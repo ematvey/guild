@@ -221,12 +221,11 @@ impl AgentRun {
             {
                 // Surface model/policy failures (bad model, no route, …) so
                 // the UI unblocks instead of waiting for agent.done forever.
-                self.events
-                    .send(serde_json::to_value(&protocol::rpc::Event::new(
-                        "agent.error",
-                        serde_json::json!({ "message": e.to_string() }),
-                    ))
-                    .unwrap_or(Value::Null));
+                let err_frame = protocol::rpc::Event::new(
+                    "agent.error",
+                    serde_json::json!({ "message": e.to_string() }),
+                );
+                let _ = self.events.send(serde_json::to_value(err_frame).unwrap_or(Value::Null));
             }
             history
         })
