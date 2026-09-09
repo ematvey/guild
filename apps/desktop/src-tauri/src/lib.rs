@@ -48,12 +48,28 @@ pub fn parse_line(line: &str) -> Option<EngineLine> {
     }
 }
 
-/// Resolves the engine binary: env override, then workspace target dirs.
+/// Resolves the engine binary: sibling of this executable (bundled
+/// distributions ship GUI + engine together), env override, workspace target
+/// dirs (dev), then PATH (platform-correct separator).
 pub fn engine_binary() -> Option<String> {
+    let engine_name = if cfg!(windows) {
+        "guild-app-server.exe"
+    } else {
+        "guild-app-server"
+    };
+    // 1. next to the GUI binary (single-distro layout)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join(engine_name);
+            if sibling.exists() {
+                return Some(sibling.to_string_lossy().into_owned());
+            }
+        }
+    }
     if let Ok(p) = std::env::var("GUILD_APP_SERVER_BIN") {
         return Some(p);
     }
-    // In `tauri dev`, cwd is apps/desktop/src-tauri.
+    // 2. In `tauri dev`, cwd is apps/desktop/src-tauri.
     for candidate in [
         "../../target/debug/guild-app-server",
         "../../target/release/guild-app-server",
@@ -62,10 +78,11 @@ pub fn engine_binary() -> Option<String> {
             return Some(candidate.to_string());
         }
     }
-    // Fall back to PATH lookup.
+    // 3. Fall back to PATH lookup.
     let path = std::env::var("PATH").ok()?;
-    path.split(':')
-        .map(|dir| std::path::Path::new(dir).join("guild-app-server"))
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    path.split(sep)
+        .map(|dir| std::path::Path::new(dir).join(engine_name))
         .find(|p| p.exists())
         .map(|p| p.to_string_lossy().into_owned())
 }
