@@ -498,6 +498,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "thiserror",
  "uuid",
 ]
 

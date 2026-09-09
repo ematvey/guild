@@ -18,7 +18,7 @@ pub struct UserInfo {
     pub role: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct LoginResponse {
     pub token: String,
     pub user: UserInfo,
@@ -69,7 +69,7 @@ pub struct MessageRow {
 }
 
 /// Frames streamed from the gateway on `POST /api/v1/gateway/chat`.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StreamEvent {
     Delta {
