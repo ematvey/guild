@@ -19,6 +19,12 @@ sqlx.workspace = true
 hex.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+argon2.workspace = true
+rand.workspace = true
+rand_core.workspace = true
+aes-gcm.workspace = true
+testcontainers = { workspace = true, optional = true }
+testcontainers-modules = { workspace = true, optional = true }
 
 [dev-dependencies]
 testcontainers-modules.workspace = true
@@ -27,5 +33,6 @@ testcontainers-modules.workspace = true
 name = "http_scaffold"
 required-features = ["test-support"]
 
+
 [features]
-test-support = []
+test-support = ["dep:testcontainers", "dep:testcontainers-modules"]
