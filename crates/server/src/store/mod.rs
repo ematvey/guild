@@ -39,7 +39,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 10] = [
+        const MIGRATIONS: [(&str, &str); 11] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -77,6 +77,10 @@ impl Store {
                 include_str!("../../migrations/0009_agent_sessions.sql"),
             ),
             ("0010_oidc", include_str!("../../migrations/0010_oidc.sql")),
+            (
+                "0011_route_quota",
+                include_str!("../../migrations/0011_route_quota.sql"),
+            ),
         ];
         for (name, sql) in MIGRATIONS {
             let applied: Option<i64> =

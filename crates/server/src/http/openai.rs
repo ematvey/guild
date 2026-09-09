@@ -187,6 +187,17 @@ async fn chat_completions(
             openai_error(status, "invalid_request_error", e.message.clone())
         })?;
 
+    crate::http::gateway::enforce_quota(&state, org_id, &req.model, &route)
+        .await
+        .map_err(|e| {
+            let status = if e.code == "quota_exceeded" {
+                axum::http::StatusCode::TOO_MANY_REQUESTS
+            } else {
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR
+            };
+            openai_error(status, "quota_exceeded", e.message.clone())
+        })?;
+
     let (system, messages) = to_internal_messages(&req.messages);
     let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
         "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
