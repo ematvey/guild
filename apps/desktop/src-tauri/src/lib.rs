@@ -48,50 +48,16 @@ pub fn parse_line(line: &str) -> Option<EngineLine> {
     }
 }
 
-/// Resolves the engine binary: sibling of this executable (bundled
-/// distributions ship GUI + engine together), env override, workspace target
-/// dirs (dev), then PATH (platform-correct separator).
-pub fn engine_binary() -> Option<String> {
-    let engine_name = if cfg!(windows) {
-        "guild-app-server.exe"
-    } else {
-        "guild-app-server"
-    };
-    // 1. next to the GUI binary (single-distro layout)
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let sibling = dir.join(engine_name);
-            if sibling.exists() {
-                return Some(sibling.to_string_lossy().into_owned());
-            }
-        }
-    }
-    if let Ok(p) = std::env::var("GUILD_APP_SERVER_BIN") {
-        return Some(p);
-    }
-    // 2. In `tauri dev`, cwd is apps/desktop/src-tauri.
-    for candidate in [
-        "../../target/debug/guild-app-server",
-        "../../target/release/guild-app-server",
-    ] {
-        if std::path::Path::new(candidate).exists() {
-            return Some(candidate.to_string());
-        }
-    }
-    // 3. Fall back to PATH lookup.
-    let path = std::env::var("PATH").ok()?;
-    let sep = if cfg!(windows) { ';' } else { ':' };
-    path.split(sep)
-        .map(|dir| std::path::Path::new(dir).join(engine_name))
-        .find(|p| p.exists())
-        .map(|p| p.to_string_lossy().into_owned())
-}
-
 pub fn spawn_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
-    let bin = engine_binary().ok_or_else(|| {
-        "guild-app-server binary not found; set GUILD_APP_SERVER_BIN or run `cargo build -p guild-app-server`".to_string()
-    })?;
+    // Single-binary design: the GUI re-executes ITSELF in engine mode
+    // (JSON-RPC over stdio). GUILD_APP_SERVER_BIN overrides for dev.
+    let bin = std::env::var("GUILD_APP_SERVER_BIN").unwrap_or_else(|_| {
+        std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "guild-desktop".to_string())
+    });
     let mut child = Command::new(&bin)
+        .arg("engine")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

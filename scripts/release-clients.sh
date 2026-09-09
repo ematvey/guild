@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Builds the Guild client distribution — GUI + engine in ONE archive per OS —
-# and publishes it to a running guild-server.
+# Builds ONE Guild client binary (GUI + engine in the same executable) per OS
+# and publishes production-format artifacts:
 #
-#   linux-x86_64    native GUI build (webkit2gtk-4.1) + engine  -> tar.gz
-#   darwin-aarch64  cargo-zigbuild + hand-assembled .app        -> tar.gz
-#   darwin-x86_64   cargo-zigbuild + hand-assembled .app        -> tar.gz
-#   windows-x86_64  cargo-zigbuild                              -> zip
+#   windows-x86_64  Guild_0.1.0_x64-setup.exe      NSIS installer (tauri bundler
+#                   from Linux via cargo-xwin; requires makensis + llvm)
+#   linux-x86_64    Guild-0.1.0-x86_64.AppImage    self-contained AppImage
+#                   (linuxdeploy; bundles webkit2gtk libs; built against the
+#                   host glibc — modern distros)
+#   darwin-aarch64  Guild-0.1.0-macos-aarch64.dmg  drag-and-drop DMG (HFS+
+#   darwin-x86_64   Guild-0.1.0-macos-x86_64.dmg   image via hfsprogs + libdmg)
 #
-# Each archive contains the GUI binary and the guild-app-server engine next
-# to it (the GUI auto-detects a sibling engine), plus a README.
+# The macOS DMGs are unsigned (Apple signing needs a Mac + Developer cert);
+# Gatekeeper: right-click -> Open on first run.
 #
-# Notes:
-#   - macOS bundles are unsigned (Gatekeeper: right-click -> Open on first
-#     run). Signing/notarization needs a Mac + Apple Developer cert.
-#   - Windows GUI needs WebView2 (preinstalled on Win10/11).
+# Build-host requirements: zig + cargo-zigbuild, macOS SDK at $SDKROOT,
+# mingw-w64-gcc, makensis, llvm (llvm-rc), linuxdeploy at ~/opt/linuxdeploy,
+# libdmg-hfsplus at ~/opt/libdmg-hfsplus, hfsprogs, 7z.
 #
 # Usage:
 #   BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=0.1.0 \
@@ -27,24 +29,14 @@ export SDKROOT="${SDKROOT:-$HOME/macos-sdks/MacOSX11.3.sdk}"
 
 cd "$(dirname "$0")/.."
 
-echo "==> building GUI + engine"
-cargo build --release -p guild-app-server >/dev/null                                  # linux engine
-cargo build --release -p guild-desktop >/dev/null                                     # linux GUI
-rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
-cargo zigbuild --release -p guild-app-server --target aarch64-apple-darwin >/dev/null
-cargo zigbuild --release -p guild-app-server --target x86_64-apple-darwin >/dev/null
-cargo zigbuild --release -p guild-desktop --target aarch64-apple-darwin >/dev/null
-cargo zigbuild --release -p guild-desktop --target x86_64-apple-darwin >/dev/null
-rustup target add x86_64-pc-windows-gnu >/dev/null
-cargo zigbuild --release -p guild-app-server --target x86_64-pc-windows-gnu >/dev/null
-cargo zigbuild --release -p guild-desktop --target x86_64-pc-windows-gnu >/dev/null
+echo "==> building the single client binary (GUI + engine)"
+rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc >/dev/null
 
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
 publish() { # platform src filename
   local platform="$1" src="$2" filename="$3"
-  # idempotent: remove every existing artifact for this version+platform
   for old in $(curl -sf "$BASE/api/v1/releases" -H "authorization: Bearer $TOKEN" \
     | jq -r --arg p "$platform" '.releases[] | select(.version == "'"$VERSION"'" and .platform == $p) | .id'); do
     curl -sf -X DELETE "$BASE/api/v1/admin/releases/$old" -H "authorization: Bearer $TOKEN" >/dev/null
@@ -52,6 +44,8 @@ publish() { # platform src filename
   done
   local local_sha remote_sha ctype="application/gzip"
   if [[ "$filename" == *.zip ]]; then ctype="application/zip"; fi
+  if [[ "$filename" == *.exe ]]; then ctype="application/octet-stream"; fi
+  if [[ "$filename" == *.dmg || "$filename" == *.AppImage ]]; then ctype="application/octet-stream"; fi
   local_sha=$(sha256sum "$src" | cut -d' ' -f1)
   echo "==> $platform: $filename ($(stat -c%s "$src") bytes)"
   remote_sha=$(curl -sf -X POST \
@@ -65,46 +59,52 @@ publish() { # platform src filename
   echo "    published, sha256 verified: ${remote_sha:0:16}…"
 }
 
-# ---- linux-x86_64 ----
-LINUX="$STAGE/guild-$VERSION-linux-x86_64"
-mkdir -p "$LINUX"
-cp target/release/guild-desktop "$LINUX/guild-desktop"
-cp target/release/guild-app-server "$LINUX/guild-app-server"
-cp apps/desktop/src-tauri/icons/128x128.png "$LINUX/guild.png"
-cat > "$LINUX/README.txt" <<'EOF'
-Guild client — Linux (GUI + engine, portable).
+# ---- windows-x86_64: official NSIS installer, cross-built via cargo-xwin ----
+echo "==> windows: tauri build (cargo-xwin) + NSIS bundling"
+(cd apps/desktop && npm run build >/dev/null)
+(cd apps/desktop && timeout 3600 npm run tauri build -- \
+  --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis >/dev/null)
+WIN_SETUP="target/x86_64-pc-windows-msvc/release/bundle/nsis/Guild_${VERSION}_x64-setup.exe"
+cp "$WIN_SETUP" "$STAGE/"
+publish windows-x86_64 "$STAGE/Guild_${VERSION}_x64-setup.exe" "Guild_${VERSION}_x64-setup.exe"
 
-  ./guild-desktop        GUI app (auto-spawns ./guild-app-server)
-  ./guild-app-server     engine, also usable headless:
-                           ./guild-app-server login --url http://<server> --email ... --password ...
-                           ./guild-app-server chat --model <model> "hello"
-
-Needs a running guild-server; enter its URL at login.
+# ---- linux-x86_64: AppImage via linuxdeploy ----
+echo "==> linux: AppImage via linuxdeploy"
+# native build: the GUI links the host webkit2gtk, so zig cross-linking with
+# a glibc floor does not apply; linuxdeploy bundles the libs instead
+cargo build --release -p guild-desktop >/dev/null
+AD="$STAGE/guild.AppDir"
+mkdir -p "$AD/usr/bin" "$AD/usr/share/icons/hicolor/128x128/apps" "$AD/usr/share/applications"
+cp target/release/guild-desktop "$AD/usr/bin/guild"
+cp apps/desktop/src-tauri/icons/128x128.png "$AD/usr/share/icons/hicolor/128x128/apps/guild.png"
+cat > "$AD/usr/share/applications/guild.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Guild
+Comment=Guild client (GUI + engine)
+Exec=guild
+Icon=guild
+Categories=Development;Office;
 EOF
-tar -C "$STAGE" -czf "$STAGE/guild-$VERSION-linux-x86_64.tar.gz" "$(basename "$LINUX")"
-publish linux-x86_64 "$STAGE/guild-$VERSION-linux-x86_64.tar.gz" "guild-$VERSION-linux-x86_64.tar.gz"
+cp "$AD/usr/share/applications/guild.desktop" "$AD/guild.desktop"
+cp apps/desktop/src-tauri/icons/128x128.png "$AD/guild.png"
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 \
+  "$HOME/opt/linuxdeploy/linuxdeploy-x86_64.AppImage" --appdir "$AD" --output appimage >/dev/null
+# linuxdeploy emits the AppImage inside the AppDir (absolute --appdir) or in CWD
+APPIMG=$(find "$AD" "$STAGE" "$(pwd)" -maxdepth 3 -name "Guild*x86_64.AppImage" 2>/dev/null | head -1)
+if [[ -z "$APPIMG" ]]; then echo "AppImage build failed" >&2; exit 1; fi
+[[ "$APPIMG" == "$STAGE/Guild-x86_64.AppImage" ]] || mv "$APPIMG" "$STAGE/"
+publish linux-x86_64 "$STAGE/Guild-${VERSION}-x86_64.AppImage" "Guild-${VERSION}-x86_64.AppImage"
 
-# ---- macos: single .app containing both binaries ----
-macos_readme() {
-  cat > "$1/README.txt" <<'EOF'
-Guild client — macOS (unsigned build).
-
-1. Untar, then move Guild.app into /Applications.
-2. First launch: right-click -> Open (unsigned; Gatekeeper will warn).
-3. The engine (guild-app-server) ships inside the .app next to the GUI.
-   Headless use: Guild.app/Contents/MacOS/guild-app-server login --url ...
-
-Needs a running guild-server; enter its URL at login.
-EOF
-}
-for pair in "aarch64 target/aarch64-apple-darwin" "x86_64 target/x86_64-apple-darwin"; do
-  arch="${pair%% *}"; dir="${pair#* }"
-  APPROOT="$STAGE/Guild-$VERSION-macos-$arch"
-  mkdir -p "$APPROOT/Guild.app/Contents/MacOS" "$APPROOT/Guild.app/Contents/Resources"
-  cp "$dir/release/guild-desktop" "$APPROOT/Guild.app/Contents/MacOS/Guild"
-  cp "$dir/release/guild-app-server" "$APPROOT/Guild.app/Contents/MacOS/guild-app-server"
-  cp apps/desktop/src-tauri/icons/icon.icns "$APPROOT/Guild.app/Contents/Resources/icon.icns"
-  cat > "$APPROOT/Guild.app/Contents/Info.plist" <<EOF
+# ---- macos: .app + drag-and-drop DMG (hfsprogs + libdmg-hfsplus) ----
+echo "==> macos: .app + DMG (unsigned)"
+make_app() { # binpath out_plist_dir
+  local bindir="$1"
+  local app="$2"
+  mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+  cp "$bindir" "$app/Contents/MacOS/Guild"
+  cp apps/desktop/src-tauri/icons/icon.icns "$app/Contents/Resources/icon.icns"
+  cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -123,26 +123,29 @@ for pair in "aarch64 target/aarch64-apple-darwin" "x86_64 target/x86_64-apple-da
 </dict>
 </plist>
 EOF
-  macos_readme "$APPROOT"
-  tar -C "$STAGE" -czf "$STAGE/guild-$VERSION-macos-$arch.tar.gz" "Guild-$VERSION-macos-$arch"
-  publish "darwin-$arch" "$STAGE/guild-$VERSION-macos-$arch.tar.gz" "guild-$VERSION-macos-$arch.tar.gz"
-done
+}
 
-# ---- windows-x86_64 ----
-WIN="$STAGE/guild-$VERSION-windows-x86_64"
-mkdir -p "$WIN"
-cp target/x86_64-pc-windows-gnu/release/guild-desktop.exe "$WIN/Guild.exe"
-cp target/x86_64-pc-windows-gnu/release/guild-app-server.exe "$WIN/guild-app-server.exe"
-cat > "$WIN/README.txt" <<'EOF'
-Guild client — Windows (portable: GUI + engine).
+build_dmg() { # arch
+  local arch="$1"
+  local bin="target/$arch-apple-darwin/release/guild-desktop"
+  cargo zigbuild --release -p guild-desktop --target "$arch-apple-darwin" >/dev/null
+  local APP="$STAGE/Guild.app"
+  rm -rf "$APP"
+  make_app "$bin" "$APP"
+  local raw="$STAGE/Guild-$VERSION-macos-$arch.raw.dmg"
+  rm -f "$raw"
+  dd if=/dev/zero of="$raw" bs=1M count=64 status=none
+  mkfs.hfsplus -v "Guild" "$raw" >/dev/null 2>&1
+  sudo -n mkdir -p /mnt/guild-dmg
+  sudo -n mount -t hfsplus -o loop "$raw" /mnt/guild-dmg
+  sudo -n cp -R "$APP" /mnt/guild-dmg/Guild.app
+  sudo -n ln -s /Applications /mnt/guild-dmg/Applications
+  sudo -n umount /mnt/guild-dmg
+  fsck.hfsplus "$raw" >/dev/null 2>&1 || { echo "HFS+ fsck failed for $arch" >&2; exit 1; }
+  "$HOME/opt/libdmg-hfsplus/build/dmg/dmg" build "$raw" "$STAGE/Guild-$VERSION-macos-$arch.dmg" >/dev/null 2>&1
+  publish "darwin-$arch" "$STAGE/Guild-$VERSION-macos-$arch.dmg" "Guild-$VERSION-macos-$arch.dmg"
+}
+build_dmg aarch64
+build_dmg x86_64
 
-  Guild.exe              GUI app (auto-spawns .\guild-app-server.exe)
-  guild-app-server.exe   engine, also usable headless
-
-Requires the WebView2 runtime (preinstalled on Windows 10/11).
-Needs a running guild-server; enter its URL at login.
-EOF
-(cd "$STAGE" && zip -q -r "guild-$VERSION-windows-x86_64.zip" "$(basename "$WIN")")
-publish windows-x86_64 "$STAGE/guild-$VERSION-windows-x86_64.zip" "guild-$VERSION-windows-x86_64.zip"
-
-echo "==> client distributions published (GUI + engine, one per OS)"
+echo "==> client distributions published (single binary, production formats)"
