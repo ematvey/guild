@@ -42,6 +42,10 @@ pub fn internal_routes() -> Router<AppState> {
             axum::routing::post(internal_run_record),
         )
         .route(
+            "/api/v1/internal/runs/finish",
+            axum::routing::post(internal_finish_run),
+        )
+        .route(
             "/api/v1/internal/completion",
             axum::routing::post(internal_completion),
         )
@@ -310,6 +314,30 @@ struct InternalCompletionRequest {
     messages: Vec<Message>,
     #[serde(default)]
     tools: Option<Vec<ToolSpec>>,
+}
+
+async fn internal_finish_run(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    require_internal_token(&state, &headers).await?;
+    let run_id: Uuid = body["run_id"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| ApiError::bad_request("missing run_id"))?;
+    let status = body["status"].as_str().unwrap_or("failed");
+    let store = state.store().await?;
+    store
+        .routines()
+        .finish_run(
+            run_id,
+            status,
+            body["summary"].as_str(),
+            body["error"].as_str(),
+        )
+        .await?;
+    Ok(Json(json!({})))
 }
 
 async fn internal_completion(

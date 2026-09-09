@@ -5,6 +5,7 @@ pub mod s3;
 pub mod state;
 pub mod store;
 pub mod usage;
+pub mod worker;
 
 pub use http::build_router;
 
