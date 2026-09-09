@@ -137,6 +137,20 @@ pub mod commands {
         Ok(())
     }
 
+    /// Version of the pending downloaded update, if any (UI queries on mount
+    /// so a toast isn't missed when the update finished before the webview).
+    #[tauri::command]
+    pub async fn pending_update_version(
+        state: State<'_, UpdateState>,
+    ) -> Result<Option<String>, String> {
+        Ok(state
+            .pending
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|(u, _)| u.version.clone()))
+    }
+
     /// Applies the pending downloaded update and restarts the app.
     #[tauri::command]
     pub async fn install_update(
@@ -203,8 +217,10 @@ async fn check_and_prepare_update(app: &AppHandle) {
         Err(_) => return,
     };
     let Some(session) = guild_app_server::session_store::load(&session_path) else {
+        eprintln!("updater: no stored session, skipping");
         return;
     };
+    eprintln!("updater: checking {}", session.base_url);
     let endpoint = format!(
         "{}/api/v1/updates/latest.json",
         session.base_url.trim_end_matches('/')
@@ -227,8 +243,16 @@ async fn check_and_prepare_update(app: &AppHandle) {
             return;
         }
     };
-    let Ok(Some(update)) = updater.check().await else {
-        return; // up to date, unreachable, or server error
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            eprintln!("updater: up to date");
+            return;
+        }
+        Err(e) => {
+            eprintln!("updater: check failed: {e}");
+            return;
+        }
     };
     let version = update.version.clone();
     eprintln!("updater: downloading version {version}");
@@ -263,7 +287,8 @@ async fn check_and_prepare_update(app: &AppHandle) {
 
 pub fn start_update_checker(app: AppHandle) {
     // debug builds run from target/ with dev sessions; never self-replace them
-    if cfg!(debug_assertions) {
+    // (GUILD_UPDATER_FORCE opts a debug build in for testing)
+    if cfg!(debug_assertions) && std::env::var("GUILD_UPDATER_FORCE").is_err() {
         return;
     }
     std::thread::spawn(move || {
@@ -292,7 +317,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_engine,
             commands::rpc_request,
-            commands::install_update
+            commands::install_update,
+            commands::pending_update_version
         ])
         .setup(|app| {
             let state: State<EngineState> = app.state();
