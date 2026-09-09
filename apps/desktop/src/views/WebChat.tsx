@@ -36,7 +36,6 @@ import {
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
-import { ScrollArea } from "@guild/ui/components/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Separator } from "@guild/ui/components/separator";
 import { Skeleton } from "@guild/ui/components/skeleton";
@@ -498,7 +497,7 @@ function DeviceSetupDialog({
                 <button
                   key={k}
                   onClick={() => setOs(k)}
-                  className={`rounded-md px-2 py-1.5 text-xs transition-colors ${
+                  className={`rounded-md px-2 py-1.5 text-xs outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${
                     os === k
                       ? "bg-card text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -603,7 +602,7 @@ function SettingsDialog({
                 <button
                   key={t}
                   onClick={() => setTheme(t)}
-                  className={`rounded-md px-2 py-1.5 text-xs capitalize transition-colors ${
+                  className={`rounded-md px-2 py-1.5 text-xs capitalize outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${
                     theme === t
                       ? "bg-card text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -621,6 +620,59 @@ function SettingsDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/// Sidebar conversation item. The pill always fits the sidebar (padding on
+/// both sides); an overflowing title is faded out at the right edge instead
+/// of hard-clipped, and only when it actually overflows.
+function ChatListItem({
+  title,
+  active,
+  onClick,
+}: {
+  title: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setOverflowing(el.scrollWidth > el.clientWidth);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [title]);
+
+  const fade = overflowing
+    ? {
+        maskImage: "linear-gradient(to right, black calc(100% - 22px), transparent)",
+        WebkitMaskImage: "linear-gradient(to right, black calc(100% - 22px), transparent)",
+      }
+    : undefined;
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+        active
+          ? "bg-accent text-accent-foreground"
+          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+      }`}
+      title={title}
+    >
+      <span
+        ref={ref}
+        className="block whitespace-nowrap"
+        style={fade}
+      >
+        {title}
+      </span>
+    </button>
   );
 }
 
@@ -655,7 +707,7 @@ function SidebarContent({
         </Button>
       </div>
       <div className="px-3 pb-1 pt-4 text-xs font-medium text-muted-foreground">Chats</div>
-      <ScrollArea className="min-h-0 flex-1 px-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2">
         <div className="space-y-0.5 pb-2">
           {chats === null &&
             [0, 1, 2, 3, 4].map((i) => (
@@ -663,30 +715,24 @@ function SidebarContent({
             ))}
           {chats !== null &&
             chats.map((c) => (
-              <button
+              <ChatListItem
                 key={c.id}
+                title={c.title || "Untitled"}
+                active={c.id === chatId}
                 onClick={() => onOpenChat(c.id)}
-                className={`w-full truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                  c.id === chatId
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                }`}
-                title={c.title}
-              >
-                {c.title || "Untitled"}
-              </button>
+              />
             ))}
           {chats !== null && chats.length === 0 && (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">No conversations yet.</p>
           )}
         </div>
-      </ScrollArea>
+      </div>
       <Separator />
       <div className="p-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent"
+              className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
               title="Account"
             >
               <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
