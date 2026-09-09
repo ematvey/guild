@@ -54,7 +54,12 @@ pub struct Message {
 
 impl Message {
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: "user".into(), content: content.into(), tool_calls: None, tool_call_id: None }
+        Self {
+            role: "user".into(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+        }
     }
 
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
@@ -168,7 +173,11 @@ mod tests {
 
     #[test]
     fn tool_shapes_roundtrip() {
-        let tc = ToolCall { id: "c1".into(), name: "read_file".into(), arguments: serde_json::json!({"path": "a.rs"}) };
+        let tc = ToolCall {
+            id: "c1".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path": "a.rs"}),
+        };
         let spec = ToolSpec {
             name: "read_file".into(),
             description: "read a file".into(),

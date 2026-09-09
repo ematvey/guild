@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-
 pub const PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Default)]
@@ -40,7 +39,10 @@ pub fn parse_line(line: &str) -> Option<EngineLine> {
     let v: Value = serde_json::from_str(line.trim()).ok()?;
     // A JSON-RPC response has an `id` and no `event` field.
     if v.get("event").is_none() && v.get("id").is_some() {
-        Some(EngineLine::Response { id: v["id"].as_u64()?, value: v })
+        Some(EngineLine::Response {
+            id: v["id"].as_u64()?,
+            value: v,
+        })
     } else {
         Some(EngineLine::Event(v))
     }
@@ -52,7 +54,10 @@ pub fn engine_binary() -> Option<String> {
         return Some(p);
     }
     // In `tauri dev`, cwd is apps/desktop/src-tauri.
-    for candidate in ["../../target/debug/guild-app-server", "../../target/release/guild-app-server"] {
+    for candidate in [
+        "../../target/debug/guild-app-server",
+        "../../target/release/guild-app-server",
+    ] {
         if std::path::Path::new(candidate).exists() {
             return Some(candidate.to_string());
         }
@@ -130,7 +135,12 @@ pub mod commands {
 
     #[tauri::command]
     pub async fn start_engine(state: State<'_, EngineState>) -> Result<(), String> {
-        let handle = state.handle.lock().unwrap().clone().expect("app handle set at setup");
+        let handle = state
+            .handle
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("app handle set at setup");
         let mut guard = state.engine.lock().unwrap();
         if guard.is_none() {
             *guard = Some(spawn_engine(&handle)?);
@@ -146,7 +156,9 @@ pub mod commands {
     ) -> Result<Value, String> {
         let engine = {
             let guard = state.engine.lock().unwrap();
-            guard.clone().ok_or_else(|| "engine not started".to_string())?
+            guard
+                .clone()
+                .ok_or_else(|| "engine not started".to_string())?
         };
         let id = state.next_id.fetch_add(1, Ordering::SeqCst);
         // oneshot: tauri's async_runtime re-exports shadow `mpsc::channel`
@@ -174,7 +186,10 @@ pub mod commands {
 pub fn run() {
     tauri::Builder::default()
         .manage(EngineState::default())
-        .invoke_handler(tauri::generate_handler![commands::start_engine, commands::rpc_request])
+        .invoke_handler(tauri::generate_handler![
+            commands::start_engine,
+            commands::rpc_request
+        ])
         .setup(|app| {
             let state: State<EngineState> = app.state();
             *state.handle.lock().unwrap() = Some(app.handle().clone());
