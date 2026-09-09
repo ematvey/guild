@@ -110,3 +110,15 @@ export async function streamChat(
     }
   }
 }
+
+export interface PairingToken {
+  id: string;
+  secret: string;
+  expires_at: string;
+}
+
+/// Issues a one-time desktop-enrollment code; the client composes the full
+/// code as `g1|<server_url>|<secret>` (the URL is routing info).
+export async function createPairingToken(ttlMinutes = 30): Promise<PairingToken> {
+  return api<PairingToken>("POST", "/api/v1/auth/pairing-tokens", { ttl_minutes: ttlMinutes });
+}

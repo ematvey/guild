@@ -7,6 +7,7 @@ pub mod gateway;
 pub mod identity;
 pub mod kv;
 pub mod oidc;
+pub mod pairing;
 pub mod registry;
 pub mod releases;
 pub mod routines;
@@ -43,7 +44,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 15] = [
+        const MIGRATIONS: [(&str, &str); 16] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -101,6 +102,10 @@ impl Store {
                 "0015_release_signing",
                 include_str!("../../migrations/0015_release_signing.sql"),
             ),
+            (
+                "0016_pairing",
+                include_str!("../../migrations/0016_pairing.sql"),
+            ),
         ];
         for (name, sql) in MIGRATIONS {
             let applied: Option<i64> =
@@ -152,6 +157,10 @@ impl Store {
         api_keys::ApiKeyStore { pool: &self.pool }
     }
 
+    pub fn pairing(&self) -> pairing::PairingStore<'_> {
+        pairing::PairingStore { pool: &self.pool }
+    }
+
     pub fn teams(&self) -> teams::TeamStore<'_> {
         teams::TeamStore { pool: &self.pool }
     }
@@ -182,7 +191,7 @@ impl Store {
 
     /// Access for stores added in later tasks; unused until then.
     #[allow(dead_code)]
-    pub(crate) fn pool(&self) -> &PgPool {
+    pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 }

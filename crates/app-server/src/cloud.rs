@@ -5,7 +5,7 @@ use eventsource_stream::Eventsource;
 use futures::Stream;
 use protocol::api::{
     Chat, ChatCompletionRequest, CreateChatRequest, LoginRequest, LoginResponse, Message,
-    StreamEvent, UserInfo,
+    PairRequest, PairResponse, StreamEvent, UserInfo,
 };
 use std::time::Duration;
 
@@ -64,6 +64,38 @@ impl CloudClient {
             .await
             .map_err(|e| CloudError::Request(e.to_string()))?;
         Ok((login.token, login.user))
+    }
+
+    /// Redeems a one-time pairing code (`g1|<server_url>|<secret>`) for a
+    /// normal session. Returns (server_url, token, user).
+    pub async fn pair(code: &str) -> Result<(String, String, UserInfo), CloudError> {
+        let (base_url, _secret) = parse_pairing_code(code)?;
+        let url = format!("{}/api/v1/auth/pair", base_url.trim_end_matches('/'));
+        let resp = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| CloudError::Request(e.to_string()))?
+            .post(&url)
+            .json(&PairRequest {
+                code: code.to_string(),
+            })
+            .send()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(CloudError::Unauthorized);
+        }
+        if !resp.status().is_success() {
+            return Err(CloudError::Request(format!(
+                "pairing failed: {}",
+                resp.status()
+            )));
+        }
+        let pair: PairResponse = resp
+            .json()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        Ok((base_url, pair.token, pair.user))
     }
 
     /// Enabled models routed for the org (GET /api/v1/gateway/models).
@@ -236,4 +268,52 @@ where
         }
     }
     Ok((text, done))
+}
+
+/// Splits a pairing code `g1|<server_url>|<secret>` into (server_url, secret).
+/// The server URL is routing info, kept readable on purpose so the pairing
+/// screen can show the user where they are about to connect.
+fn parse_pairing_code(code: &str) -> Result<(String, String), CloudError> {
+    let rest = code
+        .strip_prefix("g1|")
+        .ok_or_else(|| CloudError::Request("malformed pairing code".into()))?;
+    let mut parts = rest.splitn(3, '|');
+    let base_url = parts
+        .next()
+        .filter(|s| s.starts_with("http://") || s.starts_with("https://"))
+        .ok_or_else(|| CloudError::Request("pairing code: missing server url".into()))?;
+    let secret = parts
+        .next()
+        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or_else(|| CloudError::Request("pairing code: missing secret".into()))?;
+    if parts.next().is_some() {
+        return Err(CloudError::Request("malformed pairing code".into()));
+    }
+    Ok((base_url.to_string(), secret.to_string()))
+}
+
+#[cfg(test)]
+mod pairing_tests {
+    use super::parse_pairing_code;
+
+    #[test]
+    fn parses_valid_code() {
+        let (url, secret) = parse_pairing_code("g1|https://guild.corp:18080|a1b2C3").unwrap();
+        assert_eq!(url, "https://guild.corp:18080");
+        assert_eq!(secret, "a1b2C3");
+    }
+
+    #[test]
+    fn rejects_malformed() {
+        for bad in [
+            "g1|ftp://x|a1",
+            "g1|https://x|",
+            "g1|https://x|zzz-not-hex",
+            "g1|https://x|a1|extra",
+            "x1|https://x|a1",
+            "",
+        ] {
+            assert!(parse_pairing_code(bad).is_err(), "should reject: {bad}");
+        }
+    }
 }

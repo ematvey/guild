@@ -30,6 +30,53 @@ pub struct LoginResponse {
     pub user: UserInfo,
 }
 
+/// Desktop-app enrollment: the webapp shows a one-time pairing code
+/// (`g1.<b64url(server_url)>.<secret>`) that the client redeems here for a
+/// normal session. Format: CreatePairingTokenResponse is returned once.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct PairRequest {
+    pub code: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct PairResponse {
+    pub token: String,
+    pub user: UserInfo,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct CreatePairingTokenRequest {
+    /// Token lifetime in minutes (default 30, capped server-side).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_minutes: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct PairingTokenResponse {
+    pub id: Uuid,
+    /// One-time secret — shown/copied once; the client composes the full
+    /// code as `g1|<server_url>|<secret>` (the server URL is routing info).
+    pub secret: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct PairingTokenInfo {
+    pub id: Uuid,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, optional_fields))]

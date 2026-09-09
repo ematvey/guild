@@ -132,6 +132,7 @@ async fn dispatch(
 ) {
     match req.method.as_str() {
         "login" => login_task(session, req, out_tx).await,
+        "pair" => pair_task(session, req, out_tx).await,
         "chat.send" => chat_send_task(session, req, out_tx).await,
         "session.info" => {
             let s = session.lock().unwrap();
@@ -208,6 +209,32 @@ async fn login_task(
         let email = param(&req, "email")?.to_string();
         let password = param(&req, "password")?.to_string();
         let (token, user) = CloudClient::login(&base_url, &email, &password).await?;
+        {
+            let mut s = session.lock().unwrap();
+            s.cloud = Some(CloudClient {
+                base_url: base_url.clone(),
+                token: token.clone(),
+            });
+            s.email = Some(user.email.clone());
+        }
+        let path = crate::session_store::default_path()?;
+        save(&path, &StoredSession { base_url, token })?;
+        Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
+    }
+    .await;
+    let _ = out_tx.send(response_value(req.id, result));
+}
+
+/// Redeems a one-time pairing code (webapp-issued) for a session — the
+/// desktop counterpart of login when the org ships shared installers.
+async fn pair_task(
+    session: Arc<Mutex<Session>>,
+    req: Request,
+    out_tx: mpsc::UnboundedSender<Value>,
+) {
+    let result = async {
+        let code = param(&req, "code")?.to_string();
+        let (base_url, token, user) = CloudClient::pair(&code).await?;
         {
             let mut s = session.lock().unwrap();
             s.cloud = Some(CloudClient {

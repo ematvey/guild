@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowUp,
+  Copy,
   ArrowUpRight,
   Bot,
   ChevronUp,
@@ -46,6 +47,8 @@ import {
   listChats,
   listModels,
   streamChat,
+  createPairingToken,
+  pairingCode,
   type ChatMessage,
   type ChatSummary,
 } from "../transport";
@@ -85,6 +88,10 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [pairExpiry, setPairExpiry] = useState<string | null>(null);
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairCopied, setPairCopied] = useState(false);
   const [width, setWidth] = useState<number>(() => {
     const stored = Number(localStorage.getItem(WIDTH_KEY));
     return stored ? clampWidth(stored) : 256;
@@ -384,7 +391,37 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         </div>
       </div>
 
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} email={email} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={(o) => {
+          setSettingsOpen(o);
+          if (!o) {
+            setPairCode(null);
+            setPairCopied(false);
+          }
+        }}
+        email={email}
+        pairCode={pairCode}
+        pairExpiry={pairExpiry}
+        pairBusy={pairBusy}
+        pairCopied={pairCopied}
+        onGeneratePairing={() => {
+          setPairBusy(true);
+          createPairingToken(30)
+            .then((t) => {
+              setPairCode(pairingCode(window.location.origin, t.secret));
+              setPairExpiry(
+                new Date(t.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              );
+            })
+            .catch(() => setPairCode(null))
+            .finally(() => setPairBusy(false));
+        }}
+        onPairCopied={() => {
+          setPairCopied(true);
+          setTimeout(() => setPairCopied(false), 1500);
+        }}
+      />
     </div>
   );
 }
@@ -393,10 +430,22 @@ function SettingsDialog({
   open,
   onOpenChange,
   email,
+  pairCode,
+  pairExpiry,
+  pairBusy,
+  pairCopied,
+  onGeneratePairing,
+  onPairCopied,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   email: string;
+  pairCode: string | null;
+  pairExpiry: string | null;
+  pairBusy: boolean;
+  pairCopied: boolean;
+  onGeneratePairing: () => void;
+  onPairCopied: () => void;
 }) {
   const { theme, setTheme } = useTheme();
   return (
@@ -405,7 +454,7 @@ function SettingsDialog({
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 text-left">
+        <div className="min-w-0 space-y-4 text-left">
           <div>
             <p className="mb-1.5 text-xs font-medium text-muted-foreground">Appearance</p>
             <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
@@ -427,6 +476,36 @@ function SettingsDialog({
           <div>
             <p className="mb-1.5 text-xs font-medium text-muted-foreground">Account</p>
             <p className="text-sm">{email}</p>
+          </div>
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Connect desktop app</p>
+            {pairCode ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono text-xs" title={pairCode}>
+                    {pairCode}
+                  </code>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(pairCode);
+                      onPairCopied();
+                    }}
+                  >
+                    <Copy /> {pairCopied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Paste into the desktop app's pairing screen. Single-use, expires{" "}
+                  {pairExpiry ?? "in 30 minutes"}.
+                </p>
+              </div>
+            ) : (
+              <Button size="sm" variant="outline" onClick={onGeneratePairing} disabled={pairBusy}>
+                {pairBusy ? "Generating…" : "Generate pairing code"}
+              </Button>
+            )}
           </div>
         </div>
       </DialogContent>

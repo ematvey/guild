@@ -161,3 +161,28 @@ export async function streamChat(
     }
   }
 }
+
+export interface PairingToken {
+  id: string;
+  secret: string;
+  expires_at: string;
+}
+
+/// Issues a one-time pairing code for desktop enrollment. The full code is
+/// composed client-side (`g1|<server_url>|<secret>`): the server URL is
+/// routing info, the secret is the credential.
+export async function createPairingToken(ttlMinutes = 30): Promise<PairingToken> {
+  const token = getToken();
+  const res = await fetch("/api/v1/auth/pairing-tokens", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ttl_minutes: ttlMinutes }),
+  });
+  const v = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(v?.error?.message ?? res.statusText);
+  return { id: v.id, secret: v.secret, expires_at: v.expires_at };
+}
+
+export function pairingCode(serverUrl: string, secret: string): string {
+  return `g1|${serverUrl.replace(/\/$/, "")}|${secret}`;
+}
