@@ -19,7 +19,7 @@ serde_json = "1"
 anyhow = "1"
 thiserror = "2"
 axum = "0.8"
-tower = "0.5"
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "migrate"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
@@ -33,4 +33,5 @@ rand_core = { version = "0.6", features = ["os_rng"] }
 hex = "0.4"
 async-trait = "0.1"
 futures = "0.3"
-testcontainers-modules = { version = "0.24", features = ["postgres", "clickhouse"] }
+testcontainers-modules = { version = "0.15", features = ["postgres", "clickhouse"] }
+testcontainers = "0.28"
