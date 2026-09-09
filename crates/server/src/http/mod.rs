@@ -4,6 +4,7 @@ pub mod chats;
 pub mod error;
 pub mod gateway;
 pub mod registry;
+pub mod usage;
 
 use crate::state::AppState;
 use axum::routing::get;
@@ -20,6 +21,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(gateway::routes())
         .merge(registry::routes())
         .merge(admin::routes())
+        .merge(usage::routes())
         .fallback(error::not_found)
         .with_state(state)
 }
