@@ -8,7 +8,7 @@ use guild_core::tools::ToolRegistry;
 use protocol::api::{Message, ToolCall, ToolSpec};
 use serde_json::json;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 /// Scripted fake: yields canned chunk sequences in order.
 struct ScriptedTurn {
