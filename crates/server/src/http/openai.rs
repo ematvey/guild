@@ -3,7 +3,6 @@
 //! persistence; usage is attributed to the key's org/user.
 
 use crate::http::api_keys::ApiKeyUser;
-use crate::http::error::ApiError;
 use crate::state::AppState;
 use axum::extract::State;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};

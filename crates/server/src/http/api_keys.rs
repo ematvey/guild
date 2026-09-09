@@ -5,7 +5,6 @@ use crate::http::gateway::AdminUser;
 use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::http::header::AUTHORIZATION;
-use axum::response::IntoResponse;
 use axum::{Json, Router};
 use serde_json::json;
 use uuid::Uuid;
