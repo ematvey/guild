@@ -9,6 +9,10 @@ pub struct Config {
     /// 64 hex chars = 32-byte AES-256-GCM master key for provider secrets.
     pub master_key_hex: String,
     pub jwt_secret: String,
+    pub s3_url: String,
+    pub s3_bucket: String,
+    pub s3_access_key_id: String,
+    pub s3_secret_access_key: String,
 }
 
 fn env_or(name: &str, default: &str) -> String {
@@ -31,6 +35,10 @@ impl Config {
             clickhouse_database: env_or("GUILD_CLICKHOUSE_DATABASE", "guild"),
             master_key_hex: env_req("GUILD_MASTER_KEY_HEX")?,
             jwt_secret: env_req("GUILD_JWT_SECRET")?,
+            s3_url: env_or("GUILD_S3_URL", "http://localhost:9000"),
+            s3_bucket: env_or("GUILD_S3_BUCKET", "guild"),
+            s3_access_key_id: env_or("GUILD_S3_ACCESS_KEY_ID", "minioadmin"),
+            s3_secret_access_key: env_or("GUILD_S3_SECRET_ACCESS_KEY", "minioadmin"),
         };
         cfg.validate()?;
         Ok(cfg)
@@ -45,6 +53,10 @@ impl Config {
             clickhouse_database: "guild".into(),
             master_key_hex: "00".repeat(32),
             jwt_secret: "test-secret".into(),
+            s3_url: "http://placeholder:9000".into(),
+            s3_bucket: "guild".into(),
+            s3_access_key_id: "minioadmin".into(),
+            s3_secret_access_key: "minioadmin".into(),
         }
     }
 
