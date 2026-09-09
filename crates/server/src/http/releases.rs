@@ -26,6 +26,10 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/v1/releases", axum::routing::get(list))
         .route(
+            "/api/v1/releases/signing-key",
+            axum::routing::get(signing_key),
+        )
+        .route(
             "/api/v1/releases/{id}/download-url",
             axum::routing::get(download_url),
         )
@@ -124,6 +128,15 @@ async fn upload(
         .put(&key, body.to_vec())
         .await
         .map_err(|e| ApiError::internal(format!("object store write failed: {e}")))?;
+    // ed25519-sign the artifact digest so downloads are verifiable offline
+    let digest = crate::store::releases::sha256_hex(&body);
+    let mut digest_bytes = [0u8; 32];
+    hex::decode_to_slice(&digest, &mut digest_bytes)
+        .map_err(|e| ApiError::internal(format!("digest decode failed: {e}")))?;
+    let keypair = crate::signing::signing_key(&state)
+        .await
+        .map_err(ApiError::from)?;
+    let signature = crate::signing::sign_digest(&keypair, &digest_bytes);
     let row = state
         .store()
         .await?
@@ -136,7 +149,8 @@ async fn upload(
             &filename,
             &content_type,
             body.len() as i64,
-            &crate::store::releases::sha256_hex(&body),
+            &digest,
+            &signature,
             &notes,
             &key,
         )
@@ -175,6 +189,21 @@ async fn delete_one(
 async fn list(State(state): State<AppState>, _user: AuthUser) -> Result<Json<Value>, ApiError> {
     let rows = state.store().await?.releases().list().await?;
     Ok(Json(json!({ "releases": rows })))
+}
+
+/// Public ed25519 verifying key for artifact signatures.
+async fn signing_key(
+    State(state): State<AppState>,
+    _user: AuthUser,
+) -> Result<Json<Value>, ApiError> {
+    let keypair = crate::signing::signing_key(&state)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "public_key": hex::encode(keypair.verifying_key().as_bytes()),
+        "algorithm": "ed25519",
+        "signs": "sha256 digest of the artifact (hex)",
+    })))
 }
 
 /// Hands out a short-lived signed URL usable from plain <a href> links.
