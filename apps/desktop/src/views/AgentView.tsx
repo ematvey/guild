@@ -87,6 +87,9 @@ export default function AgentView({ email }: { email: string }) {
         });
       } else if (event === "agent.done") {
         setBusy(false);
+      } else if (event === "agent.error") {
+        setBusy(false);
+        setBlocks((b) => [...b, { kind: "error", text: payload.message ?? "agent failed" }]);
       } else if (event === "rpc.error") {
         setBusy(false);
         setBlocks((b) => [...b, { kind: "error", text: payload.message ?? "unknown error" }]);
