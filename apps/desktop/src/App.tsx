@@ -5,8 +5,24 @@ import { Input } from "./components/input";
 import { Button } from "./components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/card";
 
+/// Default server URL, in precedence order:
+///   1. last successfully used URL (localStorage, per-machine pref)
+///   2. VITE_DEFAULT_SERVER_URL baked into the bundle at build time
+///      (VITE_DEFAULT_SERVER_URL=https://guild.example.org npm run build)
+///   3. localhost:18080 fallback
+const BAKED_URL: string =
+  (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "http://localhost:18080";
+
+function defaultServerUrl(): string {
+  try {
+    return localStorage.getItem("guild.serverUrl") ?? BAKED_URL;
+  } catch {
+    return BAKED_URL;
+  }
+}
+
 function Login({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
-  const [url, setUrl] = useState("http://localhost:18080");
+  const [url, setUrl] = useState(defaultServerUrl());
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +40,11 @@ function Login({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
       if (res.error) {
         setError(res.error.message ?? "login failed");
       } else {
+        try {
+          localStorage.setItem("guild.serverUrl", url);
+        } catch {
+          /* private mode: pref simply not remembered */
+        }
         onLoggedIn(res.result?.user?.email ?? email);
       }
     } catch (e) {
