@@ -3,3 +3,5 @@
 
 pub mod provider;
 pub mod usage;
+
+pub use provider::{ChatChunk, ModelProvider, ProviderError, ProviderRequest};
