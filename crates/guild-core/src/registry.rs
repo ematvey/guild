@@ -258,7 +258,7 @@ mod tests {
             let mut block = h.to_vec();
             block.extend_from_slice(data);
             let pad = (512 - data.len() % 512) % 512;
-            block.extend(std::iter::repeat(0u8).take(pad));
+            block.extend(std::iter::repeat_n(0u8, pad));
             block
         };
         let mut raw = make_entry("../evil.txt", b"evil");

@@ -254,7 +254,6 @@ impl<'a> IdentityStore<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::store::Store;
 
     #[tokio::test]
