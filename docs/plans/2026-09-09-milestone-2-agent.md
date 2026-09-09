@@ -1,5 +1,11 @@
 # Guild Milestone 2 — Desktop Agent Implementation Plan
 
+**Status: COMPLETE** (2026-09-09, branch `feat/milestone-2`). Agent loop +
+tools + approvals + MCP + skills all covered by automated end-to-end tests
+against the real server stack (testcontainers + scripted providers). Desktop
+wiring verified under xvfb (window opens, engine spawns); interactive
+click-through in the real window remains for a human.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** The desktop agent works like codex/cowork: given a project dir and a
@@ -48,11 +54,11 @@ in §10)
   - `ChatCompletionRequest` gains `tools: Option<Vec<ToolSpec>>`
   - `StreamEvent::ToolCallDelta { index: u32, id: Option<String>, name: Option<String>, arguments_delta: String }` and `StreamEvent::ToolCallDone { call: ToolCall }` — argument fragments accumulate client-side
 
-- [ ] **Step 1: Failing round-trip tests** — serialize assistant message with tool_calls; StreamEvent tagged variants round-trip.
-- [ ] **Step 2: Run, FAIL** (`cargo test -p protocol`).
-- [ ] **Step 3: Implement** — additive serde (`skip_serializing_if` on new fields keeps old wire shape).
-- [ ] **Step 4: Run, PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(protocol): tool-calling shapes`
+- [x] **Step 1: Failing round-trip tests** — serialize assistant message with tool_calls; StreamEvent tagged variants round-trip.
+- [x] **Step 2: Run, FAIL** (`cargo test -p protocol`).
+- [x] **Step 3: Implement** — additive serde (`skip_serializing_if` on new fields keeps old wire shape).
+- [x] **Step 4: Run, PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(protocol): tool-calling shapes`
 
 ### Task 2: guild-core providers — tools in request and stream
 
@@ -64,11 +70,11 @@ in §10)
 - Consumes: Task 1 types.
 - Produces: `ProviderRequest.tools: Option<&'a [ToolSpec]>`; OpenAI adapter maps `ToolSpec`→`{"type":"function","function":{...}}`, parses `delta.tool_calls` fragments (accumulate by index: id/name/`function.arguments` string concat, emit `ToolCallDelta`; on finish_reason `tool_calls` emit `ToolCallDone`); Anthropic adapter maps to `{"name","description","input_schema"}`, parses `content_block_start` (type `tool_use` → id/name) + `input_json_delta` → `ToolCallDelta`, `content_block_stop` → `ToolCallDone` with parsed arguments.
 
-- [ ] **Step 1: Failing fixture tests** (wiremock SSE bodies with tool fragments, both adapters).
-- [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement** adapters.
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(core): tool-calling in openai/anthropic adapters`
+- [x] **Step 1: Failing fixture tests** (wiremock SSE bodies with tool fragments, both adapters).
+- [x] **Step 2: FAIL.**
+- [x] **Step 3: Implement** adapters.
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(core): tool-calling in openai/anthropic adapters`
 
 ### Task 3: gateway — tools pass-through + agent history persistence
 
@@ -83,11 +89,11 @@ in §10)
   - `store::chats::append_message` extended: `tool_calls: Option<&[protocol::api::ToolCall]>`, `tool_call_id: Option<&str>` columns.
   - The "append last user message" rule from M1 stays: only append when `last.role == "user"`.
 
-- [ ] **Step 1: Failing tests** — wiremock provider returning a tool call; assert `ToolCallDelta`/`ToolCallDone` in stream, assistant message persisted with tool_calls; POST tool message persists; org isolation on the new endpoint.
-- [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(server): gateway tool calling + client-side message persistence endpoint`
+- [x] **Step 1: Failing tests** — wiremock provider returning a tool call; assert `ToolCallDelta`/`ToolCallDone` in stream, assistant message persisted with tool_calls; POST tool message persists; org isolation on the new endpoint.
+- [x] **Step 2: FAIL.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(server): gateway tool calling + client-side message persistence endpoint`
 
 ### Task 4: guild-core — tool trait and built-in tools
 
@@ -105,11 +111,11 @@ in §10)
   - Path scoping: all fs tools resolve relative paths under `workdir` and reject escapes (canonicalize check); run_command defaults cwd=workdir, rejects absolute cwd outside workdir.
   - Input validation via `jsonschema` against each tool's schema; failures return `ToolFailure::InvalidInput(model-readable)`.
 
-- [ ] **Step 1: Failing tests** — per tool: happy path, escape rejection (`../`), edit_file uniqueness error text, command timeout, grep with .gitignore respected, schema validation failure text.
-- [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(core): built-in tools with scoping and approval defaults`
+- [x] **Step 1: Failing tests** — per tool: happy path, escape rejection (`../`), edit_file uniqueness error text, command timeout, grep with .gitignore respected, schema validation failure text.
+- [x] **Step 2: FAIL.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(core): built-in tools with scoping and approval defaults`
 
 ### Task 5: guild-core — agent loop with approvals
 
@@ -126,11 +132,11 @@ in §10)
   - `policy::ApprovalPolicy { default: Approval, overrides: HashMap<String, Approval> }` with serde (session-persistable).
   - The message-array management (assistant tool_calls + tool results) mirrors provider wire shapes so the next iteration replays correctly through the gateway.
 
-- [ ] **Step 1: Failing test** — with a scripted fake provider stream (via a test `ModelProvider` impl or wiremock): prompt → tool call → tool result → second model call → text → done; assert hooks sequence, message replay shape, deny path ("denied by user"), max_steps stop.
-- [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(core): agent loop with approval hooks`
+- [x] **Step 1: Failing test** — with a scripted fake provider stream (via a test `ModelProvider` impl or wiremock): prompt → tool call → tool result → second model call → text → done; assert hooks sequence, message replay shape, deny path ("denied by user"), max_steps stop.
+- [x] **Step 2: FAIL.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(core): agent loop with approval hooks`
 
 ### Task 6: app-server — agent session over JSON-RPC
 
@@ -148,11 +154,11 @@ in §10)
   - Approval flow: hooks.request_approval registers a pending oneshot keyed by request_id, emits `agent.approval_request { request_id, tool, arguments }`, awaits; `agent.approve` resolves it.
   - History continuity: session keeps full message list client-side (server persists per-call); each `agent.start` with existing chat_id resumes from server history (GET messages) plus local tool-state.
 
-- [ ] **Step 1: Failing test** — full stack (testcontainer server + wiremock provider with a scripted tool-call stream + a scratch git repo as project_dir): `agent.start` → events arrive (text, approval_request, tool_result, done); `agent.approve` denies a `run_command` and the tool result says denied; second `agent.start` continues the same chat.
-- [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(app-server): agent session over jsonrpc with approvals`
+- [x] **Step 1: Failing test** — full stack (testcontainer server + wiremock provider with a scripted tool-call stream + a scratch git repo as project_dir): `agent.start` → events arrive (text, approval_request, tool_result, done); `agent.approve` denies a `run_command` and the tool result says denied; second `agent.start` continues the same chat.
+- [x] **Step 2: FAIL.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(app-server): agent session over jsonrpc with approvals`
 
 ### Task 7: app-server — MCP clients and skills loading
 
@@ -171,11 +177,11 @@ in §10)
   - `agent.start` merges: built-ins + MCP tools + skill index in system prompt.
   - Test MCP server: a tiny bundled fixture script (python3 or shell) speaking MCP stdio for tests; rmcp test harness if available.
 
-- [ ] **Step 1: Failing tests** — mcp.json discovery merge; skill discovery with frontmatter parsing; (integration) fixture MCP server exposes `echo` tool, agent session lists it and can call it through a scripted provider flow.
-- [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(app-server): mcp clients and local skills loading`
+- [x] **Step 1: Failing tests** — mcp.json discovery merge; skill discovery with frontmatter parsing; (integration) fixture MCP server exposes `echo` tool, agent session lists it and can call it through a scripted provider flow.
+- [x] **Step 2: FAIL.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(app-server): mcp clients and local skills loading`
 
 ### Task 8: desktop — agent UI
 
@@ -188,11 +194,11 @@ in §10)
 - Consumes: Task 6 protocol.
 - Produces: Project picker (dialog) → AgentView: transcript with text/tool-call/tool-result blocks, approval modal on `agent.approval_request` (Approve/Deny+reason → `agent.approve`), policy toggles per tool (always/ask/never), model input, "New session" (new chat_id).
 
-- [ ] **Step 1: Wire tauri-plugin-dialog** (Cargo + capability `dialog:default`).
-- [ ] **Step 2: AgentView** with event-driven transcript rendering + approval modal.
-- [ ] **Step 3: Build green** (`npm run build`, `cargo clippy -p guild-desktop -- -D warnings`).
-- [ ] **Step 4: xvfb launch check** — window opens, engine spawns, no console errors in log.
-- [ ] **Step 5: Commit** — `feat(desktop): agent view with approvals and tool transcript`
+- [x] **Step 1: Wire tauri-plugin-dialog** (Cargo + capability `dialog:default`).
+- [x] **Step 2: AgentView** with event-driven transcript rendering + approval modal.
+- [x] **Step 3: Build green** (`npm run build`, `cargo clippy -p guild-desktop -- -D warnings`).
+- [x] **Step 4: xvfb launch check** — window opens, engine spawns, no console errors in log.
+- [x] **Step 5: Commit** — `feat(desktop): agent view with approvals and tool transcript`
 
 ## Self-Review
 
