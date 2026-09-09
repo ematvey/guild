@@ -16,8 +16,26 @@ pub mod usage;
 pub mod web;
 
 use crate::state::AppState;
+use axum::extract::Request;
 use axum::routing::get;
 use axum::{Json, Router};
+
+/// Access log for every request (method, path, status, duration) at info
+/// level — the primary operational signal for the API.
+async fn log_requests(req: Request, next: axum::middleware::Next) -> axum::response::Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let started = std::time::Instant::now();
+    let res = next.run(req).await;
+    tracing::info!(
+        method = %method,
+        path = %path,
+        status = res.status().as_u16(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "http request"
+    );
+    res
+}
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -41,5 +59,6 @@ pub fn build_router(state: AppState) -> Router {
         .merge(internal::internal_routes())
         .merge(usage::routes())
         .fallback(web::fallback)
+        .layer(axum::middleware::from_fn(log_requests))
         .with_state(state)
 }
