@@ -1,0 +1,224 @@
+//! OIDC SSO configuration + login flow (spec §4.1): generic OIDC against the
+//! org's IdP, provisioning `identity_type='oidc'` users on first login.
+
+use crate::crypto;
+use crate::http::error::ApiError;
+use crate::http::gateway::AdminUser;
+use crate::state::AppState;
+use axum::extract::{Query, State};
+use axum::response::{IntoResponse, Redirect, Response};
+use axum::{Json, Router};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/v1/admin/oidc",
+            axum::routing::put(set_config).get(get_config),
+        )
+        .route("/api/v1/auth/oidc/login", axum::routing::get(login))
+        .route("/api/v1/auth/oidc/callback", axum::routing::get(callback))
+}
+
+use crate::store::oidc::OidcStore;
+
+// ---------- admin config ----------
+// ---------- admin config ----------
+
+async fn set_config(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let issuer = body["issuer"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("missing issuer"))?;
+    let client_id = body["client_id"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("missing client_id"))?;
+    let client_secret = body["client_secret"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("missing client_secret"))?;
+    let master = state.config.master_key()?;
+    state
+        .store()
+        .await?
+        .oidc()
+        .upsert(admin.0.org_id, issuer, client_id, client_secret, &master)
+        .await?;
+    Ok(Json(json!({})))
+}
+
+async fn get_config(
+    State(state): State<AppState>,
+    admin: AdminUser,
+) -> Result<Json<Value>, ApiError> {
+    let row = state.store().await?.oidc().get(admin.0.org_id).await?;
+    Ok(Json(match row {
+        Some(r) => json!({"configured": true, "issuer": r.issuer, "client_id": r.client_id}),
+        None => json!({"configured": false}),
+    }))
+}
+
+// ---------- login flow ----------
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct OidcState {
+    org: Uuid,
+    exp: i64,
+}
+
+fn sign_state(state: &AppState, org: Uuid) -> Result<String, ApiError> {
+    let claims = OidcState {
+        org,
+        exp: chrono::Utc::now().timestamp() + 600,
+    };
+    let key = jsonwebtoken::EncodingKey::from_secret(state.config.jwt_secret.as_bytes());
+    jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claims, &key)
+        .map_err(|e| ApiError::internal(format!("state sign failed: {e}")))
+}
+
+fn verify_state(state: &AppState, token: &str) -> Result<Uuid, ApiError> {
+    let key = jsonwebtoken::DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
+    let data = jsonwebtoken::decode::<OidcState>(token, &key, &jsonwebtoken::Validation::default())
+        .map_err(|_| ApiError::unauthorized("bad state"))?;
+    Ok(data.claims.org)
+}
+
+#[derive(Deserialize, Debug)]
+struct Discovery {
+    authorization_endpoint: String,
+    token_endpoint: String,
+    #[serde(default)]
+    userinfo_endpoint: Option<String>,
+}
+
+async fn fetch_discovery(issuer: &str) -> Result<Discovery, ApiError> {
+    let url = format!(
+        "{}/.well-known/openid-configuration",
+        issuer.trim_end_matches('/')
+    );
+    reqwest::get(&url)
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc discovery failed: {e}")))?
+        .error_for_status()
+        .map_err(|e| ApiError::internal(format!("oidc discovery failed: {e}")))?
+        .json::<Discovery>()
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc discovery parse failed: {e}")))
+}
+
+/// Starts the OIDC login: 302 to the IdP's authorization endpoint.
+async fn login(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Response, ApiError> {
+    let org: Uuid = q
+        .get("org_id")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| ApiError::bad_request("missing org_id"))?;
+    let store = state.store().await?;
+    let master = state.config.master_key()?;
+    let Some(row) = store.oidc().get(org).await? else {
+        return Err(ApiError::not_found("no oidc config for org"));
+    };
+    let discovery = fetch_discovery(&row.issuer).await?;
+    let redirect_uri = format!(
+        "{}/api/v1/auth/oidc/callback",
+        state.config.api_url.trim_end_matches('/')
+    );
+    let auth_url = reqwest::Url::parse_with_params(
+        &discovery.authorization_endpoint,
+        &[
+            ("response_type", "code"),
+            ("client_id", row.client_id.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
+            ("scope", "openid email profile"),
+            ("state", sign_state(&state, org)?.as_str()),
+        ],
+    )
+    .map_err(|e| ApiError::internal(format!("auth url build failed: {e}")))?;
+    Ok(Redirect::to(auth_url.as_str()).into_response())
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
+}
+
+async fn callback(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    let code = q
+        .get("code")
+        .ok_or_else(|| ApiError::bad_request("missing code"))?;
+    let state_param = q
+        .get("state")
+        .ok_or_else(|| ApiError::bad_request("missing state"))?;
+    let org = verify_state(&state, state_param)?;
+
+    let store = state.store().await?;
+    let master = state.config.master_key()?;
+    let row = store
+        .oidc()
+        .get(org)
+        .await?
+        .ok_or_else(|| ApiError::not_found("no oidc config for org"))?;
+    let client_secret = store.oidc().decrypt_secret(&row, &master)?;
+    let discovery = fetch_discovery(&row.issuer).await?;
+    let redirect_uri = format!(
+        "{}/api/v1/auth/oidc/callback",
+        state.config.api_url.trim_end_matches('/')
+    );
+
+    let token_resp = reqwest::Client::new()
+        .post(&discovery.token_endpoint)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", redirect_uri.as_str()),
+            ("client_id", row.client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc token exchange failed: {e}")))?
+        .error_for_status()
+        .map_err(|e| ApiError::unauthorized(format!("oidc token exchange failed: {e}")))?
+        .json::<TokenResponse>()
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc token parse failed: {e}")))?;
+
+    let userinfo_endpoint = discovery
+        .userinfo_endpoint
+        .ok_or_else(|| ApiError::internal("idp has no userinfo endpoint"))?;
+    let userinfo = reqwest::Client::new()
+        .get(&userinfo_endpoint)
+        .bearer_auth(&token_resp.access_token)
+        .send()
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc userinfo failed: {e}")))?
+        .error_for_status()
+        .map_err(|e| ApiError::unauthorized(format!("oidc userinfo failed: {e}")))?
+        .json::<Value>()
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc userinfo parse failed: {e}")))?;
+
+    let email = userinfo["email"]
+        .as_str()
+        .ok_or_else(|| ApiError::unauthorized("idp returned no email claim"))?
+        .to_string();
+
+    // provision on first login, then hand out a session
+    let identity = store.identity();
+    let user = match identity.find_by_email(org, &email).await? {
+        Some(u) => u,
+        None => identity.create_oidc_user(org, &email).await?,
+    };
+    let (_sid, token) = identity.create_session(user.id).await?;
+    Ok(Json(json!({"token": token, "email": email, "org_id": org})))
+}

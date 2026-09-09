@@ -6,6 +6,7 @@ pub mod chats;
 pub mod error;
 pub mod gateway;
 pub mod internal;
+pub mod oidc;
 pub mod openai;
 pub mod registry;
 pub mod usage;
@@ -27,6 +28,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(registry::routes())
         .merge(admin::routes())
         .merge(agents::routes())
+        .merge(oidc::routes())
         .merge(api_keys::routes())
         .merge(openai::routes())
         .merge(internal::routines_routes())
