@@ -40,6 +40,7 @@ pub fn safe_filename(name: &str) -> Option<String> {
 }
 
 impl<'a> AttachmentStore<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         id: Uuid,
