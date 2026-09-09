@@ -88,7 +88,7 @@ async fn api_key_issue_use_revoke() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(&format!("/api/v1/admin/api-keys/{key_id}"))
+                .uri(format!("/api/v1/admin/api-keys/{key_id}"))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())
                 .unwrap(),
