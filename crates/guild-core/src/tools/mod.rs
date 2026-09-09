@@ -1,0 +1,219 @@
+//! Built-in tools and the tool registry (spec §3.2). Tools are the agent's
+//! hands: scoped to the project dir, schema-validated, approval-gated.
+
+pub mod fs;
+pub mod git;
+pub mod shell;
+
+use async_trait::async_trait;
+use protocol::api::ToolSpec;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+/// Per-tool approval default (spec §3.2: always / never / ask).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Approval {
+    Allow,
+    Ask,
+    Never,
+}
+
+/// What a successful tool run leaves behind.
+#[derive(Debug, Clone)]
+pub struct ToolOutcome {
+    /// What the model sees on the next turn.
+    pub output_for_model: String,
+    /// One-line summary for the UI transcript.
+    pub ui_summary: Option<String>,
+    /// Unified diff for file edits (UI rendering).
+    pub diff: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ToolFailure {
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+    #[error("execution failed: {0}")]
+    Execution(String),
+}
+
+#[async_trait]
+pub trait Tool: Send + Sync {
+    fn spec(&self) -> ToolSpec;
+    fn default_policy(&self) -> Approval;
+    async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure>;
+}
+
+pub struct ToolRegistry {
+    tools: HashMap<String, Arc<dyn Tool>>,
+    order: Vec<String>,
+}
+
+impl ToolRegistry {
+    pub fn new() -> Self {
+        Self {
+            tools: HashMap::new(),
+            order: Vec::new(),
+        }
+    }
+
+    pub fn builtins() -> Self {
+        let mut r = Self::new();
+        r.add(Arc::new(fs::ReadFile));
+        r.add(Arc::new(fs::WriteFile));
+        r.add(Arc::new(fs::EditFile));
+        r.add(Arc::new(fs::GlobTool));
+        r.add(Arc::new(fs::GrepTool));
+        r.add(Arc::new(shell::RunCommand));
+        r.add(Arc::new(git::GitTool));
+        r
+    }
+
+    pub fn add(&mut self, tool: Arc<dyn Tool>) {
+        let name = tool.spec().name;
+        if !self.tools.contains_key(&name) {
+            self.order.push(name.clone());
+        }
+        self.tools.insert(name, tool);
+    }
+
+    pub fn specs(&self) -> Vec<ToolSpec> {
+        self.order.iter().map(|n| self.tools[n].spec()).collect()
+    }
+
+    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools.get(name).cloned()
+    }
+
+    pub fn names(&self) -> &[String] {
+        &self.order
+    }
+
+    /// Validates args against the tool's JSON Schema, then runs it.
+    pub async fn run(
+        &self,
+        name: &str,
+        workdir: &Path,
+        args: Value,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        let tool = self
+            .get(name)
+            .ok_or_else(|| ToolFailure::InvalidInput(format!("unknown tool {name}")))?;
+        let spec = tool.spec();
+        let compiled = jsonschema::validator_for(&spec.parameters)
+            .map_err(|e| ToolFailure::InvalidInput(format!("bad tool schema: {e}")))?;
+        if let Err(first) = compiled.validate(&args) {
+            return Err(ToolFailure::InvalidInput(format!(
+                "arguments for {name} failed validation: {first}"
+            )));
+        }
+        tool.run(workdir, args).await
+    }
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Resolves `path` under `workdir` and rejects escapes. Absolute paths must
+/// already be inside the workdir.
+pub fn resolve_scoped(workdir: &Path, path_str: &str) -> Result<PathBuf, ToolFailure> {
+    let raw = Path::new(path_str);
+    let joined = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        workdir.join(raw)
+    };
+    let base = workdir
+        .canonicalize()
+        .map_err(|e| ToolFailure::InvalidInput(format!("bad workdir: {e}")))?;
+    let resolved = match joined.canonicalize() {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // target may not exist yet (write_file); canonicalize the
+            // existing part of the chain instead
+            let parent = joined
+                .parent()
+                .and_then(|p| p.canonicalize().ok())
+                .ok_or_else(|| {
+                    ToolFailure::InvalidInput(format!(
+                        "path not found and no valid parent: {path_str}"
+                    ))
+                })?;
+            parent.join(
+                joined
+                    .file_name()
+                    .ok_or_else(|| ToolFailure::InvalidInput("empty path".into()))?,
+            )
+        }
+        Err(e) => {
+            return Err(ToolFailure::InvalidInput(format!(
+                "path resolution failed: {e}"
+            )))
+        }
+    };
+    if !resolved.starts_with(&base) {
+        return Err(ToolFailure::InvalidInput(format!(
+            "path escapes the project directory: {path_str}"
+        )));
+    }
+    Ok(resolved)
+}
+
+pub fn diff_text(old: &str, new: &str, path: &Path) -> String {
+    let d = similar::TextDiff::from_lines(old, new);
+    d.unified_diff()
+        .context_radius(3)
+        .header(
+            &format!("a/{}", path.display()),
+            &format!("b/{}", path.display()),
+        )
+        .to_string()
+}
+
+const MAX_MODEL_OUTPUT: usize = 64 * 1024;
+
+fn truncate(s: String) -> String {
+    if s.len() > MAX_MODEL_OUTPUT {
+        let mut cut = MAX_MODEL_OUTPUT;
+        while !s.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}\n[truncated]", &s[..cut])
+    } else {
+        s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_scoped_rejects_escape() {
+        let dir = std::env::temp_dir().join(format!("guild-scope-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        assert!(resolve_scoped(&dir, "sub/../file.txt").is_ok());
+        assert!(resolve_scoped(&dir, "../outside.txt").is_err());
+        assert!(resolve_scoped(&dir, "/etc/passwd").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn diff_renders() {
+        let d = diff_text("a\nb\n", "a\nc\n", Path::new("f.txt"));
+        assert!(d.contains("-b") && d.contains("+c"));
+    }
+
+    #[test]
+    fn truncate_handles_multibyte() {
+        let s = "абвгд".repeat(20_000);
+        let t = truncate(s);
+        assert!(t.ends_with("[truncated]"));
+    }
+}
