@@ -62,14 +62,16 @@ them.
 
 ## Follow-up: client distribution (post-M7, user-requested)
 
-- **Downloads from the UI** — DONE: `releases` table + object-storage
-  artifacts, `POST /api/v1/admin/releases` (admin upload, sha256 recorded,
-  512MiB body limit), `GET /api/v1/releases` list, short-lived HMAC-signed
-  download URLs (`/download-url` → `/download?exp&sig`, bearer fallback),
-  admin delete. Web UI "Downloads" view (nav item) with per-artifact
-  Download + copy-curl + checksum display. First artifact published:
-  guild-cli 0.1.0 linux-x86_64 (sha256 209d020f…), verified by download +
-  checksum match.
+- **Downloads from the UI** — DONE, evolved to single-distro: one archive
+  per OS containing GUI + engine together (GUI auto-detects a sibling
+  engine; engine also usable headless). `scripts/release-clients.sh` builds
+  + publishes: linux-x86_64 (native), darwin-aarch64/x86_64 (zigbuild +
+  hand-assembled unsigned .app), windows-x86_64 (zigbuild, portable zip).
+  All ed25519-signed; `guild-app-server verify` does offline checks. Server
+  artifacts live in object storage; old split cli/desktop artifacts
+  removed. Test evidence: linux GUI executed under xvfb, engine executed
+  natively, windows exe launches under wine; darwin binaries are
+  build-verified only (no macOS host).
 
 ## Deferred decisions (user-directed)
 
