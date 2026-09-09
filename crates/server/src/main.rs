@@ -1,4 +1,4 @@
-fn main() -> anyhow::Result<()> {
-    println!("guild-server");
-    Ok(())
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    guild_server::main_entry().await
 }
