@@ -1,5 +1,10 @@
 # Guild Milestone 3 — Registry Implementation Plan
 
+**Status: COMPLETE** (2026-09-09, branch `feat/milestone-3`). Publish →
+review → install covered by automated tests (Postgres + MinIO + ClickHouse
+testcontainers) and smoke-tested against the deployed compose stack (CLI
+publish, admin review, CLI install into a project, agent-visible SKILL.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Org-scoped registries for skills, MCP servers, and integrations:
@@ -45,11 +50,11 @@ app-server; testcontainers MinIO for tests.
   - `registry::extract(bundle: &[u8], dest: &Path) -> Result<BundleManifest>` — creates dest, unpacks; rejects entries with `..`, absolute paths, or symlinks; returns the manifest.
   - `registry::pack_skill(skill_dir, kind: "skill", version) -> Result<(Vec<u8>, BundleManifest)>` — convenience: slug = dir name, description from SKILL.md frontmatter (reuses the app-server frontmatter logic, moved here); errors if no SKILL.md.
 
-- [ ] **Step 1: Failing tests** — round-trip pack→extract with nested files; missing SKILL.md error; traversal entry rejected; manifest round-trips.
-- [ ] **Step 2: FAIL** (`cargo test -p guild-core`).
-- [ ] **Step 3: Implement** (tar + flate2; move `parse_frontmatter` from app-server/skills.rs to guild-core and re-export).
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(core): registry bundle pack/extract with manifest`
+- [x] **Step 1: Failing tests** — round-trip pack→extract with nested files; missing SKILL.md error; traversal entry rejected; manifest round-trips.
+- [x] **Step 2: FAIL** (`cargo test -p guild-core`).
+- [x] **Step 3: Implement** (tar + flate2; move `parse_frontmatter` from app-server/skills.rs to guild-core and re-export).
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(core): registry bundle pack/extract with manifest`
 
 ### Task 2: server — object storage (S3/MinIO)
 
@@ -69,11 +74,11 @@ app-server; testcontainers MinIO for tests.
   - `AppState::objects(&self)` — lazy OnceCell like `usage()`.
   - test_support: `minio_container()` helper returning `(endpoint_url, credentials)`; `test_config_with_s3(endpoint)`.
 
-- [ ] **Step 1: Failing test** — put/get/delete round-trip against a MinIO testcontainer; get of missing key errors.
-- [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement** via `object_store::aws::AmazonS3Builder` (`with_endpoint`, `with_allow_http`).
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(server): s3 object store (minio) with lazy state wiring`
+- [x] **Step 1: Failing test** — put/get/delete round-trip against a MinIO testcontainer; get of missing key errors.
+- [x] **Step 2: FAIL.**
+- [x] **Step 3: Implement** via `object_store::aws::AmazonS3Builder` (`with_endpoint`, `with_allow_http`).
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(server): s3 object store (minio) with lazy state wiring`
 
 ### Task 3: server — registry store + API
 
@@ -115,11 +120,11 @@ app-server; testcontainers MinIO for tests.
   - `GET /api/v1/registry/{kind}/{slug}/{version}/bundle` — bytes (approved, or caller is admin)
   - `POST /api/v1/registry/{kind}/{slug}/review` — admin; body `{status}`
 
-- [ ] **Step 1: Failing tests** — full round-trip: publish skill bundle (bytes from guild-core pack) → list → versions → download → bytes equal; review approve by admin; member 403 on review + on downloading draft; republish same version replaces; kind/slug mismatch 400.
-- [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement** (Postgres testcontainer + MinIO testcontainer via test_support).
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(server): registry api — publish, versions, review, download`
+- [x] **Step 1: Failing tests** — full round-trip: publish skill bundle (bytes from guild-core pack) → list → versions → download → bytes equal; review approve by admin; member 403 on review + on downloading draft; republish same version replaces; kind/slug mismatch 400.
+- [x] **Step 2: FAIL.**
+- [x] **Step 3: Implement** (Postgres testcontainer + MinIO testcontainer via test_support).
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(server): registry api — publish, versions, review, download`
 
 ### Task 4: app-server — publish and install
 
@@ -136,11 +141,11 @@ app-server; testcontainers MinIO for tests.
   - JSON-RPC: `registry.publish {kind, dir, version}` → `{slug, version}`; `registry.install {slug, version?}` → `{path, name}` (uses session project_dir)
   - CLI: `guild-app-server publish --kind skill --dir D --version 1.0.0` (login required); `guild-app-server install --slug S [--version V] --project P`
 
-- [ ] **Step 1: Failing tests** — against the full stack (server + minio testcontainers): publish a scratch skill dir → install into a fresh project → SKILL.md content matches; install of draft rejected for members.
-- [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: PASS + clippy.**
-- [ ] **Step 5: Commit** — `feat(app-server): registry publish/install over the cloud api`
+- [x] **Step 1: Failing tests** — against the full stack (server + minio testcontainers): publish a scratch skill dir → install into a fresh project → SKILL.md content matches; install of draft rejected for members.
+- [x] **Step 2: FAIL.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: PASS + clippy.**
+- [x] **Step 5: Commit** — `feat(app-server): registry publish/install over the cloud api`
 
 ### Task 5: deploy — MinIO wiring for the server
 
@@ -151,9 +156,9 @@ app-server; testcontainers MinIO for tests.
 - Compose: minio gets healthcheck; server env gains `GUILD_S3_URL=http://minio:9000`, bucket/credentials matching the minio service env (`MINIO_ROOT_USER/GUILD_S3_ACCESS_KEY_ID` aligned).
 - README: registry smoke commands (publish via CLI, list, install).
 
-- [ ] **Step 1: Update compose + env example + README.**
-- [ ] **Step 2: Smoke** — compose up; publish a scratch skill via CLI; install into a scratch project; SKILL.md matches; compose down -v.
-- [ ] **Step 3: Commit** — `deploy: minio wiring for the registry`
+- [x] **Step 1: Update compose + env example + README.**
+- [x] **Step 2: Smoke** — compose up; publish a scratch skill via CLI; install into a scratch project; SKILL.md matches; compose down -v.
+- [x] **Step 3: Commit** — `deploy: minio wiring for the registry`
 
 ## Self-Review
 

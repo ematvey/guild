@@ -37,6 +37,17 @@ curl -s -X PUT localhost:8080/api/v1/admin/gateway/routes \
   -d '{"model":"gpt-4o-mini","provider":"openai","enabled":true,"price_in":0.15,"price_out":0.6}'
 ```
 
+## Registry smoke test
+
+```bash
+mkdir -p /tmp/demo-skill/deploy-check
+printf -- '---\nname: deploy-check\ndescription: verify deploys\n---\nSteps.' > /tmp/demo-skill/deploy-check/SKILL.md
+
+cargo run -p guild-app-server -- publish --kind skill   --dir /tmp/demo-skill/deploy-check --version 1.0.0
+# approve in the web UI/admin API, then:
+cargo run -p guild-app-server -- install --slug deploy-check --project /tmp/demo-project
+```
+
 ## Headless client smoke test
 
 ```bash
