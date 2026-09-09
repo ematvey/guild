@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "../lib/utils";
 
 const variants = {
-  default: "bg-neutral-100 text-neutral-900 hover:bg-neutral-200",
+  default: "bg-indigo-600 text-white hover:bg-indigo-500",
   outline: "border border-neutral-700 bg-transparent hover:bg-neutral-900",
 };
 
