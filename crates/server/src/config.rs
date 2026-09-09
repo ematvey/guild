@@ -13,6 +13,11 @@ pub struct Config {
     pub s3_bucket: String,
     pub s3_access_key_id: String,
     pub s3_secret_access_key: String,
+    pub restate_url: String,
+    /// Static bearer token for /api/v1/internal/* (worker -> server).
+    pub internal_token: Option<String>,
+    pub worker_bind: String,
+    pub worker_advertised_url: String,
 }
 
 fn env_or(name: &str, default: &str) -> String {
@@ -39,6 +44,10 @@ impl Config {
             s3_bucket: env_or("GUILD_S3_BUCKET", "guild"),
             s3_access_key_id: env_or("GUILD_S3_ACCESS_KEY_ID", "minioadmin"),
             s3_secret_access_key: env_or("GUILD_S3_SECRET_ACCESS_KEY", "minioadmin"),
+            restate_url: env_or("GUILD_RESTATE_URL", "http://localhost:8080"),
+            internal_token: std::env::var("GUILD_INTERNAL_TOKEN").ok(),
+            worker_bind: env_or("GUILD_WORKER_BIND", "0.0.0.0:9080"),
+            worker_advertised_url: env_or("GUILD_WORKER_ADVERTISED_URL", "http://localhost:9080"),
         };
         cfg.validate()?;
         Ok(cfg)
@@ -57,6 +66,10 @@ impl Config {
             s3_bucket: "guild".into(),
             s3_access_key_id: "minioadmin".into(),
             s3_secret_access_key: "minioadmin".into(),
+            restate_url: "http://placeholder:8080".into(),
+            internal_token: Some("test-internal".into()),
+            worker_bind: "127.0.0.1:0".into(),
+            worker_advertised_url: "http://localhost:9080".into(),
         }
     }
 

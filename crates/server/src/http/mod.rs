@@ -3,6 +3,7 @@ pub mod auth;
 pub mod chats;
 pub mod error;
 pub mod gateway;
+pub mod internal;
 pub mod registry;
 pub mod usage;
 pub mod web;
@@ -22,6 +23,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(gateway::routes())
         .merge(registry::routes())
         .merge(admin::routes())
+        .merge(internal::routines_routes())
+        .merge(internal::internal_routes())
         .merge(usage::routes())
         .fallback(web::fallback)
         .with_state(state)

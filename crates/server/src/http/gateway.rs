@@ -113,7 +113,7 @@ async fn set_route(
     Ok(Json(serde_json::json!({})))
 }
 
-fn provider_err_to_api(e: ProviderError) -> ApiError {
+pub fn provider_err_to_api(e: ProviderError) -> ApiError {
     match e {
         ProviderError::Auth => ApiError::new(
             axum::http::StatusCode::UNAUTHORIZED,
