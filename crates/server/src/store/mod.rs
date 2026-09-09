@@ -1,3 +1,4 @@
+pub mod agent_sessions;
 pub mod api_keys;
 pub mod chats;
 pub mod gateway;
@@ -37,7 +38,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 8] = [
+        const MIGRATIONS: [(&str, &str); 9] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -69,6 +70,10 @@ impl Store {
             (
                 "0008_api_keys",
                 include_str!("../../migrations/0008_api_keys.sql"),
+            ),
+            (
+                "0009_agent_sessions",
+                include_str!("../../migrations/0009_agent_sessions.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {
@@ -111,6 +116,10 @@ impl Store {
 
     pub fn registry(&self) -> registry::RegistryStore<'_> {
         registry::RegistryStore { pool: &self.pool }
+    }
+
+    pub fn agent_sessions(&self) -> agent_sessions::AgentSessionStore<'_> {
+        agent_sessions::AgentSessionStore { pool: &self.pool }
     }
 
     pub fn api_keys(&self) -> api_keys::ApiKeyStore<'_> {

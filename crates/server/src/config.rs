@@ -20,6 +20,10 @@ pub struct Config {
     pub api_url: String,
     /// api | worker | all (default all).
     pub role: String,
+    /// Root for server-side workspace execution backends (M6).
+    pub data_dir: String,
+    /// Allow run_command in server-side agent sessions (default: off).
+    pub allow_shell_tools: bool,
     /// Static bearer token for /api/v1/internal/* (worker -> server).
     pub internal_token: Option<String>,
     pub worker_bind: String,
@@ -55,6 +59,9 @@ impl Config {
                 .unwrap_or_else(|_| env_or("GUILD_RESTATE_URL", "http://localhost:8080")),
             api_url: env_or("GUILD_API_URL", "http://localhost:8080"),
             role: env_or("GUILD_ROLE", "all"),
+            data_dir: env_or("GUILD_DATA_DIR", "./data"),
+            allow_shell_tools: std::env::var("GUILD_ALLOW_SHELL_TOOLS")
+                .is_ok_and(|v| v == "1" || v == "true"),
             internal_token: std::env::var("GUILD_INTERNAL_TOKEN").ok(),
             worker_bind: env_or("GUILD_WORKER_BIND", "0.0.0.0:9080"),
             worker_advertised_url: env_or("GUILD_WORKER_ADVERTISED_URL", "http://localhost:9080"),
@@ -80,6 +87,8 @@ impl Config {
             restate_admin_url: "http://placeholder:9070".into(),
             api_url: "http://localhost:8080".into(),
             role: "all".into(),
+            data_dir: "./data".into(),
+            allow_shell_tools: false,
             internal_token: Some("test-internal".into()),
             worker_bind: "127.0.0.1:0".into(),
             worker_advertised_url: "http://localhost:9080".into(),

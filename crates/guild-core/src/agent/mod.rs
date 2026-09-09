@@ -68,6 +68,7 @@ pub trait ModelTurn: Send + Sync {
 pub struct ProviderTurn<'a> {
     pub provider: &'a dyn ModelProvider,
     pub model: &'a str,
+    pub system: Option<&'a str>,
     pub base_url: &'a str,
     pub api_key: &'a str,
 }
@@ -85,7 +86,7 @@ impl ModelTurn for ProviderTurn<'_> {
         self.provider
             .chat_stream(ProviderRequest {
                 model: self.model,
-                system: None,
+                system: self.system,
                 messages,
                 api_key: self.api_key,
                 base_url: self.base_url,

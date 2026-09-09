@@ -124,6 +124,8 @@ pub async fn full_state() -> FullState {
         restate_admin_url: "http://placeholder:9070".into(),
         api_url: "http://localhost:8080".into(),
         role: "all".into(),
+        data_dir: "./data-test".into(),
+        allow_shell_tools: false,
         internal_token: Some("test-internal".into()),
         worker_bind: "127.0.0.1:0".into(),
         worker_advertised_url: "http://localhost:9080".into(),
