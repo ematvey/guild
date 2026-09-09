@@ -48,6 +48,8 @@ async fn create_list_messages_and_org_isolation() {
             None,
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -57,6 +59,8 @@ async fn create_list_messages_and_org_isolation() {
             chat["id"].as_str().unwrap().parse().unwrap(),
             "assistant",
             "hi!",
+            None,
+            None,
             Some(1),
             Some(1),
             Some(0.01),

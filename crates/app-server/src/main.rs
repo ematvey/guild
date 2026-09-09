@@ -66,14 +66,7 @@ fn cmd_chat(args: &[String]) -> anyhow::Result<()> {
         };
         let chat_id = client.create_chat(Some("headless")).await?;
         let stream = client
-            .chat_stream(
-                chat_id,
-                &model,
-                &[Message {
-                    role: "user".into(),
-                    content: text,
-                }],
-            )
+            .chat_stream(chat_id, &model, &[Message::user(text)])
             .await?;
         let (reply, done) = collect_turn(stream).await?;
         println!("{reply}");
