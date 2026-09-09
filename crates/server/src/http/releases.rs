@@ -13,11 +13,13 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
+    // artifact uploads are large: lift the 2MiB default body limit for them
+    let uploads = Router::new()
+        .route("/api/v1/admin/releases", axum::routing::post(upload))
+        .layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024));
     Router::new()
-        .route(
-            "/api/v1/admin/releases",
-            axum::routing::post(upload).get(admin_list),
-        )
+        .merge(uploads)
+        .route("/api/v1/admin/releases", axum::routing::get(admin_list))
         .route(
             "/api/v1/admin/releases/{id}",
             axum::routing::delete(delete_one),

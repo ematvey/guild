@@ -14,10 +14,17 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
+    let uploads = Router::new()
         .route(
             "/api/v1/chats/{chat_id}/attachments",
-            axum::routing::post(upload).get(list_for_chat),
+            axum::routing::post(upload),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024));
+    Router::new()
+        .merge(uploads)
+        .route(
+            "/api/v1/chats/{chat_id}/attachments",
+            axum::routing::get(list_for_chat),
         )
         .route("/api/v1/attachments/{id}", axum::routing::get(download))
 }
