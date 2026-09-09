@@ -74,6 +74,37 @@ export async function listModels(): Promise<string[]> {
   return v.models ?? [];
 }
 
+export interface ChatSummary {
+  id: string;
+  title: string;
+  created_at: string;
+}
+
+export interface ChatMessage {
+  role: string;
+  content: string;
+}
+
+export async function listChats(): Promise<ChatSummary[]> {
+  const token = getToken();
+  const res = await fetch("/api/v1/chats", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const v = await res.json().catch(() => ({}));
+  return v.chats ?? [];
+}
+
+export async function getMessages(chatId: string): Promise<ChatMessage[]> {
+  const token = getToken();
+  const res = await fetch(`/api/v1/chats/${chatId}/messages`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const v = await res.json().catch(() => ({}));
+  return v.messages ?? [];
+}
+
 export async function createChat(title: string): Promise<string | null> {
   const token = getToken();
   const res = await fetch("/api/v1/chats", {

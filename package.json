@@ -1,0 +1,8 @@
+{
+  "name": "guild-frontend",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/ui"
+  ]
+}

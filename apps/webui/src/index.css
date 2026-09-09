@@ -1,10 +1,8 @@
 @import "tailwindcss";
+@import "@guild/ui/theme.css";
 
-/* Dark theme base (the components are dark-styled; spec: same shadcn stack
-   as the client). color-scheme also fixes form controls + autofill. */
-:root {
-  color-scheme: dark;
-}
+/* include the shared UI kit sources so Tailwind generates its utilities */
+@source "../../../packages/ui/src";
 
 html,
 body,
@@ -13,6 +11,6 @@ body,
 }
 
 body {
-  background-color: var(--color-neutral-950);
-  color: var(--color-neutral-100);
+  background-color: var(--background);
+  color: var(--foreground);
 }

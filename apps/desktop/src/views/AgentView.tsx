@@ -2,9 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "../components/button";
-import { Input } from "../components/input";
-import { ApprovalModal } from "../components/approval";
+import { Button } from "@guild/ui/components/button";
+import { ThemeToggle } from "../App";
+import { Input } from "@guild/ui/components/input";
+import { ApprovalModal } from "@guild/ui/components/approval";
 
 interface Block {
   kind: "text" | "user" | "tool_call" | "tool_result" | "done" | "error";
@@ -166,12 +167,12 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
   }, []);
 
   return (
-    <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
-      <header className="flex items-center justify-between gap-2 border-b border-neutral-800 px-4 py-2">
+    <div className="flex h-screen flex-col bg-background text-foreground">
+      <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
         <span className="text-sm font-medium">Guild — {email}</span>
         {adminUrl && (
           <a
-            className="text-xs text-neutral-400 underline decoration-neutral-600 hover:text-neutral-200"
+            className="text-xs text-muted-foreground underline decoration-border hover:text-foreground"
             href={adminUrl}
             target="_blank"
             rel="noreferrer"
@@ -180,12 +181,13 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
             Admin console ↗
           </a>
         )}
+        <ThemeToggle />
         <Button variant="outline" onClick={pickProject} className="text-xs">
           {projectDir ? projectDir.split("/").pop() : "Open project…"}
         </Button>
         {models !== null && models.length > 0 ? (
           <select
-            className="h-9 appearance-none rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs text-neutral-100"
+            className="h-9 appearance-none rounded-md border border-input bg-card px-2 text-xs text-foreground"
             style={{ color: "#f5f5f5", backgroundColor: "#171717" }}
             value={model}
             onChange={(e) => setModel(e.target.value)}
@@ -206,7 +208,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
           </span>
         )}
         <select
-          className="h-9 appearance-none rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs text-neutral-100"
+          className="h-9 appearance-none rounded-md border border-input bg-card px-2 text-xs text-foreground"
           style={{ color: "#f5f5f5", backgroundColor: "#171717" }}
           value={commandPolicy}
           onChange={(e) => setPolicy(e.target.value as typeof commandPolicy)}
@@ -218,29 +220,29 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
       </header>
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {blocks.length === 0 && (
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-muted-foreground">
             Open a project, then give the agent a task. Commands ask for approval by default.
           </p>
         )}
         {blocks.map((b, i) =>
           b.kind === "tool_call" ? (
-            <div key={i} className="mr-auto max-w-[80%] rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs">
+            <div key={i} className="mr-auto max-w-[80%] rounded-lg border border-border bg-card px-3 py-2 text-xs">
               <span className="font-mono text-amber-300">tool ▶ {b.tool}</span>
-              <pre className="mt-1 whitespace-pre-wrap text-neutral-400">{b.args}</pre>
+              <pre className="mt-1 whitespace-pre-wrap text-muted-foreground">{b.args}</pre>
             </div>
           ) : b.kind === "tool_result" ? (
-            <div key={i} className="mr-auto max-w-[80%] rounded-lg bg-neutral-900 px-3 py-2 text-xs">
+            <div key={i} className="mr-auto max-w-[80%] rounded-lg bg-card px-3 py-2 text-xs">
               {b.diff ? (
                 <pre className="whitespace-pre-wrap font-mono">
                   {b.diff.split("\n").map((l, j) => (
-                    <span key={j} className={l.startsWith("+") ? "text-green-400" : l.startsWith("-") ? "text-red-400" : "text-neutral-500"}>
+                    <span key={j} className={l.startsWith("+") ? "text-green-400" : l.startsWith("-") ? "text-red-400" : "text-muted-foreground"}>
                       {l}
                       {"\n"}
                     </span>
                   ))}
                 </pre>
               ) : (
-                <span className="text-neutral-400">{b.tool}: {b.text}</span>
+                <span className="text-muted-foreground">{b.tool}: {b.text}</span>
               )}
             </div>
           ) : (
@@ -248,10 +250,10 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
               key={i}
               className={
                 b.kind === "user"
-                  ? "ml-auto max-w-[70%] rounded-lg bg-neutral-800 px-3 py-2"
+                  ? "ml-auto max-w-[70%] rounded-lg bg-secondary px-3 py-2"
                   : b.kind === "error"
                     ? "rounded-lg bg-red-950 px-3 py-2 text-sm text-red-300"
-                    : "mr-auto max-w-[70%] whitespace-pre-wrap rounded-lg bg-neutral-900 px-3 py-2"
+                    : "mr-auto max-w-[70%] whitespace-pre-wrap rounded-lg bg-card px-3 py-2"
               }
             >
               {b.text}
@@ -260,7 +262,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
         )}
         <div ref={bottom} />
       </div>
-      <div className="flex gap-2 border-t border-neutral-800 p-3">
+      <div className="flex gap-2 border-t border-border p-3">
         <Input
           value={prompt}
           placeholder={projectDir ? "Describe a task…" : "Open a project first…"}

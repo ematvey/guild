@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, getToken } from "../api";
+import { Button } from "@guild/ui/components/button";
 
 type Release = {
   id: string;
@@ -52,17 +53,17 @@ export default function Downloads() {
     <div className="p-6 text-sm">
       <h2 className="mb-4 text-lg font-medium">Client downloads</h2>
       {error && <p className="text-red-400">{error}</p>}
-      {releases === null && !error && <p className="text-neutral-500">Loading…</p>}
+      {releases === null && !error && <p className="text-muted-foreground">Loading…</p>}
       {releases?.length === 0 && (
-        <p className="text-neutral-500">
+        <p className="text-muted-foreground">
           No client builds published yet. Admins upload artifacts via
-          <code className="mx-1 rounded bg-neutral-900 px-1">POST /api/v1/admin/releases</code>
+          <code className="mx-1 rounded bg-card px-1">POST /api/v1/admin/releases</code>
           (version, kind: cli|desktop, platform).
         </p>
       )}
       {releases && releases.length > 0 && (
         <table className="w-full text-left">
-          <thead className="text-neutral-500">
+          <thead className="text-muted-foreground">
             <tr>
               <th className="py-2">version</th>
               <th className="py-2">kind</th>
@@ -75,36 +76,41 @@ export default function Downloads() {
           </thead>
           <tbody>
             {releases.map((r) => (
-              <tr key={r.id} className="border-t border-neutral-800">
+              <tr key={r.id} className="border-t border-border">
                 <td className="py-2 pr-4">{r.version}</td>
                 <td className="py-2 pr-4">{r.kind}</td>
                 <td className="py-2 pr-4">{r.platform}</td>
                 <td className="py-2 pr-4 font-mono text-xs">{r.filename}</td>
                 <td className="py-2 pr-4">{(r.size_bytes / 1024 / 1024).toFixed(1)} MiB</td>
-                <td className="py-2 pr-4 font-mono text-xs text-neutral-500" title={r.sha256}>
+                <td className="py-2 pr-4 font-mono text-xs text-muted-foreground" title={r.sha256}>
                   {r.sha256.slice(0, 12)}…
                 </td>
                 <td className="py-2 text-right">
-                  <button
-                    className="rounded-md bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-500"
+                  <Button
+                    size="sm"
+                    className="ml-2"
                     onClick={() => void download(r.id)}
                   >
                     Download
-                  </button>
-                  <button
-                    className="ml-2 rounded-md border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-900"
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="ml-2"
                     onClick={() => void navigator.clipboard?.writeText(curlFor(r.id))}
                     title="Copy a curl command (uses $TOKEN and $BASE env vars)"
                   >
                     copy curl
-                  </button>
-                  <button
-                    className="ml-2 rounded-md border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-900"
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="ml-2"
                     onClick={() => void navigator.clipboard?.writeText(verifyFor(r))}
                     title="Copy the offline ed25519 verification command"
                   >
                     copy verify
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))}
@@ -112,16 +118,16 @@ export default function Downloads() {
         </table>
       )}
       {releases && releases.length > 0 && getToken() && (
-        <p className="mt-4 text-xs text-neutral-500">
+        <p className="mt-4 text-xs text-muted-foreground">
           Artifacts are ed25519-signed by the server at upload. Verify offline with{" "}
-          <code className="rounded bg-neutral-900 px-1">copy verify</code> (checks the sha256
+          <code className="rounded bg-card px-1">copy verify</code> (checks the sha256
           digest against the signature), or compare{" "}
-          <code className="rounded bg-neutral-900 px-1">sha256sum &lt;file&gt;</code> with the
+          <code className="rounded bg-card px-1">sha256sum &lt;file&gt;</code> with the
           checksum above.{" "}
           {signingKey && (
             <>
               Signing key:{" "}
-              <code className="rounded bg-neutral-900 px-1 font-mono">{signingKey.slice(0, 16)}…</code> — pin it after
+              <code className="rounded bg-card px-1 font-mono">{signingKey.slice(0, 16)}…</code> — pin it after
               first use.
             </>
           )}

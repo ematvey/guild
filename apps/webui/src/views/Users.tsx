@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { Button } from "../components/button";
-import { Input } from "../components/input";
+import { Button } from "@guild/ui/components/button";
+import { Input } from "@guild/ui/components/input";
 
 interface UserRow {
   id: string;
@@ -52,7 +52,7 @@ export default function Users() {
       <div className="flex flex-wrap items-center gap-2">
         <Input className="w-56" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         <Input className="w-40" placeholder="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        <select className="h-9 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
+        <select className="h-9 rounded-md border border-input bg-card px-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
           <option value="member">member</option>
           <option value="admin">admin</option>
         </select>
@@ -61,7 +61,7 @@ export default function Users() {
         </Button>
       </div>
       <table className="w-full text-sm">
-        <thead className="text-left text-neutral-500">
+        <thead className="text-left text-muted-foreground">
           <tr>
             <th className="py-2">email</th>
             <th>role</th>
@@ -71,12 +71,12 @@ export default function Users() {
         </thead>
         <tbody>
           {users.map((u) => (
-            <tr key={u.id} className="border-t border-neutral-800">
+            <tr key={u.id} className="border-t border-border">
               <td className="py-2">{u.email}</td>
               <td>{u.role}</td>
-              <td className="text-neutral-500">{u.identity_type}</td>
+              <td className="text-muted-foreground">{u.identity_type}</td>
               <td className="text-right">
-                <button className="text-xs text-red-400 hover:underline" onClick={() => remove(u.id)}>
+                <button className="text-xs text-destructive hover:underline" onClick={() => remove(u.id)}>
                   delete
                 </button>
               </td>
