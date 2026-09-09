@@ -1,0 +1,143 @@
+# Guild client distribution
+
+How the Guild client is built, packaged, published, and verified. Everything
+below runs on a Linux build host — no Windows or macOS machine is required
+(with documented caveats for Apple signing).
+
+## 1. Architecture: one binary, three modes
+
+The client is a **single executable** (`guild-desktop` crate → shipped as
+`Guild`/`Guild.exe`/`guild`):
+
+| Invocation | Behaviour |
+|---|---|
+| `Guild` (no args) | GUI (Tauri window) |
+| `Guild engine` | local engine: JSON-RPC 2.0 over stdio — the GUI spawns **itself** with this argument |
+| `Guild login --url U --email E --password P` | headless login, persists session to `~/.config/guild/token.json` |
+| `Guild chat --model M "text"` | headless chat round-trip through the org gateway |
+| `Guild publish --kind K --dir D --version V` | publish a registry bundle |
+| `Guild install --slug S [--project P]` | install a skill into a project |
+| `Guild verify --file F --sig SIG --key KEY` | offline ed25519 verification of a downloaded release artifact |
+
+The engine loop is the same code as `guild-app-server::jsonrpc_loop::serve`
+(the desktop crate links the app-server library). The GUI has no agent logic;
+it spawns `current_exe() engine` and bridges JSON-RPC. The engine binary path
+can be overridden for development with `GUILD_APP_SERVER_BIN`.
+
+## 2. Server URL resolution (in the GUI login form)
+
+Precedence order:
+
+1. **Last successfully used URL** — stored in `localStorage`
+   (`guild.serverUrl`) after each successful login (per-machine pref,
+   survives restarts, no rebuild needed).
+2. **`VITE_DEFAULT_SERVER_URL`** — baked into the frontend bundle at build
+   time:
+   ```bash
+   VITE_DEFAULT_SERVER_URL=https://guild.example.org npm run build
+   ```
+   (then run the packaging script — the value is inside the shipped binary).
+3. Fallback: `http://localhost:18080`.
+
+The field stays editable, so any URL can always be typed at login.
+
+## 3. Build-host toolchain
+
+| Tool | Purpose | Setup |
+|---|---|---|
+| rustup targets | cross std libs | `rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc` |
+| zig + cargo-zigbuild | macOS/Linux cross-linking (libc + frameworks without Xcode/gcc per target) | `pacman -S zig; cargo install cargo-zigbuild` |
+| macOS SDK | Apple headers/frameworks for the macOS builds | tar.xz from phracker/MacOSX-SDKs → `~/macos-sdks/MacOSX11.3.sdk` (script uses `SDKROOT` env, default that path) |
+| mingw-w64-gcc | Windows-gnu targets (engine CLI builds) | `pacman -S mingw-w64-gcc` |
+| cargo-xwin | MSVC-target Windows builds (GUI) — downloads the Windows SDK/CRT automatically | `cargo install --locked cargo-xwin` |
+| NSIS (makensis) | Windows installer bundling | not in Arch repos: extract `nsis` + `nsis-common` debs from Ubuntu archive into `/usr/share/nsis` + `makensis` on PATH (see `~/opt/nsis`) |
+| llvm + lld | `llvm-rc` (Windows resource compile), `lld-link` | `pacman -S llvm lld` |
+| linuxdeploy | AppImage assembly (bundles webkit2gtk libs) | `~/opt/linuxdeploy/linuxdeploy-x86_64.AppImage` (continuous release) |
+| hfsprogs | HFS+ format + fsck for macOS DMGs | AUR `hfsprogs` (`paru -S hfsprogs`) |
+| libdmg-hfsplus | wraps the raw HFS+ image into a real UDIF `.dmg` | `~/opt/libdmg-hfsplus` — built with two local patches: cmake ≥3.5 and an OpenSSL-3 `filevault_stub.c` (encrypted-DMG support removed) |
+| dmg2img | DMG round-trip verification | `~/opt/dmg2img` |
+| webkit2gtk-4.1 | Linux GUI build | `pacman -S webkit2gtk-4.1` |
+
+## 4. Release process
+
+One script does everything (idempotent — republishing replaces existing
+artifacts of the same version/platform):
+
+```bash
+BASE=http://localhost:18080 TOKEN=<admin-session-token> VERSION=0.1.0 \
+  scripts/release-clients.sh
+```
+
+Per-platform pipeline:
+
+### Windows → `Guild_<VERSION>_x64-setup.exe`
+Official Tauri NSIS installer, cross-built:
+1. `npm run build` (frontend → `dist/`)
+2. `npm run tauri build -- --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis`
+   (cargo-xwin downloads the MSVC CRT/SDK on first run; `llvm-rc` compiles the
+   resource file; the tauri bundler runs `makensis`)
+3. Output: `target/x86_64-pc-windows-msvc/release/bundle/nsis/…-setup.exe`
+   (installers get shortcuts + uninstaller; WebView2 bootstrapper included)
+
+### Linux → `Guild-<VERSION>_x86_64.AppImage`
+1. `cargo build --release -p guild-desktop` (native; the GUI links the host
+   webkit2gtk, so a glibc floor pin does not apply — AppImage targets modern
+   distros)
+2. AppDir: `usr/bin/guild` + `guild.desktop` + hicolor icon
+3. `linuxdeploy --appdir <AppDir> --output appimage` (with
+   `APPIMAGE_EXTRACT_AND_RUN=1`) — bundles all non-base libs; output lands in
+   the linuxdeploy process CWD
+
+### macOS → `Guild-<VERSION>-macos-{aarch64,x86_64}.dmg`
+1. `cargo zigbuild --release -p guild-desktop --target <arch>-apple-darwin`
+   (WKWebView/AppKit link against the SDK; no Mac needed to *build*)
+2. Hand-assemble `Guild.app` (`Contents/MacOS/Guild`, `Info.plist`,
+   `Resources/icon.icns`) — Tauri's bundler refuses to bundle off-host
+3. 64 MB raw image → `mkfs.hfsplus` → loop-mount → copy `Guild.app` +
+   `Applications` symlink → unmount → `fsck.hfsplus` must pass
+4. Wrap into UDIF: `libdmg-hfsplus/build/dmg/dmg build raw.dmg out.dmg`
+5. Verify: `dmg2img` round-trip + `7z l` shows `Guild.app` and `Applications`
+
+`tauri.conf.json` has `"bundle": { "targets": "all" }`; per-run targets are
+chosen with `--bundles`/`--output` flags.
+
+### Publishing
+Each artifact is uploaded via `POST /api/v1/admin/releases` (admin session
+token). The server records size + **sha256**, and **ed25519-signs the
+sha256 digest** with a server key (auto-generated once, persisted in
+`server_kv`; override with `GUILD_RELEASE_SIGNING_SEED`). The script asserts
+the server-computed sha256 matches the local file before declaring success.
+
+## 5. Downloading + verifying clients
+
+- UI: **Downloads** view — per-artifact **Download** (mints a short-lived
+  HMAC-signed URL server-side), **copy curl**, **copy verify**; the signing
+  key is displayed (pin it out-of-band after first use).
+- CLI:
+  ```bash
+  URL=$(curl -sS -H "authorization: Bearer $TOKEN" \
+        "$BASE/api/v1/releases/$ID/download-url" | jq -r .url)
+  curl -sS "$BASE$URL" -o artifact
+  guild verify --file artifact --sig <hex> --key <signing-key-hex>
+  ```
+- `verify` checks the ed25519 signature over the file's sha256 — tamper-proof
+  offline once the signing key is pinned.
+
+## 6. Verification matrix (honest limits)
+
+| Artifact | Verified |
+|---|---|
+| linux-x86_64 (GUI + engine) | **executed**: GUI runs under xvfb (webkit alive); engine login/chat over stdio |
+| windows-x86_64 | installer produced by the official bundler; portable exe launches under wine (WebView2 cannot render in wine — full GUI session needs a real Windows box) |
+| darwin-aarch64 / darwin-x86_64 | build + Mach-O format + .app/DMG structure verified (fsck, plist, dmg2img); **never executed** — needs a Mac |
+| macOS signing | unsigned; Gatekeeper right-click → Open. Signing/notarization requires a Mac + Apple Developer cert |
+
+## 7. Release scripts
+
+| Script | Publishes |
+|---|---|
+| `scripts/release-clients.sh` | one combined GUI+engine distribution per OS (exe / AppImage / 2 DMGs) — **the only script needed** |
+| `scripts/release-desktop.sh` | (superseded) separate desktop-only artifacts |
+
+Both are idempotent: they delete and replace existing artifacts of the same
+version/platform, verify sha256 server-side, and abort on any mismatch.

@@ -96,6 +96,13 @@ curl -N -X POST localhost:8080/api/v1/agents/sessions/<id>/turns \
   -d '{"message":"write a hello.py","model":"gpt-4o-mini"}'   # SSE frames
 ```
 
+## Client builds & distribution
+
+Single client binary (GUI + engine in one executable) packaged as a Windows
+NSIS installer, a Linux AppImage, and macOS DMGs — cross-built on Linux,
+published to the server's Downloads view, ed25519-signed.
+Full process: `docs/clients.md`.
+
 ## SSO, quotas, attachments, events (M7)
 
 - **OIDC SSO** (§4.1): admins configure the org IdP via
