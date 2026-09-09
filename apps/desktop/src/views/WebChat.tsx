@@ -3,18 +3,35 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowUp,
+  ArrowUpRight,
   Bot,
+  ChevronUp,
   FileText,
   Lightbulb,
+  LogOut,
   Menu,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  Settings2,
 } from "lucide-react";
 
 import { Button } from "@guild/ui/components/button";
 import { Card } from "@guild/ui/components/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@guild/ui/components/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@guild/ui/components/dropdown-menu";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { ScrollArea } from "@guild/ui/components/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
@@ -22,7 +39,7 @@ import { Separator } from "@guild/ui/components/separator";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
-import { ThemeToggle } from "../App";
+import { useTheme } from "../theme";
 import {
   createChat,
   getMessages,
@@ -67,6 +84,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [width, setWidth] = useState<number>(() => {
     const stored = Number(localStorage.getItem(WIDTH_KEY));
     return stored ? clampWidth(stored) : 256;
@@ -175,6 +193,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
       onNewChat={newChat}
       onOpenChat={openChat}
       onSignOut={onSignOut}
+      onOpenSettings={() => setSettingsOpen(true)}
     />
   );
 
@@ -247,13 +266,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             </Button>
           )}
           <span className="min-w-0 flex-1 truncate font-medium">{activeTitle}</span>
-          <a
-            className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
-            href="/admin/"
-            title="Admin console (same account)"
-          >
-            Admin console →
-          </a>
         </header>
 
         {blocks.length === 0 ? (
@@ -371,7 +383,54 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           </div>
         </div>
       </div>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} email={email} />
     </div>
+  );
+}
+
+function SettingsDialog({
+  open,
+  onOpenChange,
+  email,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  email: string;
+}) {
+  const { theme, setTheme } = useTheme();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Settings</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 text-left">
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Appearance</p>
+            <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+              {(["dark", "light", "system"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTheme(t)}
+                  className={`rounded-md px-2 py-1.5 text-xs capitalize transition-colors ${
+                    theme === t
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Account</p>
+            <p className="text-sm">{email}</p>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -382,6 +441,7 @@ function SidebarContent({
   onNewChat,
   onOpenChat,
   onSignOut,
+  onOpenSettings,
 }: {
   chats: ChatSummary[];
   chatId: string | null;
@@ -389,12 +449,13 @@ function SidebarContent({
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
   onSignOut: () => void;
+  onOpenSettings: () => void;
 }) {
+  const initials = email.slice(0, 2).toUpperCase();
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
         <span className="text-sm font-semibold">Guild</span>
-        <ThemeToggle />
       </div>
       <div className="px-2">
         <Button variant="ghost" className="w-full justify-start gap-2 text-sm" onClick={onNewChat}>
@@ -424,13 +485,35 @@ function SidebarContent({
         </div>
       </ScrollArea>
       <Separator />
-      <div className="flex items-center justify-between px-3 py-3">
-        <span className="truncate text-xs text-muted-foreground" title={email}>
-          {email}
-        </span>
-        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={onSignOut}>
-          sign out
-        </button>
+      <div className="p-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent"
+              title="Account"
+            >
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
+                {initials}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={email}>
+                {email}
+              </span>
+              <ChevronUp className="size-3.5 shrink-0 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" className="w-56">
+            <DropdownMenuItem onClick={() => window.open("/admin/", "_blank")}>
+              <ArrowUpRight /> Admin console
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onOpenSettings}>
+              <Settings2 /> Settings
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onSignOut}>
+              <LogOut /> Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
