@@ -253,7 +253,7 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
         .worker_bind
         .parse()
         .map_err(|e| anyhow::anyhow!("bad GUILD_WORKER_BIND: {e}"))?;
-    let admin = state.config.restate_url.clone();
+    let admin = state.config.restate_admin_url.clone();
     let advertised = state.config.worker_advertised_url.clone();
     if let Err(e) = register_with_restate(&admin, &advertised).await {
         tracing::error!("restate registration failed: {e:#}");

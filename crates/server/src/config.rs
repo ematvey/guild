@@ -14,6 +14,8 @@ pub struct Config {
     pub s3_access_key_id: String,
     pub s3_secret_access_key: String,
     pub restate_url: String,
+    /// Restate admin API (endpoint registration); defaults to restate_url.
+    pub restate_admin_url: String,
     /// Base URL other components use to reach this server's API.
     pub api_url: String,
     /// api | worker | all (default all).
@@ -49,6 +51,8 @@ impl Config {
             s3_access_key_id: env_or("GUILD_S3_ACCESS_KEY_ID", "minioadmin"),
             s3_secret_access_key: env_or("GUILD_S3_SECRET_ACCESS_KEY", "minioadmin"),
             restate_url: env_or("GUILD_RESTATE_URL", "http://localhost:8080"),
+            restate_admin_url: std::env::var("GUILD_RESTATE_ADMIN_URL")
+                .unwrap_or_else(|_| env_or("GUILD_RESTATE_URL", "http://localhost:8080")),
             api_url: env_or("GUILD_API_URL", "http://localhost:8080"),
             role: env_or("GUILD_ROLE", "all"),
             internal_token: std::env::var("GUILD_INTERNAL_TOKEN").ok(),
@@ -73,6 +77,7 @@ impl Config {
             s3_access_key_id: "minioadmin".into(),
             s3_secret_access_key: "minioadmin".into(),
             restate_url: "http://placeholder:8080".into(),
+            restate_admin_url: "http://placeholder:9070".into(),
             api_url: "http://localhost:8080".into(),
             role: "all".into(),
             internal_token: Some("test-internal".into()),
