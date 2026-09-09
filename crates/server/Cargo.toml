@@ -26,6 +26,8 @@ aes-gcm.workspace = true
 clickhouse = { version = "0.15", features = ["chrono", "uuid", "rustls-tls-webpki-roots"], default-features = false }
 async-stream = "0.3"
 object_store = { version = "0.14", default-features = false, features = ["aws"] }
+include_dir = "0.7"
+mime_guess = "2"
 tracing = "0.1"
 futures.workspace = true
 wiremock = { version = "0.6", optional = true }
@@ -72,6 +74,10 @@ required-features = ["test-support"]
 
 [[test]]
 name = "usage_api"
+required-features = ["test-support"]
+
+[[test]]
+name = "webui_serving"
 required-features = ["test-support"]
 
 [features]
