@@ -105,7 +105,7 @@ async fn oidc_login_provisions_user_and_issues_session() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/auth/oidc/login?org_id={}", fs.org_id))
+                .uri(format!("/api/v1/auth/oidc/login?org_id={}", fs.org_id))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -137,7 +137,7 @@ async fn oidc_login_provisions_user_and_issues_session() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!(
+                .uri(format!(
                     "/api/v1/auth/oidc/callback?code=the-code&state={state}"
                 ))
                 .body(Body::empty())
@@ -187,7 +187,7 @@ async fn oidc_login_provisions_user_and_issues_session() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!(
+                .uri(format!(
                     "/api/v1/auth/oidc/callback?code=again&state={state}"
                 ))
                 .body(Body::empty())
