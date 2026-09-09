@@ -60,6 +60,17 @@ them.
   add a protocol round-trip test asserting the TS file matches exported JSON
   fixtures (spec §8 "Rust ↔ TS types stay in lockstep").
 
+## Follow-up: client distribution (post-M7, user-requested)
+
+- **Downloads from the UI** — DONE: `releases` table + object-storage
+  artifacts, `POST /api/v1/admin/releases` (admin upload, sha256 recorded,
+  512MiB body limit), `GET /api/v1/releases` list, short-lived HMAC-signed
+  download URLs (`/download-url` → `/download?exp&sig`, bearer fallback),
+  admin delete. Web UI "Downloads" view (nav item) with per-artifact
+  Download + copy-curl + checksum display. First artifact published:
+  guild-cli 0.1.0 linux-x86_64 (sha256 209d020f…), verified by download +
+  checksum match.
+
 ## Deferred decisions (user-directed)
 
 - **MinIO is placeholder object storage** — to be replaced in the future.
