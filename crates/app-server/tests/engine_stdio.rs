@@ -190,6 +190,54 @@ async fn engine_stdio_interop() {
     engine.drain_events();
 }
 
+/// The full enrollment flow over the stdio wire: create a pairing token via
+/// the HTTP API, redeem it through the engine's `pair` RPC, verify the
+/// session (session.info) and its persistence.
+#[tokio::test(flavor = "multi_thread")]
+async fn engine_stdio_pair_flow() {
+    let srv = guild_server::test_support::serve_full().await;
+    // token issued to the bootstrapped admin at store level
+    let created = srv
+        .store()
+        .pairing()
+        .create(srv.org_id, srv.user_id, 30)
+        .await
+        .unwrap();
+
+    let mut engine = EngineProc::spawn();
+    let res = engine
+        .call(
+            "pair",
+            json!({"code": format!("g1|{}|{}", srv.base_url, created.secret)}),
+        )
+        .expect("pair");
+    assert_eq!(res["user"]["email"], "a@b.c");
+
+    let info = engine
+        .call("session.info", json!({}))
+        .expect("session.info");
+    assert_eq!(info["base_url"], srv.base_url);
+    assert_eq!(info["email"], "a@b.c");
+
+    // the redeemed session actually authenticates against the server
+    let stored = std::fs::read_to_string(
+        std::env::temp_dir()
+            .join(format!("guild-interop-{}", std::process::id()))
+            .join("guild")
+            .join("token.json"),
+    )
+    .expect("session file written");
+    let stored: Value = serde_json::from_str(&stored).unwrap();
+    let client = reqwest::Client::new();
+    let me = client
+        .get(format!("{}/api/v1/auth/me", srv.base_url))
+        .bearer_auth(stored["token"].as_str().unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me.status(), 200);
+}
+
 /// Unknown methods produce a correlated error, not a hang or a crash.
 #[tokio::test(flavor = "multi_thread")]
 async fn engine_stdio_unknown_method_is_correlated_error() {

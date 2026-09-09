@@ -95,6 +95,8 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
 /// Tauri (desktop) mode: engine login, then the full agent view. The admin
 /// console opens in the system browser with a token handoff (fragment).
 function DesktopApp() {
+  const [mode, setMode] = useState<"pair" | "manual">("pair");
+  const [code, setCode] = useState("");
   const [url, setUrl] = useState(defaultServerUrl());
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -102,6 +104,42 @@ function DesktopApp() {
   const [busy, setBusy] = useState(false);
   const [user, setUser] = useState<string | null>(null);
   const [adminUrl, setAdminUrl] = useState<string | null>(null);
+
+  const afterAuth = async (fallbackEmail: string) => {
+    // session.info is the source of truth for the connected server URL and
+    // token (works for both pairing and manual login).
+    const info = await invoke<any>("rpc_request", { method: "session.info", params: {} });
+    const baseUrl = info.result?.base_url ?? url;
+    setUser(info.result?.email ?? fallbackEmail);
+    try {
+      localStorage.setItem("guild.serverUrl", baseUrl);
+    } catch {
+      /* private mode: pref simply not remembered */
+    }
+    // admin console handoff: token travels in the URL fragment (never sent
+    // to the server); the console picks it up and stores it locally.
+    if (info.result?.token) {
+      setAdminUrl(`${baseUrl.replace(/\/$/, "")}/admin/#tk=${info.result.token}`);
+    }
+  };
+
+  const pair = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke("start_engine");
+      const res = await invoke<any>("rpc_request", {
+        method: "pair",
+        params: { code: code.trim() },
+      });
+      if (res.error) throw new Error(res.error.message ?? "pairing failed");
+      await afterAuth(res.result?.user?.email ?? "");
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const login = async () => {
     setBusy(true);
@@ -113,20 +151,7 @@ function DesktopApp() {
         params: { base_url: url, email, password },
       });
       if (res.error) throw new Error(res.error.message ?? "login failed");
-      setUser(res.result?.user?.email ?? email);
-      try {
-        localStorage.setItem("guild.serverUrl", url);
-      } catch {
-        /* private mode: pref simply not remembered */
-      }
-      // admin console handoff: token travels in the URL fragment (never sent
-      // to the server); the console picks it up and stores it locally.
-      const info = await invoke<any>("rpc_request", { method: "session.info", params: {} });
-      if (info.result?.token) {
-        setAdminUrl(
-          `${url.replace(/\/$/, "")}/admin/#tk=${info.result.token}`,
-        );
-      }
+      await afterAuth(res.result?.user?.email ?? email);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
@@ -134,28 +159,68 @@ function DesktopApp() {
     }
   };
 
-  return user ? (
-    <AgentView email={user} adminUrl={adminUrl} />
-  ) : (
+  if (user) {
+    return <AgentView email={user} adminUrl={adminUrl} />;
+  }
+  return (
     <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-xl">Guild</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <Input placeholder="Server URL" value={url} onChange={(e) => setUrl(e.target.value)} />
-          <Input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <Input
-            placeholder="Password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && login()}
-          />
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          <Button onClick={login} disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
-          </Button>
+          {mode === "pair" ? (
+            <>
+              <Input
+                placeholder="Paste pairing code (g1|…|…)"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && code.trim() && pair()}
+                autoFocus
+              />
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <Button onClick={pair} disabled={busy || !code.trim()}>
+                {busy ? "Pairing…" : "Pair"}
+              </Button>
+              <p className="text-center text-xs text-muted-foreground">
+                Generate a code in the web app (Settings → Connect desktop app)
+              </p>
+              <button
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setMode("manual");
+                  setError(null);
+                }}
+              >
+                or sign in with server, email and password
+              </button>
+            </>
+          ) : (
+            <>
+              <Input placeholder="Server URL" value={url} onChange={(e) => setUrl(e.target.value)} />
+              <Input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Input
+                placeholder="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && login()}
+              />
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <Button onClick={login} disabled={busy}>
+                {busy ? "Signing in…" : "Sign in"}
+              </Button>
+              <button
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setMode("pair");
+                  setError(null);
+                }}
+              >
+                use a pairing code instead
+              </button>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

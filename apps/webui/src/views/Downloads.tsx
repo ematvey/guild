@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, getToken } from "../api";
 import { Button } from "@guild/ui/components/button";
+import { createPairingToken } from "../api";
 
 type Release = {
   id: string;
@@ -19,6 +20,9 @@ export default function Downloads() {
   const [releases, setReleases] = useState<Release[] | null>(null);
   const [signingKey, setSigningKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairCopied, setPairCopied] = useState(false);
 
   useEffect(() => {
     api<{ releases: Release[] }>("GET", "/api/v1/releases")
@@ -51,6 +55,45 @@ export default function Downloads() {
 
   return (
     <div className="p-6 text-sm">
+      <h2 className="mb-2 text-lg font-medium">Pair a desktop app</h2>
+      <p className="mb-3 max-w-2xl text-muted-foreground">
+        Generate a one-time pairing code, then paste it into the desktop app's pairing screen. It
+        carries this server's URL and a single-use secret that is exchanged for a normal session.
+      </p>
+      {pairCode ? (
+        <div className="mb-6 flex max-w-2xl flex-wrap items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono text-xs" title={pairCode}>
+            {pairCode}
+          </code>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              void navigator.clipboard?.writeText(pairCode);
+              setPairCopied(true);
+              setTimeout(() => setPairCopied(false), 1500);
+            }}
+          >
+            {pairCopied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+      ) : (
+        <div className="mb-6">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pairBusy}
+            onClick={() => {
+              setPairBusy(true);
+              createPairingToken(30)
+                .then((t) => setPairCode(`g1|${window.location.origin.replace(/\/$/, "")}|${t.secret}`))
+                .finally(() => setPairBusy(false));
+            }}
+          >
+            {pairBusy ? "Generating…" : "Generate pairing code"}
+          </Button>
+        </div>
+      )}
       <h2 className="mb-4 text-lg font-medium">Client downloads</h2>
       {error && <p className="text-red-400">{error}</p>}
       {releases === null && !error && <p className="text-muted-foreground">Loading…</p>}

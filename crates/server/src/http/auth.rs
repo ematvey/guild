@@ -7,7 +7,10 @@ use crate::store::identity::UserRow;
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::{Json, Router};
-use protocol::api::{LoginRequest, LoginResponse, UserInfo};
+use protocol::api::{
+    CreatePairingTokenRequest, LoginRequest, LoginResponse, PairRequest, PairResponse,
+    PairingTokenInfo, PairingTokenResponse, UserInfo,
+};
 use std::sync::Arc;
 
 pub fn routes() -> Router<AppState> {
@@ -15,6 +18,15 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/auth/bootstrap", axum::routing::post(bootstrap))
         .route("/api/v1/auth/login", axum::routing::post(login))
         .route("/api/v1/auth/me", axum::routing::get(me))
+        .route("/api/v1/auth/pair", axum::routing::post(pair))
+        .route(
+            "/api/v1/auth/pairing-tokens",
+            axum::routing::post(create_pairing_token).get(list_pairing_tokens),
+        )
+        .route(
+            "/api/v1/auth/pairing-tokens/{id}",
+            axum::routing::delete(revoke_pairing_token),
+        )
 }
 
 async fn bootstrap(
@@ -57,6 +69,72 @@ async fn login(
         token,
         user: user_info(&user),
     }))
+}
+
+/// Redeems a one-time pairing code for a normal session. Unauthenticated:
+/// the code IS the credential. Single-use and TTL-checked server-side.
+async fn pair(
+    State(state): State<AppState>,
+    Json(req): Json<PairRequest>,
+) -> Result<Json<PairResponse>, ApiError> {
+    let secret = crate::store::pairing::secret_from_code(&req.code)
+        .ok_or_else(|| ApiError::unauthorized("malformed pairing code"))?;
+    let store = state.store().await?;
+    let (_org_id, user_id) = store.pairing().redeem(secret).await?;
+    let user = store.identity().get_user(user_id).await?;
+    let (_sid, token) = store.identity().create_session(user.id).await?;
+    Ok(Json(PairResponse {
+        token,
+        user: user_info(&user),
+    }))
+}
+
+/// Issues a one-time pairing code for the calling user. The plaintext code
+/// is returned once and composed client-side as
+/// `g1.<b64url(server_url)>.<secret>` (the server URL is routing info).
+async fn create_pairing_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(req): Json<CreatePairingTokenRequest>,
+) -> Result<Json<PairingTokenResponse>, ApiError> {
+    let ttl = req.ttl_minutes.unwrap_or(30).clamp(1, 24 * 60);
+    let store = state.store().await?;
+    let created = store
+        .pairing()
+        .create(user.0.org_id, user.0.id, ttl)
+        .await?;
+    Ok(Json(PairingTokenResponse {
+        id: created.token.id,
+        secret: created.secret,
+        expires_at: created.token.expires_at,
+    }))
+}
+
+async fn list_pairing_tokens(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let rows = store.pairing().list_outstanding(user.0.id).await?;
+    let tokens: Vec<PairingTokenInfo> = rows
+        .into_iter()
+        .map(|t| PairingTokenInfo {
+            id: t.id,
+            created_at: t.created_at,
+            expires_at: t.expires_at,
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "tokens": tokens })))
+}
+
+async fn revoke_pairing_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+    axum::extract::Path(id): axum::extract::Path<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.pairing().revoke(user.0.id, id).await?;
+    Ok(Json(serde_json::json!({})))
 }
 
 fn user_info(u: &UserRow) -> UserInfo {

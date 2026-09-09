@@ -161,6 +161,24 @@ impl<'a> IdentityStore<'a> {
     }
 
     /// Provisions an OIDC user (random unusable password, member role).
+    /// Email lookup across orgs (bootstrap/single-org flows).
+    pub async fn find_by_email_any(&self, email: &str) -> anyhow::Result<Option<UserRow>> {
+        let user: Option<UserRow> =
+            sqlx::query_as("SELECT id, org_id, email, role FROM users WHERE email = $1")
+                .bind(email)
+                .fetch_optional(self.pool)
+                .await?;
+        Ok(user)
+    }
+
+    pub async fn get_user(&self, id: Uuid) -> Result<UserRow, ApiError> {
+        sqlx::query_as("SELECT id, org_id, email, role FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(self.pool)
+            .await?
+            .ok_or_else(|| ApiError::not_found("no such user"))
+    }
+
     pub async fn create_oidc_user(&self, org_id: Uuid, email: &str) -> Result<UserRow, ApiError> {
         use rand::RngCore;
         let mut bytes = [0u8; 24];
