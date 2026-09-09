@@ -1,5 +1,6 @@
 pub mod agent_sessions;
 pub mod api_keys;
+pub mod attachments;
 pub mod chats;
 pub mod gateway;
 pub mod identity;
@@ -39,7 +40,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 11] = [
+        const MIGRATIONS: [(&str, &str); 12] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -80,6 +81,10 @@ impl Store {
             (
                 "0011_route_quota",
                 include_str!("../../migrations/0011_route_quota.sql"),
+            ),
+            (
+                "0012_attachments",
+                include_str!("../../migrations/0012_attachments.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {
@@ -134,6 +139,10 @@ impl Store {
 
     pub fn teams(&self) -> teams::TeamStore<'_> {
         teams::TeamStore { pool: &self.pool }
+    }
+
+    pub fn attachments(&self) -> attachments::AttachmentStore<'_> {
+        attachments::AttachmentStore { pool: &self.pool }
     }
 
     pub fn oidc(&self) -> oidc::OidcStore<'_> {
