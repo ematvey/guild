@@ -62,6 +62,8 @@ services:
     ports:
       - "${GUILD_HTTP_PORT:-8080}:8080"
     env_file: config.env
+    volumes:
+      - guild_data:/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,3 +76,4 @@ volumes:
   pgdata:
   chdata:
   miniodata:
+  guild_data:

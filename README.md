@@ -55,3 +55,43 @@ cargo build -p guild-app-server          # the engine, found automatically
 cd apps/desktop && npm install
 npm run tauri dev
 ```
+
+## Integrations (routines, M5)
+
+User-created routines run as durable ReAct loops on Restate (webhook or
+interval triggers, `http_call` / `storage_put` actions):
+
+```bash
+curl -X POST localhost:8080/api/v1/routines -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"slug":"digest","trigger_kind":"webhook","prompt":"Digest it.","model":"gpt-4o-mini"}'
+# fire it:
+curl -X POST localhost:8080/api/v1/hooks/<org>/<slug> \
+  -H "x-guild-hook-token: <webhook_token>" -d '{"headline":"hi"}'
+```
+
+## Public OpenAI-compatible endpoint (M6)
+
+```bash
+# admins issue an org API key (plaintext shown once):
+curl -X POST localhost:8080/api/v1/admin/api-keys -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"name":"ci"}'
+# then any OpenAI client works against the org gateway:
+curl -X POST localhost:8080/openai/v1/chat/completions \
+  -H "authorization: Bearer gk_..." -H 'content-type: application/json' \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}'
+```
+
+## Server-side workspace sessions (execution backend, M6)
+
+The server can run the agent loop against a per-org workspace directory
+(`$GUILD_DATA_DIR/workspaces/<org>/<name>`), with file/git tools enabled and
+`run_command` disabled unless `GUILD_ALLOW_SHELL_TOOLS=1`:
+
+```bash
+curl -X POST localhost:8080/api/v1/agents/sessions -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"workspace_name":"repo-a"}'
+curl -N -X POST localhost:8080/api/v1/agents/sessions/<id>/turns \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"message":"write a hello.py","model":"gpt-4o-mini"}'   # SSE frames
+```
