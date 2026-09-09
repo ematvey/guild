@@ -5,6 +5,9 @@ use crate::crypto;
 use crate::http::error::ApiError;
 use uuid::Uuid;
 
+/// (provider, base_url, encrypted key, price in, price out, enabled, quota)
+type RouteQueryRow = (String, String, Option<String>, f64, f64, bool, Option<f64>);
+
 pub struct RouteRow {
     pub provider: String,
     pub base_url: String,
@@ -46,6 +49,7 @@ impl<'a> GatewayStore<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_route(
         &self,
         org_id: Uuid,
@@ -95,19 +99,18 @@ impl<'a> GatewayStore<'a> {
         model: &str,
         master_key: &[u8; 32],
     ) -> Result<RouteRow, ApiError> {
-        let row: Option<(String, String, Option<String>, f64, f64, bool, Option<f64>)> =
-            sqlx::query_as(
-                "SELECT r.provider, k.base_url, k.encrypted_key, \
+        let row: Option<RouteQueryRow> = sqlx::query_as(
+            "SELECT r.provider, k.base_url, k.encrypted_key, \
                     r.price_per_mtok_in_usd, r.price_per_mtok_out_usd, r.enabled, \
                     r.quota_monthly_usd \
              FROM model_routes r \
              LEFT JOIN provider_keys k ON k.org_id = r.org_id AND k.provider = r.provider \
              WHERE r.org_id = $1 AND r.model = $2",
-            )
-            .bind(org_id)
-            .bind(model)
-            .fetch_optional(self.pool)
-            .await?;
+        )
+        .bind(org_id)
+        .bind(model)
+        .fetch_optional(self.pool)
+        .await?;
         let Some((provider, base_url, encrypted, price_in, price_out, enabled, quota)) = row else {
             return Err(ApiError::not_found(format!("no route for model {model}")));
         };
