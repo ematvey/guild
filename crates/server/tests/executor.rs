@@ -2,7 +2,6 @@ use guild_server::test_support::{clickhouse_usage_rows, serve_full};
 use guild_server::worker::executor::RoutineExecutor;
 use guild_server::worker::run::run_routine;
 use serde_json::json;
-use uuid::Uuid;
 
 /// Scripted provider: turn 1 → http_call tool; turn 2 → final text.
 async fn scripted_provider(external_url: String) -> wiremock::MockServer {

@@ -38,8 +38,10 @@ mod tests {
 
     #[test]
     fn serde_roundtrip() {
-        let mut p = ApprovalPolicy::default();
-        p.default = Some(Approval::Allow);
+        let mut p = ApprovalPolicy {
+            default: Some(Approval::Allow),
+            ..Default::default()
+        };
         p.overrides.insert("write_file".into(), Approval::Ask);
         let s = serde_json::to_string(&p).unwrap();
         assert_eq!(serde_json::from_str::<ApprovalPolicy>(&s).unwrap(), p);
