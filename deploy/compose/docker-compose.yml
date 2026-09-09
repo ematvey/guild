@@ -26,8 +26,27 @@ services:
   minio:
     image: minio/minio
     command: server /data
+    environment:
+      MINIO_ROOT_USER: guild
+      MINIO_ROOT_PASSWORD: guild-secret
     volumes:
       - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 guild guild-secret &&
+      mc mb --ignore-existing local/guild
+      "
 
   restate:
     image: docker.io/restatedev/restate:latest
