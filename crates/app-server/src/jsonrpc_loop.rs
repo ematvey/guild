@@ -133,6 +133,26 @@ async fn dispatch(
     match req.method.as_str() {
         "login" => login_task(session, req, out_tx).await,
         "chat.send" => chat_send_task(session, req, out_tx).await,
+        "models.list" => {
+            let session = session.clone();
+            let out_tx = out_tx.clone();
+            tokio::spawn(async move {
+                let result = async {
+                    let cloud = session
+                        .lock()
+                        .unwrap()
+                        .cloud
+                        .clone()
+                        .context("not logged in — call login first")?;
+                    let models = cloud.list_models().await?;
+                    Ok(Response::ok(
+                        req.id,
+                        serde_json::json!({ "models": models }),
+                    ))
+                };
+                let _ = out_tx.send(response_value(req.id, result.await));
+            });
+        }
         "agent.start" => {
             let _ = agents.spawn(agent_start_task(session, req, out_tx));
         }

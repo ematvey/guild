@@ -33,7 +33,8 @@ interface RpcEvent {
 
 export default function AgentView({ email }: { email: string }) {
   const [projectDir, setProjectDir] = useState<string | null>(null);
-  const [model, setModel] = useState("gpt-4o-mini");
+  const [model, setModel] = useState<string>("");
+  const [models, setModels] = useState<string[] | null>(null);
   const [prompt, setPrompt] = useState("");
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [busy, setBusy] = useState(false);
@@ -42,6 +43,17 @@ export default function AgentView({ email }: { email: string }) {
   const unlisten = useRef<UnlistenFn | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const lastText = useRef<number>(-1);
+
+  useEffect(() => {
+    // discover enabled models from the org gateway; falls back to free text
+    invoke<any>("rpc_request", { method: "models.list", params: {} })
+      .then((res) => {
+        const list: string[] = res?.models ?? [];
+        setModels(list);
+        if (list.length > 0) setModel((m) => (list.includes(m) ? m : list[0]));
+      })
+      .catch(() => setModels([]));
+  }, []);
 
   useEffect(() => {
     listen<RpcEvent>("rpc-event", (e) => {
@@ -160,7 +172,28 @@ export default function AgentView({ email }: { email: string }) {
         <Button variant="outline" onClick={pickProject} className="text-xs">
           {projectDir ? projectDir.split("/").pop() : "Open project…"}
         </Button>
-        <Input className="w-40 text-xs" value={model} onChange={(e) => setModel(e.target.value)} placeholder="model" />
+        {models && models.length > 0 ? (
+          <select
+            className="h-9 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            title="Models enabled on the org gateway"
+          >
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <Input
+            className="w-40 text-xs"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="model (none routed — ask admin)"
+            title="No enabled models discovered from the server; enter one manually"
+          />
+        )}
         <select
           className="h-9 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs"
           value={commandPolicy}

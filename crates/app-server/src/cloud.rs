@@ -66,6 +66,28 @@ impl CloudClient {
         Ok((login.token, login.user))
     }
 
+    /// Enabled models routed for the org (GET /api/v1/gateway/models).
+    pub async fn list_models(&self) -> Result<Vec<String>, CloudError> {
+        let url = format!(
+            "{}/api/v1/gateway/models",
+            self.base_url.trim_end_matches('/')
+        );
+        let resp = self.http().get(&url).bearer_auth(&self.token).send().await?;
+        let resp = Self::check(resp).await?;
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        Ok(v["models"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|m| m.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     pub async fn create_chat(&self, title: Option<&str>) -> Result<Uuid, CloudError> {
         let url = format!("{}/api/v1/chats", self.base_url.trim_end_matches('/'));
         let resp = self
