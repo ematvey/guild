@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use guild_server::test_support::full_state;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -15,7 +15,7 @@ async fn attachment_upload_list_download_round_trip() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!(
+                .uri(format!(
                     "/api/v1/chats/{}/attachments?filename=report.txt&content_type=text/plain",
                     fs.chat_id
                 ))
@@ -40,7 +40,7 @@ async fn attachment_upload_list_download_round_trip() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/chats/{}/attachments", fs.chat_id))
+                .uri(format!("/api/v1/chats/{}/attachments", fs.chat_id))
                 .header("authorization", format!("Bearer {}", fs.token))
                 .body(Body::empty())
                 .unwrap(),
@@ -59,7 +59,7 @@ async fn attachment_upload_list_download_round_trip() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/attachments/{attachment_id}"))
+                .uri(format!("/api/v1/attachments/{attachment_id}"))
                 .header("authorization", format!("Bearer {}", fs.token))
                 .body(Body::empty())
                 .unwrap(),
@@ -82,7 +82,7 @@ async fn attachment_upload_list_download_round_trip() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/attachments/{missing}"))
+                .uri(format!("/api/v1/attachments/{missing}"))
                 .header("authorization", format!("Bearer {}", fs.token))
                 .body(Body::empty())
                 .unwrap(),
@@ -97,7 +97,7 @@ async fn attachment_upload_list_download_round_trip() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!(
+                .uri(format!(
                     "/api/v1/chats/{}/attachments?filename=../evil&content_type=text/plain",
                     fs.chat_id
                 ))
