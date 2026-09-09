@@ -5,6 +5,7 @@ use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
 use crate::http::gateway::AdminUser;
 use crate::http::internal::new_hook_token;
+use crate::http::internal::new_hook_token;
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
@@ -285,7 +286,7 @@ async fn install(
     let model = cfg["model"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("routine.json missing model"))?;
-    let webhook_token = crate::http::internal::new_hook_token();
+    let webhook_token = new_hook_token();
     let allowed_tools = if cfg["allowed_tools"].is_null() {
         json!(["http_call", "storage_put"])
     } else {
