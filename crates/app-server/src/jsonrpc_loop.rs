@@ -125,14 +125,7 @@ async fn handle<R: BufRead, W: Write>(
             }
             let chat_id = session.chat_id.unwrap();
             let stream = cloud
-                .chat_stream(
-                    chat_id,
-                    &session.model,
-                    &[Message {
-                        role: "user".into(),
-                        content: text,
-                    }],
-                )
+                .chat_stream(chat_id, &session.model, &[Message::user(text)])
                 .await?;
             let (full_text, done) = collect_turn(stream).await?;
             conn.write_line(&Event::new(

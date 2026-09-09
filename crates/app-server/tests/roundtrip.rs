@@ -33,14 +33,7 @@ async fn login_create_chat_stream_roundtrip() {
     };
     let chat_id = client.create_chat(Some("t")).await.unwrap();
     let stream = client
-        .chat_stream(
-            chat_id,
-            &srv.model,
-            &[Message {
-                role: "user".into(),
-                content: "greet".into(),
-            }],
-        )
+        .chat_stream(chat_id, &srv.model, &[Message::user("greet")])
         .await
         .unwrap();
     let (text, done) = collect_turn(stream).await.unwrap();

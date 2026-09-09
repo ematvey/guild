@@ -105,6 +105,7 @@ impl CloudClient {
                 chat_id,
                 model: model.into(),
                 messages: messages.to_vec(),
+                tools: None,
             })
             .send()
             .await?;
@@ -165,6 +166,9 @@ where
             StreamEvent::Error { code, message } => {
                 anyhow::bail!("stream error [{code}]: {message}");
             }
+            // Plain-chat clients ignore tool-call frames; the agent loop
+            // (Task 5/6) consumes them through its own streaming path.
+            StreamEvent::ToolCallDelta { .. } | StreamEvent::ToolCallDone { .. } => {}
         }
     }
     Ok((text, done))

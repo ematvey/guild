@@ -104,6 +104,10 @@ pub struct MessageRow {
     pub chat_id: Uuid,
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tokens_in: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]

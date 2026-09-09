@@ -12,9 +12,9 @@ use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::{Json, Router};
 use futures::Stream;
 use futures::StreamExt;
-use guild_core::provider::{ModelProvider, ProviderError, ProviderRequest};
+use guild_core::provider::{ModelProvider, ProviderChunk, ProviderError, ProviderRequest};
 use guild_core::usage::UsageEvent;
-use protocol::api::{ChatCompletionRequest, StreamEvent};
+use protocol::api::{ChatCompletionRequest, StreamEvent, ToolCall};
 use std::convert::Infallible;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -157,7 +157,16 @@ async fn chat(
         if last.role == "user" {
             store
                 .chats()
-                .append_message(req.chat_id, "user", &last.content, None, None, None)
+                .append_message(
+                    req.chat_id,
+                    "user",
+                    &last.content,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
                 .await?;
         }
     }
@@ -173,6 +182,7 @@ async fn chat(
         messages: &req.messages,
         api_key: &route.api_key,
         base_url: &route.base_url,
+        tools: req.tools.as_deref(),
     };
     let prov_stream = provider
         .chat_stream(preq)
@@ -194,16 +204,24 @@ async fn chat(
         let mut text = String::new();
         let mut tokens_in = 0u32;
         let mut tokens_out = 0u32;
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut pinned = Box::pin(prov_stream);
         while let Some(item) = pinned.next().await {
             match item {
-                Ok(chunk) => {
+                Ok(ProviderChunk::Text(chunk)) => {
                     if !chunk.text_delta.is_empty() {
                         text.push_str(&chunk.text_delta);
                         yield sse_event(StreamEvent::Delta { content: chunk.text_delta.clone() });
                     }
                     if let Some(t) = chunk.tokens_in { tokens_in = t; }
                     if let Some(t) = chunk.tokens_out { tokens_out = t; }
+                }
+                Ok(ProviderChunk::ToolCallDelta { index, id, name, arguments_delta }) => {
+                    yield sse_event(StreamEvent::ToolCallDelta { index, id, name, arguments_delta });
+                }
+                Ok(ProviderChunk::ToolCallDone { call }) => {
+                    tool_calls.push(call.clone());
+                    yield sse_event(StreamEvent::ToolCallDone { call });
                 }
                 Err(e) => {
                     yield sse_event(StreamEvent::Error { code: "provider".into(), message: e.to_string() });
@@ -212,9 +230,10 @@ async fn chat(
             }
         }
         let cost = UsageEvent::cost_usd(tokens_in, tokens_out, price_in, price_out);
+        let persisted_calls = if tool_calls.is_empty() { None } else { Some(tool_calls) };
         match store
             .chats()
-            .append_message(chat_id, "assistant", &text, Some(tokens_in), Some(tokens_out), Some(cost))
+            .append_message(chat_id, "assistant", &text, persisted_calls, None, Some(tokens_in), Some(tokens_out), Some(cost))
             .await
         {
             Ok(msg) => {
