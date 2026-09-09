@@ -57,7 +57,7 @@ export default function Registry() {
         {KINDS.map((k) => (
           <button
             key={k}
-            className={`rounded px-3 py-1 text-sm ${kind === k ? "bg-neutral-700" : "bg-neutral-900 text-neutral-500 hover:text-neutral-300"}`}
+            className={`rounded px-3 py-1 text-sm ${kind === k ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:text-foreground"}`}
             onClick={() => {
               setKind(k);
               setSelected(null);
@@ -68,7 +68,7 @@ export default function Registry() {
         ))}
       </div>
       <table className="w-full text-sm">
-        <thead className="text-left text-neutral-500">
+        <thead className="text-left text-muted-foreground">
           <tr>
             <th className="py-2">slug</th>
             <th>description</th>
@@ -79,9 +79,9 @@ export default function Registry() {
         </thead>
         <tbody>
           {items.map((it) => (
-            <tr key={it.slug} className="border-t border-neutral-800">
+            <tr key={it.slug} className="border-t border-border">
               <td className="py-2 font-mono text-xs">{it.slug}</td>
-              <td className="text-neutral-400">{it.description}</td>
+              <td className="text-muted-foreground">{it.description}</td>
               <td>{it.latest_version}</td>
               <td>
                 <span className={it.review_status === "approved" ? "text-green-400" : "text-amber-400"}>
@@ -89,15 +89,15 @@ export default function Registry() {
                 </span>
               </td>
               <td className="space-x-3 text-right text-xs">
-                <button className="text-neutral-400 hover:underline" onClick={() => openItem(it.slug)}>
+                <button className="text-muted-foreground hover:underline" onClick={() => openItem(it.slug)}>
                   versions
                 </button>
                 {it.review_status === "draft" ? (
-                  <button className="text-green-400 hover:underline" onClick={() => review(it.slug, "approved")}>
+                  <button className="text-emerald-600 dark:text-emerald-400 hover:underline" onClick={() => review(it.slug, "approved")}>
                     approve
                   </button>
                 ) : (
-                  <button className="text-amber-400 hover:underline" onClick={() => review(it.slug, "draft")}>
+                  <button className="text-amber-600 dark:text-amber-400 hover:underline" onClick={() => review(it.slug, "draft")}>
                     revert to draft
                   </button>
                 )}
@@ -106,7 +106,7 @@ export default function Registry() {
           ))}
           {items.length === 0 && (
             <tr>
-              <td colSpan={5} className="py-4 text-neutral-500">
+              <td colSpan={5} className="py-4 text-muted-foreground">
                 nothing published under {kind}
               </td>
             </tr>
@@ -114,9 +114,9 @@ export default function Registry() {
         </tbody>
       </table>
       {selected && (
-        <div className="rounded-lg border border-neutral-800 p-4">
+        <div className="rounded-lg border border-border p-4">
           <h3 className="mb-2 text-sm font-medium">{selected} — versions</h3>
-          <ul className="space-y-1 text-sm text-neutral-400">
+          <ul className="space-y-1 text-sm text-muted-foreground">
             {versions.map((v) => (
               <li key={v.version} className="font-mono text-xs">
                 {v.version} — {new Date(v.published_at).toLocaleString()}

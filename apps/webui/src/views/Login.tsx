@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { login } from "../api";
-import { Button } from "../components/button";
-import { Input } from "../components/input";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/card";
+import { Button } from "@guild/ui/components/button";
+import { Input } from "@guild/ui/components/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 
 export default function Login({ onLoggedIn }: { onLoggedIn: (u: { email: string }) => void }) {
   const [email, setEmail] = useState("");

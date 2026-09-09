@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 
 interface UsageRow {
   group: string;
@@ -34,7 +34,7 @@ export default function Dashboard() {
       <div className="flex gap-4">
         <Card className="flex-1">
           <CardHeader>
-            <CardTitle className="text-sm text-neutral-400">Today</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">Today</CardTitle>
           </CardHeader>
           <CardContent>
             <span className="text-2xl font-semibold">${summary?.today_cost_usd?.toFixed(4) ?? "…"}</span>
@@ -42,7 +42,7 @@ export default function Dashboard() {
         </Card>
         <Card className="flex-1">
           <CardHeader>
-            <CardTitle className="text-sm text-neutral-400">This month</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">This month</CardTitle>
           </CardHeader>
           <CardContent>
             <span className="text-2xl font-semibold">${summary?.month_cost_usd?.toFixed(4) ?? "…"}</span>
@@ -50,11 +50,11 @@ export default function Dashboard() {
         </Card>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-sm text-neutral-400">group by</span>
+        <span className="text-sm text-muted-foreground">group by</span>
         {["user", "team", "model"].map((g) => (
           <button
             key={g}
-            className={`rounded px-2 py-1 text-xs ${groupBy === g ? "bg-neutral-700" : "bg-neutral-900 text-neutral-500 hover:text-neutral-300"}`}
+            className={`rounded px-2 py-1 text-xs ${groupBy === g ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:text-foreground"}`}
             onClick={() => setGroupBy(g)}
           >
             {g}
@@ -62,7 +62,7 @@ export default function Dashboard() {
         ))}
       </div>
       <table className="w-full text-sm">
-        <thead className="text-left text-neutral-500">
+        <thead className="text-left text-muted-foreground">
           <tr>
             <th className="py-2">{groupBy}</th>
             <th>tokens in</th>
@@ -73,7 +73,7 @@ export default function Dashboard() {
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.group} className="border-t border-neutral-800">
+            <tr key={r.group} className="border-t border-border">
               <td className="py-2 font-mono text-xs">{r.group}</td>
               <td>{r.tokens_in}</td>
               <td>{r.tokens_out}</td>
@@ -83,7 +83,7 @@ export default function Dashboard() {
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={5} className="py-4 text-neutral-500">
+              <td colSpan={5} className="py-4 text-muted-foreground">
                 no usage yet
               </td>
             </tr>

@@ -13,7 +13,10 @@
     "@tauri-apps/api": "^2.11.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "@tauri-apps/plugin-dialog": "^2.4.2"
+    "@tauri-apps/plugin-dialog": "^2.4.2",
+    "@guild/ui": "file:../../packages/ui",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",

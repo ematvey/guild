@@ -1,5 +1,7 @@
 import { useState } from "react";
+
 import { Button } from "./button";
+import { Input } from "./input";
 
 export function ApprovalModal({
   tool,
@@ -13,13 +15,13 @@ export function ApprovalModal({
   const [reason, setReason] = useState("");
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60">
-      <div className="w-full max-w-md rounded-xl border border-neutral-700 bg-neutral-900 p-5">
+      <div className="w-full max-w-md rounded-xl border border-border bg-card p-5">
         <h3 className="text-sm font-semibold">Allow {tool}?</h3>
-        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
+        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-xs text-muted-foreground">
           {args}
         </pre>
-        <input
-          className="mt-3 h-9 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 text-sm"
+        <Input
+          className="mt-3"
           placeholder="Reason (if denying)"
           value={reason}
           onChange={(e) => setReason(e.target.value)}

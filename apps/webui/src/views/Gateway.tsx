@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { Button } from "../components/button";
-import { Input } from "../components/input";
+import { Button } from "@guild/ui/components/button";
+import { Input } from "@guild/ui/components/input";
 
 interface RouteRow {
   model: string;
@@ -63,7 +63,7 @@ export default function Gateway() {
       <section className="space-y-3">
         <h3 className="text-sm font-medium">Provider key</h3>
         <div className="flex flex-wrap items-center gap-2">
-          <select className="h-9 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-sm" value={provider} onChange={(e) => setProvider(e.target.value)}>
+          <select className="h-9 rounded-md border border-input bg-card px-2 text-sm" value={provider} onChange={(e) => setProvider(e.target.value)}>
             <option value="openai">openai</option>
             <option value="anthropic">anthropic</option>
           </select>
@@ -73,7 +73,7 @@ export default function Gateway() {
             Save key
           </Button>
         </div>
-        <p className="text-xs text-neutral-500">Keys are stored encrypted; never sent to clients.</p>
+        <p className="text-xs text-muted-foreground">Keys are stored encrypted; never sent to clients.</p>
       </section>
       <section className="space-y-3">
         <h3 className="text-sm font-medium">Model route</h3>
@@ -88,7 +88,7 @@ export default function Gateway() {
       </section>
       <section>
         <h3 className="mb-2 text-sm font-medium">Exposed models</h3>
-        <ul className="space-y-1 font-mono text-xs text-neutral-400">
+        <ul className="space-y-1 font-mono text-xs text-muted-foreground">
           {routes.map((r) => (
             <li key={r.model}>{r.model}</li>
           ))}
