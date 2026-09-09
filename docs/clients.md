@@ -178,3 +178,32 @@ the server-computed sha256 matches the local file before declaring success.
 
 Both are idempotent: they delete and replace existing artifacts of the same
 version/platform, verify sha256 server-side, and abort on any mismatch.
+
+## Desktop auto-updater (v0.3.0+)
+
+The desktop app self-updates against the server it is paired/logged into:
+
+1. On launch (and every 6h), the app requests `GET /api/v1/updates/latest.json`
+   on the stored server URL. The endpoint is public and serves the Tauri
+   updater static-JSON manifest for the newest **fully signed** desktop
+   version: per-platform minisign signatures + short-lived signed download
+   URLs (24h expiry).
+2. If the manifest version is newer, the update downloads silently in the
+   background (VSCode/Zed-style); a toast "Update to vX ready — Restart to
+   update" appears (on any screen, including the pairing screen).
+3. Clicking restart applies the update and relaunches. On Windows the NSIS
+   installer runs in passive mode and exits the app itself; on macOS/Linux
+   the app replaces its own bundle and restarts.
+
+Integrity: every updater artifact is minisign-signed with the keypair at
+`~/.tauri/guild.key` (back this up — losing it means already-installed
+clients can never be updated again). The public key is baked into the app
+config; installs are rejected without a valid signature. Plain-HTTP servers
+are allowed (`dangerousInsecureTransportProtocol`) since signatures still
+gate every install.
+
+Release flow (per release): bump the version, run
+`BASE=… TOKEN=… VERSION=… scripts/release-clients.sh` — it signs each
+artifact (AppImage, NSIS setup.exe, DMGs, `.app.tar.gz` updater bundles) and
+publishes signatures alongside. Debug builds never self-update
+(`GUILD_UPDATER_FORCE=1` opts in for testing).
