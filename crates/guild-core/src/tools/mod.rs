@@ -135,21 +135,33 @@ pub fn resolve_scoped(workdir: &Path, path_str: &str) -> Result<PathBuf, ToolFai
     let resolved = match joined.canonicalize() {
         Ok(p) => p,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // target may not exist yet (write_file); canonicalize the
-            // existing part of the chain instead
-            let parent = joined
-                .parent()
-                .and_then(|p| p.canonicalize().ok())
-                .ok_or_else(|| {
-                    ToolFailure::InvalidInput(format!(
-                        "path not found and no valid parent: {path_str}"
-                    ))
-                })?;
-            parent.join(
-                joined
-                    .file_name()
-                    .ok_or_else(|| ToolFailure::InvalidInput("empty path".into()))?,
-            )
+            // Target may not exist yet (write_file): canonicalize the
+            // nearest existing ancestor and rejoin the missing tail.
+            let mut missing: Vec<std::ffi::OsString> = vec![];
+            let mut probe: &Path = &joined;
+            let existing = loop {
+                match probe.canonicalize() {
+                    Ok(p) => break p,
+                    Err(_) => match probe.parent() {
+                        Some(p) => {
+                            if let Some(name) = probe.file_name() {
+                                missing.push(name.to_os_string());
+                            }
+                            probe = p;
+                        }
+                        None => {
+                            return Err(ToolFailure::InvalidInput(format!(
+                                "path not found: {path_str}"
+                            )))
+                        }
+                    },
+                }
+            };
+            let mut resolved = existing;
+            for part in missing.iter().rev() {
+                resolved = resolved.join(part);
+            }
+            resolved
         }
         Err(e) => {
             return Err(ToolFailure::InvalidInput(format!(
