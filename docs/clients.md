@@ -24,7 +24,31 @@ The engine loop is the same code as `guild-app-server::jsonrpc_loop::serve`
 it spawns `current_exe() engine` and bridges JSON-RPC. The engine binary path
 can be overridden for development with `GUILD_APP_SERVER_BIN`.
 
-## 2. Server URL resolution (in the GUI login form)
+## 2. Web mode + admin console (product flow)
+
+The same chat frontend runs in two hosts:
+
+- **Desktop (Tauri)**: engine login → full agent view (project, tools,
+  approvals). The header has an **Admin console ↗** link that opens the
+  system browser at `<server>/admin/#tk=<session-token>` — the token travels
+  in the URL fragment (never sent to the server), the console stores it
+  locally, so no re-login (pin/re-login happens only if the session is
+  revoked).
+- **Web** (served by the guild-server binary): the SAME frontend at `/` —
+  it detects the browser (no `__TAURI_INTERNALS__`), uses same-origin
+  fetch/SSE instead of the engine, and runs in **chat mode** (streaming
+  gateway chat; agent mode with local tools stays desktop-only — tools run
+  on the machine that has the project).
+- **Admin console**: the separate webui app at `/admin` (Users, Usage,
+  Registry, Gateway, Downloads). Same origin + the same localStorage token
+  key → auth is shared with the chat app seamlessly in web mode; its
+  "Guild" title links back to `/`.
+
+Serving: the guild-server binary embeds both frontends (`/` = chat app from
+`apps/desktop/dist`, `/admin` = admin console from `apps/webui/dist`, built
+with `base: /admin/`). The Dockerfile has node stages for both.
+
+## Server URL resolution (in the GUI login form)
 
 Precedence order:
 
