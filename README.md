@@ -95,3 +95,28 @@ curl -N -X POST localhost:8080/api/v1/agents/sessions/<id>/turns \
   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"message":"write a hello.py","model":"gpt-4o-mini"}'   # SSE frames
 ```
+
+## SSO, quotas, attachments, events (M7)
+
+- **OIDC SSO** (§4.1): admins configure the org IdP via
+  `PUT /api/v1/admin/oidc {issuer, client_id, client_secret}`; browser login
+  starts at `GET /api/v1/auth/oidc/login?org_id=…` (302 to the IdP), the
+  callback provisions `identity_type=oidc` members on first login and issues
+  a normal session.
+- **Model route quotas** (§4.5): `PUT /api/v1/admin/gateway/routes` accepts
+  `quota_monthly_usd`; the gateway returns 429 `quota_exceeded` once
+  month-to-date ClickHouse spend reaches the cap.
+- **Attachments** (§4.3): `POST /api/v1/chats/{id}/attachments?filename=…`
+  (raw body), list + org-scoped download via `/api/v1/attachments/{id}`;
+  bytes live in object storage.
+- **Registry `integration` items** (§4.4): `POST
+  /api/v1/registry/integration/{slug}/install` reads the bundle's
+  `routine.json` and creates a disabled routine — enable it via the routines
+  API to activate the trigger.
+- **Org events** (§4.6/§4.8): published to the `events` table and fanned out
+  over Postgres LISTEN/NOTIFY; subscribe with
+  `GET /api/v1/events/stream` (SSE) or read recent events from
+  `GET /api/v1/events`. Emitted on skill publish and member join today.
+- **Generated TS types** (§6): `crates/protocol/ts/**` is generated with
+  `TS_RS_EXPORT_DIR=ts cargo test -p protocol --features ts`; do not edit by
+  hand.

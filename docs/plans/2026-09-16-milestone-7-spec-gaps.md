@@ -1,6 +1,11 @@
 # Milestone 7 — spec-completion audit items
 
-Status: IN PROGRESS (branch `feat/milestone-7`, on top of master @ d7914e8)
+Status: COMPLETE
+
+(All tasks done on feat/milestone-7. Accepted gaps documented in the plan:
+Restate forced-replay CI test remains open; org-event trigger_kind for
+routines deferred — events are emitted and streamed, but webhook/interval
+remain the only routine triggers.) (branch `feat/milestone-7`, on top of master @ d7914e8)
 
 The six milestones (spec §10) are complete, but the audit against the spec
 body found v1 requirements that were never implemented. This milestone closes
