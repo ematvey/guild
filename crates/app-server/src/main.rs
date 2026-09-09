@@ -8,6 +8,7 @@ use anyhow::Context;
 use guild_app_server::cloud::{collect_turn, CloudClient};
 use guild_app_server::{jsonrpc_loop, session_store};
 use protocol::api::Message;
+use std::path::Path;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -27,7 +28,11 @@ fn main() -> anyhow::Result<()> {
         }
         Some("login") => cmd_login(&args[1..]),
         Some("chat") => cmd_chat(&args[1..]),
-        Some(other) => anyhow::bail!("unknown subcommand {other}; expected none, login, or chat"),
+        Some("publish") => cmd_publish(&args[1..]),
+        Some("install") => cmd_install(&args[1..]),
+        Some(other) => anyhow::bail!(
+            "unknown subcommand {other}; expected none, login, chat, publish, or install"
+        ),
     }
 }
 
@@ -56,6 +61,50 @@ fn cmd_login(args: &[String]) -> anyhow::Result<()> {
     )?;
     println!("logged in as {}", user.email);
     Ok(())
+}
+
+fn cmd_publish(args: &[String]) -> anyhow::Result<()> {
+    let kind = flag(args, "--kind")?;
+    let dir = flag(args, "--dir")?;
+    let version = flag(args, "--version")?;
+    let stored = session_store::load(&session_store::default_path()?)
+        .context("not logged in — run `guild-app-server login` first")?;
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async move {
+        let cloud = CloudClient {
+            base_url: stored.base_url,
+            token: stored.token,
+        };
+        let r =
+            guild_app_server::registry_client::publish(&cloud, &kind, Path::new(&dir), &version)
+                .await?;
+        println!("published {} {} {}", kind, r.slug, r.version);
+        Ok(())
+    })
+}
+
+fn cmd_install(args: &[String]) -> anyhow::Result<()> {
+    let slug = flag(args, "--slug")?;
+    let version = flag(args, "--version").ok();
+    let project = flag(args, "--project")?;
+    let stored = session_store::load(&session_store::default_path()?)
+        .context("not logged in — run `guild-app-server login` first")?;
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async move {
+        let cloud = CloudClient {
+            base_url: stored.base_url,
+            token: stored.token,
+        };
+        let entry = guild_app_server::registry_client::install_skill(
+            &cloud,
+            Path::new(&project),
+            &slug,
+            version.as_deref(),
+        )
+        .await?;
+        println!("installed {} -> {}", entry.name, entry.path.display());
+        Ok(())
+    })
 }
 
 fn cmd_chat(args: &[String]) -> anyhow::Result<()> {

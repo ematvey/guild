@@ -52,11 +52,11 @@ fn scan_dir(root: &Path) -> Vec<SkillEntry> {
     out
 }
 
-/// Skills visible to a session: user config dir first, then project
-/// (project entries win on name collision).
+/// Skills visible to a session: user config dir first, then the project's
+/// `.guild` dir (project entries win on name collision).
 pub fn discover(project_dir: &Path, config_dir: &Path) -> Vec<SkillEntry> {
     let mut out = scan_dir(config_dir);
-    for project_skill in scan_dir(project_dir) {
+    for project_skill in scan_dir(&project_dir.join(".guild")) {
         if let Some(existing) = out.iter_mut().find(|e| e.name == project_skill.name) {
             *existing = project_skill;
         } else {
@@ -106,8 +106,8 @@ mod tests {
         let proj = base.join("proj");
         std::fs::create_dir_all(cfg.join("skills/shared")).unwrap();
         std::fs::create_dir_all(cfg.join("skills/user-only")).unwrap();
-        std::fs::create_dir_all(proj.join("skills/shared")).unwrap();
-        std::fs::create_dir_all(proj.join("skills/proj-only")).unwrap();
+        std::fs::create_dir_all(proj.join(".guild/skills/shared")).unwrap();
+        std::fs::create_dir_all(proj.join(".guild/skills/proj-only")).unwrap();
         std::fs::write(
             cfg.join("skills/shared/SKILL.md"),
             "---\nname: shared\ndescription: user version\n---",
@@ -119,12 +119,12 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            proj.join("skills/shared/SKILL.md"),
+            proj.join(".guild/skills/shared/SKILL.md"),
             "---\nname: shared\ndescription: project version\n---",
         )
         .unwrap();
         std::fs::write(
-            proj.join("skills/proj-only/SKILL.md"),
+            proj.join(".guild/skills/proj-only/SKILL.md"),
             "---\nname: proj-only\ndescription: p\n---",
         )
         .unwrap();

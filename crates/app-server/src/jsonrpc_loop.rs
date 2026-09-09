@@ -141,6 +141,12 @@ async fn dispatch(
         }
         "agent.policy.set" => policy_set(session, req, out_tx),
         "agent.policy.get" => policy_get(session, req, out_tx),
+        "registry.publish" => {
+            tokio::spawn(registry_publish(session, req, out_tx));
+        }
+        "registry.install" => {
+            tokio::spawn(registry_install(session, req, out_tx));
+        }
         other => {
             let _ = out_tx.send(response_value(
                 req.id,
@@ -416,4 +422,64 @@ fn policy_get(session: Arc<Mutex<Session>>, req: Request, out_tx: mpsc::Unbounde
     let _ = out_tx.send(
         serde_json::to_value(Response::ok(req.id, serde_json::to_value(&policy).unwrap())).unwrap(),
     );
+}
+
+async fn registry_publish(
+    session: Arc<Mutex<Session>>,
+    req: Request,
+    out_tx: mpsc::UnboundedSender<Value>,
+) {
+    let result = async {
+        let cloud = session
+            .lock()
+            .unwrap()
+            .cloud
+            .clone()
+            .context("not logged in — call login first")?;
+        let kind = param(&req, "kind")?.to_string();
+        let dir = PathBuf::from(param(&req, "dir")?);
+        let version = param(&req, "version")?.to_string();
+        let r = crate::registry_client::publish(&cloud, &kind, &dir, &version).await?;
+        Ok(Response::ok(
+            req.id,
+            json!({"slug": r.slug, "version": r.version}),
+        ))
+    }
+    .await;
+    let _ = out_tx.send(response_value(req.id, result));
+}
+
+async fn registry_install(
+    session: Arc<Mutex<Session>>,
+    req: Request,
+    out_tx: mpsc::UnboundedSender<Value>,
+) {
+    let result = async {
+        let cloud = session
+            .lock()
+            .unwrap()
+            .cloud
+            .clone()
+            .context("not logged in — call login first")?;
+        let slug = param(&req, "slug")?.to_string();
+        let version = req.params["version"].as_str().map(String::from);
+        if let Some(d) = req.params["project_dir"].as_str() {
+            session.lock().unwrap().project_dir = Some(PathBuf::from(d));
+        }
+        let project_dir = session
+            .lock()
+            .unwrap()
+            .project_dir
+            .clone()
+            .context("missing project_dir — pass it in registry.install params")?;
+        let entry =
+            crate::registry_client::install_skill(&cloud, &project_dir, &slug, version.as_deref())
+                .await?;
+        Ok(Response::ok(
+            req.id,
+            json!({"name": entry.name, "path": entry.path.to_string_lossy()}),
+        ))
+    }
+    .await;
+    let _ = out_tx.send(response_value(req.id, result));
 }
