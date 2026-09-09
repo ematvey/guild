@@ -1,5 +1,10 @@
 # Guild Milestone 1 — Skeleton Round-Trip Implementation Plan
 
+**Status: COMPLETE** (2026-09-09, branch `feat/milestone-1`). All automated
+tests pass. One residual manual check: clicking through login→chat inside the
+real Tauri window (wiring verified headlessly under xvfb: window opens, engine
+child spawns; engine round-trip is covered by automated tests).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Workspace scaffolding; guild-server and guild-app-server both run; managed-account login; one chat round-trip through the gateway with SSE streaming; history persisted; per-request usage events with cost.
@@ -30,7 +35,7 @@
 **Interfaces:**
 - Produces: workspace with members `crates/protocol`, `crates/guild-core`, `crates/app-server`, `crates/server`; `cargo test` and `cargo clippy --workspace` pass.
 
-- [ ] **Step 1: Write workspace `Cargo.toml`**
+- [x] **Step 1: Write workspace `Cargo.toml`**
 
 ```toml
 [workspace]
@@ -70,7 +75,7 @@ futures = "0.3"
 testcontainers-modules = { version = "0.24", features = ["postgres", "clickhouse"] }
 ```
 
-- [ ] **Step 2: Create member crates**
+- [x] **Step 2: Create member crates**
 
 `crates/protocol/Cargo.toml`:
 
@@ -180,12 +185,12 @@ dist
 *.local
 ```
 
-- [ ] **Step 3: Verify build, test, clippy**
+- [x] **Step 3: Verify build, test, clippy**
 
 Run: `cargo fmt --all && cargo build --workspace && cargo test --workspace && cargo clippy --workspace -- -D warnings`
 Expected: all pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A && git commit -m "chore: cargo workspace scaffold with four crates"
@@ -211,7 +216,7 @@ git add -A && git commit -m "chore: cargo workspace scaffold with four crates"
   - `api::ChatCompletionRequest { chat_id: Uuid, model: String, messages: Vec<api::Message> }`, `api::Message { role: String, content: String }`
   - `api::StreamEvent` — serde-tagged enum: `delta { content }`, `done { message_id, cost_usd: f64, tokens_in: u32, tokens_out: u32 }`, `error { code, message }`
 
-- [ ] **Step 1: Write failing round-trip tests in `crates/protocol/src/rpc.rs`**
+- [x] **Step 1: Write failing round-trip tests in `crates/protocol/src/rpc.rs`**
 
 ```rust
 use crate::rpc::*;
@@ -241,12 +246,12 @@ fn connection_roundtrips_request_and_event() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p protocol`
 Expected: FAIL — `Request`, `Connection` not defined.
 
-- [ ] **Step 3: Implement `rpc.rs`**
+- [x] **Step 3: Implement `rpc.rs`**
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -303,16 +308,16 @@ impl<R: BufRead, W: Write> Connection<R, W> {
 }
 ```
 
-- [ ] **Step 4: Write `api.rs` types exactly as in Interfaces above**
+- [x] **Step 4: Write `api.rs` types exactly as in Interfaces above**
 
 All types derive `Serialize, Deserialize, Debug, Clone`; ids use `uuid::Uuid` (add `uuid.workspace = true`, `chrono.workspace = true` to protocol deps).
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cargo test -p protocol && cargo clippy -p protocol -- -D warnings`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/protocol && git commit -m "feat(protocol): json-rpc envelope and cloud api types"
@@ -336,7 +341,7 @@ git add crates/protocol && git commit -m "feat(protocol): json-rpc envelope and 
   - `build_router(state) -> axum::Router` in `http/mod.rs` — `GET /api/v1/health` returns `{"status":"ok"}`.
   - `server::run(config)` — binds, serves; `main` loads config and calls it.
 
-- [ ] **Step 1: Write failing test `crates/server/tests/http_scaffold.rs`**
+- [x] **Step 1: Write failing test `crates/server/tests/http_scaffold.rs`**
 
 ```rust
 use axum::body::Body;
@@ -366,12 +371,12 @@ async fn unknown_route_returns_error_envelope() {
 
 (`test_support` is a `#[cfg(test)]`-gated public module providing an in-memory `AppState` before stores exist; it stays for later tasks and grows DB support.)
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cargo test -p guild-server`
 Expected: FAIL — `build_router`, `test_state` not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `crates/server/src/lib.rs` (move logic out of main; main calls `guild_server::main_entry()`):
 
@@ -442,12 +447,12 @@ pub async fn not_found() -> ApiError {
 
 `config.rs` reads `GUILD_BIND_ADDR` (default `0.0.0.0:8080`), `GUILD_DATABASE_URL`, `GUILD_CLICKHOUSE_URL`, `GUILD_CLICKHOUSE_DATABASE` (default `guild`), `GUILD_MASTER_KEY_HEX` (64 hex chars = 32 bytes), `GUILD_JWT_SECRET`. `AppState::from_config` in this task only stores the config (stores arrive in Task 4); `test_state()` builds a `Config` with placeholder URLs.
 
-- [ ] **Step 4: Run tests to verify pass; clippy**
+- [x] **Step 4: Run tests to verify pass; clippy**
 
 Run: `cargo test -p guild-server && cargo clippy --workspace -- -D warnings`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/server && git commit -m "feat(server): axum scaffold, health endpoint, error envelope, config"
@@ -496,7 +501,7 @@ CREATE TABLE sessions (
 );
 ```
 
-- [ ] **Step 1: Write failing test `crates/server/tests/identity_store.rs`**
+- [x] **Step 1: Write failing test `crates/server/tests/identity_store.rs`**
 
 ```rust
 use guild_server::store::Store;
@@ -522,12 +527,12 @@ async fn bootstrap_admin_once_then_login_and_session() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cargo test -p guild-server --test identity_store`
 Expected: FAIL — `Store` not defined.
 
-- [ ] **Step 3: Implement store, migrations, crypto**
+- [x] **Step 3: Implement store, migrations, crypto**
 
 Migrations embedded with `sqlx::migrate!("crates/server/migrations")` run in `Store::connect`. Session tokens: 32 random bytes hex. Passwords: `argon2::Argon2::default()` with random salt, PHC string stored. `validate_session` joins `sessions`+`users`, filters `revoked_at IS NULL AND expires_at > now()`, returns `UserRow`, uses `code: "unauthorized"`.
 
@@ -535,12 +540,12 @@ Migrations embedded with `sqlx::migrate!("crates/server/migrations")` run in `St
 
 Crypto test (inline in `crypto.rs`): round-trip plus wrong-key failure.
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 Run: `cargo test -p guild-server && cargo clippy --workspace -- -D warnings`
 Expected: PASS (identity_store, crypto, http_scaffold).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/server && git commit -m "feat(server): identity store with migrations, argon2, sessions, crypto"
@@ -563,7 +568,7 @@ git add crates/server && git commit -m "feat(server): identity store with migrat
   - `GET /api/v1/auth/me` with `Authorization: Bearer <token>` → `UserInfo` (`401 code: "unauthorized"`).
   - `state::AppState { store: Option<Store>, config, .. }`; `http::auth::auth_middleware` extracts `UserRow` into request extensions (used by later tasks). Test helper `test_state_with_db()` returns `TestDb`-backed state.
 
-- [ ] **Step 1: Write failing test `crates/server/tests/auth_api.rs`**
+- [x] **Step 1: Write failing test `crates/server/tests/auth_api.rs`**
 
 ```rust
 use axum::body::Body;
@@ -601,12 +606,12 @@ async fn bootstrap_login_me_flow() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cargo test -p guild-server --test auth_api`
 Expected: FAIL — routes missing.
 
-- [ ] **Step 3: Implement `http/auth.rs` and middleware**
+- [x] **Step 3: Implement `http/auth.rs` and middleware**
 
 Handlers call the identity store directly; `bootstrap` handler shape:
 
@@ -623,12 +628,12 @@ async fn bootstrap(State(state): State<AppState>, Json(body): Json<serde_json::V
 
 `auth_middleware`: parse `Bearer`, `validate_session`, insert `UserRow` into extensions; `401 code: "unauthorized"` otherwise. `state.store()` lazily connects using `config.database_url` (once, via `tokio::sync::OnceCell`), so `test_state()` (no DB) can still serve health.
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 Run: `cargo test -p guild-server && cargo clippy --workspace -- -D warnings`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/server && git commit -m "feat(server): auth api — bootstrap, login, me, bearer middleware"
@@ -653,7 +658,7 @@ git add crates/server && git commit -m "feat(server): auth api — bootstrap, lo
   - `provider::anthropic::AnthropicProvider` — POST `{base_url}/v1/messages` with `x-api-key`, `anthropic-version` headers, body `{model, max_tokens, system, messages, stream: true}`, parses `content_block_delta` (`delta.text`) and `message_delta` (`usage.output_tokens`) plus `message_start` (`usage.input_tokens`).
   - `usage::UsageEvent { ts: chrono::DateTime<Utc>, org_id: Uuid, user_id: Uuid, team_id: Option<Uuid>, session_id: Uuid, model: String, provider: String, tokens_in: u32, tokens_out: u32, cost_usd: f64, request_id: Uuid }`
 
-- [ ] **Step 1: Write failing test `crates/guild-core/tests/provider_stream.rs`**
+- [x] **Step 1: Write failing test `crates/guild-core/tests/provider_stream.rs`**
 
 Uses `wiremock` (add `wiremock = "0.6"` dev-dep) serving an SSE body; asserts chunks collected.
 
@@ -689,21 +694,21 @@ async fn openai_stream_yields_deltas_then_usage() {
 
 Add an equivalent `anthropic_stream_yields_deltas_then_usage` test with the Anthropic frame shapes.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cargo test -p guild-core`
 Expected: FAIL — providers not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 SSE parsing: `reqwest::Response::bytes_stream()` → `eventsource_stream::Eventsource` → `.map(|ev| parse_frame(ev?))`. Each provider maps frames to `ChatChunk`; usage carried on the final chunk (fields `Option`). `ProviderError` enum: `auth`, `rate_limited`, `upstream(String)`, maps provider HTTP status codes; terminal vs retryable is decided by callers.
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 Run: `cargo test -p guild-core && cargo clippy --workspace -- -D warnings`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/guild-core && git commit -m "feat(core): openai/anthropic streaming provider clients with fixtures"
@@ -756,7 +761,7 @@ git add crates/guild-core && git commit -m "feat(core): openai/anthropic streami
   ) ENGINE = MergeTree ORDER BY (org_id, ts);
   ```
 
-- [ ] **Step 1: Write failing test `crates/server/tests/gateway_api.rs`**
+- [x] **Step 1: Write failing test `crates/server/tests/gateway_api.rs`**
 
 Wiremock fake provider + Postgres + ClickHouse testcontainers:
 
@@ -804,23 +809,23 @@ async fn chat_roundtrip_streams_persists_and_records_usage() {
 
 Admin endpoints in this task (needed by the test and by M4's admin UI): `POST /api/v1/admin/gateway/keys {provider, base_url, key}`, `PUT /api/v1/admin/gateway/routes {model, provider, enabled, price_in, price_out}`, guarded by a role-check middleware (`403 code: "forbidden"` for non-admins).
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cargo test -p guild-server --test gateway_api`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `http/gateway.rs` handler: resolve route → build `ProviderRequest` → map provider stream to `protocol::api::StreamEvent::delta` frames → accumulate full text + usage → on end: `chats().append_message(chat_id, "assistant", text, cost, tokens)` + `usage.record(...)` → final `done` event. Cost: `tokens_in/1e6*price_in + tokens_out/1e6*price_out`. The endpoint also appends the incoming user message before calling the provider.
 
 `test_support::full_state()`: postgres + clickhouse testcontainers, an "openai" provider key + route pointing at the wiremock server, a seeded chat. `UsageSink` in tests points at the testcontainer ClickHouse; a `count_usage_events()` helper is exposed via `test_support` (not shipped logic).
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 Run: `cargo test -p guild-server && cargo clippy --workspace -- -D warnings`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/server && git commit -m "feat(server): gateway — streaming chat, keys/routes admin api, clickhouse usage"
@@ -868,15 +873,15 @@ git add crates/server && git commit -m "feat(server): gateway — streaming chat
 
   Task 7's gateway endpoint already writes messages through `ChatStore` — this task adds the store if not present and the user-facing routes; keep the `append_message` signature identical to Task 7 usage.
 
-- [ ] **Step 1: Write failing test `crates/server/tests/chats_api.rs`** — login via helpers, create chat, append two messages via store, list via API, assert ordering and 404 for a foreign org's chat id (use a second org row inserted directly).
+- [x] **Step 1: Write failing test `crates/server/tests/chats_api.rs`** — login via helpers, create chat, append two messages via store, list via API, assert ordering and 404 for a foreign org's chat id (use a second org row inserted directly).
 
-- [ ] **Step 2: Run to verify failure** — `cargo test -p guild-server --test chats_api` → FAIL.
+- [x] **Step 2: Run to verify failure** — `cargo test -p guild-server --test chats_api` → FAIL.
 
-- [ ] **Step 3: Implement store and routes** — straightforward sqlx queries; org scoping enforced in SQL (`WHERE c.org_id = $1`).
+- [x] **Step 3: Implement store and routes** — straightforward sqlx queries; org scoping enforced in SQL (`WHERE c.org_id = $1`).
 
-- [ ] **Step 4: Run tests to verify pass** — `cargo test --workspace && cargo clippy --workspace -- -D warnings` → PASS.
+- [x] **Step 4: Run tests to verify pass** — `cargo test --workspace && cargo clippy --workspace -- -D warnings` → PASS.
 
-- [ ] **Step 5: Commit** — `git add crates/server && git commit -m "feat(server): chats store and user-facing chat api"`
+- [x] **Step 5: Commit** — `git add crates/server && git commit -m "feat(server): chats store and user-facing chat api"`
 
 ---
 
@@ -900,7 +905,7 @@ git add crates/server && git commit -m "feat(server): gateway — streaming chat
     - `chat.send {text}` → starts/uses a session chat; streams back `rpc::Event { event: "chat.delta" | "chat.done", payload }`
   - `main`: `guild-app-server` with no args runs the JSON-RPC stdio loop (UI path); `guild-app-server login --url ... --email ...` and `guild-app-server chat --model ... "text"` are headless paths for M1 tests and humans.
 
-- [ ] **Step 1: Write failing end-to-end test `crates/app-server/tests/roundtrip.rs`**
+- [x] **Step 1: Write failing end-to-end test `crates/app-server/tests/roundtrip.rs`**
 
 The test boots the real guild-server (lib entry `build_router` + `axum::serve` on an ephemeral port with testcontainer pg/clickhouse and a wiremock provider seeded exactly like Task 7's `full_state()` — expose `test_support::serve_full()` from guild-server returning `(base_url, TestDb)`), then drives `CloudClient`:
 
@@ -922,13 +927,13 @@ async fn login_create_chat_stream_roundtrip() {
 
 A second test drives the JSON-RPC stdio loop through in-memory buffers: send `login` then `chat.send`, read events, assert `chat.done` arrives.
 
-- [ ] **Step 2: Run to verify failure** — `cargo test -p guild-app-server` → FAIL (modules missing).
+- [x] **Step 2: Run to verify failure** — `cargo test -p guild-app-server` → FAIL (modules missing).
 
-- [ ] **Step 3: Implement** — `cloud.rs` (reqwest + `eventsource-stream` parsing `StreamEvent` JSON lines), `session_store.rs` (JSON file in config dir), `jsonrpc_loop.rs` (line-based `Connection` from protocol crate; in-memory state: base_url/token/chat id/model), `main.rs` (clap-free manual arg parsing for `login`/`chat` subcommands; default runs the loop).
+- [x] **Step 3: Implement** — `cloud.rs` (reqwest + `eventsource-stream` parsing `StreamEvent` JSON lines), `session_store.rs` (JSON file in config dir), `jsonrpc_loop.rs` (line-based `Connection` from protocol crate; in-memory state: base_url/token/chat id/model), `main.rs` (clap-free manual arg parsing for `login`/`chat` subcommands; default runs the loop).
 
-- [ ] **Step 4: Run tests to verify pass** — `cargo test --workspace && cargo clippy --workspace -- -D warnings` → PASS.
+- [x] **Step 4: Run tests to verify pass** — `cargo test --workspace && cargo clippy --workspace -- -D warnings` → PASS.
 
-- [ ] **Step 5: Commit** — `git add crates/app-server && git commit -m "feat(app-server): cloud client, stdio jsonrpc loop, headless login/chat"`
+- [x] **Step 5: Commit** — `git add crates/app-server && git commit -m "feat(app-server): cloud client, stdio jsonrpc loop, headless login/chat"`
 
 ---
 
@@ -943,11 +948,11 @@ A second test drives the JSON-RPC stdio loop through in-memory buffers: send `lo
 
 `docker-compose.yml` services: `server` (build `../..`, ports `8080:8080`, env from `config.env`), `restate` (`docker.io/restatedev/restate:latest`, ingress port 8080 internal, admin 9070 — worker role consumes it from M5), `postgres:17` (volume, healthcheck), `clickhouse/clickhouse-server:24` (volume, healthcheck), `minio/minio` (`server /data`, console off, volume). Server depends_on all healthy. `config.env.example` documents every `GUILD_*` var from Task 3 plus `GUILD_RESTATE_URL`.
 
-- [ ] **Step 1: Write Dockerfile** — multi-stage: `rust:1.97` build (`cargo build --release -p guild-server`), `debian:bookworm-slim` runtime with `ca-certificates`, entrypoint `guild-server`.
-- [ ] **Step 2: Write compose file + config example + README** (README includes the exact smoke commands).
-- [ ] **Step 3: Smoke test locally** — `docker compose -f deploy/compose/docker-compose.yml up -d`, wait for health, `curl -s localhost:8080/api/v1/health` → `{"status":"ok"}`; then `docker compose down -v`.
+- [x] **Step 1: Write Dockerfile** — multi-stage: `rust:1.97` build (`cargo build --release -p guild-server`), `debian:bookworm-slim` runtime with `ca-certificates`, entrypoint `guild-server`.
+- [x] **Step 2: Write compose file + config example + README** (README includes the exact smoke commands).
+- [x] **Step 3: Smoke test locally** — `docker compose -f deploy/compose/docker-compose.yml up -d`, wait for health, `curl -s localhost:8080/api/v1/health` → `{"status":"ok"}`; then `docker compose down -v`.
   Expected: health OK. (Full chat smoke needs a real provider key — documented in README as optional.)
-- [ ] **Step 4: Commit** — `git add -A && git commit -m "deploy: compose bundle with postgres, clickhouse, minio, server image"`
+- [x] **Step 4: Commit** — `git add -A && git commit -m "deploy: compose bundle with postgres, clickhouse, minio, server image"`
 
 ---
 
@@ -961,11 +966,11 @@ A second test drives the JSON-RPC stdio loop through in-memory buffers: send `lo
 - Consumes: `protocol::rpc` (Task 2), app-server JSON-RPC loop (Task 9).
 - Produces: desktop app that logs in and completes one chat round-trip against a running guild-server.
 
-- [ ] **Step 1: Scaffold** — `npm create tauri-app@latest` into `apps/desktop` (template: react-ts, identifier `org.guild.desktop`), `npm install`, add Tailwind + shadcn init with button/input/card components only.
-- [ ] **Step 2: Tauri side bridge** — `src-tauri/src/lib.rs`: tauri command `start_engine()` spawns `guild-app-server` (resolved from `PATH`, overridable by `GUILD_APP_SERVER_BIN`), keeps child handle in tauri state, exposes `rpc_request(method, params)` and `rpc_events()` (channel) that relay through the child's stdin/stdout using the same line-based JSON-RPC. Unit-test the relay with a fake child (a tiny script echoing a JSON-RPC response) where possible; otherwise verify via `cargo check -p` of the tauri crate.
-- [ ] **Step 3: React UI** — two views: `Login` (server URL, email, password → calls `rpc_request("login", ...)`; on success stores nothing sensitive in the webview — token lives in the engine) and `Chat` (model input + message list; `chat.send` streams `chat.delta` events into the transcript). Keep components shadcn-styled, no router.
-- [ ] **Step 4: Verify** — run compose (Task 10) or a dev guild-server, seed provider key/route via admin API, `npm run tauri dev`, login, send "hello", see streamed reply. Manual verification; record result in commit message.
-- [ ] **Step 5: Commit** — `git add apps/desktop README.md && git commit -m "feat(desktop): tauri shell with login and chat over stdio jsonrpc"`
+- [x] **Step 1: Scaffold** — `npm create tauri-app@latest` into `apps/desktop` (template: react-ts, identifier `org.guild.desktop`), `npm install`, add Tailwind + shadcn init with button/input/card components only.
+- [x] **Step 2: Tauri side bridge** — `src-tauri/src/lib.rs`: tauri command `start_engine()` spawns `guild-app-server` (resolved from `PATH`, overridable by `GUILD_APP_SERVER_BIN`), keeps child handle in tauri state, exposes `rpc_request(method, params)` and `rpc_events()` (channel) that relay through the child's stdin/stdout using the same line-based JSON-RPC. Unit-test the relay with a fake child (a tiny script echoing a JSON-RPC response) where possible; otherwise verify via `cargo check -p` of the tauri crate.
+- [x] **Step 3: React UI** — two views: `Login` (server URL, email, password → calls `rpc_request("login", ...)`; on success stores nothing sensitive in the webview — token lives in the engine) and `Chat` (model input + message list; `chat.send` streams `chat.delta` events into the transcript). Keep components shadcn-styled, no router.
+- [x] **Step 4: Verify** — run compose (Task 10) or a dev guild-server, seed provider key/route via admin API, `npm run tauri dev`, login, send "hello", see streamed reply. Manual verification; record result in commit message.
+- [x] **Step 5: Commit** — `git add apps/desktop README.md && git commit -m "feat(desktop): tauri shell with login and chat over stdio jsonrpc"`
 
 ---
 
