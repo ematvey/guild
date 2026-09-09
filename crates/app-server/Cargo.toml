@@ -19,6 +19,7 @@ async-trait.workspace = true
 async-stream = "0.3"
 uuid.workspace = true
 dirs = "6"
+rmcp = { version = "3.2", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 
 [dev-dependencies]
 guild-server = { path = "../server", features = ["test-support"] }
