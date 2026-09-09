@@ -48,7 +48,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
     // discover enabled models from the org gateway; falls back to free text
     invoke<any>("rpc_request", { method: "models.list", params: {} })
       .then((res) => {
-        const list: string[] = res?.models ?? [];
+        const list: string[] = res?.result?.models ?? [];
         setModels(list);
         if (list.length > 0) setModel((m) => (list.includes(m) ? m : list[0]));
       })
@@ -185,7 +185,8 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
         </Button>
         {models !== null && models.length > 0 ? (
           <select
-            className="h-9 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs"
+            className="h-9 appearance-none rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs text-neutral-100"
+            style={{ color: "#f5f5f5", backgroundColor: "#171717" }}
             value={model}
             onChange={(e) => setModel(e.target.value)}
             title="Models enabled on the org gateway"
@@ -205,7 +206,8 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
           </span>
         )}
         <select
-          className="h-9 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs"
+          className="h-9 appearance-none rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs text-neutral-100"
+          style={{ color: "#f5f5f5", backgroundColor: "#171717" }}
           value={commandPolicy}
           onChange={(e) => setPolicy(e.target.value as typeof commandPolicy)}
         >
