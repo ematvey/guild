@@ -9,18 +9,23 @@ type Release = {
   filename: string;
   size_bytes: number;
   sha256: string;
+  signature: string;
   notes: string;
   created_at: string;
 };
 
 export default function Downloads() {
   const [releases, setReleases] = useState<Release[] | null>(null);
+  const [signingKey, setSigningKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api<{ releases: Release[] }>("GET", "/api/v1/releases")
       .then((v) => setReleases(v.releases))
       .catch((e) => setError(String(e instanceof Error ? e.message : e)));
+    api<{ public_key: string }>("GET", "/api/v1/releases/signing-key")
+      .then((v) => setSigningKey(v.public_key))
+      .catch(() => setSigningKey(null));
   }, []);
 
   const download = async (id: string) => {
@@ -37,6 +42,11 @@ export default function Downloads() {
   const curlFor = (id: string) =>
     `curl -sS -o artifact.bin "$(curl -sS -H 'authorization: Bearer $TOKEN' \\
       $BASE/api/v1/releases/${id}/download-url | jq -r .url)"`;
+
+  const verifyFor = (r: Release) =>
+    `guild-app-server verify --file ${r.filename} \\
+  --sig ${r.signature} \\
+  --key ${signingKey ?? "<signing-key>"}`;
 
   return (
     <div className="p-6 text-sm">
@@ -88,6 +98,13 @@ export default function Downloads() {
                   >
                     copy curl
                   </button>
+                  <button
+                    className="ml-2 rounded-md border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-900"
+                    onClick={() => void navigator.clipboard?.writeText(verifyFor(r))}
+                    title="Copy the offline ed25519 verification command"
+                  >
+                    copy verify
+                  </button>
                 </td>
               </tr>
             ))}
@@ -96,8 +113,18 @@ export default function Downloads() {
       )}
       {releases && releases.length > 0 && getToken() && (
         <p className="mt-4 text-xs text-neutral-500">
-          Verify after download: <code className="rounded bg-neutral-900 px-1">sha256sum &lt;file&gt;</code> must match the
-          checksum above.
+          Artifacts are ed25519-signed by the server at upload. Verify offline with{" "}
+          <code className="rounded bg-neutral-900 px-1">copy verify</code> (checks the sha256
+          digest against the signature), or compare{" "}
+          <code className="rounded bg-neutral-900 px-1">sha256sum &lt;file&gt;</code> with the
+          checksum above.{" "}
+          {signingKey && (
+            <>
+              Signing key:{" "}
+              <code className="rounded bg-neutral-900 px-1 font-mono">{signingKey.slice(0, 16)}…</code> — pin it after
+              first use.
+            </>
+          )}
         </p>
       )}
     </div>
