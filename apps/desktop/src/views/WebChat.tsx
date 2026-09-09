@@ -203,7 +203,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   );
 
   return (
-    <div className="flex h-dvh bg-background text-foreground">
+    <div className="fixed inset-0 flex bg-background text-foreground">
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>
@@ -230,7 +230,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
 
       {/* main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 text-sm">
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-sm">
           {isMobile ? (
             <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
               <Menu />
@@ -287,7 +287,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             )}
           </div>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-6">
               {loadingChat && <Spinner />}
               {blocks.map((b, i) =>
@@ -321,7 +321,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         )}
 
         {/* composer */}
-        <div className="p-3 sm:p-4">
+        <div className="p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
           <div className="mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-sm">
             <Textarea
               ref={ta}
