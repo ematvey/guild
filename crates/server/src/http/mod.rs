@@ -60,5 +60,6 @@ pub fn build_router(state: AppState) -> Router {
         .merge(usage::routes())
         .fallback(web::fallback)
         .layer(axum::middleware::from_fn(log_requests))
+        .layer(tower_http::cors::CorsLayer::very_permissive())
         .with_state(state)
 }

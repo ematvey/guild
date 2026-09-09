@@ -56,7 +56,9 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
     setBusy(true);
     setError(null);
     try {
-      const user = await apiLogin(defaultServerUrl(), email, password);
+      // web mode is always same-origin (served by guild-server); an absolute
+      // default would go cross-origin when tunneled (e.g. Moshi) and trip CORS
+      const user = await apiLogin(window.location.origin, email, password);
       onLoggedIn(user.email);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
