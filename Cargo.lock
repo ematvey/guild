@@ -2595,12 +2595,19 @@ dependencies = [
 name = "guild-desktop"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "ed25519-dalek",
+ "guild-app-server",
+ "hex",
+ "protocol",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tokio",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

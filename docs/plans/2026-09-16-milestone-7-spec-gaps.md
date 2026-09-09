@@ -60,7 +60,24 @@ them.
   add a protocol round-trip test asserting the TS file matches exported JSON
   fixtures (spec §8 "Rust ↔ TS types stay in lockstep").
 
-## Follow-up: client distribution (post-M7, user-requested)
+## Follow-up: client distribution v2 (user-directed redesign)
+
+- **Single binary**: the Tauri GUI binary IS the engine now. It re-executes
+  itself in `engine` mode (JSON-RPC stdio) instead of spawning a separate
+  guild-app-server binary; headless subcommands (login/chat/publish/install/
+  verify) live in the same executable; Windows release builds re-attach the
+  parent console. Engine round-trip verified over stdio (login + streaming
+  chat with GLM-5.3-Flash).
+- **Production formats, built on Linux**:
+  - Windows: official Tauri NSIS installer (cargo-xwin cross + makensis).
+  - Linux: AppImage via linuxdeploy (self-contained, bundles webkit2gtk
+    libs; built against host glibc — modern distros).
+  - macOS: drag-and-drop UDIF DMGs (hfsprogs HFS+ image + libdmg-hfsplus
+    wrapper, patched for OpenSSL 3), fsck-verified, unsigned.
+- Old split cli/desktop artifacts removed; `scripts/release-clients.sh`
+  publishes all four artifacts idempotently.
+
+## Earlier follow-up: client distribution (post-M7)
 
 - **Downloads from the UI** — DONE, evolved to single-distro: one archive
   per OS containing GUI + engine together (GUI auto-detects a sibling
