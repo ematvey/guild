@@ -203,7 +203,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   );
 
   return (
-    <div className="flex h-screen bg-background text-foreground">
+    <div className="flex h-dvh bg-background text-foreground">
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>
