@@ -17,6 +17,10 @@
 # mingw-w64-gcc, makensis, llvm (llvm-rc), linuxdeploy at ~/opt/linuxdeploy,
 # libdmg-hfsplus at ~/opt/libdmg-hfsplus, hfsprogs, 7z.
 #
+# Each updater-capable artifact is minisign-signed with the tauri updater key
+# (~/.tauri/guild.key; override with UPDATER_KEY) and published with its
+# signature so /api/v1/updates/latest.json can serve the auto-updater.
+#
 # Usage:
 #   BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=0.1.0 \
 #     scripts/release-clients.sh
@@ -26,6 +30,11 @@ BASE="${BASE:-http://localhost:8080}"
 TOKEN="${TOKEN:?set TOKEN to an admin session token}"
 VERSION="${VERSION:?set VERSION, e.g. 0.1.0}"
 export SDKROOT="${SDKROOT:-$HOME/macos-sdks/MacOSX11.3.sdk}"
+# minisign keypair for the tauri desktop auto-updater (passwordless)
+UPDATER_KEY="${UPDATER_KEY:-$HOME/.tauri/guild.key}"
+# the bundler signs its updater artifacts itself when createUpdaterArtifacts is on
+export TAURI_SIGNING_PRIVATE_KEY="$UPDATER_KEY"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 
 cd "$(dirname "$0")/.."
 
@@ -38,7 +47,9 @@ trap 'rm -rf "$STAGE"' EXIT
 # Signs a file with the tauri updater key; echoes the signature content.
 sign() { # file -> stdout signature
   local sig="$1.sig"
-  (cd apps/desktop && npx tauri signer sign -k "$UPDATER_KEY" --password "" -f "$1" >/dev/null)
+  # env -u: -f conflicts with TAURI_SIGNING_PRIVATE_KEY inherited from above
+  (cd apps/desktop && env -u TAURI_SIGNING_PRIVATE_KEY npx tauri signer sign \
+    -f "$UPDATER_KEY" --password "" "$1" >/dev/null)
   cat "$sig"
   rm -f "$sig"
 }
