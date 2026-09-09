@@ -40,7 +40,7 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex min-h-screen items-center justify-center bg-neutral-950 text-neutral-100">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-xl">Guild</CardTitle>
@@ -116,7 +116,7 @@ function DesktopApp() {
   return user ? (
     <AgentView email={user} adminUrl={adminUrl} />
   ) : (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex min-h-screen items-center justify-center bg-neutral-950 text-neutral-100">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-xl">Guild</CardTitle>
