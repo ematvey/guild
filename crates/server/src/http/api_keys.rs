@@ -5,6 +5,7 @@ use crate::http::gateway::AdminUser;
 use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::http::header::AUTHORIZATION;
+use axum::response::IntoResponse;
 use axum::{Json, Router};
 use serde_json::json;
 use uuid::Uuid;
@@ -57,8 +58,24 @@ async fn revoke(
 /// Extractor: bearer-auth org API key (`gk_…`) for the public endpoint.
 pub struct ApiKeyUser(pub crate::store::api_keys::ApiKeyRow);
 
+/// Rejection rendered in the OpenAI error shape (the public endpoint's
+/// error contract).
+pub struct OpenAiAuthError(pub ApiError);
+
+impl axum::response::IntoResponse for OpenAiAuthError {
+    fn into_response(self) -> axum::response::Response {
+        (
+            self.0.status,
+            Json(serde_json::json!({
+                "error": {"message": self.0.message, "type": "invalid_request_error", "code": self.0.code}
+            })),
+        )
+            .into_response()
+    }
+}
+
 impl axum::extract::FromRequestParts<AppState> for ApiKeyUser {
-    type Rejection = ApiError;
+    type Rejection = OpenAiAuthError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
@@ -69,13 +86,16 @@ impl axum::extract::FromRequestParts<AppState> for ApiKeyUser {
             .get(AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .ok_or_else(|| ApiError::unauthorized("missing api key"))?;
-        let store = state.store().await?;
-        let row = store
+            .ok_or_else(|| OpenAiAuthError(ApiError::unauthorized("missing api key")))?;
+        let row = state
+            .store()
+            .await
+            .map_err(OpenAiAuthError)?
             .api_keys()
             .authenticate(token)
-            .await?
-            .ok_or_else(|| ApiError::unauthorized("invalid api key"))?;
+            .await
+            .map_err(OpenAiAuthError)?
+            .ok_or_else(|| OpenAiAuthError(ApiError::unauthorized("invalid api key")))?;
         Ok(ApiKeyUser(row))
     }
 }
