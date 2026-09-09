@@ -1,9 +1,16 @@
-# Web UI stage.
+# Frontend stages: admin console (webui) + shared chat app (desktop frontend).
 FROM node:22 AS webui
 WORKDIR /web
 COPY apps/webui/package.json apps/webui/package-lock.json* ./
 RUN npm install
 COPY apps/webui ./
+RUN npm run build
+
+FROM node:22 AS chatapp
+WORKDIR /app
+COPY apps/desktop/package.json apps/desktop/package-lock.json* ./
+RUN npm install
+COPY apps/desktop ./
 RUN npm run build
 
 # Build stage: compile guild-server from the workspace.
@@ -13,6 +20,7 @@ COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 COPY apps/desktop/src-tauri ./apps/desktop/src-tauri
 COPY --from=webui /web/dist ./apps/webui/dist
+COPY --from=chatapp /app/dist ./apps/desktop/dist
 RUN cargo build --release -p guild-server
 
 # Runtime stage.
