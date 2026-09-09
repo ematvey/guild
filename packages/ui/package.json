@@ -6,6 +6,7 @@
   "description": "Shared shadcn/ui-style component kit for the Guild chat client and admin console.",
   "exports": {
     "./theme.css": "./src/theme.css",
+    "./theme": "./src/theme.tsx",
     "./components/*": "./src/components/*.tsx",
     "./lib/*": "./src/lib/*.ts"
   },
