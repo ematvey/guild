@@ -1974,6 +1974,8 @@ name = "guild-app-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
+ "async-trait",
  "dirs",
  "eventsource-stream",
  "futures",
@@ -1986,6 +1988,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]

@@ -178,7 +178,7 @@ async fn chat(
     };
     let preq = ProviderRequest {
         model: &req.model,
-        system: None,
+        system: req.system.as_deref(),
         messages: &req.messages,
         api_key: &route.api_key,
         base_url: &route.base_url,

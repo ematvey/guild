@@ -93,6 +93,21 @@ impl CloudClient {
         model: &str,
         messages: &[Message],
     ) -> Result<impl Stream<Item = Result<StreamEvent, CloudError>> + 'static, CloudError> {
+        self.stream_completion(ChatCompletionRequest {
+            chat_id,
+            model: model.into(),
+            messages: messages.to_vec(),
+            tools: None,
+            system: None,
+        })
+        .await
+    }
+
+    /// Generic streaming completion; agent sessions pass tools + system.
+    pub async fn stream_completion(
+        &self,
+        req: ChatCompletionRequest,
+    ) -> Result<impl Stream<Item = Result<StreamEvent, CloudError>> + 'static, CloudError> {
         let url = format!(
             "{}/api/v1/gateway/chat",
             self.base_url.trim_end_matches('/')
@@ -101,12 +116,7 @@ impl CloudClient {
             .http()
             .post(&url)
             .bearer_auth(&self.token)
-            .json(&ChatCompletionRequest {
-                chat_id,
-                model: model.into(),
-                messages: messages.to_vec(),
-                tools: None,
-            })
+            .json(&req)
             .send()
             .await?;
         let resp = Self::check(resp).await?;
@@ -123,6 +133,27 @@ impl CloudClient {
                 }
             });
         Ok(stream)
+    }
+
+    /// Persists a client-produced tool message to the server record.
+    pub async fn append_tool_message(&self, chat_id: Uuid, m: &Message) -> Result<(), CloudError> {
+        let url = format!(
+            "{}/api/v1/chats/{chat_id}/messages",
+            self.base_url.trim_end_matches('/')
+        );
+        let resp = self
+            .http()
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&serde_json::json!({
+                "role": m.role,
+                "content": m.content,
+                "tool_call_id": m.tool_call_id,
+            }))
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
     }
 
     fn http(&self) -> reqwest::Client {

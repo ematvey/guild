@@ -1,4 +1,5 @@
 use guild_app_server::cloud::{collect_turn, CloudClient};
+use guild_app_server::jsonrpc_loop::{self, Session};
 use protocol::api::{Message, StreamEvent};
 use std::io::Cursor;
 
@@ -20,7 +21,7 @@ fn collect_written(written: Vec<u8>) -> Vec<serde_json::Value> {
 }
 
 /// Full login → chat round-trip through the real server stack.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn login_create_chat_stream_roundtrip() {
     let srv = guild_server::test_support::serve_full().await;
     let (token, user) = CloudClient::login(&srv.base_url, "a@b.c", "hunter226")
@@ -61,10 +62,9 @@ async fn login_create_chat_stream_roundtrip() {
 }
 
 /// The stdio JSON-RPC loop handles login and chat.send end-to-end.
-#[test]
-fn jsonrpc_loop_login_and_chat_send() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let srv = rt.block_on(guild_server::test_support::serve_full());
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jsonrpc_loop_login_and_chat_send() {
+    let srv = guild_server::test_support::serve_full().await;
 
     let requests = vec![
         serde_json::json!({
@@ -83,19 +83,16 @@ fn jsonrpc_loop_login_and_chat_send() {
     std::fs::create_dir_all(&tmp).unwrap();
     std::env::set_var("XDG_CONFIG_HOME", &tmp);
 
-    let (_session, written) = guild_app_server::jsonrpc_loop::serve(
-        input(&requests),
-        Vec::new(),
-        guild_app_server::jsonrpc_loop::Session::default(),
-    )
-    .unwrap();
+    let (_session, written) = jsonrpc_loop::serve(input(&requests), Vec::new(), Session::default())
+        .await
+        .unwrap();
 
     let msgs = collect_written(written);
-    eprintln!("DEBUG msgs = {msgs:#?}");
-    // login response
-    assert_eq!(msgs[0]["id"], 1);
-    assert_eq!(msgs[0]["result"]["ok"], true);
-    // chat deltas + done event, then final response
+    let login = msgs
+        .iter()
+        .find(|m| m.get("id") == Some(&serde_json::json!(1)))
+        .expect("login response");
+    assert_eq!(login["result"]["ok"], true);
     let events: Vec<&serde_json::Value> =
         msgs.iter().filter(|m| m.get("event").is_some()).collect();
     assert!(events
@@ -111,9 +108,4 @@ fn jsonrpc_loop_login_and_chat_send() {
         .find(|m| m.get("id") == Some(&serde_json::json!(2)))
         .expect("chat.send response");
     assert_eq!(resp2["result"]["tokens_in"], 5);
-
-    // drop containers while the tokio runtime is alive (testcontainers needs a reactor)
-    rt.block_on(async move {
-        drop(srv);
-    });
 }
