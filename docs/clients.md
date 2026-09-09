@@ -48,6 +48,19 @@ Serving: the guild-server binary embeds both frontends (`/` = chat app from
 `apps/desktop/dist`, `/admin` = admin console from `apps/webui/dist`, built
 with `base: /admin/`). The Dockerfile has node stages for both.
 
+## Tauri release builds need `custom-protocol`
+
+Plain `cargo build --release` produces a DEV-mode binary: Tauri's `dev` cfg is
+set whenever the `custom-protocol` feature is off, and the window then tries
+to load the vite dev server (`http://localhost:1420`) showing "Connection
+refused". Always build release binaries with:
+
+    cargo build --release -p guild-desktop --features tauri/custom-protocol
+
+(`tauri build` sets it automatically; the release script does this for the
+AppImage and macOS DMG builds — cross-verified by launching the shipped
+artifacts under xvfb.)
+
 ## Server URL resolution (in the GUI login form)
 
 Precedence order:
