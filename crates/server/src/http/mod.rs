@@ -11,6 +11,7 @@ pub mod internal;
 pub mod oidc;
 pub mod openai;
 pub mod registry;
+pub mod releases;
 pub mod usage;
 pub mod web;
 
@@ -35,6 +36,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(oidc::routes())
         .merge(api_keys::routes())
         .merge(openai::routes())
+        .merge(releases::routes())
         .merge(internal::routines_routes())
         .merge(internal::internal_routes())
         .merge(usage::routes())

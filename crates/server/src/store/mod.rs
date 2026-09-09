@@ -7,6 +7,7 @@ pub mod gateway;
 pub mod identity;
 pub mod oidc;
 pub mod registry;
+pub mod releases;
 pub mod routines;
 pub mod teams;
 
@@ -41,7 +42,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 13] = [
+        const MIGRATIONS: [(&str, &str); 14] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -90,6 +91,10 @@ impl Store {
             (
                 "0013_events",
                 include_str!("../../migrations/0013_events.sql"),
+            ),
+            (
+                "0014_releases",
+                include_str!("../../migrations/0014_releases.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {
@@ -144,6 +149,10 @@ impl Store {
 
     pub fn teams(&self) -> teams::TeamStore<'_> {
         teams::TeamStore { pool: &self.pool }
+    }
+
+    pub fn releases(&self) -> releases::ReleaseStore<'_> {
+        releases::ReleaseStore { pool: &self.pool }
     }
 
     pub fn events(&self) -> events::EventStore<'_> {
