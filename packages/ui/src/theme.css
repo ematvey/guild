@@ -69,3 +69,15 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
 }
+
+/* Consistent focus indication: replace the UA's default focus outline
+   (which paints on programmatic focus too, e.g. Radix returning focus to
+   a trigger after its menu closes) with the theme's ring token. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}

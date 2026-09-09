@@ -2,10 +2,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@guild/ui/components/button";
-import { ThemeToggle } from "../App";
-import { Input } from "@guild/ui/components/input";
+import { ArrowUp, Bot, FolderOpen, Wrench } from "lucide-react";
+
 import { ApprovalModal } from "@guild/ui/components/approval";
+import { Button } from "@guild/ui/components/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
+import { Separator } from "@guild/ui/components/separator";
+import { Skeleton } from "@guild/ui/components/skeleton";
+import { Spinner } from "@guild/ui/components/spinner";
+import { Textarea } from "@guild/ui/components/textarea";
+import { ThemeToggle } from "../App";
 
 interface Block {
   kind: "text" | "user" | "tool_call" | "tool_result" | "done" | "error";
@@ -32,6 +38,8 @@ interface RpcEvent {
   };
 }
 
+/// Desktop (Tauri) agent view: same design language as the web chat, but the
+/// conversation is an agent run against a local project (tools, approvals).
 export default function AgentView({ email, adminUrl }: { email: string; adminUrl?: string | null }) {
   const [projectDir, setProjectDir] = useState<string | null>(null);
   const [model, setModel] = useState<string>("");
@@ -44,6 +52,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
   const unlisten = useRef<UnlistenFn | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const lastText = useRef<number>(-1);
+  const ta = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     // discover enabled models from the org gateway; falls back to free text
@@ -119,6 +128,13 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [blocks]);
 
+  const autoGrow = () => {
+    const el = ta.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  };
+
   const pickProject = useCallback(async () => {
     const dir = await open({ directory: true, multiple: false });
     if (typeof dir === "string") setProjectDir(dir);
@@ -139,6 +155,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
       setBlocks((b) => [...b, { kind: "error", text: String(e) }]);
     }
     setPrompt("");
+    if (ta.current) ta.current.style.height = "auto";
   }, [projectDir, prompt, busy, model]);
 
   const decide = useCallback(async (approve: boolean, reason: string) => {
@@ -166,121 +183,242 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
     }
   }, []);
 
+  const noModels = models !== null && models.length === 0;
+  const canRun = !!projectDir && !busy && !noModels;
+
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
-      <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
-        <span className="text-sm font-medium">Guild — {email}</span>
-        {adminUrl && (
-          <a
-            className="text-xs text-muted-foreground underline decoration-border hover:text-foreground"
-            href={adminUrl}
-            target="_blank"
-            rel="noreferrer"
-            title="Open the admin console in your browser (account handoff via link)"
+    <div className="fixed inset-0 flex bg-background text-foreground">
+      {/* sidebar */}
+      <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-card">
+        <div className="flex items-center justify-between px-3 py-3">
+          <span className="text-sm font-semibold">Guild</span>
+          <ThemeToggle />
+        </div>
+        <div className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">Project</div>
+        <div className="px-2">
+          <button
+            onClick={pickProject}
+            className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+            title={projectDir ?? "Choose a project directory"}
           >
-            Admin console ↗
-          </a>
-        )}
-        <ThemeToggle />
-        <Button variant="outline" onClick={pickProject} className="text-xs">
-          {projectDir ? projectDir.split("/").pop() : "Open project…"}
-        </Button>
-        {models !== null && models.length > 0 ? (
-          <select
-            className="h-9 appearance-none rounded-md border border-input bg-card px-2 text-xs text-foreground"
-            style={{ color: "#f5f5f5", backgroundColor: "#171717" }}
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            title="Models enabled on the org gateway"
-          >
-            {models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span
-            className="rounded-md border border-amber-700/60 bg-amber-900/30 px-2 py-1.5 text-xs text-amber-300"
-            title="An org admin must add a provider key and a model route in the admin console"
-          >
-            no models configured — ask an admin to add a route
-          </span>
-        )}
-        <select
-          className="h-9 appearance-none rounded-md border border-input bg-card px-2 text-xs text-foreground"
-          style={{ color: "#f5f5f5", backgroundColor: "#171717" }}
-          value={commandPolicy}
-          onChange={(e) => setPolicy(e.target.value as typeof commandPolicy)}
-        >
-          <option value="ask">commands: ask</option>
-          <option value="allow">commands: allow</option>
-          <option value="never">commands: never</option>
-        </select>
-      </header>
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
-        {blocks.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            Open a project, then give the agent a task. Commands ask for approval by default.
-          </p>
-        )}
-        {blocks.map((b, i) =>
-          b.kind === "tool_call" ? (
-            <div key={i} className="mr-auto max-w-[80%] rounded-lg border border-border bg-card px-3 py-2 text-xs">
-              <span className="font-mono text-amber-300">tool ▶ {b.tool}</span>
-              <pre className="mt-1 whitespace-pre-wrap text-muted-foreground">{b.args}</pre>
-            </div>
-          ) : b.kind === "tool_result" ? (
-            <div key={i} className="mr-auto max-w-[80%] rounded-lg bg-card px-3 py-2 text-xs">
-              {b.diff ? (
-                <pre className="whitespace-pre-wrap font-mono">
-                  {b.diff.split("\n").map((l, j) => (
-                    <span key={j} className={l.startsWith("+") ? "text-green-400" : l.startsWith("-") ? "text-red-400" : "text-muted-foreground"}>
-                      {l}
-                      {"\n"}
-                    </span>
-                  ))}
-                </pre>
-              ) : (
-                <span className="text-muted-foreground">{b.tool}: {b.text}</span>
+            <FolderOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm">
+                {projectDir ? projectDir.split("/").pop() || projectDir : "Open project…"}
+              </span>
+              {projectDir && (
+                <span className="block truncate text-xs text-muted-foreground" title={projectDir}>
+                  {projectDir}
+                </span>
               )}
-            </div>
-          ) : (
-            <div
-              key={i}
-              className={
-                b.kind === "user"
-                  ? "ml-auto max-w-[70%] rounded-lg bg-secondary px-3 py-2"
-                  : b.kind === "error"
-                    ? "rounded-lg bg-red-950 px-3 py-2 text-sm text-red-300"
-                    : "mr-auto max-w-[70%] whitespace-pre-wrap rounded-lg bg-card px-3 py-2"
-              }
+            </span>
+          </button>
+        </div>
+        <div className="px-3 pb-1 pt-4 text-xs font-medium text-muted-foreground">Commands</div>
+        <div className="px-2">
+          <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+            {(["ask", "allow", "never"] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => void setPolicy(p)}
+                className={`rounded-md px-2 py-1.5 text-xs capitalize outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${
+                  commandPolicy === p
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 px-1 text-xs text-muted-foreground">
+            Shell commands run by the agent {commandPolicy === "ask" ? "ask for approval" : commandPolicy === "allow" ? "run without asking" : "are denied"}.
+          </p>
+        </div>
+        <div className="min-h-0 flex-1" />
+        <Separator />
+        <div className="flex items-center gap-2.5 px-3 py-3">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
+            {email.slice(0, 2).toUpperCase()}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={email}>
+            {email}
+          </span>
+          {adminUrl && (
+            <a
+              href={adminUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+              title="Open the admin console in your browser"
             >
-              {b.text}
+              ↗
+            </a>
+          )}
+        </div>
+      </aside>
+
+      {/* main column */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 text-sm">
+          <span className="min-w-0 flex-1 truncate font-medium">
+            {projectDir ? projectDir.split("/").pop() || projectDir : "Guild agent"}
+          </span>
+          {busy && <Spinner />}
+        </header>
+
+        {blocks.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+            <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
+              <Bot className="size-7 text-muted-foreground" />
             </div>
-          ),
+            <h1 className="mt-6 text-center text-2xl font-semibold tracking-tight">
+              {projectDir ? (
+                <>
+                  What should we work on in{" "}
+                  <span className="underline decoration-border underline-offset-4">
+                    {projectDir.split("/").pop() || projectDir}
+                  </span>
+                  ?
+                </>
+              ) : (
+                "Open a project to begin"
+              )}
+            </h1>
+            <p className="mt-2 max-w-md text-center text-sm text-muted-foreground">
+              The agent works directly in your project — reading and editing files, running commands
+              {commandPolicy === "ask" ? " (with your approval)" : ""}.{" "}
+              {noModels
+                ? "No models are configured yet — ask an org admin to add a route."
+                : "Pick a project, then describe a task below."}
+            </p>
+            {!projectDir && (
+              <Button className="mt-8" onClick={pickProject}>
+                <FolderOpen /> Open project…
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-6">
+              {blocks.map((b, i) =>
+                b.kind === "tool_call" ? (
+                  <div key={i} className="mr-auto w-fit max-w-[85%] rounded-lg border border-border bg-card px-3 py-2 text-xs">
+                    <span className="inline-flex items-center gap-1.5 font-mono text-amber-600 dark:text-amber-400">
+                      <Wrench className="size-3.5" /> {b.tool}
+                    </span>
+                    <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-muted-foreground">{b.args}</pre>
+                  </div>
+                ) : b.kind === "tool_result" ? (
+                  <div key={i} className="mr-auto w-fit max-w-[85%] rounded-lg border border-border bg-card px-3 py-2 text-xs">
+                    {b.diff ? (
+                      <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap font-mono">
+                        {b.diff.split("\n").map((l, j) => (
+                          <span
+                            key={j}
+                            className={
+                              l.startsWith("+")
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : l.startsWith("-")
+                                  ? "text-red-600 dark:text-red-400"
+                                  : "text-muted-foreground"
+                            }
+                          >
+                            {l}
+                            {"\n"}
+                          </span>
+                        ))}
+                      </pre>
+                    ) : (
+                      <span className="text-muted-foreground">
+                        <span className="font-mono">{b.tool}</span>: {b.text}
+                      </span>
+                    )}
+                  </div>
+                ) : b.kind === "user" ? (
+                  <div key={i} className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-sm">
+                    {b.text}
+                  </div>
+                ) : b.kind === "error" ? (
+                  <div
+                    key={i}
+                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                  >
+                    {b.text}
+                  </div>
+                ) : (
+                  <div key={i} className="mr-auto w-fit max-w-[85%] whitespace-pre-wrap text-sm leading-relaxed">
+                    {b.text}
+                  </div>
+                ),
+              )}
+              {busy && <Spinner />}
+              <div ref={bottom} />
+            </div>
+          </div>
         )}
-        <div ref={bottom} />
+
+        {/* composer */}
+        <div className="p-3 sm:p-4">
+          <div className="mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-sm">
+            <Textarea
+              ref={ta}
+              value={prompt}
+              onChange={(e) => {
+                setPrompt(e.target.value);
+                autoGrow();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void start();
+                }
+              }}
+              rows={1}
+              placeholder={
+                noModels
+                  ? "No model available"
+                  : projectDir
+                    ? "Describe a task…"
+                    : "Open a project first…"
+              }
+              disabled={busy || !projectDir || noModels}
+              className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
+            />
+            <div className="flex items-center justify-between gap-2 px-1 pt-1">
+              {models === null ? (
+                <Skeleton className="h-7 w-28 rounded-md" />
+              ) : models.length > 0 ? (
+                <Select value={model} onValueChange={setModel}>
+                  <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map((m) => (
+                      <SelectItem key={m} value={m} className="text-xs">
+                        {m}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <span className="text-xs text-muted-foreground">no models configured</span>
+              )}
+              <Button
+                size="icon"
+                className="size-7 rounded-full"
+                onClick={() => void start()}
+                disabled={!canRun || !prompt.trim()}
+                title="Run"
+              >
+                {busy ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
-      <div className="flex gap-2 border-t border-border p-3">
-        <Input
-          value={prompt}
-          placeholder={projectDir ? "Describe a task…" : "Open a project first…"}
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && start()}
-          disabled={!projectDir || (models !== null && models.length === 0)}
-        />
-        <Button onClick={start} disabled={busy || !projectDir || (models !== null && models.length === 0)}>
-          {busy ? "Working…" : "Run"}
-        </Button>
-      </div>
-      {approval && (
-        <ApprovalModal
-          tool={approval.tool}
-          args={approval.args}
-          onDecide={decide}
-        />
-      )}
+
+      {approval && <ApprovalModal tool={approval.tool} args={approval.args} onDecide={decide} />}
     </div>
   );
 }
