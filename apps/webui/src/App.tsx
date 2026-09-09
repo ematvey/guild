@@ -6,8 +6,9 @@ import Users from "./views/Users";
 import Registry from "./views/Registry";
 import Gateway from "./views/Gateway";
 import Chat from "./views/Chat";
+import Downloads from "./views/Downloads";
 
-const VIEWS = ["dashboard", "chat", "users", "registry", "gateway"] as const;
+const VIEWS = ["dashboard", "chat", "downloads", "users", "registry", "gateway"] as const;
 
 function currentView(): string {
   const h = window.location.hash.replace("#/", "");
@@ -43,6 +44,7 @@ export default function App() {
   const nav: [string, string][] = [
     ["dashboard", "Usage"],
     ["chat", "Chat"],
+    ["downloads", "Downloads"],
     ...(isAdmin ? ([["users", "Users"], ["registry", "Registry"], ["gateway", "Gateway"]] as [string, string][]) : []),
   ];
 
@@ -72,6 +74,7 @@ export default function App() {
       </header>
       {view === "dashboard" && <Dashboard />}
       {view === "chat" && <Chat />}
+      {view === "downloads" && <Downloads />}
       {view === "users" && isAdmin && <Users />}
       {view === "registry" && isAdmin && <Registry />}
       {view === "gateway" && isAdmin && <Gateway />}
