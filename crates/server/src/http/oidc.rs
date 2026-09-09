@@ -118,7 +118,6 @@ async fn login(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| ApiError::bad_request("missing org_id"))?;
     let store = state.store().await?;
-    let master = state.config.master_key()?;
     let Some(row) = store.oidc().get(org).await? else {
         return Err(ApiError::not_found("no oidc config for org"));
     };
