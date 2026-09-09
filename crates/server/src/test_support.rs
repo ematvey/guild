@@ -180,3 +180,30 @@ pub async fn clickhouse_usage_rows(state: &AppState) -> (u64, f64) {
         .expect("clickhouse sum");
     (count, cost)
 }
+
+/// full_state() plus a real HTTP listener; for client round-trip tests.
+pub struct ServedFull {
+    pub full: FullState,
+    pub base_url: String,
+}
+
+impl std::ops::Deref for ServedFull {
+    type Target = FullState;
+    fn deref(&self) -> &FullState {
+        &self.full
+    }
+}
+
+pub async fn serve_full() -> ServedFull {
+    let full = full_state().await;
+    let app = crate::build_router(full.state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    ServedFull {
+        full,
+        base_url: format!("http://{addr}"),
+    }
+}

@@ -11,3 +11,12 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+eventsource-stream.workspace = true
+futures.workspace = true
+uuid.workspace = true
+dirs = "6"
+
+[dev-dependencies]
+guild-server = { path = "../server", features = ["test-support"] }

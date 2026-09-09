@@ -145,6 +145,11 @@ impl<R: Read, W: Write> Connection<R, W> {
         w.flush()
     }
 
+    /// Disassembles the connection (used when a loop exits).
+    pub fn into_parts(self) -> (BufReader<R>, Mutex<W>) {
+        (self.reader, self.writer)
+    }
+
     /// Reads the next line and parses it. `None` on clean EOF.
     pub fn read_message(&mut self) -> Option<Result<Message, RpcError>> {
         let mut line = String::new();
