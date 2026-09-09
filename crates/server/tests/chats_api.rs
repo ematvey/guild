@@ -73,7 +73,7 @@ async fn create_list_messages_and_org_isolation() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/chats/{chat_id}/messages"))
+                .uri(format!("/api/v1/chats/{chat_id}/messages"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -99,7 +99,7 @@ async fn create_list_messages_and_org_isolation() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/chats/{foreign}/messages"))
+                .uri(format!("/api/v1/chats/{foreign}/messages"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),

@@ -220,7 +220,7 @@ async fn policy_never_skips_approval_entirely() {
     isolate_config("never");
 
     let (pipe_r, mut pipe_w) = std::io::pipe().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let (tx, _rx) = std::sync::mpsc::channel::<String>();
     let tee = Tee {
         buf: Arc::new(Mutex::new(Vec::new())),
         tx,

@@ -89,7 +89,7 @@ async fn tool_call_streams_persists_and_usage_records() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/v1/chats/{}/messages", fs.chat_id))
+                .uri(format!("/api/v1/chats/{}/messages", fs.chat_id))
                 .header("authorization", format!("Bearer {}", fs.token))
                 .header("content-type", "application/json")
                 .body(Body::from(
@@ -125,7 +125,7 @@ async fn tool_message_without_tool_call_id_is_rejected() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/v1/chats/{}/messages", fs.chat_id))
+                .uri(format!("/api/v1/chats/{}/messages", fs.chat_id))
                 .header("authorization", format!("Bearer {}", fs.token))
                 .header("content-type", "application/json")
                 .body(Body::from(
@@ -146,7 +146,7 @@ async fn assistant_role_cannot_be_appended_by_clients() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/v1/chats/{}/messages", fs.chat_id))
+                .uri(format!("/api/v1/chats/{}/messages", fs.chat_id))
                 .header("authorization", format!("Bearer {}", fs.token))
                 .header("content-type", "application/json")
                 .body(Body::from(
