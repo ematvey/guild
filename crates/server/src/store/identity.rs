@@ -135,6 +135,40 @@ impl<'a> IdentityStore<'a> {
         }
     }
 
+    /// Finds an existing user by email within an org (any identity type).
+    pub async fn find_by_email(
+        &self,
+        org_id: Uuid,
+        email: &str,
+    ) -> Result<Option<UserRow>, ApiError> {
+        sqlx::query_as("SELECT id, org_id, email, role FROM users WHERE org_id = $1 AND email = $2")
+            .bind(org_id)
+            .bind(email)
+            .fetch_optional(self.pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Provisions an OIDC user (random unusable password, member role).
+    pub async fn create_oidc_user(&self, org_id: Uuid, email: &str) -> Result<UserRow, ApiError> {
+        use rand::RngCore;
+        let mut bytes = [0u8; 24];
+        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        let unusable = hex::encode(bytes);
+        let hash = hash_password(&unusable).map_err(ApiError::from)?;
+        let id = Uuid::now_v7();
+        sqlx::query_as(
+            "INSERT INTO users (id, org_id, email, password_hash, role, identity_type)              VALUES ($1, $2, $3, $4, 'member', 'oidc')              RETURNING id, org_id, email, role",
+        )
+        .bind(id)
+        .bind(org_id)
+        .bind(email)
+        .bind(hash)
+        .fetch_one(self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
     pub async fn authenticate(&self, email: &str, password: &str) -> Result<UserRow, ApiError> {
         let row: Option<AuthRow> = sqlx::query_as(
             "SELECT id, org_id, email, role, password_hash FROM users WHERE email = $1",

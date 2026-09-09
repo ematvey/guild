@@ -3,6 +3,7 @@ pub mod api_keys;
 pub mod chats;
 pub mod gateway;
 pub mod identity;
+pub mod oidc;
 pub mod registry;
 pub mod routines;
 pub mod teams;
@@ -38,7 +39,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 9] = [
+        const MIGRATIONS: [(&str, &str); 10] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -75,6 +76,7 @@ impl Store {
                 "0009_agent_sessions",
                 include_str!("../../migrations/0009_agent_sessions.sql"),
             ),
+            ("0010_oidc", include_str!("../../migrations/0010_oidc.sql")),
         ];
         for (name, sql) in MIGRATIONS {
             let applied: Option<i64> =
@@ -128,6 +130,10 @@ impl Store {
 
     pub fn teams(&self) -> teams::TeamStore<'_> {
         teams::TeamStore { pool: &self.pool }
+    }
+
+    pub fn oidc(&self) -> oidc::OidcStore<'_> {
+        oidc::OidcStore { pool: &self.pool }
     }
 
     pub fn routines(&self) -> routines::RoutineStore<'_> {
