@@ -56,6 +56,8 @@ async fn messages(
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
+    // 404 for chats outside the caller's org, not an empty list.
+    store.chats().get_chat(user.0.org_id, chat_id).await?;
     let msgs = store.chats().list_messages(user.0.org_id, chat_id).await?;
     Ok(Json(serde_json::json!({ "messages": msgs })))
 }
