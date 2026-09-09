@@ -1,7 +1,6 @@
 //! OIDC SSO configuration + login flow (spec §4.1): generic OIDC against the
 //! org's IdP, provisioning `identity_type='oidc'` users on first login.
 
-use crate::crypto;
 use crate::http::error::ApiError;
 use crate::http::gateway::AdminUser;
 use crate::state::AppState;
@@ -22,8 +21,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/auth/oidc/login", axum::routing::get(login))
         .route("/api/v1/auth/oidc/callback", axum::routing::get(callback))
 }
-
-use crate::store::oidc::OidcStore;
 
 // ---------- admin config ----------
 // ---------- admin config ----------
