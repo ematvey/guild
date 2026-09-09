@@ -102,6 +102,10 @@ function UpdateToast() {
   const [version, setVersion] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
   useEffect(() => {
+    // query first: the download may have finished before the webview loaded
+    invoke<string | null>("pending_update_version")
+      .then((v) => v && setVersion(v))
+      .catch(() => {});
     const unlisteners: Promise<UnlistenFn>[] = [
       listen<{ version: string }>("update.ready", (e) => setVersion(e.payload.version)),
       listen("update.failed", () => setVersion(null)),
@@ -205,6 +209,7 @@ function DesktopApp() {
   }
   return (
     <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+      <UpdateToast />
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-xl">Guild</CardTitle>
