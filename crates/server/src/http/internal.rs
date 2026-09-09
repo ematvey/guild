@@ -117,6 +117,10 @@ async fn create(
             enabled,
         )
         .await?;
+    // a newly created enabled interval routine starts its chain immediately
+    if routine.enabled && routine.trigger_kind == "interval" {
+        forward_tick(&state, &routine).await?;
+    }
     Ok(Json(
         serde_json::to_value(&routine).expect("routine serializes"),
     ))
