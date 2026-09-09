@@ -60,6 +60,14 @@ them.
   add a protocol round-trip test asserting the TS file matches exported JSON
   fixtures (spec §8 "Rust ↔ TS types stay in lockstep").
 
+## Deferred decisions (user-directed)
+
+- **MinIO is placeholder object storage** — to be replaced in the future.
+  The server speaks plain S3 via `object_store` (`GUILD_S3_URL`,
+  `GUILD_S3_BUCKET`, key id/secret), so any S3-compatible backend (or a
+  purpose-built store) is a config-only swap. Compose's `minio` +
+  `minio-init` services are the only MinIO-specific pieces.
+
 ## Verification
 
 - `cargo test --workspace`, `cargo test -p guild-server --features test-support`
