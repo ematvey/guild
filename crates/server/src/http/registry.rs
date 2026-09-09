@@ -133,6 +133,15 @@ async fn publish(
             user.0.id,
         )
         .await?;
+    // org event: registry item published (spec §4.6); best-effort
+    let _ = store
+        .events()
+        .emit(
+            user.0.org_id,
+            "registry.published",
+            serde_json::json!({ "kind": kind, "slug": slug, "version": version }),
+        )
+        .await;
     Ok(Json(json!({"slug": slug, "version": version})))
 }
 

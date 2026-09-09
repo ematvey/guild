@@ -126,7 +126,18 @@ impl<'a> IdentityStore<'a> {
         .fetch_one(self.pool)
         .await;
         match row {
-            Ok(u) => Ok(u),
+            Ok(u) => {
+                // org event: member joined (spec §4.6); best-effort
+                let events = crate::store::events::EventStore { pool: self.pool };
+                let _ = events
+                    .emit(
+                        org_id,
+                        "member.joined",
+                        serde_json::json!({ "email": email, "user_id": u.id }),
+                    )
+                    .await;
+                Ok(u)
+            }
             Err(sqlx::Error::Database(db)) if db.is_unique_violation() => Err(ApiError::conflict(
                 "email_taken",
                 "a user with this email already exists",

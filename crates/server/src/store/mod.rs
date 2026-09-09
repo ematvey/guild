@@ -2,6 +2,7 @@ pub mod agent_sessions;
 pub mod api_keys;
 pub mod attachments;
 pub mod chats;
+pub mod events;
 pub mod gateway;
 pub mod identity;
 pub mod oidc;
@@ -40,7 +41,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 12] = [
+        const MIGRATIONS: [(&str, &str); 13] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -85,6 +86,10 @@ impl Store {
             (
                 "0012_attachments",
                 include_str!("../../migrations/0012_attachments.sql"),
+            ),
+            (
+                "0013_events",
+                include_str!("../../migrations/0013_events.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {
@@ -139,6 +144,10 @@ impl Store {
 
     pub fn teams(&self) -> teams::TeamStore<'_> {
         teams::TeamStore { pool: &self.pool }
+    }
+
+    pub fn events(&self) -> events::EventStore<'_> {
+        events::EventStore { pool: &self.pool }
     }
 
     pub fn attachments(&self) -> attachments::AttachmentStore<'_> {

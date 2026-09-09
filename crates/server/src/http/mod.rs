@@ -5,6 +5,7 @@ pub mod attachments;
 pub mod auth;
 pub mod chats;
 pub mod error;
+pub mod events;
 pub mod gateway;
 pub mod internal;
 pub mod oidc;
@@ -30,6 +31,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(admin::routes())
         .merge(agents::routes())
         .merge(attachments::routes())
+        .merge(events::routes())
         .merge(oidc::routes())
         .merge(api_keys::routes())
         .merge(openai::routes())
