@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import AgentView from "./views/AgentView";
 import WebChat from "./views/WebChat";
 import { Button } from "@guild/ui/components/button";
@@ -95,6 +96,40 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
 
 /// Tauri (desktop) mode: engine login, then the full agent view. The admin
 /// console opens in the system browser with a token handoff (fragment).
+/// Bottom-right toast shown when a signed update has been downloaded and is
+/// waiting; applying happens on the user's restart (VSCode/Zed-style).
+function UpdateToast() {
+  const [version, setVersion] = useState<string | null>(null);
+  const [installing, setInstalling] = useState(false);
+  useEffect(() => {
+    const unlisteners: Promise<UnlistenFn>[] = [
+      listen<{ version: string }>("update.ready", (e) => setVersion(e.payload.version)),
+      listen("update.failed", () => setVersion(null)),
+    ];
+    return () => {
+      unlisteners.forEach((p) => p.then((u) => u()).catch(() => {}));
+    };
+  }, []);
+  if (!version) return null;
+  return (
+    <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-lg">
+      <span className="text-sm">
+        Update to <span className="font-medium">v{version}</span> ready
+      </span>
+      <Button
+        size="sm"
+        disabled={installing}
+        onClick={() => {
+          setInstalling(true);
+          invoke("install_update").catch(() => setInstalling(false));
+        }}
+      >
+        {installing ? "Restarting…" : "Restart to update"}
+      </Button>
+    </div>
+  );
+}
+
 function DesktopApp() {
   const [mode, setMode] = useState<"pair" | "manual">("pair");
   const [code, setCode] = useState("");
@@ -161,7 +196,12 @@ function DesktopApp() {
   };
 
   if (user) {
-    return <AgentView email={user} adminUrl={adminUrl} />;
+    return (
+      <>
+        <AgentView email={user} adminUrl={adminUrl} />
+        <UpdateToast />
+      </>
+    );
   }
   return (
     <div className="flex min-h-screen items-center justify-center bg-background text-foreground">

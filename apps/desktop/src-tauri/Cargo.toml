@@ -1,6 +1,6 @@
 [package]
 name = "guild-desktop"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 
@@ -10,6 +10,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
 guild-app-server = { path = "../../../crates/app-server" }
 sha2.workspace = true
 hex.workspace = true
@@ -20,6 +22,7 @@ protocol = { path = "../../../crates/protocol" }
 tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+url = "2"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Console"] }

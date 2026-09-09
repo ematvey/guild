@@ -44,7 +44,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 16] = [
+        const MIGRATIONS: [(&str, &str); 17] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -105,6 +105,10 @@ impl Store {
             (
                 "0016_pairing",
                 include_str!("../../migrations/0016_pairing.sql"),
+            ),
+            (
+                "0017_updater",
+                include_str!("../../migrations/0017_updater.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {

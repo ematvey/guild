@@ -6,7 +6,7 @@ use crate::http::gateway::AdminUser;
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -36,6 +36,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/v1/releases/{id}/download",
             axum::routing::get(download),
+        )
+        .route(
+            "/api/v1/updates/latest.json",
+            axum::routing::get(updater_manifest),
         )
 }
 
@@ -119,6 +123,7 @@ async fn upload(
         .cloned()
         .unwrap_or_else(|| "application/octet-stream".into());
     let notes = q.get("notes").cloned().unwrap_or_default();
+    let updater_signature = q.get("updater_sig").cloned().unwrap_or_default();
 
     let id = Uuid::now_v7();
     let key = object_key(version, kind, platform, id, &filename);
@@ -151,6 +156,7 @@ async fn upload(
             body.len() as i64,
             &digest,
             &signature,
+            &updater_signature,
             &notes,
             &key,
         )
@@ -204,6 +210,113 @@ async fn signing_key(
         "algorithm": "ed25519",
         "signs": "sha256 digest of the artifact (hex)",
     })))
+}
+
+/// Tauri desktop auto-updater manifest (`GET /api/v1/updates/latest.json`).
+/// Public: static-JSON format from the updater plugin, pointing at
+/// short-lived signed download URLs. Only platforms with a signed updater
+/// artifact for the newest desktop version are listed.
+async fn updater_manifest(
+    State(state): State<AppState>,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, ApiError> {
+    let rows = state.store().await?.releases().list().await?;
+    let mut latest: Option<String> = None;
+    for r in &rows {
+        if r.kind != "desktop" || r.updater_signature.is_empty() {
+            continue;
+        }
+        if latest
+            .as_deref()
+            .is_none_or(|cur| version_gt(&r.version, cur))
+        {
+            latest = Some(r.version.clone());
+        }
+    }
+    let Some(version) = latest else {
+        return Ok(axum::http::StatusCode::NO_CONTENT.into_response());
+    };
+    let exp = chrono::Utc::now().timestamp() + 86_400;
+    // the plugin needs absolute URLs: rebuild them from the request's host
+    // (respecting X-Forwarded-Proto behind TLS-terminating proxies)
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    let base = format!("{scheme}://{host}");
+    let _ = uri;
+    let mut platforms = serde_json::Map::new();
+    for target in [
+        "linux-x86_64",
+        "windows-x86_64",
+        "darwin-x86_64",
+        "darwin-aarch64",
+    ] {
+        let Some(row) = rows.iter().find(|r| {
+            r.kind == "desktop"
+                && r.version == version
+                && r.platform == target
+                && !r.updater_signature.is_empty()
+                && updater_artifact(target, &r.filename)
+        }) else {
+            continue;
+        };
+        platforms.insert(
+            target.to_string(),
+            json!({
+                "signature": row.updater_signature,
+                "url": format!("{}{}", base, sign_download(&state, row.id, exp)),
+            }),
+        );
+    }
+    if platforms.is_empty() {
+        return Ok(axum::http::StatusCode::NO_CONTENT.into_response());
+    }
+    let notes = rows
+        .iter()
+        .find(|r| r.version == version && !r.notes.is_empty())
+        .map(|r| r.notes.clone())
+        .unwrap_or_default();
+    Ok(Json(json!({
+        "version": version,
+        "notes": notes,
+        "pub_date": rows[0].created_at.to_rfc3339(),
+        "platforms": platforms,
+    }))
+    .into_response())
+}
+
+/// Whether `filename` is the updater bundle for `target` (plugin artifact kinds).
+fn updater_artifact(target: &str, filename: &str) -> bool {
+    match target {
+        "linux-x86_64" => filename.ends_with(".AppImage"),
+        "windows-x86_64" => filename.ends_with("-setup.exe"),
+        "darwin-x86_64" | "darwin-aarch64" => filename.ends_with(".app.tar.gz"),
+        _ => false,
+    }
+}
+
+/// Semver-ish ordering: compare dot-separated numeric components, then the raw string.
+fn version_gt(a: &str, b: &str) -> bool {
+    let nums = |v: &str| -> Vec<u64> {
+        v.split(['.', '-', '_'])
+            .map(|p| p.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let (na, nb) = (nums(a), nums(b));
+    for i in 0..na.len().max(nb.len()) {
+        match na.get(i).unwrap_or(&0).cmp(nb.get(i).unwrap_or(&0)) {
+            std::cmp::Ordering::Greater => return true,
+            std::cmp::Ordering::Less => return false,
+            std::cmp::Ordering::Equal => {}
+        }
+    }
+    a != b && a > b
 }
 
 /// Hands out a short-lived signed URL usable from plain <a href> links.
