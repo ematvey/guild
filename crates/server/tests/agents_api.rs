@@ -122,7 +122,7 @@ async fn workspace_session_turn_executes_tools_and_persists() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/v1/agents/sessions/{session_id}/turns"))
+                .uri(format!("/api/v1/agents/sessions/{session_id}/turns"))
                 .header("authorization", format!("Bearer {}", fs.token))
                 .header("content-type", "application/json")
                 .body(Body::from(
@@ -156,7 +156,7 @@ async fn workspace_session_turn_executes_tools_and_persists() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/agents/sessions/{session_id}"))
+                .uri(format!("/api/v1/agents/sessions/{session_id}"))
                 .header("authorization", format!("Bearer {}", fs.token))
                 .body(Body::empty())
                 .unwrap(),
