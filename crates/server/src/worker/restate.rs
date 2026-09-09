@@ -3,10 +3,10 @@
 //! here; every nondeterministic step is journaled with `ctx.run` so Restate
 //! replays results on retry instead of re-running side effects.
 //!
-//! The journaled sequence is written once as a macro and expanded per
-//! concrete context type (`ObjectContext` / `SharedObjectContext`) — generic
-//! helpers over the SDK context traits trip rustc's async-fn-in-trait Send
-//! inference (rust-lang/rust#100013).
+//! The journaled sequence is written once as macros and expanded per concrete
+//! context type (`ObjectContext` / `SharedObjectContext`) — generic helpers
+//! over the SDK context traits trip rustc's async-fn-in-trait Send inference
+//! (rust-lang/rust#100013).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,30 +42,34 @@ impl RoutineRunner {
     }
 }
 
-/// The journaled routine execution, expanded per concrete context type.
-/// Yields `HandlerResult<()>`.
-macro_rules! journaled_routine {
-    ($ctx:expr, $exec:expr, $routine_id:expr, $trigger:expr, $input:expr) => {{
-        let input: Value = $input;
-        let exec: RoutineExecutor = ($exec).clone();
-        let routine_id: Uuid = $routine_id;
-        let trigger: &'static str = $trigger;
-
-        // Journaled: load config and check the enabled flag.
-        let exec2 = exec.clone();
-        let cfg: RoutineConfig = $ctx
-            .run(move || {
-                let exec = exec2.clone();
-                async move {
-                    let cfg = exec.load_config(routine_id).await?;
-                    if !cfg.enabled {
-                        return Err(TerminalError::new("routine disabled").into());
-                    }
-                    Ok(Json(cfg))
+/// Journaled config load; a disabled routine is a terminal error (stops the
+/// interval chain instead of retrying forever).
+macro_rules! journaled_load_config {
+    ($ctx:expr, $exec:expr, $routine_id:expr) => {{
+        let exec2 = ($exec).clone();
+        $ctx.run(move || {
+            let exec = exec2.clone();
+            async move {
+                let cfg = exec.load_config($routine_id).await?;
+                if !cfg.enabled {
+                    return Err(TerminalError::new("routine disabled").into());
                 }
-            })
-            .await?
-            .into_inner();
+                Ok(Json(cfg))
+            }
+        })
+        .await?
+        .into_inner()
+    }};
+}
+
+/// Journaled run body: open the run record, run the ReAct loop with per-step
+/// journaling, close the record. Yields `HandlerResult<()>`.
+macro_rules! journaled_run_body {
+    ($ctx:expr, $exec:expr, $cfg:expr, $trigger:expr, $input:expr) => {{
+        let exec: RoutineExecutor = ($exec).clone();
+        let cfg: RoutineConfig = ($cfg).clone();
+        let trigger: &'static str = $trigger;
+        let input: Value = $input;
 
         // Journaled: open the run record.
         let exec2 = exec.clone();
@@ -73,7 +77,7 @@ macro_rules! journaled_routine {
             .run(move || {
                 let exec = exec2.clone();
                 async move {
-                    let run_id = exec.start_run(routine_id, trigger).await?;
+                    let run_id = exec.start_run(cfg.id, trigger).await?;
                     Ok(Json(run_id))
                 }
             })
@@ -199,24 +203,23 @@ impl RoutineRunner {
         payload: Json<Value>,
     ) -> HandlerResult<()> {
         let routine_id: Uuid = ctx.key().parse().map_err(anyhow::Error::msg)?;
-        journaled_routine!(
-            ctx,
-            self.executor(),
-            routine_id,
-            "webhook",
-            payload.into_inner()
-        )
+        let exec = self.executor();
+        let cfg = journaled_load_config!(ctx, exec, routine_id);
+        journaled_run_body!(ctx, exec, cfg, "webhook", payload.into_inner())
     }
 
-    /// Interval trigger: run, then reschedule ourselves.
+    /// Interval trigger: check enabled, reschedule ourselves, then run.
+    /// The enabled check happens first so a disabled routine ends its chain.
     #[handler]
     async fn tick(&self, ctx: ObjectContext<'_>, interval_secs: Json<u64>) -> HandlerResult<()> {
         let interval = interval_secs.into_inner().max(1);
+        let routine_id: Uuid = ctx.key().parse().map_err(anyhow::Error::msg)?;
+        let exec = self.executor();
+        let cfg = journaled_load_config!(ctx, exec, routine_id); // terminal when disabled → chain ends
         ctx.object_client::<RoutineRunnerClient>(ctx.key())
             .tick(Json(interval))
             .send_after(Duration::from_secs(interval));
-        let routine_id: Uuid = ctx.key().parse().map_err(anyhow::Error::msg)?;
-        journaled_routine!(ctx, self.executor(), routine_id, "interval", json!({}))
+        journaled_run_body!(ctx, exec, cfg, "interval", json!({}))
     }
 }
 
