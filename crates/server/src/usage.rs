@@ -53,6 +53,8 @@ pub struct UsageSink {
     client: clickhouse::Client,
 }
 
+use chrono::Datelike;
+
 impl UsageSink {
     pub async fn connect(url: &str, database: &str) -> anyhow::Result<Self> {
         let client = clickhouse::Client::default()
@@ -74,6 +76,34 @@ impl UsageSink {
     pub async fn record(&self, ev: UsageEvent) {
         if let Err(e) = self.write(ev.into()).await {
             tracing::warn!("usage event dropped: {e}");
+        }
+    }
+
+    /// Month-to-date spend for one (org, model) — used for route quota
+    /// enforcement (spec §4.5). Degrades to 0.0 when ClickHouse is not
+    /// initialized yet.
+    pub async fn month_spend(&self, org_id: Uuid, model: &str) -> anyhow::Result<f64> {
+        let start_of_month = chrono::Utc::now()
+            .date_naive()
+            .with_day(1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+        // uuid + model are injected as quoted literals; model comes from the
+        // org's own route table (admin-configured), not user input.
+        let query = format!(
+            "SELECT coalesce(sum(cost_usd), 0) FROM usage_events \
+             WHERE org_id = toUUID('{org}') AND model = '{model}' \
+             AND ts >= toDateTime({ts})",
+            org = org_id.simple(),
+            model = model.replace(char::is_whitespace, ""),
+            ts = start_of_month.timestamp()
+        );
+        match self.client.query(&query).fetch_one::<f64>().await {
+            Ok(v) => Ok(v),
+            Err(e) if e.to_string().contains("UNKNOWN_TABLE") => Ok(0.0),
+            Err(e) => Err(e.into()),
         }
     }
 

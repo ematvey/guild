@@ -92,6 +92,7 @@ async fn set_route(
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing provider"))?;
     let enabled = body["enabled"].as_bool().unwrap_or(true);
+    let quota_monthly_usd = body["quota_monthly_usd"].as_f64();
     let price_in = body["price_in"]
         .as_f64()
         .ok_or_else(|| ApiError::bad_request("missing price_in"))?;
@@ -108,9 +109,37 @@ async fn set_route(
             enabled,
             price_in,
             price_out,
+            quota_monthly_usd,
         )
         .await?;
     Ok(Json(serde_json::json!({})))
+}
+
+/// Route quota enforcement (spec §4.5): reject when month-to-date spend for
+/// (org, model) has reached the route's monthly cap.
+pub async fn enforce_quota(
+    state: &AppState,
+    org_id: Uuid,
+    model: &str,
+    route: &crate::store::gateway::RouteRow,
+) -> Result<(), ApiError> {
+    let Some(quota) = route.quota_monthly_usd else {
+        return Ok(());
+    };
+    let spent = state
+        .usage()
+        .await?
+        .month_spend(org_id, model)
+        .await
+        .map_err(|e| ApiError::internal(format!("quota check failed: {e}")))?;
+    if spent >= quota {
+        return Err(ApiError::new(
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "quota_exceeded",
+            format!("monthly quota for this model reached ({spent:.2} >= {quota:.2} USD)"),
+        ));
+    }
+    Ok(())
 }
 
 pub fn provider_err_to_api(e: ProviderError) -> ApiError {
@@ -149,6 +178,7 @@ async fn chat(
         .gateway()
         .resolve_route(user.0.org_id, &req.model, &master)
         .await?;
+    enforce_quota(&state, user.0.org_id, &req.model, &route).await?;
     // Org scoping: chat must belong to the caller's org.
     store.chats().get_chat(user.0.org_id, req.chat_id).await?;
 
