@@ -1,13 +1,25 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUp, Bot, FileText, Lightbulb, MessageSquare, Plus } from "lucide-react";
+import {
+  ArrowUp,
+  Bot,
+  FileText,
+  Lightbulb,
+  Menu,
+  MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+} from "lucide-react";
 
 import { Button } from "@guild/ui/components/button";
 import { Card } from "@guild/ui/components/card";
+import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { ScrollArea } from "@guild/ui/components/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Separator } from "@guild/ui/components/separator";
+import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
 import { ThemeToggle } from "../App";
@@ -32,6 +44,14 @@ const SUGGESTIONS = [
   { icon: MessageSquare, title: "Summarize text", prompt: "Summarize the following:\n\n" },
 ];
 
+const WIDTH_KEY = "guild.sidebarWidth";
+const MIN_W = 200;
+const MAX_W = 420;
+
+function clampWidth(w: number): number {
+  return Math.min(MAX_W, Math.max(MIN_W, w));
+}
+
 /// Web-mode chat: streaming conversation through the org gateway, with a
 /// server-backed conversation list. Full agent mode (local tools + project)
 /// is the desktop (Tauri) flow.
@@ -44,6 +64,13 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [busy, setBusy] = useState(false);
   const [loadingChat, setLoadingChat] = useState(false);
+  const isMobile = useIsMobile();
+  const [open, setOpen] = useState(false); // mobile drawer
+  const [collapsed, setCollapsed] = useState(false); // desktop sidebar
+  const [width, setWidth] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(WIDTH_KEY));
+    return stored ? clampWidth(stored) : 256;
+  });
   const bottom = useRef<HTMLDivElement>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
 
@@ -62,8 +89,12 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const refreshChats = async () => setChats(await listChats());
 
   const openChat = async (id: string) => {
-    if (busy || id === chatId) return;
+    if (busy || id === chatId) {
+      setOpen(false);
+      return;
+    }
     setLoadingChat(true);
+    setOpen(false);
     try {
       const msgs: ChatMessage[] = await getMessages(id);
       setBlocks(
@@ -81,6 +112,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     if (busy) return;
     setChatId(null);
     setBlocks([]);
+    setOpen(false);
     ta.current?.focus();
   };
 
@@ -135,61 +167,88 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
 
   const activeTitle = chats.find((c) => c.id === chatId)?.title ?? "New chat";
 
+  const sidebar = (
+    <SidebarContent
+      chats={chats}
+      chatId={chatId}
+      email={email}
+      onNewChat={newChat}
+      onOpenChat={openChat}
+      onSignOut={onSignOut}
+    />
+  );
+
+  // desktop: draggable resize handle
+  const startDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = width;
+      const move = (ev: MouseEvent) => {
+        const w = clampWidth(startW + ev.clientX - startX);
+        setWidth(w);
+      };
+      const up = () => {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        setWidth((w) => {
+          localStorage.setItem(WIDTH_KEY, String(w));
+          return w;
+        });
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    },
+    [width],
+  );
+
   return (
     <div className="flex h-screen bg-background text-foreground">
-      {/* sidebar */}
-      <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-card">
-        <div className="flex items-center justify-between px-3 py-3">
-          <span className="text-sm font-semibold">Guild</span>
-          <ThemeToggle />
-        </div>
-        <div className="px-2">
-          <Button variant="ghost" className="w-full justify-start gap-2 text-sm" onClick={newChat}>
-            <Plus /> New chat
-          </Button>
-        </div>
-        <div className="px-3 pb-1 pt-4 text-xs font-medium text-muted-foreground">Chats</div>
-        <ScrollArea className="min-h-0 flex-1 px-2">
-          <div className="space-y-0.5 pb-2">
-            {chats.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => void openChat(c.id)}
-                className={`w-full truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                  c.id === chatId
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                }`}
-                title={c.title}
-              >
-                {c.title || "Untitled"}
-              </button>
-            ))}
-            {chats.length === 0 && (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">No conversations yet.</p>
-            )}
-          </div>
-        </ScrollArea>
-        <Separator />
-        <div className="flex items-center justify-between px-3 py-3">
-          <span className="truncate text-xs text-muted-foreground" title={email}>
-            {email}
-          </span>
-          <button
-            className="text-xs text-muted-foreground hover:text-foreground"
-            onClick={onSignOut}
+      {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
+      {isMobile ? (
+        <Sheet open={open} onOpenChange={setOpen}>
+          <SheetContent side="left" className="w-72 p-0">
+            <SheetTitle className="sr-only">Chats</SheetTitle>
+            {sidebar}
+          </SheetContent>
+        </Sheet>
+      ) : (
+        !collapsed && (
+          <aside
+            className="relative flex shrink-0 flex-col border-r border-border bg-card"
+            style={{ width }}
           >
-            sign out
-          </button>
-        </div>
-      </aside>
+            {sidebar}
+            <div
+              className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
+              onMouseDown={startDrag}
+              title="Drag to resize"
+            />
+          </aside>
+        )
+      )}
 
       {/* main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-border px-4 py-2.5 text-sm">
-          <span className="truncate font-medium">{activeTitle}</span>
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 text-sm">
+          {isMobile ? (
+            <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
+              <Menu />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="-ml-1.5 size-8 text-muted-foreground"
+              onClick={() => setCollapsed((c) => !c)}
+              title={collapsed ? "Open sidebar" : "Close sidebar"}
+            >
+              {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+            </Button>
+          )}
+          <span className="min-w-0 flex-1 truncate font-medium">{activeTitle}</span>
           <a
-            className="text-xs text-muted-foreground hover:text-foreground"
+            className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
             href="/admin/"
             title="Admin console (same account)"
           >
@@ -198,12 +257,12 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         </header>
 
         {blocks.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center px-4">
-            <div className="flex size-14 items-center justify-center rounded-2xl border border-border bg-card">
+          <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+            <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
               <Bot className="size-7 text-muted-foreground" />
             </div>
-            <h1 className="mt-6 text-2xl font-semibold tracking-tight">What should we work on?</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <h1 className="mt-6 text-center text-2xl font-semibold tracking-tight">What should we work on?</h1>
+            <p className="mt-2 text-center text-sm text-muted-foreground">
               Chat with the org gateway{models.length === 0 ? " — no models configured yet" : ""}.
             </p>
             <div className="mt-8 grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
@@ -222,7 +281,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
               ))}
             </div>
             {models.length === 0 && (
-              <p className="mt-8 rounded-md border border-amber-700/60 bg-amber-900/30 px-3 py-1.5 text-xs text-amber-300 dark:text-amber-300">
+              <p className="mt-8 rounded-md border border-amber-700/60 bg-amber-900/30 px-3 py-1.5 text-xs text-amber-300">
                 no models configured — ask an admin to add a route
               </p>
             )}
@@ -262,7 +321,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         )}
 
         {/* composer */}
-        <div className="p-4">
+        <div className="p-3 sm:p-4">
           <div className="mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-sm">
             <Textarea
               ref={ta}
@@ -311,6 +370,67 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SidebarContent({
+  chats,
+  chatId,
+  email,
+  onNewChat,
+  onOpenChat,
+  onSignOut,
+}: {
+  chats: ChatSummary[];
+  chatId: string | null;
+  email: string;
+  onNewChat: () => void;
+  onOpenChat: (id: string) => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <div className="flex min-h-0 w-full flex-1 flex-col">
+      <div className="flex items-center justify-between px-3 py-3">
+        <span className="text-sm font-semibold">Guild</span>
+        <ThemeToggle />
+      </div>
+      <div className="px-2">
+        <Button variant="ghost" className="w-full justify-start gap-2 text-sm" onClick={onNewChat}>
+          <Plus /> New chat
+        </Button>
+      </div>
+      <div className="px-3 pb-1 pt-4 text-xs font-medium text-muted-foreground">Chats</div>
+      <ScrollArea className="min-h-0 flex-1 px-2">
+        <div className="space-y-0.5 pb-2">
+          {chats.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => onOpenChat(c.id)}
+              className={`w-full truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                c.id === chatId
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              }`}
+              title={c.title}
+            >
+              {c.title || "Untitled"}
+            </button>
+          ))}
+          {chats.length === 0 && (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">No conversations yet.</p>
+          )}
+        </div>
+      </ScrollArea>
+      <Separator />
+      <div className="flex items-center justify-between px-3 py-3">
+        <span className="truncate text-xs text-muted-foreground" title={email}>
+          {email}
+        </span>
+        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={onSignOut}>
+          sign out
+        </button>
       </div>
     </div>
   );
