@@ -113,5 +113,9 @@ required-features = ["test-support"]
 [[test]]
 name = "quota_api"
 required-features = ["test-support"]
+
+[[test]]
+name = "attachments_api"
+required-features = ["test-support"]
 [features]
 test-support = ["dep:testcontainers", "dep:testcontainers-modules", "dep:wiremock", "dep:aws-sdk-s3"]
