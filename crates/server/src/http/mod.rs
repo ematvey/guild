@@ -5,6 +5,7 @@ pub mod error;
 pub mod gateway;
 pub mod registry;
 pub mod usage;
+pub mod web;
 
 use crate::state::AppState;
 use axum::routing::get;
@@ -22,6 +23,6 @@ pub fn build_router(state: AppState) -> Router {
         .merge(registry::routes())
         .merge(admin::routes())
         .merge(usage::routes())
-        .fallback(error::not_found)
+        .fallback(web::fallback)
         .with_state(state)
 }
