@@ -121,6 +121,7 @@ pub async fn full_state() -> FullState {
         s3_access_key_id: "minioadmin".into(),
         s3_secret_access_key: "minioadmin".into(),
         restate_url: "http://placeholder:8080".into(),
+        restate_admin_url: "http://placeholder:9070".into(),
         api_url: "http://localhost:8080".into(),
         role: "all".into(),
         internal_token: Some("test-internal".into()),
