@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct RoutineConfig {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -25,7 +25,7 @@ pub struct RoutineConfig {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Completion {
     pub text: String,
     pub tool_calls: Vec<ToolCall>,
