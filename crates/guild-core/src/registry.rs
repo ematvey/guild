@@ -120,6 +120,23 @@ fn collect_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> anyhow::Resul
 
 /// Extracts a bundle into `dest` (created if needed). Rejects path traversal
 /// (no `..`, no absolute entries) and returns the manifest.
+/// Reads one file from a packed bundle without touching the filesystem.
+/// Returns None when the bundle has no such entry.
+pub fn read_bundle_file(bundle: &[u8], path: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    let gz = flate2::read::GzDecoder::new(bundle);
+    let mut tar = tar::Archive::new(gz);
+    for entry in tar.entries()? {
+        let mut entry = entry?;
+        let entry_path = entry.path()?.to_path_buf();
+        if entry_path == std::path::Path::new(path) {
+            let mut buf = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut buf)?;
+            return Ok(Some(buf));
+        }
+    }
+    Ok(None)
+}
+
 pub fn extract(bundle: &[u8], dest: &Path) -> anyhow::Result<BundleManifest> {
     std::fs::create_dir_all(dest)?;
     let gz = flate2::read::GzDecoder::new(bundle);
