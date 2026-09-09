@@ -3,6 +3,7 @@ pub mod crypto;
 pub mod http;
 pub mod state;
 pub mod store;
+pub mod usage;
 
 pub use http::build_router;
 

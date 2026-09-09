@@ -23,11 +23,18 @@ argon2.workspace = true
 rand.workspace = true
 rand_core.workspace = true
 aes-gcm.workspace = true
+clickhouse = { version = "0.15", features = ["chrono", "uuid", "rustls-tls-webpki-roots"], default-features = false }
+async-stream = "0.3"
+tracing = "0.1"
+futures.workspace = true
+wiremock = { version = "0.6", optional = true }
 testcontainers = { workspace = true, optional = true }
 testcontainers-modules = { workspace = true, optional = true }
 
 [dev-dependencies]
 testcontainers-modules.workspace = true
+wiremock = "0.6"
+tracing-subscriber = "0.3"
 
 [[test]]
 name = "http_scaffold"
@@ -37,6 +44,10 @@ required-features = ["test-support"]
 name = "auth_api"
 required-features = ["test-support"]
 
+[[test]]
+name = "gateway_api"
+required-features = ["test-support"]
+
 
 [features]
-test-support = ["dep:testcontainers", "dep:testcontainers-modules"]
+test-support = ["dep:testcontainers", "dep:testcontainers-modules", "dep:wiremock"]
