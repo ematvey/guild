@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod error;
 
 use crate::state::AppState;
@@ -10,6 +11,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/health",
             get(|| async { Json(serde_json::json!({"status": "ok"})) }),
         )
+        .merge(auth::routes())
         .fallback(error::not_found)
         .with_state(state)
 }

@@ -1,5 +1,8 @@
 pub mod identity;
 
+#[cfg(feature = "test-support")]
+pub use test_db::TestDb;
+
 use sqlx::PgPool;
 
 /// Record store — Postgres is the source of truth (spec §2).
