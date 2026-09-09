@@ -133,6 +133,24 @@ async fn dispatch(
     match req.method.as_str() {
         "login" => login_task(session, req, out_tx).await,
         "chat.send" => chat_send_task(session, req, out_tx).await,
+        "session.info" => {
+            let s = session.lock().unwrap();
+            let result = match &s.cloud {
+                Some(cloud) => Ok(Response::ok(
+                    req.id,
+                    serde_json::json!({
+                        "base_url": cloud.base_url,
+                        "token": cloud.token,
+                        "email": s.email,
+                    }),
+                )),
+                None => Ok(Response::err(
+                    req.id,
+                    RpcError::new(RpcError::APP_BASE, "not logged in"),
+                )),
+            };
+            let _ = out_tx.send(response_value(req.id, result));
+        }
         "models.list" => {
             let session = session.clone();
             let out_tx = out_tx.clone();

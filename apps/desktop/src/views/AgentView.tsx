@@ -31,7 +31,7 @@ interface RpcEvent {
   };
 }
 
-export default function AgentView({ email }: { email: string }) {
+export default function AgentView({ email, adminUrl }: { email: string; adminUrl?: string | null }) {
   const [projectDir, setProjectDir] = useState<string | null>(null);
   const [model, setModel] = useState<string>("");
   const [models, setModels] = useState<string[] | null>(null);
@@ -169,6 +169,17 @@ export default function AgentView({ email }: { email: string }) {
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
       <header className="flex items-center justify-between gap-2 border-b border-neutral-800 px-4 py-2">
         <span className="text-sm font-medium">Guild — {email}</span>
+        {adminUrl && (
+          <a
+            className="text-xs text-neutral-400 underline decoration-neutral-600 hover:text-neutral-200"
+            href={adminUrl}
+            target="_blank"
+            rel="noreferrer"
+            title="Open the admin console in your browser (account handoff via link)"
+          >
+            Admin console ↗
+          </a>
+        )}
         <Button variant="outline" onClick={pickProject} className="text-xs">
           {projectDir ? projectDir.split("/").pop() : "Open project…"}
         </Button>
