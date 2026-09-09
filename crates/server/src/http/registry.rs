@@ -5,7 +5,6 @@ use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
 use crate::http::gateway::AdminUser;
 use crate::http::internal::new_hook_token;
-use crate::http::internal::new_hook_token;
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
