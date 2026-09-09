@@ -4,12 +4,14 @@
 use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
 use crate::http::gateway::AdminUser;
+use crate::http::internal::new_hook_token;
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::{Json, Router};
 use guild_core::registry::validate_manifest;
-use serde_json::json;
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub const MAX_BUNDLE_BYTES: usize = 50 * 1024 * 1024;
@@ -27,6 +29,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/v1/registry/{kind}/{slug}/{version}/bundle",
             axum::routing::get(download),
+        )
+        .route(
+            "/api/v1/registry/{kind}/{slug}/install",
+            axum::routing::post(install),
         )
         .route(
             "/api/v1/registry/{kind}/{slug}/review",
@@ -206,4 +212,106 @@ async fn review(
         .set_review(admin.0.org_id, &kind, &slug, status)
         .await?;
     Ok(Json(json!({})))
+}
+
+/// Server-side install for `integration` registry items (spec §4.4): reads
+/// the bundle's `routine.json` and creates a disabled routine; enabling it
+/// via the routines API activates the trigger.
+async fn install(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((kind, slug)): Path<(String, String)>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    valid_kind(&kind)?;
+    if kind != "integration" {
+        return Err(ApiError::bad_request(
+            "only integration items are installed server-side; pull skills/mcp with the client",
+        ));
+    }
+    let store = state.store().await?;
+    let version = match q.get("version") {
+        Some(v) => v.clone(),
+        None => {
+            let status = store
+                .registry()
+                .review_status(user.0.org_id, &kind, &slug)
+                .await?;
+            if status != "approved" {
+                return Err(ApiError::forbidden());
+            }
+            store
+                .registry()
+                .item_versions(user.0.org_id, &kind, &slug)
+                .await?
+                .into_iter()
+                .next()
+                .map(|v| v.version)
+                .ok_or_else(|| ApiError::not_found("no versions"))?
+        }
+    };
+    // only approved items are installable
+    let status = store
+        .registry()
+        .review_status(user.0.org_id, &kind, &slug)
+        .await?;
+    if status != "approved" && user.0.role != "admin" {
+        return Err(ApiError::forbidden());
+    }
+    let stored = store
+        .registry()
+        .get_version(user.0.org_id, &kind, &slug, &version)
+        .await?;
+    let bytes = state
+        .objects()
+        .await?
+        .get(&stored.object_key)
+        .await
+        .map_err(|e| ApiError::internal(format!("bundle read failed: {e}")))?;
+    let routine_json = guild_core::registry::read_bundle_file(&bytes, "routine.json")
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::bad_request("bundle has no routine.json"))?;
+    let cfg: Value = serde_json::from_slice(&routine_json)
+        .map_err(|e| ApiError::bad_request(format!("bad routine.json: {e}")))?;
+    let trigger_kind = cfg["trigger_kind"].as_str().unwrap_or("webhook");
+    if !matches!(trigger_kind, "webhook" | "interval") {
+        return Err(ApiError::bad_request(
+            "routine.json trigger_kind must be webhook or interval",
+        ));
+    }
+    let prompt = cfg["prompt"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("routine.json missing prompt"))?;
+    let model = cfg["model"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("routine.json missing model"))?;
+    let webhook_token = crate::http::internal::new_hook_token();
+    let allowed_tools = if cfg["allowed_tools"].is_null() {
+        json!(["http_call", "storage_put"])
+    } else {
+        cfg["allowed_tools"].clone()
+    };
+    let routine = store
+        .routines()
+        .create(
+            user.0.org_id,
+            user.0.id,
+            &slug,
+            cfg["name"].as_str().unwrap_or(&slug),
+            trigger_kind,
+            if cfg["trigger_config"].is_null() {
+                json!({})
+            } else {
+                cfg["trigger_config"].clone()
+            },
+            prompt,
+            model,
+            allowed_tools,
+            &webhook_token,
+            false, // disabled until the owner enables it
+        )
+        .await?;
+    Ok(Json(
+        json!({"routine": serde_json::to_value(&routine).expect("routine serializes")}),
+    ))
 }

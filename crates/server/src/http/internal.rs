@@ -126,7 +126,7 @@ async fn create(
     ))
 }
 
-fn new_hook_token() -> String {
+pub fn new_hook_token() -> String {
     use rand::RngCore;
     let mut b = [0u8; 24];
     rand::rngs::OsRng.fill_bytes(&mut b);
