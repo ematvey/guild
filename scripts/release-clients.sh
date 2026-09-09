@@ -72,7 +72,7 @@ publish windows-x86_64 "$STAGE/Guild_${VERSION}_x64-setup.exe" "Guild_${VERSION}
 echo "==> linux: AppImage via linuxdeploy"
 # native build: the GUI links the host webkit2gtk, so zig cross-linking with
 # a glibc floor does not apply; linuxdeploy bundles the libs instead
-cargo build --release -p guild-desktop >/dev/null
+cargo build --release -p guild-desktop --features tauri/custom-protocol >/dev/null
 AD="$STAGE/guild.AppDir"
 mkdir -p "$AD/usr/bin" "$AD/usr/share/icons/hicolor/128x128/apps" "$AD/usr/share/applications"
 cp target/release/guild-desktop "$AD/usr/bin/guild"
@@ -128,7 +128,7 @@ EOF
 build_dmg() { # arch
   local arch="$1"
   local bin="target/$arch-apple-darwin/release/guild-desktop"
-  cargo zigbuild --release -p guild-desktop --target "$arch-apple-darwin" >/dev/null
+  cargo zigbuild --release -p guild-desktop --features tauri/custom-protocol --target "$arch-apple-darwin" >/dev/null
   local APP="$STAGE/Guild.app"
   rm -rf "$APP"
   make_app "$bin" "$APP"
