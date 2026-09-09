@@ -46,7 +46,11 @@ pub struct RpcError {
 
 impl RpcError {
     pub fn new(code: i64, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), data: None }
+        Self {
+            code,
+            message: message.into(),
+            data: None,
+        }
     }
 
     pub const PARSE_ERROR: i64 = -32700;
@@ -70,11 +74,23 @@ pub struct Response {
 
 impl Response {
     pub fn ok(id: u64, result: Value) -> Self {
-        Self { jsonrpc: "2.0".into(), id, protocol: PROTOCOL_VERSION, result: Some(result), error: None }
+        Self {
+            jsonrpc: "2.0".into(),
+            id,
+            protocol: PROTOCOL_VERSION,
+            result: Some(result),
+            error: None,
+        }
     }
 
     pub fn err(id: u64, error: RpcError) -> Self {
-        Self { jsonrpc: "2.0".into(), id, protocol: PROTOCOL_VERSION, result: None, error: Some(error) }
+        Self {
+            jsonrpc: "2.0".into(),
+            id,
+            protocol: PROTOCOL_VERSION,
+            result: None,
+            error: Some(error),
+        }
     }
 }
 
@@ -89,7 +105,11 @@ pub struct Event {
 
 impl Event {
     pub fn new(event: impl Into<String>, payload: Value) -> Self {
-        Self { protocol: PROTOCOL_VERSION, event: event.into(), payload }
+        Self {
+            protocol: PROTOCOL_VERSION,
+            event: event.into(),
+            payload,
+        }
     }
 }
 
@@ -112,7 +132,10 @@ pub struct Connection<R: Read, W: Write> {
 
 impl<R: Read, W: Write> Connection<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
-        Self { reader: BufReader::new(reader), writer: Mutex::new(writer) }
+        Self {
+            reader: BufReader::new(reader),
+            writer: Mutex::new(writer),
+        }
     }
 
     pub fn write_line(&self, value: &impl Serialize) -> std::io::Result<()> {
@@ -126,20 +149,31 @@ impl<R: Read, W: Write> Connection<R, W> {
     pub fn read_message(&mut self) -> Option<Result<Message, RpcError>> {
         let mut line = String::new();
         loop {
+            line.clear();
             match self.reader.read_line(&mut line) {
                 Ok(0) => {
-                    return if line.is_empty() { None } else { Some(Err(RpcError::new(RpcError::PARSE_ERROR, "unterminated line"))) }
+                    return if line.is_empty() {
+                        None
+                    } else {
+                        Some(Err(RpcError::new(
+                            RpcError::PARSE_ERROR,
+                            "unterminated line",
+                        )))
+                    }
                 }
-                Ok(_) => break,
+                Ok(_) => {
+                    if line.trim().is_empty() {
+                        continue; // skip blank separator lines
+                    }
+                    break;
+                }
                 Err(e) => return Some(Err(RpcError::new(RpcError::INTERNAL, e.to_string()))),
             }
         }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            self.read_message()
-        } else {
-            Some(serde_json::from_str::<Message>(trimmed).map_err(|e| RpcError::new(RpcError::PARSE_ERROR, e.to_string())))
-        }
+        Some(
+            serde_json::from_str::<Message>(line.trim())
+                .map_err(|e| RpcError::new(RpcError::PARSE_ERROR, e.to_string())),
+        )
     }
 }
 
@@ -165,8 +199,10 @@ mod tests {
         let mut wire: Vec<u8> = Vec::new();
         {
             let conn = Connection::new(std::io::empty(), &mut wire);
-            conn.write_line(&Request::new(7, "ping", Value::Null)).unwrap();
-            conn.write_line(&Event::new("chat.delta", serde_json::json!({"t": "a"}))).unwrap();
+            conn.write_line(&Request::new(7, "ping", Value::Null))
+                .unwrap();
+            conn.write_line(&Event::new("chat.delta", serde_json::json!({"t": "a"})))
+                .unwrap();
         }
         // Read them back.
         let mut conn = Connection::new(Cursor::new(wire), std::io::sink());

@@ -10,7 +10,7 @@ pub struct LoginRequest {
     pub password: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UserInfo {
     pub id: Uuid,
     pub email: String,
@@ -93,7 +93,9 @@ mod tests {
 
     #[test]
     fn stream_event_roundtrip() {
-        let d = StreamEvent::Delta { content: "hi".into() };
+        let d = StreamEvent::Delta {
+            content: "hi".into(),
+        };
         let v = serde_json::to_value(&d).unwrap();
         assert_eq!(v["type"], "delta");
         assert_eq!(v["content"], "hi");
