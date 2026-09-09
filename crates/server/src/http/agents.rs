@@ -326,7 +326,7 @@ async fn run_turn(
         }
 
         match result {
-            Ok(res) => {
+            Ok(_res) => {
                 // persist the new messages (assistant tool calls + results + final)
                 for m in &history[before..] {
                     let _ = store_for_loop
@@ -361,14 +361,6 @@ async fn run_turn(
                         request_id: Uuid::now_v7(),
                     })
                     .await;
-                if res.stopped_at_max_steps {
-                    let _ = tx
-                        .send(TurnFrame {
-                            event: "done",
-                            payload: json!({"summary": "stopped at step limit"}),
-                        })
-                        .await;
-                }
             }
             Err(e) => {
                 let _ = tx
