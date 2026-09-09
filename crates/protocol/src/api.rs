@@ -5,12 +5,16 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct UserInfo {
     pub id: Uuid,
     pub email: String,
@@ -19,18 +23,24 @@ pub struct UserInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct LoginResponse {
     pub token: String,
     pub user: UserInfo,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct CreateChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct Chat {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -41,6 +51,8 @@ pub struct Chat {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct Message {
     pub role: String,
     pub content: String,
@@ -74,6 +86,8 @@ impl Message {
 
 /// Declared callable tool (JSON Schema parameters).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
@@ -82,6 +96,8 @@ pub struct ToolSpec {
 
 /// One tool invocation requested by the model.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -89,6 +105,8 @@ pub struct ToolCall {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct ChatCompletionRequest {
     pub chat_id: Uuid,
     pub model: String,
@@ -102,6 +120,8 @@ pub struct ChatCompletionRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct MessageRow {
     pub id: Uuid,
     pub chat_id: Uuid,
@@ -123,6 +143,8 @@ pub struct MessageRow {
 /// Frames streamed from the gateway on `POST /api/v1/gateway/chat`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub enum StreamEvent {
     Delta {
         content: String,

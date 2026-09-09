@@ -10,6 +10,11 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Request from client to server (either side can be "client").
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts",
+    ts(export, export_to = "rpc/Request.ts", optional_fields)
+)]
 pub struct Request {
     pub jsonrpc: String,
     pub id: u64,
@@ -37,6 +42,11 @@ impl Request {
 
 #[derive(Serialize, Deserialize, Debug, Clone, thiserror::Error)]
 #[error("rpc error {code}: {message}")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts",
+    ts(export, export_to = "rpc/RpcError.ts", optional_fields)
+)]
 pub struct RpcError {
     pub code: i64,
     pub message: String,
@@ -62,6 +72,11 @@ impl RpcError {
 
 /// Reply to a `Request`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts",
+    ts(export, export_to = "rpc/Response.ts", optional_fields)
+)]
 pub struct Response {
     pub jsonrpc: String,
     pub id: u64,
@@ -96,6 +111,11 @@ impl Response {
 
 /// Unsolicited server-push message (streaming deltas, status).
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts",
+    ts(export, export_to = "rpc/Event.ts", optional_fields)
+)]
 pub struct Event {
     pub protocol: u32,
     pub event: String,
@@ -116,6 +136,8 @@ impl Event {
 /// One message per line — any JSON value.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "rpc/Message.ts"))]
 pub enum Message {
     Request(Request),
     Response(Response),
