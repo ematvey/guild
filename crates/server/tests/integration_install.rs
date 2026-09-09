@@ -118,7 +118,7 @@ async fn integration_install_creates_disabled_routine() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/routines/{routine_id}"))
+                .uri(format!("/api/v1/routines/{routine_id}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
