@@ -1,9 +1,18 @@
+# Web UI stage.
+FROM node:22 AS webui
+WORKDIR /web
+COPY apps/webui/package.json apps/webui/package-lock.json* ./
+RUN npm install
+COPY apps/webui ./
+RUN npm run build
+
 # Build stage: compile guild-server from the workspace.
 FROM rust:1.97 AS build
 WORKDIR /build
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 COPY apps/desktop/src-tauri ./apps/desktop/src-tauri
+COPY --from=webui /web/dist ./apps/webui/dist
 RUN cargo build --release -p guild-server
 
 # Runtime stage.

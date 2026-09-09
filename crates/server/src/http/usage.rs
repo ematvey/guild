@@ -89,11 +89,13 @@ async fn usage(
     let client = clickhouse::Client::default()
         .with_url(&state.config.clickhouse_url)
         .with_database(&state.config.clickhouse_database);
-    let rows: Vec<UsageAggRow> = client
-        .query(&sql)
-        .fetch_all()
-        .await
-        .map_err(|e| ApiError::internal(format!("usage query failed: {e}")))?;
+    let rows: Vec<UsageAggRow> = match client.query(&sql).fetch_all().await {
+        Ok(rows) => rows,
+        Err(e) if e.to_string().contains("UNKNOWN_TABLE") => {
+            return Ok(Json(json!({ "rows": [] })));
+        }
+        Err(e) => return Err(ApiError::internal(format!("usage query failed: {e}"))),
+    };
     Ok(Json(json!({ "rows": rows })))
 }
 
@@ -118,22 +120,31 @@ async fn summary(
     let client = clickhouse::Client::default()
         .with_url(&state.config.clickhouse_url)
         .with_database(&state.config.clickhouse_database);
-    let today: f64 = client
+    let missing_table = |e: &str| e.contains("UNKNOWN_TABLE");
+    let today: f64 = match client
         .query(&format!(
             "SELECT coalesce(sum(cost_usd), 0) FROM usage_events WHERE {scope} AND ts >= toDateTime({})",
             start_of_day.timestamp()
         ))
         .fetch_one()
         .await
-        .map_err(|e| ApiError::internal(format!("usage query failed: {e}")))?;
-    let month: f64 = client
+    {
+        Ok(v) => v,
+        Err(e) if missing_table(&e.to_string()) => 0.0,
+        Err(e) => return Err(ApiError::internal(format!("usage query failed: {e}"))),
+    };
+    let month: f64 = match client
         .query(&format!(
             "SELECT coalesce(sum(cost_usd), 0) FROM usage_events WHERE {scope} AND ts >= toDateTime({})",
             start_of_month.timestamp()
         ))
         .fetch_one()
         .await
-        .map_err(|e| ApiError::internal(format!("usage query failed: {e}")))?;
+    {
+        Ok(v) => v,
+        Err(e) if missing_table(&e.to_string()) => 0.0,
+        Err(e) => return Err(ApiError::internal(format!("usage query failed: {e}"))),
+    };
     Ok(Json(
         json!({ "today_cost_usd": today, "month_cost_usd": month }),
     ))
