@@ -27,19 +27,23 @@ async fn openai_stream_yields_deltas_then_usage() {
         .await;
 
     let p = OpenAiProvider::new();
-    let msgs = vec![Message {
-        role: "user".into(),
-        content: "say hi".into(),
-    }];
+    let msgs = vec![Message::user("hi")];
     let req = ProviderRequest {
         model: "gpt-test",
         system: None,
         messages: &msgs,
         api_key: "sk-test",
         base_url: &server.uri(),
+        tools: None,
     };
     let stream = p.chat_stream(req).await.unwrap();
-    let chunks: Vec<_> = stream.map(|r| r.unwrap()).collect().await;
+    let chunks: Vec<_> = stream
+        .map(|r| match r.unwrap() {
+            guild_core::provider::ProviderChunk::Text(c) => c,
+            other => panic!("unexpected chunk {other:?}"),
+        })
+        .collect()
+        .await;
     let text: String = chunks.iter().map(|c| c.text_delta.as_str()).collect();
     assert_eq!(text, "Hello");
     assert_eq!(chunks.last().unwrap().tokens_in, Some(3));
@@ -63,19 +67,23 @@ async fn anthropic_stream_yields_deltas_then_usage() {
         .await;
 
     let p = AnthropicProvider::new();
-    let msgs = vec![Message {
-        role: "user".into(),
-        content: "saluer".into(),
-    }];
+    let msgs = vec![Message::user("hi")];
     let req = ProviderRequest {
         model: "claude-test",
         system: Some("be brief"),
         messages: &msgs,
         api_key: "ak-test",
         base_url: &server.uri(),
+        tools: None,
     };
     let stream = p.chat_stream(req).await.unwrap();
-    let chunks: Vec<_> = stream.map(|r| r.unwrap()).collect().await;
+    let chunks: Vec<_> = stream
+        .map(|r| match r.unwrap() {
+            guild_core::provider::ProviderChunk::Text(c) => c,
+            other => panic!("unexpected chunk {other:?}"),
+        })
+        .collect()
+        .await;
     let text: String = chunks.iter().map(|c| c.text_delta.as_str()).collect();
     assert_eq!(text, "Salut");
     assert_eq!(chunks[0].tokens_in, Some(4));
@@ -90,16 +98,14 @@ async fn provider_auth_error_is_mapped() {
         .mount(&server)
         .await;
     let p = OpenAiProvider::new();
-    let msgs = vec![Message {
-        role: "user".into(),
-        content: "x".into(),
-    }];
+    let msgs = vec![Message::user("hi")];
     let req = ProviderRequest {
         model: "m",
         system: None,
         messages: &msgs,
         api_key: "bad",
         base_url: &server.uri(),
+        tools: None,
     };
     let err = p.chat_stream(req).await.err().unwrap();
     assert!(matches!(err, guild_core::ProviderError::Auth));

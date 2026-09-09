@@ -1,12 +1,13 @@
 //! Anthropic-shaped wire protocol: `POST {base}/v1/messages` with
 //! `x-api-key` + `anthropic-version` headers and `stream: true`.
 
-use super::{ChatChunk, ModelProvider, ProviderError, ProviderRequest};
+use super::{ChatChunk, ModelProvider, ProviderChunk, ProviderError, ProviderRequest};
+use async_stream::stream;
 use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures::stream::BoxStream;
 use futures::StreamExt;
-use protocol::api::Message;
+use protocol::api::{ToolCall, ToolSpec};
 
 /// Anthropic requires an explicit cap on every request.
 const DEFAULT_MAX_TOKENS: u32 = 4096;
@@ -19,11 +20,44 @@ impl AnthropicProvider {
     }
 
     fn body(req: &ProviderRequest<'_>) -> serde_json::Value {
-        let messages: Vec<serde_json::Value> = req
-            .messages
-            .iter()
-            .map(|m: &Message| serde_json::json!({"role": m.role, "content": m.content}))
-            .collect();
+        // Anthropic conversation shape: assistant tool_use blocks and tool
+        // results as user "tool_result" blocks.
+        let mut messages: Vec<serde_json::Value> = Vec::new();
+        for m in req.messages {
+            if m.role == "tool" {
+                let result = serde_json::json!({
+                    "type": "tool_result",
+                    "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
+                    "content": m.content,
+                });
+                if let Some(last) = messages.last_mut() {
+                    if last["role"] == "user" && last["content"].is_array() {
+                        last["content"].as_array_mut().unwrap().push(result);
+                        continue;
+                    }
+                }
+                messages.push(serde_json::json!({"role": "user", "content": [result]}));
+                continue;
+            }
+            if m.role == "assistant" {
+                let Some(calls) = &m.tool_calls else {
+                    messages.push(serde_json::json!({"role": m.role, "content": m.content}));
+                    continue;
+                };
+                let mut blocks: Vec<serde_json::Value> = Vec::new();
+                if !m.content.is_empty() {
+                    blocks.push(serde_json::json!({"type": "text", "text": m.content}));
+                }
+                for c in calls {
+                    blocks.push(serde_json::json!({
+                        "type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments,
+                    }));
+                }
+                messages.push(serde_json::json!({"role": "assistant", "content": blocks}));
+                continue;
+            }
+            messages.push(serde_json::json!({"role": m.role, "content": m.content}));
+        }
         let mut body = serde_json::json!({
             "model": req.model,
             "max_tokens": DEFAULT_MAX_TOKENS,
@@ -33,10 +67,23 @@ impl AnthropicProvider {
         if let Some(system) = req.system {
             body["system"] = serde_json::Value::String(system.to_string());
         }
+        if let Some(tools) = req.tools {
+            body["tools"] = serde_json::Value::Array(
+                tools
+                    .iter()
+                    .map(|t: &ToolSpec| {
+                        serde_json::json!({
+                            "name": t.name, "description": t.description, "input_schema": t.parameters,
+                        })
+                    })
+                    .collect(),
+            );
+        }
         body
     }
 
-    /// Parses one SSE data frame into zero or one chunk.
+    /// Parses one SSE data frame into zero or one text chunk (tool assembly
+    /// happens in the stream loop below).
     fn parse_frame(data: &str) -> Option<ChatChunk> {
         let v: serde_json::Value = serde_json::from_str(data.trim()).ok()?;
         let mut chunk = ChatChunk::default();
@@ -46,7 +93,7 @@ impl AnthropicProvider {
                     .as_u64()
                     .map(|n| n as u32);
             }
-            "content_block_delta" => {
+            "content_block_delta" if v["delta"]["type"].as_str() == Some("text_delta") => {
                 chunk.text_delta = v["delta"]["text"].as_str().unwrap_or("").to_string();
             }
             "message_delta" => {
@@ -68,6 +115,13 @@ impl Default for AnthropicProvider {
     }
 }
 
+#[derive(Clone, Default)]
+struct PartialCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
 #[async_trait]
 impl ModelProvider for AnthropicProvider {
     fn name(&self) -> &'static str {
@@ -77,7 +131,7 @@ impl ModelProvider for AnthropicProvider {
     async fn chat_stream(
         &self,
         req: ProviderRequest<'_>,
-    ) -> Result<BoxStream<'static, Result<ChatChunk, ProviderError>>, ProviderError> {
+    ) -> Result<BoxStream<'static, Result<ProviderChunk, ProviderError>>, ProviderError> {
         let url = format!("{}/v1/messages", req.base_url.trim_end_matches('/'));
         let resp = reqwest::Client::new()
             .post(&url)
@@ -92,23 +146,79 @@ impl ModelProvider for AnthropicProvider {
             let body = resp.text().await.unwrap_or_default();
             return Err(ProviderError::from_status(status.as_u16(), body));
         }
-        let stream = resp
-            .bytes_stream()
-            .eventsource()
-            .filter_map(|ev| async move {
-                match ev {
-                    Ok(ev) => Self::parse_frame(&ev.data).map(Ok),
-                    Err(e) => Some(Err(ProviderError::Stream(e.to_string()))),
+        let stream = stream! {
+            // per-block partial tool calls, keyed by block index
+            let mut partials: std::collections::BTreeMap<u32, PartialCall> = Default::default();
+            let mut events = resp.bytes_stream().eventsource();
+            while let Some(ev) = events.next().await {
+                let ev = match ev {
+                    Ok(ev) => ev,
+                    Err(e) => {
+                        yield Err(ProviderError::Stream(e.to_string()));
+                        break;
+                    }
+                };
+                let data = ev.data.trim().to_string();
+                if data.is_empty() {
+                    continue;
                 }
-            })
-            .boxed();
-        Ok(stream)
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) else {
+                    continue;
+                };
+                if let Some(chunk) = Self::parse_frame(&data) {
+                    yield Ok(ProviderChunk::Text(chunk));
+                }
+                let ty = v["type"].as_str().unwrap_or("");
+                let idx = v["index"].as_u64().unwrap_or(0) as u32;
+                match ty {
+                    "content_block_start" if v["content_block"]["type"] == "tool_use" => {
+                        let id = v["content_block"]["id"].as_str().unwrap_or("").to_string();
+                        let name = v["content_block"]["name"].as_str().unwrap_or("").to_string();
+                        partials.insert(idx, PartialCall { id: id.clone(), name: name.clone(), arguments: String::new() });
+                        yield Ok(ProviderChunk::ToolCallDelta {
+                            index: idx,
+                            id: Some(id),
+                            name: Some(name),
+                            arguments_delta: String::new(),
+                        });
+                    }
+                    "content_block_delta" if v["delta"]["type"].as_str() == Some("input_json_delta") => {
+                        let delta = v["delta"]["partial_json"].as_str().unwrap_or("").to_string();
+                        if let Some(p) = partials.get_mut(&idx) {
+                            p.arguments.push_str(&delta);
+                        }
+                        yield Ok(ProviderChunk::ToolCallDelta {
+                            index: idx,
+                            id: None,
+                            name: None,
+                            arguments_delta: delta,
+                        });
+                    }
+                    "content_block_stop" => {
+                        if let Some(p) = partials.remove(&idx) {
+                            let arguments = if p.arguments.trim().is_empty() {
+                                serde_json::Value::Object(serde_json::Map::new())
+                            } else {
+                                serde_json::from_str(&p.arguments)
+                                    .unwrap_or(serde_json::Value::String(p.arguments.clone()))
+                            };
+                            yield Ok(ProviderChunk::ToolCallDone {
+                                call: ToolCall { id: p.id, name: p.name, arguments },
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        };
+        Ok(stream.boxed())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use protocol::api::Message;
 
     #[test]
     fn parse_delta_frame() {
@@ -131,5 +241,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.tokens_out, Some(7));
+    }
+
+    #[test]
+    fn body_maps_tool_messages_to_anthropic_shape() {
+        let msgs = vec![
+            Message::user("hi"),
+            Message {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: Some(vec![ToolCall {
+                    id: "c1".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "a"}),
+                }]),
+                tool_call_id: None,
+            },
+            Message::tool_result("c1", "contents"),
+        ];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+        };
+        let body = AnthropicProvider::body(&req);
+        let blocks = &body["messages"][1]["content"];
+        assert_eq!(blocks[0]["type"], "tool_use");
+        assert_eq!(blocks[0]["id"], "c1");
+        let result = &body["messages"][2]["content"][0];
+        assert_eq!(result["type"], "tool_result");
+        assert_eq!(result["tool_use_id"], "c1");
     }
 }

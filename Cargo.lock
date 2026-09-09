@@ -1885,6 +1885,7 @@ name = "guild-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "chrono",
  "eventsource-stream",

@@ -9,14 +9,29 @@ pub use openai::OpenAiProvider;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use protocol::api::Message;
+use protocol::api::{Message, ToolCall, ToolSpec};
 
-/// One streamed piece of an assistant turn. Usage rides on the final chunk.
+/// One streamed piece of an assistant turn.
 #[derive(Debug, Clone, Default)]
 pub struct ChatChunk {
     pub text_delta: String,
     pub tokens_in: Option<u32>,
     pub tokens_out: Option<u32>,
+}
+
+/// Provider-level stream item: text/usage or tool-call assembly.
+#[derive(Debug, Clone)]
+pub enum ProviderChunk {
+    Text(ChatChunk),
+    ToolCallDelta {
+        index: u32,
+        id: Option<String>,
+        name: Option<String>,
+        arguments_delta: String,
+    },
+    ToolCallDone {
+        call: ToolCall,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +62,8 @@ pub struct ProviderRequest<'a> {
     pub messages: &'a [Message],
     pub api_key: &'a str,
     pub base_url: &'a str,
+    /// Declared tools for agentic turns (None = plain chat).
+    pub tools: Option<&'a [ToolSpec]>,
 }
 
 #[async_trait]
@@ -55,5 +72,5 @@ pub trait ModelProvider: Send + Sync {
     async fn chat_stream(
         &self,
         req: ProviderRequest<'_>,
-    ) -> Result<BoxStream<'static, Result<ChatChunk, ProviderError>>, ProviderError>;
+    ) -> Result<BoxStream<'static, Result<ProviderChunk, ProviderError>>, ProviderError>;
 }
