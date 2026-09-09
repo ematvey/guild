@@ -29,6 +29,7 @@ object_store = { version = "0.14", default-features = false, features = ["aws"] 
 include_dir = "0.7"
 mime_guess = "2"
 tracing = "0.1"
+reqwest.workspace = true
 futures.workspace = true
 wiremock = { version = "0.6", optional = true }
 testcontainers = { workspace = true, optional = true }
@@ -80,5 +81,8 @@ required-features = ["test-support"]
 name = "webui_serving"
 required-features = ["test-support"]
 
+[[test]]
+name = "routines_api"
+required-features = ["test-support"]
 [features]
 test-support = ["dep:testcontainers", "dep:testcontainers-modules", "dep:wiremock", "dep:aws-sdk-s3"]
