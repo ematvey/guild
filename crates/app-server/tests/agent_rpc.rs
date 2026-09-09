@@ -4,6 +4,31 @@ use std::io::Write as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Collision-proof loopback listener: skip ports referenced in /proc/net/tcp{,6}
+/// (docker-proxy wildcard binds are invisible to bind(0) with SO_REUSEADDR).
+async fn standalone_listener() -> tokio::net::TcpListener {
+    loop {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut ports = std::collections::HashSet::<u16>::new();
+        for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                for line in content.lines().skip(1) {
+                    let fields: Vec<&str> = line.split_whitespace().collect();
+                    if fields.len() > 1 {
+                        if let Some(p) = fields[1].rsplit(':').next().and_then(|p| p.parse().ok()) {
+                            ports.insert(p);
+                        }
+                    }
+                }
+            }
+        }
+        if !ports.contains(&port) {
+            return listener;
+        }
+    }
+}
+
 fn collect_lines(buf: &[u8]) -> Vec<Value> {
     String::from_utf8(buf.to_vec())
         .unwrap()
@@ -45,7 +70,10 @@ impl std::io::Write for Tee {
 
 /// Provider script: first call asks to run a command; second call concludes.
 async fn scripted_provider() -> wiremock::MockServer {
-    let server = wiremock::MockServer::start().await;
+    let server = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_moved = calls.clone();
     wiremock::Mock::given(wiremock::matchers::method("POST"))

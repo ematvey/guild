@@ -1,12 +1,15 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use guild_server::test_support::full_state;
+use guild_server::test_support::{full_state, standalone_listener};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
 /// Fake OIDC IdP: discovery, token, userinfo over wiremock.
 async fn fake_idp(user_email: &str) -> wiremock::MockServer {
-    let server = wiremock::MockServer::start().await;
+    let server = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     let email = user_email.to_string();
     let uri = server.uri();
 

@@ -6,6 +6,31 @@ use protocol::api::Message;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// Collision-proof loopback listener: skip ports referenced in /proc/net/tcp{,6}
+/// (docker-proxy wildcard binds are invisible to bind(0) with SO_REUSEADDR).
+async fn standalone_listener() -> tokio::net::TcpListener {
+    loop {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut ports = std::collections::HashSet::<u16>::new();
+        for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                for line in content.lines().skip(1) {
+                    let fields: Vec<&str> = line.split_whitespace().collect();
+                    if fields.len() > 1 {
+                        if let Some(p) = fields[1].rsplit(':').next().and_then(|p| p.parse().ok()) {
+                            ports.insert(p);
+                        }
+                    }
+                }
+            }
+        }
+        if !ports.contains(&port) {
+            return listener;
+        }
+    }
+}
+
 fn sse(body: &str) -> ResponseTemplate {
     ResponseTemplate::new(200)
         .insert_header("content-type", "text/event-stream")
@@ -14,7 +39,10 @@ fn sse(body: &str) -> ResponseTemplate {
 
 #[tokio::test]
 async fn openai_stream_yields_deltas_then_usage() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(sse(
@@ -52,7 +80,10 @@ async fn openai_stream_yields_deltas_then_usage() {
 
 #[tokio::test]
 async fn anthropic_stream_yields_deltas_then_usage() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
         .respond_with(sse(
@@ -92,7 +123,10 @@ async fn anthropic_stream_yields_deltas_then_usage() {
 
 #[tokio::test]
 async fn provider_auth_error_is_mapped() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(401).set_body_string("bad key"))
         .mount(&server)
