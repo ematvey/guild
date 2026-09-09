@@ -8,22 +8,6 @@ pub struct Store {
     pool: PgPool,
 }
 
-/// Owns the testcontainer so it lives as long as the store.
-pub struct TestDb {
-    pub store: Store,
-    #[allow(dead_code)]
-    container: testcontainers_modules::testcontainers::ContainerAsync<
-        testcontainers_modules::postgres::Postgres,
-    >,
-}
-
-impl std::ops::Deref for TestDb {
-    type Target = Store;
-    fn deref(&self) -> &Store {
-        &self.store
-    }
-}
-
 impl Store {
     pub async fn connect(database_url: &str) -> anyhow::Result<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()
@@ -78,19 +62,44 @@ impl Store {
         identity::IdentityStore { pool: &self.pool }
     }
 
-    /// Spins a Postgres testcontainer and returns a store backed by it.
-    pub async fn connect_test() -> anyhow::Result<TestDb> {
-        use testcontainers_modules::testcontainers::runners::AsyncRunner;
-        let container = testcontainers_modules::postgres::Postgres::default()
-            .start()
-            .await?;
-        let port = container.get_host_port_ipv4(5432).await?;
-        let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-        let store = Self::connect(&url).await?;
-        Ok(TestDb { store, container })
-    }
-
+    /// Access for stores added in later tasks; unused until then.
+    #[allow(dead_code)]
     pub(crate) fn pool(&self) -> &PgPool {
         &self.pool
+    }
+}
+
+#[cfg(feature = "test-support")]
+mod test_db {
+    use super::Store;
+
+    /// Owns the testcontainer so it lives as long as the store.
+    pub struct TestDb {
+        pub store: Store,
+        #[allow(dead_code)]
+        container: testcontainers_modules::testcontainers::ContainerAsync<
+            testcontainers_modules::postgres::Postgres,
+        >,
+    }
+
+    impl std::ops::Deref for TestDb {
+        type Target = Store;
+        fn deref(&self) -> &Store {
+            &self.store
+        }
+    }
+
+    impl Store {
+        /// Spins a Postgres testcontainer and returns a store backed by it.
+        pub async fn connect_test() -> anyhow::Result<TestDb> {
+            use testcontainers_modules::testcontainers::runners::AsyncRunner;
+            let container = testcontainers_modules::postgres::Postgres::default()
+                .start()
+                .await?;
+            let port = container.get_host_port_ipv4(5432).await?;
+            let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+            let store = Self::connect(&url).await?;
+            Ok(TestDb { store, container })
+        }
     }
 }
