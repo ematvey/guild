@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod api_keys;
 pub mod auth;
 pub mod chats;
 pub mod error;
@@ -23,6 +24,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(gateway::routes())
         .merge(registry::routes())
         .merge(admin::routes())
+        .merge(api_keys::routes())
         .merge(internal::routines_routes())
         .merge(internal::internal_routes())
         .merge(usage::routes())

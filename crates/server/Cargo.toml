@@ -17,6 +17,7 @@ tower.workspace = true
 tower-http.workspace = true
 sqlx.workspace = true
 hex.workspace = true
+sha2.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 argon2.workspace = true
@@ -90,6 +91,10 @@ required-features = ["test-support"]
 
 [[test]]
 name = "executor"
+required-features = ["test-support"]
+
+[[test]]
+name = "api_keys"
 required-features = ["test-support"]
 [features]
 test-support = ["dep:testcontainers", "dep:testcontainers-modules", "dep:wiremock", "dep:aws-sdk-s3"]
