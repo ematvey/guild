@@ -48,6 +48,10 @@ required-features = ["test-support"]
 name = "gateway_api"
 required-features = ["test-support"]
 
+[[test]]
+name = "chats_api"
+required-features = ["test-support"]
+
 
 [features]
 test-support = ["dep:testcontainers", "dep:testcontainers-modules", "dep:wiremock"]

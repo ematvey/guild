@@ -134,6 +134,35 @@ pub async fn full_state() -> FullState {
     }
 }
 
+/// Creates a second org with a chat, for cross-org access tests.
+pub async fn insert_org_with_chat(store: &Store) -> Uuid {
+    let org = Uuid::now_v7();
+    let user = Uuid::now_v7();
+    let chat = Uuid::now_v7();
+    sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'other')")
+        .bind(org)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO users (id, org_id, email, password_hash, role, identity_type) \
+         VALUES ($1, $2, 'x@y.z', 'x', 'member', 'managed')",
+    )
+    .bind(user)
+    .bind(org)
+    .execute(store.pool())
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO chats (id, org_id, user_id, title) VALUES ($1, $2, $3, 'foreign')")
+        .bind(chat)
+        .bind(org)
+        .bind(user)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    chat
+}
+
 /// `(row_count, total_cost)` from the usage_events table.
 pub async fn clickhouse_usage_rows(state: &AppState) -> (u64, f64) {
     let client = clickhouse::Client::default()
