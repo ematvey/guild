@@ -13,10 +13,15 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None => {
-            let stdin = std::io::stdin().lock();
-            let stdout = std::io::stdout().lock();
-            let (session, _writer) =
-                jsonrpc_loop::serve(stdin, stdout, jsonrpc_loop::Session::default())?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()?;
+            let (session, _writer) = rt.block_on(jsonrpc_loop::serve(
+                std::io::stdin(),  // Stdin handle: Read + Send + 'static
+                std::io::stdout(), // Stdout handle: Write + Send + 'static
+                jsonrpc_loop::Session::default(),
+            ))?;
             let _ = session;
             Ok(())
         }

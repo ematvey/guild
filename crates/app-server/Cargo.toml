@@ -15,8 +15,11 @@ thiserror.workspace = true
 reqwest.workspace = true
 eventsource-stream.workspace = true
 futures.workspace = true
+async-trait.workspace = true
+async-stream = "0.3"
 uuid.workspace = true
 dirs = "6"
 
 [dev-dependencies]
 guild-server = { path = "../server", features = ["test-support"] }
+wiremock = "0.6"

@@ -96,6 +96,9 @@ pub struct ChatCompletionRequest {
     /// Agentic tool calling: declared tools for this turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolSpec>>,
+    /// Optional system prompt (agent sessions set this).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
