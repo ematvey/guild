@@ -60,8 +60,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 impl<'a> ReleaseStore<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
+        id: Uuid,
         version: &str,
         kind: &str,
         platform: &str,
@@ -77,7 +79,7 @@ impl<'a> ReleaseStore<'a> {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
              RETURNING id, version, kind, platform, filename, content_type, size_bytes, sha256, notes, created_at",
         )
-        .bind(Uuid::now_v7())
+        .bind(id)
         .bind(version)
         .bind(kind)
         .bind(platform)

@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use guild_server::test_support::full_state;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tower::ServiceExt;
 
 const ARTIFACT: &[u8] = b"#!/bin/sh\necho guild-cli fake binary\n";
@@ -116,7 +116,7 @@ async fn release_upload_list_signed_download_round_trip() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/releases/{release_id}/download-url"))
+                .uri(format!("/api/v1/releases/{release_id}/download-url"))
                 .header("authorization", format!("Bearer {member_token}"))
                 .body(Body::empty())
                 .unwrap(),

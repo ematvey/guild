@@ -33,8 +33,8 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-fn object_key(version: &str, kind: &str, platform: &str, filename: &str) -> String {
-    format!("releases/{version}/{kind}/{platform}/{filename}")
+fn object_key(version: &str, kind: &str, platform: &str, id: Uuid, filename: &str) -> String {
+    format!("releases/{version}/{kind}/{platform}/{id}/{filename}")
 }
 
 /// Short-lived signed download URL: `/dl?exp=<unix>&sig=<hmac(id,exp)>`.
@@ -115,7 +115,7 @@ async fn upload(
     let notes = q.get("notes").cloned().unwrap_or_default();
 
     let id = Uuid::now_v7();
-    let key = object_key(version, kind, platform, &filename);
+    let key = object_key(version, kind, platform, id, &filename);
     state
         .objects()
         .await?
@@ -127,6 +127,7 @@ async fn upload(
         .await?
         .releases()
         .create(
+            id,
             version,
             kind,
             platform,
@@ -158,7 +159,13 @@ async fn delete_one(
 ) -> Result<Json<Value>, ApiError> {
     let store = state.store().await?;
     let row = store.releases().delete(id).await?;
-    let key = object_key(&row.version, &row.kind, &row.platform, &row.filename);
+    let key = object_key(
+        &row.version,
+        &row.kind,
+        &row.platform,
+        row.id,
+        &row.filename,
+    );
     let _ = state.objects().await?.delete(&key).await;
     Ok(Json(json!({})))
 }
@@ -207,7 +214,13 @@ async fn download(
     }
     let store = state.store().await?;
     let row = store.releases().get(id).await?;
-    let key = object_key(&row.version, &row.kind, &row.platform, &row.filename);
+    let key = object_key(
+        &row.version,
+        &row.kind,
+        &row.platform,
+        row.id,
+        &row.filename,
+    );
     let bytes = state
         .objects()
         .await?
