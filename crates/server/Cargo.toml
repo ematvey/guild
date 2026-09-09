@@ -62,6 +62,10 @@ required-features = ["test-support"]
 name = "s3_store"
 required-features = ["test-support"]
 
+[[test]]
+name = "registry_api"
+required-features = ["test-support"]
+
 
 [features]
 test-support = ["dep:testcontainers", "dep:testcontainers-modules", "dep:wiremock", "dep:aws-sdk-s3"]

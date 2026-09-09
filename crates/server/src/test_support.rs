@@ -39,6 +39,10 @@ pub struct FullState {
         testcontainers_modules::clickhouse::ClickHouse,
     >,
     #[allow(dead_code)]
+    minio_container: testcontainers_modules::testcontainers::ContainerAsync<
+        testcontainers_modules::minio::MinIO,
+    >,
+    #[allow(dead_code)]
     provider: wiremock::MockServer,
     pub token: String,
     pub org_id: Uuid,
@@ -62,6 +66,30 @@ pub async fn full_state() -> FullState {
         .await
         .expect("clickhouse testcontainer");
     let ch_port = ch.get_host_port_ipv4(8123).await.unwrap();
+
+    // object storage (registry bundles) + bucket
+    let minio = testcontainers_modules::minio::MinIO::default()
+        .start()
+        .await
+        .unwrap();
+    let minio_port = minio.get_host_port_ipv4(9000).await.unwrap();
+    let s3_endpoint = format!("http://127.0.0.1:{minio_port}");
+    {
+        let creds =
+            aws_sdk_s3::config::Credentials::new("minioadmin", "minioadmin", None, None, "test");
+        let conf = aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .endpoint_url(&s3_endpoint)
+            .credentials_provider(creds)
+            .region(aws_sdk_s3::config::Region::new("us-east-1"))
+            .build();
+        aws_sdk_s3::Client::from_conf(conf)
+            .create_bucket()
+            .bucket("guild")
+            .send()
+            .await
+            .expect("bucket create");
+    }
 
     let provider = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
@@ -88,7 +116,7 @@ pub async fn full_state() -> FullState {
         clickhouse_database: "default".into(),
         master_key_hex: "00".repeat(32),
         jwt_secret: "test-secret".into(),
-        s3_url: "http://placeholder:9000".into(),
+        s3_url: s3_endpoint,
         s3_bucket: "guild".into(),
         s3_access_key_id: "minioadmin".into(),
         s3_secret_access_key: "minioadmin".into(),
@@ -129,6 +157,7 @@ pub async fn full_state() -> FullState {
         state,
         db,
         ch_container: ch,
+        minio_container: minio,
         provider,
         token,
         org_id,

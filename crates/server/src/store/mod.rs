@@ -1,6 +1,7 @@
 pub mod chats;
 pub mod gateway;
 pub mod identity;
+pub mod registry;
 
 #[cfg(feature = "test-support")]
 pub use test_db::TestDb;
@@ -33,7 +34,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 4] = [
+        const MIGRATIONS: [(&str, &str); 5] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -49,6 +50,10 @@ impl Store {
             (
                 "0004_chats_tool_columns",
                 include_str!("../../migrations/0004_chats_tool_columns.sql"),
+            ),
+            (
+                "0005_registry",
+                include_str!("../../migrations/0005_registry.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {
@@ -87,6 +92,10 @@ impl Store {
 
     pub fn gateway(&self) -> gateway::GatewayStore<'_> {
         gateway::GatewayStore { pool: &self.pool }
+    }
+
+    pub fn registry(&self) -> registry::RegistryStore<'_> {
+        registry::RegistryStore { pool: &self.pool }
     }
 
     /// Access for stores added in later tasks; unused until then.
