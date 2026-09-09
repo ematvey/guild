@@ -202,13 +202,13 @@ impl AgentRun {
                 system: self.system,
             };
             let hooks = SessionHooks {
-                events: self.events,
+                events: self.events.clone(),
                 pending: self.pending,
                 cloud: Some(self.cloud.clone()),
                 chat_id: Some(self.chat_id),
             };
             let mut history = self.history;
-            let _ = guild_core::agent::run_agent(
+            if let Err(e) = guild_core::agent::run_agent(
                 &turn,
                 &registry,
                 &self.policy,
@@ -217,7 +217,17 @@ impl AgentRun {
                 &hooks,
                 &AgentConfig::default(),
             )
-            .await;
+            .await
+            {
+                // Surface model/policy failures (bad model, no route, …) so
+                // the UI unblocks instead of waiting for agent.done forever.
+                self.events
+                    .send(serde_json::to_value(&protocol::rpc::Event::new(
+                        "agent.error",
+                        serde_json::json!({ "message": e.to_string() }),
+                    ))
+                    .unwrap_or(Value::Null));
+            }
             history
         })
     }
