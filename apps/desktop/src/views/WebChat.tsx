@@ -3,11 +3,13 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowUp,
-  Copy,
   ArrowUpRight,
   Bot,
   ChevronUp,
+  Copy,
+  Download,
   FileText,
+  Laptop,
   Lightbulb,
   LogOut,
   Menu,
@@ -37,6 +39,7 @@ import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { ScrollArea } from "@guild/ui/components/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Separator } from "@guild/ui/components/separator";
+import { Skeleton } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
@@ -48,9 +51,12 @@ import {
   listModels,
   streamChat,
   createPairingToken,
+  downloadRelease,
+  listReleases,
   pairingCode,
   type ChatMessage,
   type ChatSummary,
+  type Release,
 } from "../transport";
 
 interface Block {
@@ -76,9 +82,9 @@ function clampWidth(w: number): number {
 /// server-backed conversation list. Full agent mode (local tools + project)
 /// is the desktop (Tauri) flow.
 export default function WebChat({ email, onSignOut }: { email: string; onSignOut: () => void }) {
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<string[] | null>(null);
   const [model, setModel] = useState("");
-  const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [chats, setChats] = useState<ChatSummary[] | null>(null);
   const [chatId, setChatId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -88,10 +94,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [pairCode, setPairCode] = useState<string | null>(null);
-  const [pairExpiry, setPairExpiry] = useState<string | null>(null);
-  const [pairBusy, setPairBusy] = useState(false);
-  const [pairCopied, setPairCopied] = useState(false);
+  const [deviceOpen, setDeviceOpen] = useState(false);
   const [width, setWidth] = useState<number>(() => {
     const stored = Number(localStorage.getItem(WIDTH_KEY));
     return stored ? clampWidth(stored) : 256;
@@ -190,7 +193,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     }
   };
 
-  const activeTitle = chats.find((c) => c.id === chatId)?.title ?? "New chat";
+  const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
 
   const sidebar = (
     <SidebarContent
@@ -201,6 +204,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
       onOpenChat={openChat}
       onSignOut={onSignOut}
       onOpenSettings={() => setSettingsOpen(true)}
+      onOpenDevice={() => setDeviceOpen(true)}
     />
   );
 
@@ -282,7 +286,8 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             </div>
             <h1 className="mt-6 text-center text-2xl font-semibold tracking-tight">What should we work on?</h1>
             <p className="mt-2 text-center text-sm text-muted-foreground">
-              Chat with the org gateway{models.length === 0 ? " — no models configured yet" : ""}.
+              Chat with the org gateway
+              {models !== null && models.length === 0 ? " — no models configured yet" : ""}.
             </p>
             <div className="mt-8 grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
               {SUGGESTIONS.map((s) => (
@@ -299,7 +304,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                 </Card>
               ))}
             </div>
-            {models.length === 0 && (
+            {models !== null && models.length === 0 && (
               <p className="mt-8 rounded-md border border-amber-700/60 bg-amber-900/30 px-3 py-1.5 text-xs text-amber-300">
                 no models configured — ask an admin to add a route
               </p>
@@ -308,7 +313,17 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-6">
-              {loadingChat && <Spinner />}
+              {loadingChat && (
+                <div className="space-y-4" aria-label="Loading conversation">
+                  <div className="ml-auto w-fit max-w-[70%]">
+                    <Skeleton className="h-10 w-64 rounded-2xl" />
+                  </div>
+                  <Skeleton className="h-16 w-[85%] rounded-lg" />
+                  <div className="ml-auto w-fit max-w-[70%]">
+                    <Skeleton className="h-10 w-48 rounded-2xl" />
+                  </div>
+                </div>
+              )}
               {blocks.map((b, i) =>
                 b.kind === "user" ? (
                   <div
@@ -361,7 +376,9 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
             />
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
-              {models.length > 0 ? (
+              {models === null ? (
+                <Skeleton className="h-7 w-28 rounded-md" />
+              ) : models.length > 0 ? (
                 <Select value={model} onValueChange={setModel}>
                   <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none">
                     <SelectValue />
@@ -391,38 +408,182 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         </div>
       </div>
 
+      <DeviceSetupDialog open={deviceOpen} onOpenChange={setDeviceOpen} email={email} />
+
       <SettingsDialog
         open={settingsOpen}
-        onOpenChange={(o) => {
-          setSettingsOpen(o);
-          if (!o) {
-            setPairCode(null);
-            setPairCopied(false);
-          }
-        }}
+        onOpenChange={setSettingsOpen}
         email={email}
-        pairCode={pairCode}
-        pairExpiry={pairExpiry}
-        pairBusy={pairBusy}
-        pairCopied={pairCopied}
-        onGeneratePairing={() => {
-          setPairBusy(true);
-          createPairingToken(30)
-            .then((t) => {
-              setPairCode(pairingCode(window.location.origin, t.secret));
-              setPairExpiry(
-                new Date(t.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              );
-            })
-            .catch(() => setPairCode(null))
-            .finally(() => setPairBusy(false));
-        }}
-        onPairCopied={() => {
-          setPairCopied(true);
-          setTimeout(() => setPairCopied(false), 1500);
-        }}
       />
     </div>
+  );
+}
+
+/// "Set up a device": explains why the desktop app exists, lists installers
+/// with the visitor's OS preselected, and issues a pairing code.
+type DesktopOs = "mac" | "windows" | "linux";
+
+function detectOs(): DesktopOs {
+  const ua = navigator.userAgent;
+  if (/Mac/i.test(ua)) return "mac";
+  if (/Win/i.test(ua)) return "windows";
+  return "linux";
+}
+
+const OS_KEY: Record<DesktopOs, string> = { mac: "darwin", windows: "windows", linux: "linux" };
+const OS_LABEL: Record<DesktopOs, string> = { mac: "macOS", windows: "Windows", linux: "Linux" };
+
+function platformLabel(platform: string): string {
+  if (platform === "darwin-aarch64") return "Mac — Apple Silicon";
+  if (platform === "darwin-x86_64") return "Mac — Intel";
+  if (platform === "windows-x86_64") return "Windows — 64-bit";
+  if (platform === "linux-x86_64") return "Linux — 64-bit";
+  if (platform === "linux-aarch64") return "Linux — ARM64";
+  return platform;
+}
+
+function formatSize(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function DeviceSetupDialog({
+  open,
+  onOpenChange,
+  email,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  email: string;
+}) {
+  const [os, setOs] = useState<DesktopOs>("linux");
+  const [releases, setReleases] = useState<Release[] | null>(null);
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairCopied, setPairCopied] = useState(false);
+  const [dlBusy, setDlBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setOs(detectOs());
+    setReleases(null);
+    setPairCode(null);
+    listReleases().then((r) => setReleases(r.filter((x) => x.kind === "desktop")));
+  }, [open]);
+
+  const installers =
+    releases === null ? null : releases.filter((r) => r.platform.startsWith(OS_KEY[os]));
+
+  const generatePairing = () => {
+    setPairBusy(true);
+    createPairingToken(30)
+      .then((t) => setPairCode(pairingCode(window.location.origin, t.secret)))
+      .finally(() => setPairBusy(false));
+  };
+
+  const startDownload = (r: Release) => {
+    setDlBusy(r.id);
+    downloadRelease(r.id)
+      .catch(() => {})
+      .finally(() => setDlBusy(null));
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Set up a device</DialogTitle>
+        </DialogHeader>
+        <div className="min-w-0 space-y-4 text-left">
+          <p className="text-sm text-muted-foreground">
+            The desktop app runs a Guild agent on your machine — it can work directly in your
+            projects and with your files, which the browser chat can't. Chat alone stays right here.
+          </p>
+
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Installer</p>
+            <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+              {(Object.keys(OS_KEY) as DesktopOs[]).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setOs(k)}
+                  className={`rounded-md px-2 py-1.5 text-xs transition-colors ${
+                    os === k
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {OS_LABEL[k]}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 min-w-0 space-y-2">
+              {installers === null && [0, 1].map((i) => <Skeleton key={i} className="h-10 w-full rounded-md" />)}
+              {installers !== null && installers.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No {OS_LABEL[os]} installer published yet — check back soon.
+                </p>
+              )}
+              {installers?.map((r) => (
+                <div
+                  key={r.id}
+                  className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm" title={r.filename}>
+                      {platformLabel(r.platform)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      v{r.version} · {formatSize(r.size_bytes)}
+                    </p>
+                  </div>
+                  <Button size="sm" onClick={() => startDownload(r)} disabled={dlBusy === r.id}>
+                    <Download /> {dlBusy === r.id ? "…" : "Download"}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+              Already installed? Pair it with your account
+            </p>
+            {pairCode ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <code
+                    className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono text-xs"
+                    title={pairCode}
+                  >
+                    {pairCode}
+                  </code>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(pairCode);
+                      setPairCopied(true);
+                      setTimeout(() => setPairCopied(false), 1500);
+                    }}
+                  >
+                    <Copy /> {pairCopied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Paste into the desktop app's pairing screen. Single-use, expires in 30 minutes.
+                </p>
+              </div>
+            ) : (
+              <Button size="sm" variant="outline" onClick={generatePairing} disabled={pairBusy}>
+                {pairBusy ? "Generating…" : "Generate pairing code"}
+              </Button>
+            )}
+          </div>
+
+          <p className="text-xs text-muted-foreground">Signed in as {email}</p>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -430,22 +591,10 @@ function SettingsDialog({
   open,
   onOpenChange,
   email,
-  pairCode,
-  pairExpiry,
-  pairBusy,
-  pairCopied,
-  onGeneratePairing,
-  onPairCopied,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   email: string;
-  pairCode: string | null;
-  pairExpiry: string | null;
-  pairBusy: boolean;
-  pairCopied: boolean;
-  onGeneratePairing: () => void;
-  onPairCopied: () => void;
 }) {
   const { theme, setTheme } = useTheme();
   return (
@@ -477,36 +626,6 @@ function SettingsDialog({
             <p className="mb-1.5 text-xs font-medium text-muted-foreground">Account</p>
             <p className="text-sm">{email}</p>
           </div>
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Connect desktop app</p>
-            {pairCode ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono text-xs" title={pairCode}>
-                    {pairCode}
-                  </code>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(pairCode);
-                      onPairCopied();
-                    }}
-                  >
-                    <Copy /> {pairCopied ? "Copied" : "Copy"}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Paste into the desktop app's pairing screen. Single-use, expires{" "}
-                  {pairExpiry ?? "in 30 minutes"}.
-                </p>
-              </div>
-            ) : (
-              <Button size="sm" variant="outline" onClick={onGeneratePairing} disabled={pairBusy}>
-                {pairBusy ? "Generating…" : "Generate pairing code"}
-              </Button>
-            )}
-          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -521,14 +640,16 @@ function SidebarContent({
   onOpenChat,
   onSignOut,
   onOpenSettings,
+  onOpenDevice,
 }: {
-  chats: ChatSummary[];
+  chats: ChatSummary[] | null;
   chatId: string | null;
   email: string;
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
   onSignOut: () => void;
   onOpenSettings: () => void;
+  onOpenDevice: () => void;
 }) {
   const initials = email.slice(0, 2).toUpperCase();
   return (
@@ -544,21 +665,26 @@ function SidebarContent({
       <div className="px-3 pb-1 pt-4 text-xs font-medium text-muted-foreground">Chats</div>
       <ScrollArea className="min-h-0 flex-1 px-2">
         <div className="space-y-0.5 pb-2">
-          {chats.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => onOpenChat(c.id)}
-              className={`w-full truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                c.id === chatId
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              }`}
-              title={c.title}
-            >
-              {c.title || "Untitled"}
-            </button>
-          ))}
-          {chats.length === 0 && (
+          {chats === null &&
+            [0, 1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-8 w-full rounded-md" style={{ opacity: 1 - i * 0.15 }} />
+            ))}
+          {chats !== null &&
+            chats.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => onOpenChat(c.id)}
+                className={`w-full truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                  c.id === chatId
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                }`}
+                title={c.title}
+              >
+                {c.title || "Untitled"}
+              </button>
+            ))}
+          {chats !== null && chats.length === 0 && (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">No conversations yet.</p>
           )}
         </div>
@@ -581,6 +707,9 @@ function SidebarContent({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-56">
+            <DropdownMenuItem onClick={onOpenDevice}>
+              <Laptop /> Set up a device
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => window.open("/admin/", "_blank")}>
               <ArrowUpRight /> Admin console
             </DropdownMenuItem>

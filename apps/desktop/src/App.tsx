@@ -5,6 +5,7 @@ import WebChat from "./views/WebChat";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
+import { Bot } from "lucide-react";
 import { IS_TAURI, apiLogin, apiMe, clearToken } from "./transport";
 import { ThemeProvider, useTheme } from "./theme";
 
@@ -227,6 +228,18 @@ function DesktopApp() {
   );
 }
 
+/// Branded full-screen loading state — shown while auth/session resolves.
+export function Splash() {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background text-foreground">
+      <div className="flex size-14 animate-pulse items-center justify-center rounded-2xl border border-border bg-card">
+        <Bot className="size-7 text-muted-foreground" />
+      </div>
+      <p className="text-sm text-muted-foreground">Loading Guild…</p>
+    </div>
+  );
+}
+
 function AppInner() {
   const [email, setEmail] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -245,7 +258,7 @@ function AppInner() {
   }, []);
 
   if (!ready)
-    return <div className="min-h-screen bg-background p-8 text-muted-foreground">Loading…</div>;
+    return <Splash />;
 
   if (!IS_TAURI) {
     const signOut = () => {

@@ -186,3 +186,40 @@ export async function createPairingToken(ttlMinutes = 30): Promise<PairingToken>
 export function pairingCode(serverUrl: string, secret: string): string {
   return `g1|${serverUrl.replace(/\/$/, "")}|${secret}`;
 }
+
+export interface Release {
+  id: string;
+  version: string;
+  kind: string;
+  platform: string;
+  filename: string;
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+}
+
+export async function listReleases(): Promise<Release[]> {
+  const token = getToken();
+  const res = await fetch("/api/v1/releases", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const v = await res.json().catch(() => ({}));
+  return v.releases ?? [];
+}
+
+/// Mints a short-lived signed URL and triggers a browser download.
+export async function downloadRelease(id: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`/api/v1/releases/${id}/download-url`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const v = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(v?.error?.message ?? res.statusText);
+  const a = document.createElement("a");
+  a.href = v.url;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
