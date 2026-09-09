@@ -35,7 +35,7 @@ async fn publish(
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!(
+                .uri(format!(
                     "/api/v1/registry/{kind}?slug={slug}&version={version}"
                 ))
                 .header("authorization", format!("Bearer {token}"))

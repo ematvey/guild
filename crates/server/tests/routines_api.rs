@@ -141,7 +141,7 @@ async fn routine_crud_hook_auth_and_internal_completion() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/v1/hooks/{}/nightly-digest", fs.org_id))
+                .uri(format!("/api/v1/hooks/{}/nightly-digest", fs.org_id))
                 .header("x-guild-hook-token", "wrong")
                 .header("content-type", "application/json")
                 .body(Body::from("{}"))
@@ -157,7 +157,7 @@ async fn routine_crud_hook_auth_and_internal_completion() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/v1/hooks/{}/nightly-digest", fs.org_id))
+                .uri(format!("/api/v1/hooks/{}/nightly-digest", fs.org_id))
                 .header("x-guild-hook-token", &hook_token)
                 .header("content-type", "application/json")
                 .body(Body::from("{\"text\":\"go\"}"))
@@ -257,7 +257,7 @@ async fn routine_crud_hook_auth_and_internal_completion() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/v1/routines/{routine_id}/runs"))
+                .uri(format!("/api/v1/routines/{routine_id}/runs"))
                 .header("authorization", format!("Bearer {member_token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -290,7 +290,7 @@ async fn routine_crud_hook_auth_and_internal_completion() {
         .oneshot(
             Request::builder()
                 .method("PATCH")
-                .uri(&format!("/api/v1/routines/{interval_id}"))
+                .uri(format!("/api/v1/routines/{interval_id}"))
                 .header("authorization", format!("Bearer {member_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({"enabled": true}).to_string()))

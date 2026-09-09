@@ -88,7 +88,7 @@ async fn user_lifecycle_gated_by_admin_role() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(&format!("/api/v1/admin/users/{admin}"))
+                .uri(format!("/api/v1/admin/users/{admin}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -103,7 +103,7 @@ async fn user_lifecycle_gated_by_admin_role() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(&format!("/api/v1/admin/users/{new_id}"))
+                .uri(format!("/api/v1/admin/users/{new_id}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -173,7 +173,7 @@ async fn team_create_and_membership() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/v1/admin/teams/{team_id}/members"))
+                .uri(format!("/api/v1/admin/teams/{team_id}/members"))
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({"user_id": member.id}).to_string()))
