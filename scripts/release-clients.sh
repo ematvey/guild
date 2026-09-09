@@ -35,8 +35,17 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msv
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
-publish() { # platform src filename
+# Signs a file with the tauri updater key; echoes the signature content.
+sign() { # file -> stdout signature
+  local sig="$1.sig"
+  (cd apps/desktop && npx tauri signer sign -k "$UPDATER_KEY" --password "" -f "$1" >/dev/null)
+  cat "$sig"
+  rm -f "$sig"
+}
+
+publish() { # platform src filename [updater_sig]
   local platform="$1" src="$2" filename="$3"
+  local usig="${4:-}"
   for old in $(curl -sf "$BASE/api/v1/releases" -H "authorization: Bearer $TOKEN" \
     | jq -r --arg p "$platform" '.releases[] | select(.version == "'"$VERSION"'" and .platform == $p) | .id'); do
     curl -sf -X DELETE "$BASE/api/v1/admin/releases/$old" -H "authorization: Bearer $TOKEN" >/dev/null
@@ -49,7 +58,7 @@ publish() { # platform src filename
   local_sha=$(sha256sum "$src" | cut -d' ' -f1)
   echo "==> $platform: $filename ($(stat -c%s "$src") bytes)"
   remote_sha=$(curl -sf -X POST \
-    "$BASE/api/v1/admin/releases?version=$VERSION&kind=desktop&platform=$platform&filename=$filename&content_type=$ctype" \
+    "$BASE/api/v1/admin/releases?version=$VERSION&kind=desktop&platform=$platform&filename=$filename&content_type=$ctype&updater_sig=$(jq -rn --arg s "$usig" '$s|@uri')" \
     -H "authorization: Bearer $TOKEN" -H "content-type: $ctype" \
     --data-binary @"$src" | jq -r '.sha256')
   if [[ "$local_sha" != "$remote_sha" ]]; then
@@ -66,7 +75,8 @@ echo "==> windows: tauri build (cargo-xwin) + NSIS bundling"
   --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis >/dev/null)
 WIN_SETUP="target/x86_64-pc-windows-msvc/release/bundle/nsis/Guild_${VERSION}_x64-setup.exe"
 cp "$WIN_SETUP" "$STAGE/"
-publish windows-x86_64 "$STAGE/Guild_${VERSION}_x64-setup.exe" "Guild_${VERSION}_x64-setup.exe"
+WIN_SIG=$(sign "$STAGE/Guild_${VERSION}_x64-setup.exe")
+publish windows-x86_64 "$STAGE/Guild_${VERSION}_x64-setup.exe" "Guild_${VERSION}_x64-setup.exe" "$WIN_SIG"
 
 # ---- linux-x86_64: AppImage via linuxdeploy ----
 echo "==> linux: AppImage via linuxdeploy"
@@ -94,7 +104,8 @@ APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 \
 APPIMG=$(find "$AD" "$STAGE" "$(pwd)" -maxdepth 3 -name "Guild*x86_64.AppImage" 2>/dev/null | head -1)
 if [[ -z "$APPIMG" ]]; then echo "AppImage build failed" >&2; exit 1; fi
 [[ "$APPIMG" == "$STAGE/Guild-x86_64.AppImage" ]] || mv "$APPIMG" "$STAGE/"
-publish linux-x86_64 "$STAGE/Guild-${VERSION}-x86_64.AppImage" "Guild-${VERSION}-x86_64.AppImage"
+LINUX_SIG=$(sign "$STAGE/Guild-${VERSION}-x86_64.AppImage")
+publish linux-x86_64 "$STAGE/Guild-${VERSION}-x86_64.AppImage" "Guild-${VERSION}-x86_64.AppImage" "$LINUX_SIG"
 
 # ---- macos: .app + drag-and-drop DMG (hfsprogs + libdmg-hfsplus) ----
 echo "==> macos: .app + DMG (unsigned)"
@@ -143,7 +154,12 @@ build_dmg() { # arch
   sudo -n umount /mnt/guild-dmg
   fsck.hfsplus "$raw" >/dev/null 2>&1 || { echo "HFS+ fsck failed for $arch" >&2; exit 1; }
   "$HOME/opt/libdmg-hfsplus/build/dmg/dmg" build "$raw" "$STAGE/Guild-$VERSION-macos-$arch.dmg" >/dev/null 2>&1
-  publish "darwin-$arch" "$STAGE/Guild-$VERSION-macos-$arch.dmg" "Guild-$VERSION-macos-$arch.dmg"
+  # updater bundle: tar.gz of the .app (what the tauri updater installs)
+  (cd "$STAGE" && tar -czf "Guild-$VERSION-macos-$arch.app.tar.gz" Guild.app)
+  DMG_SIG=$(sign "$STAGE/Guild-$VERSION-macos-$arch.dmg")
+  TAR_SIG=$(sign "$STAGE/Guild-$VERSION-macos-$arch.app.tar.gz")
+  publish "darwin-$arch" "$STAGE/Guild-$VERSION-macos-$arch.dmg" "Guild-$VERSION-macos-$arch.dmg" "$DMG_SIG"
+  publish "darwin-$arch" "$STAGE/Guild-$VERSION-macos-$arch.app.tar.gz" "Guild-$VERSION-macos-$arch.app.tar.gz" "$TAR_SIG"
 }
 build_dmg aarch64
 build_dmg x86_64

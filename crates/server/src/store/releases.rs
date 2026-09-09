@@ -18,6 +18,8 @@ pub struct ReleaseRow {
     pub size_bytes: i64,
     pub sha256: String,
     pub signature: String,
+    /// Tauri updater (minisign) signature content; empty when not signed for the updater
+    pub updater_signature: String,
     pub notes: String,
     pub created_at: DateTime<Utc>,
 }
@@ -73,13 +75,14 @@ impl<'a> ReleaseStore<'a> {
         size_bytes: i64,
         sha256: &str,
         signature: &str,
+        updater_signature: &str,
         notes: &str,
         object_key: &str,
     ) -> Result<ReleaseRow, ApiError> {
         match sqlx::query_as::<_, ReleaseRow>(
-            "INSERT INTO releases (id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, notes, object_key) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
-             RETURNING id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, notes, created_at",
+            "INSERT INTO releases (id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, updater_signature, notes, object_key) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+             RETURNING id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, updater_signature, notes, created_at",
         )
         .bind(id)
         .bind(version)
@@ -90,6 +93,7 @@ impl<'a> ReleaseStore<'a> {
         .bind(size_bytes)
         .bind(sha256)
         .bind(signature)
+        .bind(updater_signature)
         .bind(notes)
         .bind(object_key)
         .fetch_one(self.pool)
@@ -106,7 +110,7 @@ impl<'a> ReleaseStore<'a> {
 
     pub async fn list(&self) -> Result<Vec<ReleaseRow>, ApiError> {
         sqlx::query_as(
-            "SELECT id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, notes, created_at \
+            "SELECT id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, updater_signature, notes, created_at \
              FROM releases ORDER BY created_at DESC",
         )
         .fetch_all(self.pool)
@@ -116,7 +120,7 @@ impl<'a> ReleaseStore<'a> {
 
     pub async fn get(&self, id: Uuid) -> Result<ReleaseRow, ApiError> {
         sqlx::query_as(
-            "SELECT id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, notes, created_at \
+            "SELECT id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, updater_signature, notes, created_at \
              FROM releases WHERE id = $1",
         )
         .bind(id)
@@ -129,7 +133,7 @@ impl<'a> ReleaseStore<'a> {
     pub async fn delete(&self, id: Uuid) -> Result<ReleaseRow, ApiError> {
         sqlx::query_as(
             "DELETE FROM releases WHERE id = $1 \
-             RETURNING id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, notes, created_at",
+             RETURNING id, version, kind, platform, filename, content_type, size_bytes, sha256, signature, updater_signature, notes, created_at",
         )
         .bind(id)
         .fetch_optional(self.pool)

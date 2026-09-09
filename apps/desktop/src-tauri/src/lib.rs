@@ -12,6 +12,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// Pending downloaded update, waiting for the user to restart.
+#[derive(Default)]
+pub struct UpdateState {
+    pending: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
+}
+
 #[derive(Default)]
 pub struct EngineState {
     engine: Mutex<Option<Arc<Engine>>>,
@@ -131,6 +137,25 @@ pub mod commands {
         Ok(())
     }
 
+    /// Applies the pending downloaded update and restarts the app.
+    #[tauri::command]
+    pub async fn install_update(
+        state: State<'_, UpdateState>,
+        app: AppHandle,
+    ) -> Result<(), String> {
+        let (update, bytes) = state
+            .pending
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| "no pending update".to_string())?;
+        // on Windows the installer exits the app itself; mac/linux restart below
+        update.install(bytes).map_err(|e| e.to_string())?;
+        app.request_restart();
+        #[allow(unreachable_code)]
+        Ok(())
+    }
+
     #[tauri::command]
     pub async fn rpc_request(
         state: State<'_, EngineState>,
@@ -166,17 +191,113 @@ pub mod commands {
     }
 }
 
+/// Checks the paired server for a newer signed build and, if found, downloads
+/// it in the background. Emits `update.ready {version}` when the update can be
+/// applied; the frontend shows a restart toast (VSCode/Zed-style: download is
+/// silent, applying happens on the user's restart).
+async fn check_and_prepare_update(app: &AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+    // only paired/logged-in instances have a server to ask
+    let session_path = match guild_app_server::session_store::default_path() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let Some(session) = guild_app_server::session_store::load(&session_path) else {
+        return;
+    };
+    let endpoint = format!(
+        "{}/api/v1/updates/latest.json",
+        session.base_url.trim_end_matches('/')
+    );
+    let url = match url::Url::parse(&endpoint) {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("updater: bad server url: {e}");
+            return;
+        }
+    };
+    let updater = match app
+        .updater_builder()
+        .endpoints(vec![url])
+        .and_then(|b| b.build())
+    {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("updater: bad endpoint config: {e}");
+            return;
+        }
+    };
+    let Ok(Some(update)) = updater.check().await else {
+        return; // up to date, unreachable, or server error
+    };
+    let version = update.version.clone();
+    eprintln!("updater: downloading version {version}");
+    let app_for_progress = app.clone();
+    let result = update
+        .download(
+            move |chunk, total| {
+                let _ = app_for_progress.emit(
+                    "update.progress",
+                    serde_json::json!({"chunk": chunk, "total": total}),
+                );
+            },
+            || {},
+        )
+        .await;
+    let bytes = match result {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("updater: download failed: {e}");
+            let _ = app.emit(
+                "update.failed",
+                serde_json::json!({"message": e.to_string()}),
+            );
+            return;
+        }
+    };
+    let state: State<UpdateState> = app.state();
+    *state.pending.lock().unwrap() = Some((update, bytes));
+    eprintln!("updater: version {version} ready to install");
+    let _ = app.emit("update.ready", serde_json::json!({"version": version}));
+}
+
+pub fn start_update_checker(app: AppHandle) {
+    // debug builds run from target/ with dev sessions; never self-replace them
+    if cfg!(debug_assertions) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("updater runtime");
+        rt.block_on(async move {
+            loop {
+                check_and_prepare_update(&app).await;
+                // re-check every 6 hours while the app is open
+                tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+            }
+        });
+    });
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(EngineState::default())
+        .manage(UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             commands::start_engine,
-            commands::rpc_request
+            commands::rpc_request,
+            commands::install_update
         ])
         .setup(|app| {
             let state: State<EngineState> = app.state();
             *state.handle.lock().unwrap() = Some(app.handle().clone());
+            start_update_checker(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
