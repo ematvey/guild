@@ -172,7 +172,7 @@ export default function AgentView({ email }: { email: string }) {
         <Button variant="outline" onClick={pickProject} className="text-xs">
           {projectDir ? projectDir.split("/").pop() : "Open project…"}
         </Button>
-        {models && models.length > 0 ? (
+        {models !== null && models.length > 0 ? (
           <select
             className="h-9 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs"
             value={model}
@@ -186,13 +186,12 @@ export default function AgentView({ email }: { email: string }) {
             ))}
           </select>
         ) : (
-          <Input
-            className="w-40 text-xs"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder="model (none routed — ask admin)"
-            title="No enabled models discovered from the server; enter one manually"
-          />
+          <span
+            className="rounded-md border border-amber-700/60 bg-amber-900/30 px-2 py-1.5 text-xs text-amber-300"
+            title="An org admin must add a provider key and a model route in the admin console"
+          >
+            no models configured — ask an admin to add a route
+          </span>
         )}
         <select
           className="h-9 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-xs"
@@ -254,9 +253,9 @@ export default function AgentView({ email }: { email: string }) {
           placeholder={projectDir ? "Describe a task…" : "Open a project first…"}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && start()}
-          disabled={!projectDir}
+          disabled={!projectDir || (models !== null && models.length === 0)}
         />
-        <Button onClick={start} disabled={busy || !projectDir}>
+        <Button onClick={start} disabled={busy || !projectDir || (models !== null && models.length === 0)}>
           {busy ? "Working…" : "Run"}
         </Button>
       </div>
