@@ -11,6 +11,12 @@ pub mod worker;
 pub use http::build_router;
 
 pub async fn main_entry() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
     let cfg = config::Config::from_env()?;
     let bind_addr = cfg.bind_addr.clone();
     let role = cfg.role.clone();

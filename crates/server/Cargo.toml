@@ -32,7 +32,8 @@ async-stream = "0.3"
 object_store = { version = "0.14", default-features = false, features = ["aws"] }
 include_dir = "0.7"
 mime_guess = "2"
-tracing = "0.1"
+tracing-subscriber.workspace = true
+tracing.workspace = true
 reqwest.workspace = true
 restate-sdk = { version = "0.12", features = ["reqwest-client"] }
 async-trait.workspace = true
@@ -46,7 +47,6 @@ testcontainers-modules = { workspace = true, optional = true }
 [dev-dependencies]
 testcontainers-modules.workspace = true
 wiremock = "0.6"
-tracing-subscriber = "0.3"
 
 [[test]]
 name = "http_scaffold"
