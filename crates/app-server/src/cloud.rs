@@ -156,6 +156,11 @@ impl CloudClient {
         Ok(())
     }
 
+    /// Public for the registry client (same base/token).
+    pub fn http_pub(&self) -> reqwest::Client {
+        self.http()
+    }
+
     fn http(&self) -> reqwest::Client {
         reqwest::Client::builder()
             .timeout(Duration::from_secs(600))
@@ -163,7 +168,8 @@ impl CloudClient {
             .expect("reqwest client builds")
     }
 
-    async fn check(resp: reqwest::Response) -> Result<reqwest::Response, CloudError> {
+    /// Public for the registry client.
+    pub async fn check(resp: reqwest::Response) -> Result<reqwest::Response, CloudError> {
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(CloudError::Unauthorized);
