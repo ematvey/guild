@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: guild
+      POSTGRES_PASSWORD: guild
+      POSTGRES_DB: guild
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guild"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24
+    volumes:
+      - chdata:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    image: minio/minio
+    command: server /data
+    volumes:
+      - miniodata:/data
+
+  restate:
+    image: docker.io/restatedev/restate:latest
+    # Ingress stays internal (worker role talks to it over the compose
+    # network); the admin/UI port is published for operators.
+    ports:
+      - "${GUILD_RESTATE_ADMIN_PORT:-9070}:9070"
+
+  server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "${GUILD_HTTP_PORT:-8080}:8080"
+    env_file: config.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      restate:
+        condition: service_started
+
+volumes:
+  pgdata:
+  chdata:
+  miniodata:
