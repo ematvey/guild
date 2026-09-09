@@ -262,7 +262,7 @@ mod tests {
             block
         };
         let mut raw = make_entry("../evil.txt", b"evil");
-        raw.extend(std::iter::repeat(0u8).take(1024)); // end blocks
+        raw.extend(std::iter::repeat_n(0u8, 1024)); // end blocks
         let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         enc.write_all(&raw).unwrap();
         let bytes = enc.finish().unwrap();

@@ -1,7 +1,6 @@
 use guild_core::tools::{fs::*, git::GitTool, shell::RunCommand, Approval, Tool, ToolRegistry};
 use protocol::api::ToolSpec;
 use serde_json::json;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
