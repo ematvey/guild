@@ -223,9 +223,9 @@ impl RoutineRunner {
 /// Register this worker's endpoint with the Restate admin API (retry until
 /// accepted or already registered).
 pub async fn register_with_restate(admin_url: &str, advertised_url: &str) -> anyhow::Result<()> {
-    let url = format!("{}/endpoints", admin_url.trim_end_matches('/'));
+    let url = format!("{}/deployments", admin_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
-    for _ in 0..60 {
+    for _ in 0..150 {
         let resp = client
             .post(&url)
             .json(&json!({"uri": advertised_url}))
@@ -255,11 +255,13 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("bad GUILD_WORKER_BIND: {e}"))?;
     let admin = state.config.restate_admin_url.clone();
     let advertised = state.config.worker_advertised_url.clone();
-    if let Err(e) = register_with_restate(&admin, &advertised).await {
-        tracing::error!("restate registration failed: {e:#}");
-    }
-    HttpServer::new(Endpoint::builder().bind(RoutineRunner { state }).build())
-        .listen_and_serve(bind)
-        .await;
+    // Listen first: Restate probes the advertised URI during registration.
+    let server = tokio::spawn(async move {
+        HttpServer::new(Endpoint::builder().bind(RoutineRunner { state }).build())
+            .listen_and_serve(bind)
+            .await;
+    });
+    register_with_restate(&admin, &advertised).await?;
+    server.await?;
     Ok(())
 }
