@@ -1,6 +1,13 @@
 # Milestone 6 — Execution backends & public OpenAI-compatible endpoint
 
-Status: IN PROGRESS (branch `feat/milestone-6`, built on `feat/milestone-5`)
+Status: COMPLETE
+
+(All 4 tasks done on feat/milestone-6. Compose E2E verified: api-key issued →
+/openai/v1 non-stream + stream calls; workspace agent session turn executed
+write_file server-side (file present in /data/workspaces/<org>/... inside the
+container), history + usage persisted. Note: provider base_url must NOT include
+/v1 (the OpenAI adapter appends it); the fake provider must emit SSE frames
+with "data: " prefixes.) (branch `feat/milestone-6`, built on `feat/milestone-5`)
 
 Spec §10.6: "Execution backends — server-side sandboxed repo execution as an
 additional backend; public OpenAI-compatible gateway endpoint."
