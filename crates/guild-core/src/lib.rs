@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod provider;
+pub mod registry;
 pub mod tools;
 pub mod usage;
 

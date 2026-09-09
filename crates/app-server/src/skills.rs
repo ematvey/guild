@@ -11,22 +11,8 @@ pub struct SkillEntry {
     pub path: PathBuf,
 }
 
-/// Parses `name` and `description` from YAML-ish frontmatter between `---`
-/// fences. Tolerant: missing fields fall back to the directory name.
 fn parse_frontmatter(body: &str, fallback_name: &str) -> (String, String) {
-    let mut name = fallback_name.to_string();
-    let mut description = String::new();
-    if let Some(rest) = body.strip_prefix("---") {
-        let front = rest.split("---").next().unwrap_or("");
-        for line in front.lines() {
-            if let Some(v) = line.strip_prefix("name:") {
-                name = v.trim().trim_matches('"').to_string();
-            } else if let Some(v) = line.strip_prefix("description:") {
-                description = v.trim().trim_matches('"').to_string();
-            }
-        }
-    }
-    (name, description)
+    guild_core::registry::parse_frontmatter(body, fallback_name)
 }
 
 /// Scans `<dir>/skills/*/SKILL.md` and `<dir>/skills/<file>.md`.
