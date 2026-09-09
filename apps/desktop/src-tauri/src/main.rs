@@ -66,8 +66,9 @@ fn flag(args: &[String], name: &str) -> anyhow::Result<String> {
 }
 
 fn cloud_from_session() -> anyhow::Result<guild_app_server::cloud::CloudClient> {
-    let stored = guild_app_server::session_store::load(&guild_app_server::session_store::default_path()?)
-        .context("not logged in — run `guild login` first")?;
+    let stored =
+        guild_app_server::session_store::load(&guild_app_server::session_store::default_path()?)
+            .context("not logged in — run `guild login` first")?;
     Ok(guild_app_server::cloud::CloudClient {
         base_url: stored.base_url,
         token: stored.token,
@@ -79,8 +80,9 @@ fn cmd_login(args: &[String]) -> anyhow::Result<()> {
     let email = flag(args, "--email")?;
     let password = flag(args, "--password")?;
     let rt = tokio::runtime::Runtime::new()?;
-    let (token, user) =
-        rt.block_on(guild_app_server::cloud::CloudClient::login(&url, &email, &password))?;
+    let (token, user) = rt.block_on(guild_app_server::cloud::CloudClient::login(
+        &url, &email, &password,
+    ))?;
     guild_app_server::session_store::save(
         &guild_app_server::session_store::default_path()?,
         &guild_app_server::session_store::StoredSession {

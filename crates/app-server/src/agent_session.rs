@@ -225,7 +225,9 @@ impl AgentRun {
                     "agent.error",
                     serde_json::json!({ "message": e.to_string() }),
                 );
-                let _ = self.events.send(serde_json::to_value(err_frame).unwrap_or(Value::Null));
+                let _ = self
+                    .events
+                    .send(serde_json::to_value(err_frame).unwrap_or(Value::Null));
             }
             history
         })

@@ -1,13 +1,16 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use guild_server::test_support::{clickhouse_usage_rows, full_state};
+use guild_server::test_support::{clickhouse_usage_rows, full_state, standalone_listener};
 use protocol::api::ToolCall;
 use serde_json::json;
 use tower::ServiceExt;
 
 /// Provider that streams a tool call for read_file.
 async fn tool_provider() -> wiremock::MockServer {
-    let server = wiremock::MockServer::start().await;
+    let server = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .respond_with(
             wiremock::ResponseTemplate::new(200)

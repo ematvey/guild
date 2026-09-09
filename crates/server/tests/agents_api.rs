@@ -1,13 +1,16 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use guild_server::test_support::{clickhouse_usage_rows, full_state};
+use guild_server::test_support::{clickhouse_usage_rows, full_state, standalone_listener};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
 /// Provider script: model call 1 → write_file; call 2 → run_command (must be
 /// refused); call 3 → final text.
 async fn scripted_provider() -> wiremock::MockServer {
-    let server = wiremock::MockServer::start().await;
+    let server = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let c = calls.clone();
     let sse = |body: String| {

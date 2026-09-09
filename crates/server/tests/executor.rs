@@ -1,11 +1,14 @@
-use guild_server::test_support::{clickhouse_usage_rows, serve_full};
+use guild_server::test_support::{clickhouse_usage_rows, serve_full, standalone_listener};
 use guild_server::worker::executor::RoutineExecutor;
 use guild_server::worker::run::run_routine;
 use serde_json::json;
 
 /// Scripted provider: turn 1 → http_call tool; turn 2 → final text.
 async fn scripted_provider(external_url: String) -> wiremock::MockServer {
-    let server = wiremock::MockServer::start().await;
+    let server = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let c = calls.clone();
     let tool_args = json!({"url": external_url, "method": "GET"}).to_string();
@@ -36,7 +39,10 @@ async fn scripted_provider(external_url: String) -> wiremock::MockServer {
 }
 
 async fn setup() -> (guild_server::test_support::ServedFull, wiremock::MockServer) {
-    let external = wiremock::MockServer::start().await;
+    let external = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("hello from the web"))
         .mount(&external)
@@ -116,7 +122,14 @@ async fn routine_run_completes_with_tool_use_and_records_run() {
 
     // the external site was actually fetched by the tool
     let seen = external.received_requests().await.unwrap();
-    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        seen.len(),
+        1,
+        "external requests: {:?}",
+        seen.iter()
+            .map(|r| (r.method.as_str(), r.url.path()))
+            .collect::<Vec<_>>()
+    );
 
     // run recorded as succeeded with the summary
     let runs = store
@@ -138,7 +151,10 @@ async fn routine_run_records_failure_when_tool_fails_repeatedly() {
     let (served, _external) = setup().await;
     // provider that always requests the same tool call (http scheme → refused
     // by default), until the step limit
-    let provider = wiremock::MockServer::start().await;
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     let tool_args = json!({"url": "http://insecure.example/x", "method": "GET"}).to_string();
     let body = format!(
         "data: {}\n\ndata: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n",

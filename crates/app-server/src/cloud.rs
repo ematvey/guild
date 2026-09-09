@@ -72,7 +72,12 @@ impl CloudClient {
             "{}/api/v1/gateway/models",
             self.base_url.trim_end_matches('/')
         );
-        let resp = self.http().get(&url).bearer_auth(&self.token).send().await?;
+        let resp = self
+            .http()
+            .get(&url)
+            .bearer_auth(&self.token)
+            .send()
+            .await?;
         let resp = Self::check(resp).await?;
         let v: serde_json::Value = resp
             .json()

@@ -6,6 +6,43 @@ use crate::state::AppState;
 use crate::store::{Store, TestDb};
 use uuid::Uuid;
 
+/// Bind a loopback listener on a port that is not referenced anywhere in
+/// /proc/net/tcp{,6}. Docker's userland proxy wildcard-binds published
+/// container ports with SO_REUSEADDR, which `bind("127.0.0.1:0")` (also
+/// SO_REUSEADDR) happily collides with — the kernel then delivers the
+/// container's traffic to whoever holds the specific bind. /proc/net/* sees
+/// every bound port regardless of address family and reuse flags, so
+/// requiring an unreferenced port makes test servers collision-proof
+/// against concurrently running testcontainers and the deployed compose
+/// stack.
+pub async fn standalone_listener() -> tokio::net::TcpListener {
+    loop {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        if !proc_net_ports().contains(&port) {
+            return listener;
+        }
+        // port referenced somewhere (docker-proxy, another test) — retry
+    }
+}
+
+fn proc_net_ports() -> std::collections::HashSet<u16> {
+    let mut ports = std::collections::HashSet::new();
+    for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for line in content.lines().skip(1) {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                if fields.len() > 1 {
+                    if let Some(port) = fields[1].rsplit(':').next().and_then(|p| p.parse().ok()) {
+                        ports.insert(port);
+                    }
+                }
+            }
+        }
+    }
+    ports
+}
+
 pub fn test_state() -> AppState {
     AppState::from_config(Config::test_config())
 }
@@ -91,7 +128,10 @@ pub async fn full_state() -> FullState {
             .expect("bucket create");
     }
 
-    let provider = wiremock::MockServer::start().await;
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/v1/chat/completions"))
         .respond_with(
@@ -239,7 +279,7 @@ impl std::ops::Deref for ServedFull {
 pub async fn serve_full() -> ServedFull {
     let full = full_state().await;
     let app = crate::build_router(full.state.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = standalone_listener().await;
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("serve");
