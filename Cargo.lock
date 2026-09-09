@@ -2593,7 +2593,7 @@ dependencies = [
 
 [[package]]
 name = "guild-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",

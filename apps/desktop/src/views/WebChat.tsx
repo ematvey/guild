@@ -89,7 +89,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const [prompt, setPrompt] = useState("");
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [busy, setBusy] = useState(false);
-  const [loadingChat, setLoadingChat] = useState(false);
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -101,6 +100,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   });
   const bottom = useRef<HTMLDivElement>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
+  const loadSeq = useRef(0); // guards against stale thread loads landing last
 
   useEffect(() => {
     listModels().then((m) => {
@@ -121,18 +121,21 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
       setOpen(false);
       return;
     }
-    setLoadingChat(true);
     setOpen(false);
+    // Stay on the previous thread's content until the new one arrives; the
+    // sidebar highlight moves only when chatId is set below.
+    const seq = ++loadSeq.current;
     try {
       const msgs: ChatMessage[] = await getMessages(id);
+      if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
       setBlocks(
         msgs
           .filter((m) => m.role === "user" || m.role === "assistant")
           .map((m) => ({ kind: m.role === "user" ? "user" : "text", text: m.content }) as Block),
       );
       setChatId(id);
-    } finally {
-      setLoadingChat(false);
+    } catch {
+      // leave the previous thread on screen; switching threads is non-destructive
     }
   };
 
@@ -313,17 +316,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-6">
-              {loadingChat && (
-                <div className="space-y-4" aria-label="Loading conversation">
-                  <div className="ml-auto w-fit max-w-[70%]">
-                    <Skeleton className="h-10 w-64 rounded-2xl" />
-                  </div>
-                  <Skeleton className="h-16 w-[85%] rounded-lg" />
-                  <div className="ml-auto w-fit max-w-[70%]">
-                    <Skeleton className="h-10 w-48 rounded-2xl" />
-                  </div>
-                </div>
-              )}
               {blocks.map((b, i) =>
                 b.kind === "user" ? (
                   <div
