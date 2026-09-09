@@ -1,3 +1,5 @@
+pub mod chats;
+pub mod gateway;
 pub mod identity;
 
 #[cfg(feature = "test-support")]
@@ -31,13 +33,23 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 1] = [(
-            "0001_identity",
-            include_str!("../../migrations/0001_identity.sql"),
-        )];
+        const MIGRATIONS: [(&str, &str); 3] = [
+            (
+                "0001_identity",
+                include_str!("../../migrations/0001_identity.sql"),
+            ),
+            (
+                "0002_gateway",
+                include_str!("../../migrations/0002_gateway.sql"),
+            ),
+            (
+                "0003_chats",
+                include_str!("../../migrations/0003_chats.sql"),
+            ),
+        ];
         for (name, sql) in MIGRATIONS {
             let applied: Option<i64> =
-                sqlx::query_scalar("SELECT 1 FROM schema_history WHERE name = $1")
+                sqlx::query_scalar("SELECT 1::int8 FROM schema_history WHERE name = $1")
                     .bind(name)
                     .fetch_optional(pool)
                     .await?;
@@ -65,6 +77,14 @@ impl Store {
         identity::IdentityStore { pool: &self.pool }
     }
 
+    pub fn chats(&self) -> chats::ChatStore<'_> {
+        chats::ChatStore { pool: &self.pool }
+    }
+
+    pub fn gateway(&self) -> gateway::GatewayStore<'_> {
+        gateway::GatewayStore { pool: &self.pool }
+    }
+
     /// Access for stores added in later tasks; unused until then.
     #[allow(dead_code)]
     pub(crate) fn pool(&self) -> &PgPool {
@@ -89,6 +109,13 @@ mod test_db {
         type Target = Store;
         fn deref(&self) -> &Store {
             &self.store
+        }
+    }
+
+    impl TestDb {
+        /// Host port of the containerized Postgres.
+        pub async fn get_host_port(&self) -> u16 {
+            self.container.get_host_port_ipv4(5432).await.unwrap()
         }
     }
 

@@ -1,8 +1,10 @@
-//! Shared request state: config + lazily-connected record store (spec §4).
+//! Shared request state: config + lazily-connected record store and usage
+//! sink (spec §4).
 
 use crate::config::Config;
 use crate::http::error::ApiError;
 use crate::store::Store;
+use crate::usage::SharedUsageSink;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
@@ -10,6 +12,7 @@ use tokio::sync::OnceCell;
 pub struct AppState {
     pub config: Arc<Config>,
     db: Arc<OnceCell<Arc<Store>>>,
+    usage: Arc<OnceCell<SharedUsageSink>>,
 }
 
 impl AppState {
@@ -17,6 +20,7 @@ impl AppState {
         Self {
             config: Arc::new(cfg),
             db: Arc::new(OnceCell::new()),
+            usage: Arc::new(OnceCell::new()),
         }
     }
 
@@ -33,14 +37,21 @@ impl AppState {
             .cloned()
     }
 
+    pub(crate) fn usage_cell(&self) -> &OnceCell<SharedUsageSink> {
+        &self.usage
+    }
+
     /// Test constructor: state pre-seeded with an existing store.
     #[cfg(feature = "test-support")]
     pub fn with_store(store: Arc<Store>, cfg: Config) -> Self {
-        let cell = OnceCell::new();
-        cell.set(store).unwrap_or_else(|_| panic!("fresh OnceCell"));
         Self {
             config: Arc::new(cfg),
-            db: Arc::new(cell),
+            db: {
+                let cell = OnceCell::new();
+                cell.set(store).unwrap_or_else(|_| panic!("fresh OnceCell"));
+                Arc::new(cell)
+            },
+            usage: Arc::new(OnceCell::new()),
         }
     }
 }
