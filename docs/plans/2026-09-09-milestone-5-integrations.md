@@ -1,3 +1,7 @@
+# Status: COMPLETE
+
+(completed on feat/milestone-5; see git log for task commits. Compose E2E verified: webhook routine succeeded end-to-end through Restate; interval chain runs every tick and stops when disabled. Restate 1.7 admin API path is /deployments — worker listens before registering so the probe succeeds.)
+
 # Guild Milestone 5 — Integrations Runtime (Restate) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
