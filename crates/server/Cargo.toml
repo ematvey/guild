@@ -66,6 +66,9 @@ required-features = ["test-support"]
 name = "registry_api"
 required-features = ["test-support"]
 
+[[test]]
+name = "admin_api"
+required-features = ["test-support"]
 
 [features]
 test-support = ["dep:testcontainers", "dep:testcontainers-modules", "dep:wiremock", "dep:aws-sdk-s3"]
