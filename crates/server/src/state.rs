@@ -3,6 +3,7 @@
 
 use crate::config::Config;
 use crate::http::error::ApiError;
+use crate::s3::SharedObjectStore;
 use crate::store::Store;
 use crate::usage::SharedUsageSink;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     db: Arc<OnceCell<Arc<Store>>>,
     usage: Arc<OnceCell<SharedUsageSink>>,
+    objects: Arc<OnceCell<SharedObjectStore>>,
 }
 
 impl AppState {
@@ -21,6 +23,7 @@ impl AppState {
             config: Arc::new(cfg),
             db: Arc::new(OnceCell::new()),
             usage: Arc::new(OnceCell::new()),
+            objects: Arc::new(OnceCell::new()),
         }
     }
 
@@ -41,6 +44,10 @@ impl AppState {
         &self.usage
     }
 
+    pub(crate) fn objects_cell(&self) -> &OnceCell<SharedObjectStore> {
+        &self.objects
+    }
+
     /// Test constructor: state pre-seeded with an existing store.
     #[cfg(feature = "test-support")]
     pub fn with_store(store: Arc<Store>, cfg: Config) -> Self {
@@ -52,6 +59,7 @@ impl AppState {
                 Arc::new(cell)
             },
             usage: Arc::new(OnceCell::new()),
+            objects: Arc::new(OnceCell::new()),
         }
     }
 }

@@ -88,6 +88,10 @@ pub async fn full_state() -> FullState {
         clickhouse_database: "default".into(),
         master_key_hex: "00".repeat(32),
         jwt_secret: "test-secret".into(),
+        s3_url: "http://placeholder:9000".into(),
+        s3_bucket: "guild".into(),
+        s3_access_key_id: "minioadmin".into(),
+        s3_secret_access_key: "minioadmin".into(),
     };
     let master = cfg.master_key().unwrap();
 

@@ -1,6 +1,7 @@
 //! Usage-event sink — ClickHouse (spec §4.5). Unreachable ClickHouse must
 //! never break chat: failures are logged and dropped.
 
+use crate::s3::{ObjectStore, SharedObjectStore};
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use guild_core::usage::UsageEvent;
@@ -87,6 +88,18 @@ impl UsageSink {
 pub type SharedUsageSink = Arc<UsageSink>;
 
 impl AppState {
+    /// Lazily connects to object storage on first use.
+    pub async fn objects(&self) -> Result<SharedObjectStore, crate::http::error::ApiError> {
+        self.objects_cell()
+            .get_or_try_init(|| async {
+                ObjectStore::connect(&self.config)
+                    .map(Arc::new)
+                    .map_err(|e| crate::http::error::ApiError::internal(e.to_string()))
+            })
+            .await
+            .cloned()
+    }
+
     /// Lazily connects to ClickHouse on first use.
     pub async fn usage(&self) -> Result<SharedUsageSink, crate::http::error::ApiError> {
         self.usage_cell()
