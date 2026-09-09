@@ -15,6 +15,15 @@ pub struct UserRow {
     pub role: String,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct UserListRow {
+    pub id: Uuid,
+    pub email: String,
+    pub role: String,
+    pub identity_type: String,
+    pub created_at: chrono::DateTime<Utc>,
+}
+
 #[derive(Debug, sqlx::FromRow)]
 struct AuthRow {
     id: Uuid,
@@ -184,6 +193,52 @@ impl<'a> IdentityStore<'a> {
     pub async fn revoke_session(&self, token: &str) -> anyhow::Result<()> {
         sqlx::query("UPDATE sessions SET revoked_at = now() WHERE token = $1")
             .bind(token)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_users(&self, org_id: Uuid) -> Result<Vec<UserListRow>, ApiError> {
+        sqlx::query_as(
+            "SELECT id, email, role, identity_type, created_at FROM users WHERE org_id = $1 ORDER BY created_at",
+        )
+        .bind(org_id)
+        .fetch_all(self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    /// Deletes a user; refuses to remove the org's last admin.
+    pub async fn delete_user(&self, org_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
+        let target: Option<(String,)> =
+            sqlx::query_as("SELECT role FROM users WHERE org_id = $1 AND id = $2")
+                .bind(org_id)
+                .bind(user_id)
+                .fetch_optional(self.pool)
+                .await?;
+        let Some((role,)) = target else {
+            return Err(ApiError::not_found("no such user"));
+        };
+        if role == "admin" {
+            let admins: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM users WHERE org_id = $1 AND role = 'admin'",
+            )
+            .bind(org_id)
+            .fetch_one(self.pool)
+            .await?;
+            if admins <= 1 {
+                return Err(ApiError::conflict(
+                    "last_admin",
+                    "cannot delete the last admin",
+                ));
+            }
+        }
+        sqlx::query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1")
+            .bind(user_id)
+            .execute(self.pool)
+            .await?;
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
             .execute(self.pool)
             .await?;
         Ok(())

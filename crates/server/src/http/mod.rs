@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod auth;
 pub mod chats;
 pub mod error;
@@ -18,6 +19,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(chats::routes())
         .merge(gateway::routes())
         .merge(registry::routes())
+        .merge(admin::routes())
         .fallback(error::not_found)
         .with_state(state)
 }
