@@ -189,7 +189,8 @@ impl Tool for GlobTool {
             .map_err(|e| ToolFailure::InvalidInput(format!("bad glob: {e}")))?;
         let matcher = glob.compile_matcher();
         let mut matches: Vec<String> = Vec::new();
-        for entry in ignore::Walk::new(workdir) {
+        let walker = ignore::WalkBuilder::new(workdir).require_git(false).build();
+        for entry in walker {
             let Ok(entry) = entry else { continue };
             let path = entry.path();
             let rel = path.strip_prefix(workdir).unwrap_or(path);
@@ -246,7 +247,8 @@ impl Tool for GrepTool {
             .map_err(|e| ToolFailure::InvalidInput(format!("bad regex: {e}")))?;
         let mut out: Vec<String> = Vec::new();
         let mut truncated = false;
-        for entry in ignore::Walk::new(workdir) {
+        let walker = ignore::WalkBuilder::new(workdir).require_git(false).build();
+        for entry in walker {
             let Ok(entry) = entry else { continue };
             if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
                 continue;
