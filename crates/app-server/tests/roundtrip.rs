@@ -77,6 +77,15 @@ async fn jsonrpc_loop_login_and_chat_send() {
             "method": "chat.send",
             "params": {"text": "greet", "model": "gpt-test"}
         }),
+        // desktop-only RPCs: admin-console handoff + model selector
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 3, "protocol": 1,
+            "method": "session.info", "params": {}
+        }),
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 4, "protocol": 1,
+            "method": "models.list", "params": {}
+        }),
     ];
     // keep the token file out of the developer's real config dir during tests
     let tmp = std::env::temp_dir().join(format!("guild-jsonrpc-test-{}", std::process::id()));
@@ -108,4 +117,22 @@ async fn jsonrpc_loop_login_and_chat_send() {
         .find(|m| m.get("id") == Some(&serde_json::json!(2)))
         .expect("chat.send response");
     assert_eq!(resp2["result"]["tokens_in"], 5);
+    // session.info exposes what the Admin-console handoff link needs
+    let info = msgs
+        .iter()
+        .find(|m| m.get("id") == Some(&serde_json::json!(3)))
+        .expect("session.info response");
+    assert_eq!(info["result"]["base_url"], srv.base_url);
+    assert_eq!(info["result"]["email"], "a@b.c");
+    assert!(info["result"]["token"].as_str().unwrap().len() > 20);
+    // models.list drives the desktop model selector
+    let models = msgs
+        .iter()
+        .find(|m| m.get("id") == Some(&serde_json::json!(4)))
+        .expect("models.list response");
+    assert!(models["result"]["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m.as_str() == Some("gpt-test")));
 }
