@@ -245,7 +245,7 @@ async fn chat_completions(
             .keep_alive(KeepAlive::default())
             .into_response())
     } else {
-        let (text, calls, tokens_in, tokens_out, cost) = accumulate(
+        let (text, calls, tokens_in, tokens_out, _cost) = accumulate(
             prov_stream,
             usage,
             org_id,
