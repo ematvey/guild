@@ -218,7 +218,14 @@ async fn login_task(
             s.email = Some(user.email.clone());
         }
         let path = crate::session_store::default_path()?;
-        save(&path, &StoredSession { base_url, token })?;
+        save(
+            &path,
+            &StoredSession {
+                base_url,
+                token,
+                email: Some(user.email.clone()),
+            },
+        )?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
     }
     .await;
@@ -244,7 +251,14 @@ async fn pair_task(
             s.email = Some(user.email.clone());
         }
         let path = crate::session_store::default_path()?;
-        save(&path, &StoredSession { base_url, token })?;
+        save(
+            &path,
+            &StoredSession {
+                base_url,
+                token,
+                email: Some(user.email.clone()),
+            },
+        )?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
     }
     .await;

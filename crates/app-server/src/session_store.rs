@@ -9,6 +9,11 @@ use std::path::{Path, PathBuf};
 pub struct StoredSession {
     pub base_url: String,
     pub token: String,
+    /// Known only for sessions stored by newer builds; None means the
+    /// caller should treat the email as unknown (UI shows the token's
+    /// server-side identity instead).
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 pub fn default_path() -> anyhow::Result<PathBuf> {
@@ -46,6 +51,7 @@ mod tests {
         let s = StoredSession {
             base_url: "http://x".into(),
             token: "t".into(),
+            email: Some("a@b".into()),
         };
         save(&path, &s).unwrap();
         assert_eq!(load(&path).unwrap().token, "t");

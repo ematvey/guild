@@ -19,10 +19,48 @@ fn main() -> anyhow::Result<()> {
                 .worker_threads(2)
                 .enable_all()
                 .build()?;
+            // Restore a persisted session so a GUI reload (F5) or an app
+            // restart keeps auth; a dead token is dropped, a transient
+            // network failure is not.
+            let session = rt.block_on(async {
+                let mut session = jsonrpc_loop::Session::default();
+                if let Some(stored) = session_store::load(&session_store::default_path()?) {
+                    let cloud = CloudClient {
+                        base_url: stored.base_url.clone(),
+                        token: stored.token,
+                    };
+                    match cloud.me().await {
+                        Ok(user) => {
+                            session.email = Some(user.email.clone());
+                            session.cloud = Some(cloud.clone());
+                            // upgrade old stores that lacked the email
+                            if stored.email.is_none() {
+                                session_store::save(
+                                    &session_store::default_path()?,
+                                    &session_store::StoredSession {
+                                        base_url: stored.base_url,
+                                        token: cloud.token,
+                                        email: Some(user.email),
+                                    },
+                                )?;
+                            }
+                        }
+                        Err(guild_app_server::cloud::CloudError::Unauthorized) => {
+                            let _ = session_store::clear(&session_store::default_path()?);
+                        }
+                        Err(_) => {
+                            // offline or server briefly down: keep the token
+                            session.cloud = Some(cloud);
+                            session.email = stored.email;
+                        }
+                    }
+                }
+                anyhow::Ok(session)
+            })?;
             let (session, _writer) = rt.block_on(jsonrpc_loop::serve(
                 std::io::stdin(),  // Stdin handle: Read + Send + 'static
                 std::io::stdout(), // Stdout handle: Write + Send + 'static
-                jsonrpc_loop::Session::default(),
+                session,
             ))?;
             let _ = session;
             Ok(())
@@ -54,14 +92,16 @@ fn cmd_login(args: &[String]) -> anyhow::Result<()> {
     let password = flag(args, "--password")?;
     let rt = tokio::runtime::Runtime::new()?;
     let (token, user) = rt.block_on(CloudClient::login(&url, &email, &password))?;
+    let user_email = user.email.clone();
     session_store::save(
         &session_store::default_path()?,
         &session_store::StoredSession {
             base_url: url,
             token,
+            email: Some(user.email),
         },
     )?;
-    println!("logged in as {}", user.email);
+    println!("logged in as {}", user_email);
     Ok(())
 }
 
