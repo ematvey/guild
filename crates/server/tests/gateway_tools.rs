@@ -1,7 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use guild_server::test_support::{clickhouse_usage_rows, full_state, standalone_listener};
-use protocol::api::ToolCall;
 use serde_json::json;
 use tower::ServiceExt;
 
@@ -72,34 +71,52 @@ async fn tool_call_streams_persists_and_usage_records() {
     assert!(text.contains("tool_call_done"), "{text}");
     assert!(text.contains("read_file"), "{text}");
 
-    // assistant message persisted with tool_calls
-    let msgs = fs
+    // assistant turn persisted as a thread event with tool_call blocks
+    let events = fs
         .store()
-        .chats()
-        .list_messages(fs.org_id, fs.chat_id)
+        .thread()
+        .list_events(fs.org_id, fs.chat_id)
         .await
         .unwrap();
-    assert_eq!(msgs.len(), 2);
-    let calls = msgs[1].tool_calls.as_ref().expect("tool_calls persisted");
-    assert_eq!(
-        calls[0],
-        ToolCall {
-            id: "c1".into(),
-            name: "read_file".into(),
-            arguments: serde_json::json!({"path": "README.md"}),
+    assert_eq!(events.len(), 2, "system + assistant events for the turn");
+    let (assistant_id, assistant_event) = match &events[1].event {
+        protocol::api::ThreadEvent::AssistantMessage { blocks, .. } => {
+            (events[1].id, blocks.clone())
         }
+        other => panic!("expected assistant event, got {other:?}"),
+    };
+    let _ = assistant_id;
+    let call_block = assistant_event
+        .iter()
+        .find_map(|b| match b {
+            protocol::api::Block::ToolCall { id, name, arguments } => {
+                Some((id.clone(), name.clone(), arguments.clone()))
+            }
+            _ => None,
+        })
+        .expect("tool_call block persisted");
+    assert_eq!(call_block.0, "c1");
+    assert_eq!(call_block.1, "read_file");
+    assert_eq!(
+        call_block.2,
+        "{\"path\": \"README.md\"}",
+        "raw arguments string as the model produced it"
     );
 
-    // client appends the tool result via the message endpoint
+    // client appends the tool result via the gateway result RPC (with meta)
     let res = app
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/api/v1/chats/{}/messages", fs.chat_id))
+                .uri(format!(
+                    "/api/v1/gateway/chat/{}/tools/c1/result",
+                    fs.chat_id
+                ))
                 .header("authorization", format!("Bearer {}", fs.token))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    json!({"role": "tool", "content": "# readme contents", "tool_call_id": "c1"})
+                    json!({"content": "# readme contents", "is_error": false,
+                           "meta": {"card": "read", "path": "README.md"}})
                         .to_string(),
                 ))
                 .unwrap(),
@@ -108,25 +125,31 @@ async fn tool_call_streams_persists_and_usage_records() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
-    let msgs = fs
-        .store()
-        .chats()
-        .list_messages(fs.org_id, fs.chat_id)
-        .await
-        .unwrap();
-    assert_eq!(msgs.len(), 3);
-    assert_eq!(msgs[2].role, "tool");
-    assert_eq!(msgs[2].tool_call_id.as_deref(), Some("c1"));
-
-    // assistant turn still recorded usage (model was called)
+    // (the result itself is persisted by the journaled ChatRunner, which
+    // needs a live Restate runtime — out of scope for this harness; the
+    // meta plumbing is unit-checked in the worker's own tests)
     let (count, _) = clickhouse_usage_rows(&fs.state).await;
     assert!(count >= 1);
 }
 
 #[tokio::test]
-async fn tool_message_without_tool_call_id_is_rejected() {
+async fn messages_endpoints_are_gone() {
     let fs = full_state().await;
     let app = guild_server::build_router(fs.state.clone());
+    // GET /messages removed (spec §E, §F): 404
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/chats/{}/messages", fs.chat_id))
+                .header("authorization", format!("Bearer {}", fs.token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    // POST /messages removed: 404 (any body, any role)
     let res = app
         .oneshot(
             Request::builder()
@@ -141,26 +164,5 @@ async fn tool_message_without_tool_call_id_is_rejected() {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn assistant_role_cannot_be_appended_by_clients() {
-    let fs = full_state().await;
-    let app = guild_server::build_router(fs.state.clone());
-    let res = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/chats/{}/messages", fs.chat_id))
-                .header("authorization", format!("Bearer {}", fs.token))
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"role": "assistant", "content": "forged"}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

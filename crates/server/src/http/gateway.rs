@@ -29,6 +29,9 @@ use uuid::Uuid;
 pub struct ActiveGeneration {
     pub tx: broadcast::Sender<StreamEvent>,
     pub text: Arc<RwLock<String>>,
+    /// Reasoning accumulated so far in the in-flight model call, for
+    /// catch-up on attach (first `thinking_delta` frame carries the buffer).
+    pub thinking: Arc<RwLock<String>>,
     /// Client tool calls currently suspended by the workflow, for replay to
     /// clients that attach after the ToolStarted event was broadcast.
     pub pending_tools: Arc<std::sync::Mutex<HashMap<String, PendingTool>>>,
@@ -317,19 +320,25 @@ pub(crate) fn clear_pending_tool(state: &AppState, chat_id: Uuid, call_id: &str)
 pub(crate) fn ensure_generation(
     state: &AppState,
     chat_id: Uuid,
-) -> (broadcast::Sender<StreamEvent>, Arc<RwLock<String>>) {
+) -> (
+    broadcast::Sender<StreamEvent>,
+    Arc<RwLock<String>>,
+    Arc<RwLock<String>>,
+) {
     let mut gens = state.generations.lock().unwrap();
     if let Some(g) = gens.get(&chat_id) {
-        return (g.tx.clone(), g.text.clone());
+        return (g.tx.clone(), g.text.clone(), g.thinking.clone());
     }
     let (tx, _) = broadcast::channel::<StreamEvent>(1024);
     let gen = ActiveGeneration {
         tx: tx.clone(),
         text: Arc::new(RwLock::new(String::new())),
+        thinking: Arc::new(RwLock::new(String::new())),
         pending_tools: Arc::new(std::sync::Mutex::new(HashMap::new())),
     };
     gens.insert(chat_id, gen);
-    (tx, gens.get(&chat_id).unwrap().text.clone())
+    let g = gens.get(&chat_id).unwrap();
+    (g.tx.clone(), g.text.clone(), g.thinking.clone())
 }
 
 async fn chat(
@@ -344,8 +353,10 @@ async fn chat(
     // durable Restate workflow (ChatRunner::generate) — see worker/restate.rs.
     let chat = store.chats().get_chat(user.0.org_id, req.chat_id).await?;
 
-    // One generation per chat at a time — checked BEFORE persisting, so a
-    // rejected send does not leave a phantom user message behind.
+    // One generation per chat at a time — checked BEFORE invoking, so a
+    // rejected send leaves nothing behind. The user turn itself is persisted
+    // by the ChatRunner workflow (journaled), never here — attach/replay
+    // stays consistent with the event log (spec §B.4).
     if state.generations.lock().unwrap().contains_key(&req.chat_id) {
         return Err(ApiError::new(
             axum::http::StatusCode::CONFLICT,
@@ -354,40 +365,27 @@ async fn chat(
         ));
     }
 
-    // Persist the new user turn (client sends only the new message; the
-    // workflow loads the full history from Postgres).
-    if let Some(last) = req.messages.last() {
-        if last.role == "user" {
-            store
-                .chats()
-                .append_message(
-                    req.chat_id,
-                    "user",
-                    &last.content,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .await?;
-        }
-    }
-
     // Placeholder generation: clients (including the caller) attach to this
     // via the SSE body below or the attach endpoint; the ChatRunner workflow
-    // broadcasts deltas through it. The buffer starts empty because history
+    // broadcasts deltas through it. The buffers start empty because history
     // is already on screen.
-    let (tx, _text_buf) = ensure_generation(&state, req.chat_id);
+    let (tx, _text_buf, _thinking_buf) = ensure_generation(&state, req.chat_id);
 
     // Fire-and-forget invocation via the Restate ingress; the workflow runs
     // detached, so this HTTP request ending (or the client disconnecting)
     // never cancels the generation.
+    let user_message = req
+        .messages
+        .last()
+        .filter(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
     let payload = serde_json::json!({
         "org_id": user.0.org_id,
         "user_id": user.0.id,
         "chat_id": req.chat_id,
         "model": req.model,
+        "user_message": user_message,
         "client_tools": req.client_tools,
         "project_dir": req.project_dir,
         "client_id": headers
@@ -464,11 +462,12 @@ async fn tool_result(
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing content"))?;
     let is_error = req["is_error"].as_bool().unwrap_or(false);
+    let meta = req.get("meta").cloned().filter(|v| !v.is_null());
     crate::http::internal::restate_send_one_way(
         &state,
         "ChatRunner",
         &format!("{chat_id}/complete_tool"),
-        serde_json::json!({ "call_id": call_id, "content": content, "is_error": is_error }),
+        serde_json::json!({ "call_id": call_id, "content": content, "is_error": is_error, "meta": meta }),
     )
     .await?;
     Ok(Json(json!({ "ok": true })))
@@ -486,8 +485,8 @@ async fn attach_stream(
         .lock()
         .unwrap()
         .get(&chat_id)
-        .map(|g| (g.tx.clone(), g.text.clone()));
-    let Some((tx, text)) = gen else {
+        .map(|g| (g.tx.clone(), g.text.clone(), g.thinking.clone()));
+    let Some((tx, text, thinking)) = gen else {
         // Nothing in flight: clients attach speculatively on every thread
         // open, so reply 200 instead of 404 — no console error noise. Yield
         // a single Idle frame so the client can tell "nothing running" apart
@@ -502,9 +501,10 @@ async fn attach_stream(
     // Subscribe and snapshot under the read guard: the generation task takes
     // the write guard before broadcasting, so the snapshot and the live
     // stream cannot overlap or gap.
-    let (snap, rx) = {
-        let g = text.read().await;
-        (g.clone(), tx.subscribe())
+    let (snap, think_snap, rx) = {
+        let t = text.read().await;
+        let th = thinking.read().await;
+        (t.clone(), th.clone(), tx.subscribe())
     };
     // Replay suspended client tool calls so late attachers can execute them.
     let pending: Vec<(String, String, String)> = state
@@ -524,6 +524,11 @@ async fn attach_stream(
     let out = async_stream::stream! {
         if !snap.is_empty() {
             yield sse_event(StreamEvent::Delta { content: snap });
+        }
+        // Spec §B.5: the first thinking_delta frame after attach carries the
+        // full accumulated reasoning buffer, not a delta.
+        if !think_snap.is_empty() {
+            yield sse_event(StreamEvent::ThinkingDelta { content: think_snap });
         }
         for (call_id, name, arguments) in pending {
             yield sse_event(StreamEvent::ToolStarted {
