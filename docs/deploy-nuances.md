@@ -226,3 +226,42 @@ curl -s localhost:18080/thread/x | grep -oE 'index-[A-Za-z0-9_-]+\.(js|css)'
 # nuke everything including data (destructive!)
 docker compose down -v
 ```
+
+# Daemon watch-items (milestone-8, 2026-09-10)
+
+Maintenance notes for the per-user daemon (`docs/plans/2026-09-10-milestone-8-daemon.md`).
+Check these when touching releases, tests, or the daemon itself.
+
+1. **Bump the workspace version on every release.** The attach handshake
+   (`daemon.hello` → version compare) reads `CARGO_PKG_VERSION` of the
+   shared `guild-app-server` lib on both sides, so it only distinguishes
+   builds if the workspace `[workspace.package] version` actually moves.
+   A stale version makes every daemon look current — a mismatched old
+   daemon would never be told to shut down and respawn.
+
+2. **The `#[ignore]`d app-server tests** (`agent_rpc` × 2, `roundtrip` × 2,
+   skipped for missing embedded Restate in the test env). If they are ever
+   un-ignored, note they exercise `serve()` (stdio surface), where
+   post-EOF agent events are delivered via `run_connection`'s drain tail +
+   `serve()`'s subscribe-before-drain safety net — that delivery contract
+   is load-bearing for them.
+
+3. **Daemon shutdown is unconditional** (`process::exit(0)` after
+   `run_daemon()` in both binaries). Clients holding a socket mid-request
+   get dropped connections at shutdown — deliberate: waiting for them
+   deadlocks tokio runtime teardown (blocking tasks ↔ client EOF).
+   Don't "fix" the exit into a graceful drain without solving that.
+
+4. **Test-hygiene pattern for anything touching the daemon:** every test
+   must use a distinct socket path (they collide on PID-derived names when
+   run in parallel), clients should set a read timeout (5s) so a
+   regression fails fast instead of hanging the suite, and a fake server
+   on a socketpair must hold its end open until the client closes (early
+   close = EPIPE/EOF races; also: writes to one end arrive at the OTHER
+   end — crossed ends make the client read back its own requests).
+
+5. **Overrides for dev:** `GUILD_DAEMON_BIN` (which binary to spawn as
+   daemon), `GUILD_DAEMON_SOCKET` (socket/pipe path). Release builds use
+   `cargo xwin check` (msvc) and `cargo zigbuild --lib` (apple) as
+   compile gates; full binary links happen in the release pipeline
+   (Windows SDK / macOS SDK needed there).
