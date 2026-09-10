@@ -160,6 +160,12 @@ retry-then-fail-fast ✓ · coherent model answers ✓ · machine chip in header
 - Long builds/tests: `big-job` skill (systemd transient units), never
   foreground. `curl --max-time` always. `PLAN.md`/docs updated on state
   changes so sessions can compact and recover.
+- Orchestration topology (maintainer, 2026-09-12): split worker agents from the
+  orchestrator's own pane (`herdr pane split --current --direction right|down
+  --no-focus` + `herdr pane run <id> "cd <worktree> && exec pi"`), one git
+  worktree per worker; retire each pane (`herdr pane close`) once its branch
+  is merged. Waits: `herdr agent get` first — `agent wait --until` only fires
+  on future transitions and hangs on settled agents; never sleep-poll.
 - Fast tests (2026-09-12, host-services mode): plain `cargo test` (default-members excludes
   `guild-desktop`; use `-p guild-desktop` explicitly for it — `--workspace`
   still builds it). `.cargo/config.toml` uses lld + line-tables-only
