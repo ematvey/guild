@@ -83,14 +83,16 @@ fn cmd_login(args: &[String]) -> anyhow::Result<()> {
     let (token, user) = rt.block_on(guild_app_server::cloud::CloudClient::login(
         &url, &email, &password,
     ))?;
+    let user_email = user.email.clone();
     guild_app_server::session_store::save(
         &guild_app_server::session_store::default_path()?,
         &guild_app_server::session_store::StoredSession {
             base_url: url,
             token,
+            email: Some(user.email),
         },
     )?;
-    println!("logged in as {}", user.email);
+    println!("logged in as {}", user_email);
     Ok(())
 }
 
