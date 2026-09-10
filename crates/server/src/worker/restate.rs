@@ -634,6 +634,12 @@ impl ChatRunner {
             }
         })
         .await?;
+        // The user turn reaches the model THIS request: history was derived
+        // before the append above, so push the turn onto the request messages
+        // explicitly (it is already persisted as a user_message event).
+        if !req.user_message.is_empty() {
+            messages.push(Message::user(req.user_message.clone()));
+        }
 
         let (tx, text_buf, thinking_buf) = ensure_generation(&state, req.chat_id);
 
