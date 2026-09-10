@@ -82,9 +82,12 @@ guild-server. Code work stays on the user's machine.
 - Screens: session list; chat/agent view (streaming text, tool calls, diffs);
   approval prompts (run command / edit file / MCP tool); settings (server
   URL, login, tool policy); registry browser (install skills, MCP configs).
-- Launches guild-app-server as a child process and connects over JSON-RPC on
-  stdio. On window close: offer to keep running sessions alive in the
-  background or stop them.
+- Attaches to the per-user guild daemon over a local socket (spawns it
+  detached on first use); JSON-RPC line protocol per §6. The daemon
+  survives window closure (§3.3) — sessions always keep running; no
+  keep-alive prompt is needed.
+  > 2026-09-10: changed from child-process engine to a surviving per-user
+  > daemon — milestone-8 plan (`docs/plans/2026-09-10-milestone-8-daemon.md`).
 - Login flow: OAuth-style browser flow against the guild-server (managed
   account or OIDC SSO — the client does not distinguish); token storage in
   the OS keychain via Tauri.

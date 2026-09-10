@@ -1,8 +1,7 @@
 //! Single Guild client binary:
 //! - no args  → GUI (Tauri window)
-//! - `daemon` → the per-user daemon (shared engine, survives client exit)
-//! - `engine` → local engine loop over stdio (removed with Task 6 of the
-//!   daemon milestone)
+//! - `daemon` → the per-user daemon (shared engine, survives client exit;
+//!   the GUI re-executes itself with this argument on first attach)
 //! - `login` / `chat` / `publish` / `install` / `verify` → headless CLI
 //!   (cloud-touching verbs go through the daemon)
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -43,29 +42,13 @@ fn main() -> anyhow::Result<()> {
             // the runtime teardown).
             std::process::exit(0);
         }
-        Some("engine") => {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()?;
-            // Restore the persisted session here too: the GUI re-executes
-            // ITSELF in engine mode, so without this every app launch starts
-            // logged out even though token.json is on disk.
-            let session = rt.block_on(guild_app_server::jsonrpc_loop::restored_session())?;
-            let (_session, _writer) = rt.block_on(guild_app_server::jsonrpc_loop::serve(
-                std::io::stdin(),
-                std::io::stdout(),
-                session,
-            ))?;
-            Ok(())
-        }
         Some("login") => guild_app_server::cli::cmd_login(&args[1..]),
         Some("chat") => guild_app_server::cli::cmd_chat(&args[1..]),
         Some("publish") => guild_app_server::cli::cmd_publish(&args[1..]),
         Some("install") => guild_app_server::cli::cmd_install(&args[1..]),
         Some("verify") => guild_app_server::cli::cmd_verify(&args[1..]),
         Some(other) => anyhow::bail!(
-            "unknown subcommand {other:?}; expected none (GUI), daemon, engine, login, chat, publish, install, or verify"
+            "unknown subcommand {other:?}; expected none (GUI), daemon, login, chat, publish, install, or verify"
         ),
     }
 }
