@@ -413,6 +413,11 @@ async fn internal_completion(
                 Ok(ProviderChunk::ToolCallDelta { index, id, name, arguments_delta }) => {
                     yield sse_event(StreamEvent::ToolCallDelta { index, id, name, arguments_delta });
                 }
+                Ok(ProviderChunk::Thinking(chunk)) => {
+                    if !chunk.text_delta.is_empty() {
+                        yield sse_event(StreamEvent::ThinkingDelta { content: chunk.text_delta });
+                    }
+                }
                 Ok(ProviderChunk::ToolCallDone { call }) => {
                     tool_calls.push(call.clone());
                     yield sse_event(StreamEvent::ToolCallDone { call });

@@ -76,6 +76,13 @@ impl ModelTurn for GatewayTurn {
                 Ok(StreamEvent::ToolCallDone { call }) => {
                     Some(Ok(ProviderChunk::ToolCallDone { call }))
                 }
+                Ok(StreamEvent::ThinkingDelta { content }) => {
+                    Some(Ok(ProviderChunk::Thinking(guild_core::provider::ChatChunk {
+                        text_delta: content,
+                        tokens_in: None,
+                        tokens_out: None,
+                    })))
+                }
                 // usage + history persistence happen server-side
                 Ok(StreamEvent::Done { .. }) => None,
                 // Tool lifecycle notifications are for interactive clients.

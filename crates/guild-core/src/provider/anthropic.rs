@@ -256,6 +256,7 @@ mod tests {
                     arguments: serde_json::json!({"path": "a"}),
                 }]),
                 tool_call_id: None,
+                reasoning: None,
             },
             Message::tool_result("c1", "contents"),
         ];

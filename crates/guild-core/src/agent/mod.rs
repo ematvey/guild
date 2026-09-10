@@ -35,6 +35,11 @@ pub enum ApprovalDecision {
 #[async_trait]
 pub trait AgentHooks: Send + Sync {
     async fn on_text(&self, delta: &str);
+    /// Chain-of-thought reasoning fragment (may never fire on routes
+    /// without reasoning).
+    async fn on_reasoning(&self, delta: &str) {
+        let _ = delta; // default: ignore
+    }
     async fn on_tool_call(&self, call: &ToolCall);
     async fn on_tool_result(&self, call: &ToolCall, outcome: &Result<ToolOutcome, ToolFailure>);
     async fn request_approval(&self, call: &ToolCall) -> ApprovalDecision;
@@ -151,6 +156,11 @@ pub async fn run_agent(
                     // fragments are stream-internal; the done event carries
                     // the assembled call
                 }
+                ProviderChunk::Thinking(chunk) => {
+                    if !chunk.text_delta.is_empty() {
+                        hooks.on_reasoning(&chunk.text_delta).await;
+                    }
+                }
             }
         }
         drop(pinned);
@@ -161,6 +171,7 @@ pub async fn run_agent(
                 content: text.clone(),
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning: None,
             });
             hooks.on_done(&text).await;
             return Ok(AgentResult {
@@ -176,6 +187,7 @@ pub async fn run_agent(
             content: text,
             tool_calls: Some(calls.clone()),
             tool_call_id: None,
+            reasoning: None,
         });
 
         for call in calls {

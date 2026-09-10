@@ -99,6 +99,7 @@ fn to_internal_messages(msgs: &[OpenAiMessage]) -> (Option<String>, Vec<Message>
                         .collect()
                 }),
                 tool_call_id: None,
+                reasoning: None,
             }),
             "tool" => out.push(Message::tool_result(
                 m.tool_call_id.clone().unwrap_or_default(),
@@ -109,6 +110,7 @@ fn to_internal_messages(msgs: &[OpenAiMessage]) -> (Option<String>, Vec<Message>
                 content: content_to_text(&m.content),
                 tool_calls: None,
                 tool_call_id: m.tool_call_id.clone(),
+                reasoning: None,
             }),
         }
     }
@@ -347,6 +349,14 @@ fn stream_chunks(
                 Ok(ProviderChunk::ToolCallDelta { .. }) => {
                     // fragments are folded into the Done frame by the adapter layer
                 }
+                Ok(ProviderChunk::Thinking(t)) => {
+                    if !t.text_delta.is_empty() {
+                        yield Ok(SseEvent::default().data(chunk(
+                            json!({"reasoning_content": t.text_delta}),
+                            None,
+                        ).to_string()));
+                    }
+                }
                 Ok(ProviderChunk::ToolCallDone { call }) => {
                     yield Ok(SseEvent::default().data(chunk(
                         json!({"tool_calls": [{"index": calls.len(), "id": call.id, "type": "function",
@@ -413,6 +423,10 @@ async fn accumulate(
                 }
             }
             ProviderChunk::ToolCallDelta { .. } => {}
+            ProviderChunk::Thinking(_) => {
+                // accumulate() feeds non-interactive consumers; reasoning is
+                // display-only here
+            }
             ProviderChunk::ToolCallDone { call } => calls.push(call),
         }
     }

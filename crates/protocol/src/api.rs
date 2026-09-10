@@ -118,6 +118,12 @@ pub struct Message {
     /// Set on role="tool" messages: which call this result answers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Assistant-only: chain-of-thought reasoning for this message. Persisted
+    /// on the thread and REPLAYED to the model on every reasoning-carrying
+    /// turn (serialized as `reasoning_content` on OpenAI-shape routes) —
+    /// never dropped from context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
 }
 
 impl Message {
@@ -127,6 +133,7 @@ impl Message {
             content: content.into(),
             tool_calls: None,
             tool_call_id: None,
+            reasoning: None,
         }
     }
 
@@ -136,6 +143,7 @@ impl Message {
             content: content.into(),
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
+            reasoning: None,
         }
     }
 }
@@ -262,6 +270,11 @@ pub enum StreamEvent {
         content: String,
         is_error: bool,
     },
+    /// Fragment of the model's chain-of-thought reasoning. Accumulates into
+    /// the current `reasoning` block of the in-flight assistant turn. On the
+    /// attach catch-up path the FIRST frame after attaching carries the full
+    /// buffer so far, not a delta.
+    ThinkingDelta { content: String },
 }
 
 /// Who runs a tool call.
@@ -271,6 +284,80 @@ pub enum StreamEvent {
 pub enum ToolExecutor {
     Client,
     Server,
+}
+
+/// Token accounting carried on an assistant thread event.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct UsagePayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_in: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_out: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+}
+
+/// One typed block inside an assistant thread event, in stream order.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", ts(export))]
+pub enum Block {
+    Text { text: String },
+    /// Chain-of-thought reasoning. Persisted on the thread and replayed to
+    /// the model; never dropped from context.
+    Reasoning { text: String },
+    /// A tool invocation requested by the model. `arguments` is the RAW JSON
+    /// string exactly as the model produced it — never parse/reserialize on
+    /// the persist path.
+    ToolCall { id: String, name: String, arguments: String },
+}
+
+/// One durable thread event — the append-only source of truth for a chat.
+/// Model-facing message history and client rendering are both derivations of
+/// these events (deepseek-harness session model).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", ts(export))]
+pub enum ThreadEvent {
+    UserMessage { content: String },
+    /// Server-owned system prompt for this turn. Log-only: rebuilds the
+    /// request header on derivation, never rendered as a chat message.
+    SystemMessage { content: String },
+    AssistantMessage {
+        turn: u32,
+        step: u32,
+        blocks: Vec<Block>,
+        usage: UsagePayload,
+        model: String,
+        /// Aborted mid-stream: blocks carry the delivered prefix only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interrupted: Option<()>,
+    },
+    ToolResult {
+        turn: u32,
+        step: u32,
+        call_id: String,
+        name: String,
+        /// Model-facing text (what the model reads as the tool result).
+        content: String,
+        #[serde(default)]
+        is_error: bool,
+        /// Tool-private widget payload (dsh presentationMeta pattern):
+        /// provider-neutral render intent persisted with the event so UI
+        /// cards reproduce identically on replay. Opaque to the loop.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        meta: Option<serde_json::Value>,
+    },
+    /// Reserved for future compaction payloads; not produced yet.
+    Compaction { summary: String },
+}
+
+fn is_false(b: &bool) -> bool {
+    !b
 }
 
 /// The fixed set of machine tools executed by the attached client, modeled on
@@ -379,6 +466,7 @@ mod tests {
             content: String::new(),
             tool_calls: Some(vec![tc.clone()]),
             tool_call_id: None,
+            reasoning: None,
         };
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(v["tool_calls"][0]["name"], "read_file");

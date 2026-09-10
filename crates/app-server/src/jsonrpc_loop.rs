@@ -485,6 +485,7 @@ async fn chat_send_task(
                 content: full_text.clone(),
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning: None,
             });
         }
         // Broadcast: every connected client sees chat events.

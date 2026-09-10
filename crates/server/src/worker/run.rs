@@ -80,6 +80,7 @@ async fn run_loop(
             content: c.text.clone(),
             tool_calls: Some(c.tool_calls.clone()),
             tool_call_id: None,
+            reasoning: None,
         });
         for call in &c.tool_calls {
             let result = registry
