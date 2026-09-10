@@ -167,6 +167,7 @@ impl Tool for McpTool {
             output_for_model: text,
             ui_summary: Some(format!("mcp::{}", self.spec.name)),
             diff: None,
+            meta: None,
         })
     }
 }

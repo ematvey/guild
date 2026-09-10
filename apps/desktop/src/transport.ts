@@ -426,17 +426,24 @@ export function pairingCode(serverUrl: string, secret: string): string {
 
 /// Delivers the result of a client-side tool call to the waiting chat
 /// workflow. Late results (after the server timed the call out) are ignored.
+/// `meta` is the tool's widget payload (spec C.2); the server persists it
+/// verbatim on the tool_result event.
 export async function postToolResult(
   chatId: string,
   callId: string,
   content: string,
   isError: boolean,
+  meta?: unknown,
 ): Promise<void> {
   const token = getToken();
   const res = await fetch(`/api/v1/gateway/chat/${chatId}/tools/${callId}/result`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ content, is_error: isError }),
+    body: JSON.stringify(
+      meta === undefined
+        ? { content, is_error: isError }
+        : { content, is_error: isError, meta },
+    ),
   });
   if (!res.ok) throw new Error(`tool result rejected (${res.status})`);
 }

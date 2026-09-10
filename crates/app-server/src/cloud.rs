@@ -238,6 +238,7 @@ impl CloudClient {
         call: &ToolCall,
         content: &str,
         is_error: bool,
+        meta: Option<serde_json::Value>,
     ) -> Result<(), CloudError> {
         let event = ThreadEvent::ToolResult {
             turn: 0,
@@ -246,7 +247,7 @@ impl CloudClient {
             name: call.name.clone(),
             content: content.to_string(),
             is_error,
-            meta: None,
+            meta,
         };
         let url = format!(
             "{}/api/v1/chats/{chat_id}/thread",
