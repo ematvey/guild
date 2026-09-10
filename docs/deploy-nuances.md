@@ -1,8 +1,37 @@
 # Guild — deploy nuances
 
 Everything non-obvious about building, serving, and shipping Guild on this
-host (`devbox`). Facts verified 2026-09-10. Companion to `docs/clients.md`
-(client distribution details).
+host (`devbox`). Facts verified 2026-09-12 (host-services cutover). Companion
+to `docs/clients.md` (client distribution details).
+
+---
+
+## 0. Host services (default operating mode, since 2026-09-12)
+
+Guild prod AND tests use the shared **host-level** services — nobody runs
+private copies by default. The neutral services live in `/data` and are owned
+by no single project:
+
+| Service | Compose dir | Endpoint | Creds |
+|---|---|---|---|
+| Postgres 17 | `/srv/postgres` | `127.0.0.1:5432` (published `0.0.0.0`) | admin `postgres` / `REDACTED_HOST_POSTGRES_PASSWORD`; Guild db/role: `guild`/`guild` |
+| ClickHouse 26.5 | `/srv/clickhouse` | `0.0.0.0:8123` (HTTP) | `ch_user` / `ch_test_pass` |
+| RustFS (S3) | systemd `rustfs.service`, data `/srv/rustfs` | `0.0.0.0:9950` S3 API, `:9951` console | `rustfsadmin` / `rustfsadmin` |
+
+- Each project gets its own **database/bucket** on the shared servers
+  (Guild: db `guild`, bucket `guild`).
+- Guild tests hit the same servers with per-run isolated DBs/buckets
+  (`test_*` / `t*` names; stale `test_*` databases are reaped on first use).
+  Override endpoints via `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`,
+  `GUILD_TEST_S3_URL` (+ `_USER`/`_PASSWORD`/`_ACCESS_KEY_ID`
+  /`_SECRET_ACCESS_KEY`). There are **no testcontainers anymore**.
+- `host.docker.internal` (compose `extra_hosts: host-gateway`) is how the
+  Guild server container reaches these ports.
+- History: `/srv/postgres.old-20260912` is a stale 15 GB orphan cluster
+  (one 15 GB database, last served June 2026) — parked untouched, safe to
+  delete after review. Guild's prod data was migrated into the new host
+  postgres via pg_dump (2026-09-12); usage_events (71 rows) copied to host
+  ClickHouse; MinIO objects (505 MB, 22 files) copied to rustfs.
 
 ---
 
@@ -13,17 +42,21 @@ Two different "Guild" stacks exist on this host. **Don't confuse them.**
 ### The real one: compose stack on :18080
 
 - Compose project: `~/guild/deploy/compose` (`docker-compose.yml` there).
-- Container names: `compose-server-1`, `compose-postgres-1`,
-  `compose-clickhouse-1`, `compose-minio-1`, `compose-restate-1`
-  (`minio-init` is a one-shot bucket creator).
+- Running containers: `compose-server-1`, `compose-restate-1`. The infra
+  services (postgres/clickhouse/minio) exist in the compose file behind the
+  `fullstack` profile as a self-contained fallback and are **stopped**
+  (`compose-postgres-1` etc.); the server reads config.env pointing at the
+  host services (§0).
 - `compose-server-1` publishes **0.0.0.0:18080 → 8080** (that's the chat app
   + API everything points at) and Restate admin is published on **9070**.
 - Config: `deploy/compose/config.env` (gitignored — holds real secrets:
   `GUILD_MASTER_KEY_HEX`, `GUILD_JWT_SECRET`). `GUILD_HTTP_PORT=18080`
-  because 8080 is already taken on this host.
+  because 8080 is already taken on this host. DB/CH/S3 URLs use
+  `host.docker.internal:5432/8123/9950`.
 - Server state lives in the named volume `guild_data` (`/data` inside the
-  container); DB/ClickHouse/MinIO have their own volumes (`pgdata`,
-  `chdata`, `miniodata`). `docker compose down -v` **destroys all of it**.
+  container). The fullstack fallback volumes (`pgdata`, `chdata`,
+  `miniodata`) still hold the pre-cutover data — keep until confident.
+  `docker compose down -v` destroys all of it.
 - Single-container mode: `GUILD_ROLE=all` (HTTP + worker roles in one
   binary; worker binds 9080 internally, Restate ingress is compose-internal,
   only the Restate admin port is published).
@@ -123,12 +156,16 @@ Notes:
 
 ## 4. Compose stack details
 
-- Service startup order: server waits for postgres + clickhouse
-  **healthchecks** (`pg_isready`, clickhouse ping) and restate `started`.
-  If the server crash-loops on boot, look at dependency health first.
-- ClickHouse is pinned to `clickhouse-server:24` (do not float it).
-- MinIO bucket `guild` is created by the one-shot `minio-init` service
-  (`mc mb --ignore-existing`); registry bundles live there.
+- Default `up` starts only `server` + `restate`; postgres/clickhouse/minio
+  are behind the `fullstack` profile (`--profile fullstack` to use them).
+- Server startup order: server waits only for restate `started` (host
+  services are already up). If the server crash-loops on boot, check the
+  host services first (`/srv/postgres`, `/srv/clickhouse`,
+  `rustfs.service`).
+- The fullstack fallback ClickHouse stays pinned to
+  `clickhouse-server:24`; the host ClickHouse floats 26.5
+  (`pull_policy: always`) — a host CH upgrade can change behavior.
+- Registry bundles live in rustfs bucket `guild` (host :9950).
 - Restate: `restate:latest` — **floating tag**; a rebuild can pull a new
   Restate and change behavior. Pin if that bites.
 - Host port overrides: `GUILD_HTTP_PORT` (18080 here), `GUILD_RESTATE_ADMIN_PORT`

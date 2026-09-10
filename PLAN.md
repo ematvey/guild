@@ -1,8 +1,23 @@
 # Guild — current state of work
 
-Updated 2026-09-10 after commit `d370726`. Read this before touching the
+Updated 2026-09-12 (host-services infra cutover). Read this before touching the
 codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
 `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Infra (2026-09-12)
+
+- **Default operating mode: shared host services.** Prod and tests use the
+  neutral host postgres (`/srv/postgres`, :5432), host ClickHouse
+  (`/srv/clickhouse`, :8123, user `ch_user`), and rustfs (:9950). No
+  testcontainers; compose infra is behind the `fullstack` profile and
+  stopped. Details: `docs/deploy-nuances.md` §0.
+- Prod data migrated 2026-09-12 and verified live (usage 71 rows from host
+  CH, releases from rustfs, pg_dump of users/chats into host postgres).
+  Pre-cutover volumes (`pgdata`, `chdata`, `miniodata`) still exist as
+  rollback; stale orphan cluster parked at `/srv/postgres.old-20260912`.
+- `GUILD_CLICKHOUSE_USER`/`GUILD_CLICKHOUSE_PASSWORD` config keys added
+  (`Config::clickhouse_client()` centralizes auth); deploy compose server
+  reaches host services via `extra_hosts: host.docker.internal:host-gateway`.
 
 ## Shipped and deployed (as of 2026-09-10)
 
@@ -103,15 +118,21 @@ retry-then-fail-fast ✓ · coherent model answers ✓ · machine chip in header
 - Long builds/tests: `big-job` skill (systemd transient units), never
   foreground. `curl --max-time` always. `PLAN.md`/docs updated on state
   changes so sessions can compact and recover.
-- Fast tests (2026-09-10): plain `cargo test` (default-members excludes
+- Fast tests (2026-09-12, host-services mode): plain `cargo test` (default-members excludes
   `guild-desktop`; use `-p guild-desktop` explicitly for it — `--workspace`
   still builds it). `.cargo/config.toml` uses lld + line-tables-only
-  debuginfo (changing rustflags invalidates the target cache once). One
-  Postgres testcontainer per test process, isolated DB per `connect_test()`
-  call (`TestDb.url` is the app's database_url). ClickHouse + MinIO also
-  shared per process (per-test DB/bucket). Preferred runner:
-  `cargo nextest run` (installed 2026-09-10) — guild-server suite 38 tests
-  in ~9s wall vs ~60s serial under plain cargo test. Plain `cargo test`
-  stays green and is the fallback.
+  debuginfo (changing rustflags invalidates the target cache once). Tests use
+  the **host services** (no testcontainers): Postgres at 127.0.0.1:5432,
+  ClickHouse at :8123, rustfs at :9950 — per-run isolated db/bucket on each.
+  `Store::connect_test()` creates `test_*` databases on the host postgres
+  (stale ones with no live connections are reaped on first use);
+  `full_state()` gets a per-test ClickHouse db + S3 bucket on the shared
+  host servers. Overrides: `GUILD_TEST_PG_URL`, `GUILD_TEST_CLICKHOUSE_URL`
+  (+ `_USER`/`_PASSWORD`), `GUILD_TEST_S3_URL` (+ `_ACCESS_KEY_ID`
+  /`_SECRET_ACCESS_KEY`). Suite: 38 tests ~3.5s with
+  `cargo nextest run -p guild-server --features test-support`. Plain
+  `cargo test` stays green and is the fallback. If a test run can't reach
+  the host services, start them first (`/srv/postgres` compose up,
+  `systemctl start rustfs`, `/srv/clickhouse` compose up).
 - Debug session token `pi-debug-session-token-2` is extended 7 days
   (expires ~2026-09-17); revoke when no longer needed.

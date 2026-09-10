@@ -6,6 +6,9 @@ pub struct Config {
     pub database_url: String,
     pub clickhouse_url: String,
     pub clickhouse_database: String,
+    /// ClickHouse credentials (empty = no auth, e.g. compose default).
+    pub clickhouse_user: String,
+    pub clickhouse_password: String,
     /// 64 hex chars = 32-byte AES-256-GCM master key for provider secrets.
     pub master_key_hex: String,
     pub jwt_secret: String,
@@ -48,6 +51,8 @@ impl Config {
             ),
             clickhouse_url: env_or("GUILD_CLICKHOUSE_URL", "http://localhost:8123"),
             clickhouse_database: env_or("GUILD_CLICKHOUSE_DATABASE", "guild"),
+            clickhouse_user: env_or("GUILD_CLICKHOUSE_USER", ""),
+            clickhouse_password: env_or("GUILD_CLICKHOUSE_PASSWORD", ""),
             master_key_hex: env_req("GUILD_MASTER_KEY_HEX")?,
             jwt_secret: env_req("GUILD_JWT_SECRET")?,
             s3_url: env_or("GUILD_S3_URL", "http://localhost:9000"),
@@ -77,6 +82,8 @@ impl Config {
             database_url: "postgres://placeholder".into(),
             clickhouse_url: "http://placeholder:8123".into(),
             clickhouse_database: "guild".into(),
+            clickhouse_user: String::new(),
+            clickhouse_password: String::new(),
             master_key_hex: "00".repeat(32),
             jwt_secret: "test-secret".into(),
             s3_url: "http://placeholder:9000".into(),
@@ -93,6 +100,19 @@ impl Config {
             worker_bind: "127.0.0.1:0".into(),
             worker_advertised_url: "http://localhost:9080".into(),
         }
+    }
+
+    /// ClickHouse client for this config (auth included when configured).
+    pub fn clickhouse_client(&self) -> clickhouse::Client {
+        let mut client = clickhouse::Client::default()
+            .with_url(&self.clickhouse_url)
+            .with_database(&self.clickhouse_database);
+        if !self.clickhouse_user.is_empty() {
+            client = client
+                .with_user(self.clickhouse_user.clone())
+                .with_password(self.clickhouse_password.clone());
+        }
+        client
     }
 
     pub fn master_key(&self) -> anyhow::Result<[u8; 32]> {

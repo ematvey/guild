@@ -86,9 +86,7 @@ async fn usage(
         group = group_by.0,
     );
 
-    let client = clickhouse::Client::default()
-        .with_url(&state.config.clickhouse_url)
-        .with_database(&state.config.clickhouse_database);
+    let client = state.config.clickhouse_client();
     let rows: Vec<UsageAggRow> = match client.query(&sql).fetch_all().await {
         Ok(rows) => rows,
         Err(e) if e.to_string().contains("UNKNOWN_TABLE") => {
@@ -117,9 +115,7 @@ async fn summary(
         .unwrap()
         .and_utc();
 
-    let client = clickhouse::Client::default()
-        .with_url(&state.config.clickhouse_url)
-        .with_database(&state.config.clickhouse_database);
+    let client = state.config.clickhouse_client();
     let missing_table = |e: &str| e.contains("UNKNOWN_TABLE");
     let today: f64 = match client
         .query(&format!(

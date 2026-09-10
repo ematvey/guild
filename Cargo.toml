@@ -49,5 +49,3 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 jsonwebtoken = "10"
 async-trait = "0.1"
 futures = "0.3"
-testcontainers-modules = { version = "0.15", features = ["postgres", "clickhouse", "minio"] }
-testcontainers = "0.27"

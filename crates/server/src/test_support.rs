@@ -86,56 +86,53 @@ impl FullState {
     }
 }
 
-/// Shared ClickHouse + MinIO testcontainers, one pair per test process.
-/// Each `full_state()` call gets an isolated ClickHouse database and S3
-/// bucket on the shared pair, so tests never see each other's data but pay
-/// container startup only once per process instead of once per test.
+/// Host-level ClickHouse + object storage shared by all tests on this box
+/// (the same neutral services prod uses: /srv/clickhouse on :8123 and
+/// rustfs on :9950 — see docs/deploy-nuances.md). No testcontainers: each
+/// `full_state()` call gets an isolated ClickHouse database and S3 bucket on
+/// the shared servers. Override endpoints/creds via GUILD_TEST_* env vars.
 struct SharedInfra {
-    ch_port: u16,
-    minio_port: u16,
-    _ch: testcontainers_modules::testcontainers::ContainerAsync<
-        testcontainers_modules::clickhouse::ClickHouse,
-    >,
-    _minio: testcontainers_modules::testcontainers::ContainerAsync<
-        testcontainers_modules::minio::MinIO,
-    >,
+    ch_url: String,
+    ch_user: String,
+    ch_password: String,
+    s3_url: String,
+    s3_access_key_id: String,
+    s3_secret_access_key: String,
 }
 
 static SHARED_INFRA: tokio::sync::OnceCell<SharedInfra> = tokio::sync::OnceCell::const_new();
 
 async fn shared_infra() -> anyhow::Result<&'static SharedInfra> {
-    use anyhow::Context as _;
-    use testcontainers_modules::testcontainers::runners::AsyncRunner;
     SHARED_INFRA
         .get_or_try_init(|| async {
-            let ch = testcontainers_modules::clickhouse::ClickHouse::default()
-                .start()
-                .await
-                .context("clickhouse testcontainer")?;
-            let ch_port = ch.get_host_port_ipv4(8123).await?;
-            let minio = testcontainers_modules::minio::MinIO::default()
-                .start()
-                .await
-                .context("minio testcontainer")?;
-            let minio_port = minio.get_host_port_ipv4(9000).await?;
             Ok(SharedInfra {
-                ch_port,
-                minio_port,
-                _ch: ch,
-                _minio: minio,
+                ch_url: std::env::var("GUILD_TEST_CLICKHOUSE_URL")
+                    .unwrap_or_else(|_| "http://127.0.0.1:8123".into()),
+                ch_user: std::env::var("GUILD_TEST_CLICKHOUSE_USER")
+                    .unwrap_or_else(|_| "ch_user".into()),
+                ch_password: std::env::var("GUILD_TEST_CLICKHOUSE_PASSWORD")
+                    .unwrap_or_else(|_| "ch_test_pass".into()),
+                s3_url: std::env::var("GUILD_TEST_S3_URL")
+                    .unwrap_or_else(|_| "http://127.0.0.1:9950".into()),
+                s3_access_key_id: std::env::var("GUILD_TEST_S3_ACCESS_KEY_ID")
+                    .unwrap_or_else(|_| "rustfsadmin".into()),
+                s3_secret_access_key: std::env::var("GUILD_TEST_S3_SECRET_ACCESS_KEY")
+                    .unwrap_or_else(|_| "rustfsadmin".into()),
             })
         })
         .await
 }
 
 pub async fn full_state() -> FullState {
-    let infra = shared_infra().await.expect("shared ch/minio testcontainers");
-    let db = Store::connect_test().await.expect("postgres testcontainer");
+    let infra = shared_infra().await.expect("host clickhouse/s3 config");
+    let db = Store::connect_test().await.expect("postgres test db");
 
     // per-test isolated ClickHouse database
     let ch_database = format!("t_{}", Uuid::now_v7().simple());
     clickhouse::Client::default()
-        .with_url(&format!("http://127.0.0.1:{}", infra.ch_port))
+        .with_url(&infra.ch_url)
+        .with_user(&infra.ch_user)
+        .with_password(&infra.ch_password)
         .query(&format!("CREATE DATABASE {ch_database}"))
         .execute()
         .await
@@ -144,11 +141,16 @@ pub async fn full_state() -> FullState {
     // per-test isolated S3 bucket
     let s3_bucket = format!("t{}", Uuid::now_v7().simple());
     {
-        let creds =
-            aws_sdk_s3::config::Credentials::new("minioadmin", "minioadmin", None, None, "test");
+        let creds = aws_sdk_s3::config::Credentials::new(
+            &infra.s3_access_key_id,
+            &infra.s3_secret_access_key,
+            None,
+            None,
+            "test",
+        );
         let conf = aws_sdk_s3::Config::builder()
             .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-            .endpoint_url(format!("http://127.0.0.1:{}", infra.minio_port))
+            .endpoint_url(&infra.s3_url)
             .credentials_provider(creds)
             .region(aws_sdk_s3::config::Region::new("us-east-1"))
             .build();
@@ -181,14 +183,16 @@ pub async fn full_state() -> FullState {
     let cfg = Config {
         bind_addr: "127.0.0.1:0".into(),
         database_url: db.url.clone(),
-        clickhouse_url: format!("http://127.0.0.1:{}", infra.ch_port),
+        clickhouse_url: infra.ch_url.clone(),
         clickhouse_database: ch_database,
+        clickhouse_user: infra.ch_user.clone(),
+        clickhouse_password: infra.ch_password.clone(),
         master_key_hex: "00".repeat(32),
         jwt_secret: "test-secret".into(),
-        s3_url: format!("http://127.0.0.1:{}", infra.minio_port),
+        s3_url: infra.s3_url.clone(),
         s3_bucket: s3_bucket,
-        s3_access_key_id: "minioadmin".into(),
-        s3_secret_access_key: "minioadmin".into(),
+        s3_access_key_id: infra.s3_access_key_id.clone(),
+        s3_secret_access_key: infra.s3_secret_access_key.clone(),
         restate_url: "http://placeholder:8080".into(),
         restate_admin_url: "http://placeholder:9070".into(),
         api_url: "http://localhost:8080".into(),
@@ -274,9 +278,7 @@ pub async fn insert_org_with_chat(store: &Store) -> Uuid {
 
 /// `(row_count, total_cost)` from the usage_events table.
 pub async fn clickhouse_usage_rows(state: &AppState) -> (u64, f64) {
-    let client = clickhouse::Client::default()
-        .with_url(&state.config.clickhouse_url)
-        .with_database(&state.config.clickhouse_database);
+    let client = state.config.clickhouse_client();
     let count: u64 = client
         .query("SELECT count() FROM usage_events")
         .fetch_one()
