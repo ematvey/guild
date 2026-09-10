@@ -32,6 +32,12 @@ Full redesign per `docs/plans/2026-09-12-thread-events-design.md` (grounded in
 - **API**: GET/POST /api/v1/chats/{id}/thread replaces /messages. Engine
   sessions append tool results via POST /thread (turn-join).
 - Suite: 117 tests green (nextest, host services). Desktop/webui tsc+vite clean.
+- Browser-verified live (agent-browser): multi-turn chat, web_search + web_fetch
+  via UI, tool widgets from persisted meta after reload, reasoning frames,
+  empty-sheet rendering, admin Integrations view. Hotfixes landed post-deploy:
+  user turn missing from model request (derived before append), chat
+  generation lock leaked on pre-turn terminal failures, turn-failure error
+  logging.
 - Orchestration was run via herdr panes + dagr run file (.dagr/run.json,
   gitignored); workers: store/providers/integrations/webchat/adminui/loop +
   followup T9; orchestrator did protocol base, engine-path fix, merges,
