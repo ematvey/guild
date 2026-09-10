@@ -145,6 +145,28 @@ function DesktopApp() {
   const [user, setUser] = useState<string | null>(null);
   const [adminUrl, setAdminUrl] = useState<string | null>(null);
 
+  // Restore auth on mount (and after F5): the engine keeps the session and
+  // persists it to token.json, so ask it instead of assuming logged-out.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await invoke("start_engine");
+        const res = await invoke<any>("rpc_request", {
+          method: "session.info",
+          params: {},
+        });
+        if (!cancelled && res?.result?.email) await afterAuth(res.result.email);
+      } catch {
+        /* not logged in — stay on the pair screen */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const afterAuth = async (fallbackEmail: string) => {
     // session.info is the source of truth for the connected server URL and
     // token (works for both pairing and manual login).

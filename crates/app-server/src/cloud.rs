@@ -98,6 +98,37 @@ impl CloudClient {
         Ok((base_url, pair.token, pair.user))
     }
 
+    /// Validates the stored token and returns the user (GET /api/v1/auth/me).
+    pub async fn me(&self) -> Result<UserInfo, CloudError> {
+        let url = format!(
+            "{}/api/v1/auth/me",
+            self.base_url.trim_end_matches('/')
+        );
+        let resp = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| CloudError::Request(e.to_string()))?
+            .get(&url)
+            .header("authorization", format!("Bearer {}", self.token))
+            .send()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(CloudError::Unauthorized);
+        }
+        if !resp.status().is_success() {
+            return Err(CloudError::Request(format!(
+                "me failed: {}",
+                resp.status()
+            )));
+        }
+        let me: UserInfo = resp
+            .json()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        Ok(me)
+    }
+
     /// Enabled models routed for the org (GET /api/v1/gateway/models).
     pub async fn list_models(&self) -> Result<Vec<String>, CloudError> {
         let url = format!(
