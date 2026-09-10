@@ -1,6 +1,9 @@
 //! guild-app-server — the local engine (spec §3.2).
 //!
-//! - No args: JSON-RPC loop on stdio (the desktop UI drives this).
+//! - No args: JSON-RPC loop on stdio (dev/test surface; the shipped app
+//!   uses the daemon).
+//! - `daemon`: the per-user daemon — shared engine, survives client exit,
+//!   the only session-token route to the cloud server.
 //! - `login --url U --email E --password P`: headless login, persists token.
 //! - `chat --model M "text"`: headless chat round-trip, prints the reply.
 
@@ -31,13 +34,21 @@ fn main() -> anyhow::Result<()> {
             let _ = session;
             Ok(())
         }
+        Some("daemon") => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()?;
+            rt.block_on(guild_app_server::daemon::run_daemon())?;
+            Ok(())
+        }
         Some("login") => cmd_login(&args[1..]),
         Some("chat") => cmd_chat(&args[1..]),
         Some("publish") => cmd_publish(&args[1..]),
         Some("install") => cmd_install(&args[1..]),
         Some("verify") => cmd_verify(&args[1..]),
         Some(other) => anyhow::bail!(
-            "unknown subcommand {other}; expected none, login, chat, publish, install, or verify"
+            "unknown subcommand {other}; expected none, daemon, login, chat, publish, install, or verify"
         ),
     }
 }
