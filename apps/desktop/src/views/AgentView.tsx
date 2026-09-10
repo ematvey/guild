@@ -214,27 +214,6 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
             </span>
           </button>
         </div>
-        <div className="px-3 pb-1 pt-4 text-xs font-medium text-muted-foreground">Commands</div>
-        <div className="px-2">
-          <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
-            {(["ask", "allow", "never"] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => void setPolicy(p)}
-                className={`rounded-md px-2 py-1.5 text-xs capitalize outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${
-                  commandPolicy === p
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-          <p className="mt-1.5 px-1 text-xs text-muted-foreground">
-            Shell commands run by the agent {commandPolicy === "ask" ? "ask for approval" : commandPolicy === "allow" ? "run without asking" : "are denied"}.
-          </p>
-        </div>
         <div className="min-h-0 flex-1" />
         <Separator />
         <div className="flex items-center gap-2.5 px-3 py-3">
@@ -386,6 +365,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
             />
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
+              <div className="flex min-w-0 items-center gap-1.5">
               {models === null ? (
                 <Skeleton className="h-7 w-28 rounded-md" />
               ) : models.length > 0 ? (
@@ -404,6 +384,20 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
               ) : (
                 <span className="text-xs text-muted-foreground">no models configured</span>
               )}
+              <Select value={commandPolicy} onValueChange={(v) => void setPolicy(v as typeof commandPolicy)}>
+                <SelectTrigger
+                  className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none"
+                  title={`Shell commands run by the agent ${commandPolicy === "ask" ? "ask for approval" : commandPolicy === "allow" ? "run without asking" : "are denied"}`}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ask" className="text-xs">commands: ask</SelectItem>
+                  <SelectItem value="allow" className="text-xs">commands: allow</SelectItem>
+                  <SelectItem value="never" className="text-xs">commands: never</SelectItem>
+                </SelectContent>
+              </Select>
+              </div>
               <Button
                 size="icon"
                 className="size-7 rounded-full"
