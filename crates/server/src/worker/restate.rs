@@ -258,6 +258,16 @@ pub struct ChatRunPayload {
     /// in the system prompt when present.
     #[serde(default)]
     pub project_dir: Option<String>,
+    /// The chat's bound executor machine (machine tools run ONLY there).
+    #[serde(default)]
+    pub machine_id: Option<String>,
+    /// Human-readable label of the bound machine.
+    #[serde(default)]
+    pub machine_label: Option<String>,
+    /// The originating desktop app's machine, for auto-binding chats that
+    /// were sent from a desktop without an explicit binding.
+    #[serde(default)]
+    pub origin_machine_id: Option<String>,
 }
 
 /// Final result of the journaled completion step.
@@ -506,7 +516,7 @@ impl ChatRunner {
         let server_tools = integrations::resolve_server_tools(&integration_rows)?;
         let mut tool_specs: Vec<ToolSpec> = server_tools.iter().map(|t| t.spec.clone()).collect();
         let has_web_search = server_tools.iter().any(|t| t.spec.name == "web_search");
-        if req.client_tools {
+        if req.client_tools || req.machine_id.is_some() {
             tool_specs.extend(protocol::api::client_tool_specs());
         }
         let system = build_system_prompt(req.client_tools, has_web_search, req.project_dir.as_deref());
@@ -700,10 +710,13 @@ impl ChatRunner {
                         &ctx,
                         &state,
                         &tx,
+                        req.org_id,
                         req.chat_id,
                         &call,
                         format!("{step}.{idx}"),
-                        req.client_id.clone(),
+                        req.machine_id.clone(),
+                        req.machine_label.clone(),
+                        req.origin_machine_id.clone(),
                     )
                     .await?
                 } else {
@@ -840,18 +853,86 @@ impl ChatRunner {
 }
 
 
-/// One client-side tool call: notify attached clients, durably wait for the
-/// client's result (bounded), report completion. Returns the tool content for
-/// the model-facing history.
+/// One machine-tool call: resolve the bound executor machine (fail fast when
+/// unbound/offline), notify attached clients, durably wait for the machine's
+/// result (bounded), report completion. Returns the tool content for the
+/// model-facing history.
 async fn client_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
     tx: &broadcast::Sender<StreamEvent>,
+    org_id: Uuid,
     chat_id: Uuid,
     call: &ToolCall,
     _seq: String,
-    client_id: Option<String>,
+    machine_id: Option<String>,
+    machine_label: Option<String>,
+    origin_machine_id: Option<String>,
 ) -> HandlerResult<String> {
+    // Resolve the executor machine. Journaled ctx.run snapshots: the result
+    // replays deterministically even if the in-memory registry changes
+    // between execution and replay (e.g. worker restart).
+    let bound: Option<(String, String)> = ctx
+        .run({
+            let state = state.clone();
+            move || {
+                let state = state.clone();
+                async move {
+                    if let Some(mid) = machine_id {
+                        let label = machine_label.unwrap_or_else(|| {
+                            state.machine_label(&mid).unwrap_or_else(|| mid.clone())
+                        });
+                        Ok(Json(Some((mid, label))))
+                    } else if let Some(omid) = origin_machine_id {
+                        // Auto-bind chats sent from a desktop to that
+                        // desktop's machine (idempotent persist).
+                        if state.machine_connected(&omid) {
+                            let label = state
+                                .machine_label(&omid)
+                                .unwrap_or_else(|| omid.clone());
+                            if let Ok(store) = state.store().await {
+                                let _ = store
+                                    .chats()
+                                    .set_machine(org_id, chat_id, Some(&omid), Some(&label))
+                                    .await;
+                            }
+                            Ok(Json(Some((omid, label))))
+                        } else {
+                            Ok(Json(None))
+                        }
+                    } else {
+                        Ok(Json(None))
+                    }
+                }
+            }
+        })
+        .await?
+        .into_inner();
+    let Some((mid, mlabel)) = bound else {
+        return Ok(
+            "client tool not executed: this chat is not bound to a machine — bind it in the chat settings, or send the message from the Guild desktop app on the target machine"
+                .to_string(),
+        );
+    };
+    // Fail fast when the bound machine is offline (journaled snapshot).
+    let online: bool = ctx
+        .run({
+            let state = state.clone();
+            let mid = mid.clone();
+            move || {
+                let state = state.clone();
+                let mid = mid.clone();
+                async move { Ok(Json(state.machine_connected(&mid))) }
+            }
+        })
+        .await?
+        .into_inner();
+    if !online {
+        return Ok(format!(
+            "client tool not executed: the bound machine '{mlabel}' is offline — start the Guild desktop app on it, then ask again"
+        ));
+    }
+
     // Journaled awakeable: stable id across replays.
     let (awakeable_id, promise) = ctx.awakeable::<Json<ToolResultPayload>>();
     ctx.set(&state_key(&call.id), awakeable_id.clone());
@@ -864,23 +945,22 @@ async fn client_tool_step(
         &call.id,
         &call.name,
         &args_json,
-        client_id.as_deref(),
+        Some(&mid),
     );
-    // Termination detection: if the originating app instance disappears
-    // (app-lifetime presence, not per-thread streams), resolve the tool
-    // with an error after a grace window instead of dead-airing for the
-    // full timeout. Spawned outside the journaled sections on purpose: a
-    // worker restart replays this handler and re-spawns the watcher.
-    if let Some(cid) = client_id.clone() {
-        crate::http::gateway::spawn_presence_watcher(
-            state,
-            chat_id,
-            call.id.clone(),
-            call.name.clone(),
-            cid,
-            done,
-        );
-    }
+    // Termination detection: if the bound machine disappears (executor
+    // connection gone, app-lifetime — not per-thread streams), resolve the
+    // tool with an error after a grace window instead of dead-airing for
+    // the full timeout. Spawned outside the journaled sections on purpose:
+    // a worker restart replays this handler and re-spawns the watcher.
+    crate::http::gateway::spawn_machine_watcher(
+        state,
+        chat_id,
+        call.id.clone(),
+        call.name.clone(),
+        mid,
+        mlabel,
+        done,
+    );
     let tx2 = tx.clone();
     let call_id = call.id.clone();
     let name = call.name.clone();

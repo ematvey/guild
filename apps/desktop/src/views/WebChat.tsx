@@ -18,6 +18,8 @@ import {
   PanelLeftOpen,
   Plus,
   Settings2,
+  Cpu,
+  Unlink,
   Wrench,
 } from "lucide-react";
 
@@ -49,9 +51,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { postToolResult } from "../transport";
 import {
+  bindChat,
   createChat,
   getMessages,
   listChats,
+  listMachines,
   listModels,
   streamChat,
   attachGeneration,
@@ -62,6 +66,7 @@ import {
   startEventStream,
   type ChatMessage,
   type ChatSummary,
+  type MachineInfo,
   type Release,
 } from "../transport";
 
@@ -536,6 +541,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     threadLoading && blocks.length === 0
       ? "Loading…"
       : (chats?.find((c) => c.id === chatId)?.title ?? "New chat");
+  const boundMachine = chats?.find((c) => c.id === chatId)?.machine_label ?? null;
   const streaming = busy || attaching;
 
   const sidebar = (
@@ -620,6 +626,15 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             </Button>
           )}
           <span className="min-w-0 flex-1 truncate font-medium">{activeTitle}</span>
+          {boundMachine && (
+            <span
+              className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+              title={`Machine tools run on: ${boundMachine}`}
+            >
+              <Cpu className="size-3" />
+              {boundMachine}
+            </span>
+          )}
         </header>
 
         {blocks.length === 0 ? (
@@ -785,6 +800,9 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         email={email}
+        chatId={chatId}
+        currentMachineId={chats?.find((c) => c.id === chatId)?.machine_id ?? null}
+        onMachineChanged={() => void refreshChats()}
       />
     </div>
   );
@@ -974,12 +992,22 @@ function SettingsDialog({
   open,
   onOpenChange,
   email,
+  chatId,
+  currentMachineId,
+  onMachineChanged,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   email: string;
+  chatId: string | null;
+  currentMachineId: string | null;
+  onMachineChanged: () => void;
 }) {
   const { theme, setTheme } = useTheme();
+  const [machines, setMachines] = useState<MachineInfo[] | null>(null);
+  useEffect(() => {
+    if (open) void listMachines().then(setMachines);
+  }, [open]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
@@ -1008,6 +1036,52 @@ function SettingsDialog({
           <div>
             <p className="mb-1.5 text-xs font-medium text-muted-foreground">Account</p>
             <p className="text-sm">{email}</p>
+          </div>
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Machine</p>
+            {!chatId ? (
+              <p className="text-xs text-muted-foreground">Open a chat to bind it to a machine.</p>
+            ) : machines && machines.length > 0 ? (
+              <div className="flex flex-col gap-1">
+                {machines.map((m) => (
+                  <button
+                    key={m.machine_id}
+                    onClick={async () => {
+                      await bindChat(chatId, m.machine_id);
+                      onMachineChanged();
+                    }}
+                    className={`flex items-center justify-between rounded-md border px-2 py-1.5 text-xs outline-none transition-colors ${
+                      currentMachineId === m.machine_id
+                        ? "border-foreground/30 bg-card text-foreground"
+                        : "border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <span className="truncate">{m.name}</span>
+                    {currentMachineId === m.machine_id ? (
+                      <span className="text-[10px] uppercase tracking-wide">bound</span>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground">use</span>
+                    )}
+                  </button>
+                ))}
+                {currentMachineId && (
+                  <button
+                    onClick={async () => {
+                      await bindChat(chatId, null);
+                      onMachineChanged();
+                    }}
+                    className="flex items-center gap-1 self-start rounded-md px-1.5 py-1 text-xs text-muted-foreground outline-none hover:text-foreground"
+                  >
+                    <Unlink className="size-3" /> unbind machine
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No machines connected. Start the Guild desktop app on the machine you want
+                agent tools to run on.
+              </p>
+            )}
           </div>
         </div>
       </DialogContent>

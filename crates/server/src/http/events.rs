@@ -33,21 +33,29 @@ async fn stream(
     // and is the liveness signal for client-tool termination detection.
     // The guard lives inside the body generator, so dropping the response
     // (client disconnect) releases it.
-    let presence = q
-        .get("client_id")
-        .map(|cid| state.presence_acquire(cid));
+    // (client_id is still sent by clients for tracing; executor liveness is
+    // heartbeat-based, see the machine_id params below.)
+    // Machine-executor registration: desktop apps identify the machine they
+    // run on; machine tools run only on the chat's bound machine.
+    let executor = q.get("machine_id").map(|mid| {
+        let name = q.get("machine_name").cloned().unwrap_or_default();
+        state.executor_acquire(mid, &user.0, &name)
+    });
     let store = state.store().await?;
-    let listener = sqlx::postgres::PgListener::connect_with(store.pool())
+    // Standalone connection, NOT from the request pool: every live stream
+    // pins one connection for its whole lifetime, and pool-based listeners
+    // exhaust the pool (all authenticated endpoints then hang on pool
+    // checkout — see ~/workspace/hanging-commands.md Pattern 6).
+    let mut listener = sqlx::postgres::PgListener::connect(&state.config.database_url)
         .await
         .map_err(|e| ApiError::internal(format!("event subscribe failed: {e}")))?;
-    let mut listener = listener;
     listener
         .listen(crate::store::events::NOTIFY_CHANNEL)
         .await
         .map_err(|e| ApiError::internal(format!("event subscribe failed: {e}")))?;
     let out = async_stream::stream! {
-        // Hold the presence guard for as long as this body lives.
-        let _presence = presence;
+        // Hold the executor guard for as long as this body lives.
+        let _executor = executor;
         loop {
             match listener.recv().await {
                 Ok(notification) => {

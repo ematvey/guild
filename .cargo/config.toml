@@ -1,0 +1,12 @@
+# Fast developer builds: lld linker + minimal debug info.
+#
+# The test binaries were ~580 MB each (full debug info) and linked with GNU
+# ld — single-threaded, minutes per binary. lld is parallel and much faster;
+# line-tables-only keeps backtraces readable while cutting binary size and
+# link time by an order of magnitude. Release profile is untouched.
+# NOTE: changing rustflags invalidates the whole target/ cache once.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[profile.dev]
+debug = "line-tables-only"

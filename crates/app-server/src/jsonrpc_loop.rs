@@ -5,7 +5,7 @@
 //! `agent.policy.set`, `agent.policy.get`. Streaming arrives as events.
 
 use crate::agent_session::{AgentRun, PendingApprovals};
-use crate::cloud::{collect_turn, CloudClient};
+use crate::cloud::{collect_turn, CloudClient, CloudError};
 use crate::session_store::{save, StoredSession};
 use anyhow::Context as _;
 use guild_core::agent::policy::ApprovalPolicy;
@@ -34,6 +34,45 @@ pub struct Session {
 enum Incoming {
     Request(Request),
     Malformed(String),
+}
+
+/// Restores a persisted session (token.json) into a fresh Session, so an
+/// app restart or a GUI engine re-spawn keeps auth. A dead token is
+/// dropped, a transient network failure is not.
+pub async fn restored_session() -> anyhow::Result<Session> {
+    let mut session = Session::default();
+    if let Some(stored) = crate::session_store::load(&crate::session_store::default_path()?) {
+        let cloud = CloudClient {
+            base_url: stored.base_url.clone(),
+            token: stored.token,
+        };
+        match cloud.me().await {
+            Ok(user) => {
+                session.email = Some(user.email.clone());
+                session.cloud = Some(cloud.clone());
+                // upgrade old stores that lacked the email
+                if stored.email.is_none() {
+                    crate::session_store::save(
+                        &crate::session_store::default_path()?,
+                        &crate::session_store::StoredSession {
+                            base_url: stored.base_url,
+                            token: cloud.token,
+                            email: Some(user.email),
+                        },
+                    )?;
+                }
+            }
+            Err(CloudError::Unauthorized) => {
+                let _ = crate::session_store::clear(&crate::session_store::default_path()?);
+            }
+            Err(_) => {
+                // offline or server briefly down: keep the token
+                session.cloud = Some(cloud);
+                session.email = stored.email;
+            }
+        }
+    }
+    anyhow::Ok(session)
 }
 
 fn line_to_incoming(line: &str) -> Incoming {
@@ -134,6 +173,18 @@ async fn dispatch(
         "login" => login_task(session, req, out_tx).await,
         "pair" => pair_task(session, req, out_tx).await,
         "chat.send" => chat_send_task(session, req, out_tx).await,
+        "machine.info" => {
+            // Hostname label for the machine-executor registry; the id is
+            // generated webview-side (stable per app install).
+            let name = std::env::var("COMPUTERNAME").ok()
+                .or_else(|| std::fs::read_to_string("/etc/hostname").ok().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "guild-machine".to_string());
+            let _ = out_tx.send(response_value(
+                req.id,
+                Ok(Response::ok(req.id, serde_json::json!({ "name": name }))),
+            ));
+        }
         "session.info" => {
             let s = session.lock().unwrap();
             let result = match &s.cloud {

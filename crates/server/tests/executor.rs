@@ -120,11 +120,17 @@ async fn routine_run_completes_with_tool_use_and_records_run() {
         .unwrap();
     assert_eq!(summary, "routine finished");
 
-    // the external site was actually fetched by the tool
+    // the external site was actually fetched by the tool. Other GETs can
+    // leak in: container health/S3 probes occasionally land on the mock via
+    // the docker-proxy listener collision (see standalone_listener) — assert
+    // on the tool's request, not on the total.
     let seen = external.received_requests().await.unwrap();
+    let data_hits = seen
+        .iter()
+        .filter(|r| r.method == "GET" && r.url.path() == "/data")
+        .count();
     assert_eq!(
-        seen.len(),
-        1,
+        data_hits, 1,
         "external requests: {:?}",
         seen.iter()
             .map(|r| (r.method.as_str(), r.url.path()))

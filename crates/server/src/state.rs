@@ -8,34 +8,46 @@ use crate::store::Store;
 use crate::usage::SharedUsageSink;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{watch, OnceCell};
+use tokio::sync::OnceCell;
 use uuid::Uuid;
 
-/// Live-connection tracking for one client app instance (identified by a
-/// stable `client_id`). Presence is app-lifetime, not per-stream: thread
-/// switching tears per-chat streams down by design, so client-tool
-/// termination detection must not key off them.
-pub struct PresenceHandle {
-    /// Number of live app-level connections (e.g. `/api/v1/events/stream`).
-    pub count_tx: watch::Sender<usize>,
+#[derive(Clone)]
+/// Liveness tracking for one machine executor (the desktop app running on
+/// a specific machine). Machine tools run ONLY on the machine a chat is
+/// bound to; the executor registry is the liveness source for fail-fast and
+/// disconnect detection.
+///
+/// Liveness is heartbeat-based: TCP-level disconnect detection is unreliable
+/// through docker-proxy (a dead client is not noticed until a server write
+/// fails, which may never happen on an idle SSE stream). The desktop
+/// heartbeats every few seconds; `last_seen` older than `EXECUTOR_TTL_SECS`
+/// means offline. Dropping the stream body also marks the machine offline
+/// immediately (best-effort fast path when the disconnect IS noticed).
+pub struct ExecutorHandle {
+    pub user_id: Uuid,
+    pub org_id: Uuid,
+    pub name: String,
+    /// Unix seconds of the last heartbeat; 0 = offline.
+    pub last_seen: Arc<std::sync::atomic::AtomicI64>,
 }
 
-/// Guard held for the lifetime of one app-level connection. Dropping it
-/// decrements the count; watchers observe the change via the watch channel.
-pub struct PresenceGuard {
+/// A machine is live while its heartbeats are fresher than this.
+pub const EXECUTOR_TTL_SECS: i64 = 15;
+
+/// Guard held for the lifetime of one machine-executor stream connection.
+/// Dropping it marks the machine offline immediately.
+pub struct ExecutorGuard {
     state: AppState,
-    client_id: String,
+    machine_id: String,
+    last_seen: Arc<std::sync::atomic::AtomicI64>,
 }
 
-impl Drop for PresenceGuard {
+impl Drop for ExecutorGuard {
     fn drop(&mut self) {
-        let presence = self.state.presence.lock().unwrap();
-        if let Some(h) = presence.get(&self.client_id) {
-            let next = h.count_tx.borrow().saturating_sub(1);
-            let _ = h.count_tx.send(next);
-            // The handle stays in the map (watchers may hold receivers);
-            // the count reaching 0 is the "client gone" signal.
-        }
+        self.last_seen
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        let mut executors = self.state.executors.lock().unwrap();
+        executors.remove(&self.machine_id);
     }
 }
 
@@ -50,8 +62,8 @@ pub struct AppState {
     /// via the gateway stream endpoint.
     pub generations:
         Arc<std::sync::Mutex<HashMap<Uuid, crate::http::gateway::ActiveGeneration>>>,
-    /// App-level client presence (see `PresenceGuard`), keyed by client_id.
-    pub presence: Arc<std::sync::Mutex<HashMap<String, Arc<PresenceHandle>>>>,
+    /// Connected machine executors (see `ExecutorGuard`), keyed by machine_id.
+    pub executors: Arc<std::sync::Mutex<HashMap<String, Arc<ExecutorHandle>>>>,
 }
 
 impl AppState {
@@ -62,39 +74,8 @@ impl AppState {
             usage: Arc::new(OnceCell::new()),
             objects: Arc::new(OnceCell::new()),
             generations: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            presence: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            executors: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
-    }
-
-    /// Registers one live app-level connection for `client_id`. The returned
-    /// guard must live as long as the connection.
-    pub fn presence_acquire(&self, client_id: &str) -> PresenceGuard {
-        let handle = {
-            let mut presence = self.presence.lock().unwrap();
-            presence
-                .entry(client_id.to_string())
-                .or_insert_with(|| {
-                    let (count_tx, _) = watch::channel(0usize);
-                    Arc::new(PresenceHandle { count_tx })
-                })
-                .clone()
-        };
-        let next = *handle.count_tx.borrow() + 1;
-        let _ = handle.count_tx.send(next);
-        PresenceGuard {
-            state: self.clone(),
-            client_id: client_id.to_string(),
-        }
-    }
-
-    /// Watcher-side view of a client's presence; `None` if the client was
-    /// never seen connected (its tools fall back to the timeout path).
-    pub fn presence_watch(&self, client_id: &str) -> Option<watch::Receiver<usize>> {
-        self.presence
-            .lock()
-            .unwrap()
-            .get(client_id)
-            .map(|h| h.count_tx.subscribe())
     }
 
     /// Lazily connects to Postgres on first use; shared thereafter.
@@ -131,7 +112,105 @@ impl AppState {
             usage: Arc::new(OnceCell::new()),
             objects: Arc::new(OnceCell::new()),
             generations: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            presence: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            executors: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Registers one live machine-executor stream connection.
+    pub fn executor_acquire(
+        &self,
+        machine_id: &str,
+        user: &crate::store::identity::UserRow,
+        name: &str,
+    ) -> ExecutorGuard {
+        let now = chrono::Utc::now().timestamp();
+        let last_seen = {
+            let mut executors = self.executors.lock().unwrap();
+            let entry = executors.entry(machine_id.to_string());
+            let h = match entry {
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    let h = Arc::make_mut(e.get_mut());
+                    if h.user_id != user.id {
+                        // same machine_id re-registered by another user:
+                        // last writer wins (single-user deployments in v1)
+                        h.user_id = user.id;
+                        h.org_id = user.org_id;
+                        h.name = name.to_string();
+                    }
+                    h.last_seen.store(now, std::sync::atomic::Ordering::Relaxed);
+                    e.get().clone()
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    let h = Arc::new(ExecutorHandle {
+                        user_id: user.id,
+                        org_id: user.org_id,
+                        name: name.to_string(),
+                        last_seen: Arc::new(std::sync::atomic::AtomicI64::new(now)),
+                    });
+                    e.insert(h.clone());
+                    h
+                }
+            };
+            h.last_seen.clone()
+        };
+        ExecutorGuard {
+            state: self.clone(),
+            machine_id: machine_id.to_string(),
+            last_seen,
+        }
+    }
+
+    /// Heartbeat from an executor: refreshes last_seen. Returns false for
+    /// unknown machines (they re-register by reconnecting the event stream).
+    pub fn executor_touch(&self, machine_id: &str, user_id: Uuid) -> bool {
+        let executors = self.executors.lock().unwrap();
+        match executors.get(machine_id) {
+            Some(h) if h.user_id == user_id => {
+                h.last_seen.store(
+                    chrono::Utc::now().timestamp(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// True while the machine's heartbeats are fresh.
+    pub fn machine_connected(&self, machine_id: &str) -> bool {
+        let executors = self.executors.lock().unwrap();
+        match executors.get(machine_id) {
+            Some(h) => {
+                let seen = h.last_seen.load(std::sync::atomic::Ordering::Relaxed);
+                seen > 0 && chrono::Utc::now().timestamp() - seen <= EXECUTOR_TTL_SECS
+            }
+            None => false,
+        }
+    }
+
+    pub fn machine_label(&self, machine_id: &str) -> Option<String> {
+        self.executors
+            .lock()
+            .unwrap()
+            .get(machine_id)
+            .map(|h| h.name.clone())
+    }
+
+    /// Connected executors belonging to `user_id`.
+    pub fn machines_of_user(&self, user_id: Uuid) -> Vec<(String, String)> {
+        let now = chrono::Utc::now().timestamp();
+        self.executors
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, h)| {
+                if h.user_id != user_id {
+                    return false;
+                }
+                let seen = h.last_seen.load(std::sync::atomic::Ordering::Relaxed);
+                seen > 0 && now - seen <= EXECUTOR_TTL_SECS
+            })
+            .map(|(id, h)| (id.clone(), h.name.clone()))
+            .collect()
     }
 }

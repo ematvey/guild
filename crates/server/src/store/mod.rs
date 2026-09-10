@@ -45,7 +45,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 18] = [
+        const MIGRATIONS: [(&str, &str); 19] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -114,6 +114,10 @@ impl Store {
             (
                 "0018_integrations",
                 include_str!("../../migrations/0018_integrations.sql"),
+            ),
+            (
+                "0019_machine_binding",
+                include_str!("../../migrations/0019_machine_binding.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {
@@ -212,14 +216,47 @@ impl Store {
 #[cfg(feature = "test-support")]
 mod test_db {
     use super::Store;
+    use testcontainers_modules::testcontainers::ContainerAsync;
+    use testcontainers_modules::testcontainers::runners::AsyncRunner;
+    use tokio::sync::OnceCell;
 
-    /// Owns the testcontainer so it lives as long as the store.
+    /// One Postgres container per test process, shared by every `connect_test`
+    /// caller in it. Starting a container costs seconds; sharing it turns
+    /// per-test container starts into one per test binary. Each caller still
+    /// gets an isolated database. Ryuk reaps the container when the process
+    /// exits; leftover test databases die with it.
+    struct SharedPostgres {
+        _container: ContainerAsync<testcontainers_modules::postgres::Postgres>,
+        base_url: String,
+        host_port: u16,
+    }
+
+    static SHARED: OnceCell<SharedPostgres> = OnceCell::const_new();
+
+    async fn shared_postgres() -> anyhow::Result<&'static SharedPostgres> {
+        SHARED
+            .get_or_try_init(|| async {
+                let container = testcontainers_modules::postgres::Postgres::default()
+                    .start()
+                    .await?;
+                let port = container.get_host_port_ipv4(5432).await?;
+                anyhow::Ok(SharedPostgres {
+                    _container: container,
+                    base_url: format!("postgres://postgres:postgres@127.0.0.1:{port}"),
+                    host_port: port,
+                })
+            })
+            .await
+    }
+
+    /// Owns one isolated database on the shared testcontainer.
     pub struct TestDb {
         pub store: Store,
-        #[allow(dead_code)]
-        container: testcontainers_modules::testcontainers::ContainerAsync<
-            testcontainers_modules::postgres::Postgres,
-        >,
+        /// Full connection URL of this test's isolated database.
+        pub url: String,
+        #[allow(dead_code)] // keep the name alive for debugging
+        db_name: String,
+        host_port: u16,
     }
 
     impl std::ops::Deref for TestDb {
@@ -232,21 +269,29 @@ mod test_db {
     impl TestDb {
         /// Host port of the containerized Postgres.
         pub async fn get_host_port(&self) -> u16 {
-            self.container.get_host_port_ipv4(5432).await.unwrap()
+            self.host_port
         }
     }
 
     impl Store {
-        /// Spins a Postgres testcontainer and returns a store backed by it.
+        /// Returns a store backed by a fresh database on the shared Postgres
+        /// testcontainer (one container per test process).
         pub async fn connect_test() -> anyhow::Result<TestDb> {
-            use testcontainers_modules::testcontainers::runners::AsyncRunner;
-            let container = testcontainers_modules::postgres::Postgres::default()
-                .start()
+            let shared = shared_postgres().await?;
+            let db_name = format!("test_{}", uuid::Uuid::now_v7().simple());
+            let admin = sqlx::PgPool::connect(&format!("{}/postgres", shared.base_url)).await?;
+            sqlx::query(&format!("CREATE DATABASE {db_name}"))
+                .execute(&admin)
                 .await?;
-            let port = container.get_host_port_ipv4(5432).await?;
-            let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+            admin.close().await;
+            let url = format!("{}/{}", shared.base_url, db_name);
             let store = Self::connect(&url).await?;
-            Ok(TestDb { store, container })
+            Ok(TestDb {
+                store,
+                url,
+                db_name,
+                host_port: shared.host_port,
+            })
         }
     }
 }

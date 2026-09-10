@@ -1,5 +1,14 @@
 [workspace]
 resolver = "2"
+# default-members keeps `cargo test/check/build` off the Tauri desktop app:
+# its webview dependency tree dominates compile time and it has no meaningful
+# tests. Build it explicitly with `-p guild-desktop` when working on it.
+default-members = [
+    "crates/protocol",
+    "crates/guild-core",
+    "crates/app-server",
+    "crates/server",
+]
 members = [
     "crates/protocol",
     "apps/desktop/src-tauri",

@@ -148,10 +148,7 @@ pub async fn full_state() -> FullState {
 
     let cfg = Config {
         bind_addr: "127.0.0.1:0".into(),
-        database_url: format!(
-            "postgres://postgres:postgres@127.0.0.1:{}/postgres",
-            db.get_host_port().await
-        ),
+        database_url: db.url.clone(),
         clickhouse_url: format!("http://127.0.0.1:{ch_port}"),
         clickhouse_database: "default".into(),
         master_key_hex: "00".repeat(32),
