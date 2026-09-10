@@ -181,6 +181,7 @@ impl RoutineExecutor {
                     tokens_out = to;
                 }
                 StreamEvent::ToolCallDelta { .. } => {}
+                StreamEvent::ThinkingDelta { .. } => {}
                 StreamEvent::Error { code, message } => {
                     anyhow::bail!("completion stream error [{code}]: {message}");
                 }

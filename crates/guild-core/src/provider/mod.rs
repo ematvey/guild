@@ -23,6 +23,11 @@ pub struct ChatChunk {
 #[derive(Debug, Clone)]
 pub enum ProviderChunk {
     Text(ChatChunk),
+    /// Fragment of the model's chain-of-thought reasoning (e.g. DeepSeek's
+    /// `reasoning_content`). Accumulates into the assistant turn's reasoning
+    /// block; persisted on the thread and replayed to the model — never
+    /// dropped from context.
+    Thinking(ChatChunk),
     ToolCallDelta {
         index: u32,
         id: Option<String>,

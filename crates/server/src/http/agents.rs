@@ -228,6 +228,7 @@ async fn run_turn(
             content: r.content.clone(),
             tool_calls: r.tool_calls.clone(),
             tool_call_id: r.tool_call_id.clone(),
+            reasoning: None,
         })
         .collect();
     store

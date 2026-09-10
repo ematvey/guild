@@ -145,6 +145,7 @@ macro_rules! journaled_run_body {
                 content: c.text.clone(),
                 tool_calls: Some(c.tool_calls.clone()),
                 tool_call_id: None,
+                reasoning: None,
             });
             for call in c.tool_calls {
                 // Journaled: one tool execution; failures become tool results.
@@ -495,6 +496,7 @@ impl ChatRunner {
                 content: m.content,
                 tool_calls: m.tool_calls,
                 tool_call_id: m.tool_call_id,
+                reasoning: None,
             })
             .collect();
 
@@ -580,6 +582,7 @@ impl ChatRunner {
                         let mut tokens_in = 0u32;
                         let mut tokens_out = 0u32;
                         let mut tool_calls: Vec<ToolCall> = Vec::new();
+                        let mut reasoning = String::new();
                         let mut pinned = Box::pin(stream);
                         while let Some(item) = pinned.next().await {
                             match item {
@@ -596,6 +599,14 @@ impl ChatRunner {
                                     }
                                     if let Some(t) = chunk.tokens_out {
                                         tokens_out = t;
+                                    }
+                                }
+                                Ok(ProviderChunk::Thinking(chunk)) => {
+                                    if !chunk.text_delta.is_empty() {
+                                        reasoning.push_str(&chunk.text_delta);
+                                        let _ = tx.send(StreamEvent::ThinkingDelta {
+                                            content: chunk.text_delta.clone(),
+                                        });
                                     }
                                 }
                                 Ok(ProviderChunk::ToolCallDelta {
@@ -700,6 +711,7 @@ impl ChatRunner {
                 content: completion.text.clone(),
                 tool_calls: Some(completion.tool_calls.clone()),
                 tool_call_id: None,
+                reasoning: None,
             });
 
             // Execute each requested tool call in order.
@@ -765,6 +777,7 @@ impl ChatRunner {
                     content,
                     tool_calls: None,
                     tool_call_id: Some(call.id.clone()),
+                    reasoning: None,
                 });
             }
         }

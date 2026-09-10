@@ -304,6 +304,8 @@ where
             StreamEvent::ToolStarted { .. } | StreamEvent::ToolCompleted { .. } => {}
             // attach-endpoint only; never on the completion stream
             StreamEvent::Idle => {}
+            // Reasoning is display-only for plain-chat clients here.
+            StreamEvent::ThinkingDelta { .. } => {}
         }
     }
     Ok((text, done))
