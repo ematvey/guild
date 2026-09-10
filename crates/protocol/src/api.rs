@@ -335,7 +335,7 @@ pub enum ThreadEvent {
         model: String,
         /// Aborted mid-stream: blocks carry the delivered prefix only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        interrupted: Option<()>,
+        interrupted: Option<bool>,
     },
     ToolResult {
         turn: u32,

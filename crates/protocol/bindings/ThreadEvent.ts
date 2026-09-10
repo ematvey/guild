@@ -12,7 +12,7 @@ export type ThreadEvent = { "type": "user_message", content: string, } | { "type
 /**
  * Aborted mid-stream: blocks carry the delivered prefix only.
  */
-interrupted?: null | null, } | { "type": "tool_result", turn: number, step: number, call_id: string, name: string, 
+interrupted?: boolean | null, } | { "type": "tool_result", turn: number, step: number, call_id: string, name: string, 
 /**
  * Model-facing text (what the model reads as the tool result).
  */
