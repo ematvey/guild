@@ -1057,7 +1057,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         {blocks.length === 0 ? (
           threadLoading ? (
             <ThreadSkeleton />
-          ) : (
+          ) : !chatId ? (
           <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
             <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
               <Bot className="size-7 text-muted-foreground" />
@@ -1088,6 +1088,10 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
               </p>
             )}
           </div>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+              <p className="text-sm text-muted-foreground">No messages in this thread yet.</p>
+            </div>
           )
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
