@@ -94,4 +94,17 @@ impl<'a> ThreadStore<'a> {
         .map_err(ApiError::from)?;
         rows.into_iter().map(TryInto::try_into).collect()
     }
+
+    /// Highest `turn` value in the chat's log (0 when the log is empty).
+    /// Used to place engine-side appends into the latest turn.
+    pub async fn latest_turn(&self, chat_id: Uuid) -> Result<u32, ApiError> {
+        let v: Option<i32> = sqlx::query_scalar(
+            "SELECT max((payload->>'turn')::int) FROM thread_events WHERE chat_id = $1",
+        )
+        .bind(chat_id)
+        .fetch_one(self.pool)
+        .await
+        .map_err(ApiError::from)?;
+        Ok(v.unwrap_or(0).max(0) as u32)
+    }
 }
