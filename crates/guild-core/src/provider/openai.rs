@@ -39,6 +39,11 @@ impl OpenAiProvider {
             if let Some(cid) = &m.tool_call_id {
                 mv["tool_call_id"] = serde_json::Value::String(cid.clone());
             }
+            // dsh rule: reasoning is resent on EVERY reasoning-carrying turn,
+            // never dropped from context (design §B.1).
+            if let Some(reasoning) = m.reasoning.as_deref().filter(|r| !r.is_empty()) {
+                mv["reasoning_content"] = serde_json::Value::String(reasoning.to_string());
+            }
             messages.push(mv);
         }
         let mut body = serde_json::json!({
@@ -63,7 +68,9 @@ impl OpenAiProvider {
         body
     }
 
-    fn parse_frame(data: &str) -> Option<ChatChunk> {
+    /// Parses one SSE data frame into a text or thinking chunk (tool
+    /// assembly happens in the stream loop below). Empty deltas are skipped.
+    fn parse_frame(data: &str) -> Option<ProviderChunk> {
         let v: serde_json::Value = serde_json::from_str(data).ok()?;
         let mut chunk = ChatChunk::default();
         if let Some(choice) = v["choices"].get(0) {
@@ -76,10 +83,25 @@ impl OpenAiProvider {
             chunk.tokens_in = usage["prompt_tokens"].as_u64().map(|n| n as u32);
             chunk.tokens_out = usage["completion_tokens"].as_u64().map(|n| n as u32);
         }
+        // DeepSeek-style chain-of-thought arrives in its own frames under
+        // `delta.reasoning_content`; a frame carrying reasoning is yielded as
+        // a Thinking chunk (design §B.1).
+        if let Some(choice) = v["choices"].get(0) {
+            if let Some(reasoning) = choice["delta"]["reasoning_content"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+            {
+                let mut think = ChatChunk::default();
+                think.text_delta = reasoning.to_string();
+                think.tokens_in = chunk.tokens_in;
+                think.tokens_out = chunk.tokens_out;
+                return Some(ProviderChunk::Thinking(think));
+            }
+        }
         if chunk.text_delta.is_empty() && chunk.tokens_in.is_none() && chunk.tokens_out.is_none() {
             None
         } else {
-            Some(chunk)
+            Some(ProviderChunk::Text(chunk))
         }
     }
 }
@@ -141,7 +163,7 @@ impl ModelProvider for OpenAiProvider {
                     continue;
                 };
                 if let Some(chunk) = Self::parse_frame(&data) {
-                    yield Ok(ProviderChunk::Text(chunk));
+                    yield Ok(chunk);
                 }
                 let choice = &v["choices"][0];
                 if let Some(tcs) = choice["delta"]["tool_calls"].as_array() {
@@ -198,9 +220,33 @@ mod tests {
 
     #[test]
     fn parse_delta_frame() {
-        let c =
-            OpenAiProvider::parse_frame(r#"{"choices":[{"delta":{"content":"Hel"}}]}"#).unwrap();
+        let c = OpenAiProvider::parse_frame(r#"{"choices":[{"delta":{"content":"Hel"}}]}"#)
+            .unwrap();
+        let ProviderChunk::Text(c) = c else {
+            panic!("expected text chunk");
+        };
         assert_eq!(c.text_delta, "Hel");
+    }
+
+    #[test]
+    fn parse_thinking_delta_frame() {
+        let c = OpenAiProvider::parse_frame(
+            r#"{"choices":[{"delta":{"reasoning_content":"let me think"}}]}"#,
+        )
+        .unwrap();
+        let ProviderChunk::Thinking(c) = c else {
+            panic!("expected thinking chunk");
+        };
+        assert_eq!(c.text_delta, "let me think");
+        assert!(c.tokens_in.is_none() && c.tokens_out.is_none());
+    }
+
+    #[test]
+    fn empty_reasoning_delta_is_skipped() {
+        assert!(OpenAiProvider::parse_frame(
+            r#"{"choices":[{"delta":{"reasoning_content":""}}]}"#
+        )
+        .is_none());
     }
 
     #[test]
@@ -209,6 +255,9 @@ mod tests {
             r#"{"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}"#,
         )
         .unwrap();
+        let ProviderChunk::Text(c) = c else {
+            panic!("expected text chunk");
+        };
         assert!(c.text_delta.is_empty());
         assert_eq!(c.tokens_in, Some(3));
         assert_eq!(c.tokens_out, Some(2));
@@ -255,5 +304,53 @@ mod tests {
         assert_eq!(tc["id"], "c1");
         assert_eq!(tc["function"]["arguments"], r#"{"path":"a"}"#);
         assert_eq!(body["messages"][2]["tool_call_id"], "c1");
+    }
+
+    #[test]
+    fn body_serializes_assistant_reasoning_as_reasoning_content() {
+        let msgs = vec![
+            Message::user("hi"),
+            Message {
+                role: "assistant".into(),
+                content: "answer".into(),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning: Some("chain of thought".into()),
+            },
+        ];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+        };
+        let body = OpenAiProvider::body(&req);
+        assert_eq!(body["messages"][1]["reasoning_content"], "chain of thought");
+        assert_eq!(body["messages"][1]["content"], "answer");
+        // user messages never carry the field
+        assert!(body["messages"][0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn empty_reasoning_is_omitted() {
+        let msgs = vec![Message {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning: Some(String::new()),
+        }];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+        };
+        let body = OpenAiProvider::body(&req);
+        assert!(body["messages"][0].get("reasoning_content").is_none());
     }
 }

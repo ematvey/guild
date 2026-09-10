@@ -40,6 +40,11 @@ impl AnthropicProvider {
                 continue;
             }
             if m.role == "assistant" {
+                // Reasoning replay: Anthropic requires thinking blocks to be
+                // echoed back with their original signature; replaying them
+                // as plain text is wrong, so reasoning is deliberately left
+                // unreplayed for anthropic routes (kept in the thread log,
+                // never dropped there) — see design §B.1.
                 let Some(calls) = &m.tool_calls else {
                     messages.push(serde_json::json!({"role": m.role, "content": m.content}));
                     continue;
@@ -82,9 +87,9 @@ impl AnthropicProvider {
         body
     }
 
-    /// Parses one SSE data frame into zero or one text chunk (tool assembly
+    /// Parses one SSE data frame into a text or thinking chunk (tool assembly
     /// happens in the stream loop below).
-    fn parse_frame(data: &str) -> Option<ChatChunk> {
+    fn parse_frame(data: &str) -> Option<ProviderChunk> {
         let v: serde_json::Value = serde_json::from_str(data.trim()).ok()?;
         let mut chunk = ChatChunk::default();
         match v["type"].as_str()? {
@@ -92,6 +97,9 @@ impl AnthropicProvider {
                 chunk.tokens_in = v["message"]["usage"]["input_tokens"]
                     .as_u64()
                     .map(|n| n as u32);
+            }
+            "content_block_delta" if v["delta"]["type"].as_str() == Some("thinking_delta") => {
+                chunk.text_delta = v["delta"]["thinking"].as_str().unwrap_or("").to_string();
             }
             "content_block_delta" if v["delta"]["type"].as_str() == Some("text_delta") => {
                 chunk.text_delta = v["delta"]["text"].as_str().unwrap_or("").to_string();
@@ -103,8 +111,12 @@ impl AnthropicProvider {
         }
         if chunk.text_delta.is_empty() && chunk.tokens_in.is_none() && chunk.tokens_out.is_none() {
             None
+        } else if v["type"].as_str() == Some("content_block_delta")
+            && v["delta"]["type"].as_str() == Some("thinking_delta")
+        {
+            Some(ProviderChunk::Thinking(chunk))
         } else {
-            Some(chunk)
+            Some(ProviderChunk::Text(chunk))
         }
     }
 }
@@ -166,7 +178,7 @@ impl ModelProvider for AnthropicProvider {
                     continue;
                 };
                 if let Some(chunk) = Self::parse_frame(&data) {
-                    yield Ok(ProviderChunk::Text(chunk));
+                    yield Ok(chunk);
                 }
                 let ty = v["type"].as_str().unwrap_or("");
                 let idx = v["index"].as_u64().unwrap_or(0) as u32;
@@ -226,7 +238,27 @@ mod tests {
             r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hel"}}"#,
         )
         .unwrap();
+        let ProviderChunk::Text(c) = c else {
+            panic!("expected text chunk");
+        };
         assert_eq!(c.text_delta, "Hel");
+    }
+
+    #[test]
+    fn parse_thinking_delta_frame() {
+        let c = AnthropicProvider::parse_frame(
+            r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"pondering"}}"#,
+        )
+        .unwrap();
+        let ProviderChunk::Thinking(c) = c else {
+            panic!("expected thinking chunk");
+        };
+        assert_eq!(c.text_delta, "pondering");
+        // empty thinking deltas are skipped
+        assert!(AnthropicProvider::parse_frame(
+            r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":""}}"#
+        )
+        .is_none());
     }
 
     #[test]
@@ -235,11 +267,17 @@ mod tests {
             r#"{"type":"message_start","message":{"usage":{"input_tokens":4}}}"#,
         )
         .unwrap();
+        let ProviderChunk::Text(c) = c else {
+            panic!("expected text chunk");
+        };
         assert_eq!(c.tokens_in, Some(4));
         let c = AnthropicProvider::parse_frame(
             r#"{"type":"message_delta","usage":{"output_tokens":7}}"#,
         )
         .unwrap();
+        let ProviderChunk::Text(c) = c else {
+            panic!("expected text chunk");
+        };
         assert_eq!(c.tokens_out, Some(7));
     }
 
