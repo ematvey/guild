@@ -6,3 +6,4 @@ config.env
 *.local
 crates/server/data-test/
 crates/server/data/
+.dagr/
