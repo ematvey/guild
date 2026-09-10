@@ -13,6 +13,7 @@ pub mod registry;
 pub mod releases;
 pub mod routines;
 pub mod teams;
+pub mod thread;
 
 #[cfg(feature = "test-support")]
 pub use test_db::TestDb;
@@ -45,7 +46,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 19] = [
+        const MIGRATIONS: [(&str, &str); 20] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -119,6 +120,10 @@ impl Store {
                 "0019_machine_binding",
                 include_str!("../../migrations/0019_machine_binding.sql"),
             ),
+            (
+                "0020_thread_events",
+                include_str!("../../migrations/0020_thread_events.sql"),
+            ),
         ];
         for (name, sql) in MIGRATIONS {
             let applied: Option<i64> =
@@ -156,6 +161,10 @@ impl Store {
 
     pub fn chats(&self) -> chats::ChatStore<'_> {
         chats::ChatStore { pool: &self.pool }
+    }
+
+    pub fn thread(&self) -> thread::ThreadStore<'_> {
+        thread::ThreadStore { pool: &self.pool }
     }
 
     pub fn gateway(&self) -> gateway::GatewayStore<'_> {
