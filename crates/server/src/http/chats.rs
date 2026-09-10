@@ -17,6 +17,7 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/chats/{id}/messages",
             axum::routing::get(messages).post(append),
         )
+        .route("/api/v1/chats/{id}/thread", axum::routing::get(thread))
         .route(
             "/api/v1/chats/{id}/machine",
             axum::routing::post(set_machine),
@@ -172,4 +173,17 @@ async fn messages(
     store.chats().get_chat(user.0.org_id, chat_id).await?;
     let msgs = store.chats().list_messages(user.0.org_id, chat_id).await?;
     Ok(Json(serde_json::json!({ "messages": msgs })))
+}
+
+/// The chat's full thread event log (spec §E): the durable source of truth
+/// the client renders from. Org-scoped like messages; 404 for foreign chats.
+async fn thread(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    let events = store.thread().list_events(user.0.org_id, chat_id).await?;
+    Ok(Json(serde_json::json!({ "events": events })))
 }
