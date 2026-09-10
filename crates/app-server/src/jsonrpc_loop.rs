@@ -308,7 +308,6 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             });
         }
         "tool.run" => {
-            let session = shared.session.clone();
             let out_tx = out_tx.clone();
             tokio::spawn(async move {
                 let result = async {
