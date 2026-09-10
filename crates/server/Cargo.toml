@@ -40,13 +40,11 @@ async-trait.workspace = true
 eventsource-stream.workspace = true
 futures.workspace = true
 wiremock = { version = "0.6", optional = true }
-testcontainers = { workspace = true, optional = true }
 aws-sdk-s3 = { version = "1", optional = true, default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
-testcontainers-modules = { workspace = true, optional = true }
 
 [dev-dependencies]
-testcontainers-modules.workspace = true
 wiremock = "0.6"
+uuid.workspace = true
 
 [[test]]
 name = "http_scaffold"
@@ -136,7 +134,7 @@ required-features = ["test-support"]
 name = "web_serving"
 required-features = ["test-support"]
 [features]
-test-support = ["dep:testcontainers", "dep:testcontainers-modules", "dep:wiremock", "dep:aws-sdk-s3"]
+test-support = ["dep:wiremock", "dep:aws-sdk-s3"]
 
 [[test]]
 name = "pairing_api"

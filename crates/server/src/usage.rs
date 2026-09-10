@@ -1,6 +1,7 @@
 //! Usage-event sink — ClickHouse (spec §4.5). Unreachable ClickHouse must
 //! never break chat: failures are logged and dropped.
 
+use crate::config::Config;
 use crate::s3::{ObjectStore, SharedObjectStore};
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
@@ -56,10 +57,8 @@ pub struct UsageSink {
 use chrono::Datelike;
 
 impl UsageSink {
-    pub async fn connect(url: &str, database: &str) -> anyhow::Result<Self> {
-        let client = clickhouse::Client::default()
-            .with_url(url)
-            .with_database(database);
+    pub async fn connect(cfg: &Config) -> anyhow::Result<Self> {
+        let client = cfg.clickhouse_client();
         client
             .query(
                 "CREATE TABLE IF NOT EXISTS usage_events (\
@@ -134,10 +133,7 @@ impl AppState {
     pub async fn usage(&self) -> Result<SharedUsageSink, crate::http::error::ApiError> {
         self.usage_cell()
             .get_or_try_init(|| async {
-                UsageSink::connect(
-                    &self.config.clickhouse_url,
-                    &self.config.clickhouse_database,
-                )
+                UsageSink::connect(&self.config)
                 .await
                 .map(Arc::new)
                 .map_err(|e| crate::http::error::ApiError::internal(e.to_string()))

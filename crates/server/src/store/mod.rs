@@ -216,47 +216,55 @@ impl Store {
 #[cfg(feature = "test-support")]
 mod test_db {
     use super::Store;
-    use testcontainers_modules::testcontainers::ContainerAsync;
-    use testcontainers_modules::testcontainers::runners::AsyncRunner;
     use tokio::sync::OnceCell;
 
-    /// One Postgres container per test process, shared by every `connect_test`
-    /// caller in it. Starting a container costs seconds; sharing it turns
-    /// per-test container starts into one per test binary. Each caller still
-    /// gets an isolated database. Ryuk reaps the container when the process
-    /// exits; leftover test databases die with it.
-    struct SharedPostgres {
-        _container: ContainerAsync<testcontainers_modules::postgres::Postgres>,
-        base_url: String,
-        host_port: u16,
-    }
+    /// Host Postgres shared by all tests on this box: the neutral host
+    /// service at /srv/postgres (published on 127.0.0.1:5432, see
+    /// /srv/postgres/docker-compose.yml). No testcontainer is started; each
+    /// `connect_test` caller gets an isolated database on the shared server.
+    /// Override with GUILD_TEST_PG_URL (must point at a role that can CREATE
+    /// DATABASE). Stale test databases from crashed runs are reaped on first
+    /// use: ones with no live connections are dropped.
+    static BASE_URL: OnceCell<String> = OnceCell::const_new();
 
-    static SHARED: OnceCell<SharedPostgres> = OnceCell::const_new();
-
-    async fn shared_postgres() -> anyhow::Result<&'static SharedPostgres> {
-        SHARED
+    async fn base_url() -> anyhow::Result<&'static String> {
+        BASE_URL
             .get_or_try_init(|| async {
-                let container = testcontainers_modules::postgres::Postgres::default()
-                    .start()
-                    .await?;
-                let port = container.get_host_port_ipv4(5432).await?;
-                anyhow::Ok(SharedPostgres {
-                    _container: container,
-                    base_url: format!("postgres://postgres:postgres@127.0.0.1:{port}"),
-                    host_port: port,
-                })
+                let url = std::env::var("GUILD_TEST_PG_URL").unwrap_or_else(|_| {
+                    "postgres://postgres:REDACTED_HOST_POSTGRES_PASSWORD@127.0.0.1:5432"
+                        .to_string()
+                });
+                let admin = sqlx::PgPool::connect(&format!("{url}/postgres")).await?;
+                // Reap leftovers from crashed runs: databases no process is
+                // connected to. Concurrent test processes keep theirs (they
+                // hold live connections).
+                let stale: Vec<String> = sqlx::query_scalar(
+                    "SELECT datname FROM pg_database d \
+                     WHERE datname LIKE 'test\\_%' AND NOT EXISTS (\
+                       SELECT 1 FROM pg_stat_activity a \
+                       WHERE a.datname = d.datname AND a.pid <> pg_backend_pid())",
+                )
+                .fetch_all(&admin)
+                .await
+                .unwrap_or_default();
+                for name in stale {
+                    let _ = sqlx::query(&format!("DROP DATABASE {name}"))
+                        .execute(&admin)
+                        .await;
+                }
+                admin.close().await;
+                anyhow::Ok(url)
             })
             .await
     }
 
-    /// Owns one isolated database on the shared testcontainer.
+    /// Owns one isolated database on the shared host Postgres.
     pub struct TestDb {
         pub store: Store,
         /// Full connection URL of this test's isolated database.
         pub url: String,
         #[allow(dead_code)] // keep the name alive for debugging
         db_name: String,
-        host_port: u16,
     }
 
     impl std::ops::Deref for TestDb {
@@ -266,32 +274,20 @@ mod test_db {
         }
     }
 
-    impl TestDb {
-        /// Host port of the containerized Postgres.
-        pub async fn get_host_port(&self) -> u16 {
-            self.host_port
-        }
-    }
-
     impl Store {
-        /// Returns a store backed by a fresh database on the shared Postgres
-        /// testcontainer (one container per test process).
+        /// Returns a store backed by a fresh database on the shared host
+        /// Postgres (no container; see `base_url`).
         pub async fn connect_test() -> anyhow::Result<TestDb> {
-            let shared = shared_postgres().await?;
+            let base = base_url().await?;
             let db_name = format!("test_{}", uuid::Uuid::now_v7().simple());
-            let admin = sqlx::PgPool::connect(&format!("{}/postgres", shared.base_url)).await?;
+            let admin = sqlx::PgPool::connect(&format!("{base}/postgres")).await?;
             sqlx::query(&format!("CREATE DATABASE {db_name}"))
                 .execute(&admin)
                 .await?;
             admin.close().await;
-            let url = format!("{}/{}", shared.base_url, db_name);
+            let url = format!("{base}/{db_name}");
             let store = Self::connect(&url).await?;
-            Ok(TestDb {
-                store,
-                url,
-                db_name,
-                host_port: shared.host_port,
-            })
+            Ok(TestDb { store, url, db_name })
         }
     }
 }

@@ -1,17 +1,30 @@
 use guild_server::config::Config;
 use guild_server::s3::ObjectStore;
-use testcontainers_modules::minio::MinIO;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use uuid::Uuid;
 
-fn config_with(endpoint: &str) -> Config {
+/// Object storage tests run against the neutral host rustfs (:9950, see
+/// docs/deploy-nuances.md) — no testcontainer. Each test gets its own bucket
+/// so runs never collide on the shared server. Override with GUILD_TEST_S3_URL
+/// / GUILD_TEST_S3_ACCESS_KEY_ID / GUILD_TEST_S3_SECRET_ACCESS_KEY.
+fn test_s3_env() -> (String, String, String) {
+    (
+        std::env::var("GUILD_TEST_S3_URL").unwrap_or_else(|_| "http://127.0.0.1:9950".into()),
+        std::env::var("GUILD_TEST_S3_ACCESS_KEY_ID").unwrap_or_else(|_| "rustfsadmin".into()),
+        std::env::var("GUILD_TEST_S3_SECRET_ACCESS_KEY").unwrap_or_else(|_| "rustfsadmin".into()),
+    )
+}
+
+fn config_with(endpoint: &str, bucket: &str, ak: &str, sk: &str) -> Config {
     let mut cfg = Config::test_config();
     cfg.s3_url = endpoint.to_string();
+    cfg.s3_bucket = bucket.to_string();
+    cfg.s3_access_key_id = ak.to_string();
+    cfg.s3_secret_access_key = sk.to_string();
     cfg
 }
 
-async fn make_bucket(endpoint: &str, bucket: &str) {
-    let creds =
-        aws_sdk_s3::config::Credentials::new("minioadmin", "minioadmin", None, None, "test");
+async fn make_bucket(endpoint: &str, bucket: &str, ak: &str, sk: &str) {
+    let creds = aws_sdk_s3::config::Credentials::new(ak, sk, None, None, "test");
     let conf = aws_sdk_s3::Config::builder()
         .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
         .endpoint_url(endpoint)
@@ -24,11 +37,10 @@ async fn make_bucket(endpoint: &str, bucket: &str) {
 
 #[tokio::test]
 async fn put_get_delete_roundtrip() {
-    let container = MinIO::default().start().await.expect("minio testcontainer");
-    let port = container.get_host_port_ipv4(9000).await.unwrap();
-    let endpoint = format!("http://127.0.0.1:{port}");
-    make_bucket(&endpoint, "guild").await;
-    let store = ObjectStore::connect(&config_with(&endpoint)).unwrap();
+    let (endpoint, ak, sk) = test_s3_env();
+    let bucket = format!("t{}", Uuid::now_v7().simple());
+    make_bucket(&endpoint, &bucket, &ak, &sk).await;
+    let store = ObjectStore::connect(&config_with(&endpoint, &bucket, &ak, &sk)).unwrap();
 
     let key = "test/roundtrip.bin";
     store.put(key, b"hello bundle".to_vec()).await.unwrap();
