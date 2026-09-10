@@ -164,6 +164,7 @@ impl CloudClient {
             .bearer_auth(&self.token)
             .json(&CreateChatRequest {
                 title: title.map(Into::into),
+                machine_id: None,
             })
             .send()
             .await?;

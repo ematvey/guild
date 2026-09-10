@@ -173,11 +173,18 @@ async fn routine_crud_hook_auth_and_internal_completion() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::ACCEPTED);
     let seen = restate.received_requests().await.unwrap();
-    assert_eq!(seen.len(), 1);
-    assert!(seen[0]
-        .url
-        .path()
-        .contains(&format!("RoutineRunner/{routine_id}/handle_webhook/send")));
+    // Stray container health/S3 probes can land on this mock via the
+    // docker-proxy listener collision (see standalone_listener) — assert on
+    // the forwarded webhook, not on the total.
+    let webhook_hits = seen
+        .iter()
+        .filter(|r| {
+            r.url
+                .path()
+                .contains(&format!("RoutineRunner/{routine_id}/handle_webhook/send"))
+        })
+        .count();
+    assert_eq!(webhook_hits, 1, "requests: {:?}", seen.iter().map(|r| (r.method.as_str(), r.url.path())).collect::<Vec<_>>());
 
     // internal completion drives the scripted provider; usage recorded
     let internal_req = json!({

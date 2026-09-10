@@ -83,6 +83,10 @@ pub struct PairingTokenInfo {
 pub struct CreateChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Optional machine binding at creation (desktop apps bind their own
+    /// machine so machine tools work from the first turn).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -95,6 +99,11 @@ pub struct Chat {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// Bound executor machine: machine tools run only there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine_label: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

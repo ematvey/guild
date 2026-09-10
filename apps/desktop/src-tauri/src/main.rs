@@ -37,10 +37,14 @@ fn main() -> anyhow::Result<()> {
                 .worker_threads(2)
                 .enable_all()
                 .build()?;
+            // Restore the persisted session here too: the GUI re-executes
+            // ITSELF in engine mode, so without this every app launch starts
+            // logged out even though token.json is on disk.
+            let session = rt.block_on(guild_app_server::jsonrpc_loop::restored_session())?;
             let (_session, _writer) = rt.block_on(guild_app_server::jsonrpc_loop::serve(
                 std::io::stdin(),
                 std::io::stdout(),
-                guild_app_server::jsonrpc_loop::Session::default(),
+                session,
             ))?;
             Ok(())
         }

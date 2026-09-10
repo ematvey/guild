@@ -6,10 +6,41 @@
 //  - Web (served by guild-server at /): same-origin fetch/SSE against the
 //    org gateway; plain chat. Auth is shared with the /admin console via
 //    the same localStorage token.
+import { invoke } from "@tauri-apps/api/core";
+
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export const TOKEN_KEY = "guild_token";
 const CLIENT_ID_KEY = "guild_client_id";
+const MACHINE_ID_KEY = "guild_machine_id";
+let machineNameCache: string | null = null;
+
+/** Stable machine identity (per app install): the executor key machine
+ * tools are bound to. */
+export function machineId(): string {
+  let id = localStorage.getItem(MACHINE_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(MACHINE_ID_KEY, id);
+  }
+  return id;
+}
+
+/** Human label of this machine (hostname via the engine). */
+export async function machineName(): Promise<string> {
+  if (machineNameCache) return machineNameCache;
+  try {
+    if (IS_TAURI) {
+      const res = await invoke<any>("rpc_request", { method: "machine.info", params: {} });
+      machineNameCache = res?.result?.name || machineId().slice(0, 8);
+    } else {
+      machineNameCache = machineId().slice(0, 8);
+    }
+  } catch {
+    machineNameCache = machineId().slice(0, 8);
+  }
+  return machineNameCache ?? machineId().slice(0, 8);
+}
 
 /** Stable per-app-instance identity — the presence key for client-tool
  * termination detection (server resolves suspended client tools when the
@@ -23,23 +54,41 @@ export function clientId(): string {
   return id;
 }
 
-/** Holds one app-lifetime connection to /api/v1/events/stream (the client
- * presence signal), auto-reconnecting on drop. Returns a stop function. */
+/** Holds one app-lifetime connection to /api/v1/events/stream (which also
+ * registers this machine as a tool executor) and, in Tauri, keeps the
+ * machine's liveness heartbeat running. Auto-reconnects on drop. Returns a
+ * stop function. */
 export function startEventStream(): () => void {
   let stopped = false;
   let controller: AbortController | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
   const run = async () => {
     while (!stopped) {
       controller = new AbortController();
       try {
-        const res = await fetch(
-          `/api/v1/events/stream?client_id=${encodeURIComponent(clientId())}`,
-          {
-            headers: { authorization: `Bearer ${getToken()}` },
-            signal: controller.signal,
-          },
-        );
+        let url = `/api/v1/events/stream?client_id=${encodeURIComponent(clientId())}`;
+        if (IS_TAURI) {
+          url += `&machine_id=${encodeURIComponent(machineId())}&machine_name=${encodeURIComponent(await machineName())}`;
+        }
+        const res = await fetch(url, {
+          headers: { authorization: `Bearer ${getToken()}` },
+          signal: controller.signal,
+        });
         if (!res.ok || !res.body) throw new Error(`event stream: ${res.status}`);
+        if (IS_TAURI && !heartbeat) {
+          // Executor liveness: the server cannot detect a dead client from
+          // an idle SSE stream, so the executor pings explicitly.
+          heartbeat = setInterval(() => {
+            void fetch("/api/v1/machines/heartbeat", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: `Bearer ${getToken()}`,
+              },
+              body: JSON.stringify({ machine_id: machineId() }),
+            }).catch(() => {});
+          }, 5000);
+        }
         // drain; events are not consumed yet
         const reader = res.body.getReader();
         for (;;) {
@@ -57,6 +106,7 @@ export function startEventStream(): () => void {
   return () => {
     stopped = true;
     controller?.abort();
+    if (heartbeat) clearInterval(heartbeat);
   };
 } // shared with the admin console app
 
@@ -128,6 +178,37 @@ export interface ChatSummary {
   id: string;
   title: string;
   created_at: string;
+  machine_id?: string;
+  machine_label?: string;
+}
+
+export interface MachineInfo {
+  machine_id: string;
+  name: string;
+}
+
+/** Connected machine executors for this account. */
+export async function listMachines(): Promise<MachineInfo[]> {
+  const res = await fetch("/api/v1/machines", {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) return [];
+  const v = await res.json().catch(() => ({}));
+  return v?.machines ?? [];
+}
+
+/** Binds (machineId given) or unbinds (machineId null) a chat's machine. */
+export async function bindChat(
+  chatId: string,
+  machineIdArg: string | null,
+): Promise<ChatSummary | null> {
+  const res = await fetch(`/api/v1/chats/${chatId}/machine`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify(machineIdArg ? { machine_id: machineIdArg } : { machine_id: "" }),
+  });
+  if (!res.ok) return null;
+  return res.json().catch(() => null);
 }
 
 export interface ChatMessage {
@@ -164,7 +245,7 @@ export async function createChat(title: string): Promise<string | null> {
   const res = await fetch("/api/v1/chats", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify(IS_TAURI ? { title, machine_id: machineId() } : { title }),
   });
   if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
@@ -215,6 +296,7 @@ export async function streamChat(
       "content-type": "application/json",
       authorization: `Bearer ${token}`,
       "x-guild-client-id": clientId(),
+      ...(IS_TAURI ? { "x-guild-machine-id": machineId() } : {}),
     },
     body: JSON.stringify({
       chat_id: chatId,

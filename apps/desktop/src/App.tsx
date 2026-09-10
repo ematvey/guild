@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import AgentView from "./views/AgentView";
+// AgentView (local engine agent sessions) is retired from the shell for now —
+// machine tools run through the unified WebChat surface instead.
 import WebChat from "./views/WebChat";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
@@ -175,6 +176,9 @@ function DesktopApp() {
     setUser(info.result?.email ?? fallbackEmail);
     try {
       localStorage.setItem("guild.serverUrl", baseUrl);
+      // Unified shell: the webview talks to the same server over HTTP, so the
+      // engine's session token becomes the webview's chat token.
+      if (info.result?.token) localStorage.setItem("guild_token", info.result.token);
     } catch {
       /* private mode: pref simply not remembered */
     }
@@ -221,10 +225,33 @@ function DesktopApp() {
     }
   };
 
+  const signOut = () => {
+    // Drop the webview token; the engine keeps its session, so the next
+    // restore re-logs-in automatically (full engine sign-out is phase 2).
+    clearToken();
+    setUser(null);
+    window.location.reload();
+  };
+
   if (user) {
+    // Unified shell: the desktop webview runs the same chat UI as the
+    // browser, talking HTTP to the same server; only machine-tool execution
+    // (and the executor registration that makes it possible) is desktop-
+    // specific. AgentView (local engine sessions) stays available for
+    // engine-side debugging but is no longer the primary surface.
     return (
       <>
-        <AgentView email={user} adminUrl={adminUrl} />
+        <WebChat email={user} onSignOut={signOut} />
+        {adminUrl && (
+          <a
+            href={adminUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="fixed bottom-2 right-2 z-50 rounded-md border border-border bg-card px-2 py-1 text-xs text-muted-foreground outline-none hover:text-foreground"
+          >
+            Admin console
+          </a>
+        )}
         <UpdateToast />
       </>
     );

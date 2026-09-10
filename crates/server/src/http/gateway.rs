@@ -34,20 +34,16 @@ pub struct ActiveGeneration {
     pub pending_tools: Arc<std::sync::Mutex<HashMap<String, PendingTool>>>,
 }
 
-/// One suspended client tool call.
+/// One suspended machine tool call.
 pub struct PendingTool {
     pub name: String,
     pub arguments: String,
-    /// Originating app instance (presence identity) for termination
-    /// detection; `None` → fall back to the 5-minute timeout only.
-    pub client_id: Option<String>,
+    /// Bound executor machine; `None` → fall back to the 5-minute timeout
+    /// only.
+    pub machine_id: Option<String>,
     /// Fired when the tool is resolved so the presence watcher stops.
     pub done: Arc<tokio::sync::Notify>,
 }
-
-/// How long a vanished client may reconnect before its suspended tool is
-/// resolved with a "client disconnected" error.
-const CLIENT_GONE_GRACE: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub(crate) fn pending_tool_exists(state: &AppState, chat_id: Uuid, call_id: &str) -> bool {
     state
@@ -59,43 +55,43 @@ pub(crate) fn pending_tool_exists(state: &AppState, chat_id: Uuid, call_id: &str
         .unwrap_or(false)
 }
 
-/// Watches the originating client's app-level presence while a client tool
-/// is suspended. If the client disappears (all app connections gone) and
-/// stays gone for the grace window, the tool is resolved with an error so
-/// the turn continues instead of dead-airing until the 5-minute timeout.
-/// All client tool results funnel through the same durable `complete_tool`
+/// Watches the bound machine's liveness while a machine tool is suspended.
+/// Liveness is heartbeat-based (see `ExecutorHandle`): if heartbeats stop
+/// and stay stale past the grace window, the tool is resolved with an error
+/// so the turn continues instead of dead-airing until the 5-minute timeout.
+/// All machine tool results funnel through the same durable `complete_tool`
 /// handler, so this stays replay-safe; late duplicate completions no-op.
-pub(crate) fn spawn_presence_watcher(
+pub(crate) fn spawn_machine_watcher(
     state: &AppState,
     chat_id: Uuid,
     call_id: String,
     tool_name: String,
-    client_id: String,
+    machine_id: String,
+    machine_label: String,
     done: Arc<tokio::sync::Notify>,
 ) {
-    let mut rx = match state.presence_watch(&client_id) {
-        Some(rx) => rx,
-        None => return, // client never connected; timeout backstop applies
-    };
     let state = state.clone();
-    let deadline =
-        tokio::time::Instant::now() + crate::worker::restate::CLIENT_TOOL_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + crate::worker::restate::CLIENT_TOOL_TIMEOUT;
     tokio::spawn(async move {
+        // Heartbeat TTL is short (15s); the grace window on top covers blips
+        // and reconnects before the tool is declared aborted.
+        const GRACE: std::time::Duration = std::time::Duration::from_secs(15);
+        let mut gone_since: Option<tokio::time::Instant> = None;
         loop {
+            tokio::select! {
+                _ = done.notified() => return,
+                _ = tokio::time::sleep_until(deadline) => return, // backstop handles it
+                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+            }
             if !pending_tool_exists(&state, chat_id, &call_id) {
                 return; // resolved already
             }
-            if *rx.borrow() == 0 {
-                // Already gone at spawn time (e.g. a retried tool call) or
-                // just observed going to zero: grace window for blips and
-                // reloads before declaring the client gone.
-                tokio::select! {
-                    _ = done.notified() => return,
-                    _ = tokio::time::sleep(CLIENT_GONE_GRACE) => {}
-                }
-                if !pending_tool_exists(&state, chat_id, &call_id) || *rx.borrow() != 0 {
-                    continue;
-                }
+            if state.machine_connected(&machine_id) {
+                gone_since = None;
+                continue;
+            }
+            let since = *gone_since.get_or_insert_with(tokio::time::Instant::now);
+            if since.elapsed() >= GRACE {
                 let _ = crate::http::internal::restate_send_one_way(
                     &state,
                     "ChatRunner",
@@ -103,7 +99,7 @@ pub(crate) fn spawn_presence_watcher(
                     serde_json::json!({
                         "call_id": call_id,
                         "content": format!(
-                            "client tool {tool_name} aborted: the client app disconnected before executing it",
+                            "client tool {tool_name} aborted: the bound machine '{machine_label}' went offline before executing it",
                         ),
                         "is_error": true,
                     }),
@@ -111,19 +107,10 @@ pub(crate) fn spawn_presence_watcher(
                 .await;
                 return;
             }
-            tokio::select! {
-                _ = done.notified() => return,
-                _ = tokio::time::sleep_until(deadline) => return, // backstop handles it
-                r = rx.changed() => {
-                    if r.is_err() {
-                        return; // sender gone; the deadline backstop path is moot too
-                    }
-                    // presence changed — re-evaluate at loop top
-                }
-            }
         }
     });
 }
+
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -295,7 +282,7 @@ pub(crate) fn note_pending_tool(
     call_id: &str,
     name: &str,
     args: &str,
-    client_id: Option<&str>,
+    machine_id: Option<&str>,
 ) -> Arc<tokio::sync::Notify> {
     let done = Arc::new(tokio::sync::Notify::new());
     let gens = state.generations.lock().unwrap();
@@ -305,7 +292,7 @@ pub(crate) fn note_pending_tool(
             PendingTool {
                 name: name.to_string(),
                 arguments: args.to_string(),
-                client_id: client_id.map(str::to_string),
+                machine_id: machine_id.map(str::to_string),
                 done: done.clone(),
             },
         );
@@ -353,7 +340,7 @@ async fn chat(
     // Org scoping: chat must belong to the caller's org. Route resolution,
     // quota, history, completion, persistence and usage all happen inside the
     // durable Restate workflow (ChatRunner::generate) — see worker/restate.rs.
-    store.chats().get_chat(user.0.org_id, req.chat_id).await?;
+    let chat = store.chats().get_chat(user.0.org_id, req.chat_id).await?;
 
     // One generation per chat at a time — checked BEFORE persisting, so a
     // rejected send does not leave a phantom user message behind.
@@ -403,6 +390,11 @@ async fn chat(
         "project_dir": req.project_dir,
         "client_id": headers
             .get("x-guild-client-id")
+            .and_then(|v| v.to_str().ok()),
+        "machine_id": chat.machine_id,
+        "machine_label": chat.machine_label,
+        "origin_machine_id": headers
+            .get("x-guild-machine-id")
             .and_then(|v| v.to_str().ok()),
     });
     let invoke = crate::http::internal::restate_send_one_way(
