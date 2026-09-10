@@ -1,0 +1,228 @@
+# Guild — deploy nuances
+
+Everything non-obvious about building, serving, and shipping Guild on this
+host (`devbox`). Facts verified 2026-09-10. Companion to `docs/clients.md`
+(client distribution details).
+
+---
+
+## 1. What runs where
+
+Two different "Guild" stacks exist on this host. **Don't confuse them.**
+
+### The real one: compose stack on :18080
+
+- Compose project: `~/guild/deploy/compose` (`docker-compose.yml` there).
+- Container names: `compose-server-1`, `compose-postgres-1`,
+  `compose-clickhouse-1`, `compose-minio-1`, `compose-restate-1`
+  (`minio-init` is a one-shot bucket creator).
+- `compose-server-1` publishes **0.0.0.0:18080 → 8080** (that's the chat app
+  + API everything points at) and Restate admin is published on **9070**.
+- Config: `deploy/compose/config.env` (gitignored — holds real secrets:
+  `GUILD_MASTER_KEY_HEX`, `GUILD_JWT_SECRET`). `GUILD_HTTP_PORT=18080`
+  because 8080 is already taken on this host.
+- Server state lives in the named volume `guild_data` (`/data` inside the
+  container); DB/ClickHouse/MinIO have their own volumes (`pgdata`,
+  `chdata`, `miniodata`). `docker compose down -v` **destroys all of it**.
+- Single-container mode: `GUILD_ROLE=all` (HTTP + worker roles in one
+  binary; worker binds 9080 internally, Restate ingress is compose-internal,
+  only the Restate admin port is published).
+
+### The stale one: legacy Node stack on :9330
+
+- Containers `guild-web-1` (Next-ish web on :3000), `guild-api-1`
+  (`npm run start -w @guild/api` on :4000), `guild-nginx-1` (:9330),
+  `guild-db-1`, `guild-cli-releases-1` — running since 2026-09-02.
+- **The compose file that defined them (`~/guild/docker-compose.yml`) has
+  been deleted from the repo**; the `@guild/api`/`guild-web` workspaces no
+  longer exist. This is a leftover of an earlier architecture.
+- Teardown candidate (`docker rm -f` the five containers + `docker rmi
+  guild-web guild-api guild-nginx guild-cli-releases guild-migrate`) — but
+  confirm nothing still points at :9330 first.
+- Recognition shortcut: `guild-*-1` names = legacy; `compose-*-1` names =
+  current.
+
+---
+
+## 2. The big gotcha: frontends are embedded in the server binary
+
+`crates/server/src/http/web.rs`:
+
+```rust
+static CHAT_DIST: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../apps/desktop/dist");
+static WEB_DIST: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../apps/webui/dist");
+```
+
+Consequences:
+
+- **A local `vite build` (or any edit under `apps/*/`) does NOT change what
+  `http://localhost:18080` serves.** The running container serves whatever
+  was compiled into its binary at Docker image build time. Editing files,
+  rebuilding the frontend locally, even restarting the container — none of
+  it ships frontend changes.
+- `build.rs` only `create_dir_all`s the dist dirs and prints
+  `cargo:rerun-if-changed` — it does not build the frontends. The Dockerfile
+  builds them.
+- The server returns a 503 hint ("run `npm --prefix apps/webui run build`")
+  if a dist dir is empty at compile time.
+
+### Shipping a frontend change (the canonical recipe)
+
+```bash
+cd ~/guild/deploy/compose
+docker compose build server && docker compose up -d server
+```
+
+- The Dockerfile compiles both frontends inside (stages `webui` and
+  `chatapp`), copies the dists into the Rust build stage, and `cargo build
+  --release -p guild-server` embeds them.
+- Changing anything under `apps/desktop/` invalidates the `chatapp` stage
+  (fresh `npm ci` + `npm run build`) **and** the `COPY --from=chatapp`
+  layer, which invalidates the cargo layer → **full Rust release rebuild
+  inside Docker** (the `target/` dir is not cached across builds). Expect
+  the long pole to be cargo, not npm.
+- Backend-only changes (`crates/`) also invalidate the cargo layer the same
+  way — same recipe, same cost.
+- For long builds run it detached (see §7).
+
+### Verify the new bundle actually went live
+
+```bash
+curl -s localhost:18080/thread/x | grep -oE 'index-[A-Za-z0-9_-]+\.js'
+curl -s localhost:18080/api/v1/health          # {"status":"ok"}
+```
+
+A changed asset hash = new bundle. Optionally
+`docker run --rm --entrypoint sh compose-server -c "grep -ac 'SomeNewString'
+/usr/local/bin/guild-server"` to confirm a specific change is embedded.
+
+---
+
+## 3. Dockerfile stage map (`~/guild/Dockerfile`)
+
+| Stage | Base | Does |
+|---|---|---|
+| `webui` | node:22 | `npm ci --workspace apps/webui` + build (admin console) |
+| `chatapp` | node:22 | `npm ci --workspace apps/desktop` + build (chat UI) |
+| `build` | rust:1.97 | copies `crates`, `apps/desktop/src-tauri`, both dists; `cargo build --release -p guild-server` |
+| runtime | debian:trixie-slim | just the `guild-server` binary + ca-certificates; `ENTRYPOINT ["guild-server"]` |
+
+Notes:
+
+- npm deps are hoisted via root workspaces; each stage copies
+  `package.json`/`package-lock.json` + `packages/ui` + its app only —
+  **adding a dependency to one app requires the lockfile update to flow
+  through** (lockfile is COPYed in every frontend stage).
+- Build context is the repo root (`context: ../..`), so anything new the
+  build needs must be COPYed explicitly; there is no `.dockerignore`-visible
+  sneaking in.
+
+---
+
+## 4. Compose stack details
+
+- Service startup order: server waits for postgres + clickhouse
+  **healthchecks** (`pg_isready`, clickhouse ping) and restate `started`.
+  If the server crash-loops on boot, look at dependency health first.
+- ClickHouse is pinned to `clickhouse-server:24` (do not float it).
+- MinIO bucket `guild` is created by the one-shot `minio-init` service
+  (`mc mb --ignore-existing`); registry bundles live there.
+- Restate: `restate:latest` — **floating tag**; a rebuild can pull a new
+  Restate and change behavior. Pin if that bites.
+- Host port overrides: `GUILD_HTTP_PORT` (18080 here), `GUILD_RESTATE_ADMIN_PORT`
+  (9070) in `config.env`.
+- Server-side agent sessions store under `GUILD_DATA_DIR=/data`;
+  `GUILD_ALLOW_SHELL_TOOLS=1` (commented out) is the opt-in for
+  `run_command` in server sessions.
+
+---
+
+## 5. First-run / admin plumbing
+
+- Bootstrap (once, until an admin exists):
+  `POST /api/v1/auth/bootstrap` with `{"email","password"}`.
+- Provider keys & model routes are configured via the admin API (see
+  `deploy/README.md` for copy-paste examples) or the admin console at
+  `http://localhost:18080/admin/` (served by the same binary, WEB_DIST).
+- Desktop pairing: generate a code in the web app (Settings → Connect
+  desktop app); the desktop client pairs against the same :18080.
+
+---
+
+## 6. PWA / service worker (rarely the culprit)
+
+`apps/desktop/public/sw.js`, cache name `guild-shell-v1`:
+
+- **Network-first** for all same-origin GETs (except `/api/` — always
+  passthrough): fresh response when online, cache only as offline fallback,
+  successful responses refresh the cache.
+- So a stale UI after deploy is almost never the SW — it's the
+  embed-at-build-time binary (§2). A plain reload picks up new index.html
+  fine.
+- Known console noise: `/favicon.ico` and `/icon-192.png` return 503 from
+  the server on some loads — cosmetic bug in the server's static/asset
+  handling, not a deploy problem (as of 2026-09-10).
+
+---
+
+## 7. Running long rebuilds detached
+
+`docker compose build server` can run long (cargo release). Use the
+`big-job` skill (systemd-run transient unit, journal output). Two traps:
+
+- **No shell operators after `systemd-run --`** — `a && b` becomes literal
+  args. Wrap: `-- bash -lc 'cd .../deploy/compose && docker compose build
+  server && docker compose up -d server'`.
+- Always pass an explicit working directory (systemd-run inherits the
+  caller's cwd otherwise).
+
+---
+
+## 8. Desktop clients (summary; full detail in `docs/clients.md`)
+
+- One binary (`guild-desktop` crate), three modes: GUI / `engine` (self-
+  spawned JSON-RPC over stdio) / headless CLI verbs (`login`, `chat`,
+  `publish`, `install`, `verify`).
+- Auto-updater: Tauri updater, minisign keypair `~/.tauri/guild.key`
+  (passwordless), pubkey baked into `apps/desktop/src-tauri/tauri.conf.json`;
+  endpoint `http://localhost:18080/api/v1/updates/latest.json` with
+  `dangerousInsecureTransportProtocol: true` (plain HTTP is intentional for
+  this deployment). `createUpdaterArtifacts: true`.
+- Two publisher scripts, both **idempotent** (they delete+republish an
+  existing version/platform artifact) and both verify the server's sha256
+  against the local file:
+  - `scripts/release-clients.sh` — production-format artifacts:
+    Windows NSIS installer (cargo-xwin cross-build), Linux AppImage
+    (linuxdeploy), macOS DMGs (unsigned). Updater-signed. Heavy build-host
+    deps: zig + cargo-zigbuild, macOS SDK at `$SDKROOT`, mingw-w64, makensis,
+    llvm, `~/opt/linuxdeploy`, `~/opt/libdmg-hfsplus`, hfsprogs, 7z.
+  - `scripts/release-desktop.sh` — portable tar.gz/zip builds for
+    linux/mac/windows (zigbuild), not installer-format.
+  - Usage: `BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=x.y.z
+    scripts/release-clients.sh`.
+- Artifacts land in `/api/v1/releases` (MinIO-backed); the desktop
+  updater consumes `latest.json`.
+- Local desktop dev: `npm run dev` (vite, port 1420 strict) +
+  `npm run tauri dev`; `devUrl` in `tauri.conf.json` points at :1420. The
+  GUI spawns `guild-desktop engine` — same binary, so rebuild the Rust
+  binary for engine changes too.
+
+---
+
+## 9. Quick recipes
+
+```bash
+# ship a frontend or backend change to :18080
+cd ~/guild/deploy/compose && docker compose build server && docker compose up -d server
+
+# just restart (e.g. after config.env change)
+docker compose up -d server   # recreate if env changed: --force-recreate
+
+# what's actually being served?
+curl -s localhost:18080/thread/x | grep -oE 'index-[A-Za-z0-9_-]+\.(js|css)'
+
+# nuke everything including data (destructive!)
+docker compose down -v
+```

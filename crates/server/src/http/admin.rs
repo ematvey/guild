@@ -26,6 +26,53 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/admin/teams/{id}/members",
             axum::routing::post(add_member),
         )
+        .route(
+            "/api/v1/admin/integrations",
+            axum::routing::get(list_integrations),
+        )
+        .route(
+            "/api/v1/admin/integrations/{name}",
+            axum::routing::put(upsert_integration),
+        )
+}
+
+/// Lists this org's integration plugins (configured and unconfigured).
+async fn list_integrations(
+    State(state): State<AppState>,
+    admin: AdminUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let rows = store.integrations().list(admin.0.org_id).await?;
+    let available: Vec<serde_json::Value> = ["searxng"]
+        .iter()
+        .map(|n| json!({ "name": n }))
+        .collect();
+    Ok(Json(json!({ "integrations": rows, "available": available })))
+}
+
+/// Configures one integration. The integration contributes tools to the chat
+/// loop only while enabled; config is validated on save.
+async fn upsert_integration(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(plugin) = crate::integrations::integration_by_name(&name) else {
+        return Err(ApiError::not_found(format!("unknown integration {name}")));
+    };
+    let config = body.get("config").cloned().unwrap_or(json!({}));
+    let enabled = body["enabled"].as_bool().unwrap_or(false);
+    // Validate via the plugin's own config check before saving.
+    if let Err(e) = plugin.tools(&config) {
+        return Err(ApiError::bad_request(format!("invalid integration config: {e}")));
+    }
+    let store = state.store().await?;
+    store
+        .integrations()
+        .upsert(admin.0.org_id, &name, &config, enabled)
+        .await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn list_users(

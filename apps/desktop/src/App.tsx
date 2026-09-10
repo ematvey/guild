@@ -30,7 +30,7 @@ export function ThemeToggle() {
     (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   return (
     <button
-      className="rounded-md p-1.5 text-muted-foreground hover:text-foreground"
+      className="rounded-md p-1.5 text-muted-foreground outline-none hover:text-foreground"
       title={dark ? "Switch to light theme" : "Switch to dark theme"}
       onClick={() => setTheme(dark ? "light" : "dark")}
     >
@@ -254,7 +254,7 @@ function DesktopApp() {
                 Generate a code in the web app (Settings → Connect desktop app)
               </p>
               <button
-                className="text-xs text-muted-foreground hover:text-foreground"
+                className="text-xs text-muted-foreground outline-none hover:text-foreground"
                 onClick={() => {
                   setMode("manual");
                   setError(null);
@@ -279,7 +279,7 @@ function DesktopApp() {
                 {busy ? "Signing in…" : "Sign in"}
               </Button>
               <button
-                className="text-xs text-muted-foreground hover:text-foreground"
+                className="text-xs text-muted-foreground outline-none hover:text-foreground"
                 onClick={() => {
                   setMode("pair");
                   setError(null);

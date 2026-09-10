@@ -164,6 +164,12 @@ impl RoutineExecutor {
             match parsed {
                 StreamEvent::Delta { content } => text.push_str(&content),
                 StreamEvent::ToolCallDone { call } => tool_calls.push(call),
+                // Tool lifecycle events target interactive clients; the
+                // routine executor consumes only the model-facing content.
+                // Idle only ever appears on the attach endpoint, never here.
+                StreamEvent::Idle => {}
+                StreamEvent::ToolStarted { .. } => {}
+                StreamEvent::ToolCompleted { .. } => {}
                 StreamEvent::Done {
                     cost_usd,
                     tokens_in: ti,

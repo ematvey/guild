@@ -6,23 +6,137 @@ use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
 use crate::state::AppState;
 use crate::store::identity::UserRow;
-use axum::extract::{FromRequestParts, State};
+use axum::extract::{FromRequestParts, Path, State};
 use axum::http::request::Parts;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
+use axum::response::IntoResponse;
 use axum::{Json, Router};
 use futures::Stream;
 use futures::StreamExt;
-use guild_core::provider::{ModelProvider, ProviderChunk, ProviderError, ProviderRequest};
-use guild_core::usage::UsageEvent;
-use protocol::api::{ChatCompletionRequest, StreamEvent, ToolCall};
+use guild_core::provider::ProviderError;
+use protocol::api::{ChatCompletionRequest, StreamEvent};
 use std::convert::Infallible;
+use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
+
+/// A server-side generation in flight, detached from any client connection.
+/// Broadcasts stream events to any number of attached SSE clients; the text
+/// buffer lets late subscribers catch up without missing or duplicating
+/// deltas.
+pub struct ActiveGeneration {
+    pub tx: broadcast::Sender<StreamEvent>,
+    pub text: Arc<RwLock<String>>,
+    /// Client tool calls currently suspended by the workflow, for replay to
+    /// clients that attach after the ToolStarted event was broadcast.
+    pub pending_tools: Arc<std::sync::Mutex<HashMap<String, PendingTool>>>,
+}
+
+/// One suspended client tool call.
+pub struct PendingTool {
+    pub name: String,
+    pub arguments: String,
+    /// Originating app instance (presence identity) for termination
+    /// detection; `None` → fall back to the 5-minute timeout only.
+    pub client_id: Option<String>,
+    /// Fired when the tool is resolved so the presence watcher stops.
+    pub done: Arc<tokio::sync::Notify>,
+}
+
+/// How long a vanished client may reconnect before its suspended tool is
+/// resolved with a "client disconnected" error.
+const CLIENT_GONE_GRACE: std::time::Duration = std::time::Duration::from_secs(15);
+
+pub(crate) fn pending_tool_exists(state: &AppState, chat_id: Uuid, call_id: &str) -> bool {
+    state
+        .generations
+        .lock()
+        .unwrap()
+        .get(&chat_id)
+        .map(|g| g.pending_tools.lock().unwrap().contains_key(call_id))
+        .unwrap_or(false)
+}
+
+/// Watches the originating client's app-level presence while a client tool
+/// is suspended. If the client disappears (all app connections gone) and
+/// stays gone for the grace window, the tool is resolved with an error so
+/// the turn continues instead of dead-airing until the 5-minute timeout.
+/// All client tool results funnel through the same durable `complete_tool`
+/// handler, so this stays replay-safe; late duplicate completions no-op.
+pub(crate) fn spawn_presence_watcher(
+    state: &AppState,
+    chat_id: Uuid,
+    call_id: String,
+    tool_name: String,
+    client_id: String,
+    done: Arc<tokio::sync::Notify>,
+) {
+    let mut rx = match state.presence_watch(&client_id) {
+        Some(rx) => rx,
+        None => return, // client never connected; timeout backstop applies
+    };
+    let state = state.clone();
+    let deadline =
+        tokio::time::Instant::now() + crate::worker::restate::CLIENT_TOOL_TIMEOUT;
+    tokio::spawn(async move {
+        loop {
+            if !pending_tool_exists(&state, chat_id, &call_id) {
+                return; // resolved already
+            }
+            if *rx.borrow() == 0 {
+                // Already gone at spawn time (e.g. a retried tool call) or
+                // just observed going to zero: grace window for blips and
+                // reloads before declaring the client gone.
+                tokio::select! {
+                    _ = done.notified() => return,
+                    _ = tokio::time::sleep(CLIENT_GONE_GRACE) => {}
+                }
+                if !pending_tool_exists(&state, chat_id, &call_id) || *rx.borrow() != 0 {
+                    continue;
+                }
+                let _ = crate::http::internal::restate_send_one_way(
+                    &state,
+                    "ChatRunner",
+                    &format!("{chat_id}/complete_tool"),
+                    serde_json::json!({
+                        "call_id": call_id,
+                        "content": format!(
+                            "client tool {tool_name} aborted: the client app disconnected before executing it",
+                        ),
+                        "is_error": true,
+                    }),
+                )
+                .await;
+                return;
+            }
+            tokio::select! {
+                _ = done.notified() => return,
+                _ = tokio::time::sleep_until(deadline) => return, // backstop handles it
+                r = rx.changed() => {
+                    if r.is_err() {
+                        return; // sender gone; the deadline backstop path is moot too
+                    }
+                    // presence changed — re-evaluate at loop top
+                }
+            }
+        }
+    });
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/gateway/models", axum::routing::get(models))
         .route("/api/v1/gateway/chat", axum::routing::post(chat))
+        .route(
+            "/api/v1/gateway/chat/{id}/stream",
+            axum::routing::get(attach_stream),
+        )
+        .route(
+            "/api/v1/gateway/chat/{id}/tools/{call_id}/result",
+            axum::routing::post(tool_result),
+        )
         .route("/api/v1/admin/gateway/keys", axum::routing::post(set_key))
         .route(
             "/api/v1/admin/gateway/routes",
@@ -167,22 +281,92 @@ fn sse_event(ev: StreamEvent) -> Result<SseEvent, Infallible> {
     Ok(SseEvent::default().data(json))
 }
 
+/// Registry entry for the chat's in-flight generation, creating it if absent.
+/// Used by the API (placeholder before invocation) and by the Restate worker
+/// (the generation task broadcasts deltas through it). Both roles share one
+/// process in this deployment; with split roles, live deltas only reach
+/// clients attached on the worker's process — catch-up after completion is
+/// unaffected since Postgres is the record system.
+/// Registers a suspended client tool call for late-attaching clients and
+/// returns the watcher's completion signal.
+pub(crate) fn note_pending_tool(
+    state: &AppState,
+    chat_id: Uuid,
+    call_id: &str,
+    name: &str,
+    args: &str,
+    client_id: Option<&str>,
+) -> Arc<tokio::sync::Notify> {
+    let done = Arc::new(tokio::sync::Notify::new());
+    let gens = state.generations.lock().unwrap();
+    if let Some(g) = gens.get(&chat_id) {
+        g.pending_tools.lock().unwrap().insert(
+            call_id.to_string(),
+            PendingTool {
+                name: name.to_string(),
+                arguments: args.to_string(),
+                client_id: client_id.map(str::to_string),
+                done: done.clone(),
+            },
+        );
+    }
+    done
+}
+
+/// Removes a suspended client tool call (completed or timed out).
+pub(crate) fn clear_pending_tool(state: &AppState, chat_id: Uuid, call_id: &str) {
+    let gens = state.generations.lock().unwrap();
+    if let Some(g) = gens.get(&chat_id) {
+        if let Some(t) = g.pending_tools.lock().unwrap().remove(call_id) {
+            // notify_one stores a permit even if the watcher is between
+            // iterations, so it cannot miss this signal.
+            t.done.notify_one();
+        }
+    }
+}
+
+pub(crate) fn ensure_generation(
+    state: &AppState,
+    chat_id: Uuid,
+) -> (broadcast::Sender<StreamEvent>, Arc<RwLock<String>>) {
+    let mut gens = state.generations.lock().unwrap();
+    if let Some(g) = gens.get(&chat_id) {
+        return (g.tx.clone(), g.text.clone());
+    }
+    let (tx, _) = broadcast::channel::<StreamEvent>(1024);
+    let gen = ActiveGeneration {
+        tx: tx.clone(),
+        text: Arc::new(RwLock::new(String::new())),
+        pending_tools: Arc::new(std::sync::Mutex::new(HashMap::new())),
+    };
+    gens.insert(chat_id, gen);
+    (tx, gens.get(&chat_id).unwrap().text.clone())
+}
+
 async fn chat(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: axum::http::HeaderMap,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, ApiError> {
     let store = state.store().await?;
-    let master = state.config.master_key().map_err(ApiError::from)?;
-    let route = store
-        .gateway()
-        .resolve_route(user.0.org_id, &req.model, &master)
-        .await?;
-    enforce_quota(&state, user.0.org_id, &req.model, &route).await?;
-    // Org scoping: chat must belong to the caller's org.
+    // Org scoping: chat must belong to the caller's org. Route resolution,
+    // quota, history, completion, persistence and usage all happen inside the
+    // durable Restate workflow (ChatRunner::generate) — see worker/restate.rs.
     store.chats().get_chat(user.0.org_id, req.chat_id).await?;
 
-    // Persist the new user turn (client sends only the new message in v1).
+    // One generation per chat at a time — checked BEFORE persisting, so a
+    // rejected send does not leave a phantom user message behind.
+    if state.generations.lock().unwrap().contains_key(&req.chat_id) {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "generation_in_progress",
+            "a generation is already running for this chat — wait for it to finish",
+        ));
+    }
+
+    // Persist the new user turn (client sends only the new message; the
+    // workflow loads the full history from Postgres).
     if let Some(last) = req.messages.last() {
         if last.role == "user" {
             store
@@ -201,87 +385,165 @@ async fn chat(
         }
     }
 
-    let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
-        "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
-        "anthropic" => Arc::new(guild_core::provider::AnthropicProvider::new()),
-        other => return Err(ApiError::internal(format!("unknown provider {other}"))),
-    };
-    let preq = ProviderRequest {
-        model: &req.model,
-        system: req.system.as_deref(),
-        messages: &req.messages,
-        api_key: &route.api_key,
-        base_url: &route.base_url,
-        tools: req.tools.as_deref(),
-    };
-    let prov_stream = provider
-        .chat_stream(preq)
-        .await
-        .map_err(provider_err_to_api)?;
+    // Placeholder generation: clients (including the caller) attach to this
+    // via the SSE body below or the attach endpoint; the ChatRunner workflow
+    // broadcasts deltas through it. The buffer starts empty because history
+    // is already on screen.
+    let (tx, _text_buf) = ensure_generation(&state, req.chat_id);
 
-    let store = store.clone();
-    let usage = state.usage().await?;
-    let org_id = user.0.org_id;
-    let user_id = user.0.id;
-    let team_id: Option<Uuid> = None;
-    let chat_id = req.chat_id;
-    let model = req.model.clone();
-    let provider_name = route.provider.clone();
-    let price_in = route.price_in;
-    let price_out = route.price_out;
-
-    let out = async_stream::stream! {
-        let mut text = String::new();
-        let mut tokens_in = 0u32;
-        let mut tokens_out = 0u32;
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut pinned = Box::pin(prov_stream);
-        while let Some(item) = pinned.next().await {
-            match item {
-                Ok(ProviderChunk::Text(chunk)) => {
-                    if !chunk.text_delta.is_empty() {
-                        text.push_str(&chunk.text_delta);
-                        yield sse_event(StreamEvent::Delta { content: chunk.text_delta.clone() });
-                    }
-                    if let Some(t) = chunk.tokens_in { tokens_in = t; }
-                    if let Some(t) = chunk.tokens_out { tokens_out = t; }
-                }
-                Ok(ProviderChunk::ToolCallDelta { index, id, name, arguments_delta }) => {
-                    yield sse_event(StreamEvent::ToolCallDelta { index, id, name, arguments_delta });
-                }
-                Ok(ProviderChunk::ToolCallDone { call }) => {
-                    tool_calls.push(call.clone());
-                    yield sse_event(StreamEvent::ToolCallDone { call });
-                }
-                Err(e) => {
-                    yield sse_event(StreamEvent::Error { code: "provider".into(), message: e.to_string() });
-                    return;
-                }
-            }
-        }
-        let cost = UsageEvent::cost_usd(tokens_in, tokens_out, price_in, price_out);
-        let persisted_calls = if tool_calls.is_empty() { None } else { Some(tool_calls) };
-        match store
-            .chats()
-            .append_message(chat_id, "assistant", &text, persisted_calls, None, Some(tokens_in), Some(tokens_out), Some(cost))
-            .await
-        {
-            Ok(msg) => {
-                let ev = UsageEvent {
-                    ts: chrono::Utc::now(),
-                    org_id, user_id, team_id, session_id: chat_id,
-                    model: model.clone(), provider: provider_name.clone(),
-                    tokens_in, tokens_out, cost_usd: cost,
-                    request_id: Uuid::now_v7(),
-                };
-                usage.record(ev).await;
-                yield sse_event(StreamEvent::Done { message_id: msg.id, cost_usd: cost, tokens_in, tokens_out });
-            }
-            Err(e) => {
-                yield sse_event(StreamEvent::Error { code: "internal".into(), message: e.message });
-            }
+    // Fire-and-forget invocation via the Restate ingress; the workflow runs
+    // detached, so this HTTP request ending (or the client disconnecting)
+    // never cancels the generation.
+    let payload = serde_json::json!({
+        "org_id": user.0.org_id,
+        "user_id": user.0.id,
+        "chat_id": req.chat_id,
+        "model": req.model,
+        "client_tools": req.client_tools,
+        "project_dir": req.project_dir,
+        "client_id": headers
+            .get("x-guild-client-id")
+            .and_then(|v| v.to_str().ok()),
+    });
+    let invoke = crate::http::internal::restate_send_one_way(
+        &state,
+        "ChatRunner",
+        &format!("{}/generate", req.chat_id),
+        payload,
+    )
+    .await;
+    let invocation_id = match invoke {
+        Ok(id) => id,
+        Err(e) => {
+            // Invocation failed — free the chat instead of leaving a stuck lock.
+            state.generations.lock().unwrap().remove(&req.chat_id);
+            return Err(e);
         }
     };
+    // Remember the invocation for stuck-generation cleanup across deploys
+    // (see the worker's startup sweep).
+    let _ = store
+        .kv()
+        .put(&format!("chatgen_inv:{}", req.chat_id), &invocation_id)
+        .await;
 
+    let out = forward_sse(tx.subscribe());
     Ok(Sse::new(out).keep_alive(KeepAlive::default()))
+}
+
+/// SSE body that forwards broadcast events until the generation ends. The
+/// generation itself is unaffected when this body is dropped.
+fn forward_sse(
+    mut rx: broadcast::Receiver<StreamEvent>,
+) -> impl Stream<Item = Result<SseEvent, Infallible>> {
+    async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(ev) => {
+                    let ended = matches!(ev, StreamEvent::Done { .. } | StreamEvent::Error { .. });
+                    yield sse_event(ev);
+                    if ended {
+                        return;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    }
+}
+
+/// Attaches an SSE client to an in-flight generation: catch-up delta with the
+/// text accumulated so far, then live events. An idle chat (no generation
+/// running) gets a 200 SSE body that ends immediately.
+/// Delivers a client-side tool result to the waiting ChatRunner workflow.
+/// Late results (after the workflow timed the call out) are ignored there.
+async fn tool_result(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((chat_id, call_id)): Path<(Uuid, String)>,
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    let content = req["content"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("missing content"))?;
+    let is_error = req["is_error"].as_bool().unwrap_or(false);
+    crate::http::internal::restate_send_one_way(
+        &state,
+        "ChatRunner",
+        &format!("{chat_id}/complete_tool"),
+        serde_json::json!({ "call_id": call_id, "content": content, "is_error": is_error }),
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn attach_stream(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+) -> Result<axum::response::Response, ApiError> {
+    let store = state.store().await?;
+    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    let gen = state
+        .generations
+        .lock()
+        .unwrap()
+        .get(&chat_id)
+        .map(|g| (g.tx.clone(), g.text.clone()));
+    let Some((tx, text)) = gen else {
+        // Nothing in flight: clients attach speculatively on every thread
+        // open, so reply 200 instead of 404 — no console error noise. Yield
+        // a single Idle frame so the client can tell "nothing running" apart
+        // from a stream that dropped mid-generation.
+        let idle = async_stream::stream! {
+            yield sse_event(StreamEvent::Idle);
+        };
+        return Ok(Sse::new(idle)
+            .keep_alive(KeepAlive::default())
+            .into_response());
+    };
+    // Subscribe and snapshot under the read guard: the generation task takes
+    // the write guard before broadcasting, so the snapshot and the live
+    // stream cannot overlap or gap.
+    let (snap, rx) = {
+        let g = text.read().await;
+        (g.clone(), tx.subscribe())
+    };
+    // Replay suspended client tool calls so late attachers can execute them.
+    let pending: Vec<(String, String, String)> = state
+        .generations
+        .lock()
+        .unwrap()
+        .get(&chat_id)
+        .map(|g| {
+            g.pending_tools
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(id, t)| (id.clone(), t.name.clone(), t.arguments.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let out = async_stream::stream! {
+        if !snap.is_empty() {
+            yield sse_event(StreamEvent::Delta { content: snap });
+        }
+        for (call_id, name, arguments) in pending {
+            yield sse_event(StreamEvent::ToolStarted {
+                call_id,
+                name,
+                arguments,
+                executor: protocol::api::ToolExecutor::Client,
+            });
+        }
+        // forward the live tail
+        let mut pinned = Box::pin(forward_sse(rx));
+        while let Some(item) = pinned.next().await {
+            yield item;
+        }
+    };
+    Ok(Sse::new(out).keep_alive(KeepAlive::default()).into_response())
 }

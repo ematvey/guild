@@ -18,6 +18,7 @@ import {
   PanelLeftOpen,
   Plus,
   Settings2,
+  Wrench,
 } from "lucide-react";
 
 import { Button } from "@guild/ui/components/button";
@@ -44,25 +45,48 @@ import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
 import { useTheme } from "../theme";
+import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { postToolResult } from "../transport";
 import {
   createChat,
   getMessages,
   listChats,
   listModels,
   streamChat,
+  attachGeneration,
   createPairingToken,
   downloadRelease,
   listReleases,
   pairingCode,
+  startEventStream,
   type ChatMessage,
   type ChatSummary,
   type Release,
 } from "../transport";
 
-interface Block {
-  kind: "user" | "text" | "error";
-  text: string;
+interface ToolBlock {
+  callId: string;
+  name: string;
+  args: string;
+  executor: "client" | "server";
+  status: "running" | "done" | "error";
+  content?: string;
 }
+
+interface Block {
+  kind: "user" | "text" | "error" | "tool";
+  text: string;
+  tool?: ToolBlock;
+}
+
+/// Client-side tools need the desktop runtime (local files, shell); in a plain
+/// browser they stay pending until the server-side timeout releases the turn.
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/// Sentinel for a send stream that ended without a terminal frame: not a
+/// user-facing error — the send path converts it into a reattach watch.
+class DropError extends Error {}
 
 const SUGGESTIONS = [
   { icon: Lightbulb, title: "Explain a concept", prompt: "Explain how " },
@@ -78,6 +102,18 @@ function clampWidth(w: number): number {
   return Math.min(MAX_W, Math.max(MIN_W, w));
 }
 
+/// Shown while a deep-linked thread's messages are in flight (the URL says
+/// /thread/<id> but the view has nothing to render yet). Without this, the
+/// new-thread hero would flash for the whole fetch duration.
+function ThreadSkeleton() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto px-4 py-8">
+      <Spinner />
+      <p className="text-sm text-muted-foreground">Loading thread…</p>
+    </div>
+  );
+}
+
 /// Web-mode chat: streaming conversation through the org gateway, with a
 /// server-backed conversation list. Full agent mode (local tools + project)
 /// is the desktop (Tauri) flow.
@@ -86,9 +122,11 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
   const [chatId, setChatId] = useState<string | null>(null);
+  const [threadLoading, setThreadLoading] = useState(false); // /thread/<id> fetch in flight with nothing to show
   const [prompt, setPrompt] = useState("");
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [busy, setBusy] = useState(false);
+  const [attaching, setAttaching] = useState(false); // receiving a server-side generation
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -100,7 +138,16 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   });
   const bottom = useRef<HTMLDivElement>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
+  const attachAbort = useRef<AbortController | null>(null);
+  const loadAbort = useRef<AbortController | null>(null); // in-flight thread-load fetch
+  const sendAbort = useRef<AbortController | null>(null); // in-flight send stream
   const loadSeq = useRef(0); // guards against stale thread loads landing last
+  const pendingDeepLink = useRef(false); // true while the /thread/<id> from the URL is loading
+
+  // App-lifetime presence connection: the server uses it to detect that
+  // this app instance is gone and resolve suspended client tools without
+  // waiting for the 5-minute timeout.
+  useEffect(() => startEventStream(), []);
 
   useEffect(() => {
     listModels().then((m) => {
@@ -110,23 +157,78 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     void refreshChats();
   }, []);
 
+  // Deep link: open the thread encoded in the URL (/thread/<id>) on first load.
+  useEffect(() => {
+    const m = window.location.pathname.match(/^\/thread\/([^/]+)\/?$/);
+    if (m) {
+      pendingDeepLink.current = true;
+      void openChat(decodeURIComponent(m[1])).finally(() => {
+        pendingDeepLink.current = false;
+      });
+    } else {
+      window.history.replaceState(null, "", "/");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the URL in sync with the open thread; back/forward walks thread history.
+  useEffect(() => {
+    if (pendingDeepLink.current) return;
+    const path = chatId ? `/thread/${chatId}` : "/";
+    if (window.location.pathname !== path) window.history.pushState(null, "", path);
+  }, [chatId]);
+
+  useEffect(() => {
+    const onPop = () => popHandler.current();
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [blocks]);
 
   const refreshChats = async () => setChats(await listChats());
 
+  // latest closure for the popstate handler
+  const popHandler = useRef<() => void>(() => {});
+  popHandler.current = () => {
+    const m = window.location.pathname.match(/^\/thread\/([^/]+)\/?$/);
+    if (m) void openChat(decodeURIComponent(m[1]));
+    else {
+      loadAbort.current?.abort();
+      loadAbort.current = null;
+      sendAbort.current?.abort();
+      sendAbort.current = null;
+      attachAbort.current?.abort();
+      attachAbort.current = null;
+      setChatId(null);
+      setBlocks([]);
+      setThreadLoading(false);
+    }
+  };
+
   const openChat = async (id: string) => {
-    if (busy || id === chatId) {
+    if (id === chatId) {
       setOpen(false);
       return;
     }
     setOpen(false);
+    // Switching is allowed even mid-generation: the generation runs detached
+    // server-side and keeps persisting; the client-side stream is cancelled
+    // here and re-attached (with catch-up) when this thread is reopened.
+    loadAbort.current?.abort();
+    loadAbort.current = new AbortController();
+    const loadAc = loadAbort.current;
+    sendAbort.current?.abort();
+    sendAbort.current = null;
+    attachAbort.current?.abort(); // replaced when the new thread's attach starts
     // Stay on the previous thread's content until the new one arrives; the
     // sidebar highlight moves only when chatId is set below.
     const seq = ++loadSeq.current;
+    setThreadLoading(true);
     try {
-      const msgs: ChatMessage[] = await getMessages(id);
+      const msgs: ChatMessage[] = await getMessages(id, loadAc.signal);
       if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
       setBlocks(
         msgs
@@ -134,15 +236,37 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           .map((m) => ({ kind: m.role === "user" ? "user" : "text", text: m.content }) as Block),
       );
       setChatId(id);
+      // A generation may still be running server-side (e.g. it outlived a
+      // previous client, or the stream dropped earlier). Attach with
+      // automatic reconnection and keep streaming it into the view.
+      const attachSeq = seq;
+      const ac = new AbortController();
+      attachAbort.current?.abort();
+      attachAbort.current = ac;
+      void watchGeneration(id, attachSeq, ac);
     } catch {
-      // leave the previous thread on screen; switching threads is non-destructive
+      // aborted (a newer switch superseded this one) or a real error — either
+      // way leave the previous thread on screen; switching is non-destructive
+    } finally {
+      // only the load that is still current may clear the flag; a superseded
+      // one finishing late must not extinguish a newer load's spinner
+      if (seq === loadSeq.current) setThreadLoading(false);
     }
   };
 
   const newChat = () => {
-    if (busy) return;
+    // allowed even mid-generation: the server-side generation continues and
+    // is re-attachable when the thread is reopened
+    loadSeq.current++; // invalidate any in-flight thread load or generation attach
+    loadAbort.current?.abort();
+    loadAbort.current = null;
+    sendAbort.current?.abort();
+    sendAbort.current = null;
+    attachAbort.current?.abort();
+    attachAbort.current = null;
     setChatId(null);
     setBlocks([]);
+    setThreadLoading(false);
     setOpen(false);
     ta.current?.focus();
   };
@@ -154,9 +278,172 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   };
 
+  // ---- server-side tool loop support ----
+
+  const executingTools = useRef<Set<string>>(new Set());
+  const workDirRef = useRef<string | null>(null);
+
+  /// Handles tool lifecycle events from either stream (send or attach):
+  /// renders the tool chip and, for client-executed tools in the desktop
+  /// runtime, runs the tool locally and posts the result back.
+  const handleToolEvent = (ev: { type: string; [k: string]: unknown }, cid: string, seq: number) => {
+    const callId = ev.call_id as string | undefined;
+    if (!callId) return;
+    if (ev.type === "tool_started") {
+      const name = (ev.name as string) ?? "";
+      const args = (ev.arguments as string) ?? "{}";
+      const executor = ev.executor === "client" ? "client" : "server";
+      setBlocks((b) => [
+        ...b,
+        { kind: "tool", text: "", tool: { callId, name, args, executor, status: "running" } },
+      ]);
+      if (executor !== "client" || !isTauri) return; // browser: the desktop app would execute this
+      if (seq !== loadSeq.current || executingTools.current.has(callId)) return;
+      executingTools.current.add(callId);
+      void (async () => {
+        try {
+          let dir = workDirRef.current;
+          if (!dir) {
+            const picked = await openDialog({ directory: true, multiple: false });
+            if (typeof picked !== "string") throw new Error("no workspace folder selected");
+            dir = picked;
+            workDirRef.current = dir;
+          }
+          const res = await invoke<any>("rpc_request", {
+            method: "tool.run",
+            params: { name, args: JSON.parse(args), workdir: dir },
+          });
+          const payload = res.result ?? res;
+          await postToolResult(cid, callId, String(payload.output ?? ""), !!payload.is_error);
+        } catch (e) {
+          await postToolResult(cid, callId, `client tool failed: ${String(e)}`, true).catch(() => {});
+        } finally {
+          executingTools.current.delete(callId);
+        }
+      })();
+    } else if (ev.type === "tool_completed") {
+      const status: "done" | "error" = ev.is_error ? "error" : "done";
+      const content = (ev.content as string) ?? "";
+      setBlocks((b) =>
+        b.map((x) => {
+          const t = x.tool;
+          if (x.kind !== "tool" || !t || t.callId !== callId) return x;
+          return { kind: "tool", text: "", tool: { ...t, status, content } };
+        }),
+      );
+    }
+  };
+
+  /// Watches a chat's server-side generation, reconnecting transparently when
+  /// the SSE stream drops (server redeploy, network blip, laptop sleep).
+  /// Every (re)connect first reloads the persisted messages — the durable
+  /// source of truth — so text streamed before the drop is neither duplicated
+  /// nor lost. The attach endpoint ends with `idle` when nothing is running,
+  /// `done`/`error` when the turn finished; a stream that ends with neither
+  /// is a dropped connection → backoff, reload, reattach. Returns what was
+  /// observed so callers can decide on user-facing messaging.
+  const watchGeneration = async (
+    cid: string,
+    seq: number,
+    ac: AbortController,
+  ): Promise<{ terminal: "done" | "error" | "idle" | "none"; sawContent: boolean }> => {
+    setAttaching(true);
+    let sawContent = false;
+    // holder object: the SSE callbacks mutate this after an await, which a
+    // plain `let` cannot express under TS control-flow narrowing
+    const term: { v: "done" | "error" | "idle" | "none" } = { v: "none" };
+    let lastError: string | null = null;
+    try {
+      for (let attempt = 0; attempt < 12; attempt++) {
+        if (seq !== loadSeq.current || ac.signal.aborted) break;
+        try {
+          // reconcile with durable state before (re)attaching
+          const msgs: ChatMessage[] = await getMessages(cid, ac.signal);
+          if (seq !== loadSeq.current || ac.signal.aborted) break;
+          setBlocks(
+            msgs
+              .filter((m) => m.role === "user" || m.role === "assistant")
+              .map((m) => ({ kind: m.role === "user" ? "user" : "text", text: m.content }) as Block),
+          );
+          term.v = "none";
+          // The first delta after attach is the server's catch-up snapshot of
+          // the in-flight turn (full buffer, not a delta) — or, when there is
+          // no catch-up, the first live delta of that turn. Either way it
+          // starts a NEW text block: the reload above restored persisted
+          // messages only, so the in-flight turn has no block yet and the
+          // last text block belongs to a previous turn. Later deltas append.
+          let firstDelta = true;
+          await attachGeneration(
+            cid,
+            (ev) => {
+              if (seq !== loadSeq.current) return; // user moved to another thread
+              if (ev.type === "delta" && ev.content) {
+                sawContent = true;
+                const seed = firstDelta;
+                firstDelta = false;
+                setBlocks((b) => {
+                  const last = b[b.length - 1];
+                  if (!seed && last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
+                  return [...b, { kind: "text", text: ev.content! }];
+                });
+              } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
+                sawContent = true;
+                handleToolEvent(ev, cid, seq);
+              } else if (ev.type === "error") {
+                lastError = ev.message ?? "model error";
+                term.v = "error";
+              } else if (ev.type === "done") {
+                term.v = "done";
+              } else if (ev.type === "idle") {
+                term.v = "idle";
+              }
+            },
+            ac.signal,
+          );
+          // re-read through a widened local: the SSE callbacks may have
+          // reassigned term.v after the await, which TS narrowing can't see
+          const outcome = term.v as "done" | "error" | "idle" | "none";
+          if (outcome === "idle") {
+            // the generation may have completed between the reload and the
+            // attach; reload once more so the final message is on screen
+            try {
+              const final: ChatMessage[] = await getMessages(cid, ac.signal);
+              if (seq === loadSeq.current) {
+                setBlocks(
+                  final
+                    .filter((m) => m.role === "user" || m.role === "assistant")
+                    .map((m) => ({ kind: m.role === "user" ? "user" : "text", text: m.content }) as Block),
+                );
+              }
+            } catch {
+              /* keep what we have */
+            }
+            break;
+          }
+          if (outcome !== "none") break; // done / error: real end
+          // no terminal frame → dropped connection; fall through to backoff
+        } catch {
+          /* network error while loading or attaching → retry */
+        }
+        await new Promise((r) => setTimeout(r, Math.min(500 * 2 ** attempt, 4000)));
+      }
+    } finally {
+      if (attachAbort.current === ac) {
+        attachAbort.current = null;
+        setAttaching(false);
+      }
+    }
+    if (term.v === "error" && lastError !== null) {
+      // (kept as-is: reached only when the loop broke on an error frame)
+      setBlocks((b) => [...b, { kind: "error", text: lastError! }]);
+    }
+    return { terminal: term.v as "done" | "error" | "idle" | "none", sawContent };
+  };
+
   const send = async () => {
     const text = prompt.trim();
     if (!text || busy || !model) return;
+    const mySeq = loadSeq.current; // switching away mid-send cancels the client stream
     setBusy(true);
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
@@ -164,39 +451,92 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     let cid = chatId;
     if (!cid) {
       cid = await createChat(text.slice(0, 48));
-      if (cid) {
+      if (cid && loadSeq.current === mySeq) {
         setChatId(cid);
         void refreshChats();
       }
     }
     if (!cid) {
-      setBlocks((b) => [...b, { kind: "error", text: "chat create failed" }]);
+      if (loadSeq.current === mySeq) {
+        setBlocks((b) => [...b, { kind: "error", text: "chat create failed" }]);
+      }
       setBusy(false);
       return;
     }
+    const ac = new AbortController();
+    sendAbort.current = ac;
     try {
-      let acc = "";
-      await streamChat(cid, model, text, (ev) => {
-        if (ev.type === "delta" && ev.content) {
-          acc += ev.content;
-          setBlocks((b) => {
-            const last = b[b.length - 1];
-            if (last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: acc }];
-            return [...b, { kind: "text", text: acc }];
-          });
-        } else if (ev.type === "error") {
-          setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error" }]);
-        }
-      });
+      let gotDone = false;
+      await streamChat(
+        cid,
+        model,
+        text,
+        (ev) => {
+          if (loadSeq.current !== mySeq) return; // user switched away mid-generation
+          if (ev.type === "done") {
+            gotDone = true;
+            return;
+          }
+          if (ev.type === "delta" && ev.content) {
+            // deltas are per model turn; every tool call emits tool_started,
+            // so a tool block always separates turns — append to the current
+            // text block, or start a new one after a tool block
+            setBlocks((b) => {
+              const last = b[b.length - 1];
+              if (last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
+              return [...b, { kind: "text", text: ev.content! }];
+            });
+          } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
+            handleToolEvent(ev, cid, mySeq);
+          } else if (ev.type === "error") {
+            setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error" }]);
+          }
+        },
+        ac.signal,
+      );
+      if (!gotDone) {
+        // stream ended without a terminal frame: the connection dropped while
+        // the durable generation keeps running server-side — watch it instead
+        // of surfacing a dead "network error"
+        throw new DropError();
+      }
       void refreshChats();
     } catch (e) {
-      setBlocks((b) => [...b, { kind: "error", text: String(e instanceof Error ? e.message : e) }]);
+      if (loadSeq.current !== mySeq) return; // deliberate switch away, not an error
+      setBusy(false);
+      if (sendAbort.current === ac) sendAbort.current = null;
+      const wac = new AbortController();
+      attachAbort.current?.abort();
+      attachAbort.current = wac;
+      const r = await watchGeneration(cid, mySeq, wac);
+      if (r.terminal === "done") {
+        void refreshChats();
+      } else if (r.terminal === "idle" && !r.sawContent) {
+        setBlocks((b) => [
+          ...b,
+          { kind: "error", text: "connection dropped before the reply started — try sending again" },
+        ]);
+      } else if (r.terminal === "none") {
+        setBlocks((b) => [
+          ...b,
+          {
+            kind: "error",
+            text: "lost connection and could not reattach — the reply may still arrive; reopen this thread to catch up",
+          },
+        ]);
+      }
+      return;
     } finally {
       setBusy(false);
+      if (sendAbort.current === ac) sendAbort.current = null;
     }
   };
 
-  const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
+  const activeTitle =
+    threadLoading && blocks.length === 0
+      ? "Loading…"
+      : (chats?.find((c) => c.id === chatId)?.title ?? "New chat");
+  const streaming = busy || attaching;
 
   const sidebar = (
     <SidebarContent
@@ -283,6 +623,9 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         </header>
 
         {blocks.length === 0 ? (
+          threadLoading ? (
+            <ThreadSkeleton />
+          ) : (
           <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
             <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
               <Bot className="size-7 text-muted-foreground" />
@@ -313,6 +656,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
               </p>
             )}
           </div>
+          )
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-6">
@@ -323,6 +667,29 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                     className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-sm"
                   >
                     {b.text}
+                  </div>
+                ) : b.kind === "tool" && b.tool ? (
+                  <div key={i} className="mr-auto w-fit max-w-[85%] rounded-lg border border-border bg-card px-3 py-2 text-xs">
+                    <span className="inline-flex items-center gap-1.5 font-mono text-amber-600 dark:text-amber-400">
+                      <Wrench className="size-3.5" /> {b.tool.name}
+                      <span className="text-muted-foreground">· {b.tool.executor}</span>
+                      {b.tool.status === "running" && (
+                        <span className="animate-pulse text-muted-foreground">running…</span>
+                      )}
+                    </span>
+                    <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-muted-foreground">
+                      {b.tool.args}
+                    </pre>
+                    {b.tool.status !== "running" && b.tool.content && (
+                      <pre
+                        className={
+                          "mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap " +
+                          (b.tool.status === "error" ? "text-destructive" : "text-muted-foreground")
+                        }
+                      >
+                        {b.tool.content}
+                      </pre>
+                    )}
                   </div>
                 ) : b.kind === "error" ? (
                   <div
@@ -337,11 +704,13 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                     className="max-w-none space-y-2 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:text-base [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc"
                   >
                     <Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown>
-                    {busy && i === blocks.length - 1 && <Caret className="mt-1" />}
+                    {streaming && i === blocks.length - 1 && <Caret className="mt-1" />}
                   </div>
                 ),
               )}
-              {busy && blocks[blocks.length - 1]?.kind !== "text" && (
+              {/* caret only while reply text is actually streaming; tool
+                  blocks have their own status, silence shows nothing */}
+              {streaming && blocks.length === 0 && (
                 <div className="max-w-none text-sm">
                   <Caret />
                 </div>
@@ -368,8 +737,8 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                 }
               }}
               rows={1}
-              placeholder={model ? "Message Guild…" : "No model available"}
-              disabled={busy || !model}
+              placeholder={models === null || model ? "Message Guild…" : "No model available"}
+              disabled={streaming || (models !== null && !model)}
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none "
             />
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
@@ -410,7 +779,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         </div>
       </div>
 
-      <DeviceSetupDialog open={deviceOpen} onOpenChange={setDeviceOpen} email={email} />
+      <DeviceSetupDialog open={deviceOpen} onOpenChange={setDeviceOpen} />
 
       <SettingsDialog
         open={settingsOpen}
@@ -433,6 +802,16 @@ function detectOs(): DesktopOs {
 }
 
 const OS_KEY: Record<DesktopOs, string> = { mac: "darwin", windows: "windows", linux: "linux" };
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
 const OS_LABEL: Record<DesktopOs, string> = { mac: "macOS", windows: "Windows", linux: "Linux" };
 
 function platformLabel(platform: string): string {
@@ -451,11 +830,9 @@ function formatSize(bytes: number): string {
 function DeviceSetupDialog({
   open,
   onOpenChange,
-  email,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  email: string;
 }) {
   const [os, setOs] = useState<DesktopOs>("linux");
   const [releases, setReleases] = useState<Release[] | null>(null);
@@ -469,7 +846,15 @@ function DeviceSetupDialog({
     setOs(detectOs());
     setReleases(null);
     setPairCode(null);
-    listReleases().then((r) => setReleases(r.filter((x) => x.kind === "desktop")));
+    listReleases().then((r) => {
+      const desktop = r.filter((x) => x.kind === "desktop");
+      // show only the latest version's installers, one per platform
+      const latest = desktop.reduce<string | null>(
+        (acc, x) => (acc === null || compareVersions(x.version, acc) > 0 ? x.version : acc),
+        null,
+      );
+      setReleases(latest === null ? desktop : desktop.filter((x) => x.version === latest));
+    });
   }, [open]);
 
   const installers =
@@ -502,13 +887,13 @@ function DeviceSetupDialog({
           </p>
 
           <div>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Installer</p>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">1. Download app</p>
             <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
               {(Object.keys(OS_KEY) as DesktopOs[]).map((k) => (
                 <button
                   key={k}
                   onClick={() => setOs(k)}
-                  className={`rounded-md px-2 py-1.5 text-xs transition-colors ${
+                  className={`rounded-md px-2 py-1.5 text-xs outline-none transition-colors ${
                     os === k
                       ? "bg-card text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -546,10 +931,8 @@ function DeviceSetupDialog({
             </div>
           </div>
 
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">
-              Already installed? Pair it with your account
-            </p>
+          <div className="mt-6">
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">2. Pair with your account</p>
             {pairCode ? (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
@@ -576,13 +959,11 @@ function DeviceSetupDialog({
                 </p>
               </div>
             ) : (
-              <Button size="sm" variant="outline" onClick={generatePairing} disabled={pairBusy}>
+              <Button size="sm" onClick={generatePairing} disabled={pairBusy}>
                 {pairBusy ? "Generating…" : "Generate pairing code"}
               </Button>
             )}
           </div>
-
-          <p className="text-xs text-muted-foreground">Signed in as {email}</p>
         </div>
       </DialogContent>
     </Dialog>
@@ -613,7 +994,7 @@ function SettingsDialog({
                 <button
                   key={t}
                   onClick={() => setTheme(t)}
-                  className={`rounded-md px-2 py-1.5 text-xs capitalize transition-colors ${
+                  className={`rounded-md px-2 py-1.5 text-xs capitalize outline-none transition-colors ${
                     theme === t
                       ? "bg-card text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -669,7 +1050,7 @@ function ChatListItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+      className={`w-full overflow-hidden rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors ${
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -743,7 +1124,7 @@ function SidebarContent({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+              className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent"
               title="Account"
             >
               <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">

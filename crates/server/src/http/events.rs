@@ -26,8 +26,16 @@ async fn list(State(state): State<AppState>, user: AuthUser) -> Result<Json<Valu
 async fn stream(
     State(state): State<AppState>,
     user: AuthUser,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, ApiError> {
     let org = user.0.org_id;
+    // App-level presence: this connection is held for the app's lifetime
+    // and is the liveness signal for client-tool termination detection.
+    // The guard lives inside the body generator, so dropping the response
+    // (client disconnect) releases it.
+    let presence = q
+        .get("client_id")
+        .map(|cid| state.presence_acquire(cid));
     let store = state.store().await?;
     let listener = sqlx::postgres::PgListener::connect_with(store.pool())
         .await
@@ -38,6 +46,8 @@ async fn stream(
         .await
         .map_err(|e| ApiError::internal(format!("event subscribe failed: {e}")))?;
     let out = async_stream::stream! {
+        // Hold the presence guard for as long as this body lives.
+        let _presence = presence;
         loop {
             match listener.recv().await {
                 Ok(notification) => {

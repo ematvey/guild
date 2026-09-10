@@ -202,9 +202,15 @@ async fn list_runs(
 // ---------- webhook ingress ----------
 
 /// Fire-and-forget forward to Restate ingress (`/send` suffix = one-way).
-async fn restate_send_one_way(state: &AppState, path: &str, body: Value) -> Result<(), ApiError> {
+/// Returns the accepted invocation id (used for stuck-invocation cleanup).
+pub(crate) async fn restate_send_one_way(
+    state: &AppState,
+    service: &str,
+    path: &str,
+    body: Value,
+) -> Result<String, ApiError> {
     let url = format!(
-        "{}/RoutineRunner/{path}/send",
+        "{}/{service}/{path}/send",
         state.config.restate_url.trim_end_matches('/')
     );
     let resp = reqwest::Client::new()
@@ -213,21 +219,26 @@ async fn restate_send_one_way(state: &AppState, path: &str, body: Value) -> Resu
         .send()
         .await
         .map_err(|e| ApiError::internal(format!("restate ingress unreachable: {e}")))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
         return Err(ApiError::internal(format!(
-            "restate ingress rejected: {status} {body}"
+            "restate ingress rejected: {status} {text}"
         )));
     }
-    Ok(())
+    let invocation_id = serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v["invocationId"].as_str().map(String::from))
+        .unwrap_or_default();
+    Ok(invocation_id)
 }
 
 async fn forward_tick(state: &AppState, routine: &RoutineRow) -> Result<(), ApiError> {
     let interval = routine.trigger_config["interval_secs"]
         .as_u64()
         .unwrap_or(60);
-    restate_send_one_way(state, &format!("{}/tick", routine.id), json!(interval)).await
+    restate_send_one_way(state, "RoutineRunner", &format!("{}/tick", routine.id), json!(interval)).await?;
+    Ok(())
 }
 
 async fn hook(
@@ -252,7 +263,7 @@ async fn hook(
         ));
     }
     let payload: Value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({}));
-    restate_send_one_way(&state, &format!("{}/handle_webhook", routine.id), payload).await?;
+    restate_send_one_way(&state, "RoutineRunner", &format!("{}/handle_webhook", routine.id), payload).await?;
     Ok((StatusCode::ACCEPTED, Json(json!({"accepted": true}))))
 }
 
