@@ -15,7 +15,7 @@ use protocol::rpc::{Event, Request, Response, RpcError, PROTOCOL_VERSION};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc, watch};
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -34,6 +34,34 @@ pub struct Session {
 enum Incoming {
     Request(Request),
     Malformed(String),
+}
+
+/// Engine state shared by every client connection (daemon groundwork):
+/// one Session, one event fan-out, one agent JoinSet, one shutdown flag.
+#[derive(Clone)]
+pub struct Shared {
+    pub session: Arc<Mutex<Session>>,
+    /// Broadcast channel for protocol events (agent.*, chat.*). Every
+    /// connected client receives every event. Capacity 256.
+    pub events: tokio::sync::broadcast::Sender<Value>,
+    /// Agent runs owned by the daemon (outlive any single client).
+    /// tokio Mutex because we hold the guard across `.await` while draining.
+    pub agents: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
+    /// Set true by `daemon.shutdown`; the daemon's accept loop watches it.
+    pub shutdown: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+impl Shared {
+    pub fn new(session: Session) -> Self {
+        let (events, _) = broadcast::channel(256);
+        let (shutdown, _) = watch::channel(false);
+        Self {
+            session: Arc::new(Mutex::new(session)),
+            events,
+            agents: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
+            shutdown: Arc::new(shutdown),
+        }
+    }
 }
 
 /// Restores a persisted session (token.json) into a fresh Session, so an
@@ -99,8 +127,30 @@ fn event_value(event: &str, payload: Value) -> Value {
 }
 
 /// Reads requests until EOF, handles them, writes responses/events to the
-/// writer. Returns the (mutated) session and the writer back.
+/// writer. Returns the (mutated) session and the writer back. Thin wrapper:
+/// one Shared, one connection.
 pub async fn serve<R, W>(reader: R, writer: W, session: Session) -> anyhow::Result<(Session, W)>
+where
+    R: std::io::Read + Send + 'static,
+    W: std::io::Write + Send + 'static,
+{
+    let shared = Shared::new(session);
+    let writer = run_connection(&shared, reader, writer).await?;
+    // Let in-flight agent runs finish so their events are written (as before).
+    // tokio Mutex: the guard is held across .await here.
+    while shared.agents.lock().await.join_next().await.is_some() {}
+    let session = match Arc::try_unwrap(shared.session) {
+        Ok(m) => m.into_inner().expect("session lock"),
+        Err(_) => anyhow::bail!("session references still alive"),
+    };
+    Ok((session, writer))
+}
+
+/// One client connection: reads requests, dispatches onto `shared`,
+/// writes responses for THIS connection plus all broadcast events.
+/// Returns the writer when the client disconnects (EOF) — never on error
+/// conditions that should keep the daemon alive.
+pub async fn run_connection<R, W>(shared: &Shared, reader: R, writer: W) -> anyhow::Result<W>
 where
     R: std::io::Read + Send + 'static,
     W: std::io::Write + Send + 'static,
@@ -132,47 +182,46 @@ where
         w
     });
 
-    let session = Arc::new(Mutex::new(session));
-    let mut agents: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
-
+    let mut event_rx = shared.events.subscribe();
+    let mut events_open = true;
     loop {
-        match req_rx.recv().await {
-            None => break,
-            Some(Incoming::Malformed(msg)) => {
-                let _ = out_tx.send(json!({
-                    "protocol": PROTOCOL_VERSION, "event": "rpc.error",
-                    "payload": {"message": msg},
-                }));
-            }
-            Some(Incoming::Request(req)) => {
-                // Sequential handling preserves ordering for dependent
-                // calls (login before chat.send); only agent runs go to
-                // the background.
-                dispatch(session.clone(), req, out_tx.clone(), &mut agents).await;
-            }
+        tokio::select! {
+            biased;
+            inc = req_rx.recv() => match inc {
+                None => break,
+                Some(Incoming::Malformed(msg)) => {
+                    let _ = out_tx.send(json!({
+                        "protocol": PROTOCOL_VERSION, "event": "rpc.error",
+                        "payload": {"message": msg},
+                    }));
+                }
+                Some(Incoming::Request(req)) => {
+                    // Sequential per connection (ordering for login → chat).
+                    dispatch(shared.clone(), req, out_tx.clone()).await;
+                }
+            },
+            ev = event_rx.recv(), if events_open => match ev {
+                Ok(v) => { let _ = out_tx.send(v); }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => {
+                    // sender dropped (only possible while Shared is being torn
+                    // down in serve()): stop consuming events, keep serving
+                    // requests until EOF
+                    events_open = false;
+                }
+            },
         }
     }
-    // Let in-flight agent runs finish so their events are written.
-    while agents.join_next().await.is_some() {}
-    drop(out_tx); // closes the writer channel
+    drop(out_tx);
     let writer = writer_thread.join().expect("writer thread");
-    let session = match Arc::try_unwrap(session) {
-        Ok(m) => m.into_inner().expect("session lock"),
-        Err(_) => anyhow::bail!("session references still alive"),
-    };
-    Ok((session, writer))
+    Ok(writer)
 }
 
-async fn dispatch(
-    session: Arc<Mutex<Session>>,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-    agents: &mut tokio::task::JoinSet<()>,
-) {
+async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     match req.method.as_str() {
-        "login" => login_task(session, req, out_tx).await,
-        "pair" => pair_task(session, req, out_tx).await,
-        "chat.send" => chat_send_task(session, req, out_tx).await,
+        "login" => login_task(shared.session.clone(), req, out_tx).await,
+        "pair" => pair_task(shared.session.clone(), req, out_tx).await,
+        "chat.send" => chat_send_task(shared.clone(), req, out_tx).await,
         "machine.info" => {
             // Hostname label for the machine-executor registry; the id is
             // generated webview-side (stable per app install).
@@ -186,7 +235,7 @@ async fn dispatch(
             ));
         }
         "session.info" => {
-            let s = session.lock().unwrap();
+            let s = shared.session.lock().unwrap();
             let result = match &s.cloud {
                 Some(cloud) => Ok(Response::ok(
                     req.id,
@@ -204,7 +253,7 @@ async fn dispatch(
             let _ = out_tx.send(response_value(req.id, result));
         }
         "models.list" => {
-            let session = session.clone();
+            let session = shared.session.clone();
             let out_tx = out_tx.clone();
             tokio::spawn(async move {
                 let result = async {
@@ -224,7 +273,7 @@ async fn dispatch(
             });
         }
         "tool.run" => {
-            let session = session.clone();
+            let session = shared.session.clone();
             let out_tx = out_tx.clone();
             tokio::spawn(async move {
                 let result = async {
@@ -255,18 +304,40 @@ async fn dispatch(
             });
         }
         "agent.start" => {
-            let _ = agents.spawn(agent_start_task(session, req, out_tx));
+            let _ = shared
+                .agents
+                .lock()
+                .await
+                .spawn(agent_start_task(shared.clone(), req, out_tx));
         }
         "agent.approve" => {
-            tokio::spawn(agent_approve(session, req, out_tx));
+            tokio::spawn(agent_approve(shared.session.clone(), req, out_tx));
         }
-        "agent.policy.set" => policy_set(session, req, out_tx),
-        "agent.policy.get" => policy_get(session, req, out_tx),
+        "agent.policy.set" => policy_set(shared.session.clone(), req, out_tx),
+        "agent.policy.get" => policy_get(shared.session.clone(), req, out_tx),
+        "daemon.hello" => {
+            // Version + protocol handshake for daemon clients (wire method
+            // exists before any client uses it).
+            let _ = out_tx.send(response_value(
+                req.id,
+                Ok(Response::ok(
+                    req.id,
+                    json!({"version": env!("CARGO_PKG_VERSION"), "protocol": PROTOCOL_VERSION}),
+                )),
+            ));
+        }
+        "daemon.shutdown" => {
+            let _ = shared.shutdown.send(true);
+            let _ = out_tx.send(response_value(
+                req.id,
+                Ok(Response::ok(req.id, json!({"ok": true}))),
+            ));
+        }
         "registry.publish" => {
-            tokio::spawn(registry_publish(session, req, out_tx));
+            tokio::spawn(registry_publish(shared.session.clone(), req, out_tx));
         }
         "registry.install" => {
-            tokio::spawn(registry_install(session, req, out_tx));
+            tokio::spawn(registry_install(shared.session.clone(), req, out_tx));
         }
         other => {
             let _ = out_tx.send(response_value(
@@ -348,14 +419,14 @@ async fn pair_task(
 }
 
 async fn chat_send_task(
-    session: Arc<Mutex<Session>>,
+    shared: Shared,
     req: Request,
     out_tx: mpsc::UnboundedSender<Value>,
 ) {
     let result = async {
         let text = param(&req, "text")?.to_string();
         let (cloud, existing_chat, model) = {
-            let mut s = session.lock().unwrap();
+            let mut s = shared.session.lock().unwrap();
             let cloud = s.cloud.clone().context("not logged in — call login first")?;
             if s.model.is_empty() {
                 s.model = req.params["model"].as_str().unwrap_or("gpt-4o-mini").to_string();
@@ -366,14 +437,14 @@ async fn chat_send_task(
             Some(c) => c,
             None => {
                 let c = cloud.create_chat(None).await?;
-                session.lock().unwrap().chat_id = Some(c);
+                shared.session.lock().unwrap().chat_id = Some(c);
                 c
             }
         };
         let stream = cloud.chat_stream(chat_id, &model, &[Message::user(text.clone())]).await?;
         let (full_text, done) = collect_turn(stream).await?;
         {
-            let mut s = session.lock().unwrap();
+            let mut s = shared.session.lock().unwrap();
             s.messages.push(Message::user(text));
             s.messages.push(Message {
                 role: "assistant".into(),
@@ -382,14 +453,15 @@ async fn chat_send_task(
                 tool_call_id: None,
             });
         }
-        let _ = out_tx.send(event_value("chat.delta", json!({"content": full_text})));
+        // Broadcast: every connected client sees chat events.
+        let _ = shared.events.send(event_value("chat.delta", json!({"content": full_text})));
         let (message_id, cost_usd, tokens_in, tokens_out) = match done {
             Some(protocol::api::StreamEvent::Done { message_id, cost_usd, tokens_in, tokens_out }) => {
                 (message_id, cost_usd, tokens_in, tokens_out)
             }
             _ => anyhow::bail!("stream ended without done event"),
         };
-        let _ = out_tx.send(event_value(
+        let _ = shared.events.send(event_value(
             "chat.done",
             json!({"message_id": message_id, "cost_usd": cost_usd, "tokens_in": tokens_in, "tokens_out": tokens_out}),
         ));
@@ -405,7 +477,7 @@ async fn chat_send_task(
 /// Starts an agent run in the background: creates the chat if needed,
 /// responds immediately with `started`, streams progress as events.
 async fn agent_start_task(
-    session: Arc<Mutex<Session>>,
+    shared: Shared,
     req: Request,
     out_tx: mpsc::UnboundedSender<Value>,
 ) {
@@ -420,7 +492,7 @@ async fn agent_start_task(
         PendingApprovals,
     );
     let prep = || -> anyhow::Result<AgentPrep> {
-        let mut s = session.lock().unwrap();
+        let mut s = shared.session.lock().unwrap();
         let cloud = s
             .cloud
             .clone()
@@ -464,7 +536,7 @@ async fn agent_start_task(
         Some(c) => c,
         None => match cloud.create_chat(Some("agent")).await {
             Ok(c) => {
-                session.lock().unwrap().chat_id = Some(c);
+                shared.session.lock().unwrap().chat_id = Some(c);
                 c
             }
             Err(e) => {
@@ -484,7 +556,7 @@ async fn agent_start_task(
         .unwrap(),
     );
 
-    // run the agent loop; events stream through out_tx
+    // run the agent loop; events broadcast to every connected client
     let run = AgentRun {
         cloud: cloud.clone(),
         chat_id,
@@ -493,7 +565,7 @@ async fn agent_start_task(
         system: None, // skills index lands in Task 7
         history,
         policy,
-        events: out_tx.clone(),
+        events: shared.events.clone(),
         pending,
     };
     let updated = run
@@ -501,7 +573,7 @@ async fn agent_start_task(
         .await
         .unwrap_or_default();
 
-    session.lock().unwrap().messages = updated;
+    shared.session.lock().unwrap().messages = updated;
 }
 
 /// Resolves a pending approval. Polls briefly so an approve that races the
