@@ -46,7 +46,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 20] = [
+        const MIGRATIONS: [(&str, &str); 22] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -124,6 +124,14 @@ impl Store {
                 "0020_thread_events",
                 include_str!("../../migrations/0020_thread_events.sql"),
             ),
+            (
+                "0021_reasoning_flag",
+                include_str!("../../migrations/0021_reasoning_flag.sql"),
+            ),
+            (
+                "0022_drop_messages",
+                include_str!("../../migrations/0022_drop_messages.sql"),
+            ),
         ];
         for (name, sql) in MIGRATIONS {
             let applied: Option<i64> =
@@ -134,6 +142,13 @@ impl Store {
             if applied.is_some() {
                 continue;
             }
+            // Split on ';'. Comment lines are stripped first — a ';' inside a
+            // `--` comment would otherwise break the statement split.
+            let sql = sql
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("--"))
+                .collect::<Vec<_>>()
+                .join("\n");
             let mut tx = pool.begin().await?;
             for stmt in sql.split(';') {
                 let stmt = stmt.trim();

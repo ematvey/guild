@@ -185,14 +185,28 @@ async fn web_chat_flow_login_models_chat_stream_history() {
     assert!(done["tokens_in"].as_i64() == Some(5));
     assert!(done["tokens_out"].as_i64() == Some(2));
 
-    // history persisted
-    let msgs = srv
+    // turn persisted: system + user + assistant thread events
+    let events = srv
         .store()
-        .chats()
-        .list_messages(srv.full.org_id, chat_id.parse().unwrap())
+        .thread()
+        .list_events(srv.full.org_id, chat_id.parse().unwrap())
         .await
         .unwrap();
-    assert_eq!(msgs.len(), 2);
-    assert_eq!(msgs[0].content, "greet");
-    assert_eq!(msgs[1].content, "hi there");
+    let texts: Vec<String> = events
+        .iter()
+        .flat_map(|e| match &e.event {
+            protocol::api::ThreadEvent::UserMessage { content } => {
+                vec![format!("user:{content}")]
+            }
+            protocol::api::ThreadEvent::AssistantMessage { blocks, .. } => blocks
+                .iter()
+                .filter_map(|b| match b {
+                    protocol::api::Block::Text { text } => Some(format!("assistant:{text}")),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect();
+    assert_eq!(texts, vec!["user:greet", "assistant:hi there"]);
 }

@@ -56,13 +56,16 @@ async fn login_create_chat_stream_roundtrip() {
         }
         other => panic!("expected done, got {other:?}"),
     }
-    let msgs = srv
+    // turn persisted as thread events: system + user + assistant
+    let events = srv
         .store()
-        .chats()
-        .list_messages(user.org_id, chat_id)
+        .thread()
+        .list_events(user.org_id, chat_id)
         .await
         .unwrap();
-    assert_eq!(msgs.len(), 2);
+    assert_eq!(events.len(), 3, "system + user + assistant events");
+    assert!(matches!(events[1].event, protocol::api::ThreadEvent::UserMessage { .. }));
+    assert!(matches!(events[2].event, protocol::api::ThreadEvent::AssistantMessage { .. }));
 }
 
 /// The stdio JSON-RPC loop handles login and chat.send end-to-end.
