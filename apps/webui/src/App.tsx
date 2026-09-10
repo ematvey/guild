@@ -6,6 +6,7 @@ import Dashboard from "./views/Dashboard";
 import Users from "./views/Users";
 import Registry from "./views/Registry";
 import Gateway from "./views/Gateway";
+import Integrations from "./views/Integrations";
 
 import Downloads from "./views/Downloads";
 
@@ -34,7 +35,7 @@ function ThemeToggle() {
   );
 }
 
-const VIEWS = ["dashboard", "downloads", "users", "registry", "gateway"] as const;
+const VIEWS = ["dashboard", "downloads", "users", "registry", "gateway", "integrations"] as const;
 
 function currentView(): string {
   const h = window.location.hash.replace("#/", "");
@@ -86,7 +87,7 @@ function AppInner() {
   const nav: [string, string][] = [
     ["dashboard", "Usage"],
     ["downloads", "Downloads"],
-    ...(isAdmin ? ([["users", "Users"], ["registry", "Registry"], ["gateway", "Gateway"]] as [string, string][]) : []),
+    ...(isAdmin ? ([["users", "Users"], ["registry", "Registry"], ["gateway", "Gateway"], ["integrations", "Integrations"]] as [string, string][]) : []),
   ];
 
   return (
@@ -124,6 +125,7 @@ function AppInner() {
       {view === "users" && isAdmin && <Users />}
       {view === "registry" && isAdmin && <Registry />}
       {view === "gateway" && isAdmin && <Gateway />}
+      {view === "integrations" && isAdmin && <Integrations />}
     </div>
   );
 }
