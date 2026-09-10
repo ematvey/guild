@@ -5,11 +5,15 @@ import {
   ArrowUp,
   ArrowUpRight,
   Bot,
+  Brain,
+  ChevronDown,
   ChevronUp,
   Copy,
+  FileDiff,
   Download,
   FileText,
   Laptop,
+  Globe,
   Lightbulb,
   LogOut,
   Menu,
@@ -17,7 +21,9 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  Search,
   Settings2,
+  SquareTerminal,
   Cpu,
   Unlink,
   Wrench,
@@ -53,7 +59,7 @@ import { postToolResult } from "../transport";
 import {
   bindChat,
   createChat,
-  getMessages,
+  getThread,
   listChats,
   listMachines,
   listModels,
@@ -64,10 +70,10 @@ import {
   listReleases,
   pairingCode,
   startEventStream,
-  type ChatMessage,
   type ChatSummary,
   type MachineInfo,
   type Release,
+  type ThreadEventRow,
 } from "../transport";
 
 interface ToolBlock {
@@ -77,67 +83,114 @@ interface ToolBlock {
   executor: "client" | "server";
   status: "running" | "done" | "error";
   content?: string;
+  meta?: ToolMeta;
+}
+
+/// Widget payload persisted on tool/result events (spec C.2). Loose: the
+/// server owns the shape, unknown fields are ignored by the widgets.
+interface ToolMeta {
+  card?: string;
+  kind?: string;
+  sources?: { url: string; title?: string; snippet?: string }[];
+  truncated?: boolean;
+  url?: string;
+  status_code?: number;
+  title?: string;
+  output?: string;
+  exit_code?: number;
+  path?: string;
+  offset?: number;
+  total_lines?: number;
+  lang?: string;
 }
 
 interface Block {
-  kind: "user" | "text" | "error" | "tool";
+  kind: "user" | "text" | "error" | "reasoning" | "tool";
   text: string;
+  /// kind === "reasoning": the accumulated thinking text.
+  reasoningText?: string;
   tool?: ToolBlock;
 }
 
 /// Tools the desktop executor runs locally (mirrors server `client_tool_names`).
 const CLIENT_TOOL_NAMES = ["read", "bash", "edit", "write"];
 
-/// Rebuilds the thread view from persisted messages. Tool calls are resident
-/// parts of the thread: assistant rows carry the calls, `tool` rows carry
-/// their results — both must survive a reload/refresh, same as user and
-/// assistant text.
-function msgsToBlocks(msgs: ChatMessage[]): Block[] {
+/// Rebuilds the thread view from the persisted thread event log (spec C.3).
+/// Tool calls, reasoning and text are all resident thread parts — nothing
+/// disappears on refresh: every assistant block is replayed in stream order
+/// and tool results fill their matching frames.
+function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
+  const events = [...rows].sort((a, b) => a.seq - b.seq).map((r) => r.event);
   const blocks: Block[] = [];
   const byCallId = new Map<string, ToolBlock>();
-  for (const m of msgs) {
-    if (m.role === "user") {
-      blocks.push({ kind: "user", text: m.content });
-      continue;
-    }
-    if (m.role === "assistant") {
-      if (m.content) blocks.push({ kind: "text", text: m.content });
-      for (const c of m.tool_calls ?? []) {
-        const tb: ToolBlock = {
-          callId: c.id,
-          name: c.name,
-          args: typeof c.arguments === "string" ? c.arguments : JSON.stringify(c.arguments),
-          executor: CLIENT_TOOL_NAMES.includes(c.name) ? "client" : "server",
-          status: "done",
-        };
-        byCallId.set(c.id, tb);
-        blocks.push({ kind: "tool", text: "", tool: tb });
+  for (const ev of events) {
+    switch (ev.type) {
+      case "user_message":
+        blocks.push({ kind: "user", text: ev.content });
+        break;
+      case "system_message":
+        break; // server-owned prompt, log-only
+      case "assistant_message":
+        for (const b of ev.blocks) {
+          if (b.type === "reasoning") {
+            blocks.push({ kind: "reasoning", text: "", reasoningText: b.text });
+          } else if (b.type === "text") {
+            blocks.push({ kind: "text", text: b.text });
+          } else {
+            const tb: ToolBlock = {
+              callId: b.id,
+              name: b.name,
+              args: b.arguments,
+              executor: CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server",
+              status: "done", // filled by the matching tool_result below
+            };
+            byCallId.set(b.id, tb);
+            blocks.push({ kind: "tool", text: "", tool: tb });
+          }
+        }
+        break;
+      case "tool_result": {
+        const meta = (ev.meta ?? undefined) as ToolMeta | undefined;
+        const tb = byCallId.get(ev.call_id);
+        if (tb) {
+          tb.content = ev.content;
+          tb.status = ev.is_error ? "error" : "done";
+          tb.meta = meta;
+        } else {
+          // Orphan result (call block missing): render it anyway rather than drop it.
+          blocks.push({
+            kind: "tool",
+            text: "",
+            tool: {
+              callId: ev.call_id,
+              name: ev.name || "tool",
+              args: "",
+              executor: "server",
+              status: ev.is_error ? "error" : "done",
+              content: ev.content,
+              meta,
+            },
+          });
+        }
+        break;
       }
-      continue;
-    }
-    if (m.role === "tool") {
-      const tb = m.tool_call_id ? byCallId.get(m.tool_call_id) : undefined;
-      if (tb) {
-        tb.content = m.content;
-      } else {
-        // Orphan result (call row missing): render it anyway rather than drop it.
-        blocks.push({
-          kind: "tool",
-          text: "",
-          tool: {
-            callId: m.tool_call_id ?? "",
-            name: "tool",
-            args: "",
-            executor: "server",
-            status: "done",
-            content: m.content,
-          },
-        });
-      }
-      continue;
+      case "compaction":
+        break; // reserved, not built yet
     }
   }
   return blocks;
+}
+
+/// Thinking deltas accumulate into the trailing reasoning block. The first
+/// frame after a (re)attach carries the full in-flight buffer (spec B.5), so
+/// it replaces instead of appending.
+function upsertThinking(blocks: Block[], content: string, replace: boolean): Block[] {
+  const last = blocks[blocks.length - 1];
+  if (last?.kind === "reasoning") {
+    const text = replace ? content : last.reasoningText + content;
+    return [...blocks.slice(0, -1), { kind: "reasoning", text: "", reasoningText: text }];
+  }
+  return [...blocks, { kind: "reasoning", text: "", reasoningText: content }];
 }
 
 /// Client-side tools need the desktop runtime (local files, shell); in a plain
@@ -171,6 +224,309 @@ function ThreadSkeleton() {
       <Spinner />
       <p className="text-sm text-muted-foreground">Loading thread…</p>
     </div>
+  );
+}
+
+/// Markdown body class shared by text blocks and tool-card excerpts.
+const MD_CLASS =
+  "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:text-base [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc";
+
+/// Status pill on tool frames and page cards.
+function StatusPill({ status }: { status: "running" | "done" | "error" }) {
+  const cls = {
+    running: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    done: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    error: "border-destructive/40 bg-destructive/10 text-destructive",
+  }[status];
+  return (
+    <span
+      className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${cls}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+/// Generic collapsible frame behind the reasoning and tool renders.
+function Frame({
+  icon,
+  title,
+  badge,
+  defaultOpen = false,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: React.ReactNode;
+  badge?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="mr-auto w-full max-w-[85%] overflow-hidden rounded-lg border border-border bg-card text-xs">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left outline-none transition-colors hover:bg-accent/50"
+      >
+        {icon}
+        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
+        {badge}
+        {open ? (
+          <ChevronUp className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+      </button>
+      {open && <div className="border-t border-border px-3 py-2">{children}</div>}
+    </div>
+  );
+}
+
+/// Collapsible "Thinking" frame for a reasoning block; default collapsed,
+/// body is the accumulated thinking text.
+function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
+  return (
+    <Frame
+      icon={<Brain className="size-3.5 shrink-0 text-muted-foreground" />}
+      title={live ? "Thinking…" : "Thinking"}
+    >
+      <div className="max-h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed text-muted-foreground">
+        {text || "…"}
+      </div>
+    </Frame>
+  );
+}
+
+/// Human-facing tool kind: drives the frame icon and widget selection.
+function toolKind(t: ToolBlock): string {
+  if (t.meta?.kind) return t.meta.kind;
+  if (t.meta?.card) return t.meta.card;
+  const n = t.name.toLowerCase();
+  if (n.includes("search")) return "search";
+  if (n.includes("fetch")) return "fetch";
+  if (n === "bash" || n === "shell") return "terminal";
+  if (n === "read") return "read";
+  if (n === "edit" || n === "write") return "diff";
+  return "other";
+}
+
+function ToolKindIcon({ kind }: { kind: string }) {
+  const cls = "size-3.5 shrink-0 text-muted-foreground";
+  switch (kind) {
+    case "search":
+      return <Search className={cls} />;
+    case "fetch":
+      return <Globe className={cls} />;
+    case "terminal":
+      return <SquareTerminal className={cls} />;
+    case "read":
+      return <FileText className={cls} />;
+    case "diff":
+      return <FileDiff className={cls} />;
+    default:
+      return <Wrench className={cls} />;
+  }
+}
+
+function statusPillCls(ok: boolean): string {
+  return ok
+    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+    : "border-destructive/40 bg-destructive/10 text-destructive";
+}
+
+function TruncatedBadge() {
+  return (
+    <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
+      truncated
+    </span>
+  );
+}
+
+/// Per-widget body of an expanded tool frame, driven by the persisted `meta`
+/// on the tool_result event (spec C.2 → C.3). Tools without meta fall back
+/// to pretty JSON of the arguments plus the raw content.
+function ToolBody({ t }: { t: ToolBlock }) {
+  const m = t.meta;
+  if (m?.card === "web" && m.kind === "search") {
+    const sources = m.sources ?? [];
+    return (
+      <div className="space-y-1.5">
+        {m.truncated && <TruncatedBadge />}
+        {sources.map((s, i) => (
+          <div key={i} className="rounded-md border border-border px-2 py-1.5">
+            <a
+              href={s.url}
+              target="_blank"
+              rel="noreferrer"
+              className="break-all font-medium underline decoration-border underline-offset-2 hover:decoration-foreground"
+            >
+              {s.title || s.url}
+            </a>
+            {s.snippet && <p className="mt-0.5 text-muted-foreground">{s.snippet}</p>}
+          </div>
+        ))}
+        {sources.length === 0 && t.content && (
+          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
+            {t.content}
+          </pre>
+        )}
+      </div>
+    );
+  }
+  if (m?.card === "web" && m.kind === "fetch") {
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <a
+            href={m.url}
+            target="_blank"
+            rel="noreferrer"
+            className="min-w-0 flex-1 truncate underline decoration-border underline-offset-2 hover:decoration-foreground"
+            title={m.url}
+          >
+            {m.url}
+          </a>
+          {m.status_code != null && (
+            <span
+              className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${statusPillCls(m.status_code < 400)}`}
+            >
+              {m.status_code}
+            </span>
+          )}
+          {m.truncated && <TruncatedBadge />}
+        </div>
+        {m.title && <p className="font-medium">{m.title}</p>}
+        {t.content && (
+          <div className={`max-h-64 overflow-y-auto ${MD_CLASS}`}>
+            <Markdown remarkPlugins={[remarkGfm]}>{t.content}</Markdown>
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (m?.card === "terminal") {
+    return (
+      <div className="space-y-1.5">
+        <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
+          {m.output ?? t.content ?? ""}
+        </pre>
+        {m.exit_code != null && (
+          <span
+            className={`inline-block rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${statusPillCls(m.exit_code === 0)}`}
+          >
+            exit {m.exit_code}
+          </span>
+        )}
+      </div>
+    );
+  }
+  if (m?.card === "read") {
+    const lines = (t.content ?? "").split("\n");
+    const start = m.offset ?? 1;
+    return (
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
+          <span className="min-w-0 truncate font-mono" title={m.path}>
+            {m.path}
+          </span>
+          {m.total_lines != null && (
+            <span className="shrink-0 text-[10px]">
+              {lines.length}/{m.total_lines} lines
+            </span>
+          )}
+        </div>
+        <div className="max-h-64 overflow-y-auto rounded-md bg-muted p-2 font-mono">
+          {lines.map((l, i) => (
+            <div key={i} className="flex gap-2">
+              <span className="w-8 shrink-0 select-none text-right text-muted-foreground/60">
+                {start + i}
+              </span>
+              <span className="whitespace-pre-wrap break-all">{l}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (m?.card === "diff") {
+    return (
+      <div className="space-y-1.5">
+        {m.path && (
+          <span className="block min-w-0 truncate font-mono text-muted-foreground" title={m.path}>
+            {m.path}
+          </span>
+        )}
+        <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono">
+          {(t.content ?? "").split("\n").map((l, i) => (
+            <div
+              key={i}
+              className={
+                l.startsWith("+") && !l.startsWith("+++")
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : l.startsWith("-") && !l.startsWith("---")
+                    ? "text-destructive"
+                    : l.startsWith("@@")
+                      ? "text-muted-foreground"
+                      : undefined
+              }
+            >
+              {l}
+            </div>
+          ))}
+        </pre>
+      </div>
+    );
+  }
+  let prettyArgs = t.args;
+  try {
+    prettyArgs = JSON.stringify(JSON.parse(t.args), null, 2);
+  } catch {
+    /* keep the raw arguments string */
+  }
+  return (
+    <div className="space-y-1.5">
+      {prettyArgs && (
+        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
+          {prettyArgs}
+        </pre>
+      )}
+      {t.content && (
+        <pre
+          className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 ${
+            t.status === "error" ? "text-destructive" : "text-muted-foreground"
+          }`}
+        >
+          {t.content}
+        </pre>
+      )}
+      {t.status === "running" && (
+        <span className="animate-pulse text-muted-foreground">running…</span>
+      )}
+    </div>
+  );
+}
+
+/// One collapsible frame per tool_call block: header is kind icon + tool
+/// name + human title from the widget + status pill.
+function ToolFrame({ t }: { t: ToolBlock }) {
+  return (
+    <Frame
+      icon={<ToolKindIcon kind={toolKind(t)} />}
+      title={<span className="font-mono">{t.name}</span>}
+      badge={
+        <>
+          {t.meta?.title && (
+            <span className="hidden max-w-40 truncate text-muted-foreground sm:inline">
+              {t.meta.title}
+            </span>
+          )}
+          <StatusPill status={t.status} />
+        </>
+      }
+      defaultOpen={t.status === "running"}
+    >
+      <ToolBody t={t} />
+    </Frame>
   );
 }
 
@@ -288,9 +644,9 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     const seq = ++loadSeq.current;
     setThreadLoading(true);
     try {
-      const msgs: ChatMessage[] = await getMessages(id, loadAc.signal);
+      const rows: ThreadEventRow[] = await getThread(id, loadAc.signal);
       if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
-      setBlocks(msgsToBlocks(msgs));
+      setBlocks(eventsToBlocks(rows));
       setChatId(id);
       // A generation may still be running server-side (e.g. it outlived a
       // previous client, or the stream dropped earlier). Attach with
@@ -414,9 +770,9 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         if (seq !== loadSeq.current || ac.signal.aborted) break;
         try {
           // reconcile with durable state before (re)attaching
-          const msgs: ChatMessage[] = await getMessages(cid, ac.signal);
+          const rows: ThreadEventRow[] = await getThread(cid, ac.signal);
           if (seq !== loadSeq.current || ac.signal.aborted) break;
-          setBlocks(msgsToBlocks(msgs));
+          setBlocks(eventsToBlocks(rows));
           term.v = "none";
           // The first delta after attach is the server's catch-up snapshot of
           // the in-flight turn (full buffer, not a delta) — or, when there is
@@ -425,6 +781,9 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           // messages only, so the in-flight turn has no block yet and the
           // last text block belongs to a previous turn. Later deltas append.
           let firstDelta = true;
+          // Same contract for thinking: the first thinking_delta after attach
+          // carries the full in-flight reasoning buffer (spec B.5).
+          let firstThinking = true;
           await attachGeneration(
             cid,
             (ev) => {
@@ -438,6 +797,11 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                   if (!seed && last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
                   return [...b, { kind: "text", text: ev.content! }];
                 });
+              } else if (ev.type === "thinking_delta" && ev.content) {
+                sawContent = true;
+                const seed = firstThinking;
+                firstThinking = false;
+                setBlocks((b) => upsertThinking(b, ev.content!, seed));
               } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
                 sawContent = true;
                 handleToolEvent(ev, cid, seq);
@@ -457,11 +821,11 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           const outcome = term.v as "done" | "error" | "idle" | "none";
           if (outcome === "idle") {
             // the generation may have completed between the reload and the
-            // attach; reload once more so the final message is on screen
+            // attach; reload once more so the final events are on screen
             try {
-              const final: ChatMessage[] = await getMessages(cid, ac.signal);
+              const final: ThreadEventRow[] = await getThread(cid, ac.signal);
               if (seq === loadSeq.current) {
-                setBlocks(msgsToBlocks(final));
+                setBlocks(eventsToBlocks(final));
               }
             } catch {
               /* keep what we have */
@@ -534,6 +898,10 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
               if (last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
               return [...b, { kind: "text", text: ev.content! }];
             });
+          } else if (ev.type === "thinking_delta" && ev.content) {
+            // live deltas: the send stream has no catch-up snapshot, every
+            // frame is a pure delta (spec B.5)
+            setBlocks((b) => upsertThinking(b, ev.content!, false));
           } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
             handleToolEvent(ev, cid, mySeq);
           } else if (ev.type === "error") {
@@ -726,29 +1094,14 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                   >
                     {b.text}
                   </div>
+                ) : b.kind === "reasoning" ? (
+                  <ReasoningFrame
+                    key={i}
+                    text={b.reasoningText ?? ""}
+                    live={streaming && i === blocks.length - 1}
+                  />
                 ) : b.kind === "tool" && b.tool ? (
-                  <div key={i} className="mr-auto w-fit max-w-[85%] rounded-lg border border-border bg-card px-3 py-2 text-xs">
-                    <span className="inline-flex items-center gap-1.5 font-mono text-amber-600 dark:text-amber-400">
-                      <Wrench className="size-3.5" /> {b.tool.name}
-                      <span className="text-muted-foreground">· {b.tool.executor}</span>
-                      {b.tool.status === "running" && (
-                        <span className="animate-pulse text-muted-foreground">running…</span>
-                      )}
-                    </span>
-                    <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-muted-foreground">
-                      {b.tool.args}
-                    </pre>
-                    {b.tool.status !== "running" && b.tool.content && (
-                      <pre
-                        className={
-                          "mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap " +
-                          (b.tool.status === "error" ? "text-destructive" : "text-muted-foreground")
-                        }
-                      >
-                        {b.tool.content}
-                      </pre>
-                    )}
-                  </div>
+                  <ToolFrame key={i} t={b.tool} />
                 ) : b.kind === "error" ? (
                   <div
                     key={i}
@@ -759,7 +1112,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                 ) : (
                   <div
                     key={i}
-                    className="max-w-none space-y-2 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:text-base [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc"
+                    className={`max-w-none space-y-2 text-sm leading-relaxed ${MD_CLASS}`}
                   >
                     <Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown>
                     {streaming && i === blocks.length - 1 && <Caret className="mt-1" />}
