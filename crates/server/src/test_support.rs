@@ -47,8 +47,7 @@ pub fn test_state() -> AppState {
     AppState::from_config(Config::test_config())
 }
 
-/// State backed by a real Postgres testcontainer. The container lives as
-/// long as the returned `TestState`.
+/// State backed by an isolated database on the shared host Postgres.
 pub struct TestState {
     pub state: AppState,
     pub db: TestDb,
@@ -102,10 +101,114 @@ struct SharedInfra {
 
 static SHARED_INFRA: tokio::sync::OnceCell<SharedInfra> = tokio::sync::OnceCell::const_new();
 
+/// Test ClickHouse databases (`t_<uuid-v7>`) and rustfs buckets (`t<uuid-v7>`)
+/// embed their creation time in the uuid; drop ones older than this on first
+/// fixture use, so crashed test runs don't leak databases/buckets on the
+/// shared host services. Concurrent test processes keep theirs (they're young).
+const REAP_AFTER_SECS: u64 = 6 * 3600;
+
+/// Age in seconds of a `t`-prefixed name's embedded uuid-v7 timestamp.
+fn name_age_secs(name: &str) -> Option<u64> {
+    let hex = name.strip_prefix('t')?.trim_start_matches('_');
+    let id = Uuid::parse_str(hex).ok()?;
+    let (secs, _) = id.get_timestamp()?.to_unix();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(now.saturating_sub(secs))
+}
+
+async fn reap_stale_ch_databases(infra: &SharedInfra) {
+    let client = clickhouse::Client::default()
+        .with_url(&infra.ch_url)
+        .with_user(&infra.ch_user)
+        .with_password(&infra.ch_password);
+    let names: Vec<String> = client
+        .query("SELECT name FROM system.databases WHERE name LIKE 't\\_%'")
+        .fetch_all()
+        .await
+        .unwrap_or_default();
+    for name in names {
+        if name_age_secs(&name).is_some_and(|age| age > REAP_AFTER_SECS) {
+            let _ = client
+                .query(&format!("DROP DATABASE IF EXISTS {name}"))
+                .execute()
+                .await;
+        }
+    }
+}
+
+async fn reap_stale_s3_buckets(infra: &SharedInfra) {
+    let creds = aws_sdk_s3::config::Credentials::new(
+        &infra.s3_access_key_id,
+        &infra.s3_secret_access_key,
+        None,
+        None,
+        "test",
+    );
+    let conf = aws_sdk_s3::Config::builder()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .endpoint_url(&infra.s3_url)
+        .credentials_provider(creds)
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .build();
+    let s3 = aws_sdk_s3::Client::from_conf(conf);
+    let Ok(buckets) = s3.list_buckets().send().await else {
+        return;
+    };
+    for name in buckets
+        .buckets()
+        .iter()
+        .filter_map(|b| b.name().map(str::to_string))
+        .collect::<Vec<_>>()
+    {
+        if !name_age_secs(&name).is_some_and(|age| age > REAP_AFTER_SECS) {
+            continue;
+        }
+        // delete_bucket fails on non-empty buckets: empty first.
+        let Ok(pages) = s3
+            .list_objects_v2()
+            .bucket(&name)
+            .into_paginator()
+            .send()
+            .collect::<Result<Vec<_>, _>>()
+            .await
+        else {
+            continue;
+        };
+        let keys: Vec<String> = pages
+            .iter()
+            .flat_map(|p| p.contents().iter().filter_map(|o| o.key().map(str::to_string)))
+            .collect();
+        for batch in keys.chunks(1000) {
+            let Ok(objs) = batch
+                .iter()
+                .map(|k| aws_sdk_s3::types::ObjectIdentifier::builder().key(k).build())
+                .collect::<Result<Vec<_>, _>>()
+            else {
+                break;
+            };
+            let Ok(delete) =
+                aws_sdk_s3::types::Delete::builder().set_objects(Some(objs)).build()
+            else {
+                break;
+            };
+            let _ = s3
+                .delete_objects()
+                .bucket(&name)
+                .delete(delete)
+                .send()
+                .await;
+        }
+        let _ = s3.delete_bucket().bucket(&name).send().await;
+    }
+}
+
 async fn shared_infra() -> anyhow::Result<&'static SharedInfra> {
     SHARED_INFRA
         .get_or_try_init(|| async {
-            Ok(SharedInfra {
+            let infra = SharedInfra {
                 ch_url: std::env::var("GUILD_TEST_CLICKHOUSE_URL")
                     .unwrap_or_else(|_| "http://127.0.0.1:8123".into()),
                 ch_user: std::env::var("GUILD_TEST_CLICKHOUSE_USER")
@@ -118,7 +221,10 @@ async fn shared_infra() -> anyhow::Result<&'static SharedInfra> {
                     .unwrap_or_else(|_| "rustfsadmin".into()),
                 s3_secret_access_key: std::env::var("GUILD_TEST_S3_SECRET_ACCESS_KEY")
                     .unwrap_or_else(|_| "rustfsadmin".into()),
-            })
+            };
+            reap_stale_ch_databases(&infra).await;
+            reap_stale_s3_buckets(&infra).await;
+            Ok(infra)
         })
         .await
 }
