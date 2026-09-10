@@ -244,6 +244,66 @@ export async function getMessages(
   return v.messages ?? [];
 }
 
+// ---- Thread events (shapes mirror crates/protocol/bindings/ThreadEvent.ts;
+// the event log is the durable source of truth, message history and the
+// rendered thread are both derivations of it) ----
+
+export type UsagePayload = { tokens_in?: number; tokens_out?: number; cost_usd?: number };
+
+export type ThreadBlock =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
+  | { type: "tool_call"; id: string; name: string; arguments: string };
+
+export type ThreadEvent =
+  | { type: "user_message"; content: string }
+  | { type: "system_message"; content: string }
+  | {
+      type: "assistant_message";
+      turn: number;
+      step: number;
+      blocks: ThreadBlock[];
+      usage: UsagePayload;
+      model: string;
+      /** Aborted mid-stream: blocks carry the delivered prefix only. */
+      interrupted?: boolean | null;
+    }
+  | {
+      type: "tool_result";
+      turn: number;
+      step: number;
+      call_id: string;
+      name: string;
+      /** Model-facing text (what the model reads as the tool result). */
+      content: string;
+      is_error: boolean;
+      /** Tool-private widget payload; opaque to the loop. */
+      meta?: unknown | null;
+    }
+  | { type: "compaction"; summary: string };
+
+export interface ThreadEventRow {
+  id: string;
+  seq: number;
+  event: ThreadEvent;
+  created_at: string;
+}
+
+/** The durable thread: every persisted event for a chat, in write order. */
+export async function getThread(
+  chatId: string,
+  signal?: AbortSignal,
+): Promise<ThreadEventRow[]> {
+  const token = getToken();
+  const res = await fetch(`/api/v1/chats/${chatId}/thread`, {
+    headers: { authorization: `Bearer ${token}` },
+    signal,
+  });
+  if (!res.ok) return [];
+  const v = await res.json().catch(() => ({}));
+  return v.events ?? [];
+}
+
 export async function createChat(title: string): Promise<string | null> {
   const token = getToken();
   const res = await fetch("/api/v1/chats", {
