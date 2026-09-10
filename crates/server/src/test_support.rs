@@ -72,14 +72,6 @@ pub struct FullState {
     pub state: AppState,
     pub db: TestDb,
     #[allow(dead_code)]
-    ch_container: testcontainers_modules::testcontainers::ContainerAsync<
-        testcontainers_modules::clickhouse::ClickHouse,
-    >,
-    #[allow(dead_code)]
-    minio_container: testcontainers_modules::testcontainers::ContainerAsync<
-        testcontainers_modules::minio::MinIO,
-    >,
-    #[allow(dead_code)]
     provider: wiremock::MockServer,
     pub token: String,
     pub org_id: Uuid,
@@ -94,35 +86,75 @@ impl FullState {
     }
 }
 
-pub async fn full_state() -> FullState {
+/// Shared ClickHouse + MinIO testcontainers, one pair per test process.
+/// Each `full_state()` call gets an isolated ClickHouse database and S3
+/// bucket on the shared pair, so tests never see each other's data but pay
+/// container startup only once per process instead of once per test.
+struct SharedInfra {
+    ch_port: u16,
+    minio_port: u16,
+    _ch: testcontainers_modules::testcontainers::ContainerAsync<
+        testcontainers_modules::clickhouse::ClickHouse,
+    >,
+    _minio: testcontainers_modules::testcontainers::ContainerAsync<
+        testcontainers_modules::minio::MinIO,
+    >,
+}
+
+static SHARED_INFRA: tokio::sync::OnceCell<SharedInfra> = tokio::sync::OnceCell::const_new();
+
+async fn shared_infra() -> anyhow::Result<&'static SharedInfra> {
+    use anyhow::Context as _;
     use testcontainers_modules::testcontainers::runners::AsyncRunner;
+    SHARED_INFRA
+        .get_or_try_init(|| async {
+            let ch = testcontainers_modules::clickhouse::ClickHouse::default()
+                .start()
+                .await
+                .context("clickhouse testcontainer")?;
+            let ch_port = ch.get_host_port_ipv4(8123).await?;
+            let minio = testcontainers_modules::minio::MinIO::default()
+                .start()
+                .await
+                .context("minio testcontainer")?;
+            let minio_port = minio.get_host_port_ipv4(9000).await?;
+            Ok(SharedInfra {
+                ch_port,
+                minio_port,
+                _ch: ch,
+                _minio: minio,
+            })
+        })
+        .await
+}
 
+pub async fn full_state() -> FullState {
+    let infra = shared_infra().await.expect("shared ch/minio testcontainers");
     let db = Store::connect_test().await.expect("postgres testcontainer");
-    let ch = testcontainers_modules::clickhouse::ClickHouse::default()
-        .start()
-        .await
-        .expect("clickhouse testcontainer");
-    let ch_port = ch.get_host_port_ipv4(8123).await.unwrap();
 
-    // object storage (registry bundles) + bucket
-    let minio = testcontainers_modules::minio::MinIO::default()
-        .start()
+    // per-test isolated ClickHouse database
+    let ch_database = format!("t_{}", Uuid::now_v7().simple());
+    clickhouse::Client::default()
+        .with_url(&format!("http://127.0.0.1:{}", infra.ch_port))
+        .query(&format!("CREATE DATABASE {ch_database}"))
+        .execute()
         .await
-        .unwrap();
-    let minio_port = minio.get_host_port_ipv4(9000).await.unwrap();
-    let s3_endpoint = format!("http://127.0.0.1:{minio_port}");
+        .expect("create clickhouse test database");
+
+    // per-test isolated S3 bucket
+    let s3_bucket = format!("t{}", Uuid::now_v7().simple());
     {
         let creds =
             aws_sdk_s3::config::Credentials::new("minioadmin", "minioadmin", None, None, "test");
         let conf = aws_sdk_s3::Config::builder()
             .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-            .endpoint_url(&s3_endpoint)
+            .endpoint_url(format!("http://127.0.0.1:{}", infra.minio_port))
             .credentials_provider(creds)
             .region(aws_sdk_s3::config::Region::new("us-east-1"))
             .build();
         aws_sdk_s3::Client::from_conf(conf)
             .create_bucket()
-            .bucket("guild")
+            .bucket(&s3_bucket)
             .send()
             .await
             .expect("bucket create");
@@ -149,12 +181,12 @@ pub async fn full_state() -> FullState {
     let cfg = Config {
         bind_addr: "127.0.0.1:0".into(),
         database_url: db.url.clone(),
-        clickhouse_url: format!("http://127.0.0.1:{ch_port}"),
-        clickhouse_database: "default".into(),
+        clickhouse_url: format!("http://127.0.0.1:{}", infra.ch_port),
+        clickhouse_database: ch_database,
         master_key_hex: "00".repeat(32),
         jwt_secret: "test-secret".into(),
-        s3_url: s3_endpoint,
-        s3_bucket: "guild".into(),
+        s3_url: format!("http://127.0.0.1:{}", infra.minio_port),
+        s3_bucket: s3_bucket,
         s3_access_key_id: "minioadmin".into(),
         s3_secret_access_key: "minioadmin".into(),
         restate_url: "http://placeholder:8080".into(),
@@ -202,8 +234,6 @@ pub async fn full_state() -> FullState {
     FullState {
         state,
         db,
-        ch_container: ch,
-        minio_container: minio,
         provider,
         token,
         org_id,
