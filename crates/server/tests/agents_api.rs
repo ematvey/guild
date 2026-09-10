@@ -154,7 +154,7 @@ async fn workspace_session_turn_executes_tools_and_persists() {
         .unwrap();
     assert_eq!(written, "hi from workspace");
 
-    // history persisted: user + assistant(tool_calls) + tool + assistant final
+    // history persisted as thread events: user + assistant(tool_calls) + tool + assistant final
     let res = app
         .clone()
         .oneshot(
@@ -171,29 +171,35 @@ async fn workspace_session_turn_executes_tools_and_persists() {
         .await
         .unwrap();
     let v: Value = serde_json::from_slice(&body).unwrap();
-    let roles: Vec<&str> = v["messages"]
+    let types: Vec<String> = v["events"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|m| m["role"].as_str().unwrap())
+        .map(|e| e["event"]["type"].as_str().unwrap().to_string())
         .collect();
-    // two assistant turns with tool calls, two tool results, final text
+    // user turn + two assistant turns with tool calls, two tool results, final text
     assert_eq!(
-        roles,
+        types,
         vec![
-            "user",
-            "assistant",
-            "tool",
-            "assistant",
-            "tool",
-            "assistant"
+            "user_message",
+            "assistant_message",
+            "tool_result",
+            "assistant_message",
+            "tool_result",
+            "assistant_message"
         ]
     );
+    let events = v["events"].as_array().unwrap();
     assert_eq!(
-        v["messages"][4]["content"],
+        events[4]["event"]["content"],
         "tool failed: execution failed: denied by user: disabled by policy"
     );
-    assert_eq!(v["messages"][5]["content"], "workspace updated");
+    assert_eq!(events[4]["event"]["name"], "run_command");
+    assert_eq!(events[5]["event"]["blocks"][0]["text"], "workspace updated");
+    // step numbering: 0-based model call index within the turn
+    assert_eq!(events[1]["event"]["step"], 0);
+    assert_eq!(events[3]["event"]["step"], 1);
+    assert_eq!(events[5]["event"]["step"], 2);
 
     // usage recorded for the run
     let (count, _) = clickhouse_usage_rows(&fs.state).await;

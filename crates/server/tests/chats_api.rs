@@ -1,11 +1,12 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use guild_server::test_support::{insert_org_with_chat, test_state_with_db};
+use protocol::api::{Block, ThreadEvent, UsagePayload};
 use serde_json::json;
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn create_list_messages_and_org_isolation() {
+async fn create_list_thread_and_org_isolation() {
     let ts = test_state_with_db().await;
     let store = ts.store();
     let user = store
@@ -37,43 +38,40 @@ async fn create_list_messages_and_org_isolation() {
         .unwrap();
     let chat: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let chat_id = chat["id"].as_str().unwrap().to_string();
+    let chat_uuid: uuid::Uuid = chat_id.parse().unwrap();
 
-    // append messages via store (gateway normally does this)
+    // append events via the thread store (the ChatRunner normally does this)
     store
-        .chats()
-        .append_message(
-            chat["id"].as_str().unwrap().parse().unwrap(),
-            "user",
-            "hello",
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        .thread()
+        .append_event(chat_uuid, &ThreadEvent::UserMessage { content: "hello".into() })
         .await
         .unwrap();
     store
-        .chats()
-        .append_message(
-            chat["id"].as_str().unwrap().parse().unwrap(),
-            "assistant",
-            "hi!",
-            None,
-            None,
-            Some(1),
-            Some(1),
-            Some(0.01),
+        .thread()
+        .append_event(
+            chat_uuid,
+            &ThreadEvent::AssistantMessage {
+                turn: 1,
+                step: 0,
+                blocks: vec![Block::Text { text: "hi!".into() }],
+                usage: UsagePayload {
+                    tokens_in: Some(1),
+                    tokens_out: Some(1),
+                    cost_usd: Some(0.01),
+                },
+                model: "test-model".into(),
+                interrupted: None,
+            },
         )
         .await
         .unwrap();
 
-    // list messages via API: ordered, full content
+    // read the thread via API: ordered, full payloads
     let res = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/api/v1/chats/{chat_id}/messages"))
+                .uri(format!("/api/v1/chats/{chat_id}/thread"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -85,21 +83,51 @@ async fn create_list_messages_and_org_isolation() {
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let msgs = v["messages"].as_array().unwrap();
-    assert_eq!(msgs.len(), 2);
-    assert_eq!(msgs[0]["role"], "user");
-    assert_eq!(msgs[0]["content"], "hello");
-    assert_eq!(msgs[1]["role"], "assistant");
-    assert_eq!(msgs[1]["content"], "hi!");
-    assert_eq!(msgs[1]["cost_usd"], 0.01);
+    let events = v["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"]["type"], "user_message");
+    assert_eq!(events[0]["event"]["content"], "hello");
+    assert_eq!(events[1]["event"]["type"], "assistant_message");
+    assert_eq!(events[1]["event"]["blocks"][0]["text"], "hi!");
+    assert_eq!(events[1]["event"]["usage"]["cost_usd"], 0.01);
+    assert!(events[0]["id"].is_string());
+    assert!(events[0]["seq"].is_i64());
 
-    // foreign org's chat is invisible: 404
+    // the old /messages endpoints are gone (spec §E, §F): 404
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/chats/{chat_id}/messages"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/chats/{chat_id}/messages"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"role": "user", "content": "x"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // foreign org's chat is invisible on /thread: 404
     let foreign = insert_org_with_chat(&store).await;
     let res = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/api/v1/chats/{foreign}/messages"))
+                .uri(format!("/api/v1/chats/{foreign}/thread"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
