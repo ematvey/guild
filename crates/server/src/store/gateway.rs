@@ -5,8 +5,9 @@ use crate::crypto;
 use crate::http::error::ApiError;
 use uuid::Uuid;
 
-/// (provider, base_url, encrypted key, price in, price out, enabled, quota)
-type RouteQueryRow = (String, String, Option<String>, f64, f64, bool, Option<f64>);
+/// (provider, base_url, encrypted key, price in, price out, enabled, quota,
+/// reasoning flag)
+type RouteQueryRow = (String, String, Option<String>, f64, f64, bool, Option<f64>, bool);
 
 /// Resolved route for a model call. Plain data so it can be journaled
 /// through Restate run steps.
@@ -20,6 +21,9 @@ pub struct RouteRow {
     pub price_out: f64,
     /// Monthly spend cap in USD; None = unlimited (spec §4.2/§4.5).
     pub quota_monthly_usd: Option<f64>,
+    /// Route metadata: model produces chain-of-thought reasoning
+    /// (reasoning_content) — design §B.3.
+    pub reasoning: bool,
 }
 
 pub struct GatewayStore<'a> {
@@ -62,15 +66,17 @@ impl<'a> GatewayStore<'a> {
         price_in: f64,
         price_out: f64,
         quota_monthly_usd: Option<f64>,
+        reasoning: bool,
     ) -> anyhow::Result<()> {
         sqlx::query(
-            "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+            "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
              ON CONFLICT (org_id, model) \
              DO UPDATE SET provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, \
                price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, \
                price_per_mtok_out_usd = EXCLUDED.price_per_mtok_out_usd, \
-               quota_monthly_usd = EXCLUDED.quota_monthly_usd",
+               quota_monthly_usd = EXCLUDED.quota_monthly_usd, \
+               reasoning = EXCLUDED.reasoning",
         )
         .bind(org_id)
         .bind(model)
@@ -79,6 +85,7 @@ impl<'a> GatewayStore<'a> {
         .bind(price_in)
         .bind(price_out)
         .bind(quota_monthly_usd)
+        .bind(reasoning)
         .execute(self.pool)
         .await?;
         Ok(())
@@ -105,7 +112,7 @@ impl<'a> GatewayStore<'a> {
         let row: Option<RouteQueryRow> = sqlx::query_as(
             "SELECT r.provider, k.base_url, k.encrypted_key, \
                     r.price_per_mtok_in_usd, r.price_per_mtok_out_usd, r.enabled, \
-                    r.quota_monthly_usd \
+                    r.quota_monthly_usd, r.reasoning \
              FROM model_routes r \
              LEFT JOIN provider_keys k ON k.org_id = r.org_id AND k.provider = r.provider \
              WHERE r.org_id = $1 AND r.model = $2",
@@ -114,7 +121,9 @@ impl<'a> GatewayStore<'a> {
         .bind(model)
         .fetch_optional(self.pool)
         .await?;
-        let Some((provider, base_url, encrypted, price_in, price_out, enabled, quota)) = row else {
+        let Some((provider, base_url, encrypted, price_in, price_out, enabled, quota, reasoning)) =
+            row
+        else {
             return Err(ApiError::not_found(format!("no route for model {model}")));
         };
         if !enabled {
@@ -138,6 +147,7 @@ impl<'a> GatewayStore<'a> {
             price_in,
             price_out,
             quota_monthly_usd: quota,
+            reasoning,
         })
     }
 }
