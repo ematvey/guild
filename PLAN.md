@@ -7,8 +7,14 @@ codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
 ## Shipped and deployed (as of 2026-09-10)
 
 - **Server** live at `:18080` (compose stack, image rebuilt + restarted).
-  Desktop **0.3.6** published for linux/darwin-x86_64/darwin-aarch64/windows
-  (sha256-verified on upload; updater delivers it once — no loop).
+  Desktop **0.3.7** published for linux/darwin-x86_64/darwin-aarch64/windows
+  (sha256-verified on upload; updater delivers it once — no loop). 0.3.7 is
+  the daemon milestone: per-user daemon (survives client closure, shared by
+  all windows + CLI verbs, only session-token route to the server), GUI
+  attaches over a local socket, `engine` mode removed, `daemon.hello`/
+  `daemon.shutdown` handshake, workspace version bumped to 0.2.0 for the
+  handshake. Plans: `docs/plans/2026-09-10-milestone-8-daemon.md`;
+  watch-items: `docs/deploy-nuances.md` §Daemon watch-items.
 - **Server-owned system prompt** (also in `d370726`): the ChatRunner workflow
   builds the prompt server-side (`build_system_prompt` in
   `worker/restate.rs`) — role, client-tool guidance, web_search-only-for-
