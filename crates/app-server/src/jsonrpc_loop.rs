@@ -135,10 +135,28 @@ where
     W: std::io::Write + Send + 'static,
 {
     let shared = Shared::new(session);
-    let writer = run_connection(&shared, reader, writer).await?;
-    // Let in-flight agent runs finish so their events are written (as before).
+    let mut writer = run_connection(&shared, reader, writer).await?;
+    // The client has EOF'd; in-flight agent runs must still get their
+    // events written (as the pre-refactor serve() did). run_connection
+    // forwards the events its own subscriber buffered around EOF (its join
+    // blocks until the agent tasks finish). Subscribing here as well,
+    // BEFORE draining, covers any run still alive past run_connection, so
+    // its events are buffered instead of dropped; drain the JoinSet, then
+    // forward whatever was buffered to the writer.
+    let mut event_rx = shared.events.subscribe();
     // tokio Mutex: the guard is held across .await here.
     while shared.agents.lock().await.join_next().await.is_some() {}
+    loop {
+        match event_rx.try_recv() {
+            Ok(v) => {
+                let _ = writeln!(writer, "{v}");
+                let _ = writer.flush();
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+        }
+    }
     let session = match Arc::try_unwrap(shared.session) {
         Ok(m) => m.into_inner().expect("session lock"),
         Err(_) => anyhow::bail!("session references still alive"),
@@ -213,7 +231,24 @@ where
         }
     }
     drop(out_tx);
-    let writer = writer_thread.join().expect("writer thread");
+    let mut writer = writer_thread.join().expect("writer thread");
+    // Post-EOF event delivery: the join above blocks until in-flight agent
+    // tasks finish (they hold out_tx clones), and those tasks broadcast
+    // events after EOF with this connection's subscriber no longer polled —
+    // the events sit unread in event_rx's buffer. Forward them before
+    // returning the writer, so delivery matches the pre-refactor serve()
+    // (which wrote them through the still-open out_tx).
+    loop {
+        match event_rx.try_recv() {
+            Ok(v) => {
+                let _ = writeln!(writer, "{v}");
+                let _ = writer.flush();
+            }
+            Err(broadcast::error::TryRecvError::Empty) => break,
+            Err(broadcast::error::TryRecvError::Closed) => break,
+            Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+        }
+    }
     Ok(writer)
 }
 
