@@ -85,6 +85,61 @@ interface Block {
   tool?: ToolBlock;
 }
 
+/// Tools the desktop executor runs locally (mirrors server `client_tool_names`).
+const CLIENT_TOOL_NAMES = ["read", "bash", "edit", "write"];
+
+/// Rebuilds the thread view from persisted messages. Tool calls are resident
+/// parts of the thread: assistant rows carry the calls, `tool` rows carry
+/// their results — both must survive a reload/refresh, same as user and
+/// assistant text.
+function msgsToBlocks(msgs: ChatMessage[]): Block[] {
+  const blocks: Block[] = [];
+  const byCallId = new Map<string, ToolBlock>();
+  for (const m of msgs) {
+    if (m.role === "user") {
+      blocks.push({ kind: "user", text: m.content });
+      continue;
+    }
+    if (m.role === "assistant") {
+      if (m.content) blocks.push({ kind: "text", text: m.content });
+      for (const c of m.tool_calls ?? []) {
+        const tb: ToolBlock = {
+          callId: c.id,
+          name: c.name,
+          args: typeof c.arguments === "string" ? c.arguments : JSON.stringify(c.arguments),
+          executor: CLIENT_TOOL_NAMES.includes(c.name) ? "client" : "server",
+          status: "done",
+        };
+        byCallId.set(c.id, tb);
+        blocks.push({ kind: "tool", text: "", tool: tb });
+      }
+      continue;
+    }
+    if (m.role === "tool") {
+      const tb = m.tool_call_id ? byCallId.get(m.tool_call_id) : undefined;
+      if (tb) {
+        tb.content = m.content;
+      } else {
+        // Orphan result (call row missing): render it anyway rather than drop it.
+        blocks.push({
+          kind: "tool",
+          text: "",
+          tool: {
+            callId: m.tool_call_id ?? "",
+            name: "tool",
+            args: "",
+            executor: "server",
+            status: "done",
+            content: m.content,
+          },
+        });
+      }
+      continue;
+    }
+  }
+  return blocks;
+}
+
 /// Client-side tools need the desktop runtime (local files, shell); in a plain
 /// browser they stay pending until the server-side timeout releases the turn.
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -235,11 +290,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     try {
       const msgs: ChatMessage[] = await getMessages(id, loadAc.signal);
       if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
-      setBlocks(
-        msgs
-          .filter((m) => m.role === "user" || m.role === "assistant")
-          .map((m) => ({ kind: m.role === "user" ? "user" : "text", text: m.content }) as Block),
-      );
+      setBlocks(msgsToBlocks(msgs));
       setChatId(id);
       // A generation may still be running server-side (e.g. it outlived a
       // previous client, or the stream dropped earlier). Attach with
@@ -365,11 +416,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           // reconcile with durable state before (re)attaching
           const msgs: ChatMessage[] = await getMessages(cid, ac.signal);
           if (seq !== loadSeq.current || ac.signal.aborted) break;
-          setBlocks(
-            msgs
-              .filter((m) => m.role === "user" || m.role === "assistant")
-              .map((m) => ({ kind: m.role === "user" ? "user" : "text", text: m.content }) as Block),
-          );
+          setBlocks(msgsToBlocks(msgs));
           term.v = "none";
           // The first delta after attach is the server's catch-up snapshot of
           // the in-flight turn (full buffer, not a delta) — or, when there is
@@ -414,11 +461,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             try {
               const final: ChatMessage[] = await getMessages(cid, ac.signal);
               if (seq === loadSeq.current) {
-                setBlocks(
-                  final
-                    .filter((m) => m.role === "user" || m.role === "assistant")
-                    .map((m) => ({ kind: m.role === "user" ? "user" : "text", text: m.content }) as Block),
-                );
+                setBlocks(msgsToBlocks(final));
               }
             } catch {
               /* keep what we have */
