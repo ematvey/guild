@@ -946,6 +946,7 @@ impl ChatRunner {
         let final_sent = match turn_out {
             Ok(sent) => sent,
             Err(e) => {
+                tracing::error!(chat = %req.chat_id, "turn failed: {e:#}");
                 let _ = tx.send(StreamEvent::Error {
                     code: "turn_failed".into(),
                     message: "the turn failed; see server logs".into(),
