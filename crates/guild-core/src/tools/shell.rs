@@ -79,6 +79,10 @@ impl Tool for RunCommand {
             output_for_model: truncate(output),
             ui_summary: Some(format!("$ {command}")),
             diff: None,
+            meta: Some(serde_json::json!({
+                "card": "terminal",
+                "exit_code": out.status.code().unwrap_or(-1),
+            })),
         })
     }
 }
