@@ -1102,7 +1102,10 @@ async fn server_tool_step(
                     .execute(&tool.config, &call.name, call.arguments.clone())
                     .await;
                 Ok(Json(match out {
-                    Ok(content) => (content, false),
+                    // Minimal adaptation to the new ToolOutcome contract: the
+                    // loop persists content only for now; forwarding `meta`
+                    // into the tool/result event is the next task's job.
+                    Ok(outcome) => (outcome.content, false),
                     Err(e) => (format!("web tool failed: {e}"), true),
                 }))
             }
