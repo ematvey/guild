@@ -13,7 +13,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 /// Model turns through the org gateway (the only model path for clients).
@@ -106,7 +106,7 @@ pub type PendingApprovals = Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalDe
 /// Hooks that push protocol events, pause for approvals, and sync tool
 /// results to the durable server record immediately (correct ordering).
 pub struct SessionHooks {
-    pub events: mpsc::UnboundedSender<Value>,
+    pub events: tokio::sync::broadcast::Sender<Value>,
     pub pending: PendingApprovals,
     pub cloud: Option<CloudClient>,
     pub chat_id: Option<Uuid>,
@@ -192,7 +192,7 @@ pub struct AgentRun {
     pub system: Option<String>,
     pub history: Vec<Message>,
     pub policy: ApprovalPolicy,
-    pub events: mpsc::UnboundedSender<Value>,
+    pub events: tokio::sync::broadcast::Sender<Value>,
     pub pending: PendingApprovals,
 }
 

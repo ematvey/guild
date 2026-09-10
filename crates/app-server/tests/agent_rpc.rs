@@ -296,3 +296,243 @@ async fn policy_never_skips_approval_entirely() {
         .contains("disabled by policy"));
     std::fs::remove_dir_all(&project).ok();
 }
+
+// ===== Task 1: two connections over one Shared (daemon groundwork) =====
+
+/// Fake org-gateway: covers exactly the CloudClient endpoints the agent path
+/// touches (login, create chat, scripted completion stream, tool-message
+/// sink), so agent runs are hermetic without a Restate runtime. Frames are
+/// gateway StreamEvents (not raw provider chunks) — the same wire
+/// CloudClient::stream_completion parses.
+async fn fake_cloud() -> wiremock::MockServer {
+    let server = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/v1/auth/login"))
+        .respond_with(move |_req: &wiremock::Request| {
+            wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "token": "fake-token",
+                "user": {"id": uuid::Uuid::now_v7(), "email": "a@b.c",
+                         "org_id": uuid::Uuid::now_v7(), "role": "admin"},
+            }))
+        })
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/v1/chats"))
+        .respond_with(move |_req: &wiremock::Request| {
+            wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "id": uuid::Uuid::now_v7(), "org_id": uuid::Uuid::now_v7(),
+                "user_id": uuid::Uuid::now_v7(), "created_at": "2026-01-01T00:00:00Z",
+            }))
+        })
+        .mount(&server)
+        .await;
+    // Completion stream: call 1 requests a tool, call 2 concludes in text.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_moved = calls.clone();
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/v1/gateway/chat"))
+        .respond_with(move |_req: &wiremock::Request| {
+            let n = calls_moved.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                sse(concat!(
+                    "data: {\"type\":\"tool_call_done\",\"call\":{\"id\":\"cmd1\",\"name\":\"run_command\",\"arguments\":{\"command\":\"echo hello-from-tool\"}}}\n\n",
+                ))
+            } else {
+                sse(concat!(
+                    "data: {\"type\":\"delta\",\"content\":\"all done\"}\n\n",
+                    "data: {\"type\":\"done\",\"message_id\":\"00000000-0000-0000-0000-000000000000\",\"cost_usd\":0.1,\"tokens_in\":5,\"tokens_out\":2}\n\n",
+                ))
+            }
+        })
+        .mount(&server)
+        .await;
+    // Tool-result sink (fire and forget for the fake).
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path_regex(r"^/api/v1/chats/.+/messages$"))
+        .respond_with(move |_req: &wiremock::Request| wiremock::ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    server
+}
+
+/// First Value matching a predicate, from the buffered lines then the live
+/// channel, with a deadline.
+fn wait_matching<F>(
+    rx: &std::sync::mpsc::Receiver<Value>,
+    seen: &mut Vec<Value>,
+    mut pred: F,
+    what: &str,
+) -> Value
+where
+    F: FnMut(&Value) -> bool,
+{
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if let Some(v) = seen.iter().find(|v| pred(v)) {
+            return v.clone();
+        }
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            panic!("timed out waiting for {what}; seen: {seen:?}");
+        }
+        match rx.recv_timeout(deadline - now) {
+            Ok(v) => seen.push(v),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("timed out waiting for {what}; seen: {seen:?}")
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("reader closed while waiting for {what}")
+            }
+        }
+    }
+}
+
+fn wait_response(
+    rx: &std::sync::mpsc::Receiver<Value>,
+    seen: &mut Vec<Value>,
+    id: u64,
+) -> Value {
+    wait_matching(rx, seen, |v| v.get("id") == Some(&json!(id)), &format!("response {id}"))
+}
+
+fn wait_event(
+    rx: &std::sync::mpsc::Receiver<Value>,
+    seen: &mut Vec<Value>,
+    event: &str,
+) -> Value {
+    wait_matching(rx, seen, |v| v.get("event").and_then(|e| e.as_str()) == Some(event), event)
+}
+
+/// Two connections over one Shared see each other's mutations and both
+/// receive broadcast events. This is the property the daemon needs.
+#[test]
+fn two_connections_share_state_and_events() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let shared = jsonrpc_loop::Shared::new(Session::default());
+
+        // One duplex pipe pair per connection: run_connection owns `s_*`
+        // (read half cloned for its reader thread), the test client holds
+        // the other end `c_*` (read half cloned for its reader thread).
+        let (sa, ca) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (sb, cb) = std::os::unix::net::UnixStream::pair().unwrap();
+
+        let sa_read = sa.try_clone().unwrap();
+        let c1 = tokio::task::spawn_blocking({
+            let shared = shared.clone();
+            move || {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(jsonrpc_loop::run_connection(&shared, sa_read, sa))
+            }
+        });
+        let sb_read = sb.try_clone().unwrap();
+        let c2 = tokio::task::spawn_blocking({
+            let shared = shared.clone();
+            move || {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(jsonrpc_loop::run_connection(&shared, sb_read, sb))
+            }
+        });
+
+        // Reader threads feed parsed lines into channels for the assertions.
+        let (a_tx, a_rx) = std::sync::mpsc::channel::<Value>();
+        let ca_read = ca.try_clone().unwrap();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(ca_read).lines() {
+                let Ok(line) = line else { break };
+                if let Ok(v) = serde_json::from_str::<Value>(&line) {
+                    if a_tx.send(v).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        let (b_tx, b_rx) = std::sync::mpsc::channel::<Value>();
+        let cb_read = cb.try_clone().unwrap();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(cb_read).lines() {
+                let Ok(line) = line else { break };
+                if let Ok(v) = serde_json::from_str::<Value>(&line) {
+                    if b_tx.send(v).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let send = |w: &std::os::unix::net::UnixStream, v: &Value| {
+            use std::io::Write as _;
+            let mut w = w;
+            w.write_all(format!("{v}\n").as_bytes()).unwrap();
+            w.flush().unwrap();
+        };
+
+        isolate_config("shared-two-conn");
+        let cloud = fake_cloud().await;
+
+        let mut seen_a = Vec::new();
+        let mut seen_b = Vec::new();
+
+        // login on A so agent.start finds a cloud client
+        send(&ca, &json!({"jsonrpc": "2.0", "id": 1, "protocol": 1, "method": "login",
+             "params": {"base_url": cloud.uri(), "email": "a@b.c", "password": "hunter226"}}));
+        let resp = wait_response(&a_rx, &mut seen_a, 1);        assert!(resp.get("error").is_none(), "{resp}");
+
+        // 1. A sets a policy override
+        send(&ca, &json!({"jsonrpc": "2.0", "id": 2, "protocol": 1, "method": "agent.policy.set",
+             "params": {"tool": "run_command", "policy": "allow"}}));
+        let resp = wait_response(&a_rx, &mut seen_a, 2);
+        assert!(resp.get("error").is_none(), "{resp}");
+
+        // 2. B reads it back — same Shared, same Session
+        send(&cb, &json!({"jsonrpc": "2.0", "id": 3, "protocol": 1,
+             "method": "agent.policy.get", "params": {}}));
+        let resp = wait_response(&b_rx, &mut seen_b, 3);
+        assert_eq!(resp["result"]["overrides"]["run_command"], "allow", "{resp}");
+
+        // 3. A starts an agent run; BOTH readers see the same event lines
+        //    (broadcast fan-out, not per-connection plumbing).
+        let project = std::env::temp_dir().join(format!("guild-shared-proj-{}", std::process::id()));
+        std::fs::create_dir_all(&project).unwrap();
+        send(&ca, &json!({"jsonrpc": "2.0", "id": 4, "protocol": 1, "method": "agent.start",
+             "params": {"project_dir": project.to_str().unwrap(), "prompt": "run the command", "model": "gpt-test"}}));
+        let resp = wait_response(&a_rx, &mut seen_a, 4);
+        assert_eq!(resp["result"]["started"], true, "{resp}");
+
+        for (rx, seen) in [(&a_rx, &mut seen_a), (&b_rx, &mut seen_b)] {
+            let tc = wait_event(rx, seen, "agent.tool_call");
+            assert_eq!(tc["payload"]["name"], "run_command", "{tc}");
+            let text = wait_event(rx, seen, "agent.text");
+            assert_eq!(text["payload"]["content"], "all done", "{text}");
+            wait_event(rx, seen, "agent.done");
+        }
+
+        // 4. A disconnects (EOF); B keeps working over the same Shared.
+        // NB: shutdown(Both), not just drop — the client reader thread still
+        // holds a clone of this end, and a socketpair only signals EOF when
+        // the whole end is shut down.
+        ca.shutdown(std::net::Shutdown::Both).unwrap();
+        drop(ca);
+        c1.await.unwrap().expect("A's connection ends cleanly on EOF");
+        send(&cb, &json!({"jsonrpc": "2.0", "id": 5, "protocol": 1,
+             "method": "session.info", "params": {}}));
+        let resp = wait_response(&b_rx, &mut seen_b, 5);
+        assert!(resp.get("error").is_none(), "{resp}");
+        assert_eq!(resp["result"]["email"], "a@b.c");
+
+        cb.shutdown(std::net::Shutdown::Both).unwrap();
+        drop(cb);
+        c2.await.unwrap().expect("B's connection ends cleanly");
+        std::fs::remove_dir_all(&project).ok();
+    });
+}
