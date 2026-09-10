@@ -306,6 +306,14 @@ fn api_terminal(e: ApiError) -> HandlerError {
     }
 }
 
+/// Terminal failure BEFORE the turn loop: the uniform failure path below the
+/// turn never runs, so the chat's generation lock must be released here or
+/// the chat stays "generation_in_progress" until a restart.
+fn api_terminal_free_chat(state: &AppState, chat_id: Uuid, e: ApiError) -> HandlerError {
+    state.generations.lock().unwrap().remove(&chat_id);
+    api_terminal(e)
+}
+
 /// Virtual object: key = chat id (string form). One generation at a time per
 /// chat — Restate serializes handler invocations per object key.
 pub struct ChatRunner {
@@ -549,6 +557,7 @@ impl ChatRunner {
         let st = state.clone();
         let org = req.org_id;
         let model = req.model.clone();
+        let chat_id = req.chat_id;
         let route = ctx
             .run(move || {
                 let state = st.clone();
@@ -560,10 +569,10 @@ impl ChatRunner {
                         .gateway()
                         .resolve_route(org, &model, &master)
                         .await
-                        .map_err(api_terminal)?;
+                        .map_err(|e| api_terminal_free_chat(&state, chat_id, e))?;
                     enforce_quota(&state, org, &model, &route)
                         .await
-                        .map_err(api_terminal)?;
+                        .map_err(|e| api_terminal_free_chat(&state, chat_id, e))?;
                     Ok(Json(route))
                 }
             })
