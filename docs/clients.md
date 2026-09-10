@@ -11,18 +11,31 @@ The client is a **single executable** (`guild-desktop` crate → shipped as
 
 | Invocation | Behaviour |
 |---|---|
-| `Guild` (no args) | GUI (Tauri window) |
-| `Guild engine` | local engine: JSON-RPC 2.0 over stdio — the GUI spawns **itself** with this argument |
-| `Guild login --url U --email E --password P` | headless login, persists session to `~/.config/guild/token.json` |
-| `Guild chat --model M "text"` | headless chat round-trip through the org gateway |
-| `Guild publish --kind K --dir D --version V` | publish a registry bundle |
-| `Guild install --slug S [--project P]` | install a skill into a project |
-| `Guild verify --file F --sig SIG --key KEY` | offline ed25519 verification of a downloaded release artifact |
+| `Guild` (no args) | GUI (Tauri window); attaches to the per-user daemon (spawns it detached if missing) |
+| `Guild daemon` | the per-user daemon: shared engine, survives client exit, the only session-token route to the server |
+| `Guild login --url U --email E --password P` | CLI verb via the daemon; the daemon validates and persists the session to `~/.config/guild/token.json` |
+| `Guild chat --model M "text"` | CLI verb via the daemon (streams the reply through it) |
+| `Guild publish --kind K --dir D --version V` | CLI verb via the daemon |
+| `Guild install --slug S [--project P]` | CLI verb via the daemon (`--project` defaults to `.`) |
+| `Guild verify --file F --sig SIG --key KEY` | offline ed25519 verification of a downloaded release artifact (no daemon, no network) |
 
-The engine loop is the same code as `guild-app-server::jsonrpc_loop::serve`
-(the desktop crate links the app-server library). The GUI has no agent logic;
-it spawns `current_exe() engine` and bridges JSON-RPC. The engine binary path
-can be overridden for development with `GUILD_APP_SERVER_BIN`.
+The engine loop is the library code in `guild-app-server::jsonrpc_loop`
+(the desktop crate links the app-server library). The GUI has no agent
+logic; it attaches to the daemon over a per-user local socket (Unix socket
+on Linux/macOS, named pipe on Windows) and bridges the same line-delimited
+JSON-RPC. The daemon binary path can be overridden for development with
+`GUILD_DAEMON_BIN`, and the socket/pipe path with `GUILD_DAEMON_SOCKET`.
+
+Daemon lifecycle: spawned detached on first client attach (own process
+group, survives GUI closure), owns the session and all agent runs, shared
+by every client window and CLI verb, exits only on `daemon.shutdown` —
+which a version-mismatched client invokes on attach (handshake on
+`daemon.hello` carries the daemon's build version).
+
+Documented exception to the one-cloud-route rule: the Tauri updater plugin
+in the GUI fetches `/api/v1/updates/latest.json` + release artifacts
+directly — that endpoint is public and unauthenticated, and the plugin
+requires in-GUI binary handling. No session token travels from the GUI.
 
 ## 2. Web mode + admin console (product flow)
 
