@@ -7,14 +7,14 @@ use crate::http::error::ApiError;
 use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::{Json, Router};
-use protocol::api::{Chat, CreateChatRequest};
+use protocol::api::{Chat, CreateChatRequest, ThreadEvent};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/chats", axum::routing::post(create).get(list))
-        .route("/api/v1/chats/{id}/thread", axum::routing::get(thread))
+        .route("/api/v1/chats/{id}/thread", axum::routing::get(thread).post(append_thread_event))
         .route(
             "/api/v1/chats/{id}/machine",
             axum::routing::post(set_machine),
@@ -141,4 +141,35 @@ async fn thread(
     store.chats().get_chat(user.0.org_id, chat_id).await?;
     let events = store.thread().list_events(user.0.org_id, chat_id).await?;
     Ok(Json(serde_json::json!({ "events": events })))
+}
+
+/// Appends one thread event from a client. Used by the desktop engine path
+/// (workspace agent sessions run their tool loop locally, so the server never
+/// sees their tool executions through the ChatRunner) — engine tool results
+/// land here so the event log stays the single record. `turn: 0` means "join
+/// the latest turn"; the server assigns the real turn number.
+async fn append_thread_event(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+    Json(event): Json<ThreadEvent>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    let event = match event {
+        ThreadEvent::ToolResult { turn: 0, step, .. } => {
+            let turn = store.thread().latest_turn(chat_id).await?.max(1);
+            let mut ev = event;
+            if let ThreadEvent::ToolResult { turn: t, .. } = &mut ev {
+                *t = turn;
+            }
+            let _ = step;
+            ev
+        }
+        other => other,
+    };
+    let row = store.thread().append_event(chat_id, &event).await?;
+    Ok(Json(serde_json::json!({
+        "id": row.id, "seq": row.seq, "event": row.event, "created_at": row.created_at
+    })))
 }

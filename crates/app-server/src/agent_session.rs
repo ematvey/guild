@@ -159,12 +159,12 @@ impl AgentHooks for SessionHooks {
         self.send("agent.tool_result", payload);
         // durable record, right away: keeps server ordering correct
         if let (Some(cloud), Some(chat_id)) = (&self.cloud, self.chat_id) {
-            let content = match outcome {
-                Ok(o) => o.output_for_model.clone(),
-                Err(e) => e.to_string(),
+            let (content, is_error) = match outcome {
+                Ok(o) => (o.output_for_model.clone(), false),
+                Err(e) => (e.to_string(), true),
             };
             let _ = cloud
-                .append_tool_message(chat_id, &Message::tool_result(call.id.clone(), content))
+                .append_tool_message(chat_id, call, &content, is_error)
                 .await;
         }
     }

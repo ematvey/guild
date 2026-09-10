@@ -5,7 +5,7 @@ use eventsource_stream::Eventsource;
 use futures::Stream;
 use protocol::api::{
     Chat, ChatCompletionRequest, CreateChatRequest, LoginRequest, LoginResponse, Message,
-    PairRequest, PairResponse, StreamEvent, UserInfo,
+    PairRequest, PairResponse, StreamEvent, ThreadEvent, ToolCall, UserInfo,
 };
 use std::time::Duration;
 
@@ -229,21 +229,34 @@ impl CloudClient {
         Ok(stream)
     }
 
-    /// Persists a client-produced tool message to the server record.
-    pub async fn append_tool_message(&self, chat_id: Uuid, m: &Message) -> Result<(), CloudError> {
+    /// Persists a client-produced tool result to the server's thread event
+    /// log (engine sessions execute tools locally; `turn: 0` makes the server
+    /// join the result to the latest turn).
+    pub async fn append_tool_message(
+        &self,
+        chat_id: Uuid,
+        call: &ToolCall,
+        content: &str,
+        is_error: bool,
+    ) -> Result<(), CloudError> {
+        let event = ThreadEvent::ToolResult {
+            turn: 0,
+            step: 0,
+            call_id: call.id.clone(),
+            name: call.name.clone(),
+            content: content.to_string(),
+            is_error,
+            meta: None,
+        };
         let url = format!(
-            "{}/api/v1/chats/{chat_id}/messages",
+            "{}/api/v1/chats/{chat_id}/thread",
             self.base_url.trim_end_matches('/')
         );
         let resp = self
             .http()
             .post(&url)
             .bearer_auth(&self.token)
-            .json(&serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-                "tool_call_id": m.tool_call_id,
-            }))
+            .json(&event)
             .send()
             .await?;
         Self::check(resp).await?;
