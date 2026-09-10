@@ -32,6 +32,17 @@ fn main() -> anyhow::Result<()> {
         }
         // Engine mode: the GUI spawns itself with this argument; the JSON-RPC
         // stdio loop is the same one guild-app-server exposes.
+        Some("daemon") => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()?;
+            rt.block_on(guild_app_server::daemon::run_daemon())?;
+            // Shutdown is unconditional: exit now instead of waiting for open
+            // client connections (a client holding its socket would deadlock
+            // the runtime teardown).
+            std::process::exit(0);
+        }
         Some("engine") => {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)

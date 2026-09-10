@@ -3,11 +3,11 @@
 //! hello handshake, client-issued shutdown.
 
 #![cfg(unix)]
-use guild_app_server::daemon::{run_daemon_on, try_connect_at};
+use guild_app_server::daemon::{run_daemon_on, try_connect_at, Pair};
 use guild_app_server::jsonrpc_loop::Session;
 use protocol::rpc::Request;
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -16,8 +16,69 @@ fn temp_socket() -> PathBuf {
     std::env::temp_dir().join(format!("guild-daemon-test-{}.sock", std::process::id()))
 }
 
+/// Distinct from temp_socket(): the attach test runs in parallel with the
+/// daemon loop test in the same process, and paths must not collide (a
+/// single-instance daemon on the shared path would kill the sibling's child).
+fn temp_socket_attach() -> PathBuf {
+    std::env::temp_dir().join(format!("guild-daemon-attach-test-{}.sock", std::process::id()))
+}
+
 fn req(id: u64, method: &str, params: Value) -> String {
     serde_json::to_string(&Request::new(id, method, params)).unwrap()
+}
+
+/// attach() must spawn the daemon binary when none is running, handshake
+/// with it, and leave it alive (survives client exit).
+#[test]
+fn attach_spawns_and_survives_client_exit() {
+    let path = temp_socket_attach();
+    let _ = std::fs::remove_file(&path);
+    std::env::set_var("GUILD_DAEMON_SOCKET", &path);
+
+    let pair = guild_app_server::daemon::attach(std::path::Path::new(env!("CARGO_BIN_EXE_guild-app-server")))
+        .expect("attach spawns and handshakes");
+    let Pair(mut rd, mut wr) = pair;
+
+    // use the connection, then drop it — the daemon must keep running
+    writeln!(wr, "{}", req(1, "daemon.hello", json!({}))).unwrap();
+    wr.flush().unwrap();
+    let mut line = Vec::new();
+    for b in rd.by_ref().bytes() {
+        let b = b.unwrap();
+        if b == b'\n' {
+            break;
+        }
+        line.push(b);
+    }
+    let hello: Value = serde_json::from_slice(&line).unwrap();
+    assert!(hello["result"]["version"].is_string());
+    drop(rd);
+    drop(wr);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(try_connect_at(&path).is_ok(), "daemon outlives its client");
+
+    // clean up the spawned daemon via shutdown
+    let pair = try_connect_at(&path).unwrap();
+    let Pair(mut rd, mut wr) = pair;
+    writeln!(wr, "{}", req(1, "daemon.shutdown", json!({}))).unwrap();
+    wr.flush().unwrap();
+    let mut line = Vec::new();
+    for b in rd.by_ref().bytes() {
+        let b = b.unwrap();
+        if b == b'\n' {
+            break;
+        }
+        line.push(b);
+    }
+    let _ = rd.read_to_end(&mut Vec::new());
+    for _ in 0..50 {
+        if !path.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!path.exists(), "daemon removes its socket on shutdown");
+    std::env::remove_var("GUILD_DAEMON_SOCKET");
 }
 
 struct Client {
@@ -104,3 +165,4 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
         .expect("daemon result");
     let _ = std::fs::remove_file(&path);
 }
+

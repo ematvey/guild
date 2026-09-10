@@ -40,7 +40,10 @@ fn main() -> anyhow::Result<()> {
                 .enable_all()
                 .build()?;
             rt.block_on(guild_app_server::daemon::run_daemon())?;
-            Ok(())
+            // Shutdown is unconditional: exit now instead of waiting for open
+            // client connections (a client holding its socket would deadlock
+            // the runtime teardown).
+            std::process::exit(0);
         }
         Some("login") => cmd_login(&args[1..]),
         Some("chat") => cmd_chat(&args[1..]),

@@ -1,11 +1,11 @@
-//! Tauri side of the desktop shell: spawns the local engine
-//! (guild-app-server) and bridges JSON-RPC over the child's stdio
-//! (spec §3.1, §3.2, §6).
+//! Tauri side of the desktop shell: attaches to the local daemon
+//! (guild-app-server's per-user daemon) and bridges JSON-RPC line protocol
+//! over the daemon socket (spec §3.1, §3.2, §3.3, §6).
 
+use guild_app_server::daemon::Pair;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -26,9 +26,7 @@ pub struct EngineState {
 }
 
 pub struct Engine {
-    #[allow(dead_code)]
-    child: Mutex<Child>,
-    stdin: Arc<Mutex<ChildStdin>>,
+    stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     responses: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>>,
 }
 
@@ -54,27 +52,28 @@ pub fn parse_line(line: &str) -> Option<EngineLine> {
     }
 }
 
-pub fn spawn_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
-    // Single-binary design: the GUI re-executes ITSELF in engine mode
-    // (JSON-RPC over stdio). GUILD_APP_SERVER_BIN overrides for dev.
-    let bin = std::env::var("GUILD_APP_SERVER_BIN").unwrap_or_else(|_| {
+/// Attaches to (or spawns) the per-user daemon and builds the Engine from
+/// the socket pair. The daemon survives this app's exit; if it dies, the
+/// reader thread clears the handle and the next start_engine re-attaches.
+pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
+    // The daemon should be a copy of this binary (single-binary design);
+    // GUILD_DAEMON_BIN overrides for dev.
+    let bin = std::env::var("GUILD_DAEMON_BIN").unwrap_or_else(|_| {
         std::env::current_exe()
             .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "guild-desktop".to_string())
+            .unwrap_or_else(|_| "guild".to_string())
     });
-    let mut child = Command::new(&bin)
-        .arg("engine")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|e| format!("failed to spawn {bin}: {e}"))?;
-    let stdin = child.stdin.take().expect("stdin piped");
-    let stdout = child.stdout.take().expect("stdout piped");
+    // daemon::attach is fully blocking — keep it off the async reactor.
+    let pair = tokio::task::spawn_blocking(move || {
+        guild_app_server::daemon::attach(std::path::Path::new(&bin))
+    })
+    .await
+    .map_err(|e| format!("daemon attach join: {e}"))?
+    .map_err(|e| format!("daemon attach failed: {e}"))?;
+    let Pair(read, write) = pair;
 
     let engine = Arc::new(Engine {
-        child: Mutex::new(child),
-        stdin: Arc::new(Mutex::new(stdin)),
+        stdin: Arc::new(Mutex::new(write)),
         responses: Arc::new(Mutex::new(HashMap::new())),
     });
 
@@ -82,9 +81,13 @@ pub fn spawn_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
     let responses = engine.responses.clone();
     let app_handle = app.clone();
     std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
+        let mut reader = BufReader::new(read);
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
             match parse_line(&line) {
                 Some(EngineLine::Response { id, value }) => {
                     if let Some(sender) = responses.lock().unwrap().remove(&id) {
@@ -98,13 +101,23 @@ pub fn spawn_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
                     let _ = app_handle.emit(
                         "rpc-event",
                         serde_json::json!({
-                            "event": "rpc.error",
-                            "payload": {"message": format!("unparseable engine line: {line}")}
+                            "protocol": PROTOCOL_VERSION, "event": "rpc.error",
+                            "payload": {"message": format!("unparseable daemon line: {line}")}
                         }),
                     );
                 }
             }
         }
+        // daemon gone: drop our handle; requests fail until it returns.
+        let state: State<EngineState> = app_handle.state();
+        *state.engine.lock().unwrap() = None;
+        let _ = app_handle.emit(
+            "rpc-event",
+            serde_json::json!({
+                "protocol": PROTOCOL_VERSION, "event": "rpc.error",
+                "payload": {"message": "daemon connection lost"}
+            }),
+        );
     });
 
     Ok(engine)
@@ -130,9 +143,16 @@ pub mod commands {
             .unwrap()
             .clone()
             .expect("app handle set at setup");
+        // Drop the guard before awaiting: tauri command futures must be Send.
+        if state.engine.lock().unwrap().is_some() {
+            return Ok(());
+        }
+        let engine = attach_engine(&handle).await?;
         let mut guard = state.engine.lock().unwrap();
         if guard.is_none() {
-            *guard = Some(spawn_engine(&handle)?);
+            // another concurrent attach may have won; its handle is equally
+            // good (both are daemon connections)
+            *guard = Some(engine);
         }
         Ok(())
     }
@@ -189,11 +209,16 @@ pub mod commands {
         engine.responses.lock().unwrap().insert(id, tx);
         {
             let mut stdin = engine.stdin.lock().unwrap();
-            stdin
+            if let Err(e) = stdin
                 .write_all(envelope(id, &method, &params).to_string().as_bytes())
                 .and_then(|_| stdin.write_all(b"\n"))
                 .and_then(|_| stdin.flush())
-                .map_err(|e| format!("engine write failed: {e}"))?;
+            {
+                // write failed → daemon is gone or wedged; drop the handle so
+                // the next start_engine re-attaches (respawning if needed).
+                *state.engine.lock().unwrap() = None;
+                return Err(format!("engine write failed: {e}"));
+            }
         }
         match rx.await {
             Ok(value) => Ok(value),
@@ -203,7 +228,7 @@ pub mod commands {
             }
         }
     }
-}
+} // commands module
 
 /// Checks the paired server for a newer signed build and, if found, downloads
 /// it in the background. Emits `update.ready {version}` when the update can be
