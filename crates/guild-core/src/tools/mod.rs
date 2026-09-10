@@ -30,6 +30,9 @@ pub struct ToolOutcome {
     pub ui_summary: Option<String>,
     /// Unified diff for file edits (UI rendering).
     pub diff: Option<String>,
+    /// Widget payload for the UI (spec C.2): card kind + tool-owned render
+    /// hints, persisted with the tool_result event. Opaque to the loop.
+    pub meta: Option<serde_json::Value>,
 }
 
 #[derive(Debug, thiserror::Error)]

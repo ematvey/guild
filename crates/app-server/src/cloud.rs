@@ -230,7 +230,14 @@ impl CloudClient {
     }
 
     /// Persists a client-produced tool message to the server record.
-    pub async fn append_tool_message(&self, chat_id: Uuid, m: &Message) -> Result<(), CloudError> {
+    pub async fn append_tool_message(
+        &self,
+        chat_id: Uuid,
+        call_id: &str,
+        content: &str,
+        is_error: bool,
+        meta: Option<serde_json::Value>,
+    ) -> Result<(), CloudError> {
         let url = format!(
             "{}/api/v1/chats/{chat_id}/messages",
             self.base_url.trim_end_matches('/')
@@ -240,9 +247,11 @@ impl CloudClient {
             .post(&url)
             .bearer_auth(&self.token)
             .json(&serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-                "tool_call_id": m.tool_call_id,
+                "role": "tool",
+                "content": content,
+                "tool_call_id": call_id,
+                "is_error": is_error,
+                "meta": meta,
             }))
             .send()
             .await?;

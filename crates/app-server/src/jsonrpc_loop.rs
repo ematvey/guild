@@ -325,6 +325,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
                                 "output": out.output_for_model,
                                 "ui_summary": out.ui_summary,
                                 "diff": out.diff,
+                                "meta": out.meta,
                                 "is_error": false,
                             }),
                         )),
