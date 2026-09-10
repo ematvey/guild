@@ -43,9 +43,14 @@ async fn list_integrations(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
     let rows = store.integrations().list(admin.0.org_id).await?;
-    let available: Vec<serde_json::Value> = ["searxng"]
+    let available: Vec<serde_json::Value> = ["searxng", "superproxy"]
         .iter()
-        .map(|n| json!({ "name": n }))
+        .map(|n| {
+            let category = crate::integrations::integration_by_name(n)
+                .map(|p| p.category().to_string())
+                .unwrap_or_else(|| "other".to_string());
+            json!({ "name": n, "category": category })
+        })
         .collect();
     Ok(Json(json!({ "integrations": rows, "available": available })))
 }
