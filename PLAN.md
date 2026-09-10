@@ -1,8 +1,41 @@
 # Guild — current state of work
 
-Updated 2026-09-12 (tool-call history fix deployed). Read this before touching the
+Updated 2026-09-12 (thread event log milestone). Read this before touching the
 codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
 `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Thread event log milestone (2026-09-12, this session)
+
+Full redesign per `docs/plans/2026-09-12-thread-events-design.md` (grounded in
+`docs/deepseek-harness-study.md`):
+
+- **Thread = append-only `thread_events` table** (type + JSONB payload, uuid v7
+  ordering). Event types: user_message, system_message, assistant_message
+  (blocks: reasoning/text/tool_call in stream order + usage + model),
+  tool_result (content + is_error + widget meta), compaction (reserved). The
+  old messages table is DROPPED (0022); model-facing history is a derivation
+  (`build_model_history` in worker/restate.rs).
+- **Reasoning never dropped**: ProviderChunk::Thinking parses
+  `delta.reasoning_content`; assistant turns persist a reasoning block; every
+  reasoning-carrying turn replays `reasoning_content` to the model (dsh rule).
+  StreamEvent::ThinkingDelta streams to clients; first frame after attach
+  carries the full buffer.
+- **Tool presentation**: ToolResult events carry tool-private `meta` (dsh
+  presentationMeta pattern): web search cards (sources), web fetch cards
+  (url/status/truncated), terminal/read/diff tags on client tools via
+  ToolOutcome.meta. WebChat renders collapsible tool frames + per-tool
+  widgets; reasoning blocks are collapsible "Thinking" frames.
+- **Integrations**: trait gains category() (search/fetch/other); NEW superproxy
+  plugin (fetch provider) with web_fetch against the superproxy gateway
+  /v1/fetch; searxng emits search meta; admin API + new admin webui
+  Integrations view (grouped by category, config editor).
+- **API**: GET/POST /api/v1/chats/{id}/thread replaces /messages. Engine
+  sessions append tool results via POST /thread (turn-join).
+- Suite: 117 tests green (nextest, host services). Desktop/webui tsc+vite clean.
+- Orchestration was run via herdr panes + dagr run file (.dagr/run.json,
+  gitignored); workers: store/providers/integrations/webchat/adminui/loop +
+  followup T9; orchestrator did protocol base, engine-path fix, merges,
+  verification. Worker panes retired after merge.
 
 ## Shipped (2026-09-12, later)
 
