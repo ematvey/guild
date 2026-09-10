@@ -25,6 +25,7 @@ pub fn socket_path() -> anyhow::Result<PathBuf> {
 }
 
 /// Pure suffix for the Windows pipe name (testable on any host).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn user_pipe_suffix(user: &str) -> String {
     sha2::Sha256::digest(user.as_bytes())
         .iter()
@@ -166,7 +167,7 @@ pub async fn run_daemon_on(path: PathBuf, session: Session) -> anyhow::Result<()
     }
 
     let shared = Shared::new(session);
-    let mut shutdown_rx = shared.shutdown.subscribe();
+    let shutdown_rx = shared.shutdown.subscribe();
 
     // Reap finished agent runs so the JoinSet doesn't grow unbounded.
     {
@@ -237,8 +238,37 @@ async fn windows_accept_loop(
     shared: Shared,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    let _ = (path, shared, &mut shutdown_rx);
-    anyhow::bail!("windows daemon transport lands in the next task")
+    use tokio::net::windows::named_pipe::ServerOptions;
+    // Named pipes need one pre-created server instance per pending client:
+    // create instance N, await its connect, create instance N+1, serve N.
+    let pipe_name = path.to_string_lossy().into_owned();
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(&pipe_name)?;
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow_and_update() {
+                    return Ok(());
+                }
+            }
+            connected = server.connect() => {
+                connected.context("daemon pipe connect")?;
+                let client = server;
+                server = ServerOptions::new().create(&pipe_name)?; // next client
+                let shared = shared.clone();
+                tokio::task::spawn_blocking(move || {
+                    let rt = tokio::runtime::Handle::current();
+                    let (rd, wr) = tokio::io::split(client);
+                    // SyncIoBridge bridges the async halves to the std
+                    // Read/Write that run_connection's threads expect.
+                    let rd = tokio_util::io::SyncIoBridge::new(rd);
+                    let wr = tokio_util::io::SyncIoBridge::new(wr);
+                    let _ = rt.block_on(run_connection(&shared, rd, wr));
+                });
+            }
+        }
+    }
 }
 
 #[cfg(test)]
