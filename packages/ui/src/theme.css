@@ -120,12 +120,6 @@
   background: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
 }
 
-/* No focus rings anywhere (product decision): suppress the UA outline and
-   any residual outline even on keyboard focus, plus Tailwind ring utilities
-   (which draw via box-shadow, hence the ring-var override). Menus/dialogs
-   still show position via background/selected styles. */
-:focus,
-:focus-visible {
-  outline: none !important;
-  --tw-ring-shadow: 0 0 #0000 !important;
-}
+/* Focus indication policy: no global suppression. Each component declares its
+   own focus styling — interactive components carry outline-none, menus and
+   dialogs show focus position via background/selected styles. */

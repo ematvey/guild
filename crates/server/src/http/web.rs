@@ -18,6 +18,15 @@ fn serve_file(dist: &include_dir::Dir<'static>, path: &str) -> Option<Response> 
     Some(([(header::CONTENT_TYPE, mime.as_ref())], file.contents()).into_response())
 }
 
+/// Missing file: an honest 404 when the dist is actually built; the 503
+/// "not built" hint only when the dist is empty (see spec §4.7).
+fn not_built_or_404(dist: &include_dir::Dir<'static>, hint: &str) -> Response {
+    if dist.get_file("index.html").is_some() {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    not_built(hint)
+}
+
 pub async fn fallback(uri: Uri) -> Response {
     let path = uri.path();
     if path.starts_with("/api/") || path == "/api" {
@@ -32,10 +41,8 @@ pub async fn fallback(uri: Uri) -> Response {
             }
             return not_built("admin UI not built — run `npm --prefix apps/webui run build`");
         }
-        return match serve_file(&WEB_DIST, sub) {
-            Some(resp) => resp,
-            None => not_built("admin UI not built — run `npm --prefix apps/webui run build`"),
-        };
+        return serve_file(&WEB_DIST, sub)
+            .unwrap_or_else(|| not_built_or_404(&WEB_DIST, "admin UI not built — run `npm --prefix apps/webui run build`"));
     }
     // everything else -> the shared chat app
     if path == "/" || !path.contains('.') {
@@ -46,7 +53,7 @@ pub async fn fallback(uri: Uri) -> Response {
     }
     match serve_file(&CHAT_DIST, path) {
         Some(resp) => resp,
-        None => not_built("chat app not built — run `npm --prefix apps/desktop run build`"),
+        None => not_built_or_404(&CHAT_DIST, "chat app not built — run `npm --prefix apps/desktop run build`"),
     }
 }
 

@@ -199,7 +199,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
         <div className="px-2">
           <button
             onClick={pickProject}
-            className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+            className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent"
             title={projectDir ?? "Choose a project directory"}
           >
             <FolderOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -229,7 +229,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
               href={adminUrl}
               target="_blank"
               rel="noreferrer"
-              className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+              className="shrink-0 text-xs text-muted-foreground outline-none hover:text-foreground"
               title="Open the admin console in your browser"
             >
               ↗

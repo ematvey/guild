@@ -189,6 +189,9 @@ impl CloudClient {
             messages: messages.to_vec(),
             tools: None,
             system: None,
+            // the desktop engine executes machine tools client-side
+            client_tools: true,
+            project_dir: None,
         })
         .await
     }
@@ -296,6 +299,10 @@ where
             // Plain-chat clients ignore tool-call frames; the agent loop
             // (Task 5/6) consumes them through its own streaming path.
             StreamEvent::ToolCallDelta { .. } | StreamEvent::ToolCallDone { .. } => {}
+            // Tool lifecycle notifications are for interactive clients.
+            StreamEvent::ToolStarted { .. } | StreamEvent::ToolCompleted { .. } => {}
+            // attach-endpoint only; never on the completion stream
+            StreamEvent::Idle => {}
         }
     }
     Ok((text, done))

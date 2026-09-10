@@ -8,6 +8,9 @@ use uuid::Uuid;
 /// (provider, base_url, encrypted key, price in, price out, enabled, quota)
 type RouteQueryRow = (String, String, Option<String>, f64, f64, bool, Option<f64>);
 
+/// Resolved route for a model call. Plain data so it can be journaled
+/// through Restate run steps.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct RouteRow {
     pub provider: String,
     pub base_url: String,

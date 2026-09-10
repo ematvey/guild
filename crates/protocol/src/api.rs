@@ -164,6 +164,18 @@ pub struct ChatCompletionRequest {
     /// Optional system prompt (agent sessions set this).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
+    /// True when the calling client can execute machine tools (read/bash/
+    /// edit/write) — i.e. the Tauri desktop app. Web clients cannot, and
+    /// declaring the tools there makes the model call them and the durable
+    /// turn suspend for the 5-minute client-tool timeout with no one to
+    /// answer it.
+    #[serde(default)]
+    pub client_tools: bool,
+    /// Workspace directory the client executes machine tools in. The server
+    /// includes it in the system prompt it builds (the server owns the
+    /// prompt; the client never sends one for agent turns).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -196,6 +208,10 @@ pub enum StreamEvent {
     Delta {
         content: String,
     },
+    /// Sent (only on the attach endpoint) when the chat has no generation in
+    /// flight: lets a (re)attaching client distinguish "nothing running" from
+    /// a dropped connection, which just ends the stream without a frame.
+    Idle,
     Done {
         message_id: Uuid,
         cost_usd: f64,
@@ -220,6 +236,96 @@ pub enum StreamEvent {
     ToolCallDone {
         call: ToolCall,
     },
+    /// A tool call is being executed: `executor` says whether the attached
+    /// client must run it (machine tools: read/bash/edit/write) or it runs
+    /// server-side (integrations, e.g. web_search). Clients that cannot
+    /// execute client tools just display it.
+    ToolStarted {
+        call_id: String,
+        name: String,
+        arguments: String,
+        executor: ToolExecutor,
+    },
+    /// A tool call finished with its result (both executors).
+    ToolCompleted {
+        call_id: String,
+        name: String,
+        content: String,
+        is_error: bool,
+    },
+}
+
+/// Who runs a tool call.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum ToolExecutor {
+    Client,
+    Server,
+}
+
+/// The fixed set of machine tools executed by the attached client, modeled on
+/// pi's core coding-agent tool set. Declared here so server and clients share
+/// one definition.
+pub fn client_tool_specs() -> Vec<ToolSpec> {
+    fn spec(
+        name: &str,
+        description: &str,
+        properties: serde_json::Value,
+        required: &[&str],
+    ) -> ToolSpec {
+        ToolSpec {
+            name: name.into(),
+            description: description.into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": properties,
+                "required": required.iter().map(|r| serde_json::Value::from(*r)).collect::<Vec<serde_json::Value>>()
+            }),
+        }
+    }
+    let str_prop = serde_json::json!({ "type": "string" });
+    let num_prop = serde_json::json!({ "type": "number" });
+    vec![
+        spec(
+            "read",
+            "Read a text file from the workspace. Returns up to 2000 lines starting at `offset` (1-based).",
+            serde_json::json!({
+                "path": str_prop,
+                "offset": num_prop,
+                "limit": num_prop
+            }),
+            &["path"],
+        ),
+        spec(
+            "bash",
+            "Run a shell command in the workspace and return combined stdout+stderr.",
+            serde_json::json!({
+                "command": str_prop,
+                "timeout_ms": num_prop
+            }),
+            &["command"],
+        ),
+        spec(
+            "edit",
+            "Replace one exact occurrence of `oldText` in a file with `newText`. Fails when oldText is not found or is ambiguous.",
+            serde_json::json!({
+                "path": str_prop,
+                "oldText": str_prop,
+                "newText": str_prop
+            }),
+            &["path", "oldText", "newText"],
+        ),
+        spec(
+            "write",
+            "Create a file or overwrite it with `content`. Parent directories are created automatically.",
+            serde_json::json!({
+                "path": str_prop,
+                "content": str_prop
+            }),
+            &["path", "content"],
+        ),
+    ]
 }
 
 #[cfg(test)]

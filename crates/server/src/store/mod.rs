@@ -5,6 +5,7 @@ pub mod chats;
 pub mod events;
 pub mod gateway;
 pub mod identity;
+pub mod integrations;
 pub mod kv;
 pub mod oidc;
 pub mod pairing;
@@ -44,7 +45,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 17] = [
+        const MIGRATIONS: [(&str, &str); 18] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -110,6 +111,10 @@ impl Store {
                 "0017_updater",
                 include_str!("../../migrations/0017_updater.sql"),
             ),
+            (
+                "0018_integrations",
+                include_str!("../../migrations/0018_integrations.sql"),
+            ),
         ];
         for (name, sql) in MIGRATIONS {
             let applied: Option<i64> =
@@ -139,6 +144,10 @@ impl Store {
 
     pub fn identity(&self) -> identity::IdentityStore<'_> {
         identity::IdentityStore { pool: &self.pool }
+    }
+
+    pub fn integrations(&self) -> integrations::IntegrationStore<'_> {
+        integrations::IntegrationStore { pool: &self.pool }
     }
 
     pub fn chats(&self) -> chats::ChatStore<'_> {

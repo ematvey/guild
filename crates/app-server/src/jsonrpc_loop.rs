@@ -172,6 +172,37 @@ async fn dispatch(
                 let _ = out_tx.send(response_value(req.id, result.await));
             });
         }
+        "tool.run" => {
+            let session = session.clone();
+            let out_tx = out_tx.clone();
+            tokio::spawn(async move {
+                let result = async {
+                    let name = param(&req, "name")?.to_string();
+                    let workdir = param(&req, "workdir")?.to_string();
+                    let args = req.params.get("args").cloned().unwrap_or(serde_json::json!({}));
+                    let registry = guild_core::tools::ToolRegistry::builtins();
+                    let tool = registry
+                        .get(&name)
+                        .with_context(|| format!("unknown tool {name}"))?;
+                    match tool.run(std::path::Path::new(&workdir), args).await {
+                        Ok(out) => Ok(Response::ok(
+                            req.id,
+                            serde_json::json!({
+                                "output": out.output_for_model,
+                                "ui_summary": out.ui_summary,
+                                "diff": out.diff,
+                                "is_error": false,
+                            }),
+                        )),
+                        Err(e) => Ok(Response::ok(
+                            req.id,
+                            serde_json::json!({ "output": e.to_string(), "is_error": true }),
+                        )),
+                    }
+                };
+                let _ = out_tx.send(response_value(req.id, result.await));
+            });
+        }
         "agent.start" => {
             let _ = agents.spawn(agent_start_task(session, req, out_tx));
         }

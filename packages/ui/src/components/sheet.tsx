@@ -21,7 +21,7 @@ function SheetContent({
       <SheetPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60" />
       <SheetPrimitive.Content
         className={cn(
-          "fixed z-50 flex flex-col gap-4 bg-card shadow-lg transition ease-in-out",
+          "fixed z-50 flex flex-col gap-4 bg-card shadow-lg outline-none transition ease-in-out",
           side === "left" && "inset-y-0 left-0 h-full w-72 border-r border-border",
           side === "right" && "inset-y-0 right-0 h-full w-72 border-l border-border",
           side === "top" && "inset-x-0 top-0 border-b border-border",
@@ -31,7 +31,7 @@ function SheetContent({
         {...props}
       >
         {children}
-        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100">
+        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm outline-none opacity-70 transition-opacity hover:opacity-100">
           <X className="size-4" />
           <span className="sr-only">Close</span>
         </SheetPrimitive.Close>

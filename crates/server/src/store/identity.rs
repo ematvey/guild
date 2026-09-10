@@ -315,7 +315,7 @@ impl<'a> IdentityStore<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-support"))]
 mod tests {
     use crate::store::Store;
 

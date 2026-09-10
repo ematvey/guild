@@ -1,6 +1,7 @@
 pub mod config;
 pub mod crypto;
 pub mod http;
+pub mod integrations;
 pub mod s3;
 pub mod signing;
 pub mod state;

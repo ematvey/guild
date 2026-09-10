@@ -22,6 +22,7 @@ pub struct GatewayTurn {
     pub chat_id: Uuid,
     pub model: String,
     pub system: Option<String>,
+    pub project_dir: Option<String>,
 }
 
 #[async_trait]
@@ -46,6 +47,9 @@ impl ModelTurn for GatewayTurn {
                     Some(tools.to_vec())
                 },
                 system: self.system.clone(),
+                project_dir: self.project_dir.clone(),
+                // the desktop app executes machine tools client-side
+                client_tools: true,
             })
             .await
             .map_err(map_cloud)?;
@@ -74,6 +78,11 @@ impl ModelTurn for GatewayTurn {
                 }
                 // usage + history persistence happen server-side
                 Ok(StreamEvent::Done { .. }) => None,
+                // Tool lifecycle notifications are for interactive clients.
+                Ok(StreamEvent::ToolStarted { .. }) => None,
+                Ok(StreamEvent::ToolCompleted { .. }) => None,
+                // attach-endpoint only; never on the completion stream
+                Ok(StreamEvent::Idle) => None,
                 Ok(StreamEvent::Error { code, message }) => {
                     Some(Err(ProviderError::Upstream(format!("[{code}] {message}"))))
                 }
@@ -200,6 +209,7 @@ impl AgentRun {
                 chat_id: self.chat_id,
                 model: self.model,
                 system: self.system,
+                project_dir: Some(self.project_dir.to_string_lossy().into_owned()),
             };
             let hooks = SessionHooks {
                 events: self.events.clone(),

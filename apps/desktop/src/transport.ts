@@ -8,7 +8,57 @@
 //    the same localStorage token.
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-export const TOKEN_KEY = "guild_token"; // shared with the admin console app
+export const TOKEN_KEY = "guild_token";
+const CLIENT_ID_KEY = "guild_client_id";
+
+/** Stable per-app-instance identity — the presence key for client-tool
+ * termination detection (server resolves suspended client tools when the
+ * app holding this id disconnects). */
+export function clientId(): string {
+  let id = localStorage.getItem(CLIENT_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(CLIENT_ID_KEY, id);
+  }
+  return id;
+}
+
+/** Holds one app-lifetime connection to /api/v1/events/stream (the client
+ * presence signal), auto-reconnecting on drop. Returns a stop function. */
+export function startEventStream(): () => void {
+  let stopped = false;
+  let controller: AbortController | null = null;
+  const run = async () => {
+    while (!stopped) {
+      controller = new AbortController();
+      try {
+        const res = await fetch(
+          `/api/v1/events/stream?client_id=${encodeURIComponent(clientId())}`,
+          {
+            headers: { authorization: `Bearer ${getToken()}` },
+            signal: controller.signal,
+          },
+        );
+        if (!res.ok || !res.body) throw new Error(`event stream: ${res.status}`);
+        // drain; events are not consumed yet
+        const reader = res.body.getReader();
+        for (;;) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+      } catch {
+        // fall through to reconnect
+      }
+      if (stopped) return;
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  };
+  void run();
+  return () => {
+    stopped = true;
+    controller?.abort();
+  };
+} // shared with the admin console app
 
 export function getToken(): string | null {
   try {
@@ -95,10 +145,14 @@ export async function listChats(): Promise<ChatSummary[]> {
   return v.chats ?? [];
 }
 
-export async function getMessages(chatId: string): Promise<ChatMessage[]> {
+export async function getMessages(
+  chatId: string,
+  signal?: AbortSignal,
+): Promise<ChatMessage[]> {
   const token = getToken();
   const res = await fetch(`/api/v1/chats/${chatId}/messages`, {
     headers: { authorization: `Bearer ${token}` },
+    signal,
   });
   if (!res.ok) return [];
   const v = await res.json().catch(() => ({}));
@@ -117,29 +171,12 @@ export async function createChat(title: string): Promise<string | null> {
   return v.id ?? null;
 }
 
-/// Streams one chat turn via the org gateway (web mode). Returns the final
-/// done event, invoking onEvent for each frame (delta / tool_call / done / error).
-export async function streamChat(
-  chatId: string,
-  model: string,
-  prompt: string,
+/// Reads an SSE response body, invoking onEvent for every data frame.
+async function readSse(
+  res: Response,
   onEvent: (ev: { type: string; content?: string; message?: string; tokens_in?: number; tokens_out?: number }) => void,
 ): Promise<void> {
-  const token = getToken();
-  const res = await fetch("/api/v1/gateway/chat", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      chat_id: chatId,
-      model,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  if (!res.ok || !res.body) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? res.statusText);
-  }
-  const reader = res.body.getReader();
+  const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   for (;;) {
@@ -160,6 +197,60 @@ export async function streamChat(
       }
     }
   }
+}
+
+/// Streams one chat turn via the org gateway (web mode). Returns the final
+/// done event, invoking onEvent for each frame (delta / tool_call / done / error).
+export async function streamChat(
+  chatId: string,
+  model: string,
+  prompt: string,
+  onEvent: (ev: { type: string; content?: string; message?: string; tokens_in?: number; tokens_out?: number }) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const token = getToken();
+  const res = await fetch("/api/v1/gateway/chat", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      "x-guild-client-id": clientId(),
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      model,
+      messages: [{ role: "user", content: prompt }],
+      // only the desktop runtime can execute machine tools (read/bash/edit/
+      // write); declaring them in the browser suspends the turn until the
+      // 5-minute client-tool timeout
+      client_tools: IS_TAURI,
+    }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? res.statusText);
+  }
+  await readSse(res, onEvent);
+}
+
+/// Attaches to a generation that is running server-side for this chat
+/// (e.g. one that outlived a disconnected client). The server ends the
+/// stream immediately when nothing is in flight, so this always resolves
+/// quickly either way.
+export async function attachGeneration(
+  chatId: string,
+  onEvent: (ev: { type: string; content?: string; message?: string; tokens_in?: number; tokens_out?: number }) => void,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const token = getToken();
+  const res = await fetch(`/api/v1/gateway/chat/${chatId}/stream`, {
+    headers: { authorization: `Bearer ${token}` },
+    signal,
+  });
+  if (!res.ok || !res.body) return false;
+  await readSse(res, onEvent);
+  return true;
 }
 
 export interface PairingToken {
@@ -185,6 +276,23 @@ export async function createPairingToken(ttlMinutes = 30): Promise<PairingToken>
 
 export function pairingCode(serverUrl: string, secret: string): string {
   return `g1|${serverUrl.replace(/\/$/, "")}|${secret}`;
+}
+
+/// Delivers the result of a client-side tool call to the waiting chat
+/// workflow. Late results (after the server timed the call out) are ignored.
+export async function postToolResult(
+  chatId: string,
+  callId: string,
+  content: string,
+  isError: boolean,
+): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`/api/v1/gateway/chat/${chatId}/tools/${callId}/result`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ content, is_error: isError }),
+  });
+  if (!res.ok) throw new Error(`tool result rejected (${res.status})`);
 }
 
 export interface Release {
