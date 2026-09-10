@@ -1,8 +1,17 @@
 # Guild — current state of work
 
-Updated 2026-09-12 (host-services infra cutover). Read this before touching the
+Updated 2026-09-12 (tool-call history fix deployed). Read this before touching the
 codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
 `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Shipped (2026-09-12, later)
+
+- **Tool calls survive page refresh** (client fix, server redeployed): tool
+calls were always persisted, but WebChat's history rebuild filtered to
+user/assistant rows only. New `msgsToBlocks()` in
+`apps/desktop/src/views/WebChat.tsx` rebuilds tool chips from assistant
+`tool_calls` + `tool` result rows (joined by `tool_call_id`);
+`ChatMessage` in transport.ts now declares the tool fields. No migration.
 
 ## Infra (2026-09-12)
 

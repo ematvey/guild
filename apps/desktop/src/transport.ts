@@ -214,6 +214,10 @@ export async function bindChat(
 export interface ChatMessage {
   role: string;
   content: string;
+  /// Present on assistant rows that requested tool calls.
+  tool_calls?: { id: string; name: string; arguments: unknown }[];
+  /// Present on tool rows: the call this result answers.
+  tool_call_id?: string;
 }
 
 export async function listChats(): Promise<ChatSummary[]> {
