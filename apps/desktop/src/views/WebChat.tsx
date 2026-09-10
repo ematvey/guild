@@ -36,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
+import { Caret } from "@guild/ui/components/caret";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Separator } from "@guild/ui/components/separator";
 import { Skeleton } from "@guild/ui/components/skeleton";
@@ -336,10 +337,15 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                     className="max-w-none space-y-2 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:text-base [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc"
                   >
                     <Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown>
+                    {busy && i === blocks.length - 1 && <Caret className="mt-1" />}
                   </div>
                 ),
               )}
-              {busy && <Spinner />}
+              {busy && blocks[blocks.length - 1]?.kind !== "text" && (
+                <div className="max-w-none text-sm">
+                  <Caret />
+                </div>
+              )}
               <div ref={bottom} />
             </div>
           </div>
@@ -364,7 +370,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
               rows={1}
               placeholder={model ? "Message Guild…" : "No model available"}
               disabled={busy || !model}
-              className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
+              className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none "
             />
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
               {models === null ? (
@@ -502,7 +508,7 @@ function DeviceSetupDialog({
                 <button
                   key={k}
                   onClick={() => setOs(k)}
-                  className={`rounded-md px-2 py-1.5 text-xs outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${
+                  className={`rounded-md px-2 py-1.5 text-xs transition-colors ${
                     os === k
                       ? "bg-card text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -607,7 +613,7 @@ function SettingsDialog({
                 <button
                   key={t}
                   onClick={() => setTheme(t)}
-                  className={`rounded-md px-2 py-1.5 text-xs capitalize outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${
+                  className={`rounded-md px-2 py-1.5 text-xs capitalize transition-colors ${
                     theme === t
                       ? "bg-card text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"

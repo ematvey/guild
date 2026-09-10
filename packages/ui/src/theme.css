@@ -65,19 +65,67 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --animate-caret: caret-blink 1.1s step-end infinite;
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
 }
 
-/* Consistent focus indication: replace the UA's default focus outline
-   (which paints on programmatic focus too, e.g. Radix returning focus to
-   a trigger after its menu closes) with the theme's ring token. */
-:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
 }
 
-:focus:not(:focus-visible) {
-  outline: none;
+/* Overlay-style scrollbars: no track, no accent color. The container keeps a
+   thin scrollbar gutter but the handle is invisible until the container is
+   hovered or scrolled, then shows as a small neutral handle. The
+   ::-webkit-scrollbar rules are for WebKitGTK (Tauri on Linux); engines that
+   support scrollbar-color (Chromium 121+, Firefox) use the standard props
+   instead and ignore the webkit ones. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 45%, transparent) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+}
+
+*::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+}
+
+/* No focus rings anywhere (product decision): suppress the UA outline and
+   any residual outline even on keyboard focus, plus Tailwind ring utilities
+   (which draw via box-shadow, hence the ring-var override). Menus/dialogs
+   still show position via background/selected styles. */
+:focus,
+:focus-visible {
+  outline: none !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
 }

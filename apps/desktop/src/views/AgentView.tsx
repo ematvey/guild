@@ -6,6 +6,7 @@ import { ArrowUp, Bot, FolderOpen, Wrench } from "lucide-react";
 
 import { ApprovalModal } from "@guild/ui/components/approval";
 import { Button } from "@guild/ui/components/button";
+import { Caret } from "@guild/ui/components/caret";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Separator } from "@guild/ui/components/separator";
 import { Skeleton } from "@guild/ui/components/skeleton";
@@ -328,10 +329,15 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
                 ) : (
                   <div key={i} className="mr-auto w-fit max-w-[85%] whitespace-pre-wrap text-sm leading-relaxed">
                     {b.text}
+                    {busy && i === blocks.length - 1 && <Caret />}
                   </div>
                 ),
               )}
-              {busy && <Spinner />}
+              {busy && blocks[blocks.length - 1]?.kind !== "text" && (
+                <div className="mr-auto w-fit max-w-[85%] text-sm">
+                  <Caret />
+                </div>
+              )}
               <div ref={bottom} />
             </div>
           </div>
@@ -362,7 +368,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
                     : "Open a project first…"
               }
               disabled={busy || !projectDir || noModels}
-              className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
+              className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none "
             />
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
               <div className="flex min-w-0 items-center gap-1.5">
