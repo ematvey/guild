@@ -99,7 +99,6 @@ impl Client {
     fn call(&mut self, method: &str, params: Value) -> Value {
         let id = self.next;
         self.next += 1;
-        eprintln!("CLIENT CALL {method} id={id}");
         writeln!(self.stream, "{}", req(id, method, params)).unwrap();
         loop {
             let mut line = String::new();
@@ -140,9 +139,7 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     assert!(hello["result"]["version"].is_string());
 
     // 2. shared state: A mutates, B observes
-    eprintln!("daemon finished? {}", daemon.is_finished());
     let mut b = Client::connect(&path);
-    eprintln!("connected B; daemon finished? {}", daemon.is_finished());
     a.call("agent.policy.set", json!({"tool": "run_command", "policy": "allow"}));
     let got = b.call("agent.policy.get", json!({}));
     assert_eq!(got["result"]["overrides"]["run_command"], "allow");
