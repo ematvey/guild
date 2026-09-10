@@ -22,7 +22,9 @@ use futures::StreamExt;
 use tokio::sync::broadcast;
 use guild_core::provider::{ModelProvider, ProviderChunk, ProviderRequest};
 use guild_core::usage::UsageEvent;
-use protocol::api::{Message, MessageRow, StreamEvent, ToolCall, ToolExecutor, ToolSpec};
+use protocol::api::{
+    Block, Message, StreamEvent, ThreadEvent, ToolCall, ToolExecutor, ToolSpec, UsagePayload,
+};
 use restate_sdk::errors::HandlerError;
 use restate_sdk::service::IntoServiceDefinition;
 use restate_sdk::prelude::*;
@@ -269,6 +271,11 @@ pub struct ChatRunPayload {
     /// were sent from a desktop without an explicit binding.
     #[serde(default)]
     pub origin_machine_id: Option<String>,
+    /// The user turn content. Persisted as a `user_message` thread event by
+    /// the journaled generate step (the gateway HTTP handler does NOT write
+    /// events — spec §B.4), so attach/replay stays consistent.
+    #[serde(default)]
+    pub user_message: String,
 }
 
 /// Final result of the journaled completion step.
@@ -278,6 +285,7 @@ struct CompletionOut {
     tool_calls: Vec<ToolCall>,
     tokens_in: u32,
     tokens_out: u32,
+    reasoning: String,
 }
 
 fn api_err(e: ApiError) -> anyhow::Error {
@@ -309,6 +317,8 @@ pub struct ChatRunner {
 struct ToolResultPayload {
     content: String,
     is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    meta: Option<Value>,
 }
 
 /// Body of the `complete_tool` handler.
@@ -318,6 +328,10 @@ pub struct ToolResultReq {
     pub content: String,
     #[serde(default)]
     pub is_error: bool,
+    /// Widget payload from the executing client, persisted verbatim on the
+    /// `tool_result` event (spec §C.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 /// How many model/tool round-trips one turn may take.
@@ -363,6 +377,93 @@ fn build_system_prompt(
         s.push_str(&format!(" The workspace directory is {dir}."));
     }
     s
+}
+
+/// Next turn number for a chat: max `turn` across persisted events + 1
+/// (spec §B.4 — turn = one client request, step = one model call).
+pub fn next_turn(events: &[ThreadEvent]) -> u32 {
+    events
+        .iter()
+        .map(|e| match e {
+            ThreadEvent::AssistantMessage { turn, .. } | ThreadEvent::ToolResult { turn, .. } => {
+                *turn
+            }
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+/// Model-facing history derived from the thread event log (spec §A.4):
+/// user → `role:user`; assistant blocks → `role:assistant` with concatenated
+/// text blocks, `tool_calls` from the tool_call blocks, and reasoning
+/// carried on the message so openai.rs replays it as `reasoning_content`
+/// (never dropped, dsh rule); tool_result → `role:tool`. SystemMessage
+/// events are log-only — the system prompt rides on the request header, not
+/// in message history.
+pub fn build_model_history(events: &[ThreadEvent]) -> Vec<Message> {
+    let mut out = Vec::new();
+    for ev in events {
+        match ev {
+            ThreadEvent::UserMessage { content } => out.push(Message::user(content.clone())),
+            ThreadEvent::SystemMessage { .. } | ThreadEvent::Compaction { .. } => {}
+            ThreadEvent::AssistantMessage { blocks, .. } => {
+                let mut text = String::new();
+                let mut reasoning = String::new();
+                let mut tool_calls = Vec::new();
+                for b in blocks {
+                    match b {
+                        Block::Text { text: t } => text.push_str(t),
+                        Block::Reasoning { text: t } => reasoning.push_str(t),
+                        Block::ToolCall { id, name, arguments } => {
+                            // arguments are the raw JSON string as produced by
+                            // the model; parse for the wire, fall back to a
+                            // JSON string on garbage rather than dropping.
+                            let arguments = serde_json::from_str(arguments)
+                                .unwrap_or_else(|_| Value::String(arguments.clone()));
+                            tool_calls.push(ToolCall {
+                                id: id.clone(),
+                                name: name.clone(),
+                                arguments,
+                            });
+                        }
+                    }
+                }
+                out.push(Message {
+                    role: "assistant".into(),
+                    content: text,
+                    tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                    tool_call_id: None,
+                    reasoning: if reasoning.is_empty() { None } else { Some(reasoning) },
+                });
+            }
+            ThreadEvent::ToolResult { call_id, content, .. } => {
+                out.push(Message::tool_result(call_id, content));
+            }
+        }
+    }
+    out
+}
+
+/// Assistant blocks in stream order (spec §B.4): `[reasoning?, text?,
+/// tool_call*]`, empty blocks skipped.
+fn assistant_blocks(reasoning: &str, text: &str, tool_calls: &[ToolCall]) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    if !reasoning.is_empty() {
+        blocks.push(Block::Reasoning { text: reasoning.to_string() });
+    }
+    if !text.is_empty() {
+        blocks.push(Block::Text { text: text.to_string() });
+    }
+    for c in tool_calls {
+        blocks.push(Block::ToolCall {
+            id: c.id.clone(),
+            name: c.name.clone(),
+            arguments: serde_json::to_string(&c.arguments).unwrap_or_default(),
+        });
+    }
+    blocks
 }
 
 /// Journaled usage recording (called when a turn ends with usage numbers).
@@ -469,36 +570,24 @@ impl ChatRunner {
             .await?
             .into_inner();
 
-        // Journaled: load the thread history from Postgres (the user turn was
-        // persisted by the API before invocation).
+        // Journaled: load the thread event log; the model-facing history and
+        // the next turn number are derivations of it (spec §A.4, §B.4).
         let st = state.clone();
         let org = req.org_id;
         let chat_id = req.chat_id;
-        let history: Vec<MessageRow> = ctx
+        let prior_events: Vec<ThreadEvent> = ctx
             .run(move || {
                 let state = st.clone();
                 async move {
                     let store = state.store().await.map_err(api_err)?;
-                    let msgs = store
-                        .chats()
-                        .list_messages(org, chat_id)
-                        .await
-                        .map_err(api_err)?;
-                    Ok(Json(msgs))
+                    let rows = store.thread().list_events(org, chat_id).await.map_err(api_err)?;
+                    Ok(Json(rows.into_iter().map(|r| r.event).collect::<Vec<_>>()))
                 }
             })
             .await?
             .into_inner();
-        let mut messages: Vec<Message> = history
-            .into_iter()
-            .map(|m| Message {
-                role: m.role,
-                content: m.content,
-                tool_calls: m.tool_calls,
-                tool_call_id: m.tool_call_id,
-                reasoning: None,
-            })
-            .collect();
+        let turn_no = next_turn(&prior_events);
+        let mut messages: Vec<Message> = build_model_history(&prior_events);
 
         // Journaled: resolve this org's enabled integrations (admin-configured
         // server-side tools, e.g. web_search).
@@ -523,13 +612,38 @@ impl ChatRunner {
         }
         let system = build_system_prompt(req.client_tools, has_web_search, req.project_dir.as_deref());
 
-        let (tx, text_buf) = ensure_generation(&state, req.chat_id);
+        // Journaled: append this turn's system + user events (once per turn;
+        // the gateway never writes events itself — spec §B.4).
+        let st = state.clone();
+        let chat_id = req.chat_id;
+        let system_ev = ThreadEvent::SystemMessage { content: system.clone() };
+        let user_message = req.user_message.clone();
+        ctx.run(move || {
+            let state = st.clone();
+            async move {
+                let store = state.store().await.map_err(api_err)?;
+                store.thread().append_event(chat_id, &system_ev).await.map_err(api_err)?;
+                if !user_message.is_empty() {
+                    store
+                        .thread()
+                        .append_event(chat_id, &ThreadEvent::UserMessage { content: user_message })
+                        .await
+                        .map_err(api_err)?;
+                }
+                Ok(Json(()))
+            }
+        })
+        .await?;
+
+        let (tx, text_buf, thinking_buf) = ensure_generation(&state, req.chat_id);
 
         // Returns Ok(true) when the turn ended with a final answer, Ok(false)
         // when the step limit was exhausted without one.
-        let turn: HandlerResult<bool> = async {
+        let steps_used = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let turn_out: HandlerResult<bool> = async {
         let state = state.clone();
-        for step in 1..=CHAT_MAX_STEPS {
+        for step in 0..CHAT_MAX_STEPS {
+            steps_used.store(step as u32, std::sync::atomic::Ordering::SeqCst);
             // Journaled: one model call with the full tool surface.
             let st = state.clone();
             let route2 = route.clone();
@@ -540,6 +654,7 @@ impl ChatRunner {
             let chat_id = req.chat_id;
             let tx_loop = tx.clone();
             let buf_loop = text_buf.clone();
+            let think_loop = thinking_buf.clone();
             let completion: CompletionOut = ctx
                 .run(move || {
                     let state = st.clone();
@@ -547,6 +662,7 @@ impl ChatRunner {
                     let model = model2.clone();
                     let tx = tx_loop.clone();
                     let text_buf = buf_loop.clone();
+                    let thinking_buf = think_loop.clone();
                     async move {
                         let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
                             "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
@@ -578,6 +694,7 @@ impl ChatRunner {
                             HandlerError::from(TerminalError::new(format!("provider error: {e}")))
                         })?;
                         *text_buf.write().await = String::new(); // reset per model call
+                        *thinking_buf.write().await = String::new();
                         let mut text = String::new();
                         let mut tokens_in = 0u32;
                         let mut tokens_out = 0u32;
@@ -604,6 +721,7 @@ impl ChatRunner {
                                 Ok(ProviderChunk::Thinking(chunk)) => {
                                     if !chunk.text_delta.is_empty() {
                                         reasoning.push_str(&chunk.text_delta);
+                                        *thinking_buf.write().await = reasoning.clone();
                                         let _ = tx.send(StreamEvent::ThinkingDelta {
                                             content: chunk.text_delta.clone(),
                                         });
@@ -643,6 +761,7 @@ impl ChatRunner {
                             tool_calls,
                             tokens_in,
                             tokens_out,
+                            reasoning,
                         }))
                     }
                 })
@@ -651,37 +770,47 @@ impl ChatRunner {
 
             let is_final = completion.tool_calls.is_empty();
 
-            // Journaled: persist the assistant message (with any tool calls).
+            // Journaled: persist ONE assistant_message event for this model
+            // call — blocks [reasoning?, text?, tool_call*] in stream order,
+            // usage, model, turn/step (spec §B.4). Replaces the old
+            // append_message write.
             let st = state.clone();
             let chat_id = req.chat_id;
             let completion2 = completion.clone();
-            let msg_id: Uuid = ctx
+            let route2 = route.clone();
+            let model_name = req.model.clone();
+            let turn2 = turn_no;
+            let step2 = step as u32;
+            let event_id: Uuid = ctx
                 .run(move || {
                     let state = st.clone();
                     let c = completion2.clone();
+                    let route = route2.clone();
                     async move {
                         let store = state.store().await.map_err(api_err)?;
-                        let persisted_calls = if c.tool_calls.is_empty() { None } else { Some(c.tool_calls) };
-                        let msg = store
-                            .chats()
-                            .append_message(
-                                chat_id,
-                                "assistant",
-                                &c.text,
-                                persisted_calls,
-                                None,
-                                Some(c.tokens_in),
-                                Some(c.tokens_out),
-                                Some(UsageEvent::cost_usd(
+                        let event = ThreadEvent::AssistantMessage {
+                            turn: turn2,
+                            step: step2,
+                            blocks: assistant_blocks(&c.reasoning, &c.text, &c.tool_calls),
+                            usage: UsagePayload {
+                                tokens_in: Some(c.tokens_in),
+                                tokens_out: Some(c.tokens_out),
+                                cost_usd: Some(UsageEvent::cost_usd(
                                     c.tokens_in,
                                     c.tokens_out,
                                     route.price_in,
                                     route.price_out,
                                 )),
-                            )
+                            },
+                            model: model_name,
+                            interrupted: None,
+                        };
+                        let row = store
+                            .thread()
+                            .append_event(chat_id, &event)
                             .await
                             .map_err(api_err)?;
-                        Ok(Json(msg.id))
+                        Ok(Json(row.id))
                     }
                 })
                 .await?
@@ -691,7 +820,7 @@ impl ChatRunner {
                 // Journaled: record usage, then finish.
                 record_usage!(ctx, state, req, completion, route);
                 let _ = tx.send(StreamEvent::Done {
-                    message_id: msg_id,
+                    message_id: event_id,
                     cost_usd: UsageEvent::cost_usd(
                         completion.tokens_in,
                         completion.tokens_out,
@@ -706,19 +835,25 @@ impl ChatRunner {
                 return Ok(true);
             }
 
+            // Reasoning replay: the next model call sees the reasoning of
+            // this one (openai.rs serializes it as reasoning_content).
             messages.push(Message {
                 role: "assistant".into(),
                 content: completion.text.clone(),
                 tool_calls: Some(completion.tool_calls.clone()),
                 tool_call_id: None,
-                reasoning: None,
+                reasoning: if completion.reasoning.is_empty() {
+                    None
+                } else {
+                    Some(completion.reasoning.clone())
+                },
             });
 
             // Execute each requested tool call in order.
             for (idx, call) in completion.tool_calls.iter().enumerate() {
                 let is_client_tool = client_tool_names().contains(&call.name.as_str());
-                let content = if is_client_tool {
-                    client_tool_step(
+                let (content, is_error, meta) = if is_client_tool {
+                    let payload = client_tool_step(
                         &ctx,
                         &state,
                         &tx,
@@ -730,7 +865,8 @@ impl ChatRunner {
                         req.machine_label.clone(),
                         req.origin_machine_id.clone(),
                     )
-                    .await?
+                    .await?;
+                    (payload.content, payload.is_error, payload.meta)
                 } else {
                     server_tool_step(
                         &ctx,
@@ -743,28 +879,32 @@ impl ChatRunner {
                     .await?
                 };
 
-                // Journaled: persist the tool result.
+                // Journaled: persist the tool_result event with turn/step and
+                // the executor's widget meta (spec §C.2).
                 let st = state.clone();
                 let chat_id = req.chat_id;
-                let call_id = call.id.clone();
+                let call2 = call.clone();
                 let content2 = content.clone();
+                let meta2 = meta.clone();
+                let turn2 = turn_no;
+                let step2 = step as u32;
                 ctx.run(move || {
                     let state = st.clone();
-                    let content = content2.clone();
+                    let call = call2.clone();
                     async move {
                         let store = state.store().await.map_err(api_err)?;
+                        let event = ThreadEvent::ToolResult {
+                            turn: turn2,
+                            step: step2,
+                            call_id: call.id.clone(),
+                            name: call.name.clone(),
+                            content: content2.clone(),
+                            is_error,
+                            meta: meta2.clone(),
+                        };
                         store
-                            .chats()
-                            .append_message(
-                                chat_id,
-                                "tool",
-                                &content,
-                                None,
-                                Some(call_id),
-                                None,
-                                None,
-                                None,
-                            )
+                            .thread()
+                            .append_event(chat_id, &event)
                             .await
                             .map_err(api_err)?;
                         Ok(Json(()))
@@ -784,15 +924,33 @@ impl ChatRunner {
         Ok(false)
         }
         .await;
-        // Uniform failure path: notify clients and free the chat (registry +
-        // recorded invocation) so a failed turn never jams the thread.
-        let final_sent = match turn {
+        // Uniform failure path: notify clients, persist the delivered prefix
+        // as an interrupted assistant event (best effort), and free the chat
+        // (registry + recorded invocation) so a failed turn never jams the
+        // thread.
+        let final_sent = match turn_out {
             Ok(sent) => sent,
             Err(e) => {
                 let _ = tx.send(StreamEvent::Error {
                     code: "turn_failed".into(),
                     message: "the turn failed; see server logs".into(),
                 });
+                // Best effort (spec §B.4): append what was delivered so far
+                // as an interrupted assistant event. Fire-and-forget — a
+                // failure here must not mask the original error.
+                let partial_text = text_buf.read().await.clone();
+                let partial_reasoning = thinking_buf.read().await.clone();
+                if let Ok(store) = state.store().await {
+                    let event = ThreadEvent::AssistantMessage {
+                        turn: turn_no,
+                        step: steps_used.load(std::sync::atomic::Ordering::SeqCst),
+                        blocks: assistant_blocks(&partial_reasoning, &partial_text, &[]),
+                        usage: UsagePayload::default(),
+                        model: req.model.clone(),
+                        interrupted: Some(true),
+                    };
+                    let _ = store.thread().append_event(req.chat_id, &event).await;
+                }
                 state.generations.lock().unwrap().remove(&req.chat_id);
                 if let Ok(store) = state.store().await {
                     let _ = store.kv().delete(&format!("chatgen_inv:{}", req.chat_id)).await;
@@ -809,27 +967,37 @@ impl ChatRunner {
         // Step limit reached: tell the model-facing history and the client.
         let st = state.clone();
         let chat_id = req.chat_id;
+        let model_name = req.model.clone();
+        let turn2 = turn_no;
         let note = format!(
             "Turn stopped after {CHAT_MAX_STEPS} model/tool rounds without a final answer."
         );
-        let msg_id: Uuid = ctx
+        let event_id: Uuid = ctx
             .run(move || {
                 let state = st.clone();
                 let note = note.clone();
                 async move {
                     let store = state.store().await.map_err(api_err)?;
-                    let msg = store
-                        .chats()
-                        .append_message(chat_id, "assistant", &note, None, None, None, None, None)
+                    let event = ThreadEvent::AssistantMessage {
+                        turn: turn2,
+                        step: CHAT_MAX_STEPS as u32,
+                        blocks: vec![Block::Text { text: note }],
+                        usage: UsagePayload::default(),
+                        model: model_name,
+                        interrupted: None,
+                    };
+                    let row = store
+                        .thread()
+                        .append_event(chat_id, &event)
                         .await
                         .map_err(api_err)?;
-                    Ok(Json(msg.id))
+                    Ok(Json(row.id))
                 }
             })
             .await?
             .into_inner();
         let _ = tx.send(StreamEvent::Done {
-            message_id: msg_id,
+            message_id: event_id,
             cost_usd: 0.0,
             tokens_in: 0,
             tokens_out: 0,
@@ -859,6 +1027,7 @@ impl ChatRunner {
             Json(ToolResultPayload {
                 content: req.content.clone(),
                 is_error: req.is_error,
+                meta: req.meta.clone(),
             }),
         );
         Ok(())
@@ -868,8 +1037,10 @@ impl ChatRunner {
 
 /// One machine-tool call: resolve the bound executor machine (fail fast when
 /// unbound/offline), notify attached clients, durably wait for the machine's
-/// result (bounded), report completion. Returns the tool content for the
-/// model-facing history.
+/// result (bounded), report completion. Returns the tool result payload for
+/// the model-facing history and the tool_result event (content, is_error,
+/// meta).
+#[allow(clippy::too_many_arguments)]
 async fn client_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
@@ -881,7 +1052,7 @@ async fn client_tool_step(
     machine_id: Option<String>,
     machine_label: Option<String>,
     origin_machine_id: Option<String>,
-) -> HandlerResult<String> {
+) -> HandlerResult<ToolResultPayload> {
     // Resolve the executor machine. Journaled ctx.run snapshots: the result
     // replays deterministically even if the in-memory registry changes
     // between execution and replay (e.g. worker restart).
@@ -922,10 +1093,13 @@ async fn client_tool_step(
         .await?
         .into_inner();
     let Some((mid, mlabel)) = bound else {
-        return Ok(
-            "client tool not executed: this chat is not bound to a machine — bind it in the chat settings, or send the message from the Guild desktop app on the target machine"
-                .to_string(),
-        );
+        return Ok(ToolResultPayload {
+            content:
+                "client tool not executed: this chat is not bound to a machine — bind it in the chat settings, or send the message from the Guild desktop app on the target machine"
+                    .to_string(),
+            is_error: false,
+            meta: None,
+        });
     };
     // Fail fast when the bound machine is offline (journaled snapshot).
     let online: bool = ctx
@@ -941,9 +1115,13 @@ async fn client_tool_step(
         .await?
         .into_inner();
     if !online {
-        return Ok(format!(
-            "client tool not executed: the bound machine '{mlabel}' is offline — start the Guild desktop app on it, then ask again"
-        ));
+        return Ok(ToolResultPayload {
+            content: format!(
+                "client tool not executed: the bound machine '{mlabel}' is offline — start the Guild desktop app on it, then ask again"
+            ),
+            is_error: false,
+            meta: None,
+        });
     }
 
     // Journaled awakeable: stable id across replays.
@@ -1009,6 +1187,7 @@ async fn client_tool_step(
                 call.name, call.id
             ),
             is_error: true,
+            meta: None,
         }))
         .send_after(CLIENT_TOOL_TIMEOUT);
 
@@ -1017,6 +1196,7 @@ async fn client_tool_step(
         Err(t) => ToolResultPayload {
             content: format!("client tool failed: {t}"),
             is_error: true,
+            meta: None,
         },
     };
 
@@ -1046,11 +1226,14 @@ async fn client_tool_step(
     })
     .await?;
 
-    Ok(payload.content)
+    Ok(payload)
 }
 
 /// One server-side tool call: notify clients, execute the integration plugin
-/// (journaled), report completion. Returns the tool content for the model.
+/// (journaled), report completion. Returns (content, is_error, meta) for the
+/// model-facing history and the tool_result event (meta per spec §C.2). The
+/// model sees `content` only; meta rides to the client widget.
+#[allow(clippy::type_complexity)]
 async fn server_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
@@ -1058,7 +1241,7 @@ async fn server_tool_step(
     call: &ToolCall,
     server_tools: &[integrations::ServerTool],
     _seq: String,
-) -> HandlerResult<String> {
+) -> HandlerResult<(String, bool, Option<Value>)> {
     // Journaled: notify attached clients.
     let args_json = serde_json::to_string(&call.arguments)
         .unwrap_or_else(|_| "{}".to_string());
@@ -1086,7 +1269,7 @@ async fn server_tool_step(
     // Journaled: execute the integration tool.
     let tools = server_tools.to_owned();
     let call2 = call.clone();
-    let (content, is_error) = ctx
+    let (content, is_error, meta) = ctx
         .run(move || {
             let tools = tools.clone();
             let call = call2.clone();
@@ -1095,6 +1278,7 @@ async fn server_tool_step(
                     return Ok(Json((
                         format!("unknown server tool {}", call.name),
                         true,
+                        None,
                     )));
                 };
                 let out = tool
@@ -1102,11 +1286,11 @@ async fn server_tool_step(
                     .execute(&tool.config, &call.name, call.arguments.clone())
                     .await;
                 Ok(Json(match out {
-                    // Minimal adaptation to the new ToolOutcome contract: the
-                    // loop persists content only for now; forwarding `meta`
-                    // into the tool/result event is the next task's job.
-                    Ok(outcome) => (outcome.content, false),
-                    Err(e) => (format!("web tool failed: {e}"), true),
+                    // ToolOutcome contract (spec §C.1): content is
+                    // model-facing; meta is the tool-owned widget payload,
+                    // forwarded verbatim into the tool_result event.
+                    Ok(outcome) => (outcome.content, false, outcome.meta),
+                    Err(e) => (format!("web tool failed: {e}"), true, None),
                 }))
             }
         })
@@ -1135,7 +1319,7 @@ async fn server_tool_step(
     })
     .await?;
     let _ = state;
-    Ok(content)
+    Ok((content, is_error, meta))
 }
 
 /// Register this worker's endpoint with the Restate admin API (retry until

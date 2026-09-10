@@ -1,8 +1,8 @@
-//! Org-scoped chats and messages (spec §4.3).
+//! Org-scoped chats (spec §4.3). Message history moved to the thread event
+//! log (spec §A): `store::thread` owns persistence, this store owns chat rows.
 
 use crate::http::error::ApiError;
 use chrono::{DateTime, Utc};
-use protocol::api::{MessageRow, ToolCall};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -17,44 +17,10 @@ pub struct ChatRow {
     pub machine_label: Option<String>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct MessageRowDb {
-    id: Uuid,
-    chat_id: Uuid,
-    role: String,
-    content: String,
-    tool_calls: Option<serde_json::Value>,
-    tool_call_id: Option<String>,
-    tokens_in: Option<i32>,
-    tokens_out: Option<i32>,
-    cost_usd: Option<f64>,
-    created_at: DateTime<Utc>,
-}
-
-impl From<MessageRowDb> for MessageRow {
-    fn from(m: MessageRowDb) -> Self {
-        Self {
-            id: m.id,
-            chat_id: m.chat_id,
-            role: m.role,
-            content: m.content,
-            tool_calls: m
-                .tool_calls
-                .and_then(|v| serde_json::from_value::<Vec<ToolCall>>(v).ok()),
-            tool_call_id: m.tool_call_id,
-            tokens_in: m.tokens_in,
-            tokens_out: m.tokens_out,
-            cost_usd: m.cost_usd,
-            created_at: m.created_at,
-        }
-    }
-}
-
 pub struct ChatStore<'a> {
     pub(crate) pool: &'a sqlx::PgPool,
 }
 
-#[allow(clippy::too_many_arguments)]
 impl<'a> ChatStore<'a> {
     pub async fn create_chat(
         &self,
@@ -119,57 +85,5 @@ impl<'a> ChatStore<'a> {
         .fetch_one(self.pool)
         .await
         .map_err(Into::into)
-    }
-
-    pub async fn append_message(
-        &self,
-        chat_id: Uuid,
-        role: &str,
-        content: &str,
-        tool_calls: Option<Vec<ToolCall>>,
-        tool_call_id: Option<String>,
-        tokens_in: Option<u32>,
-        tokens_out: Option<u32>,
-        cost_usd: Option<f64>,
-    ) -> Result<MessageRow, ApiError> {
-        let id = Uuid::now_v7();
-        let tool_calls_json =
-            tool_calls.map(|c| serde_json::to_value(c).expect("tool calls serialize"));
-        sqlx::query_as::<_, MessageRowDb>(
-            "INSERT INTO messages (id, chat_id, role, content, tool_calls, tool_call_id, tokens_in, tokens_out, cost_usd) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-             RETURNING id, chat_id, role, content, tool_calls, tool_call_id, tokens_in, tokens_out, cost_usd, created_at",
-        )
-        .bind(id)
-        .bind(chat_id)
-        .bind(role)
-        .bind(content)
-        .bind(tool_calls_json)
-        .bind(tool_call_id)
-        .bind(tokens_in.map(|t| t as i32))
-        .bind(tokens_out.map(|t| t as i32))
-        .bind(cost_usd)
-        .fetch_one(self.pool)
-        .await
-        .map(MessageRow::from)
-        .map_err(Into::into)
-    }
-
-    pub async fn list_messages(
-        &self,
-        org_id: Uuid,
-        chat_id: Uuid,
-    ) -> Result<Vec<MessageRow>, ApiError> {
-        let rows: Vec<MessageRowDb> = sqlx::query_as(
-            "SELECT m.id, m.chat_id, m.role, m.content, m.tool_calls, m.tool_call_id, m.tokens_in, m.tokens_out, m.cost_usd, m.created_at \
-             FROM messages m JOIN chats c ON c.id = m.chat_id \
-             WHERE c.org_id = $1 AND m.chat_id = $2 ORDER BY m.created_at, m.id",
-        )
-        .bind(org_id)
-        .bind(chat_id)
-        .fetch_all(self.pool)
-        .await
-        .map_err(ApiError::from)?;
-        Ok(rows.into_iter().map(Into::into).collect())
     }
 }

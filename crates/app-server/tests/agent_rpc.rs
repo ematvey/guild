@@ -217,22 +217,34 @@ async fn agent_start_streams_tool_flow_with_approval_deny() {
         .collect::<String>();
     assert_eq!(final_text, "the command was denied");
 
-    // durable record: user, assistant(tool_calls), tool, assistant
+    // durable record: user, assistant(tool_calls), tool, assistant — as
+    // thread events now
     let chat: uuid::Uuid = chat_id.parse().unwrap();
     let rec = srv
         .store()
-        .chats()
-        .list_messages(srv.org_id, chat)
+        .thread()
+        .list_events(srv.org_id, chat)
         .await
         .unwrap();
-    let roles: Vec<&str> = rec.iter().map(|m| m.role.as_str()).collect();
+    let types: Vec<String> = rec
+        .iter()
+        .map(|e| match &e.event {
+            protocol::api::ThreadEvent::UserMessage { .. } => "user",
+            protocol::api::ThreadEvent::AssistantMessage { blocks, .. } => blocks
+                .iter()
+                .any(|b| matches!(b, protocol::api::Block::ToolCall { .. }))
+                .then_some("assistant+tool_calls")
+                .unwrap_or("assistant"),
+            protocol::api::ThreadEvent::ToolResult { .. } => "tool",
+            _ => "other",
+        })
+        .map(String::from)
+        .collect();
     assert_eq!(
-        roles,
-        vec!["user", "assistant", "tool", "assistant"],
+        types,
+        vec!["user", "assistant+tool_calls", "tool", "assistant"],
         "{rec:?}"
     );
-    assert!(rec[1].tool_calls.is_some());
-    assert!(rec[2].tool_call_id.is_some());
 
     std::fs::remove_dir_all(&project).ok();
 }

@@ -1,10 +1,12 @@
 //! Server-side execution backend: workspace agent sessions (spec §10.6, M6
 //! task 3). The agent loop runs in-process with guild-core tools scoped to a
-//! per-org workspace directory; history persists in `chats`/`messages`.
+//! per-org workspace directory; history persists as thread events on the
+//! session's chat (derivation, spec §A).
 
 use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
 use crate::state::AppState;
+use crate::worker::restate::{build_model_history, next_turn};
 use axum::extract::{Path, State};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::{Json, Router};
@@ -16,7 +18,7 @@ use guild_core::agent::{
 };
 use guild_core::provider::{ProviderChunk, ProviderError};
 use guild_core::tools::{ToolFailure, ToolOutcome, ToolRegistry};
-use protocol::api::{Message, ToolCall, ToolSpec};
+use protocol::api::{Block, Message, ThreadEvent, ToolCall, ToolSpec, UsagePayload};
 use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::path::PathBuf;
@@ -96,10 +98,10 @@ async fn session_history(
     let store = state.store().await?;
     let session = store.agent_sessions().get(user.0.org_id, id).await?;
     let rows = store
-        .chats()
-        .list_messages(user.0.org_id, session.chat_id)
+        .thread()
+        .list_events(user.0.org_id, session.chat_id)
         .await?;
-    Ok(Json(json!({ "messages": rows })))
+    Ok(Json(json!({ "events": rows })))
 }
 
 // ---------- turn execution ----------
@@ -216,36 +218,24 @@ async fn run_turn(
         .resolve_route(user.0.org_id, &model, &master)
         .await?;
 
-    // history so far
-    let rows = store
-        .chats()
-        .list_messages(user.0.org_id, session.chat_id)
-        .await?;
-    let history: Vec<Message> = rows
-        .iter()
-        .map(|r| Message {
-            role: r.role.clone(),
-            content: r.content.clone(),
-            tool_calls: r.tool_calls.clone(),
-            tool_call_id: r.tool_call_id.clone(),
-            reasoning: None,
-        })
+    // history derived from the thread event log (spec §A.4)
+    let prior_events: Vec<ThreadEvent> = store
+        .thread()
+        .list_events(user.0.org_id, session.chat_id)
+        .await?
+        .into_iter()
+        .map(|r| r.event)
         .collect();
+    let mut history: Vec<Message> = build_model_history(&prior_events);
+    let turn_no = next_turn(&prior_events);
     store
-        .chats()
-        .append_message(
+        .thread()
+        .append_event(
             session.chat_id,
-            "user",
-            &message,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &ThreadEvent::UserMessage { content: message.clone() },
         )
         .await?;
 
-    let mut history = history;
     history.push(Message::user(message.clone()));
 
     let provider: Arc<dyn guild_core::provider::ModelProvider> = match route.provider.as_str() {
@@ -328,21 +318,72 @@ async fn run_turn(
 
         match result {
             Ok(_res) => {
-                // persist the new messages (assistant tool calls + results + final)
+                // persist the new messages as thread events: assistant →
+                // assistant_message with blocks, tool → tool_result (spec §A).
+                // step = model call index within the turn (0-based),
+                // incremented per assistant message.
+                let mut step: u32 = 0;
+                let mut call_names: std::collections::HashMap<String, String> =
+                    std::collections::HashMap::new();
                 for m in &history[before..] {
-                    let _ = store_for_loop
-                        .chats()
-                        .append_message(
-                            chat_id,
-                            &m.role,
-                            &m.content,
-                            m.tool_calls.clone(),
-                            m.tool_call_id.clone(),
-                            None,
-                            None,
-                            None,
-                        )
-                        .await;
+                    match m.role.as_str() {
+                        "assistant" => {
+                            let mut blocks: Vec<Block> = Vec::new();
+                            if let Some(r) = &m.reasoning {
+                                if !r.is_empty() {
+                                    blocks.push(Block::Reasoning { text: r.clone() });
+                                }
+                            }
+                            if !m.content.is_empty() {
+                                blocks.push(Block::Text { text: m.content.clone() });
+                            }
+                            if let Some(calls) = &m.tool_calls {
+                                for c in calls {
+                                    call_names.insert(c.id.clone(), c.name.clone());
+                                    blocks.push(Block::ToolCall {
+                                        id: c.id.clone(),
+                                        name: c.name.clone(),
+                                        arguments: serde_json::to_string(&c.arguments)
+                                            .unwrap_or_default(),
+                                    });
+                                }
+                            }
+                            let _ = store_for_loop
+                                .thread()
+                                .append_event(
+                                    chat_id,
+                                    &ThreadEvent::AssistantMessage {
+                                        turn: turn_no,
+                                        step,
+                                        blocks,
+                                        usage: UsagePayload::default(),
+                                        model: model.clone(),
+                                        interrupted: None,
+                                    },
+                                )
+                                .await;
+                            step += 1;
+                        }
+                        "tool" => {
+                            let Some(call_id) = &m.tool_call_id else { continue };
+                            let _ = store_for_loop
+                                .thread()
+                                .append_event(
+                                    chat_id,
+                                    &ThreadEvent::ToolResult {
+                                        turn: turn_no,
+                                        step,
+                                        call_id: call_id.clone(),
+                                        name: call_names.get(call_id).cloned().unwrap_or_default(),
+                                        content: m.content.clone(),
+                                        is_error: false,
+                                        meta: None,
+                                    },
+                                )
+                                .await;
+                        }
+                        _ => {}
+                    }
                 }
                 let ti = tokens_in.load(Ordering::SeqCst);
                 let to = tokens_out.load(Ordering::SeqCst);

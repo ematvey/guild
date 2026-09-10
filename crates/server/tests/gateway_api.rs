@@ -49,18 +49,34 @@ async fn chat_roundtrip_streams_persists_and_records_usage() {
     );
     assert!(text.contains("done"), "should terminate with done: {text}");
 
-    // history persisted: user + assistant messages
-    let msgs = fs
+    // turn persisted as thread events: system + user + assistant
+    let events = fs
         .store()
-        .chats()
-        .list_messages(fs.org_id, fs.chat_id)
+        .thread()
+        .list_events(fs.org_id, fs.chat_id)
         .await
         .unwrap();
-    assert_eq!(msgs.len(), 2, "user message + assistant message");
-    assert_eq!(msgs[0].role, "user");
-    assert_eq!(msgs[1].role, "assistant");
-    assert_eq!(msgs[1].content, "hi there");
-    assert!(msgs[1].cost_usd.unwrap() > 0.0);
+    let types: Vec<String> = events
+        .iter()
+        .map(|e| match &e.event {
+            protocol::api::ThreadEvent::UserMessage { .. } => "user".to_string(),
+            protocol::api::ThreadEvent::SystemMessage { .. } => "system".to_string(),
+            protocol::api::ThreadEvent::AssistantMessage { blocks, .. } => blocks
+                .iter()
+                .filter_map(|b| match b {
+                    protocol::api::Block::Text { text } => Some(format!("assistant:{text}")),
+                    _ => None,
+                })
+                .collect(),
+            _ => "other".to_string(),
+        })
+        .collect();
+    assert_eq!(types, vec!["system", "user", "assistant:hi there"]);
+    let usage = match &events[2].event {
+        protocol::api::ThreadEvent::AssistantMessage { usage, .. } => usage.clone(),
+        other => panic!("expected assistant event, got {other:?}"),
+    };
+    assert!(usage.cost_usd.unwrap() > 0.0);
 
     // usage recorded in clickhouse: exactly one event, positive cost
     let (count, cost) = clickhouse_usage_rows(&fs.state).await;
