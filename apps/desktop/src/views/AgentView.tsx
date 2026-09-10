@@ -366,24 +366,10 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
             />
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
               <div className="flex min-w-0 items-center gap-1.5">
-              {models === null ? (
-                <Skeleton className="h-7 w-28 rounded-md" />
-              ) : models.length > 0 ? (
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((m) => (
-                      <SelectItem key={m} value={m} className="text-xs">
-                        {m}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
+              {models !== null && models.length === 0 && (
                 <span className="text-xs text-muted-foreground">no models configured</span>
               )}
+              {models === null && <Skeleton className="h-7 w-28 rounded-md" />}
               <Select value={commandPolicy} onValueChange={(v) => void setPolicy(v as typeof commandPolicy)}>
                 <SelectTrigger
                   className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none"
@@ -398,15 +384,31 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
                 </SelectContent>
               </Select>
               </div>
-              <Button
-                size="icon"
-                className="size-7 rounded-full"
-                onClick={() => void start()}
-                disabled={!canRun || !prompt.trim()}
-                title="Run"
-              >
-                {busy ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
-              </Button>
+              <div className="flex items-center gap-2">
+                {models !== null && models.length > 0 && (
+                  <Select value={model} onValueChange={setModel}>
+                    <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {models.map((m) => (
+                        <SelectItem key={m} value={m} className="text-xs">
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Button
+                  size="icon"
+                  className="size-7 rounded-full"
+                  onClick={() => void start()}
+                  disabled={!canRun || !prompt.trim()}
+                  title="Run"
+                >
+                  {busy ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

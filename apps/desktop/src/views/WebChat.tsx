@@ -369,31 +369,36 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
               {models === null ? (
                 <Skeleton className="h-7 w-28 rounded-md" />
-              ) : models.length > 0 ? (
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((m) => (
-                      <SelectItem key={m} value={m} className="text-xs">
-                        {m}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
+              ) : models.length === 0 ? (
                 <span className="text-xs text-muted-foreground">no models</span>
+              ) : (
+                <span />
               )}
-              <Button
-                size="icon"
-                className="size-7 rounded-full"
-                onClick={() => void send()}
-                disabled={busy || !model || !prompt.trim()}
-                title="Send"
-              >
-                {busy ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
-              </Button>
+              <div className="flex items-center gap-2">
+                {models !== null && models.length > 0 && (
+                  <Select value={model} onValueChange={setModel}>
+                    <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {models.map((m) => (
+                        <SelectItem key={m} value={m} className="text-xs">
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Button
+                  size="icon"
+                  className="size-7 rounded-full"
+                  onClick={() => void send()}
+                  disabled={busy || !model || !prompt.trim()}
+                  title="Send"
+                >
+                  {busy ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
