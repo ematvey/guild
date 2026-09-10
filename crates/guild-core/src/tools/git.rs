@@ -64,6 +64,7 @@ impl Tool for GitTool {
             output_for_model: truncate(body),
             ui_summary: Some(format!("git {sub}")),
             diff: None,
+            meta: None,
         })
     }
 }

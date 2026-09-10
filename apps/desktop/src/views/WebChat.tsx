@@ -726,7 +726,13 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             params: { name, args: JSON.parse(args), workdir: dir },
           });
           const payload = res.result ?? res;
-          await postToolResult(cid, callId, String(payload.output ?? ""), !!payload.is_error);
+          await postToolResult(
+            cid,
+            callId,
+            String(payload.output ?? ""),
+            !!payload.is_error,
+            payload.meta,
+          );
         } catch (e) {
           await postToolResult(cid, callId, `client tool failed: ${String(e)}`, true).catch(() => {});
         } finally {

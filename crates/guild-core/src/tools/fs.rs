@@ -38,10 +38,20 @@ impl Tool for ReadFile {
         let content = tokio::fs::read_to_string(&path)
             .await
             .map_err(|e| ToolFailure::Execution(format!("read {}: {e}", path.display())))?;
+        let total_lines = content.lines().count();
+        let mut meta = serde_json::json!({ "card": "read", "path": path.display().to_string() });
+        if let Some(offset) = args["offset"].as_u64() {
+            meta["offset"] = serde_json::json!(offset);
+        }
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            meta["lang"] = serde_json::json!(ext.to_ascii_lowercase());
+        }
+        meta["total_lines"] = serde_json::json!(total_lines);
         Ok(ToolOutcome {
             output_for_model: truncate(content),
             ui_summary: None,
             diff: None,
+            meta: Some(meta),
         })
     }
 }
@@ -90,6 +100,10 @@ impl Tool for WriteFile {
             output_for_model: format!("wrote {n} bytes to {}", path.display()),
             ui_summary: Some(format!("write {}", path.display())),
             diff: Some(diff_text(&old, content, &path)),
+            meta: Some(serde_json::json!({
+                "card": "diff",
+                "path": path.display().to_string(),
+            })),
         })
     }
 }
@@ -153,6 +167,10 @@ impl Tool for EditFile {
                     output_for_model: format!("edited {}", path.display()),
                     ui_summary: Some(format!("edit {}", path.display())),
                     diff: Some(diff_text(&content, &updated, &path)),
+                    meta: Some(serde_json::json!({
+                        "card": "diff",
+                        "path": path.display().to_string(),
+                    })),
                 })
             }
         }
@@ -213,6 +231,7 @@ impl Tool for GlobTool {
             },
             ui_summary: None,
             diff: None,
+            meta: None,
         })
     }
 }
@@ -294,6 +313,7 @@ impl Tool for GrepTool {
             },
             ui_summary: None,
             diff: None,
+            meta: None,
         })
     }
 }
