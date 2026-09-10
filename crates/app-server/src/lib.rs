@@ -1,6 +1,8 @@
 pub mod agent_session;
 pub mod cloud;
 pub mod daemon;
+pub mod cli;
+pub mod daemon_client;
 pub mod jsonrpc_loop;
 pub mod mcp;
 pub mod registry_client;
