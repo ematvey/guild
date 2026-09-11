@@ -29,6 +29,7 @@ fn integration_bundle(slug: &str, version: &str) -> Vec<u8> {
         version: version.into(),
         description: "posts release notes".into(),
         dependencies: vec![],
+        ..Default::default()
     };
     let bytes = guild_core::registry::pack(&dir, &manifest).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();

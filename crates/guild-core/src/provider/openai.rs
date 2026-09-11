@@ -115,10 +115,11 @@ impl OpenAiProvider {
                 .as_str()
                 .filter(|s| !s.is_empty())
             {
-                let mut think = ChatChunk::default();
-                think.text_delta = reasoning.to_string();
-                think.tokens_in = chunk.tokens_in;
-                think.tokens_out = chunk.tokens_out;
+                let think = ChatChunk {
+                    text_delta: reasoning.to_string(),
+                    tokens_in: chunk.tokens_in,
+                    tokens_out: chunk.tokens_out,
+                };
                 return Some(ProviderChunk::Thinking(think));
             }
         }
