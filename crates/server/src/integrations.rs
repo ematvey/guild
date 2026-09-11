@@ -5,6 +5,7 @@
 //! contributes tools only while enabled.
 
 use crate::store::integrations::IntegrationRow;
+use crate::state::AppState;
 use crate::worker::mcp_pool::{McpPool, PoolKey, secrets_fingerprint};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use futures::future::BoxFuture;
@@ -559,4 +560,309 @@ pub mod superproxy {
             })
         }
     }
+}
+
+// ---------- MCP plugin turn state + disclosure (spec §7) ----------
+
+/// One tool of an MCP plugin as journaled at turn start (namespaced spec +
+/// the manifest class). Secret values are never journaled — they are
+/// re-resolved from the store at call time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpToolInfo {
+    pub spec: ToolSpec,
+    pub class: String,
+}
+
+/// Turn-start resolution snapshot for one MCP plugin (journaled). Carries
+/// everything the turn needs: the tool list, the system-prompt index line,
+/// and the guide pointer — never secret values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpPluginTurn {
+    pub slug: String,
+    pub description: String,
+    pub tools: Vec<McpToolInfo>,
+    /// Object-storage key of the first cookbook skill's bundle (guide tool).
+    pub guide_object_key: Option<String>,
+    /// The installed row's config (mcp url, auth shape, tool_policy).
+    pub row_config: serde_json::Value,
+    /// Declared secret names — values are resolved at call time only.
+    pub secret_names: Vec<String>,
+    /// Caller → external identity join key (v1: always "email").
+    pub identity_key: String,
+}
+
+impl McpPluginTurn {
+    /// The tool names this plugin declares to the model, filtered by the
+    /// caller's role (spec §6/§7: a member never sees tools it cannot call).
+    pub fn allowed_specs(&self, role: &str) -> Vec<ToolSpec> {
+        self.tools
+            .iter()
+            .filter(|t| mcp_tool_allowed(t, &self.row_config, role))
+            .map(|t| t.spec.clone())
+            .collect()
+    }
+
+    pub fn auto_tool_names(&self) -> [String; 2] {
+        [
+            namespaced_tool(&self.slug, "list_tools"),
+            namespaced_tool(&self.slug, "guide"),
+        ]
+    }
+}
+
+/// Whether one journaled tool may be called by `role` under the row's
+/// `tool_policy` (spec §6: manifest class is the floor; a stored policy
+/// tightens; admin-class tools are admin-only — owners count as admins).
+pub fn mcp_tool_allowed(info: &McpToolInfo, row_config: &serde_json::Value, role: &str) -> bool {
+    let class = info.class.as_str();
+    if class == "admin" && role != "admin" && role != "owner" {
+        return false;
+    }
+    allowed_classes(&Some(row_config.clone()), role)
+        .iter()
+        .any(|c| class_rank(c) >= class_rank(class))
+}
+
+/// The system-prompt index line for one enabled integration (spec §7.1).
+pub fn mcp_index_line(turn: &McpPluginTurn) -> String {
+    format!(
+        "Integration {}: {} — call {} to discover its tools.",
+        turn.slug,
+        turn.description,
+        namespaced_tool(&turn.slug, "list_tools")
+    )
+}
+
+/// Guild-provided per-plugin disclosure tools (spec §7.2/§7.3) — never sent
+/// to the MCP server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoTool {
+    ListTools,
+    Guide,
+}
+
+/// Recognizes an auto-tool call: `int_<slug>_list_tools` / `int_<slug>_guide`.
+pub fn parse_auto_tool(turns: &[McpPluginTurn], name: &str) -> Option<(usize, AutoTool)> {
+    for (i, turn) in turns.iter().enumerate() {
+        let [list, guide] = turn.auto_tool_names();
+        if name == list {
+            return Some((i, AutoTool::ListTools));
+        }
+        if name == guide {
+            return Some((i, AutoTool::Guide));
+        }
+    }
+    None
+}
+
+/// Turn-start resolution for MCP plugins (spec §7/§8): resolves enabled rows
+/// with an `mcp.url`, the registry manifest, the tool list (connect via the
+/// pool), and the guide pointer. Secrets are checked (declared names must be
+/// stored) but only their presence — values ride the pool connection at call
+/// time. A broken plugin degrades: skipped with a warning, the turn
+/// continues without it.
+pub async fn resolve_mcp_plugins(
+    state: &AppState,
+    org: Uuid,
+) -> anyhow::Result<Vec<McpPluginTurn>> {
+    use guild_core::registry::tool_class;
+    let store = state.store().await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    let rows = store
+        .integrations()
+        .list_enabled(org)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    let master_key = state.config.master_key()?;
+    let mut out = Vec::new();
+    for row in rows {
+        let Some(url) = row.config["mcp"]["url"].as_str() else {
+            continue; // v1 (compiled-in) row — handled by resolve_server_tools
+        };
+        let manifest = match registry_manifest(&store, org, &row.name).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("integration {}: no registry manifest: {e}", row.name);
+                continue;
+            }
+        };
+        let secret_names = manifest
+            .auth
+            .as_ref()
+            .map(|a| a.secret_names.clone())
+            .unwrap_or_default();
+        // Resolve (decrypt) the declared secrets — also the presence check.
+        let secrets = match store
+            .integration_secrets()
+            .resolve(org, &row.name, &secret_names, &master_key)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("integration {}: secrets unresolved, skipping: {e}", row.name);
+                continue;
+            }
+        };
+        let headers = envelope_headers(&Uuid::now_v7(), &org, None, None, &secrets);
+        let key = PoolKey {
+            slug: row.name.clone(),
+            url: url.to_string(),
+            acting_as: None,
+            secrets_fingerprint: secrets_fingerprint(&secrets),
+        };
+        let peer = match state.mcp_pool.get_or_connect(&key, url, headers).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("integration {} unreachable, skipping: {e}", row.name);
+                continue;
+            }
+        };
+        let listed = match peer.list_tools(None).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::warn!("integration {}: list_tools failed, skipping: {e}", row.name);
+                continue;
+            }
+        };
+        let tools = listed
+            .tools
+            .into_iter()
+            .map(|t| McpToolInfo {
+                spec: ToolSpec {
+                    name: namespaced_tool(&row.name, &t.name),
+                    description: t.description.map(|d| d.into_owned()).unwrap_or_default(),
+                    parameters: serde_json::Value::Object((*t.input_schema).clone()),
+                },
+                class: tool_class(&manifest, &t.name).to_string(),
+            })
+            .collect();
+        let guide_object_key = guide_object_key(&store, org, &manifest).await?;
+        out.push(McpPluginTurn {
+            slug: row.name.clone(),
+            description: manifest.description.clone(),
+            tools,
+            guide_object_key,
+            row_config: row.config.clone(),
+            secret_names,
+            identity_key: manifest
+                .auth
+                .as_ref()
+                .map(|a| a.identity_key.clone())
+                .unwrap_or_else(|| "email".into()),
+        });
+    }
+    Ok(out)
+}
+
+/// Latest manifest of one registry integration item (any review status — an
+/// installed row keeps resolving even if a republish reset the status).
+async fn registry_manifest(
+    store: &std::sync::Arc<crate::store::Store>,
+    org: Uuid,
+    slug: &str,
+) -> anyhow::Result<BundleManifest> {
+    let items = store
+        .registry()
+        .list_items(org, "integration")
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    let item = items
+        .iter()
+        .find(|i| i.slug == slug)
+        .ok_or_else(|| anyhow::anyhow!("no registry item {slug}"))?;
+    let version = item
+        .latest_version
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("registry item {slug} has no version"))?;
+    let stored = store
+        .registry()
+        .get_version(org, "integration", slug, &version)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    serde_json::from_value::<BundleManifest>(stored.manifest)
+        .map_err(|e| anyhow::anyhow!("manifest of {slug} unreadable: {e}"))
+}
+
+/// Object-storage key of the first cookbook skill's latest version bundle.
+async fn guide_object_key(
+    store: &std::sync::Arc<crate::store::Store>,
+    org: Uuid,
+    manifest: &BundleManifest,
+) -> anyhow::Result<Option<String>> {
+    let Some(slug) = manifest.skills.first() else {
+        return Ok(None);
+    };
+    let items = match store.registry().list_items(org, "skill").await {
+        Ok(items) => items,
+        Err(_) => return Ok(None),
+    };
+    let Some(item) = items.iter().find(|i| &i.slug == slug) else {
+        return Ok(None);
+    };
+    let Some(version) = item.latest_version.clone() else {
+        return Ok(None);
+    };
+    let stored = store
+        .registry()
+        .get_version(org, "skill", slug, &version)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    Ok(Some(stored.object_key))
+}
+
+/// Executes one call against an MCP plugin's server: re-resolves the
+/// declared secrets (journaled snapshots never carry values), connects via
+/// the pool with the identity envelope, and calls the raw tool name.
+pub async fn call_mcp_plugin(
+    state: &AppState,
+    turn: &McpPluginTurn,
+    raw_tool: &str,
+    args: serde_json::Value,
+    org: Uuid,
+    acting_as: Option<&str>,
+) -> Result<ToolOutcome, String> {
+    let store = state.store().await.map_err(|e| format!("store error: {e:?}"))?;
+    let master_key = state.config.master_key().map_err(|e| e.to_string())?;
+    let secrets = store
+        .integration_secrets()
+        .resolve(org, &turn.slug, &turn.secret_names, &master_key)
+        .await
+        .map_err(|e| format!("secrets unavailable: {e}"))?;
+    let url = turn.row_config["mcp"]["url"]
+        .as_str()
+        .ok_or("mcp url missing")?
+        .to_string();
+    let headers = envelope_headers(
+        &Uuid::now_v7(),
+        &org,
+        None,
+        acting_as,
+        &secrets,
+    );
+    let key = PoolKey {
+        slug: turn.slug.clone(),
+        url: url.clone(),
+        acting_as: acting_as.map(str::to_string),
+        secrets_fingerprint: secrets_fingerprint(&secrets),
+    };
+    let peer = state
+        .mcp_pool
+        .get_or_connect(&key, &url, headers)
+        .await
+        .map_err(|e| format!("integration {} unreachable: {e}", turn.slug))?;
+    mcp_call_tool(&peer, raw_tool, args).await
+}
+
+/// Fetches and unpacks the guide body (SKILL.md, falling back to README) of
+/// one cookbook bundle from object storage (spec §7.3).
+pub async fn fetch_guide(state: &AppState, object_key: &str) -> Option<String> {
+    let objects = state.objects().await.ok()?;
+    let bundle = objects.get(object_key).await.ok()?;
+    for path in ["SKILL.md", "README.md"] {
+        if let Ok(Some(bytes)) = guild_core::registry::read_bundle_file(&bundle, path) {
+            if let Ok(text) = String::from_utf8(bytes) {
+                return Some(text);
+            }
+        }
+    }
+    None
 }
