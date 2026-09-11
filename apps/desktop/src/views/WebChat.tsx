@@ -574,6 +574,79 @@ function toolKind(t: ToolBlock): string {
   return "other";
 }
 
+/// Human-facing tool names (collapsed header): raw wire names like
+/// `web_search` stay in the log; the chat shows established-app wording.
+const TOOL_LABELS: Record<string, string> = {
+  web_search: "Web search",
+  web_fetch: "Web fetch",
+  bash: "Execute",
+  shell: "Execute",
+  read: "Read",
+  edit: "Edit",
+  write: "Write",
+};
+
+function toolLabel(t: ToolBlock): string {
+  return TOOL_LABELS[t.name.toLowerCase()] ?? t.name;
+}
+
+function argOf(t: ToolBlock, keys: string[]): string | undefined {
+  try {
+    const a = JSON.parse(t.args);
+    for (const k of keys) {
+      const v = a?.[k];
+      if (typeof v === "string" && v) return v;
+    }
+  } catch {
+    /* args are not always JSON */
+  }
+  return undefined;
+}
+
+/// Request text shown on the frame header line (same line as the tool
+/// name): search → query, fetch → URL, execute → command, read/edit → path.
+function toolPreview(t: ToolBlock): string | undefined {
+  const m = t.meta;
+  switch (toolKind(t)) {
+    case "search":
+      return m?.title || argOf(t, ["query", "q", "search"]);
+    case "fetch":
+      return m?.url || argOf(t, ["url"]);
+    case "terminal":
+      return m?.title || argOf(t, ["command", "cmd", "script"]);
+    case "read":
+    case "diff":
+      return m?.path || argOf(t, ["path", "file_path", "file"]);
+    default:
+      return m?.title || undefined;
+  }
+}
+
+/// Fallback for search results arriving WITHOUT persisted meta (older
+/// events): parses the numbered "N. Title / URL / snippet…" list the server
+/// composes into source cards.
+function parseSearchResults(content: string): { url: string; title?: string; snippet?: string }[] {
+  const out: { url: string; title?: string; snippet?: string }[] = [];
+  let cur: { url: string; title?: string; snippet?: string } | null = null;
+  for (const l of content.split("\n")) {
+    const line = l.trim();
+    const tMatch = line.match(/^\d+\.\s+(.*)$/);
+    const uMatch = line.match(/^https?:\/\/\S+$/);
+    if (tMatch) {
+      if (cur) out.push(cur);
+      cur = { url: "", title: tMatch[1].trim() };
+    } else if (uMatch && cur) {
+      cur.url = line;
+    } else if (cur && line && !cur.url) {
+      cur.title = `${cur.title} ${line}`;
+    } else if (cur && line) {
+      cur.snippet = cur.snippet ? `${cur.snippet} ${line}` : line;
+    }
+  }
+  if (cur) out.push(cur);
+  return out.filter((r) => r.url);
+}
+
 function ToolKindIcon({ kind }: { kind: string }) {
   const cls = "size-3 shrink-0 text-muted-foreground";
   switch (kind) {
@@ -689,13 +762,16 @@ function TruncatedBadge() {
 /// to pretty JSON of the arguments plus the raw content.
 function ToolBody({ t }: { t: ToolBlock }) {
   const m = t.meta;
-  if (m?.card === "web" && m.kind === "search") {
-    const sources = m.sources ?? [];
+  const kind = toolKind(t);
+  if (kind === "search") {
+    const sources = m?.sources?.length
+      ? m.sources
+      : parseSearchResults(t.content ?? "");
     return (
-      <div className="space-y-1.5">
-        {m.truncated && <TruncatedBadge />}
+      <div className="space-y-2">
+        {m?.truncated && <TruncatedBadge />}
         {sources.map((s, i) => (
-          <div key={i} className="rounded-md border border-border px-2 py-1.5">
+          <div key={i} className="rounded-lg border border-border px-3 py-2">
             <a
               href={s.url}
               target="_blank"
@@ -715,29 +791,33 @@ function ToolBody({ t }: { t: ToolBlock }) {
       </div>
     );
   }
-  if (m?.card === "web" && m.kind === "fetch") {
+  if (kind === "fetch") {
+    const url = m?.url || argOf(t, ["url"]) || "";
     return (
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          <a
-            href={m.url}
-            target="_blank"
-            rel="noreferrer"
-            className="min-w-0 flex-1 truncate underline decoration-border underline-offset-2 hover:decoration-foreground"
-            title={m.url}
-          >
-            {m.url}
-          </a>
-          {m.status_code != null && (
+          {url && (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="min-w-0 flex-1 truncate underline decoration-border underline-offset-2 hover:decoration-foreground"
+              title={url}
+            >
+              {url}
+            </a>
+          )}
+          {/* pills only for failures: HTTP errors surface, 2xx stays quiet */}
+          {m?.status_code != null && m.status_code >= 400 && (
             <span
-              className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${statusPillCls(m.status_code < 400)}`}
+              className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${statusPillCls(false)}`}
             >
               {m.status_code}
             </span>
           )}
-          {m.truncated && <TruncatedBadge />}
+          {m?.truncated && <TruncatedBadge />}
         </div>
-        {m.title && <p className="font-medium">{m.title}</p>}
+        {m?.title && <p className="font-medium">{m.title}</p>}
         {t.content && (
           <div className={`max-h-64 overflow-y-auto ${MD_CLASS}`}>
             <Markdown remarkPlugins={[remarkGfm]}>{t.content}</Markdown>
@@ -746,15 +826,26 @@ function ToolBody({ t }: { t: ToolBlock }) {
       </div>
     );
   }
-  if (m?.card === "terminal") {
+  if (kind === "terminal") {
+    const command = argOf(t, ["command", "cmd", "script"]);
+    const output = m?.output ?? t.content ?? "";
     return (
-      <div className="space-y-1.5">
-        <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
-          {m.output ?? t.content ?? ""}
-        </pre>
-        {m.exit_code != null && (
+      <div className="space-y-2">
+        {command && (
+          <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed">
+            <span className="select-none text-muted-foreground/60">$ </span>
+            {command}
+          </pre>
+        )}
+        {output && (
+          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+            {output}
+          </pre>
+        )}
+        {/* failures only: a clean exit stays quiet */}
+        {m?.exit_code != null && m.exit_code !== 0 && (
           <span
-            className={`inline-block rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${statusPillCls(m.exit_code === 0)}`}
+            className={`inline-block rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${statusPillCls(false)}`}
           >
             exit {m.exit_code}
           </span>
@@ -762,22 +853,22 @@ function ToolBody({ t }: { t: ToolBlock }) {
       </div>
     );
   }
-  if (m?.card === "read") {
+  if (kind === "read") {
     const lines = (t.content ?? "").split("\n");
-    const start = m.offset ?? 1;
+    const start = m?.offset ?? 1;
     return (
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
-          <span className="min-w-0 truncate font-mono" title={m.path}>
-            {m.path}
+          <span className="min-w-0 truncate font-mono" title={m?.path}>
+            {m?.path}
           </span>
-          {m.total_lines != null && (
+          {m?.total_lines != null && (
             <span className="shrink-0 text-[10px]">
               {lines.length}/{m.total_lines} lines
             </span>
           )}
         </div>
-        <div className="max-h-64 overflow-y-auto rounded-md bg-muted p-2 font-mono">
+        <div className="max-h-64 overflow-y-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-relaxed">
           {lines.map((l, i) => (
             <div key={i} className="flex gap-2">
               <span className="w-8 shrink-0 select-none text-right text-muted-foreground/60">
@@ -790,10 +881,10 @@ function ToolBody({ t }: { t: ToolBlock }) {
       </div>
     );
   }
-  if (m?.card === "diff") {
+  if (kind === "diff") {
     return (
-      <div className="space-y-1.5">
-        {m.path && (
+      <div className="space-y-2">
+        {m?.path && (
           <span className="block min-w-0 truncate font-mono text-muted-foreground" title={m.path}>
             {m.path}
           </span>
@@ -826,15 +917,15 @@ function ToolBody({ t }: { t: ToolBlock }) {
     /* keep the raw arguments string */
   }
   return (
-    <div className="space-y-1.5">
-      {prettyArgs && (
-        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
+    <div className="space-y-2">
+      {prettyArgs && prettyArgs !== "{}" && (
+        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
           {prettyArgs}
         </pre>
       )}
       {t.content && (
         <pre
-          className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 ${
+          className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed ${
             t.status === "error" ? "text-destructive" : "text-muted-foreground"
           }`}
         >
@@ -851,19 +942,29 @@ function ToolBody({ t }: { t: ToolBlock }) {
 /// One collapsible frame per tool_call block: header is kind icon + tool
 /// name + human title from the widget + status pill.
 function ToolFrame({ t }: { t: ToolBlock }) {
+  const preview = toolPreview(t);
   return (
     <Frame
       icon={<ToolKindIcon kind={toolKind(t)} />}
-      title={<span className="font-mono">{t.name}</span>}
-      badge={
+      title={
         <>
-          {t.meta?.title && (
-            <span className="hidden max-w-40 truncate text-muted-foreground sm:inline">
-              {t.meta.title}
+          <span className="font-medium text-foreground/80">{toolLabel(t)}</span>
+          {preview && (
+            <span
+              className={`hidden max-w-72 truncate text-muted-foreground sm:inline ${
+                toolKind(t) === "search" ? "" : "font-mono"
+              }`}
+              title={preview}
+            >
+              {preview}
             </span>
           )}
-          <StatusPill status={t.status} />
         </>
+      }
+      badge={
+        // Pills only signal trouble (established chat-app pattern): DONE is
+        // implicit, ERROR stays visible. A running frame opens expanded.
+        t.status === "error" ? <StatusPill status={t.status} /> : undefined
       }
       defaultOpen={t.status === "running"}
     >
