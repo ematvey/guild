@@ -1101,6 +1101,25 @@ export default function WebChat({
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   const fileInput = useRef<HTMLInputElement | null>(null);
+  // Drag-and-drop target state: the whole chat pane accepts attachment
+  // drops (established chat-app pattern), with a drop-hint overlay.
+  const [dragOver, setDragOver] = useState(false);
+
+
+  const addFiles = (files: File[]) => {
+    setPending((p) => [
+      ...p,
+      ...files.map((f) => ({
+        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        filename: f.name,
+        content_type: f.type || "application/octet-stream",
+        size_bytes: f.size,
+        modality: modalityOf(f.type),
+        file: f,
+        previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined,
+      })),
+    ]);
+  };
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
   const [busy, setBusy] = useState(false);
@@ -1743,7 +1762,32 @@ export default function WebChat({
       )}
 
       {/* main column */}
-      <div className="relative flex min-w-0 flex-1 flex-col">
+      <div
+        className="relative flex min-w-0 flex-1 flex-col"
+        onDragOver={(e) => {
+          if (![...e.dataTransfer.types].includes("Files")) return;
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          // only leaving the pane itself (not entering a child) clears the hint
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+        }}
+        onDrop={(e) => {
+          const files = Array.from(e.dataTransfer.files ?? []);
+          if (files.length === 0) return;
+          e.preventDefault();
+          setDragOver(false);
+          addFiles(files);
+        }}
+      >
+        {dragOver && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
+            <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-sm text-muted-foreground shadow-lg">
+              Drop files to attach
+            </div>
+          </div>
+        )}
         <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-sm">
           {isMobile ? (
             <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
@@ -1883,19 +1927,7 @@ export default function WebChat({
               multiple
               className="hidden"
               onChange={(e) => {
-                const files = Array.from(e.target.files ?? []);
-                setPending((p) => [
-                  ...p,
-                  ...files.map((f) => ({
-                    id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                    filename: f.name,
-                    content_type: f.type || "application/octet-stream",
-                    size_bytes: f.size,
-                    modality: modalityOf(f.type),
-                    file: f,
-                    previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined,
-                  })),
-                ]);
+                addFiles(Array.from(e.target.files ?? []));
                 e.target.value = "";
               }}
             />
