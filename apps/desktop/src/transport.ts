@@ -280,7 +280,17 @@ export type ThreadEvent =
       /** Tool-private widget payload; opaque to the loop. */
       meta?: unknown | null;
     }
-  | { type: "compaction"; summary: string }
+  | {
+      type: "compaction";
+      summary: string;
+      /** Total tokens the pre-compaction history represented (informational). */
+      tokens_before?: number | null;
+      /** Message-bearing events immediately before this one kept verbatim in context. */
+      keep_last?: number | null;
+      /** Model + usage of the summarization call. */
+      model?: string | null;
+      usage?: UsagePayload | null;
+    }
   | {
       type: "approval_request";
       call_id: string;
@@ -478,6 +488,22 @@ export async function postToolResult(
     ),
   });
   if (!res.ok) throw new Error(`tool result rejected (${res.status})`);
+}
+
+// ---- Compaction (design spec 2026-09-12 sections C + D) ----
+
+/// Kicks off a compaction of this chat's history: the worker summarizes the
+/// thread into one durable compaction event (fire-and-forget like generate).
+/// Clients poll GET /thread until the new compaction event appears.
+export async function compactChat(chatId: string): Promise<void> {
+  const res = await fetch(`/api/v1/gateway/chat/${chatId}/compact`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? `compact rejected (${res.status})`);
+  }
 }
 
 // ---- Approvals (design spec 2026-09-12 sections D + F) ----
