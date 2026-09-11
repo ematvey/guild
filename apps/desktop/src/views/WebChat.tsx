@@ -564,9 +564,7 @@ function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
           </span>
           {head && (
             <>
-              <span aria-hidden className="mx-2.5 hidden select-none text-muted-foreground/40 sm:inline">
-                ·
-              </span>
+              <span aria-hidden className="hidden select-none sm:inline" />
               <span className="hidden max-w-72 truncate text-muted-foreground sm:inline">
                 {head.slice(0, 160)}
               </span>
@@ -971,9 +969,7 @@ function ToolFrame({ t }: { t: ToolBlock }) {
         <>
           <span className="mr-3 font-medium text-foreground/80">{toolLabel(t)}</span>
           {preview && (
-            <span aria-hidden className="mx-2.5 select-none text-muted-foreground/40">
-              ·
-            </span>
+            <span aria-hidden className="select-none" />
           )}
           {preview && (
             <span
