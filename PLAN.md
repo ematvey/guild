@@ -22,6 +22,20 @@ Design: docs/plans/2026-09-12-approvals-design.md. Shipped and deployed:
 - Browser-verified all four paths (approve/deny/never/allow) with a scripted
   executor (SSE presence + heartbeats + tool result POST).
 
+## Loading + staleness fixes (2026-09-12, latest)
+
+- Deep links render the thread skeleton on FIRST paint — the new-thread hero
+  appears only when the user explicitly creates a new thread.
+- ThreadSkeleton is now conversation-shaped (skeleton bubbles/frames), not a
+  spinner; all loading widgets use skeletons.
+- Cache headers fixed at the source: hashed /assets/* are
+  `immutable, max-age=1y`; index.html and sw.js are `no-cache` (previously
+  NO cache headers at all — browsers heuristic-cached the shell, which is
+  what made tabs go stale after deploys).
+- Deploy freshness: the app polls the served shell every 60 s and reloads the
+  tab when the bundle hash changes (never while streaming/loading). The SW
+  itself was already network-first — headers were the root cause.
+
 ## Auto-compaction (2026-09-12, latest)
 
 - **Manual Compact button removed from the UI** (and the gauge's Compact?
