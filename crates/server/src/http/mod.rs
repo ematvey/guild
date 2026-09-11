@@ -7,6 +7,7 @@ pub mod chats;
 pub mod error;
 pub mod events;
 pub mod gateway;
+pub mod integration_tools;
 pub mod internal;
 pub mod oidc;
 pub mod openai;
@@ -54,6 +55,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(oidc::routes())
         .merge(api_keys::routes())
         .merge(openai::routes())
+        .merge(integration_tools::routes())
         .merge(releases::routes())
         .merge(internal::routines_routes())
         .merge(internal::internal_routes())

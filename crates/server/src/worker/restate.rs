@@ -522,6 +522,7 @@ fn build_system_prompt(
     client_tools: bool,
     has_web_search: bool,
     project_dir: Option<&str>,
+    integrations_index: &str,
 ) -> String {
     let persona = match org_prompt {
         Some(p) if !p.trim().is_empty() => p.trim(),
@@ -548,6 +549,12 @@ fn build_system_prompt(
     }
     if let Some(dir) = project_dir {
         s.push_str(&format!(" The workspace directory is {dir}."));
+    }
+    if !integrations_index.is_empty() {
+        s.push_str(" Enabled integrations (their tools are discovered on demand):");
+        for line in integrations_index.lines() {
+            s.push_str(&format!("\n- {line}"));
+        }
     }
     s
 }
@@ -1256,6 +1263,51 @@ impl ChatRunner {
         let server_tools = integrations::resolve_server_tools(&integration_rows)?;
         let mut tool_specs: Vec<ToolSpec> = server_tools.iter().map(|t| t.spec.clone()).collect();
         let has_web_search = server_tools.iter().any(|t| t.spec.name == "web_search");
+
+        // Journaled: resolve MCP plugins (tool list snapshots — no secrets in
+        // the journal) and the caller's identity (email + role for the
+        // disclosure filter and the identity envelope). A broken plugin
+        // contributes nothing this turn (spec §8).
+        let st = state.clone();
+        let org = req.org_id;
+        let user_id = req.user_id;
+        let (mcp_turns, mcp_caller) = ctx
+            .run(move || {
+                let state = st.clone();
+                async move {
+                    let turns = integrations::resolve_mcp_plugins(&state, org)
+                        .await
+                        .unwrap_or_default();
+                    let store = state.store().await.map_err(api_err)?;
+                    let user = store.identity().get_user(user_id).await.map_err(api_err)?;
+                    Ok(Json((turns, (user.email, user.role))))
+                }
+            })
+            .await?
+            .into_inner();
+        let (mcp_caller_email, mcp_caller_role) = mcp_caller;
+        // Disclosure filter (spec §7): the model never sees tools outside the
+        // caller's policy; the auto-tools are Guild-provided (read-class).
+        for turn in &mcp_turns {
+            tool_specs.extend(turn.allowed_specs(&mcp_caller_role));
+            tool_specs.push(ToolSpec {
+                name: integrations::namespaced_tool(&turn.slug, "list_tools"),
+                description: format!(
+                    "List the tools of the {} integration that you may call, with JSON schemas.",
+                    turn.slug
+                ),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            });
+            tool_specs.push(ToolSpec {
+                name: integrations::namespaced_tool(&turn.slug, "guide"),
+                description: format!(
+                    "Return the usage guide (SKILL.md) for the {} integration.",
+                    turn.slug
+                ),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            });
+        }
+
         if req.client_tools || req.machine_id.is_some() {
             tool_specs.extend(protocol::api::client_tool_specs());
         }
@@ -1284,6 +1336,11 @@ impl ChatRunner {
                 req.client_tools,
                 has_web_search,
                 req.project_dir.as_deref(),
+                &mcp_turns
+                    .iter()
+                    .map(integrations::mcp_index_line)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
             )
         };
 
@@ -1628,7 +1685,7 @@ impl ChatRunner {
                         &tx,
                         req.org_id,
                         req.chat_id,
-                        &call,
+                        call,
                         format!("{step}.{idx}"),
                         req.machine_id.clone(),
                         req.machine_label.clone(),
@@ -1641,9 +1698,14 @@ impl ChatRunner {
                         &ctx,
                         &state,
                         &tx,
-                        &call,
+                        call,
                         &server_tools,
                         format!("{step}.{idx}"),
+                        req.org_id,
+                        req.user_id,
+                        &mcp_turns,
+                        &mcp_caller_role,
+                        Some(mcp_caller_email.as_str()),
                     )
                     .await?
                 };
@@ -2232,6 +2294,7 @@ async fn client_tool_step(
 /// model-facing history and the tool_result event (meta per spec §C.2). The
 /// model sees `content` only; meta rides to the client widget.
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 async fn server_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
@@ -2239,6 +2302,11 @@ async fn server_tool_step(
     call: &ToolCall,
     server_tools: &[integrations::ServerTool],
     _seq: String,
+    org_id: Uuid,
+    caller_id: Uuid,
+    mcp_turns: &[integrations::McpPluginTurn],
+    caller_role: &str,
+    acting_as: Option<&str>,
 ) -> HandlerResult<(String, bool, Option<Value>)> {
     // Journaled: notify attached clients.
     let args_json = serde_json::to_string(&call.arguments)
@@ -2264,14 +2332,84 @@ async fn server_tool_step(
     })
     .await?;
 
-    // Journaled: execute the integration tool.
+    // Journaled: execute the integration tool. Guild-provided disclosure
+    // tools (spec §7.2/§7.3) and MCP plugin calls go through the turn
+    // snapshot; Rust plugins run directly. MCP connections ride the pool
+    // with the identity envelope + secret headers (connection state stays
+    // outside the journal — reconnecting on replay is safe, spec §8); the
+    // secret VALUES are re-resolved from the store inside the step, never
+    // journaled.
     let tools = server_tools.to_owned();
     let call2 = call.clone();
+    let st = state.clone();
+    let mcp = mcp_turns.to_vec();
+    let role = caller_role.to_string();
+    let acting = acting_as.map(str::to_string);
+    let org = org_id;
     let (content, is_error, meta) = ctx
         .run(move || {
             let tools = tools.clone();
             let call = call2.clone();
+            let state = st.clone();
             async move {
+                // Guild-provided disclosure tools (never sent to the server).
+                if let Some((i, kind)) = integrations::parse_auto_tool(&mcp, &call.name) {
+                    let turn = &mcp[i];
+                    return Ok(Json(match kind {
+                        integrations::AutoTool::ListTools => (
+                            serde_json::to_string(&turn.allowed_specs(&role))
+                                .unwrap_or_else(|_| "[]".to_string()),
+                            false,
+                            None,
+                        ),
+                        integrations::AutoTool::Guide => match &turn.guide_object_key {
+                            Some(key) => (
+                                integrations::fetch_guide(&state, key)
+                                    .await
+                                    .unwrap_or_else(|| "guide not available".to_string()),
+                                false,
+                                None,
+                            ),
+                            None => (
+                                format!("integration {} has no guide", turn.slug),
+                                false,
+                                None,
+                            ),
+                        },
+                    }));
+                }
+                // MCP plugin tool: policy-check, then call through the pool.
+                let mcp_target = mcp.iter().enumerate().find_map(|(i, turn)| {
+                    turn.tools
+                        .iter()
+                        .find(|t| t.spec.name == call.name)
+                        .map(|info| (i, info))
+                });
+                if let Some((i, info)) = mcp_target {
+                    if !integrations::mcp_tool_allowed(info, &mcp[i].row_config, &role) {
+                        return Ok(Json((
+                            "not permitted by integration policy".to_string(),
+                            true,
+                            None,
+                        )));
+                    }
+                    let raw = integrations::unnamespaced_tool(&mcp[i].slug, &call.name)
+                        .unwrap_or(call.name.as_str());
+                    let out = integrations::call_mcp_plugin(
+                        &state,
+                        &mcp[i],
+                        raw,
+                        call.arguments.clone(),
+                        org,
+                        acting.as_deref(),
+                    )
+                    .await;
+                    return Ok(Json(match out {
+                        Ok(outcome) => (outcome.content, false, outcome.meta),
+                        Err(e) => (format!("web tool failed: {e}"), true, None),
+                    }));
+                }
+                // Compiled-in Rust plugin (existing behavior).
                 let Some(tool) = tools.iter().find(|t| t.spec.name == call.name) else {
                     return Ok(Json((
                         format!("unknown server tool {}", call.name),
@@ -2279,10 +2417,22 @@ async fn server_tool_step(
                         None,
                     )));
                 };
-                let out = tool
-                    .integration
-                    .execute(&tool.config, &call.name, call.arguments.clone())
-                    .await;
+                let out = match &tool.executor {
+                    integrations::ServerExecutor::Rust(plugin) => {
+                        plugin
+                            .execute(&tool.config, &call.name, call.arguments.clone())
+                            .await
+                    }
+                    // MCP targets were handled above; this arm is only
+                    // reachable for names that match no resolved plugin tool.
+                    integrations::ServerExecutor::Mcp(_) => {
+                        return Ok(Json((
+                            format!("unknown server tool {}", call.name),
+                            true,
+                            None,
+                        )));
+                    }
+                };
                 Ok(Json(match out {
                     // ToolOutcome contract (spec §C.1): content is
                     // model-facing; meta is the tool-owned widget payload,
@@ -2294,6 +2444,57 @@ async fn server_tool_step(
         })
         .await?
         .into_inner();
+
+    // Journaled: audit the identity of one MCP tool call (spec §8). Auto
+    // tools are disclosure-only and not audited.
+    let audited = mcp_turns.iter().any(|turn| {
+        integrations::unnamespaced_tool(&turn.slug, &call.name).is_some()
+            && turn
+                .tools
+                .iter()
+                .any(|t| t.spec.name == call.name)
+    });
+    if audited {
+        let st = state.clone();
+        let slug = mcp_turns
+            .iter()
+            .find(|turn| {
+                turn.tools.iter().any(|t| t.spec.name == call.name)
+            })
+            .map(|turn| turn.slug.clone())
+            .unwrap_or_default();
+        let raw = mcp_turns
+            .iter()
+            .find_map(|turn| integrations::unnamespaced_tool(&turn.slug, &call.name))
+            .unwrap_or(call.name.as_str())
+            .to_string();
+        let acting = acting_as.map(str::to_string);
+        let ok = !is_error;
+        ctx.run(move || {
+            let state = st.clone();
+            async move {
+                let store = state.store().await.map_err(api_err)?;
+                store
+                    .events()
+                    .emit(
+                        org_id,
+                        "integration.tool_called",
+                        serde_json::json!({
+                            "slug": slug,
+                            "tool": raw,
+                            "caller": caller_id,
+                            "acting_as": acting,
+                            "ok": ok,
+                            "via": "chat",
+                        }),
+                    )
+                    .await
+                    .map_err(api_err)?;
+                Ok(Json(()))
+            }
+        })
+        .await?;
+    }
 
     // Journaled: report completion to attached clients.
     let tx2 = tx.clone();
@@ -2316,7 +2517,7 @@ async fn server_tool_step(
         }
     })
     .await?;
-    let _ = state;
+    let _ = tx;
     Ok((content, is_error, meta))
 }
 
@@ -2435,14 +2636,14 @@ mod tests {
 
     #[test]
     fn system_prompt_default_persona_is_helpful_assistant() {
-        let p = build_system_prompt(None, false, false, None);
+        let p = build_system_prompt(None, false, false, None, "");
         assert!(p.starts_with("You are a helpful assistant."));
         assert!(!p.contains("coding agent"));
     }
 
     #[test]
     fn system_prompt_org_persona_replaces_default_only() {
-        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some("/w"));
+        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some("/w"), "");
         assert!(p.starts_with("You are GLaDOS."));
         assert!(!p.contains("helpful assistant"));
         // Operational instructions are appended regardless of the persona.
@@ -2453,7 +2654,7 @@ mod tests {
 
     #[test]
     fn system_prompt_blank_org_prompt_falls_back_to_default() {
-        let p = build_system_prompt(Some("   "), false, false, None);
+        let p = build_system_prompt(Some("   "), false, false, None, "");
         assert!(p.starts_with("You are a helpful assistant."));
     }
 

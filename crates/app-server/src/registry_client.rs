@@ -32,6 +32,7 @@ pub async fn publish(
             version: version.into(),
             description: String::new(),
             dependencies: vec![],
+            ..Default::default()
         };
         let bytes = registry::pack(source_dir, &manifest)
             .map_err(|e| CloudError::Request(format!("pack failed: {e}")))?;

@@ -64,14 +64,11 @@ async fn set_machine(
         .map(str::to_string);
     // Trust the label only for a machine this user currently has connected;
     // otherwise keep whatever label is already stored.
-    let label = match machine_id {
-        Some(mid) => Some(
-            state
-                .machine_label(mid)
-                .unwrap_or_else(|| label.unwrap_or_else(|| mid.to_string())),
-        ),
-        None => None,
-    };
+    let label = machine_id.map(|mid| {
+        state
+            .machine_label(mid)
+            .unwrap_or_else(|| label.unwrap_or_else(|| mid.to_string()))
+    });
     let chat = state
         .store()
         .await?
@@ -83,7 +80,6 @@ async fn set_machine(
 
 /// Per-user approval policy lives at /api/v1/me/approval (auth.rs) — see
 /// migration 0026: tool trust is user-scoped, not per-chat.
-
 impl From<crate::store::chats::ChatRow> for Chat {
     fn from(c: crate::store::chats::ChatRow) -> Self {
         Self {
