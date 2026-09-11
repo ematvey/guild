@@ -520,13 +520,13 @@ function Frame({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    // Quiet, inline frame: hugs its content, no border — a subtle chip row
-    // rather than a full-width panel, so reasoning/tool blocks stay visually
-    // secondary to the conversation.
-    <div className="mr-auto flex w-fit max-w-[85%] flex-col overflow-hidden rounded-md bg-muted/50 text-xs">
+    // A clickable text row on the page — no chip background, full width, the
+    // row blends into the conversation (established chat-app pattern). The
+    // panel/card only exists below the row once it is opened.
+    <div className="flex w-full flex-col text-xs">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-1.5 px-2 py-1 text-left outline-none transition-colors hover:bg-accent/50"
+        className="flex w-full items-center gap-1.5 py-1 text-left outline-none transition-colors hover:text-foreground"
       >
         {icon}
         <span className="min-w-0 flex-1 truncate text-muted-foreground">{title}</span>
@@ -538,7 +538,7 @@ function Frame({
         )}
       </button>
       {open && (
-        <div className="max-w-[720px] border-t border-border/40 px-2 py-1.5">
+        <div className="mb-2 rounded-lg border border-border bg-card px-3 py-2.5 text-xs">
           {children}
         </div>
       )}
