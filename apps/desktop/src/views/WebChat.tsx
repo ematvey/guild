@@ -1400,6 +1400,9 @@ export default function WebChat({
     setBusy(true);
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
+    // Focus stays in the composer after send (established chat-app
+    // behavior): clicking Send or a disabled state would otherwise take it.
+    ta.current?.focus();
     setBlocks((b) => [
       ...b,
       {
@@ -1421,6 +1424,7 @@ export default function WebChat({
       if (cid && loadSeq.current === mySeq) {
         setChatId(cid);
         void refreshChats();
+      ta.current?.focus();
       }
     }
     if (!cid) {
