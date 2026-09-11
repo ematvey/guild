@@ -38,6 +38,13 @@ codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
   when status reports configured, and app boot adopts the fragment token.
 - Deployed to the compose stack (:18080); health + status endpoints
   verified live; UI flows not yet clicked through in the browser.
+- Uniform admin state machine applied to Users, Teams, Integrations and
+  Models: detail screens show saved data as read-only facts with explicit
+  Edit (draft form with Save/Cancel) and two-step destructive confirms;
+  no more always-live mixed forms. Teams gained rename (PUT
+  /api/v1/admin/teams/{id}); integrations' enable toggle moved into the
+  edit form. Registry already conformed; Usage/Approvals left to the
+  session editing them.
 
 ## Approval policy is user-scoped, not per-chat (2026-09-11, latest)
 

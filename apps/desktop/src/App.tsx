@@ -136,8 +136,8 @@ function UpdateToast() {
       .then((v) => v && setVersion(v))
       .catch(() => {});
     const unlisteners: Promise<UnlistenFn>[] = [
-      listen<{ version: string }>("update.ready", (e) => setVersion(e.payload.version)),
-      listen("update.failed", () => setVersion(null)),
+      listen<{ version: string }>("update-ready", (e) => setVersion(e.payload.version)),
+      listen("update-failed", () => setVersion(null)),
     ];
     return () => {
       unlisteners.forEach((p) => p.then((u) => u()).catch(() => {}));

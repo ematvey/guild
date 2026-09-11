@@ -53,6 +53,30 @@ impl<'a> TeamStore<'a> {
         .map_err(Into::into)
     }
 
+    pub async fn rename_team(&self, org_id: Uuid, team_id: Uuid, name: &str) -> Result<TeamRow, ApiError> {
+        if !self.team_in_org(org_id, team_id).await? {
+            return Err(ApiError::not_found("no such team"));
+        }
+        match sqlx::query_as::<_, TeamRow>(
+            "UPDATE teams SET name = $1 WHERE id = $2 AND org_id = $3 \
+             RETURNING id, org_id, name, created_at, \
+             (SELECT COUNT(*) FROM team_members WHERE team_id = teams.id)::bigint AS member_count",
+        )
+        .bind(name)
+        .bind(team_id)
+        .bind(org_id)
+        .fetch_one(self.pool)
+        .await
+        {
+            Ok(t) => Ok(t),
+            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => Err(ApiError::conflict(
+                "team_taken",
+                "a team with this name already exists",
+            )),
+            Err(e) => Err(ApiError::from(e)),
+        }
+    }
+
     pub async fn delete_team(&self, org_id: Uuid, team_id: Uuid) -> Result<(), ApiError> {
         let res = sqlx::query("DELETE FROM teams WHERE id = $1 AND org_id = $2")
             .bind(team_id)

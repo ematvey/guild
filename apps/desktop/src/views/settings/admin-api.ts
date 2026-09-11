@@ -1,4 +1,8 @@
 // Thin API wrapper: bearer token in localStorage, single error envelope.
+// Paths resolve through apiUrl: same-origin on the web, the paired server
+// URL inside the Tauri webview (whose origin is tauri://localhost).
+
+import { apiUrl } from "../../transport";
 
 const TOKEN_KEY = "guild_token";
 
@@ -25,7 +29,7 @@ export class ApiError extends Error {
 
 export async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const token = getToken();
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     method,
     headers: {
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
@@ -48,7 +52,7 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
 
 export async function apiBytes(path: string): Promise<ArrayBuffer> {
   const token = getToken();
-  const res = await fetch(path, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const res = await fetch(apiUrl(path), { headers: token ? { authorization: `Bearer ${token}` } : {} });
   if (!res.ok) {
     const v = await res.json().catch(() => ({}));
     throw new ApiError(v?.error?.code ?? "unknown", v?.error?.message ?? res.statusText);
@@ -81,7 +85,7 @@ export async function streamChat(
   onEvent: (ev: Record<string, unknown>) => void,
 ): Promise<void> {
   const token = getToken();
-  const res = await fetch("/api/v1/gateway/chat", {
+  const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify({ chat_id: chatId, model, messages: [{ role: "user", content: prompt }] }),

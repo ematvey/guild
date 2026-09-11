@@ -96,10 +96,14 @@ pub fn spawn_detached(bin: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// hello handshake over a fresh pair; a daemon of a different build version
-/// is told to shut down and the caller gets an Err (it respawns a current
-/// daemon). Reads byte-wise (no BufReader) so no bytes past the newline are
-/// lost to a dropped buffer — other clients' events may follow immediately.
+/// hello handshake over a fresh pair; a daemon speaking a different wire
+/// protocol is told to shut down and the caller gets an Err (it respawns a
+/// current daemon). The crate version is informational only — the tauri
+/// client and the app-server version independently (GUI 0.3.x vs workspace
+/// 0.2.0), so comparing crate versions here broke every attach after any
+/// version bump. Reads byte-wise (no BufReader) so no bytes past the newline
+/// are lost to a dropped buffer — other clients' events may follow
+/// immediately.
 pub fn handshake(pair: Pair) -> anyhow::Result<Pair> {
     use std::io::Read as _;
     let Pair(mut rd, mut wr) = pair;
@@ -115,13 +119,13 @@ pub fn handshake(pair: Pair) -> anyhow::Result<Pair> {
         line.push(b);
     }
     let v: serde_json::Value = serde_json::from_slice(&line)?;
-    let daemon_version = v["result"]["version"].as_str().unwrap_or("");
-    if daemon_version != env!("CARGO_PKG_VERSION") {
+    let daemon_protocol = v["result"]["protocol"].as_u64().unwrap_or(0);
+    if daemon_protocol != u64::from(protocol::rpc::PROTOCOL_VERSION) {
         let req = protocol::rpc::Request::new(1, "daemon.shutdown", serde_json::json!({}));
         let _ = writeln!(wr, "{}", serde_json::to_string(&req)?);
         anyhow::bail!(
-            "daemon version {daemon_version} != {}",
-            env!("CARGO_PKG_VERSION")
+            "daemon protocol {daemon_protocol} != {}",
+            protocol::rpc::PROTOCOL_VERSION
         );
     }
     Ok(Pair(rd, wr))

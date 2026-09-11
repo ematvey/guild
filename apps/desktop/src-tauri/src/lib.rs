@@ -108,7 +108,14 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
                 }
             }
         }
-        // daemon gone: drop our handle; requests fail until it returns.
+        // daemon gone: fail every pending RPC (dropping the oneshot senders
+        // surfaces "engine dropped the request" to the callers instead of a
+        // forever-pending invoke), then drop our handle so the next
+        // start_engine re-attaches (respawning if needed).
+        {
+            let mut pending = responses.lock().unwrap();
+            pending.clear();
+        }
         let state: State<EngineState> = app_handle.state();
         *state.engine.lock().unwrap() = None;
         let _ = app_handle.emit(
@@ -192,6 +199,7 @@ pub mod commands {
 
     #[tauri::command]
     pub async fn rpc_request(
+        app: AppHandle,
         state: State<'_, EngineState>,
         method: String,
         params: Value,
@@ -220,11 +228,21 @@ pub mod commands {
                 return Err(format!("engine write failed: {e}"));
             }
         }
-        match rx.await {
-            Ok(value) => Ok(value),
-            Err(_) => {
+        // Bounded wait: a wedged (alive-but-silent) engine must not leave the
+        // UI spinning forever — 120s covers any legitimate request (pair,
+        // login, session restore); chat streaming rides on events, not this.
+        match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(_)) => {
                 engine.responses.lock().unwrap().remove(&id);
                 Err("engine dropped the request".into())
+            }
+            Err(_) => {
+                engine.responses.lock().unwrap().remove(&id);
+                // the connection is wedged: force a fresh attach next time
+                let state: State<EngineState> = app.state();
+                *state.engine.lock().unwrap() = None;
+                Err("engine timed out".into())
             }
         }
     }
@@ -286,7 +304,7 @@ async fn check_and_prepare_update(app: &AppHandle) {
         .download(
             move |chunk, total| {
                 let _ = app_for_progress.emit(
-                    "update.progress",
+                    "update-progress",
                     serde_json::json!({"chunk": chunk, "total": total}),
                 );
             },
@@ -298,7 +316,7 @@ async fn check_and_prepare_update(app: &AppHandle) {
         Err(e) => {
             eprintln!("updater: download failed: {e}");
             let _ = app.emit(
-                "update.failed",
+                "update-failed",
                 serde_json::json!({"message": e.to_string()}),
             );
             return;
@@ -307,7 +325,7 @@ async fn check_and_prepare_update(app: &AppHandle) {
     let state: State<UpdateState> = app.state();
     *state.pending.lock().unwrap() = Some((update, bytes));
     eprintln!("updater: version {version} ready to install");
-    let _ = app.emit("update.ready", serde_json::json!({"version": version}));
+    let _ = app.emit("update-ready", serde_json::json!({"version": version}));
 }
 
 pub fn start_update_checker(app: AppHandle) {

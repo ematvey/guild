@@ -108,12 +108,13 @@ function TeamDetail({
   onBack: () => void;
 }) {
   const creating = team === null;
+  // The saved team is facts first; renaming is an explicit edit mode.
+  const [mode, setMode] = useState<"view" | "edit">(creating ? "edit" : "view");
   const [name, setName] = useState(team?.name ?? "");
   const [members, setMembers] = useState<UserRow[] | null>(creating ? [] : null);
   const [orgUsers, setOrgUsers] = useState<UserRow[] | null>(null);
   const [addUserId, setAddUserId] = useState("");
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -137,8 +138,9 @@ function TeamDetail({
         onChanged();
         onBack();
       } else {
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
+        await api("PUT", `/api/v1/admin/teams/${team!.id}`, { name });
+        onChanged();
+        setMode("view");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -205,20 +207,21 @@ function TeamDetail({
   const memberIds = new Set((members ?? []).map((m) => m.id));
   const addable = (orgUsers ?? []).filter((u) => !memberIds.has(u.id));
 
-  return (
-    <div>
-      <button className={backBtn} onClick={onBack}>
-        <ArrowLeft className="size-4" /> Teams
-      </button>
-      <h3 className="mb-1 text-base font-semibold">{creating ? "Add team" : team?.name || "…"}</h3>
-      <p className="mb-4 text-xs text-muted-foreground">
-        {creating
-          ? "Name the team; members are managed after creation."
-          : "Members of this team. Adding or removing takes effect immediately."}
-      </p>
-
-      <div className="max-w-xl space-y-4">
-        {creating ? (
+  if (creating || mode === "edit") {
+    return (
+      <div>
+        <button className={backBtn} onClick={onBack}>
+          <ArrowLeft className="size-4" /> Teams
+        </button>
+        <h3 className="mb-1 text-base font-semibold">
+          {creating ? "Add team" : "Edit team"}
+        </h3>
+        <p className="mb-4 text-xs text-muted-foreground">
+          {creating
+            ? "Name the team; members are managed after creation."
+            : "Rename the team; members are managed on the team page."}
+        </p>
+        <div className="max-w-xl space-y-4">
           <div>
             <p className={label}>Team name</p>
             <Input
@@ -229,70 +232,100 @@ function TeamDetail({
               onKeyDown={(e) => e.key === "Enter" && save()}
             />
           </div>
-        ) : (
-          <>
-            <div className="rounded-lg border border-border bg-card">
-              <div className="border-b border-border px-4 py-3">
-                <p className={label}>Members</p>
-              </div>
-              {members === null ? (
-                <div className="space-y-2 p-4">
-                  <div className="h-8 w-full animate-pulse rounded-md bg-accent" />
-                </div>
-              ) : members.length === 0 ? (
-                <p className="p-4 text-sm text-muted-foreground">No members yet.</p>
-              ) : (
-                <ul>
-                  {members.map((m) => (
-                    <li
-                      key={m.id}
-                      className="flex items-center gap-3 border-b border-border/60 px-4 py-2.5 last:border-b-0"
-                    >
-                      <p className="min-w-0 flex-1 truncate text-sm">{m.email}</p>
-                      <span className="rounded-full bg-accent px-2 py-0.5 text-[11px] font-medium capitalize text-muted-foreground">
-                        {m.role}
-                      </span>
-                      <button
-                        className="text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
-                        disabled={busy}
-                        title="Remove from team"
-                        onClick={() => removeMember(m.id)}
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <select
-                className="h-9 min-w-56 rounded-md border border-input bg-card px-2 text-sm"
-                value={addUserId}
-                onChange={(e) => setAddUserId(e.target.value)}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex items-center gap-2">
+            <Button disabled={busy || !name} onClick={save}>
+              {busy ? "Saving…" : "Save"}
+            </Button>
+            {!creating && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setName(team!.name);
+                  setError(null);
+                  setMode("view");
+                }}
               >
-                <option value="">Add a member…</option>
-                {addable.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.email}
-                  </option>
-                ))}
-              </select>
-              <Button size="sm" disabled={!addUserId || busy} onClick={addMember}>
-                <Plus className="mr-1 size-3.5" /> Add
+                Cancel
               </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // view mode: the saved team as facts, members managed in place
+  return (
+    <div>
+      <button className={backBtn} onClick={onBack}>
+        <ArrowLeft className="size-4" /> Teams
+      </button>
+      <h3 className="mb-1 text-base font-semibold">{team?.name || "…"}</h3>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Members of this team. Adding or removing takes effect immediately.
+      </p>
+
+      <div className="max-w-xl space-y-4">
+        <div className="rounded-lg border border-border bg-card">
+          <div className="border-b border-border px-4 py-3">
+            <p className={label}>Members</p>
+          </div>
+          {members === null ? (
+            <div className="space-y-2 p-4">
+              <div className="h-8 w-full animate-pulse rounded-md bg-accent" />
             </div>
-          </>
-        )}
+          ) : members.length === 0 ? (
+            <p className="p-4 text-sm text-muted-foreground">No members yet.</p>
+          ) : (
+            <ul>
+              {members.map((m) => (
+                <li
+                  key={m.id}
+                  className="flex items-center gap-3 border-b border-border/60 px-4 py-2.5 last:border-b-0"
+                >
+                  <p className="min-w-0 flex-1 truncate text-sm">{m.email}</p>
+                  <span className="rounded-full bg-accent px-2 py-0.5 text-[11px] font-medium capitalize text-muted-foreground">
+                    {m.role}
+                  </span>
+                  <button
+                    className="text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
+                    disabled={busy}
+                    title="Remove from team"
+                    onClick={() => removeMember(m.id)}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <select
+            className="h-9 min-w-56 rounded-md border border-input bg-card px-2 text-sm"
+            value={addUserId}
+            onChange={(e) => setAddUserId(e.target.value)}
+          >
+            <option value="">Add a member…</option>
+            {addable.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.email}
+              </option>
+            ))}
+          </select>
+          <Button size="sm" disabled={!addUserId || busy} onClick={addMember}>
+            <Plus className="mr-1 size-3.5" /> Add
+          </Button>
+        </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex items-center gap-2">
-          {creating ? (
-            <Button disabled={busy || !name} onClick={save}>
-              {busy ? "Creating…" : "Create team"}
-            </Button>
-          ) : confirmDelete ? (
+          <Button onClick={() => setMode("edit")}>
+            <Pencil className="mr-1 size-3.5" /> Edit
+          </Button>
+          {confirmDelete ? (
             <>
               <Button variant="destructive" disabled={busy} onClick={removeTeam}>
                 Delete team
@@ -309,9 +342,6 @@ function TeamDetail({
             >
               <Trash2 className="mr-1 size-3.5" /> Delete team
             </Button>
-          )}
-          {!creating && !confirmDelete && saved && (
-            <span className="text-xs text-muted-foreground">changes saved</span>
           )}
         </div>
       </div>
