@@ -22,6 +22,22 @@ Design: docs/plans/2026-09-12-approvals-design.md. Shipped and deployed:
 - Browser-verified all four paths (approve/deny/never/allow) with a scripted
   executor (SSE presence + heartbeats + tool result POST).
 
+## Compaction + context gauge + desktop 0.3.9 (2026-09-12, later)
+
+- **Compaction** (docs/plans/2026-09-12-compaction-design.md): on-demand via
+  the composer-row Compact action or POST /gateway/chat/{id}/compact. The
+  model summarizes pre-compaction history into a durable `compaction` event
+  (summary, tokens_before, keep_last=4, model, usage); derivation replaces
+  everything before it with summary + verbatim tail. UI: collapsed
+  "Thread compacted" card. Compaction-call tokens are informational (not
+  metered) — flag if quota accounting should include them.
+- **Context gauge**: model_routes.context_window (0024, admin-settable,
+  fallback 128k); GET /thread returns {tokens, max, model}; slim fill bar
+  next to the model selector (amber >80%, red >90%, "Compact?" hint >90%).
+- **Desktop 0.3.9 published** for linux/darwin-x64/darwin-arm64/windows,
+  sha256-verified; updater delivers once. Ships thread events UI, thinking,
+  tool widgets, approvals, compaction, gauge.
+
 ## Thread event log milestone (2026-09-12, this session)
 
 Full redesign per `docs/plans/2026-09-12-thread-events-design.md` (grounded in
