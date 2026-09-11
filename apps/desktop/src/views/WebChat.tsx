@@ -367,21 +367,28 @@ function Frame({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="mr-auto w-full max-w-[85%] overflow-hidden rounded-lg border border-border bg-card text-xs">
+    // Quiet, inline frame: hugs its content, no border — a subtle chip row
+    // rather than a full-width panel, so reasoning/tool blocks stay visually
+    // secondary to the conversation.
+    <div className="mr-auto flex w-fit max-w-[85%] flex-col overflow-hidden rounded-md bg-muted/50 text-xs">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left outline-none transition-colors hover:bg-accent/50"
+        className="flex w-full items-center gap-1.5 px-2 py-1 text-left outline-none transition-colors hover:bg-accent/50"
       >
         {icon}
-        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{title}</span>
         {badge}
         {open ? (
-          <ChevronUp className="size-3.5 shrink-0 text-muted-foreground" />
+          <ChevronUp className="size-3 shrink-0 text-muted-foreground/60" />
         ) : (
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground/60" />
         )}
       </button>
-      {open && <div className="border-t border-border px-3 py-2">{children}</div>}
+      {open && (
+        <div className="max-w-[720px] border-t border-border/40 px-2 py-1.5">
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -391,7 +398,7 @@ function Frame({
 function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
   return (
     <Frame
-      icon={<Brain className="size-3.5 shrink-0 text-muted-foreground" />}
+      icon={<Brain className="size-3 shrink-0 text-muted-foreground" />}
       title={live ? "Thinking…" : "Thinking"}
     >
       <div className="max-h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed text-muted-foreground">
@@ -415,7 +422,7 @@ function toolKind(t: ToolBlock): string {
 }
 
 function ToolKindIcon({ kind }: { kind: string }) {
-  const cls = "size-3.5 shrink-0 text-muted-foreground";
+  const cls = "size-3 shrink-0 text-muted-foreground";
   switch (kind) {
     case "search":
       return <Search className={cls} />;
@@ -438,7 +445,7 @@ function ToolKindIcon({ kind }: { kind: string }) {
 function CompactionCard({ c }: { c: CompactionBlock }) {
   return (
     <Frame
-      icon={<Minimize2 className="size-3.5 shrink-0 text-muted-foreground" />}
+      icon={<Minimize2 className="size-3 shrink-0 text-muted-foreground" />}
       title={
         <>
           <span>Thread compacted</span>
@@ -756,9 +763,9 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
     <Frame
       icon={
         resolved && a.status === "denied" ? (
-          <ShieldAlert className="size-3.5 shrink-0 text-muted-foreground" />
+          <ShieldAlert className="size-3 shrink-0 text-muted-foreground" />
         ) : (
-          <ShieldCheck className="size-3.5 shrink-0 text-muted-foreground" />
+          <ShieldCheck className="size-3 shrink-0 text-muted-foreground" />
         )
       }
       title={
@@ -2118,7 +2125,7 @@ function SidebarContent({
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={email}>
                 {email}
               </span>
-              <ChevronUp className="size-3.5 shrink-0 text-muted-foreground" />
+              <ChevronUp className="size-3 shrink-0 text-muted-foreground" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-56">
