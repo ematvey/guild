@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BundleManifest {
     /// skill | mcp | integration
     pub kind: String,
@@ -17,7 +17,79 @@ pub struct BundleManifest {
     pub description: String,
     #[serde(default)]
     pub dependencies: Vec<String>,
+    /// v2 integration fields — absent for v1 automation bundles.
+    #[serde(default)]
+    pub mcp: Option<McpManifest>,
+    #[serde(default)]
+    pub auth: Option<AuthManifest>,
+    #[serde(default)]
+    pub tools: Option<ToolsManifest>,
+    #[serde(default)]
+    pub triggers: Vec<TriggerSpec>,
+    #[serde(default)]
+    pub skills: Vec<String>,
 }
+
+/// Streamable-HTTP MCP endpoint implementing the plugin contract.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct McpManifest {
+    pub url: String,
+}
+
+/// Auth shape: one org-wide secret, an impersonated org credential, or a
+/// per-member OAuth token cached by Guild.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuthManifest {
+    #[serde(default = "default_auth_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub secret_names: Vec<String>,
+    #[serde(default = "default_identity_key")]
+    pub identity_key: String,
+}
+
+impl Default for AuthManifest {
+    fn default() -> Self {
+        Self {
+            kind: default_auth_kind(),
+            secret_names: vec![],
+            identity_key: default_identity_key(),
+        }
+    }
+}
+
+fn default_auth_kind() -> String {
+    "org_secret".into()
+}
+
+fn default_identity_key() -> String {
+    "email".into()
+}
+
+/// Per-tool class declaration from the connector: read (default), write,
+/// admin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ToolsManifest {
+    #[serde(default)]
+    pub classes: std::collections::BTreeMap<String, String>,
+}
+
+/// v1-compatible trigger descriptor (same shape as routine.json entries).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TriggerSpec {
+    pub kind: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub trigger_config: serde_json::Value,
+    pub prompt: String,
+    pub model: String,
+    #[serde(default)]
+    pub allowed_tools: Option<Vec<String>>,
+}
+
+const TOOL_CLASSES: [&str; 3] = ["read", "write", "admin"];
+const AUTH_KINDS: [&str; 3] = ["org_secret", "org_secret_impersonated", "per_user_token"];
 
 /// Validates a manifest's shape and allowed kinds.
 pub fn validate_manifest(m: &BundleManifest) -> anyhow::Result<()> {
@@ -28,6 +100,64 @@ pub fn validate_manifest(m: &BundleManifest) -> anyhow::Result<()> {
         "manifest kind must be skill, mcp, or integration"
     );
     Ok(())
+}
+
+/// Validates v2 integration manifest fields (mcp url, auth shape, tool
+/// classes and namespaced-name length, trigger shape). v1 manifests with no
+/// v2 fields pass unchanged.
+pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
+    validate_manifest(m)?;
+    if let Some(mcp) = &m.mcp {
+        anyhow::ensure!(
+            mcp.url.starts_with("http://") || mcp.url.starts_with("https://"),
+            "mcp.url must be an absolute http(s) URL"
+        );
+    }
+    if let Some(auth) = &m.auth {
+        anyhow::ensure!(
+            AUTH_KINDS.contains(&auth.kind.as_str()),
+            "auth.kind must be org_secret, org_secret_impersonated, or per_user_token"
+        );
+        anyhow::ensure!(
+            auth.identity_key == "email" || auth.identity_key.is_empty(),
+            "auth.identity_key supports only email in v1"
+        );
+    }
+    if let Some(tools) = &m.tools {
+        for (name, class) in &tools.classes {
+            anyhow::ensure!(
+                TOOL_CLASSES.contains(&class.as_str()),
+                "tool class for {name} must be read, write, or admin"
+            );
+            anyhow::ensure!(
+                name.len() <= 64 - "int_".len() - m.slug.len() - 2,
+                "tool name {name} too long for namespacing under {}",
+                m.slug
+            );
+        }
+    }
+    for t in &m.triggers {
+        anyhow::ensure!(
+            matches!(t.kind.as_str(), "webhook" | "interval"),
+            "trigger kind must be webhook or interval"
+        );
+        anyhow::ensure!(!t.prompt.is_empty(), "trigger prompt is empty");
+        anyhow::ensure!(!t.model.is_empty(), "trigger model is empty");
+    }
+    Ok(())
+}
+
+/// Effective manifest class for one tool: write, admin, or read (default for
+/// undeclared tools).
+pub fn tool_class(m: &BundleManifest, tool: &str) -> &'static str {
+    m.tools
+        .as_ref()
+        .and_then(|t| t.classes.get(tool).map(|c| match c.as_str() {
+            "write" => "write",
+            "admin" => "admin",
+            _ => "read",
+        }))
+        .unwrap_or("read")
 }
 
 /// Parses `name:` and `description:` from YAML-ish frontmatter between `---`
@@ -101,6 +231,7 @@ pub fn pack_skill(skill_dir: &Path, version: &str) -> anyhow::Result<(Vec<u8>, B
         version: version.into(),
         description,
         dependencies: vec![],
+        ..Default::default()
     };
     let bytes = pack(skill_dir, &manifest)?;
     Ok((bytes, manifest))
@@ -211,6 +342,7 @@ mod tests {
             version: "1.2.3".into(),
             description: "a demo skill".into(),
             dependencies: vec![],
+            ..Default::default()
         };
         let bytes = pack(&dir, &manifest).unwrap();
         let dest = scratch("extract");
@@ -254,6 +386,60 @@ mod tests {
         fs::create_dir_all(dir.join("empty")).unwrap();
         assert!(pack_skill(&dir.join("empty"), "1.0.0").is_err());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn v2_manifest() -> BundleManifest {
+        serde_json::from_value(serde_json::json!({
+            "kind": "integration", "slug": "hubspot", "version": "1.0.0",
+            "description": "HubSpot CRM tools",
+            "mcp": { "url": "https://mcp.example.com/mcp" },
+            "auth": { "kind": "org_secret_impersonated",
+                      "secret_names": ["sa_json"], "identity_key": "email" },
+            "tools": { "classes": { "search_contacts": "read",
+                                    "update_deal": "write" } },
+            "triggers": [{ "kind": "webhook", "prompt": "digest",
+                           "model": "gpt-4o-mini" }],
+            "skills": ["hubspot-cookbook"]
+        })).unwrap()
+    }
+
+    #[test]
+    fn v2_manifest_roundtrip_and_validation() {
+        let m = v2_manifest();
+        validate_v2(&m).unwrap();
+        assert_eq!(m.mcp.as_ref().unwrap().url, "https://mcp.example.com/mcp");
+        assert_eq!(tool_class(&m, "search_contacts"), "read");
+        assert_eq!(tool_class(&m, "update_deal"), "write");
+        assert_eq!(tool_class(&m, "unknown_tool"), "read");
+    }
+
+    #[test]
+    fn v2_validation_rejects_bad_fields() {
+        let mut m = v2_manifest();
+        m.mcp.as_mut().unwrap().url = "ftp://x".into();
+        assert!(validate_v2(&m).is_err());
+        let mut m = v2_manifest();
+        m.auth.as_mut().unwrap().kind = "magic".into();
+        assert!(validate_v2(&m).is_err());
+        let mut m = v2_manifest();
+        m.tools.as_mut().unwrap().classes.insert("t".into(), "sudo".into());
+        assert!(validate_v2(&m).is_err());
+        let mut m = v2_manifest();
+        m.mcp.as_mut().unwrap().url = "https://x/".into();
+        let mut long = BundleManifest { slug: m.slug.clone(), ..v2_manifest() };
+        long.tools.as_mut().unwrap().classes.insert(
+            "a_very_long_tool_name_exceeding_sixty_four_characters_limit_x".into(), "read".into());
+        assert!(validate_v2(&long).is_err());
+    }
+
+    #[test]
+    fn v1_manifest_still_validates() {
+        let m = BundleManifest { kind: "integration".into(), slug: "digest".into(),
+            version: "0.1.0".into(), description: String::new(),
+            dependencies: vec![], mcp: None, auth: None, tools: None,
+            triggers: vec![], skills: vec![] };
+        validate_v2(&m).unwrap();
+        assert!(m.mcp.is_none());
     }
 
     #[test]
