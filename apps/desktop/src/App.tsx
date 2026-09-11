@@ -23,7 +23,7 @@ function defaultServerUrl(): string {
 }
 
 /// Web-mode login (chat app served by the guild-server): same-origin auth,
-/// token shared with the /admin console via localStorage.
+/// session token persisted to localStorage.
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
   const dark =
@@ -123,8 +123,7 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
   );
 }
 
-/// Tauri (desktop) mode: engine login, then the full agent view. The admin
-/// console opens in the system browser with a token handoff (fragment).
+/// Tauri (desktop) mode: engine login, then the full agent view.
 /// Bottom-right toast shown when a signed update has been downloaded and is
 /// waiting; applying happens on the user's restart (VSCode/Zed-style).
 function UpdateToast() {
@@ -379,7 +378,7 @@ function AppInner() {
       setReady(true);
       return;
     }
-    // web mode: same-origin auth shared with /admin
+    // web mode: same-origin auth
     // An OIDC callback lands here as #oidc_token=…&email=…; adopt the
     // session and strip the fragment so the token never lingers in the URL.
     if (window.location.hash.startsWith("#oidc_token=")) {

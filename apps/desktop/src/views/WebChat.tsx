@@ -1159,7 +1159,7 @@ export default function WebChat({
   displayName?: string | null;
   avatarUrl?: string | null;
   onSignOut: () => void;
-}) { {
+}) {
   const [models, setModels] = useState<string[] | null>(null);
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
