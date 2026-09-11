@@ -22,6 +22,21 @@ Design: docs/plans/2026-09-12-approvals-design.md. Shipped and deployed:
 - Browser-verified all four paths (approve/deny/never/allow) with a scripted
   executor (SSE presence + heartbeats + tool result POST).
 
+## Unified settings window (2026-09-12, latest)
+
+- Admin UI folded into the main app: a large Settings window (user menu →
+  Settings) with its own sidebar — USER (Account, Appearance, Machine),
+  CURRENT CHAT (Approvals), ORGANIZATION (Usage, Users, Models, Integrations,
+  Registry, Releases; admin-only). Works identically in the desktop app and
+  the browser; role-gated via /api/v1/auth/me (transport apiMe now returns
+  role).
+- Sections live in apps/desktop/src/views/settings/sections/, lazily loaded,
+  using the shared admin-api helper (same session token as the chat).
+- New backend endpoint: GET /api/v1/admin/gateway/routes (full route rows,
+  no secrets) so Models editing is prefilled.
+- The old /admin console still exists untouched during the transition; the
+  desktop handoff link remains but the window is the primary surface now.
+
 ## Loading + staleness fixes (2026-09-12, latest)
 
 - Deep links render the thread skeleton on FIRST paint — the new-thread hero
