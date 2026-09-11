@@ -14,6 +14,18 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 pub struct AnthropicProvider;
 
+/// Splits `data:<media_type>;base64,<data>` into (media_type, data).
+fn parse_data_uri(uri: &str) -> Option<(&str, &str)> {
+    let rest = uri.strip_prefix("data:")?;
+    let semi = rest.find(";base64,")?;
+    let media_type = &rest[..semi];
+    let data = &rest[semi + ";base64,".len()..];
+    if media_type.is_empty() || data.is_empty() {
+        return None;
+    }
+    Some((media_type, data))
+}
+
 impl AnthropicProvider {
     pub fn new() -> Self {
         Self
@@ -59,6 +71,25 @@ impl AnthropicProvider {
                     }));
                 }
                 messages.push(serde_json::json!({"role": "assistant", "content": blocks}));
+                continue;
+            }
+            // Multimodal user turns: image blocks (base64 source parsed
+            // from the data URI); Anthropic has no audio input — audio
+            // parts are skipped on this route shape.
+            if m.has_media() {
+                let mut blocks: Vec<serde_json::Value> = Vec::new();
+                if !m.content.is_empty() {
+                    blocks.push(serde_json::json!({"type": "text", "text": m.content}));
+                }
+                for uri in &m.images {
+                    if let Some((media_type, data)) = parse_data_uri(uri) {
+                        blocks.push(serde_json::json!({
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": media_type, "data": data},
+                        }));
+                    }
+                }
+                messages.push(serde_json::json!({"role": m.role, "content": blocks}));
                 continue;
             }
             messages.push(serde_json::json!({"role": m.role, "content": m.content}));
@@ -288,6 +319,8 @@ mod tests {
             Message {
                 role: "assistant".into(),
                 content: String::new(),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: Some(vec![ToolCall {
                     id: "c1".into(),
                     name: "read_file".into(),

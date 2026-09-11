@@ -29,10 +29,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/attachments/{id}", axum::routing::get(download))
 }
 
-fn object_key(org_id: Uuid, id: Uuid, filename: &str) -> String {
-    format!("attachments/{org_id}/{id}/{filename}")
-}
-
 async fn upload(
     State(state): State<AppState>,
     user: AuthUser,
@@ -52,7 +48,7 @@ async fn upload(
     // chat must belong to the caller's org
     store.chats().get_chat(user.0.org_id, chat_id).await?;
     let id = Uuid::now_v7();
-    let key = object_key(user.0.org_id, id, &filename);
+    let key = crate::store::attachments::object_key(user.0.org_id, id, &filename);
     state
         .objects()
         .await?
@@ -94,7 +90,7 @@ async fn download(
 ) -> Result<impl IntoResponse, ApiError> {
     let store = state.store().await?;
     let row = store.attachments().get(user.0.org_id, id).await?;
-    let key = object_key(row.org_id, row.id, &row.filename);
+    let key = crate::store::attachments::object_key(row.org_id, row.id, &row.filename);
     let bytes = state
         .objects()
         .await?

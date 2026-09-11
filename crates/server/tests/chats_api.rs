@@ -43,7 +43,7 @@ async fn create_list_thread_and_org_isolation() {
     // append events via the thread store (the ChatRunner normally does this)
     store
         .thread()
-        .append_event(chat_uuid, &ThreadEvent::UserMessage { content: "hello".into() })
+        .append_event(chat_uuid, &ThreadEvent::UserMessage { content: "hello".into(), attachments: Vec::new() })
         .await
         .unwrap();
     store

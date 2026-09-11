@@ -195,7 +195,7 @@ async fn web_chat_flow_login_models_chat_stream_history() {
     let texts: Vec<String> = events
         .iter()
         .flat_map(|e| match &e.event {
-            protocol::api::ThreadEvent::UserMessage { content } => {
+            protocol::api::ThreadEvent::UserMessage { content, .. } => {
                 vec![format!("user:{content}")]
             }
             protocol::api::ThreadEvent::AssistantMessage { blocks, .. } => blocks

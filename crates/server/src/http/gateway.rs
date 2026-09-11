@@ -222,6 +222,17 @@ async fn set_route(
     let price_out = body["price_out"]
         .as_f64()
         .ok_or_else(|| ApiError::bad_request("missing price_out"))?;
+    // Native input modalities: subset of {image, audio, video}.
+    let modalities: Vec<String> = body["modalities"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .filter(|m| matches!(*m, "image" | "audio" | "video"))
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
     let store = state.store().await?;
     store
         .gateway()
@@ -235,6 +246,7 @@ async fn set_route(
             quota_monthly_usd,
             reasoning,
             context_window,
+            &modalities,
         )
         .await?;
     Ok(Json(serde_json::json!({})))

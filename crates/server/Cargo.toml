@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+base64.workspace = true
 protocol = { path = "../protocol" }
 guild-core = { path = "../guild-core" }
 tokio.workspace = true

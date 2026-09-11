@@ -169,6 +169,8 @@ pub async fn run_agent(
             history.push(Message {
                 role: "assistant".into(),
                 content: text.clone(),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: None,
                 tool_call_id: None,
                 reasoning: None,
@@ -185,6 +187,8 @@ pub async fn run_agent(
         history.push(Message {
             role: "assistant".into(),
             content: text,
+            images: Vec::new(),
+            audio: Vec::new(),
             tool_calls: Some(calls.clone()),
             tool_call_id: None,
             reasoning: None,
