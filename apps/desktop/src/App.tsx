@@ -9,7 +9,7 @@ import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
 import { Bot } from "lucide-react";
-import { IS_TAURI, apiLogin, apiMe, clearToken, setToken } from "./transport";
+import { IS_TAURI, apiLogin, apiMe, clearToken, rpcCall, setToken } from "./transport";
 import { ThemeProvider, useTheme } from "./theme";
 
 const BAKED_URL: string =
@@ -209,14 +209,7 @@ function DesktopApp() {
     (async () => {
       try {
         await bounded(invoke("start_engine"), 30_000, "attach timed out");
-        const res = await bounded(
-          invoke<any>("rpc_request", {
-            method: "session.info",
-            params: {},
-          }),
-          20_000,
-          "session lookup timed out",
-        );
+        const res = await rpcCall("session.info", {}, 20_000);
         if (!cancelled && res?.result?.email) await afterAuth(res.result.email);
       } catch {
         /* not logged in — stay on the pair screen */
@@ -231,11 +224,7 @@ function DesktopApp() {
   const afterAuth = async (fallbackEmail: string) => {
     // session.info is the source of truth for the connected server URL and
     // token (works for both pairing and manual login).
-    const info = await bounded(
-      invoke<any>("rpc_request", { method: "session.info", params: {} }),
-      20_000,
-      "session lookup timed out",
-    );
+    const info = await rpcCall("session.info", {}, 20_000);
     const baseUrl = info.result?.base_url ?? url;
     setUser(info.result?.email ?? fallbackEmail);
     // Engine mode shares the same session token in localStorage — fetch the
@@ -264,11 +253,7 @@ function DesktopApp() {
     try {
       await bounded(invoke("start_engine"), 30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
-      const res = await bounded(invoke<any>("rpc_request", {
-        method: "pair",
-        params: { code: code.trim() },
-      }), 45_000,
-        "pairing timed out. Check the server URL is reachable from this machine (open the health URL in a browser); quit leftover Guild background processes and try again. If it persists, run the CLI login test from a terminal.");
+      const res = await rpcCall("pair", { code: code.trim() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "pairing failed");
       await afterAuth(res.result?.user?.email ?? "");
     } catch (e) {
@@ -284,11 +269,7 @@ function DesktopApp() {
     try {
       await bounded(invoke("start_engine"), 30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
-      const res = await bounded(invoke<any>("rpc_request", {
-        method: "login",
-        params: { base_url: url, email, password },
-      }), 45_000,
-        "sign-in timed out. Check the server URL is reachable from this machine, then quit leftover Guild background processes and try again.");
+      const res = await rpcCall("login", { base_url: url, email, password }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "login failed");
       await afterAuth(res.result?.user?.email ?? email);
     } catch (e) {
