@@ -38,6 +38,7 @@ reqwest.workspace = true
 restate-sdk = { version = "0.12", features = ["reqwest-client"] }
 async-trait.workspace = true
 eventsource-stream.workspace = true
+regex = "1"
 futures.workspace = true
 wiremock = { version = "0.6", optional = true }
 aws-sdk-s3 = { version = "1", optional = true, default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
