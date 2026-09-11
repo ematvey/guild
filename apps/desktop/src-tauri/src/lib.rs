@@ -43,6 +43,12 @@ pub struct EngineState {
 pub struct Engine {
     stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     responses: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>>,
+    /// Completed JSON-RPC envelopes for poll-based clients: every response
+    /// lands here regardless of transport, so the webview never needs a
+    /// long-lived invoke response (Windows WebView2 can silently lose those).
+    results: Arc<Mutex<HashMap<u64, Value>>>,
+    /// Submit timestamps for the poll-timeout sweep.
+    submitted: Arc<Mutex<HashMap<u64, std::time::Instant>>>,
 }
 
 /// One parsed line from the engine's stdout.
@@ -91,10 +97,14 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
     let engine = Arc::new(Engine {
         stdin: Arc::new(Mutex::new(write)),
         responses: Arc::new(Mutex::new(HashMap::new())),
+        results: Arc::new(Mutex::new(HashMap::new())),
+        submitted: Arc::new(Mutex::new(HashMap::new())),
     });
 
     // Reader thread: demux lines between responses and events.
     let responses = engine.responses.clone();
+    let results = engine.results.clone();
+    let submitted = engine.submitted.clone();
     let app_handle = app.clone();
     std::thread::spawn(move || {
         ipc_trace("reader-start", "");
@@ -115,6 +125,7 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
             match parse_line(&line) {
                 Some(EngineLine::Response { id, value }) => {
                     ipc_trace("resp", &format!("id={id} bytes={}", line.len()));
+                    results.lock().unwrap().insert(id, value.clone());
                     if let Some(sender) = responses.lock().unwrap().remove(&id) {
                         let _ = sender.send(value);
                     }
@@ -135,9 +146,19 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
         }
         // daemon gone: fail every pending RPC (dropping the oneshot senders
         // surfaces "engine dropped the request" to the callers instead of a
-        // forever-pending invoke), then drop our handle so the next
-        // start_engine re-attaches (respawning if needed).
+        // forever-pending invoke; poll clients get error envelopes), then
+        // drop our handle so the next start_engine re-attaches (respawning
+        // if needed).
         {
+            let mut sub = submitted.lock().unwrap();
+            let mut res = results.lock().unwrap();
+            for id in sub.keys() {
+                res.insert(
+                    *id,
+                    serde_json::json!({"id": *id, "error": {"message": "engine dropped the request"}}),
+                );
+            }
+            sub.clear();
             let mut pending = responses.lock().unwrap();
             pending.clear();
         }
@@ -197,6 +218,75 @@ pub mod commands {
             *guard = Some(engine);
         }
         Ok(())
+    }
+
+    /// Submit an rpc without waiting for its response: returns the request id
+    /// immediately. Results are collected by rpc_poll. This keeps every webview
+    /// invoke sub-millisecond — Windows WebView2 can silently lose long-lived
+    /// WebResourceRequested responses, and a pair/login must not depend on
+    /// that path.
+    #[tauri::command]
+    pub async fn rpc_submit(
+        state: State<'_, EngineState>,
+        method: String,
+        params: Value,
+    ) -> Result<u64, String> {
+        let engine = {
+            let guard = state.engine.lock().unwrap();
+            guard
+                .clone()
+                .ok_or_else(|| "engine not started".to_string())?
+        };
+        let id = state.next_id.fetch_add(1, Ordering::SeqCst);
+        ipc_trace("rpc-start", &format!("id={id} method={method}"));
+        engine.submitted.lock().unwrap().insert(id, std::time::Instant::now());
+        {
+            let mut stdin = engine.stdin.lock().unwrap();
+            if let Err(e) = stdin
+                .write_all(envelope(id, &method, &params).to_string().as_bytes())
+                .and_then(|_| stdin.write_all(b"\n"))
+                .and_then(|_| stdin.flush())
+            {
+                ipc_trace("write-fail", &format!("id={id} err={e}"));
+                engine.submitted.lock().unwrap().remove(&id);
+                *state.engine.lock().unwrap() = None;
+                return Err(format!("engine write failed: {e}"));
+            }
+        }
+        ipc_trace("write-ok", &format!("id={id}"));
+        Ok(id)
+    }
+
+    /// Drain completed rpc envelopes (and inject timeouts for submissions
+    /// older than 120s). Returns full JSON-RPC envelopes; clients route by
+    /// the `id` field.
+    #[tauri::command]
+    pub async fn rpc_poll(state: State<'_, EngineState>) -> Result<Vec<Value>, String> {
+        let engine = {
+            let guard = state.engine.lock().unwrap();
+            guard.clone()
+        };
+        let Some(engine) = engine else { return Ok(vec![]) };
+        let now = std::time::Instant::now();
+        {
+            let mut sub = engine.submitted.lock().unwrap();
+            let mut results = engine.results.lock().unwrap();
+            let stale: Vec<u64> = sub
+                .iter()
+                .filter(|(_, t)| now.duration_since(**t) > std::time::Duration::from_secs(120))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in stale {
+                sub.remove(&id);
+                results
+                    .entry(id)
+                    .or_insert_with(|| serde_json::json!({"id": id, "error": {"message": "engine timed out"}}));
+                ipc_trace("rpc-timeout", &format!("id={id}"));
+            }
+        }
+        let mut results = engine.results.lock().unwrap();
+        let drained: Vec<Value> = results.drain().map(|(_, v)| v).collect();
+        Ok(drained)
     }
 
     /// Version of the pending downloaded update, if any (UI queries on mount
@@ -404,6 +494,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_engine,
             commands::rpc_request,
+            commands::rpc_submit,
+            commands::rpc_poll,
             commands::install_update,
             commands::pending_update_version
         ])

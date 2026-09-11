@@ -47,12 +47,78 @@ export function machineId(): string {
   return id;
 }
 
+/**
+ * Poll-based rpc bridge: submit returns in <1ms; results are collected by a
+ * single poll loop and routed to waiters by id. Long-lived invoke responses
+ * (the old rpc_request shape) can be silently lost by Windows WebView2
+ * deferral delivery — this never leaves an invoke open, so a slow or wedged
+ * daemon surfaces as a caller-side timeout instead of an eternal spinner.
+ * Resolves with the full JSON-RPC envelope (same shape rpc_request returned).
+ */
+const rpcWaiters = new Map<
+  number,
+  { resolve: (v: any) => void; reject: (e: Error) => void }
+>();
+let rpcPolling = false;
+
+async function rpcPollLoop(): Promise<void> {
+  while (rpcWaiters.size > 0) {
+    try {
+      const batch: any[] = await invoke<any[]>("rpc_poll");
+      for (const v of batch) {
+        const w = rpcWaiters.get(v?.id);
+        if (w) {
+          rpcWaiters.delete(v.id);
+          if (v?.error) w.reject(new Error(v.error?.message ?? String(v.error)));
+          else w.resolve(v);
+        }
+      }
+    } catch {
+      // engine restarting — keep polling until the caller's timeout fires
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  rpcPolling = false;
+}
+
+export async function rpcCall(
+  method: string,
+  params: any,
+  timeoutMs = 30000,
+): Promise<any> {
+  const id = await invoke<number>("rpc_submit", { method, params });
+  return new Promise<any>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      rpcWaiters.delete(id);
+      reject(
+        new Error(
+          `${method} timed out after ${Math.round(timeoutMs / 1000)}s - the local Guild service did not answer. Quit every Guild process (incl. background ones) and reopen the app.`,
+        ),
+      );
+    }, timeoutMs);
+    rpcWaiters.set(id, {
+      resolve: (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      reject: (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    });
+    if (!rpcPolling) {
+      rpcPolling = true;
+      rpcPollLoop();
+    }
+  });
+}
+
 /** Human label of this machine (hostname via the engine). */
 export async function machineName(): Promise<string> {
   if (machineNameCache) return machineNameCache;
   try {
     if (IS_TAURI) {
-      const res = await invoke<any>("rpc_request", { method: "machine.info", params: {} });
+      const res = await rpcCall("machine.info", {});
       machineNameCache = res?.result?.name || machineId().slice(0, 8);
     } else {
       machineNameCache = machineId().slice(0, 8);

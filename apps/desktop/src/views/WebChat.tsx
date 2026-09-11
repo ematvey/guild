@@ -55,9 +55,8 @@ import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsWindow } from "./settings/SettingsWindow";
-import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { attachmentBlobUrl, postApproval, postToolResult, uploadAttachment } from "../transport";
+import { attachmentBlobUrl, postApproval, postToolResult, rpcCall, uploadAttachment } from "../transport";
 import {
   createChat,
   getThread,
@@ -1426,10 +1425,7 @@ export default function WebChat({
             dir = picked;
             workDirRef.current = dir;
           }
-          const res = await invoke<any>("rpc_request", {
-            method: "tool.run",
-            params: { name, args: JSON.parse(args), workdir: dir },
-          });
+          const res = await rpcCall("tool.run", { name, args: JSON.parse(args), workdir: dir });
           const payload = res.result ?? res;
           await postToolResult(
             cid,
