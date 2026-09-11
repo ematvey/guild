@@ -29,6 +29,20 @@ pub struct RouteRow {
     pub context_window: Option<i64>,
 }
 
+/// Admin-facing route row: everything except the decrypted key (derive:
+/// Serialize for the admin settings GET).
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct AdminRouteRow {
+    pub model: String,
+    pub provider: String,
+    pub enabled: bool,
+    pub price_per_mtok_in_usd: f64,
+    pub price_per_mtok_out_usd: f64,
+    pub quota_monthly_usd: Option<f64>,
+    pub reasoning: bool,
+    pub context_window: Option<i64>,
+}
+
 pub struct GatewayStore<'a> {
     pub(crate) pool: &'a sqlx::PgPool,
 }
@@ -100,6 +114,19 @@ impl<'a> GatewayStore<'a> {
     pub async fn list_models(&self, org_id: Uuid) -> anyhow::Result<Vec<String>> {
         let rows: Vec<String> = sqlx::query_scalar(
             "SELECT model FROM model_routes WHERE org_id = $1 AND enabled ORDER BY model",
+        )
+        .bind(org_id)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Full route rows for the org's admin settings (no secrets: the
+    /// provider key itself is never returned).
+    pub async fn list_routes(&self, org_id: Uuid) -> anyhow::Result<Vec<AdminRouteRow>> {
+        let rows: Vec<AdminRouteRow> = sqlx::query_as(
+            "SELECT model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window \
+             FROM model_routes WHERE org_id = $1 ORDER BY model",
         )
         .bind(org_id)
         .fetch_all(self.pool)
