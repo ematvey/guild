@@ -15,9 +15,6 @@ pub struct ChatRow {
     /// Bound executor machine (machine tools run only there).
     pub machine_id: Option<String>,
     pub machine_label: Option<String>,
-    /// Per-chat approval policy (phase 2, design §A). `None` → server
-    /// default: default Ask, override read=Allow.
-    pub approval: Option<serde_json::Value>,
 }
 
 pub struct ChatStore<'a> {
@@ -34,7 +31,7 @@ impl<'a> ChatStore<'a> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, ChatRow>(
             "INSERT INTO chats (id, org_id, user_id, title) VALUES ($1, $2, $3, $4) \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, approval",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label",
         )
         .bind(id)
         .bind(org_id)
@@ -47,7 +44,7 @@ impl<'a> ChatStore<'a> {
 
     pub async fn list_chats(&self, org_id: Uuid, user_id: Uuid) -> Result<Vec<ChatRow>, ApiError> {
         sqlx::query_as(
-            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label, approval FROM chats \
+            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label FROM chats \
              WHERE org_id = $1 AND user_id = $2 ORDER BY created_at DESC",
         )
         .bind(org_id)
@@ -59,7 +56,7 @@ impl<'a> ChatStore<'a> {
 
     pub async fn get_chat(&self, org_id: Uuid, chat_id: Uuid) -> Result<ChatRow, ApiError> {
         sqlx::query_as(
-            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label, approval FROM chats WHERE org_id = $1 AND id = $2",
+            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label FROM chats WHERE org_id = $1 AND id = $2",
         )
         .bind(org_id)
         .bind(chat_id)
@@ -79,7 +76,7 @@ impl<'a> ChatStore<'a> {
         sqlx::query_as(
             "UPDATE chats SET machine_id = $3, machine_label = $4 \
              WHERE org_id = $1 AND id = $2 \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, approval",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label",
         )
         .bind(org_id)
         .bind(chat_id)
@@ -90,24 +87,4 @@ impl<'a> ChatStore<'a> {
         .map_err(Into::into)
     }
 
-    /// Stores (or with `None`, clears) the chat's approval policy. `None`
-    /// clears → the server default policy applies again.
-    pub async fn set_approval(
-        &self,
-        org_id: Uuid,
-        chat_id: Uuid,
-        approval: Option<serde_json::Value>,
-    ) -> Result<ChatRow, ApiError> {
-        sqlx::query_as(
-            "UPDATE chats SET approval = $3 \
-             WHERE org_id = $1 AND id = $2 \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, approval",
-        )
-        .bind(org_id)
-        .bind(chat_id)
-        .bind(approval)
-        .fetch_one(self.pool)
-        .await
-        .map_err(Into::into)
-    }
 }

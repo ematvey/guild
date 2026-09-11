@@ -179,6 +179,38 @@ impl<'a> IdentityStore<'a> {
             .ok_or_else(|| ApiError::not_found("no such user"))
     }
 
+    /// The user's approval policy (or `None` → server default: default Ask,
+    /// read-only tools allowed). User-scoped since 0026: tool trust belongs
+    /// to the user and their bound machine, not to an individual chat.
+    pub async fn approval(&self, user_id: Uuid) -> Result<Option<serde_json::Value>, ApiError> {
+        // Distinguish "no such user" (None row) from "user with NULL policy"
+        // (Some(None)) — the latter is the normal server-default case.
+        let row: Option<Option<serde_json::Value>> =
+            sqlx::query_scalar("SELECT approval FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_optional(self.pool)
+                .await?;
+        match row {
+            None => Err(ApiError::not_found("no such user")),
+            Some(inner) => Ok(inner),
+        }
+    }
+
+    /// Stores (or with `None`, clears) the user's approval policy.
+    pub async fn set_approval(
+        &self,
+        user_id: Uuid,
+        approval: Option<serde_json::Value>,
+    ) -> Result<(), ApiError> {
+        sqlx::query("UPDATE users SET approval = $2 WHERE id = $1")
+            .bind(user_id)
+            .bind(approval)
+            .execute(self.pool)
+            .await
+            .map_err(Into::into)
+            .map(|_| ())
+    }
+
     pub async fn create_oidc_user(&self, org_id: Uuid, email: &str) -> Result<UserRow, ApiError> {
         use rand::RngCore;
         let mut bytes = [0u8; 24];
@@ -269,6 +301,34 @@ impl<'a> IdentityStore<'a> {
         .fetch_all(self.pool)
         .await
         .map_err(Into::into)
+    }
+
+    /// Updates a managed user (role change and/or password reset); omitted
+    /// fields stay unchanged. The user must belong to the org.
+    pub async fn update_user(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+        role: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<UserListRow, ApiError> {
+        let hash = match password {
+            Some(p) => Some(hash_password(p).map_err(ApiError::from)?),
+            None => None,
+        };
+        sqlx::query_as(
+            "UPDATE users SET role = COALESCE($2::text, role), \
+             password_hash = COALESCE($3::text, password_hash) \
+             WHERE id = $1 AND org_id = $4 \
+             RETURNING id, email, role, identity_type, created_at",
+        )
+        .bind(user_id)
+        .bind(role)
+        .bind(hash)
+        .bind(org_id)
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| ApiError::not_found("no such user"))
     }
 
     /// Deletes a user; refuses to remove the org's last admin.

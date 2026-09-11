@@ -548,6 +548,27 @@ export async function postToolResult(
   if (!res.ok) throw new Error(`tool result rejected (${res.status})`);
 }
 
+// ---- Usage (spec §4.5; charts) ----
+
+export interface UsagePoint {
+  bucket: string; // RFC 3339
+  cost_usd: number;
+}
+
+/// Per-chat spend over time (chat-path usage events use session_id = chat
+/// id). Empty points when the chat has no recorded spend.
+export async function getChatUsage(chatId: string): Promise<{ points: UsagePoint[]; total: number }> {
+  const token = getToken();
+  const res = await fetch(
+    `/api/v1/usage/series?group_by=none&bucket=day&chat_id=${encodeURIComponent(chatId)}`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) throw new Error(`usage series failed (${res.status})`);
+  const v = await res.json().catch(() => ({}));
+  const rows = (v?.rows ?? []) as UsagePoint[];
+  return { points: rows, total: rows.reduce((s, r) => s + r.cost_usd, 0) };
+}
+
 // ---- Approvals (design spec 2026-09-12 sections D + F) ----
 
 export type ApprovalPolicy = {
@@ -575,10 +596,11 @@ export async function postApproval(
   }
 }
 
-/// Reads the open chat's approval policy; null = server default.
-export async function getApproval(chatId: string): Promise<ApprovalPolicy | null> {
+/// Reads the signed-in user's approval policy (migration 0026: user-scoped,
+/// applies to every chat they run); null = server default.
+export async function getApproval(): Promise<ApprovalPolicy | null> {
   const token = getToken();
-  const res = await fetch(`/api/v1/chats/${chatId}/approval`, {
+  const res = await fetch("/api/v1/me/approval", {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) return null;
@@ -586,14 +608,11 @@ export async function getApproval(chatId: string): Promise<ApprovalPolicy | null
   return (v?.approval ?? v) as ApprovalPolicy | null;
 }
 
-/// Saves the chat's approval policy (null resets to the server default).
+/// Saves the user's approval policy (null resets to the server default).
 /// Throws with the API's validation message on an invalid policy body.
-export async function setApproval(
-  chatId: string,
-  policy: ApprovalPolicy | null,
-): Promise<void> {
+export async function setApproval(policy: ApprovalPolicy | null): Promise<void> {
   const token = getToken();
-  const res = await fetch(`/api/v1/chats/${chatId}/approval`, {
+  const res = await fetch("/api/v1/me/approval", {
     method: "PUT",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: policy === null ? JSON.stringify({ approval: null }) : JSON.stringify(policy),

@@ -16,7 +16,11 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route(
             "/api/v1/admin/oidc",
-            axum::routing::put(set_config).get(get_config),
+            axum::routing::put(set_config).get(get_config).delete(remove_config),
+        )
+        .route(
+            "/api/v1/auth/oidc/status",
+            axum::routing::get(status),
         )
         .route("/api/v1/auth/oidc/login", axum::routing::get(login))
         .route("/api/v1/auth/oidc/callback", axum::routing::get(callback))
@@ -60,17 +64,40 @@ async fn get_config(
     }))
 }
 
+async fn remove_config(
+    State(state): State<AppState>,
+    admin: AdminUser,
+) -> Result<Json<Value>, ApiError> {
+    state.store().await?.oidc().delete(admin.0.org_id).await?;
+    Ok(Json(json!({})))
+}
+
+/// Public: tells the sign-in page whether SSO is available and where to
+/// start it. Guild is effectively single-org, so the org is resolved here.
+async fn status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let store = state.store().await?;
+    let Some(org) = store.oidc().first_org_id().await? else {
+        return Ok(Json(json!({"configured": false})));
+    };
+    let configured = store.oidc().get(org).await?.is_some();
+    Ok(Json(json!({"configured": configured, "org_id": org})))
+}
+
 // ---------- login flow ----------
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct OidcState {
     org: Uuid,
+    /// Origin the login was started from; the callback redirects the browser
+    /// back here with the session token in the URL fragment.
+    app: String,
     exp: i64,
 }
 
-fn sign_state(state: &AppState, org: Uuid) -> Result<String, ApiError> {
+fn sign_state(state: &AppState, org: Uuid, app: String) -> Result<String, ApiError> {
     let claims = OidcState {
         org,
+        app,
         exp: chrono::Utc::now().timestamp() + 600,
     };
     let key = jsonwebtoken::EncodingKey::from_secret(state.config.jwt_secret.as_bytes());
@@ -78,11 +105,26 @@ fn sign_state(state: &AppState, org: Uuid) -> Result<String, ApiError> {
         .map_err(|e| ApiError::internal(format!("state sign failed: {e}")))
 }
 
-fn verify_state(state: &AppState, token: &str) -> Result<Uuid, ApiError> {
+fn verify_state(state: &AppState, token: &str) -> Result<OidcState, ApiError> {
     let key = jsonwebtoken::DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
     let data = jsonwebtoken::decode::<OidcState>(token, &key, &jsonwebtoken::Validation::default())
         .map_err(|_| ApiError::unauthorized("bad state"))?;
-    Ok(data.claims.org)
+    Ok(data.claims)
+}
+
+/// The browser-facing base URL (scheme + host) of this request: the IdP
+/// redirect_uri and the post-login app redirect both come from it, so they
+/// match whatever origin the user actually reached the server on.
+fn request_origin(headers: &axum::http::HeaderMap) -> String {
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    format!("{scheme}://{host}")
 }
 
 #[derive(Deserialize, Debug)]
@@ -111,6 +153,7 @@ async fn fetch_discovery(issuer: &str) -> Result<Discovery, ApiError> {
 /// Starts the OIDC login: 302 to the IdP's authorization endpoint.
 async fn login(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
     let org: Uuid = q
@@ -122,10 +165,8 @@ async fn login(
         return Err(ApiError::not_found("no oidc config for org"));
     };
     let discovery = fetch_discovery(&row.issuer).await?;
-    let redirect_uri = format!(
-        "{}/api/v1/auth/oidc/callback",
-        state.config.api_url.trim_end_matches('/')
-    );
+    let app_origin = request_origin(&headers);
+    let redirect_uri = format!("{app_origin}/api/v1/auth/oidc/callback");
     let auth_url = reqwest::Url::parse_with_params(
         &discovery.authorization_endpoint,
         &[
@@ -133,7 +174,7 @@ async fn login(
             ("client_id", row.client_id.as_str()),
             ("redirect_uri", redirect_uri.as_str()),
             ("scope", "openid email profile"),
-            ("state", sign_state(&state, org)?.as_str()),
+            ("state", sign_state(&state, org, app_origin)?.as_str()),
         ],
     )
     .map_err(|e| ApiError::internal(format!("auth url build failed: {e}")))?;
@@ -148,14 +189,15 @@ struct TokenResponse {
 async fn callback(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let code = q
         .get("code")
         .ok_or_else(|| ApiError::bad_request("missing code"))?;
     let state_param = q
         .get("state")
         .ok_or_else(|| ApiError::bad_request("missing state"))?;
-    let org = verify_state(&state, state_param)?;
+    let oidc_state = verify_state(&state, state_param)?;
+    let org = oidc_state.org;
 
     let store = state.store().await?;
     let master = state.config.master_key()?;
@@ -166,10 +208,7 @@ async fn callback(
         .ok_or_else(|| ApiError::not_found("no oidc config for org"))?;
     let client_secret = store.oidc().decrypt_secret(&row, &master)?;
     let discovery = fetch_discovery(&row.issuer).await?;
-    let redirect_uri = format!(
-        "{}/api/v1/auth/oidc/callback",
-        state.config.api_url.trim_end_matches('/')
-    );
+    let redirect_uri = format!("{}/api/v1/auth/oidc/callback", oidc_state.app);
 
     let token_resp = reqwest::Client::new()
         .post(&discovery.token_endpoint)
@@ -216,5 +255,27 @@ async fn callback(
         None => identity.create_oidc_user(org, &email).await?,
     };
     let (_sid, token) = identity.create_session(user.id).await?;
-    Ok(Json(json!({"token": token, "email": email, "org_id": org})))
+
+    // Back to the web app; the token rides in the URL fragment so it never
+    // reaches the server again, and the app picks it up on load.
+    let target = format!(
+        "{}/#oidc_token={}&email={}",
+        oidc_state.app.trim_end_matches('/'),
+        urlencode(&token),
+        urlencode(&email)
+    );
+    Ok(Redirect::to(&target).into_response())
+}
+
+fn urlencode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import {
   Bot,
   Cpu,
+  KeyRound,
   Layers,
   Palette,
   Plug,
@@ -13,6 +14,7 @@ import {
   Sparkles,
   User,
   Users,
+  UsersRound,
   Waypoints,
 } from "lucide-react";
 import { X } from "lucide-react";
@@ -30,8 +32,10 @@ type SectionId =
   | "approvals"
   | "usage"
   | "users"
+  | "teams"
   | "models"
   | "integrations"
+  | "sso"
   | "registry";
   // No "releases" pane: desktop releases are dev-controlled, not
   // admin-controlled.
@@ -40,10 +44,8 @@ interface SectionDef {
   id: SectionId;
   label: string;
   icon: React.ReactNode;
-  group: "user" | "chat" | "org";
+  group: "user" | "org";
   admin?: boolean;
-  /** Chat-scoped sections need an open thread. */
-  needsChat?: boolean;
 }
 
 export function SettingsWindow({
@@ -78,11 +80,11 @@ export function SettingsWindow({
       id: "approvals",
       label: "Approvals",
       icon: <ShieldCheck className="size-4" />,
-      group: "chat",
-      needsChat: true,
+      group: "user",
     },
     { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "org", admin: true },
     { id: "users", label: "Users", icon: <Users className="size-4" />, group: "org", admin: true },
+    { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "org", admin: true },
     { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "org", admin: true },
     {
       id: "integrations",
@@ -91,18 +93,16 @@ export function SettingsWindow({
       group: "org",
       admin: true,
     },
+    { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "org", admin: true },
     { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "org", admin: true },
   ];
-  const visible = sections.filter(
-    (s) => (!s.admin || isAdmin) && (!s.needsChat || chatId),
-  );
+  const visible = sections.filter((s) => !s.admin || isAdmin);
   // Section is URL-driven (WebChat owns it); an unknown section (stale deep
   // link, or a role/chat change that hid it) falls back to the first visible.
   const activeDef = visible.find((s) => s.id === section) ?? visible[0];
 
-  const groups: { key: "user" | "chat" | "org"; label: string }[] = [
+  const groups: { key: "user" | "org"; label: string }[] = [
     { key: "user", label: "User" },
-    { key: "chat", label: "Current chat" },
     ...(isAdmin ? [{ key: "org" as const, label: "Organization" }] : []),
   ];
 
@@ -201,7 +201,7 @@ function SectionPane({
 }) {
   return (
     <div className="mx-auto max-w-2xl px-6 py-6">
-      <h2 className="text-base font-semibold">{def.label}</h2>
+      <h2 className="mb-7 text-base font-semibold">{def.label}</h2>
       <SectionBody
         id={def.id}
         email={email}
@@ -240,15 +240,19 @@ function SectionBody({
         />
       );
     case "approvals":
-      return <ApprovalsSection chatId={chatId} />;
+      return <ApprovalsSection />;
     case "usage":
       return <LazySection load={() => import("./sections/UsageSection")} name="UsageSection" />;
     case "users":
       return <LazySection load={() => import("./sections/UsersSection")} name="UsersSection" />;
+    case "teams":
+      return <LazySection load={() => import("./sections/TeamsSection")} name="TeamsSection" />;
     case "models":
       return <LazySection load={() => import("./sections/ModelsSection")} name="ModelsSection" />;
     case "integrations":
       return <LazySection load={() => import("./sections/IntegrationsSection")} name="IntegrationsSection" />;
+    case "sso":
+      return <LazySection load={() => import("./sections/SsoSection")} name="SsoSection" />;
     case "registry":
       return <LazySection load={() => import("./sections/RegistrySection")} name="RegistrySection" />;
   }

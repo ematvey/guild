@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -80,6 +80,12 @@ import {
   type ThreadEventRow,
   type ThreadResult,
 } from "../transport";
+
+// Per-chat spend chip: lazy so recharts (charting) never lands in the main
+// chat bundle; renders nothing until a thread is open and the chunk arrives.
+const ChatSpend = lazy(() =>
+  import("./ChatSpendChip").then((m) => ({ default: m.ChatSpendChip })),
+);
 
 interface ToolBlock {
   callId: string;
@@ -830,9 +836,8 @@ function ToolBody({ t }: { t: ToolBlock }) {
       : parseSearchResults(t.content ?? "");
     return (
       <div className="space-y-2">
-        {m?.truncated && <TruncatedBadge />}
         {sources.map((s, i) => (
-          <div key={i} className="rounded-lg border border-border px-3 py-2">
+          <div key={i}>
             <a
               href={s.url}
               target="_blank"
@@ -1868,6 +1873,11 @@ export default function WebChat({
               <Cpu className="size-3" />
               {boundMachine}
             </span>
+          )}
+          {chatId && (
+            <Suspense fallback={null}>
+              <ChatSpend chatId={chatId} busy={busy} />
+            </Suspense>
           )}
         </header>
 
