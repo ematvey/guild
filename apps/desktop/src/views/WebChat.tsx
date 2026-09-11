@@ -1401,8 +1401,10 @@ export default function WebChat({
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
     // Focus stays in the composer after send (established chat-app
-    // behavior): clicking Send or a disabled state would otherwise take it.
-    ta.current?.focus();
+    // behavior). Scheduled after the pending state commit: disabling the
+    // Send button during the same commit would otherwise move focus to
+    // body and override a synchronous focus().
+    requestAnimationFrame(() => ta.current?.focus());
     setBlocks((b) => [
       ...b,
       {
