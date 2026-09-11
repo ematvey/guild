@@ -1,8 +1,56 @@
 # Guild — current state of work
 
-Updated 2026-09-11 (tool frame UI polish). Read this before touching the
+Updated 2026-09-12 (desktop 0.3.10). Read this before touching the
 codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
 `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Desktop 0.3.10 — first release carrying the service-worker retirement (2026-09-12)
+
+- 0.3.9 was cut ~12 h before the PWA service worker was retired
+  (a2c0d64), so it still registered `sw.js`. On at least one Windows
+  client the registered worker intercepts the `tauri.localhost` document
+  request and the load hangs forever (DevTools: 1 request, Pending, 0 B;
+  black window). 0.3.10 ships the retirement; its cleanup script only
+  runs once a page loads, so a client whose worker already hangs the
+  document needs manual WebView2 profile cleanup — the update cannot
+  reach it through the updater.
+- Also carries: settings at top-level /settings/<section>, /admin console
+  removed (settings is the single admin surface).
+
+## Settings: users add-flow, teams, SSO (2026-09-12)
+
+- Users section reworked to the integration-style flow: list screen +
+  "Add user" entry; the detail screen creates a user (email/password/role)
+  or edits an existing one (role change, password reset, delete). New
+  endpoint: PUT /api/v1/admin/users/{id} (IdentityStore::update_user).
+- Teams section added (ORGANIZATION → Teams): list with member counts, add
+  team, detail manages members (add from org users / remove) and delete
+  team. Store: TeamStore gained list_members/remove_member/delete_team;
+  TeamRow now carries member_count.
+- SSO section added (ORGANIZATION → Sign-in / SSO): issuer / client id /
+  client secret form (blank secret = keep current), remove-config, and the
+  redirect URI to register at the IdP. Endpoints: DELETE /admin/oidc,
+  public GET /api/v1/auth/oidc/status (single-org resolution).
+- OIDC login is now a browser flow: redirect_uri and the post-login app
+  redirect derive from the request's Host/scheme (not GUILD_API_URL, which
+  is the internal docker address); callback redirects to the app with the
+  session token in the URL fragment; WebLogin offers "Continue with SSO"
+  when status reports configured, and app boot adopts the fragment token.
+- Deployed to the compose stack (:18080); health + status endpoints
+  verified live; UI flows not yet clicked through in the browser.
+
+## Approval policy is user-scoped, not per-chat (2026-09-11, latest)
+
+- Per-thread approval settings made no sense — tool trust is a property of
+  the user and their bound machine, identical across conversations.
+- Migration 0026: `users.approval JSONB` added; `chats.approval` (0023)
+  dropped. Same guild-core ApprovalPolicy shape; NULL = server default
+  (ask, read-only allowed).
+- API: GET/PUT `/api/v1/me/approval` (auth.rs) replaces
+  `/api/v1/chats/{id}/approval`. ChatRunner resolves the policy via
+  `chats JOIN users` on the chat owner.
+- Settings: Approvals moved from the "Current chat" group to "User"; no
+  longer requires an open chat. Browser-verified flows pending next deploy.
 
 ## Tool frame UI polish (2026-09-11, late)
 
@@ -21,9 +69,10 @@ codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
 
 Design: docs/plans/2026-09-12-approvals-design.md. Shipped and deployed:
 
-- Per-chat approval policy: `chats.approval JSONB` (0023), guild-core
-  ApprovalPolicy semantics; NULL = server default (ask, read allowed).
-  GET/PUT /api/v1/chats/{id}/approval, editable from any client.
+- Approval policy: user-scoped `users.approval JSONB` (0026, was per-chat
+  `chats.approval`), guild-core ApprovalPolicy semantics; NULL = server
+  default (ask, read allowed). GET/PUT /api/v1/me/approval, editable from
+  any client.
 - ChatRunner gate in client_tool_step: allow -> unchanged; never -> denied by
   policy; ask -> durable `approval_request`/`approval_decision` thread events +
   `approval_requested`/`approval_resolved` frames, awakeable `approval:{call_id}`,
