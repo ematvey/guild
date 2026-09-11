@@ -549,10 +549,24 @@ function Frame({
 /// Collapsible "Thinking" frame for a reasoning block; default collapsed,
 /// body is the accumulated thinking text.
 function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
+  // Collapsed row carries the head of the thoughts as a preview (CSS
+  // truncates to whatever fits on the line); the full text opens below.
+  const head = text.replace(/\s+/g, " ").trim();
   return (
     <Frame
       icon={<Brain className="size-3 shrink-0 text-muted-foreground" />}
-      title={live ? "Thinking…" : "Thinking"}
+      title={
+        <>
+          <span className="font-medium text-foreground/80">
+            {live ? "Thinking…" : "Thinking"}
+          </span>
+          {head && (
+            <span className="hidden max-w-72 truncate text-muted-foreground sm:inline">
+              {head.slice(0, 160)}
+            </span>
+          )}
+        </>
+      }
     >
       <div className="max-h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed text-muted-foreground">
         {text || "…"}
