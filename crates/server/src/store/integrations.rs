@@ -42,6 +42,17 @@ impl<'a> IntegrationStore<'a> {
         Ok(())
     }
 
+    /// Removes an integration's configuration entirely (the available
+    /// integration can be re-added later).
+    pub async fn delete(&self, org_id: Uuid, name: &str) -> Result<(), ApiError> {
+        sqlx::query("DELETE FROM integrations WHERE org_id = $1 AND name = $2")
+            .bind(org_id)
+            .bind(name)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn list(&self, org_id: Uuid) -> Result<Vec<IntegrationRow>, ApiError> {
         Ok(sqlx::query_as(
             "SELECT org_id, name, config, enabled FROM integrations \

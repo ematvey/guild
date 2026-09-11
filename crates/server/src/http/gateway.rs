@@ -135,7 +135,18 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/gateway/chat/{id}/compact",
             axum::routing::post(compact_chat),
         )
-        .route("/api/v1/admin/gateway/keys", axum::routing::post(set_key))
+        .route(
+            "/api/v1/admin/gateway/keys",
+            axum::routing::get(list_keys).post(set_key),
+        )
+        .route(
+            "/api/v1/admin/gateway/keys/{provider}",
+            axum::routing::delete(delete_key),
+        )
+        .route(
+            "/api/v1/admin/gateway/routes/{model}",
+            axum::routing::delete(delete_route),
+        )
         .route(
             "/api/v1/admin/gateway/routes",
             axum::routing::get(list_routes).put(set_route),
@@ -199,6 +210,39 @@ async fn list_routes(
     let store = state.store().await?;
     let rows = store.gateway().list_routes(admin.0.org_id).await?;
     Ok(Json(serde_json::json!({ "routes": rows })))
+}
+
+/// Provider keys for the admin settings (metadata only, never the secret).
+async fn list_keys(
+    State(state): State<AppState>,
+    admin: AdminUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let keys = store.gateway().list_keys(admin.0.org_id).await?;
+    Ok(Json(json!({ "keys": keys })))
+}
+
+/// Removes a provider key; routes referencing the provider stop resolving
+/// until a new key is set.
+async fn delete_key(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(provider): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.gateway().delete_key(admin.0.org_id, &provider).await?;
+    Ok(Json(json!({})))
+}
+
+/// Removes a model route entirely.
+async fn delete_route(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(model): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.gateway().delete_route(admin.0.org_id, &model).await?;
+    Ok(Json(json!({})))
 }
 
 async fn set_route(

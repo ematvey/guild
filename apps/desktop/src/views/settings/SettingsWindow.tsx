@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import {
   Bot,
   Cpu,
-  Download,
   Layers,
   Palette,
   Plug,
@@ -33,8 +32,9 @@ type SectionId =
   | "users"
   | "models"
   | "integrations"
-  | "registry"
-  | "releases";
+  | "registry";
+  // NOTE: no "releases" pane — desktop builds are dev-controlled, not
+  // admin-controlled (spec decision 2026-09-11).
 
 interface SectionDef {
   id: SectionId;
@@ -86,13 +86,6 @@ export function SettingsWindow({
       admin: true,
     },
     { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "org", admin: true },
-    {
-      id: "releases",
-      label: "Releases",
-      icon: <Download className="size-4" />,
-      group: "org",
-      admin: true,
-    },
   ];
   const visible = sections.filter(
     (s) => (!s.admin || isAdmin) && (!s.needsChat || chatId),
@@ -259,8 +252,6 @@ function SectionBody({
       return <LazySection load={() => import("./sections/IntegrationsSection")} name="IntegrationsSection" />;
     case "registry":
       return <LazySection load={() => import("./sections/RegistrySection")} name="RegistrySection" />;
-    case "releases":
-      return <LazySection load={() => import("./sections/ReleasesSection")} name="ReleasesSection" />;
   }
 }
 
@@ -312,7 +303,7 @@ function AccountSection({ email }: { email: string }) {
         <p className="mt-1 text-sm capitalize">{role}</p>
         <p className="mt-1 text-xs text-muted-foreground">
           {role === "admin"
-            ? "You can configure the organization: users, models, integrations, registry and releases."
+            ? "You can configure the organization: users, models, integrations and registry."
             : "Ask an org admin for model or integration changes."}
         </p>
       </div>

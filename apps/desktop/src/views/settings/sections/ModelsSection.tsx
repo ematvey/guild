@@ -1,332 +1,605 @@
-//! ModelsSection — admin settings section (port of the /admin Gateway view):
-//! provider API keys and model routes (pricing, quota, capabilities). The
-//! admin API only exposes the list of enabled model names, so route rows are
-//! seeded with the model id and the editable fields start blank until saved.
+//! ModelsSection — admin settings: provider keys and model routes as a rich
+//! list screen with separate add / detail (edit + delete) screens, mirroring
+//! established settings apps (list → drill-in → back).
 
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, Key, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
+import { Skeleton } from "@guild/ui/components/skeleton";
 
-interface RouteFields {
+interface RouteRow {
   model: string;
   provider: string;
   enabled: boolean;
-  price_in: string;
-  price_out: string;
-  quota_monthly_usd: string;
+  price_per_mtok_in_usd: number;
+  price_per_mtok_out_usd: number;
+  quota_monthly_usd: number | null;
   reasoning: boolean;
-  context_window: string;
+  context_window: number | null;
   modalities: string[];
 }
 
-const blankRoute = (model = ""): RouteFields => ({
-  model,
-  provider: "openai",
-  enabled: true,
-  price_in: "",
-  price_out: "",
-  quota_monthly_usd: "",
-  reasoning: false,
-  context_window: "",
-  modalities: [],
-});
+interface KeyRow {
+  provider: string;
+  base_url: string;
+}
 
-const card = "rounded-lg border border-border bg-card";
-const cardHeader = "border-b border-border px-4 py-3";
-const cardTitle = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
-const cellInput = "h-8 rounded-md border border-input bg-background px-2 text-xs";
+type View = { kind: "list" } | { kind: "detail"; model: string } | { kind: "add" };
+
+const listCard =
+  "flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40";
+const backBtn =
+  "mb-4 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
+const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
+const field =
+  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm";
+const row = "grid grid-cols-[130px_1fr] items-start gap-x-4 gap-y-3 py-2";
+
+const fmtUsd = (n: number) => `$${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}/Mtok`;
+
+const MODALITIES = ["image", "audio", "video"] as const;
 
 export default function ModelsSection() {
-  const [routes, setRoutes] = useState<RouteFields[] | null>(null);
-  const [newModel, setNewModel] = useState("");
+  const [routes, setRoutes] = useState<RouteRow[] | null>(null);
+  const [keys, setKeys] = useState<KeyRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [savingIdx, setSavingIdx] = useState<number | null>(null);
-  const [savedIdx, setSavedIdx] = useState<number | null>(null);
-
-  // provider key form
-  const [keyProvider, setKeyProvider] = useState("openai");
-  const [keyBaseUrl, setKeyBaseUrl] = useState("https://api.openai.com");
-  const [keyValue, setKeyValue] = useState("");
-  const [keySaving, setKeySaving] = useState(false);
-  const [keySaved, setKeySaved] = useState(false);
+  const [view, setView] = useState<View>({ kind: "list" });
 
   const reload = useCallback(() => {
-    setError(null);
-    // Full route rows (no secrets) — prefilled editing; fallback to bare
-    // model names when the admin GET is unavailable.
-    api<
-        { routes: { model: string; provider: string; enabled: boolean; price_per_mtok_in_usd: number; price_per_mtok_out_usd: number; quota_monthly_usd: number | null; reasoning: boolean; context_window: number | null; modalities: string[] }[] }
-      >("GET", "/api/v1/admin/gateway/routes")
-      .then((r) =>
-        setRoutes(
-          r.routes.map((row) => ({
-            model: row.model,
-            provider: row.provider,
-            enabled: row.enabled,
-            price_in: String(row.price_per_mtok_in_usd ?? ""),
-            price_out: String(row.price_per_mtok_out_usd ?? ""),
-            quota_monthly_usd: row.quota_monthly_usd != null ? String(row.quota_monthly_usd) : "",
-            reasoning: row.reasoning,
-            context_window: row.context_window != null ? String(row.context_window) : "",
-            modalities: row.modalities ?? [],
-          })),
-        ),
-      )
-      .catch(() =>
-        api<{ models: string[] }>("GET", "/api/v1/gateway/models")
-          .then((r) => setRoutes(r.models.map((m) => blankRoute(m))))
-          .catch((e) => {
-            setRoutes([]);
-            setError(e instanceof Error ? e.message : String(e));
-          }),
-      );
+    api<{ routes: RouteRow[] }>("GET", "/api/v1/admin/gateway/routes")
+      .then((r) => setRoutes(r.routes))
+      .catch((e) => {
+        setRoutes([]);
+        setError(e instanceof Error ? e.message : String(e));
+      });
+    api<{ keys: KeyRow[] }>("GET", "/api/v1/admin/gateway/keys")
+      .then((r) => setKeys(r.keys))
+      .catch(() => setKeys([]));
   }, []);
 
-  useEffect(reload, [reload]);
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
-  const patchRoute = (idx: number, patch: Partial<RouteFields>) => {
-    setRoutes((rs) => rs?.map((r, i) => (i === idx ? { ...r, ...patch } : r)) ?? rs);
-    setSavedIdx(null);
-  };
-
-  const saveKey = async () => {
-    if (!keyValue || keySaving) return;
-    setError(null);
-    setKeySaved(false);
-    setKeySaving(true);
-    try {
-      await api("POST", "/api/v1/admin/gateway/keys", {
-        provider: keyProvider,
-        base_url: keyBaseUrl,
-        key: keyValue,
-      });
-      setKeyValue("");
-      setKeySaved(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setKeySaving(false);
-    }
-  };
-
-  const saveRoute = async (r: RouteFields, idx: number) => {
-    if (!r.model || !r.price_in || !r.price_out || savingIdx !== null) return;
-    setError(null);
-    setSavedIdx(null);
-    setSavingIdx(idx);
-    try {
-      await api("PUT", "/api/v1/admin/gateway/routes", {
-        model: r.model,
-        provider: r.provider,
-        enabled: r.enabled,
-        price_in: Number(r.price_in),
-        price_out: Number(r.price_out),
-        ...(r.quota_monthly_usd !== ""
-          ? { quota_monthly_usd: Number(r.quota_monthly_usd) }
-          : {}),
-        reasoning: r.reasoning,
-        ...(r.context_window !== "" ? { context_window: Number(r.context_window) } : {}),
-        modalities: r.modalities,
-      });
-      setSavedIdx(idx);
-      reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSavingIdx(null);
-    }
-  };
+  if (view.kind === "detail") {
+    return (
+      <RouteDetail
+        model={view.model}
+        onChanged={() => reload()}
+        onBack={() => {
+          reload();
+          setView({ kind: "list" });
+        }}
+      />
+    );
+  }
+  if (view.kind === "add") {
+    return (
+      <RouteAdd
+        onAdded={(model) => {
+          reload();
+          setView({ kind: "detail", model });
+        }}
+        onBack={() => setView({ kind: "list" })}
+      />
+    );
+  }
 
   return (
-    <div className="space-y-4 pt-2">
+    <div className="space-y-6">
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       {/* provider keys */}
-      <div className={card}>
-        <div className={cardHeader}>
-          <p className={cardTitle}>Provider keys</p>
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className={label}>Provider keys</h3>
+          <span className="text-xs text-muted-foreground">
+            {keys ? `${keys.length} configured` : ""}
+          </span>
         </div>
-        <div className="space-y-3 p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-              value={keyProvider}
-              onChange={(e) => setKeyProvider(e.target.value)}
-            >
-              <option value="openai">openai</option>
-              <option value="anthropic">anthropic</option>
-            </select>
-            <Input
-              className="w-64"
-              placeholder="base url"
-              value={keyBaseUrl}
-              onChange={(e) => setKeyBaseUrl(e.target.value)}
-            />
-            <Input
-              className="w-64"
-              placeholder="api key"
-              type="password"
-              value={keyValue}
-              onChange={(e) => setKeyValue(e.target.value)}
-            />
-            <Button onClick={saveKey} disabled={!keyValue || keySaving}>
-              {keySaving ? "Saving…" : "Save key"}
-            </Button>
+        {keys === null ? (
+          <Skeleton className="h-14 w-full rounded-lg" />
+        ) : keys.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+            No provider keys yet — add one to enable model calls.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {keys.map((k) => (
+              <div key={k.provider} className={listCard}>
+                <Key className="size-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{k.provider}</p>
+                  <p className="truncate text-xs text-muted-foreground">{k.base_url}</p>
+                </div>
+                <KeyDelete provider={k.provider} onChanged={reload} />
+              </div>
+            ))}
           </div>
-          <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground">
-              Keys are stored encrypted and never sent to clients.
-            </p>
-            {keySaved && !keyValue && (
-              <p className="text-xs text-muted-foreground">Key saved.</p>
-            )}
+        )}
+        <AddKey onChanged={reload} />
+      </section>
+
+      {/* model routes */}
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className={label}>Model routes</h3>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1"
+            onClick={() => setView({ kind: "add" })}
+          >
+            <Plus className="size-3.5" /> Add model
+          </Button>
+        </div>
+        {routes === null ? (
+          <div className="space-y-2">
+            <Skeleton className="h-14 w-full rounded-lg" />
+            <Skeleton className="h-14 w-full rounded-lg" />
+          </div>
+        ) : routes.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+            No model routes — add one to make a model selectable in chats.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {routes.map((r) => (
+              <button
+                key={r.model}
+                className={listCard}
+                onClick={() => setView({ kind: "detail", model: r.model })}
+              >
+                <span
+                  className={`size-2 shrink-0 rounded-full ${
+                    r.enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
+                  }`}
+                  title={r.enabled ? "enabled" : "disabled"}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-medium">{r.model}</p>
+                    <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {r.provider}
+                    </span>
+                    {r.modalities.map((m) => (
+                      <span
+                        key={m}
+                        className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground"
+                      >
+                        {m}
+                      </span>
+                    ))}
+                    {r.reasoning && (
+                      <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
+                        reasoning
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {fmtUsd(r.price_per_mtok_in_usd)} in · {fmtUsd(r.price_per_mtok_out_usd)} out
+                    {r.context_window != null
+                      ? ` · ${(r.context_window / 1000).toFixed(0)}k context`
+                      : ""}
+                    {r.quota_monthly_usd != null ? ` · cap ${fmtUsd(r.quota_monthly_usd)}/mo` : ""}
+                  </p>
+                </div>
+                <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function KeyDelete({ provider, onChanged }: { provider: string; onChanged: () => void }) {
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!confirm) {
+    return (
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+        title={`Delete ${provider} key`}
+        onClick={() => setConfirm(true)}
+      >
+        <Trash2 className="size-3.5" />
+      </Button>
+    );
+  }
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      <Button
+        size="sm"
+        variant="destructive"
+        className="h-7 px-2 text-xs"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await api("DELETE", `/api/v1/admin/gateway/keys/${encodeURIComponent(provider)}`);
+            onChanged();
+          } finally {
+            setBusy(false);
+            setConfirm(false);
+          }
+        }}
+      >
+        {busy ? "…" : "Delete"}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2 text-xs"
+        onClick={() => setConfirm(false)}
+      >
+        Cancel
+      </Button>
+    </span>
+  );
+}
+
+function AddKey({ onChanged }: { onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState("openai");
+  const [baseUrl, setBaseUrl] = useState("https://api.openai.com");
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) {
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="mt-2 h-8 gap-1"
+        onClick={() => setOpen(true)}
+      >
+        <Plus className="size-3.5" /> Add provider key
+      </Button>
+    );
+  }
+  return (
+    <div className="mt-2 space-y-3 rounded-lg border border-border p-4">
+      <div className="grid grid-cols-[130px_1fr] items-center gap-4">
+        <span className="text-xs text-muted-foreground">Provider</span>
+        <Input className="h-8" value={provider} onChange={(e) => setProvider(e.target.value)} />
+        <span className="text-xs text-muted-foreground">Base URL</span>
+        <Input className="h-8" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+        <span className="text-xs text-muted-foreground">API key</span>
+        <Input
+          className="h-8"
+          type="password"
+          value={key}
+          placeholder="sk-…"
+          onChange={(e) => setKey(e.target.value)}
+        />
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          disabled={!key || busy}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              await api("POST", "/api/v1/admin/gateway/keys", {
+                provider,
+                base_url: baseUrl,
+                key,
+              });
+              setKey("");
+              setOpen(false);
+              onChanged();
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Saving…" : "Save key"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function useRouteField(model: string) {
+  const [f, setF] = useState<RouteRow | null>(null);
+  useEffect(() => {
+    api<{ routes: RouteRow[] }>("GET", "/api/v1/admin/gateway/routes")
+      .then((r) => setF(r.routes.find((x) => x.model === model) ?? null))
+      .catch(() => setF(null));
+  }, [model]);
+  return f;
+}
+
+function RouteDetail({
+  model,
+  onChanged,
+  onBack,
+}: {
+  model: string;
+  onChanged: () => void;
+  onBack: () => void;
+}) {
+  const r = useRouteField(model);
+  const [draft, setDraft] = useState<RouteRow | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // adopt the loaded row into the draft once (edits are local until saved)
+  useEffect(() => {
+    if (r && draft === null) setDraft(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [r]);
+
+  if (r === null || draft === null) {
+    return (
+      <div>
+        <button className={backBtn} onClick={onBack}>
+          <ArrowLeft className="size-4" /> Models
+        </button>
+        <Skeleton className="h-40 w-full rounded-lg" />
+      </div>
+    );
+  }
+  const patch = (p: Partial<RouteRow>) => setDraft({ ...draft, ...p });
+  return (
+    <div>
+      <button className={backBtn} onClick={onBack}>
+        <ArrowLeft className="size-4" /> Models
+      </button>
+      <div className="mb-4 flex items-center gap-2">
+        <h3 className="text-base font-semibold">{draft.model}</h3>
+        <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
+          {draft.provider}
+        </span>
+      </div>
+      <div className="max-w-xl space-y-1">
+        <div className={row}>
+          <span className={label}>Model id</span>
+          <Input className={field} value={draft.model} onChange={(e) => patch({ model: e.target.value })} />
+        </div>
+        <div className={row}>
+          <span className={label}>Provider</span>
+          <select
+            className={`${field} appearance-none`}
+            value={draft.provider}
+            onChange={(e) => patch({ provider: e.target.value })}
+          >
+            <option value="openai">openai</option>
+            <option value="anthropic">anthropic</option>
+          </select>
+        </div>
+        <div className={row}>
+          <span className={label}>Status</span>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="size-4 accent-foreground"
+              checked={draft.enabled}
+              onChange={(e) => patch({ enabled: e.target.checked })}
+            />
+            enabled — selectable in chats
+          </label>
+        </div>
+        <div className={row}>
+          <span className={label}>Price in</span>
+          <Input
+            className={field}
+            value={String(draft.price_per_mtok_in_usd)}
+            onChange={(e) => patch({ price_per_mtok_in_usd: Number(e.target.value) || 0 })}
+          />
+          <span className={label}>Price out</span>
+          <Input
+            className={field}
+            value={String(draft.price_per_mtok_out_usd)}
+            onChange={(e) => patch({ price_per_mtok_out_usd: Number(e.target.value) || 0 })}
+          />
+        </div>
+        <div className={row}>
+          <span className={label}>Monthly cap</span>
+          <Input
+            className={field}
+            value={draft.quota_monthly_usd != null ? String(draft.quota_monthly_usd) : ""}
+            placeholder="unlimited"
+            onChange={(e) =>
+              patch({
+                quota_monthly_usd: e.target.value === "" ? null : Number(e.target.value),
+              })
+            }
+          />
+        </div>
+        <div className={row}>
+          <span className={label}>Context window</span>
+          <Input
+            className={field}
+            value={draft.context_window != null ? String(draft.context_window) : ""}
+            placeholder="128000"
+            onChange={(e) =>
+              patch({ context_window: e.target.value === "" ? null : Number(e.target.value) })
+            }
+          />
+        </div>
+        <div className={row}>
+          <span className={label}>Capabilities</span>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="size-4 accent-foreground"
+                checked={draft.reasoning}
+                onChange={(e) => patch({ reasoning: e.target.checked })}
+              />
+              reasoning
+            </label>
+            {MODALITIES.map((m) => (
+              <label key={m} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-foreground"
+                  checked={draft.modalities.includes(m)}
+                  onChange={(e) =>
+                    patch({
+                      modalities: e.target.checked
+                        ? [...draft.modalities, m]
+                        : draft.modalities.filter((x) => x !== m),
+                    })
+                  }
+                />
+                {m}
+              </label>
+            ))}
           </div>
         </div>
       </div>
-
-      {/* model routes */}
-      <div className={card}>
-        <div className={cardHeader}>
-          <p className={cardTitle}>Model routes</p>
-        </div>
-        {routes === null ? (
-          <div className="space-y-2 p-4">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="h-9 w-full animate-pulse rounded-md bg-accent" />
-            ))}
-          </div>
+      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+      <div className="mt-5 flex items-center gap-2">
+        <Button
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              await api("PUT", "/api/v1/admin/gateway/routes", {
+                model: draft.model,
+                provider: draft.provider,
+                enabled: draft.enabled,
+                price_in: draft.price_per_mtok_in_usd,
+                price_out: draft.price_per_mtok_out_usd,
+                ...(draft.quota_monthly_usd != null ? { quota_monthly_usd: draft.quota_monthly_usd } : {}),
+                reasoning: draft.reasoning,
+                ...(draft.context_window != null ? { context_window: draft.context_window } : {}),
+                modalities: draft.modalities,
+              });
+              setSaved(true);
+              onChanged();
+              setTimeout(() => setSaved(false), 2000);
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Saving…" : saved ? "Saved" : "Save"}
+        </Button>
+        {confirmDelete ? (
+          <>
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await api("DELETE", `/api/v1/admin/gateway/routes/${encodeURIComponent(model)}`);
+                  onBack();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Delete route
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
+              Cancel
+            </Button>
+          </>
         ) : (
-          <div className="p-4">
-            <div className="space-y-2">
-              {routes.map((r, idx) => (
-                <div
-                  key={r.model}
-                  className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-border/60 bg-background p-2"
-                >
-                  <input
-                    className={`${cellInput} w-44 font-mono`}
-                    value={r.model}
-                    placeholder="model id"
-                    onChange={(e) => patchRoute(idx, { model: e.target.value })}
-                  />
-                  <select
-                    className={`${cellInput} w-24`}
-                    value={r.provider}
-                    onChange={(e) => patchRoute(idx, { provider: e.target.value })}
-                  >
-                    <option value="openai">openai</option>
-                    <option value="anthropic">anthropic</option>
-                  </select>
-                  <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      className="size-3.5 accent-foreground"
-                      checked={r.enabled}
-                      onChange={(e) => patchRoute(idx, { enabled: e.target.checked })}
-                    />
-                    enabled
-                  </label>
-                  <input
-                    className={`${cellInput} w-24`}
-                    placeholder="price in $/Mtok"
-                    value={r.price_in}
-                    onChange={(e) => patchRoute(idx, { price_in: e.target.value })}
-                  />
-                  <input
-                    className={`${cellInput} w-24`}
-                    placeholder="price out $/Mtok"
-                    value={r.price_out}
-                    onChange={(e) => patchRoute(idx, { price_out: e.target.value })}
-                  />
-                  <input
-                    className={`${cellInput} w-24`}
-                    placeholder="quota $/mo"
-                    value={r.quota_monthly_usd}
-                    onChange={(e) => patchRoute(idx, { quota_monthly_usd: e.target.value })}
-                  />
-                  <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      className="size-3.5 accent-foreground"
-                      checked={r.reasoning}
-                      onChange={(e) => patchRoute(idx, { reasoning: e.target.checked })}
-                    />
-                    reasoning
-                  </label>
-                  {(["image", "audio", "video"] as const).map((m) => (
-                    <label
-                      key={m}
-                      className="flex items-center gap-1 text-xs text-muted-foreground"
-                      title={`Native ${m} input — attachments of this modality are passed to the model`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="size-3.5 accent-foreground"
-                        checked={r.modalities.includes(m)}
-                        onChange={(e) =>
-                          patchRoute(idx, {
-                            modalities: e.target.checked
-                              ? [...r.modalities, m]
-                              : r.modalities.filter((x) => x !== m),
-                          })
-                        }
-                      />
-                      {m}
-                    </label>
-                  ))}
-                  <input
-                    className={`${cellInput} w-24`}
-                    placeholder="ctx window"
-                    value={r.context_window}
-                    onChange={(e) => patchRoute(idx, { context_window: e.target.value })}
-                  />
-                  <div className="ml-auto flex items-center gap-2">
-                    {savedIdx === idx && (
-                      <span className="text-xs text-muted-foreground">saved</span>
-                    )}
-                    <Button
-                      size="sm"
-                      onClick={() => saveRoute(r, idx)}
-                      disabled={!r.model || !r.price_in || !r.price_out || savingIdx !== null}
-                    >
-                      {savingIdx === idx ? "Saving…" : "Save"}
-                    </Button>
-                  </div>
-                </div>
-              ))}
-              {routes.length === 0 && (
-                <p className="text-sm text-muted-foreground">No routes yet — add one below.</p>
-              )}
-            </div>
-
-            {/* add route */}
-            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
-              <p className="text-xs text-muted-foreground">Add route:</p>
-              <Input
-                className="w-44 font-mono"
-                placeholder="model id"
-                value={newModel}
-                onChange={(e) => setNewModel(e.target.value)}
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!newModel}
-                onClick={() => {
-                  setRoutes((rs) => [blankRoute(newModel), ...(rs ?? [])]);
-                  setNewModel("");
-                }}
-              >
-                Add route
-              </Button>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Prices are USD per million tokens. Quota caps monthly spend per model (blank = no
-              cap). Context window is in tokens.
-            </p>
-          </div>
+          <Button variant="ghost" className="text-muted-foreground" onClick={() => setConfirmDelete(true)}>
+            <Trash2 className="mr-1 size-3.5" /> Delete
+          </Button>
         )}
+      </div>
+    </div>
+  );
+}
+
+function RouteAdd({
+  onAdded,
+  onBack,
+}: {
+  onAdded: (model: string) => void;
+  onBack: () => void;
+}) {
+  const [model, setModel] = useState("");
+  const [provider, setProvider] = useState("openai");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div>
+      <button className={backBtn} onClick={onBack}>
+        <ArrowLeft className="size-4" /> Models
+      </button>
+      <h3 className="mb-4 text-base font-semibold">Add a model route</h3>
+      <div className="max-w-xl space-y-1">
+        <div className={row}>
+          <span className={label}>Model id</span>
+          <Input
+            className={field}
+            value={model}
+            placeholder="e.g. GLM-5.3-Flash"
+            onChange={(e) => setModel(e.target.value)}
+          />
+        </div>
+        <div className={row}>
+          <span className={label}>Provider</span>
+          <select
+            className={`${field} appearance-none`}
+            value={provider}
+            onChange={(e) => setProvider(e.target.value)}
+          >
+            <option value="openai">openai</option>
+            <option value="anthropic">anthropic</option>
+          </select>
+        </div>
+        <p className="pt-2 text-xs text-muted-foreground">
+          The route is created enabled with zero pricing; open it from the list to set
+          pricing, context window and capabilities.
+        </p>
+      </div>
+      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+      <div className="mt-5 flex gap-2">
+        <Button
+          disabled={!model.trim() || busy}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              await api("PUT", "/api/v1/admin/gateway/routes", {
+                model: model.trim(),
+                provider,
+                enabled: true,
+                price_in: 0,
+                price_out: 0,
+                reasoning: false,
+                modalities: [],
+              });
+              onAdded(model.trim());
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Creating…" : "Create route"}
+        </Button>
+        <Button variant="ghost" onClick={onBack}>
+          Cancel
+        </Button>
       </div>
     </div>
   );
