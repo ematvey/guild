@@ -8,7 +8,7 @@ import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
 import { Bot } from "lucide-react";
-import { IS_TAURI, apiLogin, apiMe, clearToken } from "./transport";
+import { IS_TAURI, apiLogin, apiMe, clearToken, setToken } from "./transport";
 import { ThemeProvider, useTheme } from "./theme";
 
 const BAKED_URL: string =
@@ -54,6 +54,18 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sso, setSso] = useState<{ org_id: string } | null>(null);
+
+  // SSO availability is public: the sign-in page offers the IdP button when
+  // the org has OIDC configured.
+  useEffect(() => {
+    fetch("/api/v1/auth/oidc/status")
+      .then((r) => (r.ok ? r.json() : { configured: false }))
+      .then((v) => {
+        if (v?.configured && v?.org_id) setSso({ org_id: v.org_id });
+      })
+      .catch(() => {});
+  }, []);
 
   const submit = async () => {
     setBusy(true);
@@ -89,6 +101,22 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
           <Button onClick={submit} disabled={busy}>
             {busy ? "Signing in…" : "Sign in"}
           </Button>
+          {sso && (
+            <>
+              <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+                <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
+              </div>
+              <Button
+                variant="outline"
+                onClick={
+                  () =>
+                    (window.location.href = `/api/v1/auth/oidc/login?org_id=${sso.org_id}`)
+                }
+              >
+                Continue with SSO
+              </Button>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -337,6 +365,16 @@ function AppInner() {
       return;
     }
     // web mode: same-origin auth shared with /admin
+    // An OIDC callback lands here as #oidc_token=…&email=…; adopt the
+    // session and strip the fragment so the token never lingers in the URL.
+    if (window.location.hash.startsWith("#oidc_token=")) {
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const token = params.get("oidc_token");
+      if (token) {
+        setToken(token);
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
+    }
     apiMe()
       .then((u) => {
         setEmail(u?.email ?? null);

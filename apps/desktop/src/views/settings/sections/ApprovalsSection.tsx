@@ -1,13 +1,14 @@
-//! Approvals section of the settings window: the per-chat approval policy
-//! (default mode + optional per-tool overrides). Moved from the old settings
-//! dialog; applies to the currently open chat.
+//! Approvals section of the settings window: the user's approval policy
+//! (default mode + optional per-tool overrides), applied to every chat the
+//! user runs. User-scoped since migration 0026 — tool trust belongs to the
+//! user and their bound machine, not to an individual conversation.
 
 import { useEffect, useState } from "react";
 import { Button } from "@guild/ui/components/button";
 import { Textarea } from "@guild/ui/components/textarea";
 import { getApproval, setApproval, type ApprovalPolicy } from "../../../transport";
 
-export function ApprovalsSection({ chatId }: { chatId: string | null }) {
+export function ApprovalsSection() {
   const [policyDefault, setPolicyDefault] = useState<"server" | "ask" | "allow" | "never">("server");
   const [overridesText, setOverridesText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,9 +19,8 @@ export function ApprovalsSection({ chatId }: { chatId: string | null }) {
   useEffect(() => {
     setError(null);
     setSaved(false);
-    if (!chatId) return;
     setLoading(true);
-    getApproval(chatId)
+    getApproval()
       .then((p) => {
         setPolicyDefault(p?.default ?? "server");
         setOverridesText(
@@ -31,10 +31,10 @@ export function ApprovalsSection({ chatId }: { chatId: string | null }) {
       })
       .catch(() => setError("failed to load the current policy"))
       .finally(() => setLoading(false));
-  }, [chatId]);
+  }, []);
 
   const save = async () => {
-    if (!chatId || saving) return;
+    if (saving) return;
     setError(null);
     setSaved(false);
     let policy: ApprovalPolicy | null = null;
@@ -64,7 +64,7 @@ export function ApprovalsSection({ chatId }: { chatId: string | null }) {
     }
     setSaving(true);
     try {
-      await setApproval(chatId, policy);
+      await setApproval(policy);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {
@@ -73,14 +73,6 @@ export function ApprovalsSection({ chatId }: { chatId: string | null }) {
       setSaving(false);
     }
   };
-
-  if (!chatId) {
-    return (
-      <p className="rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">
-        Open a chat to configure its approval policy.
-      </p>
-    );
-  }
 
   const modes: { id: typeof policyDefault; label: string; hint: string }[] = [
     { id: "server", label: "Server default", hint: "ask, read-only tools allowed" },
@@ -91,6 +83,9 @@ export function ApprovalsSection({ chatId }: { chatId: string | null }) {
 
   return (
     <div className="space-y-4 pt-2">
+      <p className="text-xs text-muted-foreground">
+        Applies to every chat you run — tool trust is yours, not per-conversation.
+      </p>
       <div className="space-y-1.5">
         {modes.map((m) => (
           <button

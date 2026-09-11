@@ -11,6 +11,7 @@ use protocol::api::{
     CreatePairingTokenRequest, LoginRequest, LoginResponse, PairRequest, PairResponse,
     PairingTokenInfo, PairingTokenResponse, UserInfo,
 };
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub fn routes() -> Router<AppState> {
@@ -27,6 +28,50 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/auth/pairing-tokens/{id}",
             axum::routing::delete(revoke_pairing_token),
         )
+        .route(
+            "/api/v1/me/approval",
+            axum::routing::get(get_approval).put(set_approval),
+        )
+}
+
+/// The signed-in user's approval policy (migration 0026: user-scoped, was
+/// per-chat). NULL = the server default (default Ask, read Allow).
+async fn get_approval(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let approval = store.identity().approval(user.0.id).await?;
+    Ok(Json(json!({ "approval": approval })))
+}
+
+/// Saves (or with `{"approval": null}`, clears) the user's approval policy.
+/// The stored JSON must deserialize as guild-core `ApprovalPolicy` — invalid
+/// policies are rejected with 400 before touching the row. Accepts the bare
+/// policy JSON, an `{"approval": …}` wrapper, or `{"approval": null}`.
+async fn set_approval(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use guild_core::agent::policy::ApprovalPolicy;
+    let store = state.store().await?;
+    let value: Option<Value> = if let Some(a) = body.get("approval") {
+        match a {
+            Value::Null => None,
+            v => {
+                serde_json::from_value::<ApprovalPolicy>(v.clone())
+                    .map_err(|e| ApiError::bad_request(format!("invalid approval policy: {e}")))?;
+                Some(v.clone())
+            }
+        }
+    } else {
+        serde_json::from_value::<ApprovalPolicy>(body.clone())
+            .map_err(|e| ApiError::bad_request(format!("invalid approval policy: {e}")))?;
+        Some(body)
+    };
+    store.identity().set_approval(user.0.id, value.clone()).await?;
+    Ok(Json(json!({ "approval": value })))
 }
 
 async fn bootstrap(

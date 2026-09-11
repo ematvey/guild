@@ -63,4 +63,21 @@ impl<'a> OidcStore<'a> {
     ) -> Result<String, ApiError> {
         crypto::decrypt_secret(master_key, &row.encrypted_client_secret).map_err(ApiError::from)
     }
+
+    pub async fn delete(&self, org_id: Uuid) -> Result<(), ApiError> {
+        sqlx::query("DELETE FROM oidc_configs WHERE org_id = $1")
+            .bind(org_id)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Guild is effectively single-org (bootstrap creates one); the public
+    /// status endpoint and login flow use it to resolve the login target.
+    pub async fn first_org_id(&self) -> Result<Option<Uuid>, ApiError> {
+        sqlx::query_scalar("SELECT id FROM orgs ORDER BY created_at LIMIT 1")
+            .fetch_optional(self.pool)
+            .await
+            .map_err(Into::into)
+    }
 }

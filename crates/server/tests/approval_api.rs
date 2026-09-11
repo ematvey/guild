@@ -1,6 +1,7 @@
 //! Phase 2 approvals (docs/plans/2026-09-12-approvals-design.md §D, §E, §H):
-//! approval-policy settings endpoints, the approvals decision endpoint's
-//! org scoping, and the attach replay of unresolved approval requests.
+//! approval-policy settings endpoints (user-scoped, migration 0026), the
+//! approvals decision endpoint's org scoping, and the attach replay of
+//! unresolved approval requests.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -66,24 +67,24 @@ async fn body_json(res: axum::response::Response) -> Value {
 
 #[tokio::test]
 async fn approval_settings_roundtrip_and_validation() {
-    let (_ts, token, app, chat, _ingress) = setup().await;
+    let (_ts, token, app, _chat, _ingress) = setup().await;
 
-    // Fresh chat: no stored policy → null (server default applies).
+    // Fresh user: no stored policy → null (server default applies).
     let res = app
         .clone()
-        .oneshot(req("GET", format!("/api/v1/chats/{chat}/approval"), &token, None))
+        .oneshot(req("GET", format!("/api/v1/me/approval"), &token, None))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(body_json(res).await["approval"], Value::Null);
 
-    // Save a valid policy (bare JSON shape) and read it back.
+    // Save a valid policy for the user (bare JSON shape) and read it back.
     let policy = json!({"default": "ask", "overrides": {"read": "allow"}});
     let res = app
         .clone()
         .oneshot(req(
             "PUT",
-            format!("/api/v1/chats/{chat}/approval"),
+            format!("/api/v1/me/approval"),
             &token,
             Some(policy.clone()),
         ))
@@ -93,7 +94,7 @@ async fn approval_settings_roundtrip_and_validation() {
     assert_eq!(body_json(res).await["approval"], policy);
     let res = app
         .clone()
-        .oneshot(req("GET", format!("/api/v1/chats/{chat}/approval"), &token, None))
+        .oneshot(req("GET", format!("/api/v1/me/approval"), &token, None))
         .await
         .unwrap();
     assert_eq!(body_json(res).await["approval"], policy);
@@ -104,7 +105,7 @@ async fn approval_settings_roundtrip_and_validation() {
         .clone()
         .oneshot(req(
             "PUT",
-            format!("/api/v1/chats/{chat}/approval"),
+            format!("/api/v1/me/approval"),
             &token,
             Some(json!({"approval": policy2})),
         ))
@@ -113,7 +114,7 @@ async fn approval_settings_roundtrip_and_validation() {
     assert_eq!(res.status(), StatusCode::OK);
     let res = app
         .clone()
-        .oneshot(req("GET", format!("/api/v1/chats/{chat}/approval"), &token, None))
+        .oneshot(req("GET", format!("/api/v1/me/approval"), &token, None))
         .await
         .unwrap();
     assert_eq!(body_json(res).await["approval"], policy2);
@@ -128,7 +129,7 @@ async fn approval_settings_roundtrip_and_validation() {
             .clone()
             .oneshot(req(
                 "PUT",
-                format!("/api/v1/chats/{chat}/approval"),
+                format!("/api/v1/me/approval"),
                 &token,
                 Some(bad.clone()),
             ))
@@ -138,7 +139,7 @@ async fn approval_settings_roundtrip_and_validation() {
     }
     let res = app
         .clone()
-        .oneshot(req("GET", format!("/api/v1/chats/{chat}/approval"), &token, None))
+        .oneshot(req("GET", format!("/api/v1/me/approval"), &token, None))
         .await
         .unwrap();
     assert_eq!(body_json(res).await["approval"], policy2);
@@ -148,7 +149,7 @@ async fn approval_settings_roundtrip_and_validation() {
         .clone()
         .oneshot(req(
             "PUT",
-            format!("/api/v1/chats/{chat}/approval"),
+            format!("/api/v1/me/approval"),
             &token,
             Some(json!({"approval": null})),
         ))
@@ -163,13 +164,10 @@ async fn approval_endpoints_are_org_scoped() {
     let (_ts, token, app, _chat, ingress) = setup().await;
     let foreign = insert_org_with_chat(&_ts.store()).await;
 
+    // The policy settings endpoints are user-scoped (/api/v1/me/approval) —
+    // no chat/org scoping to test there anymore; only the decision endpoint
+    // takes a foreign chat id.
     for (method, uri, body) in [
-        ("GET", format!("/api/v1/chats/{foreign}/approval"), None),
-        (
-            "PUT",
-            format!("/api/v1/chats/{foreign}/approval"),
-            Some(json!({"default": "allow"})),
-        ),
         (
             "POST",
             format!("/api/v1/gateway/chat/{foreign}/approvals/call-1"),

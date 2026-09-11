@@ -16,15 +16,23 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/admin/users/{id}",
-            axum::routing::delete(delete_user),
+            axum::routing::put(update_user).delete(delete_user),
         )
         .route(
             "/api/v1/admin/teams",
             axum::routing::get(list_teams).post(create_team),
         )
         .route(
+            "/api/v1/admin/teams/{id}",
+            axum::routing::delete(delete_team),
+        )
+        .route(
             "/api/v1/admin/teams/{id}/members",
-            axum::routing::post(add_member),
+            axum::routing::get(list_members).post(add_member),
+        )
+        .route(
+            "/api/v1/admin/teams/{id}/members/{user_id}",
+            axum::routing::delete(remove_member),
         )
         .route(
             "/api/v1/admin/integrations",
@@ -138,6 +146,37 @@ async fn delete_user(
     Ok(Json(json!({})))
 }
 
+/// Updates a managed user: role change and/or password reset; omitted
+/// fields stay unchanged.
+async fn update_user(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(user_id): Path<Uuid>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let role = match body["role"].as_str() {
+        Some(r) if !r.is_empty() => {
+            if !matches!(r, "admin" | "member") {
+                return Err(ApiError::bad_request("role must be admin or member"));
+            }
+            Some(r)
+        }
+        _ => None,
+    };
+    let password = body["password"].as_str().filter(|p| !p.is_empty());
+    if role.is_none() && password.is_none() {
+        return Err(ApiError::bad_request("nothing to update"));
+    }
+    let store = state.store().await?;
+    let user = store
+        .identity()
+        .update_user(admin.0.org_id, user_id, role, password)
+        .await?;
+    Ok(Json(
+        json!({ "id": user.id, "email": user.email, "role": user.role }),
+    ))
+}
+
 async fn list_teams(
     State(state): State<AppState>,
     admin: AdminUser,
@@ -160,6 +199,26 @@ async fn create_team(
     Ok(Json(json!({ "id": team.id, "name": team.name })))
 }
 
+async fn delete_team(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(team_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.teams().delete_team(admin.0.org_id, team_id).await?;
+    Ok(Json(json!({})))
+}
+
+async fn list_members(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(team_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let users = store.teams().list_members(admin.0.org_id, team_id).await?;
+    Ok(Json(json!({ "members": users })))
+}
+
 async fn add_member(
     State(state): State<AppState>,
     admin: AdminUser,
@@ -174,6 +233,19 @@ async fn add_member(
     store
         .teams()
         .add_member(admin.0.org_id, team_id, user_id)
+        .await?;
+    Ok(Json(json!({})))
+}
+
+async fn remove_member(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path((team_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store
+        .teams()
+        .remove_member(admin.0.org_id, team_id, user_id)
         .await?;
     Ok(Json(json!({})))
 }

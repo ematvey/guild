@@ -494,12 +494,13 @@ fn server_default_policy() -> ApprovalPolicy {
     .expect("server default policy is valid")
 }
 
-/// Effective policy for a chat: the chat's stored policy, or the server
+/// Effective policy for a user: the user's stored policy (migration 0026 —
+/// approval is user-scoped, it applies to every chat they run), or the server
 /// default when unset or unreadable (the safe direction — default ask).
 fn resolve_policy(stored: Option<Value>) -> ApprovalPolicy {
     match stored {
         Some(v) => serde_json::from_value(v).unwrap_or_else(|e| {
-            tracing::warn!("unreadable chat approval policy, using server default: {e}");
+            tracing::warn!("unreadable user approval policy, using server default: {e}");
             server_default_policy()
         }),
         None => server_default_policy(),
@@ -1912,8 +1913,9 @@ async fn client_tool_step(
 
     // ---- Approval gate (phase 2, design §C). Journaled snapshot of the
     // chat's stored approval policy; NULL (or an unreadable column) falls
-    // back to the server default. Read directly via sqlx on the store pool —
-    // one column, no ChatStore method needed.
+    // The chat owner's approval policy (user-scoped since migration 0026 —
+    // one policy across all of the user's chats). Read directly via sqlx on
+    // the store pool — one column, no store method needed.
     let stored_policy: Option<Value> = ctx
         .run({
             let state = state.clone();
@@ -1922,7 +1924,8 @@ async fn client_tool_step(
                 async move {
                     let store = state.store().await.map_err(api_err)?;
                     match sqlx::query_scalar::<_, Option<Value>>(
-                        "SELECT approval FROM chats WHERE id = $1",
+                        "SELECT u.approval FROM chats c JOIN users u ON u.id = c.user_id \
+                         WHERE c.id = $1",
                     )
                     .bind(chat_id)
                     .fetch_optional(store.pool())

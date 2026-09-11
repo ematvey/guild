@@ -19,10 +19,6 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/chats/{id}/machine",
             axum::routing::post(set_machine),
         )
-        .route(
-            "/api/v1/chats/{id}/approval",
-            axum::routing::get(get_approval).put(set_approval),
-        )
         .route("/api/v1/machines", axum::routing::get(machines))
         .route(
             "/api/v1/machines/heartbeat",
@@ -85,51 +81,8 @@ async fn set_machine(
     Ok(Json(chat.into()))
 }
 
-/// Per-chat approval policy (phase 2, design §A). NULL stored value = the
-/// server default (default Ask, read Allow).
-async fn get_approval(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(chat_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let store = state.store().await?;
-    let chat = store.chats().get_chat(user.0.org_id, chat_id).await?;
-    Ok(Json(json!({ "approval": chat.approval })))
-}
-
-/// Saves (or with `{"approval": null}`, clears) the chat's approval policy.
-/// The stored JSON must deserialize as guild-core `ApprovalPolicy` — invalid
-/// policies are rejected with 400 before touching the row. Accepts the bare
-/// policy JSON, an `{"approval": …}` wrapper, or `{"approval": null}`.
-async fn set_approval(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(chat_id): Path<Uuid>,
-    Json(body): Json<Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    use guild_core::agent::policy::ApprovalPolicy;
-    let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id).await?;
-    let value: Option<Value> = if let Some(a) = body.get("approval") {
-        match a {
-            Value::Null => None,
-            v => {
-                serde_json::from_value::<ApprovalPolicy>(v.clone())
-                    .map_err(|e| ApiError::bad_request(format!("invalid approval policy: {e}")))?;
-                Some(v.clone())
-            }
-        }
-    } else {
-        serde_json::from_value::<ApprovalPolicy>(body.clone())
-            .map_err(|e| ApiError::bad_request(format!("invalid approval policy: {e}")))?;
-        Some(body)
-    };
-    let chat = store
-        .chats()
-        .set_approval(user.0.org_id, chat_id, value)
-        .await?;
-    Ok(Json(json!({ "approval": chat.approval })))
-}
+/// Per-user approval policy lives at /api/v1/me/approval (auth.rs) — see
+/// migration 0026: tool trust is user-scoped, not per-chat.
 
 impl From<crate::store::chats::ChatRow> for Chat {
     fn from(c: crate::store::chats::ChatRow) -> Self {
