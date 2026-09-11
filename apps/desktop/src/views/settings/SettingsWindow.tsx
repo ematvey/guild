@@ -54,6 +54,8 @@ export function SettingsWindow({
   chatId,
   currentMachineId,
   onMachineChanged,
+  section,
+  onSectionChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -62,6 +64,10 @@ export function SettingsWindow({
   chatId: string | null;
   currentMachineId: string | null;
   onMachineChanged: () => void;
+  /** Active section, driven by the URL (/settings/<section>); null = default. */
+  section: string | null;
+  /** Section picks push a new URL so back/forward walk section history. */
+  onSectionChange: (id: SectionId) => void;
 }) {
   const isAdmin = role === "admin";
   const sections: SectionDef[] = [
@@ -90,16 +96,9 @@ export function SettingsWindow({
   const visible = sections.filter(
     (s) => (!s.admin || isAdmin) && (!s.needsChat || chatId),
   );
-  const [active, setActive] = useState<SectionId>("account");
-  const activeDef = visible.find((s) => s.id === active) ?? visible[0];
-
-  // Reset to the first visible section when reopening (role/chat may change).
-  useEffect(() => {
-    if (open) {
-      setActive((cur) => (visible.some((s) => s.id === cur) ? cur : visible[0].id));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, isAdmin, chatId]);
+  // Section is URL-driven (WebChat owns it); an unknown section (stale deep
+  // link, or a role/chat change that hid it) falls back to the first visible.
+  const activeDef = visible.find((s) => s.id === section) ?? visible[0];
 
   const groups: { key: "user" | "chat" | "org"; label: string }[] = [
     { key: "user", label: "User" },
@@ -141,7 +140,7 @@ export function SettingsWindow({
                   {items.map((s) => (
                     <button
                       key={s.id}
-                      onClick={() => setActive(s.id)}
+                      onClick={() => onSectionChange(s.id)}
                       className={`mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors ${
                         activeDef?.id === s.id
                           ? "bg-accent text-accent-foreground"

@@ -255,6 +255,13 @@ retry-then-fail-fast ✓ · coherent model answers ✓ · machine chip in header
    assertions should filter on the specific path, not total count.
 6. **Web (browser) clients cannot execute machine tools by design** — keep
    it that way; execution is executor-bound.
+7. **Releases: move out of the API data model** (maintainer, 2026-09-11):
+   releases are dev objects existing outside the app workflow — publishing
+   belongs to `scripts/release-clients.sh` and object storage, not to the
+   product API surface. Today artifacts still live as
+   `/api/v1/releases` + `/api/v1/admin/releases` rows; future task is to
+   strip them from the API (keep only public download + updater manifest
+   serving, backed directly by object storage).
 
 ## Conventions to keep
 
@@ -287,3 +294,8 @@ retry-then-fail-fast ✓ · coherent model answers ✓ · machine chip in header
   `systemctl start rustfs`, `/srv/clickhouse` compose up).
 - Debug session token `pi-debug-session-token-2` is extended 7 days
   (expires ~2026-09-17); revoke when no longer needed.
+- Releases (maintainer, 2026-09-11) are dev objects, not API objects: they exist
+  outside the app workflow and should not grow into product surface. Publish
+  via `scripts/release-clients.sh` only; do not build product features around
+  the `/api/v1/releases` data model beyond serving downloads + the updater
+  manifest.
