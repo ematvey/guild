@@ -305,10 +305,28 @@ function clampWidth(w: number): number {
 /// /thread/<id> but the view has nothing to render yet). Without this, the
 /// new-thread hero would flash for the whole fetch duration.
 function ThreadSkeleton() {
+  // Conversation-shaped skeleton: mirrors the real thread layout (user
+  // bubbles right, assistant text + tool frames left) instead of a spinner.
+  const row = "flex flex-col gap-2";
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto px-4 py-8">
-      <Spinner />
-      <p className="text-sm text-muted-foreground">Loading thread…</p>
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-6">
+        <div className={row}>
+          <Skeleton className="ml-auto h-9 w-2/3 rounded-2xl" />
+          <Skeleton className="h-4 w-24 rounded-md" />
+          <Skeleton className="h-20 w-full rounded-lg" />
+          <Skeleton className="h-24 w-full rounded-lg" />
+        </div>
+        <div className={row}>
+          <Skeleton className="h-9 w-1/2 rounded-2xl" />
+          <Skeleton className="h-4 w-32 rounded-md" />
+          <Skeleton className="h-16 w-full rounded-lg" />
+          <Skeleton className="h-28 w-full rounded-lg" />
+        </div>
+        <div className={row}>
+          <Skeleton className="ml-auto h-9 w-3/5 rounded-2xl" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -773,11 +791,19 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
   const [chatId, setChatId] = useState<string | null>(null);
-  const [threadLoading, setThreadLoading] = useState(false); // /thread/<id> fetch in flight with nothing to show
+  const [threadLoading, setThreadLoading] = useState(() =>
+    // A deep link (/thread/<id>) is loading on first paint: show the thread
+    // skeleton, never the new-thread hero — the hero only ever appears when
+    // the user explicitly creates a new thread.
+    /^\/thread\//.test(window.location.pathname),
+  ); // /thread/<id> fetch in flight with nothing to show
   const [prompt, setPrompt] = useState("");
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
   const [busy, setBusy] = useState(false);
+  // Latest busy/attaching/threadLoading values for stable-ref consumers (the
+  // deploy-freshness poll below must not read stale closure state).
+  const loadStateRef = useRef({ busy: false, attaching: false, threadLoading: false });
   const [attaching, setAttaching] = useState(false); // receiving a server-side generation
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
@@ -801,6 +827,43 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   // this app instance is gone and resolve suspended client tools without
   // waiting for the 5-minute timeout.
   useEffect(() => startEventStream(), []);
+  loadStateRef.current = { busy, attaching, threadLoading };
+
+  // Deploy freshness: a long-lived tab keeps running the bundle it booted
+  // with, which drifts from the server after every deploy (removed endpoints
+  // then 404). Poll the served shell and reload once the bundle hash changes
+  // — but never while a turn is streaming or a thread is loading.
+  useEffect(() => {
+    const currentBundle = () => {
+      const m = document
+        .querySelector('script[src*="/assets/index-"]')
+        ?.getAttribute("src")
+        ?.match(/index-([^"]+)\.js/);
+      return m?.[1] ?? null;
+    };
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const res = await fetch("/", { cache: "no-store" });
+        if (!res.ok) return;
+        const html = await res.text();
+        const served = html.match(/index-([^"]+)\.js/)?.[1] ?? null;
+        const mine = currentBundle();
+        if (served && mine && served !== mine) {
+          const s = loadStateRef.current;
+          if (!s.busy && !s.attaching && !s.threadLoading && !stopped) window.location.reload();
+        }
+      } catch {
+        /* offline: nothing to compare this tick */
+      }
+    };
+    const id = window.setInterval(tick, 60_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+    // busyRef/attachingRef/threadLoadingRef are stable refs; see below.
+  }, []);
 
   useEffect(() => {
     listModels().then((m) => {

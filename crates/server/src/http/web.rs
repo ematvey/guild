@@ -15,7 +15,21 @@ static WEB_DIST: include_dir::Dir<'_> =
 fn serve_file(dist: &include_dir::Dir<'static>, path: &str) -> Option<Response> {
     let file = dist.get_file(path.trim_start_matches('/'))?;
     let mime = mime_guess::from_path(path).first_or_octet_stream();
-    Some(([(header::CONTENT_TYPE, mime.as_ref())], file.contents()).into_response())
+    // Hashed bundle assets are immutable; everything else (index.html, sw.js)
+    // must revalidate on every load or deploys leave stale shells behind.
+    let cache = if path.contains("/assets/") && path.contains(".") && !path.ends_with(".html") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    Some((
+        [
+            (header::CONTENT_TYPE, mime.as_ref()),
+            (header::CACHE_CONTROL, cache),
+        ],
+        file.contents(),
+    )
+        .into_response())
 }
 
 /// Missing file: an honest 404 when the dist is actually built; the 503
