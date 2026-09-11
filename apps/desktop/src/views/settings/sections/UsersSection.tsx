@@ -177,124 +177,177 @@ function UserDetail({
   onBack: () => void;
 }) {
   const creating = user === null;
+  // Configured users are facts first; editing is an explicit mode.
+  const [mode, setMode] = useState<"view" | "edit">("view");
   const [email, setEmail] = useState(user?.email ?? "");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState(user?.role ?? "member");
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const save = async () => {
-    if (busy) return;
-    if (creating && (!email || !password)) return;
-    setError(null);
-    setBusy(true);
-    try {
-      if (creating) {
-        await api("POST", "/api/v1/admin/users", { email, password, role });
-        onChanged();
-        onBack();
-      } else {
-        const body: Record<string, string> = { role };
-        if (password) body.password = password;
-        await api("PUT", `/api/v1/admin/users/${user!.id}`, body);
-        setSaved(true);
-        onChanged();
-        setTimeout(() => setSaved(false), 2000);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  if (creating || mode === "edit") {
+    return (
+      <div>
+        <button className={backBtn} onClick={onBack}>
+          <ArrowLeft className="size-4" /> Users
+        </button>
+        <h3 className="mb-1 text-base font-semibold">
+          {creating ? "Add user" : "Edit user"}
+        </h3>
+        <p className="mb-4 text-xs text-muted-foreground">
+          {creating
+            ? "The user signs in with this email and password."
+            : "Change the role or set a new password; leave the password blank to keep the current one."}
+        </p>
 
-  const remove = async () => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api("DELETE", `/api/v1/admin/users/${user!.id}`);
-      onChanged();
-      onBack();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setBusy(false);
-    }
-  };
+        <div className="max-w-xl space-y-4">
+          {creating && (
+            <div>
+              <p className={label}>Email</p>
+              <Input
+                className="mt-1.5"
+                type="email"
+                placeholder="user@company.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+          )}
+          <div>
+            <p className={label}>{creating ? "Password" : "New password"}</p>
+            <Input
+              className="mt-1.5"
+              type="password"
+              placeholder={creating ? "password" : "leave blank to keep the current one"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+          <div>
+            <p className={label}>Role</p>
+            <select
+              className="mt-1.5 h-9 rounded-md border border-input bg-card px-2 text-sm"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+            >
+              <option value="member">member</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
 
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex items-center gap-2">
+            <Button
+              disabled={busy || (creating && (!email || !password))}
+              onClick={async () => {
+                setBusy(true);
+                setError(null);
+                try {
+                  if (creating) {
+                    await api("POST", "/api/v1/admin/users", { email, password, role });
+                    onChanged();
+                    onBack();
+                  } else {
+                    const body: Record<string, string> = { role };
+                    if (password) body.password = password;
+                    await api("PUT", `/api/v1/admin/users/${user!.id}`, body);
+                    onChanged();
+                    setMode("view");
+                  }
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? "Saving…" : "Save"}
+            </Button>
+            {!creating && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setPassword("");
+                  setRole(user!.role);
+                  setError(null);
+                  setMode("view");
+                }}
+              >
+                Cancel
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // view mode: the saved user as facts, with explicit actions
   return (
     <div>
       <button className={backBtn} onClick={onBack}>
         <ArrowLeft className="size-4" /> Users
       </button>
-      <h3 className="mb-1 text-base font-semibold">{creating ? "Add user" : email || "…"}</h3>
+      <h3 className="mb-1 text-base font-semibold">{user!.email}</h3>
       <p className="mb-4 text-xs text-muted-foreground">
-        {creating
-          ? "The user signs in with this email and password."
-          : "Change the role or set a new password; blank fields stay unchanged."}
+        Organization user — role and sign-in method below.
       </p>
 
       <div className="max-w-xl space-y-4">
-        {creating && (
-          <div>
-            <p className={label}>Email</p>
-            <Input
-              className="mt-1.5"
-              type="email"
-              placeholder="user@company.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
-        )}
-        <div>
-          <p className={label}>{creating ? "Password" : "New password"}</p>
-          <Input
-            className="mt-1.5"
-            type="password"
-            placeholder={creating ? "password" : "leave blank to keep the current one"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
-        <div>
+        <div className="rounded-lg border border-border bg-card p-4">
           <p className={label}>Role</p>
-          <select
-            className="mt-1.5 h-9 rounded-md border border-input bg-card px-2 text-sm"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
+          <span
+            className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${roleBadge(user!.role)}`}
           >
-            <option value="member">member</option>
-            <option value="admin">admin</option>
-          </select>
+            {user!.role}
+          </span>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className={label}>Sign-in</p>
+          <p className="mt-1 text-sm">
+            {user!.identity_type === "password" ? "password" : user!.identity_type}
+          </p>
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex items-center gap-2">
-          <Button disabled={busy || (creating && (!email || !password))} onClick={save}>
-            {busy ? "Saving…" : saved ? "Saved" : "Save"}
+          <Button onClick={() => setMode("edit")}>
+            <Pencil className="mr-1 size-3.5" /> Edit
           </Button>
-          {!creating &&
-            (confirmDelete ? (
-              <>
-                <Button variant="destructive" disabled={busy} onClick={remove}>
-                  Delete user
-                </Button>
-                <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
-                  Cancel
-                </Button>
-              </>
-            ) : (
+          {confirmDelete ? (
+            <>
               <Button
-                variant="ghost"
-                className="text-muted-foreground"
-                onClick={() => setConfirmDelete(true)}
+                variant="destructive"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError(null);
+                  try {
+                    await api("DELETE", `/api/v1/admin/users/${user!.id}`);
+                    onChanged();
+                    onBack();
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                    setBusy(false);
+                  }
+                }}
               >
-                Delete
+                Delete user
               </Button>
-            ))}
+              <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="ghost"
+              className="text-muted-foreground"
+              onClick={() => setConfirmDelete(true)}
+            >
+              Delete
+            </Button>
+          )}
         </div>
       </div>
     </div>

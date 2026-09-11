@@ -3,7 +3,7 @@
 //! JSON config editor, save and delete.
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Pencil, Plus, Trash2, Webhook } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Pencil, Trash2, Webhook } from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
@@ -162,14 +162,40 @@ function IntegrationDetail({
   onBack: () => void;
 }) {
   const configured = initialConfig !== null;
+  // The saved integration is facts first; editing is an explicit mode.
+  const [mode, setMode] = useState<"view" | "edit">(configured ? "view" : "edit");
   const [enabled, setEnabled] = useState(initialEnabled);
   const [text, setText] = useState(
     configured ? JSON.stringify(initialConfig, null, 2) : "{\n  \n}",
   );
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const cfg = JSON.parse(text) as Record<string, unknown>;
+      await api("PUT", `/api/v1/admin/integrations/${encodeURIComponent(name)}`, {
+        config: cfg,
+        enabled,
+      });
+      onChanged();
+      setMode("view");
+    } catch (e) {
+      setError(
+        e instanceof SyntaxError
+          ? `config is not valid JSON: ${e.message}`
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div>
@@ -181,82 +207,91 @@ function IntegrationDetail({
         <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
           {categoryLabel(category)}
         </span>
+        <span
+          className={`size-2 rounded-full ${configured && initialEnabled ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+          title={configured ? (initialEnabled ? "enabled" : "disabled") : "not configured"}
+        />
       </div>
-      <p className="mb-4 text-xs text-muted-foreground">
-        {configured
-          ? "Configured — tools from this integration join the chat loop while enabled."
-          : "Not configured yet — save a config below to enable it."}
-      </p>
 
-      <div className="max-w-xl space-y-4">
-        <div className="flex items-center gap-3 rounded-lg border border-border px-4 py-3">
-          <label className="flex flex-1 items-center gap-3 text-sm">
-            <input
-              type="checkbox"
-              className="size-4 accent-foreground"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              disabled={!configured}
-            />
-            <span>
-              Enabled
-              <span className="block text-xs text-muted-foreground">
-                Disabled integrations keep their config but contribute no tools.
+      {mode === "edit" ? (
+        <div className="mt-4 max-w-xl space-y-4">
+          <div className="flex items-center gap-3 rounded-lg border border-border px-4 py-3">
+            <label className="flex flex-1 items-center gap-3 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 accent-foreground"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+              />
+              <span>
+                Enabled
+                <span className="block text-xs text-muted-foreground">
+                  Disabled integrations keep their config but contribute no tools.
+                </span>
               </span>
-            </span>
-          </label>
-        </div>
+            </label>
+          </div>
 
-        <div>
-          <p className="mb-1.5 flex items-center gap-2">
-            <span className={label}>Config (JSON)</span>
+          <div>
+            <p className={label}>Config (JSON)</p>
+            <Textarea
+              className="mt-1.5 min-h-40 font-mono text-xs"
+              spellCheck={false}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+          </div>
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex items-center gap-2">
+            <Button disabled={busy} onClick={save}>
+              {busy ? "Saving…" : "Save"}
+            </Button>
+            {configured && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setText(JSON.stringify(initialConfig, null, 2));
+                  setEnabled(initialEnabled);
+                  setError(null);
+                  setMode("view");
+                }}
+              >
+                Cancel
+              </Button>
+            )}
             {!configured && (
-              <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground/60">
-                <Plus className="size-3" /> new
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <ArrowUpRight className="size-3.5" /> saving creates the configuration
               </span>
             )}
-          </p>
-          <Textarea
-            className="min-h-40 font-mono text-xs"
-            spellCheck={false}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
+          </div>
         </div>
+      ) : (
+        // view: saved facts + explicit actions
+        <div className="mt-4 max-w-xl space-y-4">
+          <div className="rounded-lg border border-border bg-card p-4">
+            <p className={label}>Status</p>
+            <p className="mt-1 text-sm">
+              {initialEnabled ? "Enabled — tools join the chat loop" : "Configured, disabled"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Disabled integrations keep their config but contribute no tools.
+            </p>
+          </div>
+          <div className="rounded-lg border border-border bg-card p-4">
+            <p className={label}>Config</p>
+            <pre className="mt-1 overflow-x-auto font-mono text-xs">
+              {JSON.stringify(initialConfig, null, 2)}
+            </pre>
+          </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <div className="flex items-center gap-2">
-          <Button
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              setError(null);
-              try {
-                const cfg = JSON.parse(text) as Record<string, unknown>;
-                await api("PUT", `/api/v1/admin/integrations/${encodeURIComponent(name)}`, {
-                  config: cfg,
-                  enabled,
-                });
-                setSaved(true);
-                onChanged();
-                setTimeout(() => setSaved(false), 2000);
-              } catch (e) {
-                setError(
-                  e instanceof SyntaxError
-                    ? `config is not valid JSON: ${e.message}`
-                    : e instanceof Error
-                      ? e.message
-                      : String(e),
-                );
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            {busy ? "Saving…" : saved ? "Saved" : "Save"}
-          </Button>
-          {configured &&
-            (confirmDelete ? (
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setMode("edit")}>
+              <Pencil className="mr-1 size-3.5" /> Edit
+            </Button>
+            {confirmDelete ? (
               <>
                 <Button
                   variant="destructive"
@@ -264,10 +299,7 @@ function IntegrationDetail({
                   onClick={async () => {
                     setBusy(true);
                     try {
-                      await api(
-                        "DELETE",
-                        `/api/v1/admin/integrations/${encodeURIComponent(name)}`,
-                      );
+                      await api("DELETE", `/api/v1/admin/integrations/${encodeURIComponent(name)}`);
                       onBack();
                     } finally {
                       setBusy(false);
@@ -288,14 +320,10 @@ function IntegrationDetail({
               >
                 <Trash2 className="mr-1 size-3.5" /> Remove
               </Button>
-            ))}
-          {!configured && (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <ArrowUpRight className="size-3.5" /> saving creates the configuration
-            </span>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

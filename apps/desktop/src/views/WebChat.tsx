@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -13,11 +13,9 @@ import {
   FileDiff,
   Download,
   FileText,
-  Laptop,
   Minimize2,
   Globe,
   Lightbulb,
-  LogOut,
   Menu,
   MessageSquare,
   Film,
@@ -28,7 +26,6 @@ import {
   Plus,
   Search,
   X as XIcon,
-  Settings2,
   SquareTerminal,
   Cpu,
   Wrench,
@@ -83,9 +80,6 @@ import {
 
 // Per-chat spend chip: lazy so recharts (charting) never lands in the main
 // chat bundle; renders nothing until a thread is open and the chunk arrives.
-const ChatSpend = lazy(() =>
-  import("./ChatSpendChip").then((m) => ({ default: m.ChatSpendChip })),
-);
 
 interface ToolBlock {
   callId: string;
@@ -1874,11 +1868,6 @@ export default function WebChat({
               {boundMachine}
             </span>
           )}
-          {chatId && (
-            <Suspense fallback={null}>
-              <ChatSpend chatId={chatId} busy={busy} />
-            </Suspense>
-          )}
         </header>
 
         {blocks.length === 0 ? (
@@ -2422,15 +2411,11 @@ function SidebarContent({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-56">
-            <DropdownMenuItem onClick={onOpenDevice}>
-              <Laptop /> Set up a device
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onOpenSettings}>
-              <Settings2 /> Settings
-            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
+            <DropdownMenuItem onClick={onOpenSettings}>Settings</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onSignOut}>
-              <LogOut /> Sign out
+            <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
+              Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

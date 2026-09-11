@@ -333,10 +333,11 @@ function RouteDetail({
   onBack: () => void;
 }) {
   const r = useRouteField(model);
+  // The saved route is facts first; editing is an explicit draft mode.
+  const [mode, setMode] = useState<"view" | "edit">("view");
   const [draft, setDraft] = useState<RouteRow | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // adopt the loaded row into the draft once (edits are local until saved)
@@ -345,183 +346,261 @@ function RouteDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [r]);
 
+  const back = (
+    <button className={backBtn} onClick={onBack}>
+      <ArrowLeft className="size-4" /> Models
+    </button>
+  );
+
   if (r === null || draft === null) {
     return (
       <div>
-        <button className={backBtn} onClick={onBack}>
-          <ArrowLeft className="size-4" /> Models
-        </button>
+        {back}
         <Skeleton className="h-40 w-full rounded-lg" />
       </div>
     );
   }
   const patch = (p: Partial<RouteRow>) => setDraft({ ...draft, ...p });
-  return (
-    <div>
-      <button className={backBtn} onClick={onBack}>
-        <ArrowLeft className="size-4" /> Models
-      </button>
-      <div className="mb-4 flex items-center gap-2">
-        <h3 className="text-base font-semibold">{draft.model}</h3>
-        <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
-          {draft.provider}
-        </span>
-      </div>
-      <div className="max-w-xl space-y-1">
-        <div className={row}>
-          <span className={label}>Model id</span>
-          <Input className={field} value={draft.model} onChange={(e) => patch({ model: e.target.value })} />
+
+  if (mode === "edit") {
+    return (
+      <div>
+        {back}
+        <div className="mb-4 flex items-center gap-2">
+          <h3 className="text-base font-semibold">Edit route</h3>
+          <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
+            {draft.provider}
+          </span>
         </div>
-        <div className={row}>
-          <span className={label}>Provider</span>
-          <select
-            className={`${field} appearance-none`}
-            value={draft.provider}
-            onChange={(e) => patch({ provider: e.target.value })}
-          >
-            <option value="openai">openai</option>
-            <option value="anthropic">anthropic</option>
-          </select>
-        </div>
-        <div className={row}>
-          <span className={label}>Status</span>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="size-4 accent-foreground"
-              checked={draft.enabled}
-              onChange={(e) => patch({ enabled: e.target.checked })}
-            />
-            enabled — selectable in chats
-          </label>
-        </div>
-        <div className={row}>
-          <span className={label}>Price in</span>
-          <Input
-            className={field}
-            value={String(draft.price_per_mtok_in_usd)}
-            onChange={(e) => patch({ price_per_mtok_in_usd: Number(e.target.value) || 0 })}
-          />
-          <span className={label}>Price out</span>
-          <Input
-            className={field}
-            value={String(draft.price_per_mtok_out_usd)}
-            onChange={(e) => patch({ price_per_mtok_out_usd: Number(e.target.value) || 0 })}
-          />
-        </div>
-        <div className={row}>
-          <span className={label}>Monthly cap</span>
-          <Input
-            className={field}
-            value={draft.quota_monthly_usd != null ? String(draft.quota_monthly_usd) : ""}
-            placeholder="unlimited"
-            onChange={(e) =>
-              patch({
-                quota_monthly_usd: e.target.value === "" ? null : Number(e.target.value),
-              })
-            }
-          />
-        </div>
-        <div className={row}>
-          <span className={label}>Context window</span>
-          <Input
-            className={field}
-            value={draft.context_window != null ? String(draft.context_window) : ""}
-            placeholder="128000"
-            onChange={(e) =>
-              patch({ context_window: e.target.value === "" ? null : Number(e.target.value) })
-            }
-          />
-        </div>
-        <div className={row}>
-          <span className={label}>Capabilities</span>
-          <div className="flex flex-wrap gap-4 text-sm">
-            <label className="flex items-center gap-2">
+        <div className="max-w-xl space-y-1">
+          <div className={row}>
+            <span className={label}>Model id</span>
+            <Input className={field} value={draft.model} onChange={(e) => patch({ model: e.target.value })} />
+          </div>
+          <div className={row}>
+            <span className={label}>Provider</span>
+            <select
+              className={`${field} appearance-none`}
+              value={draft.provider}
+              onChange={(e) => patch({ provider: e.target.value })}
+            >
+              <option value="openai">openai</option>
+              <option value="anthropic">anthropic</option>
+            </select>
+          </div>
+          <div className={row}>
+            <span className={label}>Status</span>
+            <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 className="size-4 accent-foreground"
-                checked={draft.reasoning}
-                onChange={(e) => patch({ reasoning: e.target.checked })}
+                checked={draft.enabled}
+                onChange={(e) => patch({ enabled: e.target.checked })}
               />
-              reasoning
+              enabled — selectable in chats
             </label>
-            {MODALITIES.map((m) => (
-              <label key={m} className="flex items-center gap-2">
+          </div>
+          <div className={row}>
+            <span className={label}>Price in</span>
+            <Input
+              className={field}
+              value={String(draft.price_per_mtok_in_usd)}
+              onChange={(e) => patch({ price_per_mtok_in_usd: Number(e.target.value) || 0 })}
+            />
+            <span className={label}>Price out</span>
+            <Input
+              className={field}
+              value={String(draft.price_per_mtok_out_usd)}
+              onChange={(e) => patch({ price_per_mtok_out_usd: Number(e.target.value) || 0 })}
+            />
+          </div>
+          <div className={row}>
+            <span className={label}>Monthly cap</span>
+            <Input
+              className={field}
+              value={draft.quota_monthly_usd != null ? String(draft.quota_monthly_usd) : ""}
+              placeholder="unlimited"
+              onChange={(e) =>
+                patch({
+                  quota_monthly_usd: e.target.value === "" ? null : Number(e.target.value),
+                })
+              }
+            />
+          </div>
+          <div className={row}>
+            <span className={label}>Context window</span>
+            <Input
+              className={field}
+              value={draft.context_window != null ? String(draft.context_window) : ""}
+              placeholder="128000"
+              onChange={(e) =>
+                patch({ context_window: e.target.value === "" ? null : Number(e.target.value) })
+              }
+            />
+          </div>
+          <div className={row}>
+            <span className={label}>Capabilities</span>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
                   className="size-4 accent-foreground"
-                  checked={draft.modalities.includes(m)}
-                  onChange={(e) =>
-                    patch({
-                      modalities: e.target.checked
-                        ? [...draft.modalities, m]
-                        : draft.modalities.filter((x) => x !== m),
-                    })
-                  }
+                  checked={draft.reasoning}
+                  onChange={(e) => patch({ reasoning: e.target.checked })}
                 />
-                {m}
+                reasoning
               </label>
+              {MODALITIES.map((m) => (
+                <label key={m} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="size-4 accent-foreground"
+                    checked={draft.modalities.includes(m)}
+                    onChange={(e) =>
+                      patch({
+                        modalities: e.target.checked
+                          ? [...draft.modalities, m]
+                          : draft.modalities.filter((x) => x !== m),
+                      })
+                    }
+                  />
+                  {m}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+        <div className="mt-5 flex items-center gap-2">
+          <Button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                await api("PUT", "/api/v1/admin/gateway/routes", {
+                  model: draft.model,
+                  provider: draft.provider,
+                  enabled: draft.enabled,
+                  price_in: draft.price_per_mtok_in_usd,
+                  price_out: draft.price_per_mtok_out_usd,
+                  ...(draft.quota_monthly_usd != null ? { quota_monthly_usd: draft.quota_monthly_usd } : {}),
+                  reasoning: draft.reasoning,
+                  ...(draft.context_window != null ? { context_window: draft.context_window } : {}),
+                  modalities: draft.modalities,
+                });
+                onChanged();
+                setDraft(null);
+                setMode("view");
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Saving…" : "Save"}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setDraft(r);
+              setError(null);
+              setMode("view");
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // view: saved route as facts + explicit actions
+  return (
+    <div>
+      {back}
+      <div className="mb-1 flex items-center gap-2">
+        <h3 className="text-base font-semibold">{r.model}</h3>
+        <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
+          {r.provider}
+        </span>
+        <span
+          className={`size-2 rounded-full ${r.enabled ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+          title={r.enabled ? "enabled" : "disabled"}
+        />
+      </div>
+      <p className="mb-4 text-xs text-muted-foreground">
+        {r.enabled ? "Selectable in chats." : "Disabled — not selectable in chats."}
+      </p>
+      <div className="max-w-xl space-y-4">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className={label}>Pricing</p>
+          <p className="mt-1 text-sm">
+            {fmtUsd(r.price_per_mtok_in_usd)} in · {fmtUsd(r.price_per_mtok_out_usd)} out
+            {r.quota_monthly_usd != null ? ` · cap ${fmtUsd(r.quota_monthly_usd)}/mo` : " · no cap"}
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className={label}>Context window</p>
+          <p className="mt-1 text-sm">
+            {r.context_window != null ? `${(r.context_window / 1000).toFixed(0)}k tokens` : "provider default"}
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className={label}>Capabilities</p>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            {r.reasoning && (
+              <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
+                reasoning
+              </span>
+            )}
+            {r.modalities.length === 0 && !r.reasoning && (
+              <p className="text-sm text-muted-foreground">text only</p>
+            )}
+            {r.modalities.map((m) => (
+              <span
+                key={m}
+                className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground"
+              >
+                {m}
+              </span>
             ))}
           </div>
         </div>
-      </div>
-      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-      <div className="mt-5 flex items-center gap-2">
-        <Button
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError(null);
-            try {
-              await api("PUT", "/api/v1/admin/gateway/routes", {
-                model: draft.model,
-                provider: draft.provider,
-                enabled: draft.enabled,
-                price_in: draft.price_per_mtok_in_usd,
-                price_out: draft.price_per_mtok_out_usd,
-                ...(draft.quota_monthly_usd != null ? { quota_monthly_usd: draft.quota_monthly_usd } : {}),
-                reasoning: draft.reasoning,
-                ...(draft.context_window != null ? { context_window: draft.context_window } : {}),
-                modalities: draft.modalities,
-              });
-              setSaved(true);
-              onChanged();
-              setTimeout(() => setSaved(false), 2000);
-            } catch (e) {
-              setError(e instanceof Error ? e.message : String(e));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? "Saving…" : saved ? "Saved" : "Save"}
-        </Button>
-        {confirmDelete ? (
-          <>
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await api("DELETE", `/api/v1/admin/gateway/routes/${encodeURIComponent(model)}`);
-                  onBack();
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Delete route
-            </Button>
-            <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <Button variant="ghost" className="text-muted-foreground" onClick={() => setConfirmDelete(true)}>
-            <Trash2 className="mr-1 size-3.5" /> Delete
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setMode("edit")}>
+            <Pencil className="mr-1 size-3.5" /> Edit
           </Button>
-        )}
+          {confirmDelete ? (
+            <>
+              <Button
+                variant="destructive"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await api("DELETE", `/api/v1/admin/gateway/routes/${encodeURIComponent(model)}`);
+                    onBack();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Delete route
+              </Button>
+              <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" className="text-muted-foreground" onClick={() => setConfirmDelete(true)}>
+              <Trash2 className="mr-1 size-3.5" /> Delete
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );

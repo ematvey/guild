@@ -24,7 +24,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/admin/teams/{id}",
-            axum::routing::delete(delete_team),
+            axum::routing::put(rename_team).delete(delete_team),
         )
         .route(
             "/api/v1/admin/teams/{id}/members",
@@ -196,6 +196,23 @@ async fn create_team(
         .ok_or_else(|| ApiError::bad_request("missing name"))?;
     let store = state.store().await?;
     let team = store.teams().create_team(admin.0.org_id, name).await?;
+    Ok(Json(json!({ "id": team.id, "name": team.name })))
+}
+
+async fn rename_team(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(team_id): Path<Uuid>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let name = body["name"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("missing name"))?;
+    let store = state.store().await?;
+    let team = store
+        .teams()
+        .rename_team(admin.0.org_id, team_id, name)
+        .await?;
     Ok(Json(json!({ "id": team.id, "name": team.name })))
 }
 

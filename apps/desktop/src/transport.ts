@@ -10,6 +10,27 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/// Base URL for server HTTP calls. Web: same-origin (guild-server serves the
+/// app). Tauri: the webview origin is tauri://localhost, which the server
+/// knows nothing about — same-origin fetches would die there — so they go to
+/// the paired server URL the shell stored (afterAuth writes it from
+/// session.info). Falls back to same-origin (""), e.g. pre-pairing.
+export function serverBase(): string {
+  if (IS_TAURI) {
+    try {
+      return (localStorage.getItem("guild.serverUrl") ?? "").replace(/\/$/, "");
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+/** Absolute URL for a server path ("/api/…"), base-aware. */
+export function apiUrl(path: string): string {
+  return `${serverBase()}${path}`;
+}
+
 export const TOKEN_KEY = "guild_token";
 const CLIENT_ID_KEY = "guild_client_id";
 const MACHINE_ID_KEY = "guild_machine_id";
@@ -66,7 +87,7 @@ export function startEventStream(): () => void {
     while (!stopped) {
       controller = new AbortController();
       try {
-        let url = `/api/v1/events/stream?client_id=${encodeURIComponent(clientId())}`;
+        let url = apiUrl(`/api/v1/events/stream?client_id=${encodeURIComponent(clientId())}`);
         if (IS_TAURI) {
           url += `&machine_id=${encodeURIComponent(machineId())}&machine_name=${encodeURIComponent(await machineName())}`;
         }
@@ -79,7 +100,7 @@ export function startEventStream(): () => void {
           // Executor liveness: the server cannot detect a dead client from
           // an idle SSE stream, so the executor pings explicitly.
           heartbeat = setInterval(() => {
-            void fetch("/api/v1/machines/heartbeat", {
+            void fetch(apiUrl("/api/v1/machines/heartbeat"), {
               method: "POST",
               headers: {
                 "content-type": "application/json",
@@ -153,7 +174,7 @@ export async function apiLogin(
 export async function apiMe(): Promise<{ email: string; role: string } | null> {
   const token = getToken();
   if (!token) return null;
-  const res = await fetch("/api/v1/auth/me", {
+  const res = await fetch(apiUrl("/api/v1/auth/me"), {
     headers: { authorization: `Bearer ${token}` },
   });
   if (res.status === 401) {
@@ -166,7 +187,7 @@ export async function apiMe(): Promise<{ email: string; role: string } | null> {
 
 export async function listModels(): Promise<string[]> {
   const token = getToken();
-  const res = await fetch("/api/v1/gateway/models", {
+  const res = await fetch(apiUrl("/api/v1/gateway/models"), {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) return [];
@@ -189,7 +210,7 @@ export interface MachineInfo {
 
 /** Connected machine executors for this account. */
 export async function listMachines(): Promise<MachineInfo[]> {
-  const res = await fetch("/api/v1/machines", {
+  const res = await fetch(apiUrl("/api/v1/machines"), {
     headers: { authorization: `Bearer ${getToken()}` },
   });
   if (!res.ok) return [];
@@ -202,7 +223,7 @@ export async function bindChat(
   chatId: string,
   machineIdArg: string | null,
 ): Promise<ChatSummary | null> {
-  const res = await fetch(`/api/v1/chats/${chatId}/machine`, {
+  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/machine`), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
     body: JSON.stringify(machineIdArg ? { machine_id: machineIdArg } : { machine_id: "" }),
@@ -222,7 +243,7 @@ export interface ChatMessage {
 
 export async function listChats(): Promise<ChatSummary[]> {
   const token = getToken();
-  const res = await fetch("/api/v1/chats", {
+  const res = await fetch(apiUrl("/api/v1/chats"), {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) return [];
@@ -235,7 +256,7 @@ export async function getMessages(
   signal?: AbortSignal,
 ): Promise<ChatMessage[]> {
   const token = getToken();
-  const res = await fetch(`/api/v1/chats/${chatId}/messages`, {
+  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/messages`), {
     headers: { authorization: `Bearer ${token}` },
     signal,
   });
@@ -341,7 +362,7 @@ export async function getThread(
   signal?: AbortSignal,
 ): Promise<ThreadResult> {
   const token = getToken();
-  const res = await fetch(`/api/v1/chats/${chatId}/thread`, {
+  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/thread`), {
     headers: { authorization: `Bearer ${token}` },
     signal,
   });
@@ -352,7 +373,7 @@ export async function getThread(
 
 export async function createChat(title: string): Promise<string | null> {
   const token = getToken();
-  const res = await fetch("/api/v1/chats", {
+  const res = await fetch(apiUrl("/api/v1/chats"), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(IS_TAURI ? { title, machine_id: machineId() } : { title }),
@@ -431,7 +452,7 @@ export async function uploadAttachment(
 /** Fetches an attachment as a blob URL for thumbnails/downloads (authed). */
 export async function attachmentBlobUrl(id: string): Promise<string | null> {
   try {
-    const res = await fetch(`/api/v1/attachments/${id}`, {
+    const res = await fetch(apiUrl(`/api/v1/attachments/${id}`), {
       headers: { authorization: `Bearer ${getToken()}` },
     });
     if (!res.ok) return null;
@@ -453,7 +474,7 @@ export async function streamChat(
   attachmentIds: string[] = [],
 ): Promise<void> {
   const token = getToken();
-  const res = await fetch("/api/v1/gateway/chat", {
+  const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -490,7 +511,7 @@ export async function attachGeneration(
   signal?: AbortSignal,
 ): Promise<boolean> {
   const token = getToken();
-  const res = await fetch(`/api/v1/gateway/chat/${chatId}/stream`, {
+  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${chatId}/stream`), {
     headers: { authorization: `Bearer ${token}` },
     signal,
   });
@@ -510,7 +531,7 @@ export interface PairingToken {
 /// routing info, the secret is the credential.
 export async function createPairingToken(ttlMinutes = 30): Promise<PairingToken> {
   const token = getToken();
-  const res = await fetch("/api/v1/auth/pairing-tokens", {
+  const res = await fetch(apiUrl("/api/v1/auth/pairing-tokens"), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify({ ttl_minutes: ttlMinutes }),
@@ -536,7 +557,7 @@ export async function postToolResult(
   meta?: unknown,
 ): Promise<void> {
   const token = getToken();
-  const res = await fetch(`/api/v1/gateway/chat/${chatId}/tools/${callId}/result`, {
+  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${chatId}/tools/${callId}/result`), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(
@@ -585,7 +606,7 @@ export async function postApproval(
   reason?: string,
 ): Promise<void> {
   const token = getToken();
-  const res = await fetch(`/api/v1/gateway/chat/${chatId}/approvals/${callId}`, {
+  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${chatId}/approvals/${callId}`), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(reason === undefined ? { approved } : { approved, reason }),
@@ -600,7 +621,7 @@ export async function postApproval(
 /// applies to every chat they run); null = server default.
 export async function getApproval(): Promise<ApprovalPolicy | null> {
   const token = getToken();
-  const res = await fetch("/api/v1/me/approval", {
+  const res = await fetch(apiUrl("/api/v1/me/approval"), {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) return null;
@@ -612,7 +633,7 @@ export async function getApproval(): Promise<ApprovalPolicy | null> {
 /// Throws with the API's validation message on an invalid policy body.
 export async function setApproval(policy: ApprovalPolicy | null): Promise<void> {
   const token = getToken();
-  const res = await fetch("/api/v1/me/approval", {
+  const res = await fetch(apiUrl("/api/v1/me/approval"), {
     method: "PUT",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: policy === null ? JSON.stringify({ approval: null }) : JSON.stringify(policy),
@@ -636,7 +657,7 @@ export interface Release {
 
 export async function listReleases(): Promise<Release[]> {
   const token = getToken();
-  const res = await fetch("/api/v1/releases", {
+  const res = await fetch(apiUrl("/api/v1/releases"), {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) return [];
@@ -647,7 +668,7 @@ export async function listReleases(): Promise<Release[]> {
 /// Mints a short-lived signed URL and triggers a browser download.
 export async function downloadRelease(id: string): Promise<void> {
   const token = getToken();
-  const res = await fetch(`/api/v1/releases/${id}/download-url`, {
+  const res = await fetch(apiUrl(`/api/v1/releases/${id}/download-url`), {
     headers: { authorization: `Bearer ${token}` },
   });
   const v = await res.json().catch(() => ({}));

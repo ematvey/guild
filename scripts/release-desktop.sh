@@ -25,12 +25,14 @@ export SDKROOT="${SDKROOT:-$HOME/macos-sdks/MacOSX11.3.sdk}"
 cd "$(dirname "$0")/.."
 
 echo "==> building Guild desktop for available targets"
-cargo build --release -p guild-desktop >/dev/null                                   # linux-x86_64
+# custom-protocol is REQUIRED: without it even a release build loads devUrl
+# (http://localhost:1420) instead of the embedded dist — white screen.
+cargo build --release -p guild-desktop --features tauri/custom-protocol >/dev/null  # linux-x86_64
 rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
-cargo zigbuild --release -p guild-desktop --target aarch64-apple-darwin >/dev/null
-cargo zigbuild --release -p guild-desktop --target x86_64-apple-darwin >/dev/null
+cargo zigbuild --release -p guild-desktop --target aarch64-apple-darwin --features tauri/custom-protocol >/dev/null
+cargo zigbuild --release -p guild-desktop --target x86_64-apple-darwin --features tauri/custom-protocol >/dev/null
 rustup target add x86_64-pc-windows-gnu >/dev/null
-cargo zigbuild --release -p guild-desktop --target x86_64-pc-windows-gnu >/dev/null
+cargo zigbuild --release -p guild-desktop --target x86_64-pc-windows-gnu --features tauri/custom-protocol >/dev/null
 
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
