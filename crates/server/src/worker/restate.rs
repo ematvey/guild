@@ -20,7 +20,9 @@ use crate::worker::executor::{tool_registry, Completion, RoutineConfig, RoutineE
 use crate::worker::run::MAX_STEPS;
 use futures::StreamExt;
 use tokio::sync::broadcast;
+use guild_core::agent::policy::ApprovalPolicy;
 use guild_core::provider::{ModelProvider, ProviderChunk, ProviderRequest};
+use guild_core::tools::Approval;
 use guild_core::usage::UsageEvent;
 use protocol::api::{
     Block, Message, StreamEvent, ThreadEvent, ToolCall, ToolExecutor, ToolSpec, UsagePayload,
@@ -342,11 +344,12 @@ pub struct ToolResultReq {
     pub meta: Option<Value>,
 }
 
-/// Body of the `complete_approval` handler (phase 2, design §C/§D): an
-/// approval decision from any attached client. Sent one-way from the HTTP
+/// Body of the `complete_approval` handler (phase 2 gate): a user decision
+/// from any attached client (or the timeout's auto-deny). First answer wins;
+/// late answers and replays after cleanup no-op. Sent one-way from the HTTP
 /// approvals endpoint; resolves the ChatRunner's `approval:{call_id}`
 /// awakeable. Shared with the timeout auto-deny.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ApprovalReq {
     pub call_id: String,
     pub approved: bool,
@@ -354,10 +357,37 @@ pub struct ApprovalReq {
     pub reason: Option<String>,
 }
 
+/// Resolution payload of an approval awakeable — what the suspended turn
+/// reads when the decision arrives.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+struct ApprovalResolution {
+    approved: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+/// Pure dedupe core of `complete_approval`: a present state key (the
+/// awakeable id) yields resolve+clear; an absent key (first answer already
+/// won, timed out, or nobody waiting) is a no-op.
+fn approval_on_decision(pending: Option<String>, req: ApprovalReq) -> Option<(String, ApprovalResolution)> {
+    pending.map(|awakeable_id| {
+        (
+            awakeable_id,
+            ApprovalResolution {
+                approved: req.approved,
+                reason: req.reason,
+            },
+        )
+    })
+}
+
+
 /// How many model/tool round-trips one turn may take.
 const CHAT_MAX_STEPS: usize = 25;
 /// How long the loop waits for a client to execute a client-side tool.
 pub(crate) const CLIENT_TOOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// How long the approval gate waits for a user decision before auto-denying.
+pub(crate) const APPROVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 fn client_tool_names() -> &'static [&'static str] {
     &["read", "bash", "edit", "write"]
@@ -365,6 +395,33 @@ fn client_tool_names() -> &'static [&'static str] {
 
 fn state_key(call_id: &str) -> String {
     format!("pending_tool:{call_id}")
+}
+
+/// K/V state key holding the awakeable id of a pending approval decision.
+fn approval_state_key(call_id: &str) -> String {
+    format!("approval:{call_id}")
+}
+
+/// Server default approval policy for client tools (design §A): read-only
+/// tools flow, state-changing tools ask.
+fn server_default_policy() -> ApprovalPolicy {
+    serde_json::from_value(json!({
+        "default": "ask",
+        "overrides": { "read": "allow" }
+    }))
+    .expect("server default policy is valid")
+}
+
+/// Effective policy for a chat: the chat's stored policy, or the server
+/// default when unset or unreadable (the safe direction — default ask).
+fn resolve_policy(stored: Option<Value>) -> ApprovalPolicy {
+    match stored {
+        Some(v) => serde_json::from_value(v).unwrap_or_else(|e| {
+            tracing::warn!("unreadable chat approval policy, using server default: {e}");
+            server_default_policy()
+        }),
+        None => server_default_policy(),
+    }
 }
 
 /// Server-owned system prompt (the client never sends one). Without it small
@@ -1062,6 +1119,28 @@ impl ChatRunner {
         );
         Ok(())
     }
+
+    /// Delivers an approval decision to the waiting generate loop (phase 2
+    /// gate). Shared handler mirroring `complete_tool`: first answer wins;
+    /// late answers (after the key was cleared) and replays no-op. The key
+    /// itself is cleared by the waiting turn (shared handlers have no write
+    /// state access in the SDK).
+    #[handler]
+    async fn complete_approval(
+        &self,
+        ctx: SharedObjectContext<'_>,
+        req: Json<ApprovalReq>,
+    ) -> HandlerResult<()> {
+        let req = req.into_inner();
+        let key = approval_state_key(&req.call_id);
+        let pending: Option<String> =
+            ctx.get(key.as_str()).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let Some((awakeable_id, resolution)) = approval_on_decision(pending, req) else {
+            return Ok(()); // first answer already won, or nobody waiting
+        };
+        ctx.resolve_awakeable(&awakeable_id, Json(resolution));
+        Ok(())
+    }
 }
 
 
@@ -1152,6 +1231,180 @@ async fn client_tool_step(
             is_error: false,
             meta: None,
         });
+    }
+
+    // ---- Approval gate (phase 2, design §C). Journaled snapshot of the
+    // chat's stored approval policy; NULL (or an unreadable column) falls
+    // back to the server default. Read directly via sqlx on the store pool —
+    // one column, no ChatStore method needed.
+    let stored_policy: Option<Value> = ctx
+        .run({
+            let state = state.clone();
+            move || {
+                let state = state.clone();
+                async move {
+                    let store = state.store().await.map_err(api_err)?;
+                    match sqlx::query_scalar::<_, Option<Value>>(
+                        "SELECT approval FROM chats WHERE id = $1",
+                    )
+                    .bind(chat_id)
+                    .fetch_optional(store.pool())
+                    .await
+                    {
+                        Ok(row) => Ok(Json(row.flatten())),
+                        Err(e) => {
+                            // Approval column not migrated yet (or DB hiccup):
+                            // the server default is the safe direction.
+                            tracing::warn!(
+                                chat = %chat_id,
+                                "approval policy read failed, using server default: {e}"
+                            );
+                            Ok(Json(None))
+                        }
+                    }
+                }
+            }
+        })
+        .await?
+        .into_inner();
+    match resolve_policy(stored_policy).for_tool(&call.name, Approval::Ask) {
+        Approval::Never => {
+            // Denied without any approval events; the caller appends the
+            // tool_result event from this payload.
+            return Ok(ToolResultPayload {
+                content: "denied by policy".to_string(),
+                is_error: true,
+                meta: None,
+            });
+        }
+        Approval::Allow => {}
+        Approval::Ask => {
+            let args_json =
+                serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
+
+            // Journaled: append the approval request to the thread log.
+            let st = state.clone();
+            let call_id = call.id.clone();
+            let name = call.name.clone();
+            let args = args_json.clone();
+            ctx.run(move || {
+                let state = st.clone();
+                async move {
+                    let store = state.store().await.map_err(api_err)?;
+                    store
+                        .thread()
+                        .append_event(
+                            chat_id,
+                            &ThreadEvent::ApprovalRequest {
+                                call_id: call_id.clone(),
+                                name: name.clone(),
+                                arguments: args.clone(),
+                            },
+                        )
+                        .await
+                        .map_err(api_err)?;
+                    Ok(Json(()))
+                }
+            })
+            .await?;
+
+            // Journaled: broadcast the pending approval card to attached
+            // clients.
+            let tx2 = tx.clone();
+            let call_id = call.id.clone();
+            let name = call.name.clone();
+            let args = args_json.clone();
+            ctx.run(move || {
+                let tx = tx2.clone();
+                async move {
+                    let _ = tx.send(StreamEvent::ApprovalRequested {
+                        call_id,
+                        name,
+                        arguments: args,
+                    });
+                    Ok(Json(()))
+                }
+            })
+            .await?;
+
+            // Journaled awakeable + durable timeout: the first decision (a
+            // user, or the auto-deny timer) resolves the promise; the loser
+            // no-ops on the cleared state key. Resolution replays from the
+            // journal like the client-tool result.
+            let (awakeable_id, promise) = ctx.awakeable::<Json<ApprovalResolution>>();
+            ctx.set(&approval_state_key(&call.id), awakeable_id.clone());
+            ctx.object_client::<ChatRunnerClient>(&chat_id.to_string())
+                .complete_approval(Json(ApprovalReq {
+                    call_id: call.id.clone(),
+                    approved: false,
+                    reason: Some("timed out awaiting approval".to_string()),
+                }))
+                .send_after(APPROVAL_TIMEOUT);
+
+            let decision: ApprovalResolution = match promise.await {
+                Ok(Json(d)) => d,
+                Err(t) => ApprovalResolution {
+                    approved: false,
+                    reason: Some(format!("approval failed: {t}")),
+                },
+            };
+            ctx.clear(&approval_state_key(&call.id));
+
+            // Journaled: persist the decision, then broadcast the resolved
+            // frame so every client's card settles.
+            let st = state.clone();
+            let call_id = call.id.clone();
+            let approved = decision.approved;
+            let reason = decision.reason.clone();
+            ctx.run(move || {
+                let state = st.clone();
+                async move {
+                    let store = state.store().await.map_err(api_err)?;
+                    store
+                        .thread()
+                        .append_event(
+                            chat_id,
+                            &ThreadEvent::ApprovalDecision {
+                                call_id: call_id.clone(),
+                                approved,
+                                reason: reason.clone(),
+                            },
+                        )
+                        .await
+                        .map_err(api_err)?;
+                    Ok(Json(()))
+                }
+            })
+            .await?;
+            let tx2 = tx.clone();
+            let call_id = call.id.clone();
+            let approved = decision.approved;
+            let reason = decision.reason.clone();
+            ctx.run(move || {
+                let tx = tx2.clone();
+                async move {
+                    let _ = tx.send(StreamEvent::ApprovalResolved {
+                        call_id,
+                        approved,
+                        reason,
+                    });
+                    Ok(Json(()))
+                }
+            })
+            .await?;
+
+            if !decision.approved {
+                return Ok(ToolResultPayload {
+                    content: match decision.reason.as_deref() {
+                        Some(r) if !r.is_empty() => format!("denied by user: {r}"),
+                        _ => "denied by user".to_string(),
+                    },
+                    is_error: true,
+                    meta: None,
+                });
+            }
+            // Approved: fall through to the ToolStarted/suspend flow.
+        }
     }
 
     // Journaled awakeable: stable id across replays.
@@ -1459,4 +1712,70 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
     register_with_restate(&admin, &advertised).await?;
     server.await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_default_read_flows_state_changers_ask() {
+        let p = server_default_policy();
+        assert_eq!(p.for_tool("read", Approval::Ask), Approval::Allow);
+        assert_eq!(p.for_tool("bash", Approval::Ask), Approval::Ask);
+        assert_eq!(p.for_tool("edit", Approval::Ask), Approval::Ask);
+        assert_eq!(p.for_tool("write", Approval::Ask), Approval::Ask);
+    }
+
+    #[test]
+    fn stored_policy_override_wins_over_default() {
+        let p = resolve_policy(Some(json!({
+            "default": "never",
+            "overrides": { "bash": "allow" }
+        })));
+        assert_eq!(p.for_tool("bash", Approval::Ask), Approval::Allow);
+        assert_eq!(p.for_tool("read", Approval::Ask), Approval::Never);
+        assert_eq!(p.for_tool("write", Approval::Ask), Approval::Never);
+    }
+
+    #[test]
+    fn null_policy_resolves_to_server_default() {
+        let p = resolve_policy(None);
+        assert_eq!(p.for_tool("read", Approval::Ask), Approval::Allow);
+        assert_eq!(p.for_tool("bash", Approval::Ask), Approval::Ask);
+    }
+
+    #[test]
+    fn malformed_policy_falls_back_to_server_default() {
+        let p = resolve_policy(Some(json!("not-a-policy")));
+        assert_eq!(p.for_tool("bash", Approval::Ask), Approval::Ask);
+        assert_eq!(p.for_tool("read", Approval::Ask), Approval::Allow);
+    }
+
+    #[test]
+    fn approval_state_key_format() {
+        assert_eq!(approval_state_key("call-1"), "approval:call-1");
+    }
+
+    #[test]
+    fn complete_approval_dedupe_first_answer_wins() {
+        // Absent key (already decided / timed out / not waiting): no-op.
+        let req = ApprovalReq { call_id: "c".into(), approved: true, reason: None };
+        assert!(approval_on_decision(None, req.clone()).is_none());
+        // Present key: the awakeable resolves with the decision.
+        let (id, decision) =
+            approval_on_decision(Some("awakeable-1".into()), req.clone()).unwrap();
+        assert_eq!(id, "awakeable-1");
+        assert!(decision.approved);
+        assert_eq!(decision.reason, None);
+        // A denied decision carries its reason through.
+        let denied = ApprovalReq {
+            call_id: "c".into(),
+            approved: false,
+            reason: Some("no".into()),
+        };
+        let (_, decision) = approval_on_decision(Some("awakeable-2".into()), denied).unwrap();
+        assert!(!decision.approved);
+        assert_eq!(decision.reason.as_deref(), Some("no"));
+    }
 }
