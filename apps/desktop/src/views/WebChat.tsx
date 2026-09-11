@@ -5,6 +5,8 @@ import {
   ArrowUp,
   ArrowUpRight,
   Bot,
+  ShieldAlert,
+  ShieldCheck,
   Brain,
   ChevronDown,
   ChevronUp,
@@ -55,7 +57,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { useTheme } from "../theme";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { postToolResult } from "../transport";
+import { postApproval, postToolResult, setApproval, getApproval, type ApprovalPolicy } from "../transport";
 import {
   bindChat,
   createChat,
@@ -86,6 +88,16 @@ interface ToolBlock {
   meta?: ToolMeta;
 }
 
+/// One durable approval gate (design spec section F): a client tool waiting
+/// for (or having received) the user's allow/deny decision.
+interface ApprovalBlock {
+  callId: string;
+  name: string;
+  args: string;
+  status: "pending" | "approved" | "denied";
+  reason?: string;
+}
+
 /// Widget payload persisted on tool/result events (spec C.2). Loose: the
 /// server owns the shape, unknown fields are ignored by the widgets.
 interface ToolMeta {
@@ -105,11 +117,12 @@ interface ToolMeta {
 }
 
 interface Block {
-  kind: "user" | "text" | "error" | "reasoning" | "tool";
+  kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval";
   text: string;
   /// kind === "reasoning": the accumulated thinking text.
   reasoningText?: string;
   tool?: ToolBlock;
+  approval?: ApprovalBlock;
 }
 
 /// Tools the desktop executor runs locally (mirrors server `client_tool_names`).
@@ -123,6 +136,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
   const events = [...rows].sort((a, b) => a.seq - b.seq).map((r) => r.event);
   const blocks: Block[] = [];
   const byCallId = new Map<string, ToolBlock>();
+  const byApprovalId = new Map<string, ApprovalBlock>();
   for (const ev of events) {
     switch (ev.type) {
       case "user_message":
@@ -174,11 +188,60 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
         }
         break;
       }
+      case "approval_request": {
+        const a: ApprovalBlock = {
+          callId: ev.call_id,
+          name: ev.name,
+          args: ev.arguments,
+          status: "pending", // flipped by the matching decision below
+        };
+        byApprovalId.set(ev.call_id, a);
+        blocks.push({ kind: "approval", text: "", approval: a });
+        break;
+      }
+      case "approval_decision": {
+        const a = byApprovalId.get(ev.call_id);
+        if (a) {
+          a.status = ev.approved ? "approved" : "denied";
+          a.reason = ev.reason ?? undefined;
+        }
+        break; // orphan decision: the request block carries the story
+      }
       case "compaction":
         break; // reserved, not built yet
     }
   }
   return blocks;
+}
+
+/// ApprovalRequested inserts a pending card into the current blocks;
+/// re-attach replays may fire it again for a card we already render, so
+/// this is an upsert, not a blind append.
+function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
+  const i = blocks.findIndex((x) => x.kind === "approval" && x.approval?.callId === a.callId);
+  if (i < 0) return [...blocks, { kind: "approval", text: "", approval: a }];
+  return blocks.map((x, j) => (j === i ? { kind: "approval", text: "", approval: { ...a } } : x));
+}
+
+/// ApprovalResolved flips the matching card (no-op when it is absent, e.g.
+/// the stream resolved before we rendered the request).
+function resolveApproval(
+  blocks: Block[],
+  callId: string,
+  approved: boolean,
+  reason?: string,
+): Block[] {
+  const i = blocks.findIndex((x) => x.kind === "approval" && x.approval?.callId === callId);
+  if (i < 0) return blocks;
+  return blocks.map((x, j) =>
+    j === i && x.approval
+      ? {
+          kind: "approval",
+          text: "",
+          approval: { ...x.approval, status: approved ? "approved" : "denied", reason },
+        }
+      : x,
+  );
 }
 
 /// Thinking deltas accumulate into the trailing reasoning block. The first
@@ -530,6 +593,103 @@ function ToolFrame({ t }: { t: ToolBlock }) {
   );
 }
 
+/// Status pill on approval cards (mirrors the tool-frame pill palette).
+function ApprovalPill({ status }: { status: "pending" | "approved" | "denied" }) {
+  const cls = {
+    pending: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    approved: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    denied: "border-destructive/40 bg-destructive/10 text-destructive",
+  }[status];
+  return (
+    <span
+      className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${cls}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+/// Collapsible approval card (design spec section F), styled like the tool
+/// frames. Pending cards offer Approve/Deny wired to the approvals endpoint;
+/// the buttons optimistically disable on click and the card flips to the
+/// resolved pill when the approval_resolved frame (or a thread reload)
+/// confirms the decision.
+function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }) {
+  const [acted, setActed] = useState<null | "approved" | "denied">(null);
+  const resolved = a.status !== "pending";
+  const busy = !resolved && acted !== null;
+  const act = (approved: boolean) => {
+    if (acted || resolved || !chatId) return;
+    setActed(approved ? "approved" : "denied");
+    // optimistic: keep the buttons disabled until the resolved frame or a
+    // thread reload confirms; only a failed post re-enables for a retry
+    void postApproval(chatId, a.callId, approved, approved ? undefined : "denied by user").catch(
+      () => setActed(null),
+    );
+  };
+  let prettyArgs = a.args;
+  try {
+    prettyArgs = JSON.stringify(JSON.parse(a.args), null, 2);
+  } catch {
+    /* keep the raw arguments string */
+  }
+  return (
+    <Frame
+      icon={
+        resolved && a.status === "denied" ? (
+          <ShieldAlert className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ShieldCheck className="size-3.5 shrink-0 text-muted-foreground" />
+        )
+      }
+      title={
+        <>
+          <span className="font-mono">{a.name}</span>
+          <span className="text-muted-foreground"> — approval</span>
+        </>
+      }
+      badge={
+        <>
+          {a.reason && resolved && (
+            <span className="hidden max-w-40 truncate text-muted-foreground sm:inline">
+              {a.reason}
+            </span>
+          )}
+          <ApprovalPill status={resolved ? a.status : busy ? (acted as "approved" | "denied") : "pending"} />
+        </>
+      }
+      defaultOpen={!resolved}
+    >
+      <div className="space-y-2">
+        {prettyArgs && (
+          <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
+            {prettyArgs}
+          </pre>
+        )}
+        {resolved ? (
+          a.status === "denied" && a.reason ? (
+            <p className="text-muted-foreground">denied: {a.reason}</p>
+          ) : a.status === "denied" ? (
+            <p className="text-muted-foreground">denied by user</p>
+          ) : (
+            <p className="text-muted-foreground">approved — the tool was allowed to run</p>
+          )
+        ) : (
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => act(true)} disabled={busy}>
+              Approve
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => act(false)} disabled={busy}>
+              Deny
+            </Button>
+            {busy && <span className="text-xs text-muted-foreground">sending…</span>}
+          </div>
+        )}
+      </div>
+    </Frame>
+  );
+}
+
 /// Web-mode chat: streaming conversation through the org gateway, with a
 /// server-backed conversation list. Full agent mode (local tools + project)
 /// is the desktop (Tauri) flow.
@@ -811,6 +971,26 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
               } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
                 sawContent = true;
                 handleToolEvent(ev, cid, seq);
+              } else if (ev.type === "approval_requested") {
+                sawContent = true;
+                setBlocks((b) =>
+                  upsertApproval(b, {
+                    callId: ev.call_id as string,
+                    name: (ev.name as string) ?? "",
+                    args: (ev.arguments as string) ?? "{}",
+                    status: "pending",
+                  }),
+                );
+              } else if (ev.type === "approval_resolved") {
+                sawContent = true;
+                setBlocks((b) =>
+                  resolveApproval(
+                    b,
+                    ev.call_id as string,
+                    !!ev.approved,
+                    (ev.reason as string | undefined) ?? undefined,
+                  ),
+                );
               } else if (ev.type === "error") {
                 lastError = ev.message ?? "model error";
                 term.v = "error";
@@ -910,6 +1090,24 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             setBlocks((b) => upsertThinking(b, ev.content!, false));
           } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
             handleToolEvent(ev, cid, mySeq);
+          } else if (ev.type === "approval_requested") {
+            setBlocks((b) =>
+              upsertApproval(b, {
+                callId: ev.call_id as string,
+                name: (ev.name as string) ?? "",
+                args: (ev.arguments as string) ?? "{}",
+                status: "pending",
+              }),
+            );
+          } else if (ev.type === "approval_resolved") {
+            setBlocks((b) =>
+              resolveApproval(
+                b,
+                ev.call_id as string,
+                !!ev.approved,
+                (ev.reason as string | undefined) ?? undefined,
+              ),
+            );
           } else if (ev.type === "error") {
             setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error" }]);
           }
@@ -1112,6 +1310,8 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                   />
                 ) : b.kind === "tool" && b.tool ? (
                   <ToolFrame key={i} t={b.tool} />
+                ) : b.kind === "approval" && b.approval ? (
+                  <ApprovalCard key={i} a={b.approval} chatId={chatId} />
                 ) : b.kind === "error" ? (
                   <div
                     key={i}
@@ -1414,6 +1614,75 @@ function SettingsDialog({
   useEffect(() => {
     if (open) void listMachines().then(setMachines);
   }, [open]);
+
+  // ---- Approval section (design spec section F) ----
+  const [approvalDefault, setApprovalDefault] = useState<"server" | "ask" | "allow" | "never">("server");
+  const [overridesText, setOverridesText] = useState("");
+  const [approvalLoading, setApprovalLoading] = useState(false);
+  const [approvalSaving, setApprovalSaving] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [approvalSaved, setApprovalSaved] = useState(false);
+
+  // Load the open chat's policy on open (and when a different chat opens).
+  useEffect(() => {
+    setApprovalError(null);
+    setApprovalSaved(false);
+    if (!open || !chatId) return;
+    setApprovalLoading(true);
+    getApproval(chatId)
+      .then((p) => {
+        setApprovalDefault(p?.default ?? "server");
+        setOverridesText(
+          p?.overrides && Object.keys(p.overrides).length > 0
+            ? JSON.stringify({ overrides: p.overrides }, null, 2)
+            : "",
+        );
+      })
+      .catch(() => setApprovalError("failed to load the current policy"))
+      .finally(() => setApprovalLoading(false));
+  }, [open, chatId]);
+
+  const saveApproval = async () => {
+    if (!chatId || approvalSaving) return;
+    setApprovalError(null);
+    setApprovalSaved(false);
+    let policy: ApprovalPolicy | null = null;
+    if (approvalDefault !== "server") {
+      policy = { default: approvalDefault };
+      const txt = overridesText.trim();
+      if (txt) {
+        try {
+          const parsed = JSON.parse(txt) as unknown;
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+            throw new Error("must be a JSON object");
+          }
+          const obj = parsed as { overrides?: unknown };
+          if (obj.overrides !== undefined) {
+            if (typeof obj.overrides !== "object" || obj.overrides === null || Array.isArray(obj.overrides)) {
+              throw new Error('"overrides" must be an object');
+            }
+            policy.overrides = obj.overrides as ApprovalPolicy["overrides"];
+          } else {
+            // a bare per-tool map {"bash": "allow"} is accepted too
+            policy.overrides = parsed as ApprovalPolicy["overrides"];
+          }
+        } catch (e) {
+          setApprovalError(`invalid overrides JSON: ${(e as Error).message}`);
+          return;
+        }
+      }
+    }
+    setApprovalSaving(true);
+    try {
+      await setApproval(chatId, policy);
+      setApprovalSaved(true);
+      setTimeout(() => setApprovalSaved(false), 1500);
+    } catch (e) {
+      setApprovalError((e as Error).message);
+    } finally {
+      setApprovalSaving(false);
+    }
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
@@ -1487,6 +1756,52 @@ function SettingsDialog({
                 No machines connected. Start the Guild desktop app on the machine you want
                 agent tools to run on.
               </p>
+            )}
+          </div>
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Approval</p>
+            {!chatId ? (
+              <p className="text-xs text-muted-foreground">Open a chat to configure its approval policy.</p>
+            ) : approvalLoading ? (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            ) : (
+              <div className="space-y-2">
+                <Select
+                  value={approvalDefault}
+                  onValueChange={(v) => setApprovalDefault(v as typeof approvalDefault)}
+                >
+                  <SelectTrigger className="h-8 w-full text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="server" className="text-xs">server default</SelectItem>
+                    <SelectItem value="ask" className="text-xs">ask for every tool</SelectItem>
+                    <SelectItem value="allow" className="text-xs">allow all tools</SelectItem>
+                    <SelectItem value="never" className="text-xs">never run tools</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Textarea
+                  value={overridesText}
+                  onChange={(e) => setOverridesText(e.target.value)}
+                  rows={3}
+                  placeholder={'{"overrides": {"bash": "allow"}}'}
+                  className="min-h-0 resize-none font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Per-tool overrides, e.g. allow bash but keep asking for the rest.
+                </p>
+                {approvalError && (
+                  <p className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+                    {approvalError}
+                  </p>
+                )}
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={() => void saveApproval()} disabled={approvalSaving}>
+                    {approvalSaving ? "Saving…" : "Save"}
+                  </Button>
+                  {approvalSaved && <span className="text-xs text-emerald-600 dark:text-emerald-400">saved</span>}
+                </div>
+              </div>
             )}
           </div>
         </div>
