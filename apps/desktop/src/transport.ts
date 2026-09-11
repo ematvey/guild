@@ -4,7 +4,7 @@
 //  - Tauri (desktop): invoke/listen against the in-process engine; the
 //    engine talks to the org gateway. Full agent features (project, tools).
 //  - Web (served by guild-server at /): same-origin fetch/SSE against the
-//    org gateway; plain chat. Auth is shared with the /admin console via
+//    org gateway; plain chat.
 //    the same localStorage token.
 import { invoke } from "@tauri-apps/api/core";
 

@@ -5,12 +5,9 @@
 use axum::http::{header, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 
-/// The shared chat app (tauri frontend) at `/`.
+/// The web app (tauri frontend) at `/`.
 static CHAT_DIST: include_dir::Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../apps/desktop/dist");
-/// The admin console (separate app) at `/admin`.
-static WEB_DIST: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../apps/webui/dist");
 
 fn serve_file(dist: &include_dir::Dir<'static>, path: &str) -> Option<Response> {
     let file = dist.get_file(path.trim_start_matches('/'))?;
@@ -46,19 +43,7 @@ pub async fn fallback(uri: Uri) -> Response {
     if path.starts_with("/api/") || path == "/api" {
         return crate::http::error::not_found().await.into_response();
     }
-    // /admin -> the admin console app (separate frontend, shared auth)
-    if path == "/admin" || path.starts_with("/admin/") {
-        let sub = path.trim_start_matches("/admin");
-        if sub.is_empty() || sub == "/" || !sub.contains('.') {
-            if let Some(resp) = serve_file(&WEB_DIST, "index.html") {
-                return resp;
-            }
-            return not_built("admin UI not built — run `npm --prefix apps/webui run build`");
-        }
-        return serve_file(&WEB_DIST, sub)
-            .unwrap_or_else(|| not_built_or_404(&WEB_DIST, "admin UI not built — run `npm --prefix apps/webui run build`"));
-    }
-    // everything else -> the shared chat app
+    // everything else -> the web app
     if path == "/" || !path.contains('.') {
         if let Some(resp) = serve_file(&CHAT_DIST, "index.html") {
             return resp;

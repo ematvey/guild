@@ -1,7 +1,7 @@
-//! Browser-mode e2e for the shared frontends: the guild-server serves the
-//! chat app at `/` (same frontend the Tauri desktop app runs) and the admin
-//! console at `/admin`, plus the exact API flow `transport.ts` performs in
-//! web mode (login → models → create chat → SSE stream → history).
+//! Browser-mode e2e: the guild-server serves the web app at `/` (the same
+//! frontend the Tauri desktop app runs), plus the exact API flow
+//! `transport.ts` performs in web mode (login → models → create chat → SSE
+//! stream → history).
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -32,13 +32,13 @@ fn first_asset(html: &str, marker: &str) -> Option<String> {
 }
 
 #[tokio::test]
-async fn chat_app_and_admin_console_are_served() {
+async fn chat_app_is_served() {
     let app = guild_server::build_router(guild_server::test_support::test_state());
 
     // chat app at `/`
     let res = get(&app, "/").await;
     if res.status() == StatusCode::SERVICE_UNAVAILABLE {
-        eprintln!("SKIP: frontends not built (npm run build in apps/desktop + apps/webui)");
+        eprintln!("SKIP: frontend not built (npm run build in apps/desktop)");
         return;
     }
     assert_eq!(res.status(), StatusCode::OK);
@@ -50,27 +50,6 @@ async fn chat_app_and_admin_console_are_served() {
     let asset = first_asset(&html, "src=\"").expect("chat index references a js asset");
     assert!(asset.starts_with("/assets/"), "chat asset path: {asset}");
     assert_eq!(get(&app, &asset).await.status(), StatusCode::OK);
-
-    // admin console at /admin/
-    let res = get(&app, "/admin/").await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let html = body(res).await;
-    assert!(
-        html.contains("<div id=\"root\">"),
-        "admin index html: {html}"
-    );
-    let asset = first_asset(&html, "src=\"").expect("admin index references a js asset");
-    assert!(
-        asset.starts_with("/admin/assets/"),
-        "admin asset path: {asset}"
-    );
-    assert_eq!(get(&app, &asset).await.status(), StatusCode::OK);
-
-    // deep link: unknown asset under /admin stays out of the chat SPA
-    assert_ne!(
-        get(&app, "/admin/assets/nope.js").await.status(),
-        StatusCode::OK
-    );
 
     // API fallthrough preserved: unknown API path is the JSON error envelope
     let res = get(&app, "/api/v1/nope").await;

@@ -3,7 +3,6 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowUp,
-  ArrowUpRight,
   Bot,
   ShieldAlert,
   ShieldCheck,
@@ -638,7 +637,7 @@ function toolKind(t: ToolBlock): string {
 /// `web_search` stay in the log.
 const TOOL_LABELS: Record<string, string> = {
   web_search: "Web search",
-  web_fetch: "Web fetch",
+  web_fetch: "Browse",
   bash: "Execute",
   shell: "Execute",
   read: "Read",
@@ -843,6 +842,9 @@ function ToolBody({ t }: { t: ToolBlock }) {
             {s.snippet && <p className="mt-0.5 text-muted-foreground">{s.snippet}</p>}
           </div>
         ))}
+        {t.status === "running" && (
+          <span className="animate-pulse text-muted-foreground">running…</span>
+        )}
         {sources.length === 0 && t.content && (
           <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
             {t.content}
@@ -882,6 +884,9 @@ function ToolBody({ t }: { t: ToolBlock }) {
           <div className={`max-h-64 overflow-y-auto ${MD_CLASS}`}>
             <Markdown remarkPlugins={[remarkGfm]}>{t.content}</Markdown>
           </div>
+        )}
+        {t.status === "running" && (
+          <span className="animate-pulse text-muted-foreground">running…</span>
         )}
       </div>
     );
@@ -1000,34 +1005,35 @@ function ToolBody({ t }: { t: ToolBlock }) {
 }
 
 /// One collapsible frame per tool_call block: header is kind icon + tool
-/// name + human title from the widget + status pill.
+/// name + request preview (search → query, fetch → URL, …). The preview
+/// stays on the header line whether the frame is collapsed or expanded; a
+/// running call pulses until its result lands.
 function ToolFrame({ t }: { t: ToolBlock }) {
   const preview = toolPreview(t);
+  const running = t.status === "running";
+  const pulse = running ? "animate-pulse" : "";
   return (
     <Frame
       icon={<ToolKindIcon kind={toolKind(t)} />}
-      title={(open) => (
+      title={
         <>
-          <span className="mr-3 font-medium text-foreground/80">{toolLabel(t)}</span>
-          {/* collapsed only: expanded, the full content shows below */}
-          {preview && !open && (
+          <span className={`mr-3 font-medium text-foreground/80 ${pulse}`}>
+            {toolLabel(t)}
+          </span>
+          {preview && (
             <span
-              className={`hidden max-w-72 truncate text-muted-foreground sm:inline ${
-                toolKind(t) === "search" ? "" : "font-mono"
-              }`}
+              className={`hidden max-w-72 truncate text-muted-foreground sm:inline ${pulse}`}
               title={preview}
             >
               {preview}
             </span>
           )}
         </>
-      )}
+      }
       badge={
         // Pills only signal trouble: DONE is implicit, ERROR stays visible.
-        // A running frame opens expanded.
         t.status === "error" ? <StatusPill status={t.status} /> : undefined
       }
-      defaultOpen={t.status === "running"}
     >
       <ToolBody t={t} />
     </Frame>
@@ -2406,9 +2412,6 @@ function SidebarContent({
           <DropdownMenuContent side="top" align="start" className="w-56">
             <DropdownMenuItem onClick={onOpenDevice}>
               <Laptop /> Set up a device
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => window.open("/admin/", "_blank")}>
-              <ArrowUpRight /> Admin console
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onOpenSettings}>
               <Settings2 /> Settings

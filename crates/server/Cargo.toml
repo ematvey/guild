@@ -85,10 +85,6 @@ name = "usage_api"
 required-features = ["test-support"]
 
 [[test]]
-name = "webui_serving"
-required-features = ["test-support"]
-
-[[test]]
 name = "routines_api"
 required-features = ["test-support"]
 
