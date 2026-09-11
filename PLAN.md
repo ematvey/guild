@@ -22,6 +22,18 @@ Design: docs/plans/2026-09-12-approvals-design.md. Shipped and deployed:
 - Browser-verified all four paths (approve/deny/never/allow) with a scripted
   executor (SSE presence + heartbeats + tool result POST).
 
+## Auto-compaction (2026-09-12, latest)
+
+- **Manual Compact button removed from the UI** (and the gauge's Compact?
+  hint) — compaction is server-side only: POST /compact stays for ops.
+- **Threshold trigger**: before each model call, if the last request's
+  tokens_in > context_window - 16384 (pi's reserve), the ChatRunner compacts
+  first (shared compact_core) and continues with fresh derivation.
+- **Overflow trigger**: provider errors matching pi's overflow regex port
+  (crates/server/src/worker/overflow.rs, with non-overflow exclusions like
+  rate-limit) compact once and retry the call exactly once per turn.
+- Auto-compaction tokens are metered through the same usage path.
+
 ## Compaction + context gauge + desktop 0.3.9 (2026-09-12, later)
 
 - **Compaction** (docs/plans/2026-09-12-compaction-design.md): on-demand via
