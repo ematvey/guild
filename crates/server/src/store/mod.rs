@@ -8,6 +8,7 @@ pub mod identity;
 pub mod integrations;
 pub mod kv;
 pub mod oidc;
+pub mod org_kv;
 pub mod pairing;
 pub mod registry;
 pub mod releases;
@@ -46,7 +47,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 27] = [
+        const MIGRATIONS: [(&str, &str); 28] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -152,6 +153,10 @@ impl Store {
                 "0027_user_profile",
                 include_str!("../../migrations/0027_user_profile.sql"),
             ),
+            (
+                "0028_org_kv",
+                include_str!("../../migrations/0028_org_kv.sql"),
+            ),
         ];
         for (name, sql) in MIGRATIONS {
             let applied: Option<i64> =
@@ -228,6 +233,10 @@ impl Store {
 
     pub fn kv(&self) -> kv::KvStore<'_> {
         kv::KvStore { pool: &self.pool }
+    }
+
+    pub fn org_kv(&self) -> org_kv::OrgKvStore<'_> {
+        org_kv::OrgKvStore { pool: &self.pool }
     }
 
     pub fn releases(&self) -> releases::ReleaseStore<'_> {

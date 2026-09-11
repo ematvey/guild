@@ -42,6 +42,61 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/admin/integrations/{name}",
             axum::routing::put(upsert_integration).delete(delete_integration),
         )
+        .route(
+            "/api/v1/admin/assistant-prompt",
+            axum::routing::get(get_assistant_prompt).put(set_assistant_prompt),
+        )
+}
+
+// Org KV key holding the admin-configured assistant persona prompt.
+use crate::worker::restate::ASSISTANT_PROMPT_KEY;
+/// Upper bound on a custom prompt — personas are short; this is abuse
+/// protection, not a context-window budget.
+const ASSISTANT_PROMPT_MAX: usize = 10_000;
+
+/// Returns the org's assistant system prompt; `null` = using the built-in
+/// default. Operational instructions (tools, workspace) are appended
+/// server-side regardless and are not part of this setting.
+async fn get_assistant_prompt(
+    State(state): State<AppState>,
+    admin: AdminUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let prompt = store
+        .org_kv()
+        .get(admin.0.org_id, ASSISTANT_PROMPT_KEY)
+        .await?;
+    Ok(Json(json!({ "prompt": prompt })))
+}
+
+/// Sets the org's assistant system prompt. An empty string resets to the
+/// built-in default.
+async fn set_assistant_prompt(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(prompt) = body.get("prompt").and_then(|p| p.as_str()) else {
+        return Err(ApiError::bad_request("missing \"prompt\" string"));
+    };
+    if prompt.chars().count() > ASSISTANT_PROMPT_MAX {
+        return Err(ApiError::bad_request(
+            "prompt exceeds 10,000 characters",
+        ));
+    }
+    let store = state.store().await?;
+    if prompt.is_empty() {
+        store
+            .org_kv()
+            .delete(admin.0.org_id, ASSISTANT_PROMPT_KEY)
+            .await?;
+    } else {
+        store
+            .org_kv()
+            .put(admin.0.org_id, ASSISTANT_PROMPT_KEY, prompt)
+            .await?;
+    }
+    Ok(Json(json!({ "ok": true })))
 }
 
 /// Lists this org's integration plugins (configured and unconfigured).

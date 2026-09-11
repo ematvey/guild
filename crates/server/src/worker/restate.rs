@@ -507,19 +507,28 @@ fn resolve_policy(stored: Option<Value>) -> ApprovalPolicy {
     }
 }
 
+/// Org KV key holding the admin-configured assistant persona prompt
+/// (admin API owns the same constant — keep in sync or re-export).
+pub const ASSISTANT_PROMPT_KEY: &str = "assistant_system_prompt";
+
 /// Server-owned system prompt (the client never sends one). Without it small
 /// models fall back to generic web-assistant behavior even with the full tool
 /// surface declared — they need the role, the workspace, and when to use
-/// which tool class spelled out.
+/// which tool class spelled out. The persona sentence comes from the org's
+/// admin-configured prompt when set (via the admin API); the operational
+/// instructions below are always appended and are not admin-editable.
 fn build_system_prompt(
+    org_prompt: Option<&str>,
     client_tools: bool,
     has_web_search: bool,
     project_dir: Option<&str>,
 ) -> String {
-    let mut s = String::from(
-        "You are a coding agent assisting the user with their software project. \
-         Answer concisely and act on the project when asked.",
-    );
+    let persona = match org_prompt {
+        Some(p) if !p.trim().is_empty() => p.trim(),
+        _ => "You are a helpful assistant. Answer concisely and help with the \
+              user's tasks, including software work when asked.",
+    };
+    let mut s = String::from(persona);
     if client_tools {
         s.push_str(
             " You have tools (read, bash, edit, write, glob, grep) that execute on \
@@ -1250,7 +1259,33 @@ impl ChatRunner {
         if req.client_tools || req.machine_id.is_some() {
             tool_specs.extend(protocol::api::client_tool_specs());
         }
-        let system = build_system_prompt(req.client_tools, has_web_search, req.project_dir.as_deref());
+        let system = {
+            // Journaled: resolve the org's admin-configured assistant persona
+            // prompt (falls back to the built-in default when unset).
+            let st = state.clone();
+            let org = req.org_id;
+            let org_prompt: Option<String> = ctx
+                .run(move || {
+                    let state = st.clone();
+                    async move {
+                        let store = state.store().await.map_err(api_err)?;
+                        let p = store
+                            .org_kv()
+                            .get(org, ASSISTANT_PROMPT_KEY)
+                            .await
+                            .map_err(api_err)?;
+                        Ok(Json(p))
+                    }
+                })
+                .await?
+                .into_inner();
+            build_system_prompt(
+                org_prompt.as_deref(),
+                req.client_tools,
+                has_web_search,
+                req.project_dir.as_deref(),
+            )
+        };
 
         // The user event content is the model-facing turn: typed text plus
         // inlined attachment blocks (the marker is the UI's strip boundary).
@@ -2397,6 +2432,30 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_prompt_default_persona_is_helpful_assistant() {
+        let p = build_system_prompt(None, false, false, None);
+        assert!(p.starts_with("You are a helpful assistant."));
+        assert!(!p.contains("coding agent"));
+    }
+
+    #[test]
+    fn system_prompt_org_persona_replaces_default_only() {
+        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some("/w"));
+        assert!(p.starts_with("You are GLaDOS."));
+        assert!(!p.contains("helpful assistant"));
+        // Operational instructions are appended regardless of the persona.
+        assert!(p.contains("You have tools"));
+        assert!(p.contains("web_search"));
+        assert!(p.contains("The workspace directory is /w"));
+    }
+
+    #[test]
+    fn system_prompt_blank_org_prompt_falls_back_to_default() {
+        let p = build_system_prompt(Some("   "), false, false, None);
+        assert!(p.starts_with("You are a helpful assistant."));
+    }
 
     #[test]
     fn auto_compact_threshold_uses_window_minus_reserve() {
