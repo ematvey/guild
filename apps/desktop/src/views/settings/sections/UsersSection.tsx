@@ -1,4 +1,4 @@
-//! UsersSection — admin settings section (port of the /admin Users view):
+//! UsersSection — admin settings:
 //! list org users, create a user (email + password + role), delete with
 //! confirm.
 

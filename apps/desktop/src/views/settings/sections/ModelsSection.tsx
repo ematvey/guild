@@ -1,6 +1,5 @@
 //! ModelsSection — admin settings: provider keys and model routes as a rich
-//! list screen with separate add / detail (edit + delete) screens, mirroring
-//! established settings apps (list → drill-in → back).
+//! list screen with separate add / detail (edit + delete) screens.
 
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, Key, Pencil, Plus, Trash2 } from "lucide-react";

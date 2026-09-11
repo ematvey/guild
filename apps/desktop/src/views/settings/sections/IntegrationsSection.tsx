@@ -1,7 +1,6 @@
-//! IntegrationsSection — admin settings: a rich list screen of available and
-//! configured integrations; clicking one opens a separate detail screen with
-//! the enable toggle, JSON config editor, save and delete (list → drill-in →
-//! back, mirroring established settings apps).
+//! IntegrationsSection — admin settings: a list screen of available and
+//! configured integrations; the detail screen holds the enable toggle,
+//! JSON config editor, save and delete.
 
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, ArrowUpRight, Pencil, Plus, Trash2, Webhook } from "lucide-react";

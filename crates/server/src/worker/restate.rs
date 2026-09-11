@@ -413,10 +413,10 @@ pub(crate) fn too_short_to_compact(history: &[Message]) -> bool {
 }
 
 /// Tokens held back for the model's reply when auto-compacting (pi's
-/// reserveTokens semantics — task M1).
+/// reserveTokens semantics).
 pub(crate) const CONTEXT_RESERVE_TOKENS: i64 = 16_384;
 
-/// Pure auto-compact threshold (task M1): compact once per turn when the
+/// Auto-compact threshold: compact once per turn when the
 /// last known request size crosses the route's window minus the 16k reserve.
 pub(crate) fn should_auto_compact(last_tokens: u32, window: i64, compacted: bool) -> bool {
     if compacted {
@@ -427,7 +427,7 @@ pub(crate) fn should_auto_compact(last_tokens: u32, window: i64, compacted: bool
 }
 
 /// Pure helper: `usage.tokens_in` of the LATEST `assistant_message` event —
-/// the last known model-request size (task M1 initial value).
+/// the last known model-request size (initialized from the latest turn).
 pub(crate) fn latest_tokens_in(events: &[ThreadEvent]) -> u32 {
     events
         .iter()
@@ -988,7 +988,7 @@ macro_rules! journaled_load_events {
     }};
 }
 
-/// Shared compaction core (task M1): summarizes the model-facing history
+/// Shared compaction core: summarizes the model-facing history
 /// derived from `events` with one journaled non-streaming model call and
 /// appends the durable `Compaction` checkpoint. Used by the explicit
 /// `compact` handler AND by the auto-compaction paths inside `generate`
@@ -1222,7 +1222,7 @@ impl ChatRunner {
             build_turn_text(&req.attachment_ids, &media_map, &att_rows, &route.modalities);
         let mut messages: Vec<Message> =
             build_model_history(&prior_events, &media_map, &route.modalities);
-        // Auto-compact tracking (task M1): last known model-request size,
+        // Auto-compact tracking: last known model-request size,
         // initialized from the latest assistant_message usage and updated
         // with each completion's tokens_in; at most one compaction per turn.
         let mut last_context_tokens = latest_tokens_in(&prior_events);
@@ -1305,7 +1305,7 @@ impl ChatRunner {
         for step in 0..CHAT_MAX_STEPS {
             steps_used.store(step as u32, std::sync::atomic::Ordering::SeqCst);
 
-            // Auto-compact, proactive path (task M1): before each model call,
+            // Auto-compact, proactive path: before each model call,
             // when the last known request size crossed the route's window
             // minus the 16k reserve, summarize the thread once and re-derive
             // the model-facing messages from the event log.
@@ -1332,7 +1332,7 @@ impl ChatRunner {
             }
 
             // Journaled: one model call with the full tool surface. On a
-            // context-overflow provider error (task M1): compact once,
+            // context-overflow provider error: compact once,
             // re-derive messages from the event log, retry the call once.
             let mut msgs = messages.clone();
             let completion: CompletionOut = loop {
@@ -1465,7 +1465,7 @@ impl ChatRunner {
                         // would pin the async block's error type to
                         // TerminalError and break every other `?` below.
                         Err(e) => {
-                            // Overflow retry (task M1): a provider error
+                            // Overflow retry: a provider error
                             // saying the request exceeded the context window
                             // gets exactly one compaction + re-derivation +
                             // retry per turn; every other error propagates
@@ -1814,7 +1814,7 @@ impl ChatRunner {
 
         // Journaled: load the thread event log; the shared core derives the
         // pre-compaction history, runs the summarization call and appends
-        // the durable checkpoint (task M1 — also used by auto-compaction).
+        // the durable checkpoint (also used by auto-compaction).
         let prior_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
         compact_core(&ctx, &state, req.org_id, req.chat_id, &prior_events).await
     }
@@ -2369,7 +2369,7 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
     let server = tokio::spawn(async move {
         // One journaled completion can legitimately run for minutes without
         // emitting a Restate command; the default inactivity timeout would
-        // abort such runs mid-generation (same reason Acme overrides it).
+        // abort such runs mid-generation.
         let chat_options = ServiceOptions::new()
             .inactivity_timeout(Duration::from_secs(10 * 60))
             .abort_timeout(Duration::from_secs(60));

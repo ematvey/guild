@@ -1,4 +1,4 @@
-//! UsageSection — admin settings section (port of the /admin Dashboard view):
+//! UsageSection — admin settings:
 //! spend summary as stat cards plus a grouped usage breakdown table.
 
 import { useEffect, useState } from "react";

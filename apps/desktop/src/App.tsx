@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-// AgentView (local engine agent sessions) is retired from the shell for now —
+// AgentView (local engine agent sessions) is not part of the shell —
 // machine tools run through the unified WebChat surface instead.
 import WebChat from "./views/WebChat";
 import { Button } from "@guild/ui/components/button";
