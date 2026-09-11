@@ -92,6 +92,46 @@ interface ToolBlock {
   meta?: ToolMeta;
 }
 
+/// URL-driven navigation: the pathname is the single source of truth for
+/// where the user is. Routes:
+///   /                          — new chat
+///   /thread/<id>               — open thread
+///   /device                    — device-setup dialog, optionally over a
+///                                thread: /thread/<id>/device
+///   /settings[/<section>]      — settings overlay, optionally over a
+///                                thread: /thread/<id>/settings/<section>
+/// Back/forward, reloads and deep links all resolve through parseChatRoute.
+type ChatOverlay = { kind: "settings"; section: string | null } | { kind: "device" } | null;
+interface ChatRoute {
+  chatId: string | null;
+  overlay: ChatOverlay;
+}
+
+const parseChatRoute = (pathname: string): ChatRoute => {
+  const parts = pathname
+    .replace(/^\/+|\/+$/g, "")
+    .split("/")
+    .filter(Boolean)
+    .map(decodeURIComponent);
+  let chatId: string | null = null;
+  if (parts[0] === "thread" && parts[1]) {
+    chatId = parts[1];
+    parts.splice(0, 2);
+  }
+  if (parts[0] === "device") return { chatId, overlay: { kind: "device" } };
+  if (parts[0] === "settings")
+    return { chatId, overlay: { kind: "settings", section: parts[1] ?? null } };
+  return { chatId, overlay: null };
+};
+
+const chatRoutePath = (chatId: string | null, overlay: ChatOverlay): string => {
+  const base = chatId ? `/thread/${encodeURIComponent(chatId)}` : "";
+  if (overlay?.kind === "device") return `${base}/device`;
+  if (overlay?.kind === "settings")
+    return `${base}/settings${overlay.section ? `/${overlay.section}` : ""}`;
+  return base || "/";
+};
+
 /// One durable approval gate (design spec section F): a client tool waiting
 /// for (or having received) the user's allow/deny decision.
 interface ApprovalBlock {
@@ -1106,13 +1146,14 @@ export default function WebChat({
   const [models, setModels] = useState<string[] | null>(null);
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
-  const [chatId, setChatId] = useState<string | null>(null);
-  const [threadLoading, setThreadLoading] = useState(() =>
-    // A deep link (/thread/<id>) is loading on first paint: show the thread
-    // skeleton, never the new-thread hero — the hero only ever appears when
-    // the user explicitly creates a new thread.
-    /^\/thread\//.test(window.location.pathname),
-  ); // /thread/<id> fetch in flight with nothing to show
+  // URL-driven navigation state (see parseChatRoute above): everything the
+  // user can navigate to — the open thread, the settings overlay with its
+  // active section, the device dialog — lives in the pathname, so back/forward,
+  // reloads and deep links all land in exactly the right place.
+  const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
+  const chatId = route.chatId;
+  const overlay = route.overlay;
+  const [threadLoading, setThreadLoading] = useState(() => route.chatId !== null); // /thread/<id> fetch in flight with nothing to show
   const [prompt, setPrompt] = useState("");
   // Composer attachments (ChatGPT/Claude pattern): strip of previews above
   // the input — image thumbnails with an overlay ✕, file chips with an icon.
@@ -1151,8 +1192,6 @@ export default function WebChat({
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [deviceOpen, setDeviceOpen] = useState(false);
   const [width, setWidth] = useState<number>(() => {
     const stored = Number(localStorage.getItem(WIDTH_KEY));
     return stored ? clampWidth(stored) : 256;
@@ -1169,8 +1208,8 @@ export default function WebChat({
   const loadAbort = useRef<AbortController | null>(null); // in-flight thread-load fetch
   const sendAbort = useRef<AbortController | null>(null); // in-flight send stream
   const loadSeq = useRef(0); // guards against stale thread loads landing last
+  const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
   const maxSeqSeen = useRef(0); // highest thread-event seq rendered for the open chat
-  const pendingDeepLink = useRef(false); // true while the /thread/<id> from the URL is loading
 
   // App-lifetime presence connection: the server uses it to detect that
   // this app instance is gone and resolve suspended client tools without
@@ -1222,32 +1261,24 @@ export default function WebChat({
     void refreshChats();
   }, []);
 
-  // Deep link: open the thread encoded in the URL (/thread/<id>) on first load.
+  // Browser back/forward: re-derive the whole route from the URL. The
+  // chatId effect below takes care of (re)loading or clearing the thread,
+  // and the overlay state opens/closes the settings/device surfaces.
   useEffect(() => {
-    const m = window.location.pathname.match(/^\/thread\/([^/]+)\/?$/);
-    if (m) {
-      pendingDeepLink.current = true;
-      void openChat(decodeURIComponent(m[1])).finally(() => {
-        pendingDeepLink.current = false;
-      });
-    } else {
-      window.history.replaceState(null, "", "/");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Keep the URL in sync with the open thread; back/forward walks thread history.
-  useEffect(() => {
-    if (pendingDeepLink.current) return;
-    const path = chatId ? `/thread/${chatId}` : "/";
-    if (window.location.pathname !== path) window.history.pushState(null, "", path);
-  }, [chatId]);
-
-  useEffect(() => {
-    const onPop = () => popHandler.current();
+    const onPop = () => setRoute(parseChatRoute(window.location.pathname));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  // Every navigation goes through here: history and route state move
+  // together, so the URL always reflects what is on screen.
+  const pushRoute = (next: { chatId?: string | null; overlay?: ChatOverlay }) => {
+    const chatId = "chatId" in next ? (next.chatId as string | null) : route.chatId;
+    const ov = "overlay" in next ? (next.overlay as ChatOverlay) : route.overlay;
+    const path = chatRoutePath(chatId, ov);
+    if (window.location.pathname !== path) window.history.pushState(null, "", path);
+    setRoute({ chatId, overlay: ov });
+  };
 
   useEffect(() => {
     if (!stick.current) return;
@@ -1266,83 +1297,79 @@ export default function WebChat({
     setBlocks(eventsToBlocks(res.events));
   };
 
-  // latest closure for the popstate handler
-  const popHandler = useRef<() => void>(() => {});
-  popHandler.current = () => {
-    const m = window.location.pathname.match(/^\/thread\/([^/]+)\/?$/);
-    if (m) void openChat(decodeURIComponent(m[1]));
-    else {
+  // Load (or clear) the thread whenever the URL-driven chatId changes — one
+  // path for deep links, back/forward, sidebar picks and "new chat" alike.
+  useEffect(() => {
+    if (!chatId) {
+      loadSeq.current++; // invalidate any in-flight load or generation attach
       loadAbort.current?.abort();
       loadAbort.current = null;
       sendAbort.current?.abort();
       sendAbort.current = null;
       attachAbort.current?.abort();
       attachAbort.current = null;
-      setChatId(null);
+      maxSeqSeen.current = 0;
       setBlocks([]);
       setCtx(null);
       setThreadLoading(false);
-    }
-  };
-
-  const openChat = async (id: string) => {
-    stick.current = true; // a freshly opened thread starts pinned to the bottom
-    if (id === chatId) {
-      setOpen(false);
       return;
     }
-    setOpen(false);
+    if (skipLoadRef.current === chatId) {
+      // First send just created this thread and its stream is live — the
+      // URL moved to /thread/<id> but nothing may refetch/clear the view.
+      skipLoadRef.current = null;
+      return;
+    }
+    stick.current = true; // a freshly opened thread starts pinned to the bottom
     // Switching is allowed even mid-generation: the generation runs detached
     // server-side and keeps persisting; the client-side stream is cancelled
     // here and re-attached (with catch-up) when this thread is reopened.
     loadAbort.current?.abort();
-    loadAbort.current = new AbortController();
-    const loadAc = loadAbort.current;
+    const loadAc = new AbortController();
+    loadAbort.current = loadAc;
     sendAbort.current?.abort();
     sendAbort.current = null;
     attachAbort.current?.abort(); // replaced when the new thread's attach starts
-    // Stay on the previous thread's content until the new one arrives; the
-    // sidebar highlight moves only when chatId is set below.
     const seq = ++loadSeq.current;
     setThreadLoading(true);
-    try {
-      const res: ThreadResult = await getThread(id, loadAc.signal);
-      if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
-      applyThreadRows(res);
-      setChatId(id);
-      // A generation may still be running server-side (e.g. it outlived a
-      // previous client, or the stream dropped earlier). Attach with
-      // automatic reconnection and keep streaming it into the view.
-      const attachSeq = seq;
-      const ac = new AbortController();
-      attachAbort.current?.abort();
-      attachAbort.current = ac;
-      void watchGeneration(id, attachSeq, ac);
-    } catch {
-      // aborted (a newer switch superseded this one) or a real error — either
-      // way leave the previous thread on screen; switching is non-destructive
-    } finally {
-      // only the load that is still current may clear the flag; a superseded
-      // one finishing late must not extinguish a newer load's spinner
-      if (seq === loadSeq.current) setThreadLoading(false);
-    }
+    setBlocks([]);
+    setCtx(null);
+    (async () => {
+      try {
+        const res: ThreadResult = await getThread(chatId, loadAc.signal);
+        if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
+        applyThreadRows(res);
+        // A generation may still be running server-side (e.g. it outlived a
+        // previous client, or the stream dropped earlier). Attach with
+        // automatic reconnection and keep streaming it into the view.
+        const ac = new AbortController();
+        attachAbort.current = ac;
+        void watchGeneration(chatId, seq, ac);
+      } catch {
+        // aborted (a newer switch superseded this one) or a real error —
+        // either way the pane falls back to the empty-thread view;
+        // switching is non-destructive
+      } finally {
+        // only the load that is still current may clear the flag; a superseded
+        // one finishing late must not extinguish a newer load's spinner
+        if (seq === loadSeq.current) setThreadLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId]);
+
+  const openChat = (id: string) => {
+    // Navigation only: the chatId effect performs the actual load, so back/
+    // forward, deep links and sidebar picks all share one code path.
+    setOpen(false);
+    pushRoute({ chatId: id, overlay: null });
   };
 
   const newChat = () => {
-    stick.current = true;
-    // allowed even mid-generation: the server-side generation continues and
-    // is re-attachable when the thread is reopened
-    loadSeq.current++; // invalidate any in-flight thread load or generation attach
-    loadAbort.current?.abort();
-    loadAbort.current = null;
-    sendAbort.current?.abort();
-    sendAbort.current = null;
-    attachAbort.current?.abort();
-    attachAbort.current = null;
-    setChatId(null);
-    setBlocks([]);
-    setCtx(null);
-    setThreadLoading(false);
+    // Navigation only: the chatId effect clears the pane and aborts any
+    // in-flight load/stream; the server-side generation keeps running and
+    // is re-attachable when the thread is reopened.
+    pushRoute({ chatId: null, overlay: null });
     setOpen(false);
     ta.current?.focus();
   };
@@ -1574,9 +1601,12 @@ export default function WebChat({
     if (!cid) {
       cid = await createChat(text.slice(0, 48));
       if (cid && loadSeq.current === mySeq) {
-        setChatId(cid);
+        // Move the URL to the new thread; the live send stream must not be
+        // interrupted by a refetch (the chatId effect skips via skipLoadRef).
+        skipLoadRef.current = cid;
+        pushRoute({ chatId: cid, overlay: null });
         void refreshChats();
-      ta.current?.focus();
+        ta.current?.focus();
       }
     }
     if (!cid) {
@@ -1722,8 +1752,8 @@ export default function WebChat({
       onNewChat={newChat}
       onOpenChat={openChat}
       onSignOut={onSignOut}
-      onOpenSettings={() => setSettingsOpen(true)}
-      onOpenDevice={() => setDeviceOpen(true)}
+      onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null } })}
+      onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
     />
   );
 
@@ -1763,31 +1793,21 @@ export default function WebChat({
         </Sheet>
       ) : (
         <aside
-          className="relative flex shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground"
-          style={{ width: collapsed ? 44 : width }}
+          className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground transition-[width] duration-150 ${
+            collapsed ? "" : "border-r border-border"
+          }`}
+          style={{ width: collapsed ? 0 : width }}
         >
-          {collapsed ? (
-            // Collapsed keeps the space pre-reserved: a slim rail instead of
-            // an unmount, so the central pane never reflows on toggle/load.
-            <div className="flex flex-1 flex-col items-center gap-2 py-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8 text-muted-foreground"
-                onClick={() => setCollapsed(false)}
-                title="Open sidebar"
-              >
-                <PanelLeftOpen />
-              </Button>
-            </div>
-          ) : (
-            sidebar
+          {/* Collapsed = fully gone: the header toggle reopens it, so no rail
+              is pre-reserved and the central pane reflows on toggle. */}
+          {!collapsed && sidebar}
+          {!collapsed && (
+            <div
+              className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
+              onMouseDown={startDrag}
+              title="Drag to resize"
+            />
           )}
-          <div
-            className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
-            onMouseDown={startDrag}
-            title="Drag to resize"
-          />
         </aside>
       )}
 
@@ -2063,11 +2083,20 @@ export default function WebChat({
         </div>
       </div>
 
-      <DeviceSetupDialog open={deviceOpen} onOpenChange={setDeviceOpen} />
+      <DeviceSetupDialog
+        open={overlay?.kind === "device"}
+        onOpenChange={(o) => {
+          if (!o) pushRoute({ overlay: null });
+        }}
+      />
 
       <SettingsWindow
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
+        open={overlay?.kind === "settings"}
+        onOpenChange={(o) => {
+          if (!o) pushRoute({ overlay: null });
+        }}
+        section={overlay?.kind === "settings" ? overlay.section : null}
+        onSectionChange={(id) => pushRoute({ overlay: { kind: "settings", section: id } })}
         email={email}
         role={role}
         chatId={chatId}

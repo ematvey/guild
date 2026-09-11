@@ -38,8 +38,10 @@ function ThemeToggle() {
 const VIEWS = ["dashboard", "downloads", "users", "registry", "gateway", "integrations"] as const;
 
 function currentView(): string {
-  const h = window.location.hash.replace("#/", "");
-  return VIEWS.includes(h as (typeof VIEWS)[number]) ? h : "dashboard";
+  // Sub-views may nest deeper (#/registry/<kind>/<slug>); only the first
+  // segment selects the view.
+  const first = window.location.hash.replace(/^#\//, "").split("/")[0] ?? "";
+  return VIEWS.includes(first as (typeof VIEWS)[number]) ? first : "dashboard";
 }
 
 function AppInner() {
@@ -57,7 +59,7 @@ function AppInner() {
       if (token) {
         setToken(token);
         window.location.hash = next ? `#${next}` : "#/dashboard";
-        setView(next ? next.replace(/^\//, "") : "dashboard");
+        setView(currentView());
         return;
       }
     }

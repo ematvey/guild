@@ -25,10 +25,17 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
+    // The PWA service worker was retired (2026-09-11): the app is
+    // server-backed and always-online, the desktop app bundles its own
+    // assets (no SW), and the SW's cached-shell fallback only complicated
+    // deploys. One-time cleanup for browsers that still hold the old SW.
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", function () {
-        navigator.serviceWorker.register("/sw.js").catch(function () {
-          /* SW is best-effort: without it the app still works (no install prompt) */
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        for (const r of rs) r.unregister();
+      });
+      navigator.serviceWorker.getRegistration("/sw.js").then(function (r) {
+        if (r) caches.keys().then(function (ks) {
+          for (const k of ks) if (k.startsWith("guild-shell")) caches.delete(k);
         });
       });
     }

@@ -239,6 +239,11 @@ Notes:
     linux/mac/windows (zigbuild), not installer-format.
   - Usage: `BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=x.y.z
     scripts/release-clients.sh`.
+  - Running the release script from a systemd transient unit needs an explicit
+    `-E PATH=...` including `~/.cargo/bin` (cargo-xwin/zigbuild) — the unit's
+    default PATH lacks it and the build fails with "cargo-xwin command not
+    found" (hit 2026-09-11). Also pass `-E TAURI_SIGNING_PRIVATE_KEY=` for the
+    bundler to sign updater artifacts.
 - Artifacts land in `/api/v1/releases` (MinIO-backed); the desktop
   updater consumes `latest.json`.
 - Local desktop dev: `npm run dev` (vite, port 1420 strict) +
