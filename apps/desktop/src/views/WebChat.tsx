@@ -1939,8 +1939,11 @@ export default function WebChat({
                     key={i}
                     className={`max-w-none space-y-2 text-sm leading-relaxed ${MD_CLASS}`}
                   >
-                    <Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown>
-                    {streaming && i === blocks.length - 1 && <Caret className="mt-1" />}
+                    <Markdown remarkPlugins={[remarkGfm]}>
+                      {/* streaming caret rides INSIDE the markdown source so
+                          it lands on the forming line, not below the block */}
+                      {streaming && i === blocks.length - 1 ? `${b.text}▍` : b.text}
+                    </Markdown>
                   </div>
                 ),
               )}
