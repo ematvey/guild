@@ -192,6 +192,7 @@ impl CloudClient {
             system: None,
             // the desktop engine executes machine tools client-side
             client_tools: true,
+                attachment_ids: Vec::new(),
             project_dir: None,
         })
         .await

@@ -7,7 +7,18 @@ use uuid::Uuid;
 
 /// (provider, base_url, encrypted key, price in, price out, enabled, quota,
 /// reasoning flag, context window)
-type RouteQueryRow = (String, String, Option<String>, f64, f64, bool, Option<f64>, bool, Option<i64>);
+type RouteQueryRow = (
+    String,
+    String,
+    Option<String>,
+    f64,
+    f64,
+    bool,
+    Option<f64>,
+    bool,
+    Option<i64>,
+    Vec<String>,
+);
 
 /// Resolved route for a model call. Plain data so it can be journaled
 /// through Restate run steps.
@@ -24,6 +35,9 @@ pub struct RouteRow {
     /// Route metadata: model produces chain-of-thought reasoning
     /// (reasoning_content) — design §B.3.
     pub reasoning: bool,
+    /// Native input modalities (migration 0025): subset of {image, audio,
+    /// video}; empty = text-only.
+    pub modalities: Vec<String>,
     /// Model context window in tokens (migration 0024); None = unset —
     /// callers fall back to their own default (thread readout: 128000).
     pub context_window: Option<i64>,
@@ -41,6 +55,7 @@ pub struct AdminRouteRow {
     pub quota_monthly_usd: Option<f64>,
     pub reasoning: bool,
     pub context_window: Option<i64>,
+    pub modalities: Vec<String>,
 }
 
 pub struct GatewayStore<'a> {
@@ -85,17 +100,19 @@ impl<'a> GatewayStore<'a> {
         quota_monthly_usd: Option<f64>,
         reasoning: bool,
         context_window: Option<i64>,
+        modalities: &[String],
     ) -> anyhow::Result<()> {
         sqlx::query(
-            "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+            "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window, modalities) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
              ON CONFLICT (org_id, model) \
              DO UPDATE SET provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, \
                price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, \
                price_per_mtok_out_usd = EXCLUDED.price_per_mtok_out_usd, \
                quota_monthly_usd = EXCLUDED.quota_monthly_usd, \
                reasoning = EXCLUDED.reasoning, \
-               context_window = EXCLUDED.context_window",
+               context_window = EXCLUDED.context_window, \
+               modalities = EXCLUDED.modalities",
         )
         .bind(org_id)
         .bind(model)
@@ -106,6 +123,7 @@ impl<'a> GatewayStore<'a> {
         .bind(quota_monthly_usd)
         .bind(reasoning)
         .bind(context_window)
+        .bind(modalities)
         .execute(self.pool)
         .await?;
         Ok(())
@@ -125,7 +143,7 @@ impl<'a> GatewayStore<'a> {
     /// provider key itself is never returned).
     pub async fn list_routes(&self, org_id: Uuid) -> anyhow::Result<Vec<AdminRouteRow>> {
         let rows: Vec<AdminRouteRow> = sqlx::query_as(
-            "SELECT model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window \
+            "SELECT model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window, modalities \
              FROM model_routes WHERE org_id = $1 ORDER BY model",
         )
         .bind(org_id)
@@ -145,7 +163,7 @@ impl<'a> GatewayStore<'a> {
         let row: Option<RouteQueryRow> = sqlx::query_as(
             "SELECT r.provider, k.base_url, k.encrypted_key, \
                     r.price_per_mtok_in_usd, r.price_per_mtok_out_usd, r.enabled, \
-                    r.quota_monthly_usd, r.reasoning, r.context_window \
+                    r.quota_monthly_usd, r.reasoning, r.context_window, r.modalities \
              FROM model_routes r \
              LEFT JOIN provider_keys k ON k.org_id = r.org_id AND k.provider = r.provider \
              WHERE r.org_id = $1 AND r.model = $2",
@@ -164,6 +182,7 @@ impl<'a> GatewayStore<'a> {
             quota,
             reasoning,
             context_window,
+            modalities,
         )) = row
         else {
             return Err(ApiError::not_found(format!("no route for model {model}")));
@@ -191,6 +210,7 @@ impl<'a> GatewayStore<'a> {
             quota_monthly_usd: quota,
             reasoning,
             context_window,
+            modalities,
         })
     }
 

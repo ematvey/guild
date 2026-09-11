@@ -22,7 +22,31 @@ impl OpenAiProvider {
             messages.push(serde_json::json!({"role": "system", "content": system}));
         }
         for m in req.messages {
-            let mut mv = serde_json::json!({"role": m.role, "content": m.content});
+            // Multimodal user turns: text plus image/audio content parts
+            // (OpenAI contract: image_url with data URIs, input_audio with
+            // base64+format). Text-only messages keep the plain string form.
+            let content: serde_json::Value = if m.has_media() {
+                let mut parts: Vec<serde_json::Value> = Vec::new();
+                if !m.content.is_empty() {
+                    parts.push(serde_json::json!({"type": "text", "text": m.content}));
+                }
+                for uri in &m.images {
+                    parts.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": {"url": uri},
+                    }));
+                }
+                for a in &m.audio {
+                    parts.push(serde_json::json!({
+                        "type": "input_audio",
+                        "input_audio": {"data": a.data, "format": a.format},
+                    }));
+                }
+                serde_json::Value::Array(parts)
+            } else {
+                serde_json::Value::String(m.content.clone())
+            };
+            let mut mv = serde_json::json!({"role": m.role, "content": content});
             if let Some(calls) = &m.tool_calls {
                 mv["tool_calls"] = serde_json::Value::Array(
                     calls
@@ -275,6 +299,8 @@ mod tests {
             Message {
                 role: "assistant".into(),
                 content: String::new(),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: Some(vec![ToolCall {
                     id: "c1".into(),
                     name: "read_file".into(),
@@ -313,6 +339,8 @@ mod tests {
             Message {
                 role: "assistant".into(),
                 content: "answer".into(),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: None,
                 tool_call_id: None,
                 reasoning: Some("chain of thought".into()),
@@ -338,6 +366,8 @@ mod tests {
         let msgs = vec![Message {
             role: "assistant".into(),
             content: String::new(),
+            images: Vec::new(),
+            audio: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
             reasoning: Some(String::new()),

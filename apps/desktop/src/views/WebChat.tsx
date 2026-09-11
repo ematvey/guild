@@ -21,10 +21,14 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Film,
+  Image as ImageIcon,
+  Music,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Search,
+  X as XIcon,
   Settings2,
   SquareTerminal,
   Cpu,
@@ -57,7 +61,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsWindow } from "./settings/SettingsWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { postApproval, postToolResult } from "../transport";
+import { attachmentBlobUrl, postApproval, postToolResult, uploadAttachment } from "../transport";
 import {
   createChat,
   getThread,
@@ -71,6 +75,7 @@ import {
   pairingCode,
   startEventStream,
   type ChatSummary,
+  type MessageAttachmentMeta,
   type Release,
   type ThreadContext,
   type ThreadEventRow,
@@ -126,6 +131,9 @@ interface ToolMeta {
 interface Block {
   kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval" | "compaction";
   text: string;
+  /// kind === "user": context attachment chips (metadata only; images may
+  /// carry a local preview URL for optimistic rendering).
+  attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
   /// kind === "reasoning": the accumulated thinking text.
   reasoningText?: string;
   tool?: ToolBlock;
@@ -135,6 +143,146 @@ interface Block {
 
 /// Tools the desktop executor runs locally (mirrors server `client_tool_names`).
 const CLIENT_TOOL_NAMES = ["read", "bash", "edit", "write"];
+
+function modalityOf(contentType: string): string {
+  if (contentType.startsWith("image/")) return "image";
+  if (contentType.startsWith("audio/")) return "audio";
+  if (contentType.startsWith("video/")) return "video";
+  return "document";
+}
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Icon for a non-image attachment by modality/type. */
+function AttachmentFileIcon({ att }: { att: MessageAttachmentMeta }) {
+  if (att.modality === "video" || att.content_type.startsWith("video/"))
+    return <Film className="size-3.5 shrink-0 text-muted-foreground" />;
+  if (att.modality === "audio" || att.content_type.startsWith("audio/"))
+    return <Music className="size-3.5 shrink-0 text-muted-foreground" />;
+  return <FileText className="size-3.5 shrink-0 text-muted-foreground" />;
+}
+
+/** Authed blob fetch → object URL for a stored attachment (thumbnails and
+ * downloads). `null` while loading; renders the file icon meanwhile. */
+function useAttachmentPreview(
+  att: MessageAttachmentMeta & { previewUrl?: string },
+): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let dead = false;
+    if (att.previewUrl) {
+      setUrl(att.previewUrl);
+      return;
+    }
+    if (att.id.startsWith("pending-") || att.modality !== "image") return;
+    void attachmentBlobUrl(att.id).then((u) => {
+      if (!dead) setUrl(u);
+    });
+    return () => {
+      dead = true;
+    };
+  }, [att.id, att.modality, att.previewUrl]);
+  return url;
+}
+
+/** Image attachment: 56px rounded thumbnail (preview when available, icon
+ * fallback otherwise) with an overlaid ✕ when removable. */
+function AttachmentImageThumb({
+  att,
+  onRemove,
+}: {
+  att: MessageAttachmentMeta & { previewUrl?: string };
+  onRemove?: () => void;
+}) {
+  const url = useAttachmentPreview(att);
+  const img = (
+    <button
+      type="button"
+      title={att.filename}
+      className="group relative size-14 shrink-0 overflow-hidden rounded-lg border border-border bg-secondary"
+      onClick={() => !onRemove && url && window.open(url, "_blank")}
+    >
+      {url ? (
+        <img src={url} alt={att.filename} className="size-full object-cover" />
+      ) : (
+        <span className="flex size-full items-center justify-center text-muted-foreground">
+          <ImageIcon className="size-4" />
+        </span>
+      )}
+    </button>
+  );
+  return (
+    <span className="relative">
+      {img}
+      {onRemove && (
+        <button
+          type="button"
+          title="Remove"
+          className="absolute -right-1.5 -top-1.5 flex size-4.5 items-center justify-center rounded-full bg-foreground/80 text-background shadow hover:bg-foreground"
+          onClick={onRemove}
+        >
+          <XIcon className="size-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** Non-image attachment: compact chip with a type icon, name, size and an
+ * optional ✕ (composer state) — Claude/ChatGPT file-chip pattern. */
+function AttachmentFileChip({
+  att,
+  onRemove,
+}: {
+  att: MessageAttachmentMeta & { previewUrl?: string };
+  onRemove?: () => void;
+}) {
+  const body = (
+    <>
+      <AttachmentFileIcon att={att} />
+      <span className="max-w-56 truncate">{att.filename}</span>
+      <span className="shrink-0 text-muted-foreground">{fmtBytes(att.size_bytes)}</span>
+      {onRemove && (
+        <button
+          type="button"
+          title="Remove"
+          className="ml-0.5 rounded-full p-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+          onClick={onRemove}
+        >
+          <XIcon className="size-3" />
+        </button>
+      )}
+    </>
+  );
+  const cls =
+    "flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-secondary px-2 py-1 text-xs";
+  if (onRemove) {
+    return <span className={cls}>{body}</span>;
+  }
+  return (
+    <button
+      type="button"
+      title="Download"
+      className={`${cls} hover:bg-accent`}
+      onClick={() => {
+        if (!att.id.startsWith("pending-")) void attachmentBlobUrl(att.id).then((u) => {
+          if (!u) return;
+          const a = document.createElement("a");
+          a.href = u;
+          a.download = att.filename;
+          a.click();
+          URL.revokeObjectURL(u);
+        });
+      }}
+    >
+      {body}
+    </button>
+  );
+}
 
 /// Rebuilds the thread view from the persisted thread event log (spec C.3).
 /// Tool calls, reasoning and text are all resident thread parts — nothing
@@ -147,9 +295,18 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
   const byApprovalId = new Map<string, ApprovalBlock>();
   for (const ev of events) {
     switch (ev.type) {
-      case "user_message":
-        blocks.push({ kind: "user", text: ev.content });
+      case "user_message": {
+        // Event content is the model-facing turn: typed text plus inlined
+        // "[Attachment: …]" blocks. Show the typed text; chips carry the
+        // file references.
+        const at = ev.attachments?.length ? ev.content.indexOf("\n\n[Attachment: ") : -1;
+        blocks.push({
+          kind: "user",
+          text: at >= 0 ? ev.content.slice(0, at) : ev.content,
+          attachments: ev.attachments,
+        });
         break;
+      }
       case "system_message":
         break; // server-owned prompt, log-only
       case "assistant_message":
@@ -835,6 +992,14 @@ export default function WebChat({
     /^\/thread\//.test(window.location.pathname),
   ); // /thread/<id> fetch in flight with nothing to show
   const [prompt, setPrompt] = useState("");
+  // Composer attachments (ChatGPT/Claude pattern): strip of previews above
+  // the input — image thumbnails with an overlay ✕, file chips with an icon.
+  const [pending, setPending] = useState<
+    (MessageAttachmentMeta & { file?: File; previewUrl?: string })[]
+  >([]);
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
   const [busy, setBusy] = useState(false);
@@ -1230,12 +1395,26 @@ export default function WebChat({
 
   const send = async () => {
     const text = prompt.trim();
-    if (!text || busy || !model) return;
+    if ((!text && pendingRef.current.length === 0) || busy || !model) return;
     const mySeq = loadSeq.current; // switching away mid-send cancels the client stream
     setBusy(true);
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
-    setBlocks((b) => [...b, { kind: "user", text }]);
+    setBlocks((b) => [
+      ...b,
+      {
+        kind: "user",
+        text,
+        attachments: pendingRef.current.map((a) => ({
+          id: `pending-${a.id}`,
+          filename: a.filename,
+          content_type: a.content_type,
+          size_bytes: a.size_bytes,
+          modality: a.modality,
+          previewUrl: a.previewUrl,
+        })),
+      },
+    ]);
     let cid = chatId;
     if (!cid) {
       cid = await createChat(text.slice(0, 48));
@@ -1254,6 +1433,27 @@ export default function WebChat({
     const ac = new AbortController();
     sendAbort.current = ac;
     try {
+      // Upload attachments first; their ids ride along with the send and
+      // the server inlines text / passes media parts per route modality.
+      const attachmentIds: string[] = [];
+      for (const a of pendingRef.current) {
+        if (!a.file) continue;
+        try {
+          const meta = await uploadAttachment(cid, a.file);
+          attachmentIds.push(meta.id);
+        } catch (e) {
+          if (loadSeq.current === mySeq) {
+            setBlocks((b) => [
+              ...b,
+              {
+                kind: "error",
+                text: `attachment upload failed (${a.filename}): ${e instanceof Error ? e.message : String(e)}`,
+              },
+            ]);
+          }
+        }
+      }
+      setPending([]);
       let gotDone = false;
       await streamChat(
         cid,
@@ -1303,6 +1503,7 @@ export default function WebChat({
           }
         },
         ac.signal,
+        attachmentIds,
       );
       if (!gotDone) {
         // stream ended without a terminal frame: the connection dropped while
@@ -1512,7 +1713,17 @@ export default function WebChat({
                     key={i}
                     className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-sm"
                   >
-                    {b.text}
+                    {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
+                    {b.attachments && b.attachments.length > 0 && (
+                      <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
+                        {b.attachments.filter((a) => a.modality === "image").map((a) => (
+                          <AttachmentImageThumb key={a.id} att={a} />
+                        ))}
+                        {b.attachments.filter((a) => a.modality !== "image").map((a) => (
+                          <AttachmentFileChip key={a.id} att={a} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : b.kind === "reasoning" ? (
                   <ReasoningFrame
@@ -1559,6 +1770,46 @@ export default function WebChat({
             full-height behind it */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:p-4">
           <div className="pointer-events-auto mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm">
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                setPending((p) => [
+                  ...p,
+                  ...files.map((f) => ({
+                    id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    filename: f.name,
+                    content_type: f.type || "application/octet-stream",
+                    size_bytes: f.size,
+                    modality: modalityOf(f.type),
+                    file: f,
+                    previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined,
+                  })),
+                ]);
+                e.target.value = "";
+              }}
+            />
+            {pending.length > 0 && (
+              <div className="flex flex-wrap items-start gap-2 px-1 pb-2">
+                {pending.filter((a) => a.modality === "image").map((a) => (
+                  <AttachmentImageThumb
+                    key={a.id}
+                    att={a}
+                    onRemove={() => setPending((p) => p.filter((x) => x.id !== a.id))}
+                  />
+                ))}
+                {pending.filter((a) => a.modality !== "image").map((a) => (
+                  <AttachmentFileChip
+                    key={a.id}
+                    att={a}
+                    onRemove={() => setPending((p) => p.filter((x) => x.id !== a.id))}
+                  />
+                ))}
+              </div>
+            )}
             <Textarea
               ref={ta}
               value={prompt}
@@ -1578,13 +1829,25 @@ export default function WebChat({
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none "
             />
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
-              {models === null ? (
+              <div className="flex items-center gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 rounded-full text-muted-foreground hover:text-foreground"
+                  onClick={() => fileInput.current?.click()}
+                  disabled={busy}
+                  title="Attach images, audio, or files"
+                >
+                  <Plus className="size-4" />
+                </Button>
+            {models === null ? (
                 <Skeleton className="h-7 w-28 rounded-md" />
               ) : models.length === 0 ? (
                 <span className="text-xs text-muted-foreground">no models</span>
               ) : (
                 <span />
               )}
+              </div>
               <div className="flex items-center gap-2">
                 {chatId && ctx && <ContextGauge ctx={ctx} />}
                 {models !== null && models.length > 0 && (
@@ -1605,7 +1868,7 @@ export default function WebChat({
                   size="icon"
                   className="size-7 rounded-full"
                   onClick={() => void send()}
-                  disabled={busy || !model || !prompt.trim()}
+                  disabled={busy || !model || (!prompt.trim() && pending.length === 0)}
                   title="Send"
                 >
                   {busy ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}

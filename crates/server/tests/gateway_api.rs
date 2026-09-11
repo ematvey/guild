@@ -168,7 +168,7 @@ async fn route_context_window_roundtrip() {
     store
         .gateway()
         .upsert_route(
-            fs.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000),
+            fs.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000), &[],
         )
         .await
         .unwrap();

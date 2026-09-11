@@ -26,7 +26,8 @@ use guild_core::provider::{ModelProvider, ProviderChunk, ProviderRequest};
 use guild_core::tools::Approval;
 use guild_core::usage::UsageEvent;
 use protocol::api::{
-    Block, Message, StreamEvent, ThreadEvent, ToolCall, ToolExecutor, ToolSpec, UsagePayload,
+    Block, Message, MessageAttachment, MessageAudio, StreamEvent, ThreadEvent, ToolCall,
+    ToolExecutor, ToolSpec, UsagePayload,
 };
 use restate_sdk::errors::HandlerError;
 use restate_sdk::service::IntoServiceDefinition;
@@ -148,6 +149,8 @@ macro_rules! journaled_run_body {
             messages.push(Message {
                 role: "assistant".into(),
                 content: c.text.clone(),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: Some(c.tool_calls.clone()),
                 tool_call_id: None,
                 reasoning: None,
@@ -279,6 +282,12 @@ pub struct ChatRunPayload {
     /// events — spec §B.4), so attach/replay stays consistent.
     #[serde(default)]
     pub user_message: String,
+    /// Context attachments uploaded beforehand (ids validated against this
+    /// chat); documents' text is inlined into the turn, image/audio parts
+    /// ride on the model-facing Message when the route supports the
+    /// modality (spec §4.3).
+    #[serde(default)]
+    pub attachment_ids: Vec<Uuid>,
 }
 
 /// Final result of the journaled completion step.
@@ -564,14 +573,256 @@ pub fn next_turn(events: &[ThreadEvent]) -> u32 {
 /// Multiple compactions compose — each applies at its position to the
 /// segment accumulated since the previous one. Events after the last
 /// compaction flow exactly as in the uncompacted derivation.
-pub fn build_model_history(events: &[ThreadEvent]) -> Vec<Message> {
+/// Loaded attachment bytes for the current turn, wire-ready: base64 plus
+/// the content type (data URIs and audio parts are derived at use time,
+/// gated by the resolved route's modalities). Values are journaled (the
+/// run result carries the base64), so map loads must happen inside `run`.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct MediaRef {
+    pub mime: String,
+    pub b64: String,
+}
+
+impl MediaRef {
+    pub fn decoded(&self) -> Vec<u8> {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD
+            .decode(&self.b64)
+            .unwrap_or_default()
+    }
+}
+
+pub type MediaMap = std::collections::HashMap<Uuid, MediaRef>;
+
+/// Attachment modality class from the content type.
+pub fn modality_of(content_type: &str) -> &'static str {
+    let ct = content_type.to_ascii_lowercase();
+    if ct.starts_with("image/") {
+        "image"
+    } else if ct.starts_with("audio/") {
+        "audio"
+    } else if ct.starts_with("video/") {
+        "video"
+    } else {
+        "document"
+    }
+}
+
+/// OpenAI `input_audio` accepts wav/mp3 only.
+fn audio_format(mime: &str) -> Option<&'static str> {
+    match mime {
+        "audio/wav" | "audio/x-wav" | "audio/wave" => Some("wav"),
+        "audio/mpeg" | "audio/mp3" => Some("mp3"),
+        _ => None,
+    }
+}
+
+/// Model-facing image/audio parts for a turn's attachments, gated by the
+/// route's native modalities. Unsupported media stays in the log and in
+/// object storage (later: code-execution tooling), never silently deleted —
+/// it just does not reach this model.
+pub fn media_parts(
+    media: &MediaMap,
+    atts: &[MessageAttachment],
+    modalities: &[String],
+) -> (Vec<String>, Vec<MessageAudio>) {
+    let mut images = Vec::new();
+    let mut audio = Vec::new();
+    for a in atts {
+        let Some(m) = media.get(&a.id) else { continue };
+        let supported = modalities.iter().any(|x| x == &a.modality);
+        match a.modality.as_str() {
+            "image" if supported => {
+                images.push(format!("data:{};base64,{}", m.mime, m.b64));
+            }
+            "audio" if supported => {
+                if let Some(f) = audio_format(&m.mime) {
+                    audio.push(MessageAudio {
+                        data: m.b64.clone(),
+                        format: f.to_string(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    (images, audio)
+}
+
+/// Inline cap for one document attachment's textual content (chars) — a
+/// single huge file must not blow the context window by itself.
+const ATTACHMENT_INLINE_LIMIT: usize = 80_000;
+
+/// Whether a document attachment's content is textual and can be inlined.
+fn attachment_is_textual(content_type: &str, filename: &str) -> bool {
+    let ct = content_type.to_ascii_lowercase();
+    if ct.starts_with("text/") {
+        return true;
+    }
+    if matches!(
+        ct.as_str(),
+        "application/json"
+            | "application/xml"
+            | "application/yaml"
+            | "application/x-yaml"
+            | "application/javascript"
+            | "application/toml"
+            | "application/sql"
+            | "application/x-sh"
+    ) {
+        return true;
+    }
+    let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "md" | "txt" | "json" | "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "toml" | "yaml"
+            | "yml" | "csv" | "tsv" | "log" | "sh" | "bash" | "sql" | "html" | "htm" | "css"
+            | "xml" | "ini" | "conf" | "env" | "c" | "h" | "cpp" | "hpp" | "go" | "java" | "rb"
+            | "php" | "swift" | "kt" | "proto" | "gradle" | "lock" | "gitignore" | "dockerfile"
+            | "makefile" | "patch" | "diff"
+    )
+}
+
+/// Builds the arrival-turn user event from the requested attachment ids
+/// (in the chat's attachment order): chip metadata plus the text appended
+/// to the typed message (inlined document text, or a note for media).
+/// The marker `"\n\n[Attachment: "` is the UI's strip boundary — clients
+/// render the typed text plus chips, not the wire text.
+pub fn build_turn_text(
+    requested: &[Uuid],
+    media: &MediaMap,
+    rows: &[(Uuid, String, String, i64)], // (id, filename, content_type, size)
+    modalities: &[String],
+) -> (Vec<MessageAttachment>, String) {
+    let mut chips = Vec::new();
+    let mut blocks = Vec::new();
+    for (id, filename, content_type, size) in rows {
+        if !requested.contains(id) {
+            continue;
+        }
+        let modality = modality_of(content_type);
+        chips.push(MessageAttachment {
+            id: *id,
+            filename: filename.clone(),
+            content_type: content_type.clone(),
+            size_bytes: *size,
+            modality: modality.to_string(),
+        });
+        match modality {
+            "document" => {
+                let mut text = media
+                    .get(id)
+                    .map(|m| String::from_utf8_lossy(&m.decoded()).into_owned())
+                    .unwrap_or_default();
+                if text.chars().count() > ATTACHMENT_INLINE_LIMIT {
+                    text = text.chars().take(ATTACHMENT_INLINE_LIMIT).collect();
+                    text.push_str("\n…[truncated]");
+                }
+                if attachment_is_textual(content_type, filename) && !text.is_empty() {
+                    blocks.push(format!(
+                        "[Attachment: {} ({}, {} bytes)]\n{}",
+                        filename, content_type, size, text
+                    ));
+                } else {
+                    blocks.push(format!(
+                        "[Attachment: {} ({}, {} bytes) — content not inlined]",
+                        filename, content_type, size
+                    ));
+                }
+            }
+            m => {
+                let supported = modalities.iter().any(|x| *x == m);
+                let note = if supported {
+                    match m {
+                        "image" => "shown to the model as an image",
+                        "audio" => "provided to the model as audio",
+                        _ => "no native modality on this route",
+                    }
+                } else {
+                    "stored; this model does not accept this modality"
+                };
+                blocks.push(format!(
+                    "[Attachment: {} ({}, {} bytes) — {}]",
+                    filename, content_type, size, note
+                ));
+            }
+        }
+    }
+    let text = if blocks.is_empty() {
+        String::new()
+    } else {
+        blocks.join("\n\n")
+    };
+    (chips, text)
+}
+
+/// Journaled-loadable attachment bytes for one chat: every image/audio
+/// attachment referenced by `events` (derivation replays them as parts on
+/// every subsequent turn) plus every id in `extra_ids` (the arrival turn;
+/// documents need their bytes for inlining). Bytes are immutable once
+/// uploaded, so the read is replay-deterministic.
+pub async fn load_media_map(
+    state: &AppState,
+    org_id: Uuid,
+    chat_id: Uuid,
+    events: &[ThreadEvent],
+    extra_ids: &[Uuid],
+) -> Result<MediaMap, ApiError> {
+    let mut ids: Vec<Uuid> = Vec::new();
+    for ev in events {
+        if let ThreadEvent::UserMessage { attachments, .. } = ev {
+            for a in attachments {
+                if a.modality == "image" || a.modality == "audio" {
+                    ids.push(a.id);
+                }
+            }
+        }
+    }
+    ids.extend(extra_ids.iter().copied());
+    if ids.is_empty() {
+        return Ok(MediaMap::new());
+    }
+    let store = state.store().await?;
+    let rows = store.attachments().list(org_id, chat_id).await?;
+    let objects = state.objects().await?;
+    let mut map = MediaMap::new();
+    for row in rows {
+        if !ids.contains(&row.id) {
+            continue;
+        }
+        let key = crate::store::attachments::object_key(org_id, row.id, &row.filename);
+        let Ok(bytes) = objects.get(&key).await else {
+            continue;
+        };
+        use base64::Engine as _;
+        map.insert(
+            row.id,
+            MediaRef {
+                mime: row.content_type.clone(),
+                b64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+            },
+        );
+    }
+    Ok(map)
+}
+
+/// Builds the model-facing history from the event log. `media` carries the
+/// bytes of image/audio attachments referenced by the events (loaded
+/// journaled by the caller); `modalities` gates which parts actually ride
+/// on the wire — unsupported media stays a text note.
+pub fn build_model_history(
+    events: &[ThreadEvent],
+    media: &MediaMap,
+    modalities: &[String],
+) -> Vec<Message> {
     let mut out = Vec::new();
     // Message-bearing Messages since the last compaction (or thread start).
     let mut buffer: Vec<Message> = Vec::new();
     for ev in events {
         match ev {
-            ThreadEvent::UserMessage { content } => {
-                buffer.push(Message::user(content.clone()))
+            ThreadEvent::UserMessage { content, attachments } => {
+                let (images, audio) = media_parts(media, attachments, modalities);
+                buffer.push(Message::user(content.clone()).with_images(images).with_audio(audio));
             }
             ThreadEvent::SystemMessage { .. } => {}
             // Log-only lifecycle records: never part of model-facing history.
@@ -616,6 +867,8 @@ pub fn build_model_history(events: &[ThreadEvent]) -> Vec<Message> {
                 buffer.push(Message {
                     role: "assistant".into(),
                     content: text,
+                    images: Vec::new(),
+                    audio: Vec::new(),
                     tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
                     tool_call_id: None,
                     reasoning: if reasoning.is_empty() { None } else { Some(reasoning) },
@@ -747,7 +1000,7 @@ pub(crate) async fn compact_core(
     chat_id: Uuid,
     events: &[ThreadEvent],
 ) -> HandlerResult<()> {
-    let history = build_model_history(events);
+    let history = build_model_history(events, &MediaMap::new(), &[]);
 
     // (b) Too-short threads cannot be compacted meaningfully.
     if too_short_to_compact(&history) {
@@ -941,7 +1194,34 @@ impl ChatRunner {
         // the next turn number are derivations of it (spec §A.4, §B.4).
         let prior_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
         let turn_no = next_turn(&prior_events);
-        let mut messages: Vec<Message> = build_model_history(&prior_events);
+        // Attachment media: a plain read of immutable object bytes (no
+        // delete path exists, so replay re-reads identical data). Covers
+        // the arrival turn's requested ids plus every prior image/audio
+        // attachment — derivation replays media parts on every turn.
+        let media_map = load_media_map(
+            &state,
+            req.org_id,
+            req.chat_id,
+            &prior_events,
+            &req.attachment_ids,
+        )
+        .await
+        .map_err(api_err)?;
+        let att_rows: Vec<(Uuid, String, String, i64)> = {
+            let store = state.store().await.map_err(api_err)?;
+            store
+                .attachments()
+                .list(req.org_id, req.chat_id)
+                .await
+                .map_err(api_err)?
+                .into_iter()
+                .map(|r| (r.id, r.filename, r.content_type, r.size_bytes))
+                .collect()
+        };
+        let (att_chips, inline_text) =
+            build_turn_text(&req.attachment_ids, &media_map, &att_rows, &route.modalities);
+        let mut messages: Vec<Message> =
+            build_model_history(&prior_events, &media_map, &route.modalities);
         // Auto-compact tracking (task M1): last known model-request size,
         // initialized from the latest assistant_message usage and updated
         // with each completion's tokens_in; at most one compaction per turn.
@@ -971,21 +1251,31 @@ impl ChatRunner {
         }
         let system = build_system_prompt(req.client_tools, has_web_search, req.project_dir.as_deref());
 
+        // The user event content is the model-facing turn: typed text plus
+        // inlined attachment blocks (the marker is the UI's strip boundary).
+        let user_turn_content = match (!req.user_message.is_empty(), !inline_text.is_empty()) {
+            (true, true) => format!("{}\n\n{}", req.user_message, inline_text),
+            (true, false) => req.user_message.clone(),
+            (false, true) => inline_text,
+            (false, false) => String::new(),
+        };
         // Journaled: append this turn's system + user events (once per turn;
         // the gateway never writes events itself — spec §B.4).
         let st = state.clone();
         let chat_id = req.chat_id;
         let system_ev = ThreadEvent::SystemMessage { content: system.clone() };
-        let user_message = req.user_message.clone();
+        let event_content = user_turn_content.clone();
+        let ev_chips = att_chips.clone();
+        let has_user_event = !event_content.is_empty() || !ev_chips.is_empty();
         ctx.run(move || {
             let state = st.clone();
             async move {
                 let store = state.store().await.map_err(api_err)?;
                 store.thread().append_event(chat_id, &system_ev).await.map_err(api_err)?;
-                if !user_message.is_empty() {
+                if has_user_event {
                     store
                         .thread()
-                        .append_event(chat_id, &ThreadEvent::UserMessage { content: user_message })
+                        .append_event(chat_id, &ThreadEvent::UserMessage { content: event_content, attachments: ev_chips })
                         .await
                         .map_err(api_err)?;
                 }
@@ -996,8 +1286,13 @@ impl ChatRunner {
         // The user turn reaches the model THIS request: history was derived
         // before the append above, so push the turn onto the request messages
         // explicitly (it is already persisted as a user_message event).
-        if !req.user_message.is_empty() {
-            messages.push(Message::user(req.user_message.clone()));
+        let (turn_images, turn_audio) = media_parts(&media_map, &att_chips, &route.modalities);
+        if !user_turn_content.is_empty() || !turn_images.is_empty() || !turn_audio.is_empty() {
+            messages.push(
+                Message::user(user_turn_content)
+                    .with_images(turn_images)
+                    .with_audio(turn_audio),
+            );
         }
 
         let (tx, text_buf, thinking_buf) = ensure_generation(&state, req.chat_id);
@@ -1017,7 +1312,7 @@ impl ChatRunner {
             let context_window = route.context_window.unwrap_or(128_000);
             if should_auto_compact(last_context_tokens, context_window, compacted_this_turn) {
                 let all_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
-                let history = build_model_history(&all_events);
+                let history = build_model_history(&all_events, &media_map, &route.modalities);
                 if too_short_to_compact(&history) {
                     tracing::warn!(
                         chat = %req.chat_id,
@@ -1030,7 +1325,7 @@ impl ChatRunner {
                     );
                     compact_core(&ctx, &state, req.org_id, req.chat_id, &all_events).await?;
                     let refreshed = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
-                    messages = build_model_history(&refreshed);
+                    messages = build_model_history(&refreshed, &media_map, &route.modalities);
                 }
                 // Either way, do not re-attempt within this turn.
                 compacted_this_turn = true;
@@ -1181,7 +1476,8 @@ impl ChatRunner {
                             compacted_this_turn = true;
                             let all_events =
                                 journaled_load_events!(ctx, state, req.org_id, req.chat_id);
-                            let history = build_model_history(&all_events);
+                            let history =
+                                build_model_history(&all_events, &media_map, &route.modalities);
                             if too_short_to_compact(&history) {
                                 return Err(HandlerError::from(e));
                             }
@@ -1193,7 +1489,7 @@ impl ChatRunner {
                                 .await?;
                             let refreshed =
                                 journaled_load_events!(ctx, state, req.org_id, req.chat_id);
-                            msgs = build_model_history(&refreshed);
+                            msgs = build_model_history(&refreshed, &media_map, &route.modalities);
                             continue;
                         }
                     };
@@ -1275,6 +1571,8 @@ impl ChatRunner {
             messages.push(Message {
                 role: "assistant".into(),
                 content: completion.text.clone(),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: Some(completion.tool_calls.clone()),
                 tool_call_id: None,
                 reasoning: if completion.reasoning.is_empty() {
@@ -1350,6 +1648,8 @@ impl ChatRunner {
                 messages.push(Message {
                     role: "tool".into(),
                     content,
+                    images: Vec::new(),
+                    audio: Vec::new(),
                     tool_calls: None,
                     tool_call_id: Some(call.id.clone()),
                     reasoning: None,
@@ -2118,7 +2418,7 @@ mod tests {
     #[test]
     fn latest_tokens_in_takes_the_last_assistant_usage() {
         let events = vec![
-            ThreadEvent::UserMessage { content: "hi".into() },
+            ThreadEvent::UserMessage { content: "hi".into(), attachments: Vec::new() },
             ThreadEvent::AssistantMessage {
                 turn: 1,
                 step: 0,
@@ -2190,7 +2490,7 @@ mod tests {
     // --- compaction derivation (design §B) ---
 
     fn user_ev(content: &str) -> ThreadEvent {
-        ThreadEvent::UserMessage { content: content.into() }
+        ThreadEvent::UserMessage { content: content.into(), attachments: Vec::new() }
     }
 
     fn text_assistant(turn: u32, step: u32, text: &str) -> ThreadEvent {
@@ -2229,7 +2529,7 @@ mod tests {
             user_ev("q3"),
             text_assistant(2, 0, "a3"),
         ];
-        let msgs = build_model_history(&events);
+        let msgs = build_model_history(&events, &Default::default(), &[]);
         assert_eq!(msgs.len(), 5, "summary + 2 tail + 2 post-compaction");
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].content, summarized("S"));
@@ -2256,7 +2556,7 @@ mod tests {
             compaction("S", None),
             user_ev("q5"),
         ];
-        let msgs = build_model_history(&events);
+        let msgs = build_model_history(&events, &Default::default(), &[]);
         // summary + last 4 buffered (q3,a3,q4,a4) + q5
         assert_eq!(msgs.len(), 6);
         assert_eq!(msgs[0].content, summarized("S"));
@@ -2274,7 +2574,7 @@ mod tests {
             compaction("S", Some(99)),
             user_ev("q2"),
         ];
-        let msgs = build_model_history(&events);
+        let msgs = build_model_history(&events, &Default::default(), &[]);
         assert_eq!(msgs.len(), 4, "summary + both buffered + post");
         assert_eq!(msgs[0].content, summarized("S"));
         assert_eq!(msgs[1].content, "q1");
@@ -2290,7 +2590,7 @@ mod tests {
             compaction("S", Some(0)),
             user_ev("q2"),
         ];
-        let msgs = build_model_history(&events);
+        let msgs = build_model_history(&events, &Default::default(), &[]);
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].content, summarized("S"));
         assert_eq!(msgs[1].content, "q2");
@@ -2307,7 +2607,7 @@ mod tests {
             compaction("S2", Some(1)),
             user_ev("q3"),
         ];
-        let msgs = build_model_history(&events);
+        let msgs = build_model_history(&events, &Default::default(), &[]);
         // Each compaction applies at its position: S1 replaces q1/a1 keeping
         // a1; S2 replaces the segment since S1 (q2/a2) keeping a2; q3 flows.
         assert_eq!(msgs.len(), 5);
@@ -2336,7 +2636,7 @@ mod tests {
             },
             user_ev("q2"),
         ];
-        assert_eq!(build_model_history(&plain), build_model_history(&annotated));
+        assert_eq!(build_model_history(&plain, &Default::default(), &[]), build_model_history(&annotated, &Default::default(), &[]));
     }
 
     #[test]
@@ -2373,7 +2673,7 @@ mod tests {
                 meta: None,
             },
         ];
-        let msgs = build_model_history(&events);
+        let msgs = build_model_history(&events, &Default::default(), &[]);
         assert_eq!(msgs.len(), 6, "summary + tail(q1,a1) + q2 + assistant(tool) + tool");
         assert_eq!(msgs[0].content, summarized("S"));
         assert_eq!(msgs[3].content, "q2");
@@ -2424,9 +2724,9 @@ mod tests {
     #[test]
     fn latest_assistant_model_takes_the_last_assistant_event() {
         let events = vec![
-            ThreadEvent::UserMessage { content: "hi".into() },
+            ThreadEvent::UserMessage { content: "hi".into(), attachments: Vec::new() },
             assistant(1, 0, "first", "model-a"),
-            ThreadEvent::UserMessage { content: "more".into() },
+            ThreadEvent::UserMessage { content: "more".into(), attachments: Vec::new() },
             assistant(2, 0, "second", "model-b"),
             ThreadEvent::ToolResult {
                 turn: 2,
@@ -2445,7 +2745,7 @@ mod tests {
     fn latest_assistant_model_none_without_assistant_events() {
         let events = vec![
             ThreadEvent::SystemMessage { content: "s".into() },
-            ThreadEvent::UserMessage { content: "hi".into() },
+            ThreadEvent::UserMessage { content: "hi".into(), attachments: Vec::new() },
             ThreadEvent::Compaction {
                 summary: "earlier".into(),
                 tokens_before: None,
@@ -2471,9 +2771,9 @@ mod tests {
                 approved: true,
                 reason: None,
             },
-            ThreadEvent::UserMessage { content: "q".into() },
+            ThreadEvent::UserMessage { content: "q".into(), attachments: Vec::new() },
             assistant(1, 0, "a", "m"),
-        ]);
+        ], &Default::default(), &[]);
         assert_eq!(message_bearing_count(&history), 2);
     }
 
@@ -2490,6 +2790,8 @@ mod tests {
             Message {
                 role: "assistant".into(),
                 content: String::new(),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: Some(vec![]),
                 tool_call_id: None,
                 reasoning: None,

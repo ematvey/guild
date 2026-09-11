@@ -255,8 +255,18 @@ export type ThreadBlock =
   | { type: "reasoning"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: string };
 
+/** A file attached to a user turn (chip metadata; bytes via
+ * /api/v1/attachments/{id}). `modality`: image | audio | video | document. */
+export type MessageAttachmentMeta = {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  modality: string;
+};
+
 export type ThreadEvent =
-  | { type: "user_message"; content: string }
+  | { type: "user_message"; content: string; attachments?: MessageAttachmentMeta[] }
   | { type: "system_message"; content: string }
   | {
       type: "assistant_message";
@@ -400,6 +410,38 @@ async function readSse(
   }
 }
 
+/** Uploads one file as a chat context attachment (POST raw bytes, metadata
+ * in the query string per the server contract). */
+export async function uploadAttachment(
+  chatId: string,
+  file: File,
+): Promise<MessageAttachmentMeta> {
+  const res = await fetch(
+    `/api/v1/chats/${chatId}/attachments?filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${getToken()}` },
+      body: file,
+    },
+  );
+  if (!res.ok) throw new Error(`attachment upload failed: ${res.status}`);
+  return (await res.json()) as MessageAttachmentMeta;
+}
+
+/** Fetches an attachment as a blob URL for thumbnails/downloads (authed). */
+export async function attachmentBlobUrl(id: string): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/v1/attachments/${id}`, {
+      headers: { authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
 /// Streams one chat turn via the org gateway (web mode). Returns the final
 /// done event, invoking onEvent for each frame (delta / tool_call / done / error).
 export async function streamChat(
@@ -408,6 +450,7 @@ export async function streamChat(
   prompt: string,
   onEvent: (ev: StreamFrame) => void,
   signal?: AbortSignal,
+  attachmentIds: string[] = [],
 ): Promise<void> {
   const token = getToken();
   const res = await fetch("/api/v1/gateway/chat", {
@@ -426,6 +469,7 @@ export async function streamChat(
       // write); declaring them in the browser suspends the turn until the
       // 5-minute client-tool timeout
       client_tools: IS_TAURI,
+      attachment_ids: attachmentIds,
     }),
     signal,
   });

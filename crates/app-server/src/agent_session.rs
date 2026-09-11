@@ -50,6 +50,7 @@ impl ModelTurn for GatewayTurn {
                 project_dir: self.project_dir.clone(),
                 // the desktop app executes machine tools client-side
                 client_tools: true,
+                attachment_ids: Vec::new(),
             })
             .await
             .map_err(map_cloud)?;

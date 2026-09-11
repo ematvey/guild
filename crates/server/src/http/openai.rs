@@ -88,6 +88,8 @@ fn to_internal_messages(msgs: &[OpenAiMessage]) -> (Option<String>, Vec<Message>
             "user" | "assistant" => out.push(Message {
                 role: m.role.clone(),
                 content: content_to_text(&m.content),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: m.tool_calls.as_ref().map(|calls| {
                     calls
                         .iter()
@@ -108,6 +110,8 @@ fn to_internal_messages(msgs: &[OpenAiMessage]) -> (Option<String>, Vec<Message>
             other => out.push(Message {
                 role: other.to_string(),
                 content: content_to_text(&m.content),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: None,
                 tool_call_id: m.tool_call_id.clone(),
                 reasoning: None,

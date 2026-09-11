@@ -26,6 +26,7 @@ async fn thread_store_append_list_roundtrip_and_org_scope() {
 
     let user_event = ThreadEvent::UserMessage {
         content: "hello thread".into(),
+        attachments: Vec::new(),
     };
     let assistant_event = ThreadEvent::AssistantMessage {
         turn: 1,
@@ -101,6 +102,7 @@ async fn thread_store_append_list_roundtrip_and_org_scope() {
             foreign_chat,
             &ThreadEvent::UserMessage {
                 content: "foreign".into(),
+                attachments: Vec::new(),
             },
         )
         .await
@@ -153,6 +155,7 @@ async fn thread_endpoint_returns_events_and_is_org_scoped() {
             chat["id"].as_str().unwrap().parse().unwrap(),
             &ThreadEvent::UserMessage {
                 content: "hi via api".into(),
+                attachments: Vec::new(),
             },
         )
         .await
@@ -220,7 +223,7 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
     store
         .gateway()
         .upsert_route(
-            user.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000),
+            user.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000), &[],
         )
         .await
         .unwrap();
@@ -257,6 +260,7 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
             chat.id,
             &ThreadEvent::UserMessage {
                 content: "hi".into(),
+                attachments: Vec::new(),
             },
         )
         .await

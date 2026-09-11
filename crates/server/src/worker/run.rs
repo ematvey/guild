@@ -78,6 +78,8 @@ async fn run_loop(
         messages.push(Message {
             role: "assistant".into(),
             content: c.text.clone(),
+            images: Vec::new(),
+            audio: Vec::new(),
             tool_calls: Some(c.tool_calls.clone()),
             tool_call_id: None,
             reasoning: None,

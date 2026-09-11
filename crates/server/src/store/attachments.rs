@@ -20,6 +20,12 @@ pub struct AttachmentStore<'a> {
     pub(crate) pool: &'a sqlx::PgPool,
 }
 
+/// Object-storage key for an attachment (shared by the HTTP upload/download
+/// handlers and the turn-injection path in the worker).
+pub fn object_key(org_id: Uuid, id: Uuid, filename: &str) -> String {
+    format!("attachments/{org_id}/{id}/{filename}")
+}
+
 /// Only safe path segments for object keys.
 pub fn safe_filename(name: &str) -> Option<String> {
     let cleaned: String = name

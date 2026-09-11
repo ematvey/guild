@@ -112,6 +112,18 @@ pub struct Chat {
 pub struct Message {
     pub role: String,
     pub content: String,
+    /// User-turn image parts (data URIs, e.g. `data:image/png;base64,…`).
+    /// Serialized as `image_url` content parts on OpenAI-shape routes and
+    /// base64 image blocks on Anthropic routes — only when the resolved
+    /// route supports the image modality.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
+    /// User-turn audio parts (base64 + `wav`/`mp3` per the OpenAI
+    /// `input_audio` contract). Anthropic routes have no audio input —
+    /// media is never dropped from the thread log; it is only skipped on
+    /// the wire for routes without the modality.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio: Vec<MessageAudio>,
     /// Assistant message tool invocations (agentic loop replay).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
@@ -126,21 +138,51 @@ pub struct Message {
     pub reasoning: Option<String>,
 }
 
+/// One audio part on a user turn (OpenAI `input_audio` contract).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct MessageAudio {
+    /// Raw base64 (no data: prefix).
+    pub data: String,
+    /// `wav` or `mp3`.
+    pub format: String,
+}
+
 impl Message {
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: "user".into(),
             content: content.into(),
+            images: Vec::new(),
+            audio: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
             reasoning: None,
         }
     }
 
+    pub fn with_images(mut self, images: Vec<String>) -> Self {
+        self.images = images;
+        self
+    }
+
+    pub fn with_audio(mut self, audio: Vec<MessageAudio>) -> Self {
+        self.audio = audio;
+        self
+    }
+
+    /// Whether this message carries image/audio parts.
+    pub fn has_media(&self) -> bool {
+        !self.images.is_empty() || !self.audio.is_empty()
+    }
+
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: "tool".into(),
             content: content.into(),
+            images: Vec::new(),
+            audio: Vec::new(),
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
             reasoning: None,
@@ -193,6 +235,12 @@ pub struct ChatCompletionRequest {
     /// prompt; the client never sends one for agent turns).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_dir: Option<String>,
+    /// Context attachments for this turn: uploaded beforehand via
+    /// POST /api/v1/chats/{id}/attachments; the server inlines documents'
+    /// text and passes image/audio parts when the route supports the
+    /// modality (spec §4.3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -330,6 +378,21 @@ pub enum Block {
     ToolCall { id: String, name: String, arguments: String },
 }
 
+/// A file attached to a user turn (chip metadata: the bytes live in object
+/// storage; documents' text is inlined into the turn content).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct MessageAttachment {
+    pub id: Uuid,
+    pub filename: String,
+    pub content_type: String,
+    pub size_bytes: i64,
+    /// `image` | `audio` | `video` | `document` — derived from the content
+    /// type; drives chip rendering and model-modality gating.
+    pub modality: String,
+}
+
 /// One durable thread event — the append-only source of truth for a chat.
 /// Model-facing message history and client rendering are both derivations of
 /// these events (deepseek-harness session model).
@@ -338,7 +401,15 @@ pub enum Block {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "ts", ts(export))]
 pub enum ThreadEvent {
-    UserMessage { content: String },
+    /// File attached to this user turn: bytes live in object storage
+    /// (`/api/v1/attachments/{id}`); documents' text is inlined into the
+    /// turn content, image/audio parts ride on the model-facing Message
+    /// when the route supports the modality; chips are for client rendering.
+    UserMessage {
+        content: String,
+        #[serde(default)]
+        attachments: Vec<MessageAttachment>,
+    },
     /// Server-owned system prompt for this turn. Log-only: rebuilds the
     /// request header on derivation, never rendered as a chat message.
     SystemMessage { content: String },
@@ -506,6 +577,8 @@ mod tests {
         let m = Message {
             role: "assistant".into(),
             content: String::new(),
+            images: Vec::new(),
+            audio: Vec::new(),
             tool_calls: Some(vec![tc.clone()]),
             tool_call_id: None,
             reasoning: None,

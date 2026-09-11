@@ -484,6 +484,8 @@ async fn chat_send_task(
             s.messages.push(Message {
                 role: "assistant".into(),
                 content: full_text.clone(),
+                images: Vec::new(),
+                audio: Vec::new(),
                 tool_calls: None,
                 tool_call_id: None,
                 reasoning: None,

@@ -226,13 +226,13 @@ async fn run_turn(
         .into_iter()
         .map(|r| r.event)
         .collect();
-    let mut history: Vec<Message> = build_model_history(&prior_events);
+    let mut history: Vec<Message> = build_model_history(&prior_events, &Default::default(), &[]);
     let turn_no = next_turn(&prior_events);
     store
         .thread()
         .append_event(
             session.chat_id,
-            &ThreadEvent::UserMessage { content: message.clone() },
+            &ThreadEvent::UserMessage { content: message.clone(), attachments: Vec::new() },
         )
         .await?;
 

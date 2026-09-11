@@ -17,6 +17,7 @@ interface RouteFields {
   quota_monthly_usd: string;
   reasoning: boolean;
   context_window: string;
+  modalities: string[];
 }
 
 const blankRoute = (model = ""): RouteFields => ({
@@ -28,6 +29,7 @@ const blankRoute = (model = ""): RouteFields => ({
   quota_monthly_usd: "",
   reasoning: false,
   context_window: "",
+  modalities: [],
 });
 
 const card = "rounded-lg border border-border bg-card";
@@ -54,7 +56,7 @@ export default function ModelsSection() {
     // Full route rows (no secrets) — prefilled editing; fallback to bare
     // model names when the admin GET is unavailable.
     api<
-        { routes: { model: string; provider: string; enabled: boolean; price_per_mtok_in_usd: number; price_per_mtok_out_usd: number; quota_monthly_usd: number | null; reasoning: boolean; context_window: number | null }[] }
+        { routes: { model: string; provider: string; enabled: boolean; price_per_mtok_in_usd: number; price_per_mtok_out_usd: number; quota_monthly_usd: number | null; reasoning: boolean; context_window: number | null; modalities: string[] }[] }
       >("GET", "/api/v1/admin/gateway/routes")
       .then((r) =>
         setRoutes(
@@ -67,6 +69,7 @@ export default function ModelsSection() {
             quota_monthly_usd: row.quota_monthly_usd != null ? String(row.quota_monthly_usd) : "",
             reasoning: row.reasoning,
             context_window: row.context_window != null ? String(row.context_window) : "",
+            modalities: row.modalities ?? [],
           })),
         ),
       )
@@ -124,6 +127,7 @@ export default function ModelsSection() {
           : {}),
         reasoning: r.reasoning,
         ...(r.context_window !== "" ? { context_window: Number(r.context_window) } : {}),
+        modalities: r.modalities,
       });
       setSavedIdx(idx);
       reload();
@@ -250,6 +254,27 @@ export default function ModelsSection() {
                     />
                     reasoning
                   </label>
+                  {(["image", "audio", "video"] as const).map((m) => (
+                    <label
+                      key={m}
+                      className="flex items-center gap-1 text-xs text-muted-foreground"
+                      title={`Native ${m} input — attachments of this modality are passed to the model`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="size-3.5 accent-foreground"
+                        checked={r.modalities.includes(m)}
+                        onChange={(e) =>
+                          patchRoute(idx, {
+                            modalities: e.target.checked
+                              ? [...r.modalities, m]
+                              : r.modalities.filter((x) => x !== m),
+                          })
+                        }
+                      />
+                      {m}
+                    </label>
+                  ))}
                   <input
                     className={`${cellInput} w-24`}
                     placeholder="ctx window"

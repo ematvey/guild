@@ -25,7 +25,7 @@ fn derivation_builds_model_history_with_reasoning_replay() {
         ThreadEvent::SystemMessage {
             content: "server prompt".into(),
         },
-        ThreadEvent::UserMessage { content: "question".into() },
+        ThreadEvent::UserMessage { content: "question".into(), attachments: Vec::new() },
         assistant(
             1,
             0,
@@ -49,7 +49,7 @@ fn derivation_builds_model_history_with_reasoning_replay() {
             meta: None,
         },
         assistant(1, 1, vec![Block::Text { text: "final answer".into() }]),
-        ThreadEvent::UserMessage { content: "again".into() },
+        ThreadEvent::UserMessage { content: "again".into(), attachments: Vec::new() },
         assistant(
             2,
             0,
@@ -60,7 +60,7 @@ fn derivation_builds_model_history_with_reasoning_replay() {
         ),
     ];
 
-    let msgs = build_model_history(&events);
+    let msgs = build_model_history(&events, &Default::default(), &[]);
 
     // system events are log-only; everything else maps 1:1
     assert_eq!(msgs.len(), 6, "system message skipped");
@@ -101,7 +101,7 @@ fn turn_numbering_continues_from_events() {
     assert_eq!(next_turn(&[]), 1, "empty thread starts at turn 1");
 
     let events = vec![
-        ThreadEvent::UserMessage { content: "q".into() },
+        ThreadEvent::UserMessage { content: "q".into(), attachments: Vec::new() },
         assistant(
             1,
             0,
@@ -123,7 +123,7 @@ fn turn_numbering_continues_from_events() {
     // user/system events do not advance the turn counter
     let no_turns = vec![
         ThreadEvent::SystemMessage { content: "s".into() },
-        ThreadEvent::UserMessage { content: "u".into() },
+        ThreadEvent::UserMessage { content: "u".into(), attachments: Vec::new() },
     ];
     assert_eq!(next_turn(&no_turns), 1);
 }
