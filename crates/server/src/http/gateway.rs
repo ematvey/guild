@@ -131,6 +131,10 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/gateway/chat/{id}/approvals/{call_id}",
             axum::routing::post(approval_decision),
         )
+        .route(
+            "/api/v1/gateway/chat/{id}/compact",
+            axum::routing::post(compact_chat),
+        )
         .route("/api/v1/admin/gateway/keys", axum::routing::post(set_key))
         .route(
             "/api/v1/admin/gateway/routes",
@@ -503,6 +507,32 @@ async fn approval_decision(
             reason,
         })
         .expect("approval request serializes"),
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Kicks off a thread compaction (phase 3, design §D): one-way send to the
+/// ChatRunner's `compact` handler — fire-and-forget like generate, no
+/// generation lock is taken here (the handler rejects if a generation is
+/// somehow in flight). The client polls GET /thread for the resulting
+/// `Compaction` event. Org-scoped: 404 for foreign chats.
+async fn compact_chat(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    crate::http::internal::restate_send_one_way(
+        &state,
+        "ChatRunner",
+        &format!("{chat_id}/compact"),
+        serde_json::to_value(crate::worker::restate::CompactReq {
+            org_id: user.0.org_id,
+            chat_id,
+        })
+        .expect("compact request serializes"),
     )
     .await?;
     Ok(Json(json!({ "ok": true })))
