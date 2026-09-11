@@ -87,6 +87,11 @@ async fn publish(
     if let Err(e) = validate_manifest(&parsed) {
         return Err(ApiError::bad_request(e.to_string()));
     }
+    if kind == "integration" {
+        if let Err(e) = guild_core::registry::validate_v2(&parsed) {
+            return Err(ApiError::bad_request(e.to_string()));
+        }
+    }
     if parsed.kind != kind {
         return Err(ApiError::bad_request(format!(
             "manifest kind {} does not match path kind {kind}",
@@ -277,6 +282,16 @@ async fn install(
         .get(&stored.object_key)
         .await
         .map_err(|e| ApiError::internal(format!("bundle read failed: {e}")))?;
+    let manifest: guild_core::registry::BundleManifest =
+        serde_json::from_slice(
+            &guild_core::registry::read_bundle_file(&bytes, "manifest.json")
+                .map_err(ApiError::from)?
+                .ok_or_else(|| ApiError::bad_request("bundle has no manifest.json"))?,
+        )
+        .map_err(|e| ApiError::bad_request(format!("bad manifest.json: {e}")))?;
+    if manifest.mcp.is_some() {
+        return install_mcp_plugin(state, &user, &slug, manifest).await;
+    }
     let routine_json = guild_core::registry::read_bundle_file(&bytes, "routine.json")
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::bad_request("bundle has no routine.json"))?;
@@ -322,5 +337,92 @@ async fn install(
         .await?;
     Ok(Json(
         json!({"routine": serde_json::to_value(&routine).expect("routine serializes")}),
+    ))
+}
+
+/// Install path for v2 MCP plugin bundles (spec §9): creates a disabled
+/// `integrations` row carrying the mcp/auth/tool_policy config (skipped when
+/// the row already exists) and disabled routines from the manifest triggers.
+async fn install_mcp_plugin(
+    state: AppState,
+    user: &AuthUser,
+    slug: &str,
+    manifest: guild_core::registry::BundleManifest,
+) -> Result<Json<Value>, ApiError> {
+    guild_core::registry::validate_v2(&manifest)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let store = state.store().await?;
+
+    let auth = manifest.auth.clone().unwrap_or_default();
+    let config = json!({
+        "mcp": manifest.mcp.clone().expect("mcp checked by caller"),
+        "auth": auth,
+        "tool_policy": {},
+    });
+    let existing = store
+        .integrations()
+        .list(user.0.org_id)
+        .await?
+        .into_iter()
+        .find(|r| r.name == slug);
+    let row = match existing {
+        Some(row) => row,
+        None => {
+            store
+                .integrations()
+                .upsert(user.0.org_id, slug, &config, false)
+                .await?;
+            store
+                .integrations()
+                .list(user.0.org_id)
+                .await?
+                .into_iter()
+                .find(|r| r.name == slug)
+                .expect("row just upserted")
+        }
+    };
+
+    let mut routines = Vec::new();
+    for (i, t) in manifest.triggers.iter().enumerate() {
+        let routine_slug = if i == 0 {
+            slug.to_string()
+        } else {
+            format!("{slug}-{i}")
+        };
+        if store
+            .routines()
+            .get_by_slug(user.0.org_id, &routine_slug)
+            .await
+            .is_ok()
+        {
+            continue;
+        }
+        let allowed_tools = t
+            .allowed_tools
+            .clone()
+            .unwrap_or_else(|| vec!["http_call".into(), "storage_put".into()]);
+        let routine = store
+            .routines()
+            .create(
+                user.0.org_id,
+                user.0.id,
+                &routine_slug,
+                t.name.as_deref().unwrap_or(slug),
+                &t.kind,
+                t.trigger_config.clone(),
+                &t.prompt,
+                &t.model,
+                serde_json::to_value(&allowed_tools).expect("tool list serializes"),
+                &new_hook_token(),
+                false, // disabled until an admin enables it
+            )
+            .await?;
+        routines.push(serde_json::to_value(&routine).expect("routine serializes"));
+    }
+    Ok(Json(
+        json!({
+            "integration": serde_json::to_value(&row).expect("row serializes"),
+            "routines": routines,
+        }),
     ))
 }
