@@ -22,6 +22,28 @@ Design: docs/plans/2026-09-12-approvals-design.md. Shipped and deployed:
 - Browser-verified all four paths (approve/deny/never/allow) with a scripted
   executor (SSE presence + heartbeats + tool result POST).
 
+## Context attachments — multimodal (2026-09-11, latest)
+
+- Composer "+" attach (ChatGPT/Claude pattern): preview strip above the
+  input — image thumbnails with overlay ✕, file chips with type icon +
+  name + size; user bubbles render the same previews (authed blob fetch);
+  inlined wire text stripped from display.
+- Uploads go to object storage via POST /api/v1/chats/{id}/attachments
+  (64 MiB cap); the send carries attachment_ids; the server inlines textual
+  documents into the turn (80k-char cap per file) and passes image parts
+  (OpenAI image_url data URIs / Anthropic base64 blocks) and audio parts
+  (OpenAI input_audio, wav/mp3) ONLY when the resolved route lists the
+  modality. Unsupported media stay stored for later code-execution tooling
+  (by design, never dropped from the log).
+- Modality capability is admin-configurable per route: model_routes.modalities
+  TEXT[] (migration 0025, values image/audio/video), edited in Settings →
+  Models; GET /api/v1/admin/gateway/routes returns it.
+- Derivation continuity: build_model_history replays prior image/audio parts
+  from a journaled-loaded media map on every turn — images persist in
+  context like Codex/Claude sessions. Compaction summaries are text-only.
+- Verified live: passphrase extracted from inlined .txt, 8x8 PNG identified
+  as red, composer upload → preview → send → second-turn recall all pass.
+
 ## Unified settings window (2026-09-12, latest)
 
 - Admin UI folded into the main app: a large Settings window (user menu →
