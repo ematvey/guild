@@ -280,7 +280,19 @@ export type ThreadEvent =
       /** Tool-private widget payload; opaque to the loop. */
       meta?: unknown | null;
     }
-  | { type: "compaction"; summary: string };
+  | { type: "compaction"; summary: string }
+  | {
+      type: "approval_request";
+      call_id: string;
+      name: string;
+      arguments: string;
+    }
+  | {
+      type: "approval_decision";
+      call_id: string;
+      approved: boolean;
+      reason?: string | null;
+    };
 
 export interface ThreadEventRow {
   id: string;
@@ -316,10 +328,30 @@ export async function createChat(title: string): Promise<string | null> {
   return v.id ?? null;
 }
 
+/// Frame shape passed to stream consumers: loose — the server owns the
+/// protocol (see crates/protocol/bindings/StreamEvent.ts); consumers
+/// dispatch on `type` and read only the fields they know.
+type StreamFrame = {
+  type: string;
+  content?: string;
+  message?: string;
+  tokens_in?: number;
+  tokens_out?: number;
+  // tool frames
+  call_id?: string;
+  name?: string;
+  arguments?: string;
+  executor?: string;
+  is_error?: boolean;
+  // approval frames
+  approved?: boolean;
+  reason?: string;
+};
+
 /// Reads an SSE response body, invoking onEvent for every data frame.
 async function readSse(
   res: Response,
-  onEvent: (ev: { type: string; content?: string; message?: string; tokens_in?: number; tokens_out?: number }) => void,
+  onEvent: (ev: StreamFrame) => void,
 ): Promise<void> {
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
@@ -350,7 +382,7 @@ export async function streamChat(
   chatId: string,
   model: string,
   prompt: string,
-  onEvent: (ev: { type: string; content?: string; message?: string; tokens_in?: number; tokens_out?: number }) => void,
+  onEvent: (ev: StreamFrame) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const token = getToken();
@@ -386,7 +418,7 @@ export async function streamChat(
 /// quickly either way.
 export async function attachGeneration(
   chatId: string,
-  onEvent: (ev: { type: string; content?: string; message?: string; tokens_in?: number; tokens_out?: number }) => void,
+  onEvent: (ev: StreamFrame) => void,
   signal?: AbortSignal,
 ): Promise<boolean> {
   const token = getToken();
@@ -446,6 +478,62 @@ export async function postToolResult(
     ),
   });
   if (!res.ok) throw new Error(`tool result rejected (${res.status})`);
+}
+
+// ---- Approvals (design spec 2026-09-12 sections D + F) ----
+
+export type ApprovalPolicy = {
+  default?: "ask" | "allow" | "never";
+  overrides?: Record<string, "ask" | "allow" | "never">;
+};
+
+/// Delivers the user's decision on a pending tool approval. The first
+/// decision wins server-side; late posts and replays are no-ops.
+export async function postApproval(
+  chatId: string,
+  callId: string,
+  approved: boolean,
+  reason?: string,
+): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`/api/v1/gateway/chat/${chatId}/approvals/${callId}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(reason === undefined ? { approved } : { approved, reason }),
+  });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? `approval rejected (${res.status})`);
+  }
+}
+
+/// Reads the open chat's approval policy; null = server default.
+export async function getApproval(chatId: string): Promise<ApprovalPolicy | null> {
+  const token = getToken();
+  const res = await fetch(`/api/v1/chats/${chatId}/approval`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const v = await res.json().catch(() => ({}));
+  return (v?.approval ?? v) as ApprovalPolicy | null;
+}
+
+/// Saves the chat's approval policy (null resets to the server default).
+/// Throws with the API's validation message on an invalid policy body.
+export async function setApproval(
+  chatId: string,
+  policy: ApprovalPolicy | null,
+): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`/api/v1/chats/${chatId}/approval`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: policy === null ? JSON.stringify({ approval: null }) : JSON.stringify(policy),
+  });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? `approval policy rejected (${res.status})`);
+  }
 }
 
 export interface Release {
