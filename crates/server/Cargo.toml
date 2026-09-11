@@ -147,3 +147,7 @@ required-features = ["test-support"]
 
 [[test]]
 name = "mcp_plugin"
+
+[[test]]
+name = "disclosure"
+required-features = ["test-support"]
