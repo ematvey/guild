@@ -559,12 +559,12 @@ function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
       icon={<Brain className="size-3 shrink-0 text-muted-foreground" />}
       title={
         <>
-          <span className="mr-1 font-medium text-foreground/80">
+          <span className="mr-2 font-medium text-foreground/80">
             {live ? "Thinking…" : "Thinking"}
           </span>
           {head && (
             <>
-              <span aria-hidden className="mx-1 hidden select-none text-muted-foreground/40 sm:inline">
+              <span aria-hidden className="mx-1.5 hidden select-none text-muted-foreground/40 sm:inline">
                 ·
               </span>
               <span className="hidden max-w-72 truncate text-muted-foreground sm:inline">
@@ -969,9 +969,9 @@ function ToolFrame({ t }: { t: ToolBlock }) {
       icon={<ToolKindIcon kind={toolKind(t)} />}
       title={
         <>
-          <span className="mr-1 font-medium text-foreground/80">{toolLabel(t)}</span>
+          <span className="mr-2 font-medium text-foreground/80">{toolLabel(t)}</span>
           {preview && (
-            <span aria-hidden className="mx-1 select-none text-muted-foreground/40">
+            <span aria-hidden className="mx-1.5 select-none text-muted-foreground/40">
               ·
             </span>
           )}
