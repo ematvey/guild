@@ -145,7 +145,6 @@ function DesktopApp() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [user, setUser] = useState<string | null>(null);
-  const [adminUrl, setAdminUrl] = useState<string | null>(null);
 
   // Restore auth on mount (and after F5): the engine keeps the session and
   // persists it to token.json, so ask it instead of assuming logged-out.
@@ -187,11 +186,6 @@ function DesktopApp() {
       if (info.result?.token) localStorage.setItem("guild_token", info.result.token);
     } catch {
       /* private mode: pref simply not remembered */
-    }
-    // admin console handoff: token travels in the URL fragment (never sent
-    // to the server); the console picks it up and stores it locally.
-    if (info.result?.token) {
-      setAdminUrl(`${baseUrl.replace(/\/$/, "")}/admin/#tk=${info.result.token}`);
     }
   };
 
@@ -248,16 +242,6 @@ function DesktopApp() {
     return (
       <>
         <WebChat email={user} role={role} onSignOut={signOut} />
-        {adminUrl && (
-          <a
-            href={adminUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="fixed bottom-2 right-2 z-50 rounded-md border border-border bg-card px-2 py-1 text-xs text-muted-foreground outline-none hover:text-foreground"
-          >
-            Admin console
-          </a>
-        )}
         <UpdateToast />
       </>
     );
