@@ -159,7 +159,12 @@ export async function apiLogin(
   url: string,
   email: string,
   password: string,
-): Promise<{ email: string }> {
+): Promise<{
+  email: string;
+  role: string;
+  display_name?: string;
+  avatar_url?: string;
+}> {
   const res = await fetch(`${url.replace(/\/$/, "")}/api/v1/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -168,7 +173,12 @@ export async function apiLogin(
   const v = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(v?.error?.message ?? res.statusText);
   setToken(v.token);
-  return { email: v.user?.email ?? email };
+  return {
+    email: v.user?.email ?? email,
+    role: v.user?.role ?? "member",
+    display_name: v.user?.display_name,
+    avatar_url: v.user?.avatar_url,
+  };
 }
 
 export async function apiMe(): Promise<{
