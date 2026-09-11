@@ -1,10 +1,23 @@
 # Guild — current state of work
 
-Updated 2026-09-12 (thread event log milestone). Read this before touching the
+Updated 2026-09-11 (tool frame UI polish). Read this before touching the
 codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
 `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
-## Phase 2 — approvals as protocol events (2026-09-12, later this session)
+## Tool frame UI polish (2026-09-11, late)
+
+- Tool frame header keeps the request preview (search → query, fetch → URL,
+  …) visible whether the frame is collapsed or expanded; preview text is no
+  longer monospace.
+- A running tool call pulses (`animate-pulse`) on the header line until its
+  result lands; running frames no longer auto-expand (the body is empty
+  until the result arrives anyway).
+- `web_fetch` renders as "Browse" in the UI (wire name unchanged).
+- Search/fetch expanded bodies show a pulsing "running…" line while the call
+  is in flight. Verified live in the browser (search + fetch, running and
+  completed states).
+
+## Phase 2 — approvals as protocol events (2026-09-12)
 
 Design: docs/plans/2026-09-12-approvals-design.md. Shipped and deployed:
 
