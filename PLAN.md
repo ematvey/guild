@@ -4,6 +4,24 @@ Updated 2026-09-12 (thread event log milestone). Read this before touching the
 codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
 `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Phase 2 — approvals as protocol events (2026-09-12, later this session)
+
+Design: docs/plans/2026-09-12-approvals-design.md. Shipped and deployed:
+
+- Per-chat approval policy: `chats.approval JSONB` (0023), guild-core
+  ApprovalPolicy semantics; NULL = server default (ask, read allowed).
+  GET/PUT /api/v1/chats/{id}/approval, editable from any client.
+- ChatRunner gate in client_tool_step: allow -> unchanged; never -> denied by
+  policy; ask -> durable `approval_request`/`approval_decision` thread events +
+  `approval_requested`/`approval_resolved` frames, awakeable `approval:{call_id}`,
+  5-min send_after auto-deny, shared `complete_approval` handler
+  (first answer wins), POST /api/v1/gateway/chat/{id}/approvals/{call_id}.
+- Attach replay emits ApprovalRequested for unresolved approvals.
+- WebChat: pending/resolved approval cards; Settings approval selector +
+  overrides editor. Excluded from model-facing history derivation.
+- Browser-verified all four paths (approve/deny/never/allow) with a scripted
+  executor (SSE presence + heartbeats + tool result POST).
+
 ## Thread event log milestone (2026-09-12, this session)
 
 Full redesign per `docs/plans/2026-09-12-thread-events-design.md` (grounded in
