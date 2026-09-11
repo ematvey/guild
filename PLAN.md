@@ -1,8 +1,33 @@
 # Guild — current state of work
 
-Updated 2026-09-12 (desktop 0.3.10). Read this before touching the
-codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
-`docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+Updated 2026-09-12 (integration plugins milestone 9). Read this before
+touching the codebase; detailed milestone plans live in `docs/plans/`,
+deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
+`~/workspace/hanging-commands.md`.
+
+## Milestone 9 — integration plugin system (2026-09-12)
+
+- Org integrations are now installable plugins: a registry bundle (kind
+  `integration`) whose manifest v2 declares an MCP server url (streamable
+  HTTP), auth shape (`org_secret` | `org_secret_impersonated` |
+  `per_user_token`), per-tool classes (read/write/admin), triggers
+  (routines), and guide skills. Spec:
+  `docs/specs/2026-09-12-integration-plugins-design.md`; plan:
+  `docs/plans/2026-09-12-milestone-9-integration-plugins.md`.
+- The worker connects to enabled MCP plugins at turn start (journaled
+  tool-list snapshot; connections pooled in AppState keyed by
+  slug/url/acting-as/secrets-fingerprint), exposes namespaced tools
+  `int_<slug>_<tool>` plus Guild-provided `int_<slug>_list_tools` and
+  `int_<slug>_guide` disclosure tools, and enforces tool classes before
+  execution. Compiled-in Rust plugins (searxng, superproxy) unchanged.
+- Identity envelope on every MCP call (spec §5): org / caller /
+  acting-as / call-id headers + secret headers; acting-as override is
+  admin-only. Secrets encrypted at rest (0029_integration_secrets).
+- Script surface: `GET /api/v1/integrations`,
+  `GET /api/v1/integrations/{slug}/tools`,
+  `POST /api/v1/integrations/{slug}/tools/{tool}` — session or org-API-key
+  auth, policy-filtered, audited (`integration.tool_called`).
+- Deployed to the compose stack (:18080); health + new routes smoke-verified.
 
 ## Desktop 0.3.10 — first release carrying the service-worker retirement (2026-09-12)
 
