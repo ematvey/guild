@@ -504,22 +504,6 @@ export async function postToolResult(
   if (!res.ok) throw new Error(`tool result rejected (${res.status})`);
 }
 
-// ---- Compaction (design spec 2026-09-12 sections C + D) ----
-
-/// Kicks off a compaction of this chat's history: the worker summarizes the
-/// thread into one durable compaction event (fire-and-forget like generate).
-/// Clients poll GET /thread until the new compaction event appears.
-export async function compactChat(chatId: string): Promise<void> {
-  const res = await fetch(`/api/v1/gateway/chat/${chatId}/compact`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${getToken()}` },
-  });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? `compact rejected (${res.status})`);
-  }
-}
-
 // ---- Approvals (design spec 2026-09-12 sections D + F) ----
 
 export type ApprovalPolicy = {

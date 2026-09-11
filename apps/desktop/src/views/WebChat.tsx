@@ -58,7 +58,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { useTheme } from "../theme";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { compactChat, postApproval, postToolResult, setApproval, getApproval, type ApprovalPolicy } from "../transport";
+import { postApproval, postToolResult, setApproval, getApproval, type ApprovalPolicy } from "../transport";
 import {
   bindChat,
   createChat,
@@ -453,19 +453,10 @@ function fmtK(n: number): string {
 }
 
 /// Slim context-usage bar next to the model selector (task G2): fills as the
-/// thread's context grows; amber past 80% of the window, red past 90%, where
-/// a subtle "Compact?" hint (only when the thread has messages) starts the
-/// existing compaction flow. Hidden entirely when the server reports no
-/// context data (pre-G1).
-function ContextGauge({
-  ctx,
-  hint,
-  onCompact,
-}: {
-  ctx: ThreadContext;
-  hint: boolean;
-  onCompact: () => void;
-}) {
+/// thread's context grows; amber past 80% of the window, red past 90%.
+/// Compaction itself is automatic server-side (task M1) — the gauge is
+/// read-only. Hidden entirely when the server reports no context data.
+function ContextGauge({ ctx }: { ctx: ThreadContext }) {
   const ratio = ctx.max > 0 ? Math.min(1, Math.max(0, ctx.tokens / ctx.max)) : 0;
   const fill =
     ratio > 0.9 ? "bg-destructive" : ratio >= 0.8 ? "bg-amber-500" : "bg-foreground";
@@ -477,15 +468,6 @@ function ContextGauge({
       >
         <span className={`block h-full rounded-full ${fill}`} style={{ width: `${ratio * 100}%` }} />
       </span>
-      {hint && (
-        <button
-          onClick={onCompact}
-          title="Context is nearly full — compact the thread to shrink it"
-          className="text-xs text-muted-foreground outline-none hover:text-foreground"
-        >
-          Compact?
-        </button>
-      )}
     </span>
   );
 }
@@ -797,8 +779,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
   const [busy, setBusy] = useState(false);
   const [attaching, setAttaching] = useState(false); // receiving a server-side generation
-  const [compacting, setCompacting] = useState(false); // compaction POST sent, waiting for the event
-  const [compactNote, setCompactNote] = useState<string | null>(null); // transient header error note
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -815,7 +795,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const sendAbort = useRef<AbortController | null>(null); // in-flight send stream
   const loadSeq = useRef(0); // guards against stale thread loads landing last
   const maxSeqSeen = useRef(0); // highest thread-event seq rendered for the open chat
-  const compactNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingDeepLink = useRef(false); // true while the /thread/<id> from the URL is loading
 
   // App-lifetime presence connection: the server uses it to detect that
@@ -874,12 +853,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     setBlocks(eventsToBlocks(res.events));
   };
 
-  const flashCompactNote = (text: string) => {
-    setCompactNote(text);
-    if (compactNoteTimer.current) clearTimeout(compactNoteTimer.current);
-    compactNoteTimer.current = setTimeout(() => setCompactNote(null), 6000);
-  };
-
   // latest closure for the popstate handler
   const popHandler = useRef<() => void>(() => {});
   popHandler.current = () => {
@@ -896,8 +869,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
       setBlocks([]);
       setCtx(null);
       setThreadLoading(false);
-      setCompacting(false);
-      setCompactNote(null);
     }
   };
 
@@ -957,8 +928,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     setBlocks([]);
     setCtx(null);
     setThreadLoading(false);
-    setCompacting(false);
-    setCompactNote(null);
     setOpen(false);
     ta.current?.focus();
   };
@@ -1281,50 +1250,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     }
   };
 
-  /// Compacts the open thread: fire-and-forget POST, then poll the thread
-  /// log every 3s (up to 60s) until a compaction event newer than everything
-  /// currently rendered lands; then reload blocks. On timeout, surface a
-  /// small error note instead (compaction spec section E).
-  const compact = async () => {
-    if (!chatId || compacting || streaming) return;
-    const mySeq = loadSeq.current;
-    const baseline = maxSeqSeen.current;
-    setCompactNote(null);
-    setCompacting(true);
-    try {
-      await compactChat(chatId);
-    } catch (e) {
-      if (loadSeq.current !== mySeq) return;
-      setCompacting(false);
-      flashCompactNote(`compact failed: ${(e as Error).message}`);
-      return;
-    }
-    for (let attempt = 0; attempt < 20; attempt++) {
-      await new Promise((r) => setTimeout(r, 3000));
-      if (loadSeq.current !== mySeq) {
-        setCompacting(false); // user switched away; the new thread owns the UI
-        return;
-      }
-      try {
-        const res: ThreadResult = await getThread(chatId);
-        if (loadSeq.current !== mySeq) {
-          setCompacting(false);
-          return;
-        }
-        if (res.events.some((r) => r.event.type === "compaction" && r.seq > baseline)) {
-          applyThreadRows(res);
-          setCompacting(false);
-          return;
-        }
-      } catch {
-        /* network blip — keep polling until the deadline */
-      }
-    }
-    if (loadSeq.current !== mySeq) return; // switched away mid-poll
-    setCompacting(false);
-    flashCompactNote("compaction timed out — reopen the thread to check");
-  };
-
   const activeTitle =
     threadLoading && blocks.length === 0
       ? "Loading…"
@@ -1421,17 +1346,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             >
               <Cpu className="size-3" />
               {boundMachine}
-            </span>
-          )}
-          {compacting && (
-            <span className="flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-              <Spinner className="size-3" />
-              Compacting…
-            </span>
-          )}
-          {compactNote && (
-            <span className="shrink-0 rounded-md border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive">
-              {compactNote}
             </span>
           )}
         </header>
@@ -1557,13 +1471,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                 <span />
               )}
               <div className="flex items-center gap-2">
-                {chatId && ctx && (
-                  <ContextGauge
-                    ctx={ctx}
-                    hint={ctx.tokens / (ctx.max || 1) > 0.9 && blocks.length > 0}
-                    onCompact={() => void compact()}
-                  />
-                )}
+                {chatId && ctx && <ContextGauge ctx={ctx} />}
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
                     <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none">
@@ -1578,15 +1486,6 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                     </SelectContent>
                   </Select>
                 )}
-                <Button
-                  size="icon"
-                  className="size-7 shrink-0 rounded-full"
-                  onClick={() => void compact()}
-                  disabled={streaming || compacting || !chatId || blocks.length === 0}
-                  title="Summarize this thread to shrink context"
-                >
-                  {compacting ? <Spinner className="size-3.5" /> : <Minimize2 className="size-3.5" />}
-                </Button>
                 <Button
                   size="icon"
                   className="size-7 rounded-full"
