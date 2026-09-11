@@ -105,6 +105,16 @@ pub fn spawn_detached(bin: &Path) -> anyhow::Result<()> {
 /// are lost to a dropped buffer — other clients' events may follow
 /// immediately.
 pub fn handshake(pair: Pair) -> anyhow::Result<Pair> {
+    handshake_with(pair, None)
+}
+
+/// Like `handshake`, but also verifies the daemon's build identity: a daemon
+/// from a different build than the client's own binary is told to shut down
+/// so the caller respawns a current one. This is what makes app upgrades
+/// safe: a leftover background daemon of the previous install can never
+/// serve the new client (its rpc/timeout fixes would be missing). `None`
+/// skips the check (tests, CLI tools against foreign daemons).
+pub fn handshake_with(pair: Pair, expected_build: Option<&str>) -> anyhow::Result<Pair> {
     use std::io::Read as _;
     let Pair(mut rd, mut wr) = pair;
     let req = protocol::rpc::Request::new(0, "daemon.hello", serde_json::json!({}));
@@ -128,25 +138,43 @@ pub fn handshake(pair: Pair) -> anyhow::Result<Pair> {
             protocol::rpc::PROTOCOL_VERSION
         );
     }
+    if let Some(expected) = expected_build {
+        let daemon_build = v["result"]["build"].as_str().unwrap_or("");
+        if daemon_build != expected {
+            let req = protocol::rpc::Request::new(1, "daemon.shutdown", serde_json::json!({}));
+            let _ = writeln!(wr, "{}", serde_json::to_string(&req)?);
+            anyhow::bail!(
+                "daemon build mismatch (running {daemon_build}, expected {expected}) — a \"Guild\" background service from an older install is still running and was asked to exit; reopen the app (or quit the old one in Task Manager / Activity Monitor) and pair again"
+            );
+        }
+    }
     Ok(Pair(rd, wr))
 }
 
 /// Full blocking client flow: connect → (spawn detached + wait) → handshake.
-/// Used by the GUI (via spawn_blocking) and the CLI verbs.
+/// Used by the GUI (via spawn_blocking) and the CLI verbs. Enforces the
+/// build identity: a daemon from a different build is shut down and
+/// replaced by one spawned from this binary.
 pub fn attach(bin: &Path) -> anyhow::Result<Pair> {
+    attach_with(bin, Some(protocol::rpc::BUILD_ID))
+}
+
+/// `attach` with an explicit build-expectation override (None = accept any
+/// daemon speaking the current protocol — used by tests).
+pub fn attach_with(bin: &Path, expected_build: Option<&str>) -> anyhow::Result<Pair> {
     for attempt in 0..2u8 {
         if let Ok(pair) = try_connect() {
-            if let Ok(pair) = handshake(pair) {
+            if let Ok(pair) = handshake_with(pair, expected_build) {
                 return Ok(pair);
             }
-            // stale version: daemon shutting down, respawn below
+            // stale version/build: daemon shutting down, respawn below
         }
         if attempt == 0 {
             spawn_detached(bin)?;
             for _ in 0..50 {
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 if let Ok(pair) = try_connect() {
-                    if let Ok(pair) = handshake(pair) {
+                    if let Ok(pair) = handshake_with(pair, expected_build) {
                         return Ok(pair);
                     }
                 }

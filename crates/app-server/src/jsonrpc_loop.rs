@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use guild_core::agent::policy::ApprovalPolicy;
 use guild_core::tools::{Approval, ToolRegistry};
 use protocol::api::Message;
-use protocol::rpc::{Event, Request, Response, RpcError, PROTOCOL_VERSION};
+use protocol::rpc::{Event, Request, Response, RpcError, BUILD_ID, PROTOCOL_VERSION};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -357,7 +357,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
                 req.id,
                 Ok(Response::ok(
                     req.id,
-                    json!({"version": env!("CARGO_PKG_VERSION"), "protocol": PROTOCOL_VERSION}),
+                    json!({"version": env!("CARGO_PKG_VERSION"), "protocol": PROTOCOL_VERSION, "build": protocol::rpc::BUILD_ID}),
                 )),
             ));
         }
