@@ -357,6 +357,51 @@ pub struct ApprovalReq {
     pub reason: Option<String>,
 }
 
+/// Body of the `compact` handler (phase 3, design §C): a fire-and-forget
+/// compaction request — no user turn, no streaming client. Sent one-way
+/// from the HTTP gateway endpoint.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CompactReq {
+    pub org_id: Uuid,
+    pub chat_id: Uuid,
+}
+
+/// Compaction prompt (design §C): one non-streaming summarization call over
+/// the FULL pre-compaction history; the reply becomes the durable summary.
+pub(crate) const COMPACTION_PROMPT: &str = "Summarize this conversation for continuation by a coding agent. Capture: the user's goals and decisions, key facts and artifacts (paths, versions, identifiers), open questions, and the current state / next step. Be factual and compact. Do not answer as if replying to the user.";
+
+/// How many message-bearing events immediately before the compaction event
+/// stay in context verbatim (the dsh retained-tail pattern).
+pub(crate) const COMPACTION_KEEP_LAST: u32 = 4;
+
+/// Minimum message-bearing messages a history needs before compacting is
+/// meaningful (design §C) — a summary of less is a summary of nothing.
+pub(crate) const COMPACTION_MIN_MESSAGES: usize = 4;
+
+/// Pure helper: the model of the LATEST `assistant_message` event (design
+/// §C — compaction defaults to the model the thread was last run with, so
+/// the summarizer is never a surprise provider).
+pub(crate) fn latest_assistant_model(events: &[ThreadEvent]) -> Option<String> {
+    events.iter().rev().find_map(|ev| match ev {
+        ThreadEvent::AssistantMessage { model, .. } => Some(model.clone()),
+        _ => None,
+    })
+}
+
+/// Pure helper: message-bearing entries (user / assistant / tool — anything
+/// the model reads as a turn) in a model-facing history.
+pub(crate) fn message_bearing_count(history: &[Message]) -> usize {
+    history
+        .iter()
+        .filter(|m| matches!(m.role.as_str(), "user" | "assistant" | "tool"))
+        .count()
+}
+
+/// Pure core of the too-short rejection (design §C).
+pub(crate) fn too_short_to_compact(history: &[Message]) -> bool {
+    message_bearing_count(history) < COMPACTION_MIN_MESSAGES
+}
+
 /// Resolution payload of an approval awakeable — what the suspended turn
 /// reads when the decision arrives.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -1168,6 +1213,193 @@ impl ChatRunner {
             return Ok(()); // first answer already won, or nobody waiting
         };
         ctx.resolve_awakeable(&awakeable_id, Json(resolution));
+        Ok(())
+    }
+
+    /// Compacts the thread (phase 3, design §C): one journaled non-streaming
+    /// summarization call over the FULL pre-compaction history, then a
+    /// durable `Compaction` event appended to the thread log. The log itself
+    /// is never rewritten — compaction is a derivation change (the next
+    /// `generate` derives through the event). Fire-and-forget: no broadcast,
+    /// no generation registry entry; clients poll GET /thread for the new
+    /// event. Virtual-object serialization already keeps compact and
+    /// generate from overlapping on the same key; the generations-registry
+    /// check below is a terminal guard against a stale in-flight turn
+    /// (nothing is taken that would need freeing on failure).
+    #[handler]
+    async fn compact(&self, ctx: ObjectContext<'_>, req: Json<CompactReq>) -> HandlerResult<()> {
+        let req = req.into_inner();
+        let state = self.state.clone();
+
+        // (a) A generation in flight must finish first — compacting a
+        // half-written thread would summarize a turn in progress.
+        if state.generations.lock().unwrap().contains_key(&req.chat_id) {
+            return Err(TerminalError::new("cannot compact while a generation is running").into());
+        }
+
+        // Journaled: load the thread event log; the FULL model-facing
+        // history (the pre-compaction view being summarized) derives from it.
+        let st = state.clone();
+        let org = req.org_id;
+        let chat_id = req.chat_id;
+        let prior_events: Vec<ThreadEvent> = ctx
+            .run(move || {
+                let state = st.clone();
+                async move {
+                    let store = state.store().await.map_err(api_err)?;
+                    let rows = store.thread().list_events(org, chat_id).await.map_err(api_err)?;
+                    Ok(Json(rows.into_iter().map(|r| r.event).collect::<Vec<_>>()))
+                }
+            })
+            .await?
+            .into_inner();
+        let history = build_model_history(&prior_events);
+
+        // (b) Too-short threads cannot be compacted meaningfully.
+        if too_short_to_compact(&history) {
+            return Err(TerminalError::new("thread too short to compact").into());
+        }
+
+        // (c) Model selection (journaled, mirrors generate): the thread's
+        // latest assistant model; when no assistant event names one, fall
+        // back to the org's first enabled route. Route + quota resolved like
+        // any turn — on failure nothing is freed (no lock was taken).
+        let st = state.clone();
+        let org = req.org_id;
+        let chosen = latest_assistant_model(&prior_events);
+        let (model, route) = ctx
+            .run(move || {
+                let state = st.clone();
+                async move {
+                    let store = state.store().await.map_err(api_err)?;
+                    let model = match chosen {
+                        Some(m) => m,
+                        None => {
+                            let models = store.gateway().list_models(org).await?;
+                            models.into_iter().next().ok_or_else(|| {
+                                HandlerError::from(TerminalError::new(
+                                    "no enabled route for this org",
+                                ))
+                            })?
+                        }
+                    };
+                    let master = state.config.master_key()?;
+                    let route = store
+                        .gateway()
+                        .resolve_route(org, &model, &master)
+                        .await
+                        .map_err(api_terminal)?;
+                    enforce_quota(&state, org, &model, &route)
+                        .await
+                        .map_err(api_terminal)?;
+                    Ok(Json((model, route)))
+                }
+            })
+            .await?
+            .into_inner();
+
+        // (d) Journaled: ONE non-streaming model call with the compaction
+        // prompt — same provider machinery as generate (accumulate the
+        // stream), but nothing is broadcast and no buffers/lock exist.
+        let route2 = route.clone();
+        let model2 = model.clone();
+        let msgs = history.clone();
+        let (summary, tokens_in, tokens_out) = ctx
+            .run(move || {
+                let route = route2.clone();
+                let model = model2.clone();
+                async move {
+                    let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
+                        "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
+                        "anthropic" => {
+                            Arc::new(guild_core::provider::AnthropicProvider::new())
+                        }
+                        other => {
+                            return Err(TerminalError::new(format!("unknown provider {other}"))
+                                .into())
+                        }
+                    };
+                    let preq = ProviderRequest {
+                        model: &model,
+                        system: Some(COMPACTION_PROMPT),
+                        messages: &msgs,
+                        api_key: &route.api_key,
+                        base_url: &route.base_url,
+                        tools: None,
+                    };
+                    let stream = provider.chat_stream(preq).await.map_err(|e| {
+                        HandlerError::from(TerminalError::new(format!("provider error: {e}")))
+                    })?;
+                    let mut text = String::new();
+                    let mut tokens_in = 0u32;
+                    let mut tokens_out = 0u32;
+                    let mut pinned = Box::pin(stream);
+                    while let Some(item) = pinned.next().await {
+                        match item {
+                            Ok(ProviderChunk::Text(chunk)) => {
+                                if !chunk.text_delta.is_empty() {
+                                    text.push_str(&chunk.text_delta);
+                                }
+                                if let Some(t) = chunk.tokens_in {
+                                    tokens_in = t;
+                                }
+                                if let Some(t) = chunk.tokens_out {
+                                    tokens_out = t;
+                                }
+                            }
+                            // Reasoning / tool deltas are not wanted in a
+                            // summary — skipped, not accumulated.
+                            Ok(_) => {}
+                            Err(e) => {
+                                return Err(TerminalError::new(format!(
+                                    "provider error: {e}"
+                                ))
+                                .into())
+                            }
+                        }
+                    }
+                    Ok(Json((text, tokens_in, tokens_out)))
+                }
+            })
+            .await?
+            .into_inner();
+
+        // (e)+(f) Journaled: the durable checkpoint — one `Compaction` event
+        // with the summarization usage; NOTHING is broadcast (clients poll
+        // GET /thread, design §D/F).
+        let st = state.clone();
+        let chat_id = req.chat_id;
+        let model_name = model;
+        let summary2 = summary;
+        ctx.run(move || {
+            let state = st.clone();
+            async move {
+                let store = state.store().await.map_err(api_err)?;
+                let event = ThreadEvent::Compaction {
+                    summary: summary2,
+                    tokens_before: Some(tokens_in),
+                    keep_last: Some(COMPACTION_KEEP_LAST),
+                    model: Some(model_name),
+                    usage: Some(UsagePayload {
+                        tokens_in: Some(tokens_in),
+                        tokens_out: Some(tokens_out),
+                        cost_usd: Some(UsageEvent::cost_usd(
+                            tokens_in,
+                            tokens_out,
+                            route.price_in,
+                            route.price_out,
+                        )),
+                    }),
+                };
+                store
+                    .thread()
+                    .append_event(chat_id, &event)
+                    .await
+                    .map_err(api_err)?;
+                Ok(Json(()))
+            }
+        })
+        .await?;
         Ok(())
     }
 }
@@ -2006,4 +2238,118 @@ mod tests {
         assert!(!decision.approved);
         assert_eq!(decision.reason.as_deref(), Some("no"));
     }
+
+    // ---- compaction pure parts (phase 3, design §C) ----
+
+    fn assistant(turn: u32, step: u32, text: &str, model: &str) -> ThreadEvent {
+        ThreadEvent::AssistantMessage {
+            turn,
+            step,
+            blocks: vec![Block::Text { text: text.into() }],
+            usage: UsagePayload::default(),
+            model: model.into(),
+            interrupted: None,
+        }
+    }
+
+    #[test]
+    fn latest_assistant_model_takes_the_last_assistant_event() {
+        let events = vec![
+            ThreadEvent::UserMessage { content: "hi".into() },
+            assistant(1, 0, "first", "model-a"),
+            ThreadEvent::UserMessage { content: "more".into() },
+            assistant(2, 0, "second", "model-b"),
+            ThreadEvent::ToolResult {
+                turn: 2,
+                step: 0,
+                call_id: "c".into(),
+                name: "read".into(),
+                content: "x".into(),
+                is_error: false,
+                meta: None,
+            },
+        ];
+        assert_eq!(latest_assistant_model(&events).as_deref(), Some("model-b"));
+    }
+
+    #[test]
+    fn latest_assistant_model_none_without_assistant_events() {
+        let events = vec![
+            ThreadEvent::SystemMessage { content: "s".into() },
+            ThreadEvent::UserMessage { content: "hi".into() },
+            ThreadEvent::Compaction {
+                summary: "earlier".into(),
+                tokens_before: None,
+                keep_last: None,
+                model: Some("old-model".into()),
+                usage: None,
+            },
+        ];
+        assert_eq!(latest_assistant_model(&events), None);
+    }
+
+    #[test]
+    fn message_bearing_count_ignores_log_only_events() {
+        let history = build_model_history(&[
+            ThreadEvent::SystemMessage { content: "s".into() },
+            ThreadEvent::ApprovalRequest {
+                call_id: "c".into(),
+                name: "bash".into(),
+                arguments: "{}".into(),
+            },
+            ThreadEvent::ApprovalDecision {
+                call_id: "c".into(),
+                approved: true,
+                reason: None,
+            },
+            ThreadEvent::UserMessage { content: "q".into() },
+            assistant(1, 0, "a", "m"),
+        ]);
+        assert_eq!(message_bearing_count(&history), 2);
+    }
+
+    #[test]
+    fn too_short_rejection_threshold_is_four() {
+        // Fewer than 4 message-bearing messages: rejected.
+        for n in 0..4 {
+            let history: Vec<Message> = (0..n).map(|i| Message::user(format!("u{i}"))).collect();
+            assert!(too_short_to_compact(&history), "n={n} should be too short");
+        }
+        // 4 and up: compactible (user/assistant/tool all count).
+        let history = vec![
+            Message::user("q"),
+            Message {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: Some(vec![]),
+                tool_call_id: None,
+                reasoning: None,
+            },
+            Message::tool_result("c1", "out"),
+            Message::user("next"),
+        ];
+        assert!(!too_short_to_compact(&history));
+        assert_eq!(message_bearing_count(&history), 4);
+    }
+
+    #[test]
+    fn compaction_request_serializes_minimally() {
+        // The gateway sends this via restate_send_one_way; the JSON shape is
+        // the handler contract (org + chat only — history is loaded in the
+        // workflow).
+        let org = Uuid::now_v7();
+        let chat = Uuid::now_v7();
+        let v = serde_json::to_value(CompactReq { org_id: org, chat_id: chat }).unwrap();
+        assert_eq!(v["org_id"], serde_json::to_value(org).unwrap());
+        assert_eq!(v["chat_id"], serde_json::to_value(chat).unwrap());
+    }
+
+    // INTEGRATION GAP (noted per task C2): the happy-path handler test
+    // against a wiremock-mocked provider (summary event appended with
+    // model/usage; generation-in-flight rejection) needs an embedded Restate
+    // runtime to drive the ChatRunner virtual object — the same gap that
+    // keeps the existing gateway/approval suites `#[ignore]`d (see
+    // crates/server/tests/gateway_api.rs). The pure parts above cover model
+    // selection, log-only exclusion, and the too-short threshold; the
+    // handler itself mirrors the journaled shape of `generate` line-for-line.
 }
