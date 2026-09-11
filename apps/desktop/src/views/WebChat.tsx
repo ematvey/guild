@@ -28,7 +28,6 @@ import {
   Settings2,
   SquareTerminal,
   Cpu,
-  Unlink,
   Wrench,
 } from "lucide-react";
 
@@ -55,16 +54,14 @@ import { Skeleton } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
-import { useTheme } from "../theme";
+import { SettingsWindow } from "./settings/SettingsWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { postApproval, postToolResult, setApproval, getApproval, type ApprovalPolicy } from "../transport";
+import { postApproval, postToolResult } from "../transport";
 import {
-  bindChat,
   createChat,
   getThread,
   listChats,
-  listMachines,
   listModels,
   streamChat,
   attachGeneration,
@@ -74,7 +71,6 @@ import {
   pairingCode,
   startEventStream,
   type ChatSummary,
-  type MachineInfo,
   type Release,
   type ThreadContext,
   type ThreadEventRow,
@@ -819,7 +815,15 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
 /// Web-mode chat: streaming conversation through the org gateway, with a
 /// server-backed conversation list. Full agent mode (local tools + project)
 /// is the desktop (Tauri) flow.
-export default function WebChat({ email, onSignOut }: { email: string; onSignOut: () => void }) {
+export default function WebChat({
+  email,
+  role = "member",
+  onSignOut,
+}: {
+  email: string;
+  role?: string;
+  onSignOut: () => void;
+}) {
   const [models, setModels] = useState<string[] | null>(null);
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
@@ -1614,10 +1618,11 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
 
       <DeviceSetupDialog open={deviceOpen} onOpenChange={setDeviceOpen} />
 
-      <SettingsDialog
+      <SettingsWindow
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         email={email}
+        role={role}
         chatId={chatId}
         currentMachineId={chats?.find((c) => c.id === chatId)?.machine_id ?? null}
         onMachineChanged={() => void refreshChats()}
@@ -1806,225 +1811,7 @@ function DeviceSetupDialog({
   );
 }
 
-function SettingsDialog({
-  open,
-  onOpenChange,
-  email,
-  chatId,
-  currentMachineId,
-  onMachineChanged,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  email: string;
-  chatId: string | null;
-  currentMachineId: string | null;
-  onMachineChanged: () => void;
-}) {
-  const { theme, setTheme } = useTheme();
-  const [machines, setMachines] = useState<MachineInfo[] | null>(null);
-  useEffect(() => {
-    if (open) void listMachines().then(setMachines);
-  }, [open]);
 
-  // ---- Approval section (design spec section F) ----
-  const [approvalDefault, setApprovalDefault] = useState<"server" | "ask" | "allow" | "never">("server");
-  const [overridesText, setOverridesText] = useState("");
-  const [approvalLoading, setApprovalLoading] = useState(false);
-  const [approvalSaving, setApprovalSaving] = useState(false);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
-  const [approvalSaved, setApprovalSaved] = useState(false);
-
-  // Load the open chat's policy on open (and when a different chat opens).
-  useEffect(() => {
-    setApprovalError(null);
-    setApprovalSaved(false);
-    if (!open || !chatId) return;
-    setApprovalLoading(true);
-    getApproval(chatId)
-      .then((p) => {
-        setApprovalDefault(p?.default ?? "server");
-        setOverridesText(
-          p?.overrides && Object.keys(p.overrides).length > 0
-            ? JSON.stringify({ overrides: p.overrides }, null, 2)
-            : "",
-        );
-      })
-      .catch(() => setApprovalError("failed to load the current policy"))
-      .finally(() => setApprovalLoading(false));
-  }, [open, chatId]);
-
-  const saveApproval = async () => {
-    if (!chatId || approvalSaving) return;
-    setApprovalError(null);
-    setApprovalSaved(false);
-    let policy: ApprovalPolicy | null = null;
-    if (approvalDefault !== "server") {
-      policy = { default: approvalDefault };
-      const txt = overridesText.trim();
-      if (txt) {
-        try {
-          const parsed = JSON.parse(txt) as unknown;
-          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-            throw new Error("must be a JSON object");
-          }
-          const obj = parsed as { overrides?: unknown };
-          if (obj.overrides !== undefined) {
-            if (typeof obj.overrides !== "object" || obj.overrides === null || Array.isArray(obj.overrides)) {
-              throw new Error('"overrides" must be an object');
-            }
-            policy.overrides = obj.overrides as ApprovalPolicy["overrides"];
-          } else {
-            // a bare per-tool map {"bash": "allow"} is accepted too
-            policy.overrides = parsed as ApprovalPolicy["overrides"];
-          }
-        } catch (e) {
-          setApprovalError(`invalid overrides JSON: ${(e as Error).message}`);
-          return;
-        }
-      }
-    }
-    setApprovalSaving(true);
-    try {
-      await setApproval(chatId, policy);
-      setApprovalSaved(true);
-      setTimeout(() => setApprovalSaved(false), 1500);
-    } catch (e) {
-      setApprovalError((e as Error).message);
-    } finally {
-      setApprovalSaving(false);
-    }
-  };
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
-        </DialogHeader>
-        <div className="min-w-0 space-y-4 text-left">
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Appearance</p>
-            <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
-              {(["dark", "light", "system"] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTheme(t)}
-                  className={`rounded-md px-2 py-1.5 text-xs capitalize outline-none transition-colors ${
-                    theme === t
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Account</p>
-            <p className="text-sm">{email}</p>
-          </div>
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Machine</p>
-            {!chatId ? (
-              <p className="text-xs text-muted-foreground">Open a chat to bind it to a machine.</p>
-            ) : machines && machines.length > 0 ? (
-              <div className="flex flex-col gap-1">
-                {machines.map((m) => (
-                  <button
-                    key={m.machine_id}
-                    onClick={async () => {
-                      await bindChat(chatId, m.machine_id);
-                      onMachineChanged();
-                    }}
-                    className={`flex items-center justify-between rounded-md border px-2 py-1.5 text-xs outline-none transition-colors ${
-                      currentMachineId === m.machine_id
-                        ? "border-foreground/30 bg-card text-foreground"
-                        : "border-border text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    <span className="truncate">{m.name}</span>
-                    {currentMachineId === m.machine_id ? (
-                      <span className="text-[10px] uppercase tracking-wide">bound</span>
-                    ) : (
-                      <span className="text-[10px] text-muted-foreground">use</span>
-                    )}
-                  </button>
-                ))}
-                {currentMachineId && (
-                  <button
-                    onClick={async () => {
-                      await bindChat(chatId, null);
-                      onMachineChanged();
-                    }}
-                    className="flex items-center gap-1 self-start rounded-md px-1.5 py-1 text-xs text-muted-foreground outline-none hover:text-foreground"
-                  >
-                    <Unlink className="size-3" /> unbind machine
-                  </button>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                No machines connected. Start the Guild desktop app on the machine you want
-                agent tools to run on.
-              </p>
-            )}
-          </div>
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Approval</p>
-            {!chatId ? (
-              <p className="text-xs text-muted-foreground">Open a chat to configure its approval policy.</p>
-            ) : approvalLoading ? (
-              <p className="text-xs text-muted-foreground">Loading…</p>
-            ) : (
-              <div className="space-y-2">
-                <Select
-                  value={approvalDefault}
-                  onValueChange={(v) => setApprovalDefault(v as typeof approvalDefault)}
-                >
-                  <SelectTrigger className="h-8 w-full text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="server" className="text-xs">server default</SelectItem>
-                    <SelectItem value="ask" className="text-xs">ask for every tool</SelectItem>
-                    <SelectItem value="allow" className="text-xs">allow all tools</SelectItem>
-                    <SelectItem value="never" className="text-xs">never run tools</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Textarea
-                  value={overridesText}
-                  onChange={(e) => setOverridesText(e.target.value)}
-                  rows={3}
-                  placeholder={'{"overrides": {"bash": "allow"}}'}
-                  className="min-h-0 resize-none font-mono text-xs"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Per-tool overrides, e.g. allow bash but keep asking for the rest.
-                </p>
-                {approvalError && (
-                  <p className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
-                    {approvalError}
-                  </p>
-                )}
-                <div className="flex items-center gap-2">
-                  <Button size="sm" onClick={() => void saveApproval()} disabled={approvalSaving}>
-                    {approvalSaving ? "Saving…" : "Save"}
-                  </Button>
-                  {approvalSaved && <span className="text-xs text-emerald-600 dark:text-emerald-400">saved</span>}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/// Sidebar conversation item. The pill always fits the sidebar (padding on
-/// both sides); an overflowing title is faded out at the right edge instead
-/// of hard-clipped, and only when it actually overflows.
 function ChatListItem({
   title,
   active,
