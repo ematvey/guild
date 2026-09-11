@@ -12,6 +12,21 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// Client-side IPC trace: one line per attach/rpc step into %TEMP%, so a
+/// wedge on a remote user's machine can be diagnosed from the log without
+/// interactive debugging (the GUI's own console is not visible to us).
+pub fn ipc_trace(event: &str, detail: &str) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = std::env::temp_dir().join("guild-rpc.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{ts} {event} {detail}");
+    }
+}
+
 /// Pending downloaded update, waiting for the user to restart.
 #[derive(Default)]
 pub struct UpdateState {
@@ -71,6 +86,7 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
     .map_err(|e| format!("daemon attach join: {e}"))?
     .map_err(|e| format!("daemon attach failed: {e}"))?;
     let Pair(read, write) = pair;
+    ipc_trace("attach-ok", "");
 
     let engine = Arc::new(Engine {
         stdin: Arc::new(Mutex::new(write)),
@@ -81,15 +97,24 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
     let responses = engine.responses.clone();
     let app_handle = app.clone();
     std::thread::spawn(move || {
+        ipc_trace("reader-start", "");
         let mut reader = BufReader::new(read);
         loop {
             let mut line = String::new();
             match reader.read_line(&mut line) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => {
+                    ipc_trace("reader-exit", "eof");
+                    break;
+                }
+                Err(e) => {
+                    ipc_trace("reader-exit", &format!("err={e}"));
+                    break;
+                }
                 Ok(_) => {}
             }
             match parse_line(&line) {
                 Some(EngineLine::Response { id, value }) => {
+                    ipc_trace("resp", &format!("id={id} bytes={}", line.len()));
                     if let Some(sender) = responses.lock().unwrap().remove(&id) {
                         let _ = sender.send(value);
                     }
@@ -144,6 +169,7 @@ pub mod commands {
 
     #[tauri::command]
     pub async fn start_engine(state: State<'_, EngineState>) -> Result<(), String> {
+        let t0 = std::time::Instant::now();
         let handle = state
             .handle
             .lock()
@@ -152,9 +178,18 @@ pub mod commands {
             .expect("app handle set at setup");
         // Drop the guard before awaiting: tauri command futures must be Send.
         if state.engine.lock().unwrap().is_some() {
+            ipc_trace("start-engine", "already-attached");
             return Ok(());
         }
-        let engine = attach_engine(&handle).await?;
+        ipc_trace("start-engine", "attaching");
+        let engine = match attach_engine(&handle).await {
+            Ok(e) => e,
+            Err(e) => {
+                ipc_trace("start-engine", &format!("failed in {:?}: {e}", t0.elapsed()));
+                return Err(e);
+            }
+        };
+        ipc_trace("start-engine", &format!("attached in {:?}", t0.elapsed()));
         let mut guard = state.engine.lock().unwrap();
         if guard.is_none() {
             // another concurrent attach may have won; its handle is equally
@@ -211,6 +246,8 @@ pub mod commands {
                 .ok_or_else(|| "engine not started".to_string())?
         };
         let id = state.next_id.fetch_add(1, Ordering::SeqCst);
+        let t0 = std::time::Instant::now();
+        ipc_trace("rpc-start", &format!("id={id} method={method}"));
         // oneshot: tauri's async_runtime re-exports shadow `mpsc::channel`
         // inside #[tauri::command] scopes; oneshot stays unambiguous.
         let (tx, rx) = tokio::sync::oneshot::channel::<Value>();
@@ -224,17 +261,23 @@ pub mod commands {
             {
                 // write failed → daemon is gone or wedged; drop the handle so
                 // the next start_engine re-attaches (respawning if needed).
+                ipc_trace("write-fail", &format!("id={id} err={e}"));
                 *state.engine.lock().unwrap() = None;
                 return Err(format!("engine write failed: {e}"));
             }
         }
+        ipc_trace("write-ok", &format!("id={id}"));
         // Bounded wait: a wedged (alive-but-silent) engine must not leave the
         // UI spinning forever — 120s covers any legitimate request (pair,
         // login, session restore); chat streaming rides on events, not this.
         match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
-            Ok(Ok(value)) => Ok(value),
+            Ok(Ok(value)) => {
+                ipc_trace("rpc-resolved", &format!("id={id} in {:?}", t0.elapsed()));
+                Ok(value)
+            }
             Ok(Err(_)) => {
                 engine.responses.lock().unwrap().remove(&id);
+                ipc_trace("rpc-dropped", &format!("id={id} after {:?}", t0.elapsed()));
                 Err("engine dropped the request".into())
             }
             Err(_) => {
@@ -242,6 +285,7 @@ pub mod commands {
                 // the connection is wedged: force a fresh attach next time
                 let state: State<EngineState> = app.state();
                 *state.engine.lock().unwrap() = None;
+                ipc_trace("rpc-timeout", &format!("id={id} after {:?}", t0.elapsed()));
                 Err("engine timed out".into())
             }
         }
