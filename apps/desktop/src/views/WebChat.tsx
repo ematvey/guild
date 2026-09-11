@@ -97,8 +97,8 @@ interface ToolBlock {
 ///   /thread/<id>               — open thread
 ///   /device                    — device-setup dialog, optionally over a
 ///                                thread: /thread/<id>/device
-///   /settings[/<section>]      — settings overlay, optionally over a
-///                                thread: /thread/<id>/settings/<section>
+///   /settings[/<section>]      — settings overlay (top-level; the thread
+///                                underneath stays loaded in app state)
 /// Back/forward, reloads and deep links all resolve through parseChatRoute.
 type ChatOverlay = { kind: "settings"; section: string | null } | { kind: "device" } | null;
 interface ChatRoute {
@@ -126,8 +126,10 @@ const parseChatRoute = (pathname: string): ChatRoute => {
 const chatRoutePath = (chatId: string | null, overlay: ChatOverlay): string => {
   const base = chatId ? `/thread/${encodeURIComponent(chatId)}` : "";
   if (overlay?.kind === "device") return `${base}/device`;
+  // Settings is chat-independent — top-level URL even when opened over a
+  // thread (the thread stays loaded; closing the overlay restores it).
   if (overlay?.kind === "settings")
-    return `${base}/settings${overlay.section ? `/${overlay.section}` : ""}`;
+    return `/settings${overlay.section ? `/${overlay.section}` : ""}`;
   return base || "/";
 };
 
