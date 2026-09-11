@@ -114,7 +114,7 @@ export function SettingsWindow({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[80vh] max-w-5xl gap-0 overflow-hidden p-0">
+      <DialogContent className="flex h-screen max-h-none w-screen max-w-none gap-0 rounded-none border-0 overflow-hidden p-0 sm:max-w-none">
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <DialogDescription className="sr-only">Guild settings</DialogDescription>
         {/* settings sidebar */}
