@@ -155,3 +155,7 @@ required-features = ["test-support"]
 [[test]]
 name = "admin_integration_policy"
 required-features = ["test-support"]
+
+[[test]]
+name = "integration_tools_api"
+required-features = ["test-support"]
