@@ -183,3 +183,141 @@ async fn team_create_and_membership() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+/// Assistant system prompt: admin-only GET/PUT roundtrip, reset via empty
+/// string, and member forbidden (spec: per-org persona prompt, migration 0028).
+#[tokio::test]
+async fn assistant_prompt_roundtrip_gated_by_admin_role() {
+    let ts = test_state_with_db().await;
+    let store: Store = ts.store();
+    let admin = store
+        .identity()
+        .ensure_bootstrap_admin("p@b.c", "hunter226")
+        .await
+        .unwrap();
+    let (_sid, token) = store.identity().create_session(admin).await.unwrap();
+    let user = store.identity().validate_session(&token).await.unwrap();
+    let member = store
+        .identity()
+        .create_user(user.org_id, "pm@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let (_sid2, member_token) = store.identity().create_session(member.id).await.unwrap();
+    let app = guild_server::build_router(ts.state.clone());
+
+    // member forbidden
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/admin/assistant-prompt")
+                .header("authorization", format!("Bearer {member_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // unset → null
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/admin/assistant-prompt")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v["prompt"].is_null());
+
+    // set
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/admin/assistant-prompt")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"prompt": "You are GLaDOS."}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // read back
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/admin/assistant-prompt")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["prompt"], "You are GLaDOS.");
+
+    // over-long prompt refused
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/admin/assistant-prompt")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"prompt": "x".repeat(10_001)}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // empty string resets
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/admin/assistant-prompt")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"prompt": ""}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/admin/assistant-prompt")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v["prompt"].is_null());
+}

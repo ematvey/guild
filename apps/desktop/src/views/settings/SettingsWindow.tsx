@@ -24,6 +24,7 @@ import { apiMe } from "../../transport";
 import { useTheme } from "../../theme";
 import { MachineSection } from "./sections/MachineSection";
 import { ApprovalsSection } from "./sections/ApprovalsSection";
+import { AssistantSection } from "./sections/AssistantSection";
 
 type SectionId =
   | "account"
@@ -31,6 +32,7 @@ type SectionId =
   | "machine"
   | "approvals"
   | "usage"
+  | "assistant"
   | "users"
   | "teams"
   | "models"
@@ -83,6 +85,7 @@ export function SettingsWindow({
       group: "user",
     },
     { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "org", admin: true },
+    { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "org", admin: true },
     { id: "users", label: "Users", icon: <Users className="size-4" />, group: "org", admin: true },
     { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "org", admin: true },
     { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "org", admin: true },
@@ -243,6 +246,8 @@ function SectionBody({
       return <ApprovalsSection />;
     case "usage":
       return <LazySection load={() => import("./sections/UsageSection")} name="UsageSection" />;
+    case "assistant":
+      return <AssistantSection />;
     case "users":
       return <LazySection load={() => import("./sections/UsersSection")} name="UsersSection" />;
     case "teams":

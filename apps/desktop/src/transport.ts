@@ -664,6 +664,34 @@ export async function setApproval(policy: ApprovalPolicy | null): Promise<void> 
   }
 }
 
+/// Reads the org's admin-configured assistant system prompt; null = using the
+/// built-in default ("You are a helpful assistant." + server-owned tool
+/// instructions). Admin API.
+export async function getAssistantPrompt(): Promise<string | null> {
+  const token = getToken();
+  const res = await fetch(apiUrl("/api/v1/admin/assistant-prompt"), {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const v = await res.json().catch(() => ({}));
+  return (v?.prompt ?? null) as string | null;
+}
+
+/// Saves the org's assistant system prompt (empty string resets to the
+/// built-in default). Throws with the API's validation message on failure.
+export async function setAssistantPrompt(prompt: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(apiUrl("/api/v1/admin/assistant-prompt"), {
+    method: "PUT",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? `prompt rejected (${res.status})`);
+  }
+}
+
 export interface Release {
   id: string;
   version: string;
