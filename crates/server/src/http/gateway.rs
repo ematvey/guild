@@ -138,7 +138,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/admin/gateway/keys", axum::routing::post(set_key))
         .route(
             "/api/v1/admin/gateway/routes",
-            axum::routing::put(set_route),
+            axum::routing::get(list_routes).put(set_route),
         )
 }
 
@@ -190,6 +190,15 @@ async fn set_key(
         .upsert_provider_key(admin.0.org_id, provider, base_url, key, &master)
         .await?;
     Ok(Json(serde_json::json!({})))
+}
+
+async fn list_routes(
+    State(state): State<AppState>,
+    admin: AdminUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let rows = store.gateway().list_routes(admin.0.org_id).await?;
+    Ok(Json(serde_json::json!({ "routes": rows })))
 }
 
 async fn set_route(

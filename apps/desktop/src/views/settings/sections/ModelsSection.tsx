@@ -51,12 +51,33 @@ export default function ModelsSection() {
 
   const reload = useCallback(() => {
     setError(null);
-    api<{ models: string[] }>("GET", "/api/v1/gateway/models")
-      .then((r) => setRoutes(r.models.map((m) => blankRoute(m))))
-      .catch((e) => {
-        setRoutes([]);
-        setError(e instanceof Error ? e.message : String(e));
-      });
+    // Full route rows (no secrets) — prefilled editing; fallback to bare
+    // model names when the admin GET is unavailable.
+    api<
+        { routes: { model: string; provider: string; enabled: boolean; price_per_mtok_in_usd: number; price_per_mtok_out_usd: number; quota_monthly_usd: number | null; reasoning: boolean; context_window: number | null }[] }
+      >("GET", "/api/v1/admin/gateway/routes")
+      .then((r) =>
+        setRoutes(
+          r.routes.map((row) => ({
+            model: row.model,
+            provider: row.provider,
+            enabled: row.enabled,
+            price_in: String(row.price_per_mtok_in_usd ?? ""),
+            price_out: String(row.price_per_mtok_out_usd ?? ""),
+            quota_monthly_usd: row.quota_monthly_usd != null ? String(row.quota_monthly_usd) : "",
+            reasoning: row.reasoning,
+            context_window: row.context_window != null ? String(row.context_window) : "",
+          })),
+        ),
+      )
+      .catch(() =>
+        api<{ models: string[] }>("GET", "/api/v1/gateway/models")
+          .then((r) => setRoutes(r.models.map((m) => blankRoute(m))))
+          .catch((e) => {
+            setRoutes([]);
+            setError(e instanceof Error ? e.message : String(e));
+          }),
+      );
   }, []);
 
   useEffect(reload, [reload]);
