@@ -136,6 +136,7 @@ function UpdateToast() {
 }
 
 function DesktopApp() {
+  const [role, setRole] = useState<string>("member");
   const [mode, setMode] = useState<"pair" | "manual">("pair");
   const [code, setCode] = useState("");
   const [url, setUrl] = useState(defaultServerUrl());
@@ -174,6 +175,11 @@ function DesktopApp() {
     const info = await invoke<any>("rpc_request", { method: "session.info", params: {} });
     const baseUrl = info.result?.base_url ?? url;
     setUser(info.result?.email ?? fallbackEmail);
+    // Engine mode shares the same session token in localStorage — fetch the
+    // role for settings gating (fallback member on any failure).
+    apiMe()
+      .then((u) => setRole(u?.role ?? "member"))
+      .catch(() => setRole("member"));
     try {
       localStorage.setItem("guild.serverUrl", baseUrl);
       // Unified shell: the webview talks to the same server over HTTP, so the
@@ -241,7 +247,7 @@ function DesktopApp() {
     // engine-side debugging but is no longer the primary surface.
     return (
       <>
-        <WebChat email={user} onSignOut={signOut} />
+        <WebChat email={user} role={role} onSignOut={signOut} />
         {adminUrl && (
           <a
             href={adminUrl}
@@ -336,6 +342,7 @@ export function Splash() {
 
 function AppInner() {
   const [email, setEmail] = useState<string | null>(null);
+  const [role, setRole] = useState<string>("member");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -347,7 +354,10 @@ function AppInner() {
     }
     // web mode: same-origin auth shared with /admin
     apiMe()
-      .then((u) => setEmail(u?.email ?? null))
+      .then((u) => {
+        setEmail(u?.email ?? null);
+        setRole(u?.role ?? "member");
+      })
       .finally(() => setReady(true));
   }, []);
 
@@ -359,7 +369,7 @@ function AppInner() {
       clearToken();
       setEmail(null);
     };
-    return email ? <WebChat email={email} onSignOut={signOut} /> : <WebLogin onLoggedIn={setEmail} />;
+    return email ? <WebChat email={email} role={role} onSignOut={signOut} /> : <WebLogin onLoggedIn={setEmail} />;
   }
   return <DesktopApp />;
 }

@@ -1,0 +1,124 @@
+// Thin API wrapper: bearer token in localStorage, single error envelope.
+
+const TOKEN_KEY = "guild_token";
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(t: string) {
+  localStorage.setItem(TOKEN_KEY, t);
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export class ApiError extends Error {
+  constructor(
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+  const token = getToken();
+  const res = await fetch(path, {
+    method,
+    headers: {
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) {
+    clearToken();
+    throw new ApiError("unauthorized", "session expired — sign in again");
+  }
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new ApiError(v?.error?.code ?? "unknown", v?.error?.message ?? res.statusText);
+  }
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return text ? JSON.parse(text) : (undefined as T);
+}
+
+export async function apiBytes(path: string): Promise<ArrayBuffer> {
+  const token = getToken();
+  const res = await fetch(path, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new ApiError(v?.error?.code ?? "unknown", v?.error?.message ?? res.statusText);
+  }
+  return res.arrayBuffer();
+}
+
+export interface UserInfo {
+  id: string;
+  email: string;
+  org_id: string;
+  role: string;
+}
+
+export async function me(): Promise<UserInfo> {
+  return api<UserInfo>("GET", "/api/v1/auth/me");
+}
+
+export async function login(email: string, password: string): Promise<UserInfo> {
+  const r = await api<{ token: string; user: UserInfo }>("POST", "/api/v1/auth/login", { email, password });
+  setToken(r.token);
+  return r.user;
+}
+
+/** Streams a chat completion; onEvent gets each SSE frame's parsed JSON. */
+export async function streamChat(
+  chatId: string,
+  model: string,
+  prompt: string,
+  onEvent: (ev: Record<string, unknown>) => void,
+): Promise<void> {
+  const token = getToken();
+  const res = await fetch("/api/v1/gateway/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ chat_id: chatId, model, messages: [{ role: "user", content: prompt }] }),
+  });
+  if (!res.ok || !res.body) {
+    const v = await res.json().catch(() => ({}));
+    throw new ApiError(v?.error?.code ?? "unknown", v?.error?.message ?? res.statusText);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const frames = buf.split("\n\n");
+    buf = frames.pop() ?? "";
+    for (const frame of frames) {
+      const line = frame.split("\n").find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      try {
+        onEvent(JSON.parse(line.slice(6)));
+      } catch {
+        // ignore malformed frames
+      }
+    }
+  }
+}
+
+export interface PairingToken {
+  id: string;
+  secret: string;
+  expires_at: string;
+}
+
+/// Issues a one-time desktop-enrollment code; the client composes the full
+/// code as `g1|<server_url>|<secret>` (the URL is routing info).
+export async function createPairingToken(ttlMinutes = 30): Promise<PairingToken> {
+  return api<PairingToken>("POST", "/api/v1/auth/pairing-tokens", { ttl_minutes: ttlMinutes });
+}

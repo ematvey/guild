@@ -150,7 +150,7 @@ export async function apiLogin(
   return { email: v.user?.email ?? email };
 }
 
-export async function apiMe(): Promise<{ email: string } | null> {
+export async function apiMe(): Promise<{ email: string; role: string } | null> {
   const token = getToken();
   if (!token) return null;
   const res = await fetch("/api/v1/auth/me", {
@@ -161,7 +161,7 @@ export async function apiMe(): Promise<{ email: string } | null> {
     return null;
   }
   const v = await res.json().catch(() => ({}));
-  return { email: v.email };
+  return { email: v.email, role: v.role ?? "member" };
 }
 
 export async function listModels(): Promise<string[]> {
