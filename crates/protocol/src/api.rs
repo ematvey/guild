@@ -20,6 +20,8 @@ pub struct UserInfo {
     pub email: String,
     pub org_id: Uuid,
     pub role: String,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -620,6 +622,8 @@ mod tests {
                 email: "a@b.c".into(),
                 org_id: Uuid::now_v7(),
                 role: "admin".into(),
+                display_name: Some("Admin".into()),
+                avatar_url: None,
             },
         };
         let s = serde_json::to_string(&r).unwrap();

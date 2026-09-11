@@ -188,6 +188,8 @@ fn user_info(u: &UserRow) -> UserInfo {
         email: u.email.clone(),
         org_id: u.org_id,
         role: u.role.clone(),
+        display_name: u.display_name.clone(),
+        avatar_url: u.avatar_url.clone(),
     }
 }
 

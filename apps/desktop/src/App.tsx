@@ -165,6 +165,8 @@ function UpdateToast() {
 
 function DesktopApp() {
   const [role, setRole] = useState<string>("member");
+  const [displayName, setDisplayName] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [mode, setMode] = useState<"pair" | "manual">("pair");
   const [code, setCode] = useState("");
   const [url, setUrl] = useState(defaultServerUrl());
@@ -203,9 +205,14 @@ function DesktopApp() {
     const baseUrl = info.result?.base_url ?? url;
     setUser(info.result?.email ?? fallbackEmail);
     // Engine mode shares the same session token in localStorage — fetch the
-    // role for settings gating (fallback member on any failure).
+    // role for settings gating and the IdP profile for the sidebar (fallback
+    // member / bare email on any failure).
     apiMe()
-      .then((u) => setRole(u?.role ?? "member"))
+      .then((u) => {
+        setRole(u?.role ?? "member");
+        setDisplayName(u?.display_name ?? null);
+        setAvatarUrl(u?.avatar_url ?? null);
+      })
       .catch(() => setRole("member"));
     try {
       localStorage.setItem("guild.serverUrl", baseUrl);
@@ -269,7 +276,13 @@ function DesktopApp() {
     // engine-side debugging but is no longer the primary surface.
     return (
       <>
-        <WebChat email={user} role={role} onSignOut={signOut} />
+        <WebChat
+          email={user}
+          role={role}
+          displayName={displayName}
+          avatarUrl={avatarUrl}
+          onSignOut={signOut}
+        />
         <UpdateToast />
       </>
     );
@@ -355,6 +368,8 @@ export function Splash() {
 function AppInner() {
   const [email, setEmail] = useState<string | null>(null);
   const [role, setRole] = useState<string>("member");
+  const [displayName, setDisplayName] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -379,6 +394,8 @@ function AppInner() {
       .then((u) => {
         setEmail(u?.email ?? null);
         setRole(u?.role ?? "member");
+        setDisplayName(u?.display_name ?? null);
+        setAvatarUrl(u?.avatar_url ?? null);
       })
       .finally(() => setReady(true));
   }, []);
@@ -391,7 +408,17 @@ function AppInner() {
       clearToken();
       setEmail(null);
     };
-    return email ? <WebChat email={email} role={role} onSignOut={signOut} /> : <WebLogin onLoggedIn={setEmail} />;
+    return email ? (
+      <WebChat
+        email={email}
+        role={role}
+        displayName={displayName}
+        avatarUrl={avatarUrl}
+        onSignOut={signOut}
+      />
+    ) : (
+      <WebLogin onLoggedIn={setEmail} />
+    );
   }
   return <DesktopApp />;
 }

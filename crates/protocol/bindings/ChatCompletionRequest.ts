@@ -24,4 +24,11 @@ client_tools: boolean,
  * includes it in the system prompt it builds (the server owns the
  * prompt; the client never sends one for agent turns).
  */
-project_dir?: string, };
+project_dir?: string, 
+/**
+ * Context attachments for this turn: uploaded beforehand via
+ * POST /api/v1/chats/{id}/attachments; the server inlines documents'
+ * text and passes image/audio parts when the route supports the
+ * modality (spec §4.3).
+ */
+attachment_ids: Array<string>, };
