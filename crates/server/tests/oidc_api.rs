@@ -11,7 +11,9 @@ async fn fake_idp(user_email: &str) -> wiremock::MockServer {
         .start()
         .await;
     let email = user_email.to_string();
-    let uri = server.uri();
+    let base = server.uri();
+    let uri = base.clone();
+    let avatar_uri = base.clone();
 
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path(
@@ -45,8 +47,12 @@ async fn fake_idp(user_email: &str) -> wiremock::MockServer {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
             if auth == "Bearer idp-access-token" {
-                wiremock::ResponseTemplate::new(200)
-                    .set_body_json(json!({"email": email, "sub": "user-1"}))
+                wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                    "email": email,
+                    "sub": "user-1",
+                    "name": "Sso User",
+                    "picture": format!("{avatar_uri}/avatar.png"),
+                }))
             } else {
                 wiremock::ResponseTemplate::new(401)
             }
@@ -135,7 +141,8 @@ async fn oidc_login_provisions_user_and_issues_session() {
         .unwrap()
         .to_string();
 
-    // callback exchanges the code, provisions the user, issues a session
+    // callback exchanges the code, provisions the user with the IdP profile,
+    // and redirects to the app with the session token in the URL fragment
     let res = app
         .clone()
         .oneshot(
@@ -148,15 +155,25 @@ async fn oidc_login_provisions_user_and_issues_session() {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let v: Value = serde_json::from_slice(&body).unwrap();
-    let token = v["token"].as_str().unwrap().to_string();
-    assert_eq!(v["email"], "sso.user@example.org");
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let location = res
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let fragment = location.split('#').nth(1).unwrap_or_default().to_string();
+    let params: std::collections::HashMap<String, String> = fragment
+        .split('&')
+        .filter_map(|kv| kv.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let token = params["oidc_token"].clone();
+    assert!(!token.is_empty(), "{location}");
+    assert_eq!(params["email"], "sso.user%40example.org"); // url-encoded
 
-    // session works and the user is an org member
+    // session works and the user is an org member with the IdP profile
     let res = app
         .clone()
         .oneshot(
@@ -175,6 +192,8 @@ async fn oidc_login_provisions_user_and_issues_session() {
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["org_id"], fs.org_id.to_string());
     assert_eq!(v["role"], "member");
+    assert_eq!(v["display_name"], "Sso User");
+    assert_eq!(v["avatar_url"], format!("{}/avatar.png", idp.uri()));
 
     // user row persisted with identity_type oidc (via the me endpoint's email)
     let row = store
@@ -185,7 +204,8 @@ async fn oidc_login_provisions_user_and_issues_session() {
         .expect("oidc user provisioned");
     let _ = row.id;
 
-    // second login for the same email reuses the account
+    // second login for the same email reuses the account (and re-syncs the
+    // profile — same claims, no duplicate row)
     let res = app
         .clone()
         .oneshot(
@@ -198,7 +218,7 @@ async fn oidc_login_provisions_user_and_issues_session() {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
     // still exactly one row with that email (find_by_email returns one)
     let again = store
         .identity()

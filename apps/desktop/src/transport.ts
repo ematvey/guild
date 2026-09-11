@@ -129,7 +129,7 @@ export function startEventStream(): () => void {
     controller?.abort();
     if (heartbeat) clearInterval(heartbeat);
   };
-} // shared with the admin console app
+} // shared with the settings window client code
 
 export function getToken(): string | null {
   try {
@@ -171,7 +171,12 @@ export async function apiLogin(
   return { email: v.user?.email ?? email };
 }
 
-export async function apiMe(): Promise<{ email: string; role: string } | null> {
+export async function apiMe(): Promise<{
+  email: string;
+  role: string;
+  display_name?: string;
+  avatar_url?: string;
+} | null> {
   const token = getToken();
   if (!token) return null;
   const res = await fetch(apiUrl("/api/v1/auth/me"), {
@@ -182,7 +187,12 @@ export async function apiMe(): Promise<{ email: string; role: string } | null> {
     return null;
   }
   const v = await res.json().catch(() => ({}));
-  return { email: v.email, role: v.role ?? "member" };
+  return {
+    email: v.email,
+    role: v.role ?? "member",
+    display_name: v.display_name ?? undefined,
+    avatar_url: v.avatar_url ?? undefined,
+  };
 }
 
 export async function listModels(): Promise<string[]> {
