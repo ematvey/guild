@@ -472,21 +472,48 @@ pub fn next_turn(events: &[ThreadEvent]) -> u32 {
         + 1
 }
 
-/// Model-facing history derived from the thread event log (spec §A.4):
-/// user → `role:user`; assistant blocks → `role:assistant` with concatenated
-/// text blocks, `tool_calls` from the tool_call blocks, and reasoning
-/// carried on the message so openai.rs replays it as `reasoning_content`
-/// (never dropped, dsh rule); tool_result → `role:tool`. SystemMessage
-/// events are log-only — the system prompt rides on the request header, not
-/// in message history.
+/// Model-facing history derived from the thread event log (spec §A.4, §B of
+/// the compaction design): user → `role:user`; assistant blocks →
+/// `role:assistant` with concatenated text blocks, `tool_calls` from the
+/// tool_call blocks, and reasoning carried on the message so openai.rs
+/// replays it as `reasoning_content` (never dropped, dsh rule); tool_result →
+/// `role:tool`. SystemMessage and approval events are log-only — the system
+/// prompt rides on the request header, not in message history.
+///
+/// Compaction checkpoints (design §B): message-bearing events are buffered
+/// until a `Compaction` event, which replaces the buffer with a summary
+/// user message plus the verbatim tail of the last `keep_last.unwrap_or(4)`
+/// buffered messages (older ones are folded into the summary and dropped).
+/// Multiple compactions compose — each applies at its position to the
+/// segment accumulated since the previous one. Events after the last
+/// compaction flow exactly as in the uncompacted derivation.
 pub fn build_model_history(events: &[ThreadEvent]) -> Vec<Message> {
     let mut out = Vec::new();
+    // Message-bearing Messages since the last compaction (or thread start).
+    let mut buffer: Vec<Message> = Vec::new();
     for ev in events {
         match ev {
-            ThreadEvent::UserMessage { content } => out.push(Message::user(content.clone())),
-            ThreadEvent::SystemMessage { .. } | ThreadEvent::Compaction { .. } => {}
+            ThreadEvent::UserMessage { content } => {
+                buffer.push(Message::user(content.clone()))
+            }
+            ThreadEvent::SystemMessage { .. } => {}
             // Log-only lifecycle records: never part of model-facing history.
             ThreadEvent::ApprovalRequest { .. } | ThreadEvent::ApprovalDecision { .. } => {}
+            ThreadEvent::Compaction {
+                summary, keep_last, ..
+            } => {
+                // Summary replaces everything before the compaction; the
+                // verbatim tail (last keep_last buffered messages) is
+                // re-emitted after it; the rest of the buffer is dropped.
+                // tokens_before/model/usage are informational — ignored here.
+                out.push(Message::user(format!(
+                    "[Conversation summary so far]\n\n{summary}"
+                )));
+                let keep = usize::try_from(keep_last.unwrap_or(4)).unwrap_or(usize::MAX);
+                let tail_start = buffer.len().saturating_sub(keep);
+                out.extend(buffer.split_off(tail_start));
+                buffer.clear();
+            }
             ThreadEvent::AssistantMessage { blocks, .. } => {
                 let mut text = String::new();
                 let mut reasoning = String::new();
@@ -509,7 +536,7 @@ pub fn build_model_history(events: &[ThreadEvent]) -> Vec<Message> {
                         }
                     }
                 }
-                out.push(Message {
+                buffer.push(Message {
                     role: "assistant".into(),
                     content: text,
                     tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
@@ -518,10 +545,12 @@ pub fn build_model_history(events: &[ThreadEvent]) -> Vec<Message> {
                 });
             }
             ThreadEvent::ToolResult { call_id, content, .. } => {
-                out.push(Message::tool_result(call_id, content));
+                buffer.push(Message::tool_result(call_id, content));
             }
         }
     }
+    // No further compaction: everything buffered flows as today.
+    out.extend(buffer);
     out
 }
 
@@ -1755,6 +1784,205 @@ mod tests {
     #[test]
     fn approval_state_key_format() {
         assert_eq!(approval_state_key("call-1"), "approval:call-1");
+    }
+
+    // --- compaction derivation (design §B) ---
+
+    fn user_ev(content: &str) -> ThreadEvent {
+        ThreadEvent::UserMessage { content: content.into() }
+    }
+
+    fn text_assistant(turn: u32, step: u32, text: &str) -> ThreadEvent {
+        ThreadEvent::AssistantMessage {
+            turn,
+            step,
+            blocks: vec![Block::Text { text: text.into() }],
+            usage: UsagePayload::default(),
+            model: "deepseek-test".into(),
+            interrupted: None,
+        }
+    }
+
+    fn compaction(summary: &str, keep_last: Option<u32>) -> ThreadEvent {
+        ThreadEvent::Compaction {
+            summary: summary.into(),
+            tokens_before: None,
+            keep_last,
+            model: None,
+            usage: None,
+        }
+    }
+
+    fn summarized(summary: &str) -> String {
+        format!("[Conversation summary so far]\n\n{summary}")
+    }
+
+    #[test]
+    fn compaction_replaces_prefix_with_summary_and_tail() {
+        let events = vec![
+            user_ev("q1"),
+            text_assistant(1, 0, "a1"),
+            user_ev("q2"),
+            text_assistant(1, 1, "a2"),
+            compaction("S", Some(2)),
+            user_ev("q3"),
+            text_assistant(2, 0, "a3"),
+        ];
+        let msgs = build_model_history(&events);
+        assert_eq!(msgs.len(), 5, "summary + 2 tail + 2 post-compaction");
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, summarized("S"));
+        assert_eq!(msgs[1].content, "q2", "tail = last keep_last buffered");
+        assert_eq!(msgs[2].content, "a2");
+        assert_eq!(msgs[3].content, "q3", "post-compaction events flow");
+        assert_eq!(msgs[4].content, "a3");
+        // Older messages are folded into the summary, not re-emitted.
+        assert!(!msgs.iter().any(|m| m.content == "q1"));
+        assert!(!msgs.iter().any(|m| m.content == "a1"));
+    }
+
+    #[test]
+    fn compaction_keep_last_defaults_to_four() {
+        let events = vec![
+            user_ev("q1"),
+            text_assistant(1, 0, "a1"),
+            user_ev("q2"),
+            text_assistant(1, 1, "a2"),
+            user_ev("q3"),
+            text_assistant(2, 0, "a3"),
+            user_ev("q4"),
+            text_assistant(3, 0, "a4"),
+            compaction("S", None),
+            user_ev("q5"),
+        ];
+        let msgs = build_model_history(&events);
+        // summary + last 4 buffered (q3,a3,q4,a4) + q5
+        assert_eq!(msgs.len(), 6);
+        assert_eq!(msgs[0].content, summarized("S"));
+        assert_eq!(msgs[1].content, "q3");
+        assert_eq!(msgs[4].content, "a4");
+        assert_eq!(msgs[5].content, "q5");
+        assert!(!msgs.iter().any(|m| m.content == "q1" || m.content == "a1"));
+    }
+
+    #[test]
+    fn compaction_keep_last_larger_than_buffer_emits_all() {
+        let events = vec![
+            user_ev("q1"),
+            text_assistant(1, 0, "a1"),
+            compaction("S", Some(99)),
+            user_ev("q2"),
+        ];
+        let msgs = build_model_history(&events);
+        assert_eq!(msgs.len(), 4, "summary + both buffered + post");
+        assert_eq!(msgs[0].content, summarized("S"));
+        assert_eq!(msgs[1].content, "q1");
+        assert_eq!(msgs[2].content, "a1");
+        assert_eq!(msgs[3].content, "q2");
+    }
+
+    #[test]
+    fn compaction_keep_last_zero_emits_summary_only() {
+        let events = vec![
+            user_ev("q1"),
+            text_assistant(1, 0, "a1"),
+            compaction("S", Some(0)),
+            user_ev("q2"),
+        ];
+        let msgs = build_model_history(&events);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, summarized("S"));
+        assert_eq!(msgs[1].content, "q2");
+    }
+
+    #[test]
+    fn two_compactions_compose() {
+        let events = vec![
+            user_ev("q1"),
+            text_assistant(1, 0, "a1"),
+            compaction("S1", Some(1)),
+            user_ev("q2"),
+            text_assistant(2, 0, "a2"),
+            compaction("S2", Some(1)),
+            user_ev("q3"),
+        ];
+        let msgs = build_model_history(&events);
+        // Each compaction applies at its position: S1 replaces q1/a1 keeping
+        // a1; S2 replaces the segment since S1 (q2/a2) keeping a2; q3 flows.
+        assert_eq!(msgs.len(), 5);
+        assert_eq!(msgs[0].content, summarized("S1"));
+        assert_eq!(msgs[1].content, "a1");
+        assert_eq!(msgs[2].content, summarized("S2"));
+        assert_eq!(msgs[3].content, "a2");
+        assert_eq!(msgs[4].content, "q3");
+    }
+
+    #[test]
+    fn compaction_informational_fields_ignored_by_derivation() {
+        let plain = vec![user_ev("q1"), compaction("S", Some(1)), user_ev("q2")];
+        let annotated = vec![
+            user_ev("q1"),
+            ThreadEvent::Compaction {
+                summary: "S".into(),
+                tokens_before: Some(12345),
+                keep_last: Some(1),
+                model: Some("deepseek-test".into()),
+                usage: Some(UsagePayload {
+                    tokens_in: Some(12000),
+                    tokens_out: Some(345),
+                    cost_usd: Some(0.01),
+                }),
+            },
+            user_ev("q2"),
+        ];
+        assert_eq!(build_model_history(&plain), build_model_history(&annotated));
+    }
+
+    #[test]
+    fn compaction_preserves_per_event_semantics() {
+        // Reasoning replay, tool_call parsing and tool results survive
+        // compaction both in the tail and after the checkpoint.
+        let events = vec![
+            user_ev("q1"),
+            text_assistant(1, 0, "gone"),
+            compaction("S", Some(3)),
+            user_ev("q2"),
+            ThreadEvent::AssistantMessage {
+                turn: 2,
+                step: 0,
+                blocks: vec![
+                    Block::Reasoning { text: "think".into() },
+                    Block::ToolCall {
+                        id: "c1".into(),
+                        name: "read".into(),
+                        arguments: "{\"path\":\"a.rs\"}".into(),
+                    },
+                ],
+                usage: UsagePayload::default(),
+                model: "deepseek-test".into(),
+                interrupted: None,
+            },
+            ThreadEvent::ToolResult {
+                turn: 2,
+                step: 0,
+                call_id: "c1".into(),
+                name: "read".into(),
+                content: "fn main() {}".into(),
+                is_error: false,
+                meta: None,
+            },
+        ];
+        let msgs = build_model_history(&events);
+        assert_eq!(msgs.len(), 6, "summary + tail(q1,a1) + q2 + assistant(tool) + tool");
+        assert_eq!(msgs[0].content, summarized("S"));
+        assert_eq!(msgs[3].content, "q2");
+        assert_eq!(msgs[4].reasoning.as_deref(), Some("think"));
+        let calls = msgs[4].tool_calls.as_ref().expect("tool calls carried");
+        assert_eq!(calls[0].id, "c1");
+        assert_eq!(calls[0].arguments["path"], "a.rs");
+        assert_eq!(msgs[5].role, "tool");
+        assert_eq!(msgs[5].tool_call_id.as_deref(), Some("c1"));
+        assert_eq!(msgs[5].content, "fn main() {}");
     }
 
     #[test]
