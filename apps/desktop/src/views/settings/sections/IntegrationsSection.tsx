@@ -1,11 +1,21 @@
 //! IntegrationsSection — admin settings: a list screen of available and
 //! configured integrations; the detail screen holds the enable toggle,
-//! JSON config editor, save and delete.
+//! JSON config editor, save and delete. MCP plugin rows additionally show
+//! the mcp url, secret names with timestamps, a write-only secret form,
+//! and a per-role tool-policy editor.
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Pencil, Trash2, Webhook } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  KeyRound,
+  Pencil,
+  Trash2,
+  Webhook,
+} from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
+import { Input } from "@guild/ui/components/input";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
 
@@ -21,13 +31,58 @@ interface AvailableEntry {
   category?: string;
 }
 
+interface SecretEntry {
+  name: string;
+  updated_at: string;
+}
+
+const TOOL_CLASSES = ["read", "write", "admin"] as const;
+type ToolClass = (typeof TOOL_CLASSES)[number];
+type ToolRole = "member" | "admin";
+type ToolPolicy = Partial<Record<ToolRole, ToolClass[]>>;
+
 const CATEGORY_LABELS: Record<string, string> = {
   fetch: "Fetch providers",
   search: "Search providers",
   other: "Other",
+  mcp: "MCP plugins",
 };
 
 const categoryLabel = (c?: string) => CATEGORY_LABELS[c ?? "other"] ?? CATEGORY_LABELS.other;
+
+const ROLES: ToolRole[] = ["member", "admin"];
+
+/** Reads config.tool_policy into the checkbox-editor shape, ignoring
+ * anything the editor cannot represent. */
+function readPolicy(config: Record<string, unknown> | null): ToolPolicy {
+  const raw = config?.["tool_policy"] as Record<string, unknown> | undefined;
+  const out: ToolPolicy = {};
+  for (const role of ROLES) {
+    const list = raw?.[role];
+    if (Array.isArray(list)) {
+      const classes = list.filter((c): c is ToolClass =>
+        (TOOL_CLASSES as readonly string[]).includes(c as string),
+      );
+      if (classes.length > 0) out[role] = classes;
+    }
+  }
+  return out;
+}
+
+/** Drops empty role lists so the saved config stays minimal. */
+function cleanPolicy(policy: ToolPolicy): ToolPolicy {
+  const out: ToolPolicy = {};
+  for (const role of ROLES) {
+    if (policy[role]?.length) out[role] = policy[role];
+  }
+  return out;
+}
+
+const toggleClass = (policy: ToolPolicy, role: ToolRole, cls: ToolClass): ToolPolicy => {
+  const cur = policy[role] ?? [];
+  const next = cur.includes(cls) ? cur.filter((c) => c !== cls) : [...cur, cls];
+  return { ...policy, [role]: next };
+};
 
 const backBtn =
   "mb-4 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
@@ -66,7 +121,10 @@ export default function IntegrationsSection() {
     return (
       <IntegrationDetail
         name={detail}
-        category={available?.find((a) => a.name === detail)?.category}
+        category={
+          available?.find((a) => a.name === detail)?.category ??
+          (configured ? "mcp" : undefined)
+        }
         initialConfig={configured?.config ?? null}
         initialEnabled={configured?.enabled ?? false}
         onChanged={reload}
@@ -89,8 +147,19 @@ export default function IntegrationsSection() {
           <Skeleton className="h-14 w-full rounded-lg" />
         </div>
       ) : (
-        (["fetch", "search", "other"] as const).map((cat) => {
-          const inCat = available.filter((a) => (a.category ?? "other") === cat);
+        (["fetch", "search", "other", "mcp"] as const).map((cat) => {
+          // Configured registry plugins have no available entry; every such
+          // row is a v2 MCP plugin, so they list under the mcp category.
+          const configuredOnly =
+            cat === "mcp"
+              ? (rows ?? [])
+                  .filter((r) => !availableNames.has(r.name))
+                  .map((r) => ({ name: r.name, category: "mcp" as const }))
+              : [];
+          const inCat = [
+            ...available.filter((a) => (a.category ?? "other") === cat),
+            ...configuredOnly,
+          ];
           if (inCat.length === 0) return null;
           return (
             <section key={cat}>
@@ -137,7 +206,7 @@ export default function IntegrationsSection() {
           );
         })
       )}
-      {availableNames.size === 0 && rows !== null && (
+      {availableNames.size === 0 && (rows ?? []).length === 0 && (
         <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
           No integrations are available in this build.
         </p>
@@ -162,6 +231,8 @@ function IntegrationDetail({
   onBack: () => void;
 }) {
   const configured = initialConfig !== null;
+  const isMcp =
+    configured && typeof initialConfig?.mcp === "object" && initialConfig.mcp !== null;
   // The saved integration is facts first; editing is an explicit mode.
   const [mode, setMode] = useState<"view" | "edit">(configured ? "view" : "edit");
   const [enabled, setEnabled] = useState(initialEnabled);
@@ -171,6 +242,29 @@ function IntegrationDetail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // MCP plugin facts: stored secret names + timestamps, never values.
+  const [secrets, setSecrets] = useState<SecretEntry[] | null>(null);
+  const [secretName, setSecretName] = useState("");
+  const [secretValue, setSecretValue] = useState("");
+  const [confirmSecret, setConfirmSecret] = useState<string | null>(null);
+  // Tool policy draft: checkbox state per role; saved into config.tool_policy.
+  const [policy, setPolicy] = useState<ToolPolicy>(
+    readPolicy(initialConfig),
+  );
+
+  const reloadSecrets = useCallback(() => {
+    if (!configured) return;
+    api<{ secrets: SecretEntry[] }>(
+      "GET",
+      `/api/v1/admin/integrations/${encodeURIComponent(name)}/secrets`,
+    )
+      .then((r) => setSecrets(r.secrets))
+      .catch(() => setSecrets([]));
+  }, [configured, name]);
+
+  useEffect(() => {
+    reloadSecrets();
+  }, [reloadSecrets]);
 
   const save = async () => {
     if (busy) return;
@@ -178,6 +272,9 @@ function IntegrationDetail({
     setError(null);
     try {
       const cfg = JSON.parse(text) as Record<string, unknown>;
+      const clean = cleanPolicy(policy);
+      if (Object.keys(clean).length > 0) cfg.tool_policy = clean;
+      else delete cfg.tool_policy;
       await api("PUT", `/api/v1/admin/integrations/${encodeURIComponent(name)}`, {
         config: cfg,
         enabled,
@@ -192,6 +289,47 @@ function IntegrationDetail({
             ? e.message
             : String(e),
       );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveSecret = async () => {
+    if (busy || !secretName.trim() || !secretValue) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(
+        "PUT",
+        `/api/v1/admin/integrations/${encodeURIComponent(name)}/secrets`,
+        { name: secretName.trim(), value: secretValue },
+      );
+      setSecretName("");
+      setSecretValue("");
+      setSecrets(null);
+      reloadSecrets();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteSecret = async (secret: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(
+        "DELETE",
+        `/api/v1/admin/integrations/${encodeURIComponent(name)}/secrets/${encodeURIComponent(secret)}`,
+      );
+      setConfirmSecret(null);
+      setSecrets(null);
+      onChanged();
+      reloadSecrets();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -242,6 +380,35 @@ function IntegrationDetail({
             />
           </div>
 
+          {isMcp && (
+            <div>
+              <p className={label}>Tool policy (saved into config.tool_policy)</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Classes each role may call; unchecked roles get the manifest defaults.
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {ROLES.map((role) => (
+                  <div key={role} className="rounded-lg border border-border px-3 py-2">
+                    <p className="text-sm font-medium capitalize">{role}</p>
+                    <div className="mt-1 space-y-1">
+                      {TOOL_CLASSES.map((cls) => (
+                        <label key={cls} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            className="size-4 accent-foreground"
+                            checked={policy[role]?.includes(cls) ?? false}
+                            onChange={() => setPolicy((p) => toggleClass(p, role, cls))}
+                          />
+                          <span className="capitalize text-muted-foreground">{cls}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
             <Button disabled={busy} onClick={save}>
@@ -253,6 +420,7 @@ function IntegrationDetail({
                 onClick={() => {
                   setText(JSON.stringify(initialConfig, null, 2));
                   setEnabled(initialEnabled);
+                  setPolicy(readPolicy(initialConfig));
                   setError(null);
                   setMode("view");
                 }}
@@ -285,6 +453,117 @@ function IntegrationDetail({
               {JSON.stringify(initialConfig, null, 2)}
             </pre>
           </div>
+
+          {isMcp && (
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className={label}>Connection</p>
+              <p className="mt-1 font-mono text-xs break-all">
+                {String((initialConfig.mcp as Record<string, unknown>).url ?? "(no url)")}
+              </p>
+            </div>
+          )}
+
+          {isMcp && (
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-center gap-1.5">
+                <KeyRound className="size-3.5 text-muted-foreground" />
+                <p className={label}>Secrets</p>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Passed to the MCP server as headers on connect; values are
+                never shown or returned by the API.
+              </p>
+              {secrets === null ? (
+                <Skeleton className="mt-2 h-8 w-56" />
+              ) : secrets.length === 0 ? (
+                <p className="mt-2 text-sm text-muted-foreground">No secrets stored.</p>
+              ) : (
+                <ul className="mt-2 space-y-1">
+                  {secrets.map((s) =>
+                    confirmSecret === s.name ? (
+                      <li key={s.name} className="flex items-center gap-2 text-sm">
+                        <span className="font-mono text-xs">{s.name}</span>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => deleteSecret(s.name)}
+                        >
+                          Delete secret
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setConfirmSecret(null)}>
+                          Cancel
+                        </Button>
+                      </li>
+                    ) : (
+                      <li key={s.name} className="flex items-center gap-2 text-sm">
+                        <span className="font-mono text-xs">{s.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          updated {new Date(s.updated_at).toLocaleString()}
+                        </span>
+                        <button
+                          className="text-xs text-muted-foreground transition-colors hover:text-destructive"
+                          onClick={() => setConfirmSecret(s.name)}
+                        >
+                          <Trash2 className="size-3" />
+                        </button>
+                      </li>
+                    ),
+                  )}
+                </ul>
+              )}
+              <div className="mt-3 flex items-end gap-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">Name</p>
+                  <Input
+                    className="h-8 w-40 font-mono text-xs"
+                    value={secretName}
+                    onChange={(e) => setSecretName(e.target.value)}
+                    placeholder="e.g. api_key"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Value (write-only)</p>
+                  <Input
+                    className="h-8 w-56 font-mono text-xs"
+                    type="password"
+                    value={secretValue}
+                    onChange={(e) => setSecretValue(e.target.value)}
+                    placeholder="add or replace"
+                  />
+                </div>
+                <Button size="sm" disabled={busy || !secretName.trim() || !secretValue} onClick={saveSecret}>
+                  {busy ? "Saving…" : "Save secret"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {isMcp && (
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className={label}>Tool policy</p>
+              {Object.keys(cleanPolicy(readPolicy(initialConfig))).length === 0 ? (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Default — manifest tool classes apply to every role.
+                </p>
+              ) : (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {ROLES.map((role) => {
+                    const classes = readPolicy(initialConfig)[role];
+                    if (!classes?.length) return null;
+                    return (
+                      <div key={role}>
+                        <p className="text-sm font-medium capitalize">{role}</p>
+                        <p className="text-xs capitalize text-muted-foreground">
+                          {classes.join(", ")}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
