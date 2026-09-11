@@ -1163,6 +1163,12 @@ export default function WebChat({
     return stored ? clampWidth(stored) : 256;
   });
   const bottom = useRef<HTMLDivElement>(null);
+  // Sticky-scroll: while streaming, follow the generated text ONLY when the
+  // pane is already at the bottom; scrolling up detaches into free scroll,
+  // scrolling back to the last character re-attaches (established chat-app
+  // behavior). The scroll handler keeps `stick.current` truthful.
+  const pane = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
   const ta = useRef<HTMLTextAreaElement>(null);
   const attachAbort = useRef<AbortController | null>(null);
   const loadAbort = useRef<AbortController | null>(null); // in-flight thread-load fetch
@@ -1249,7 +1255,8 @@ export default function WebChat({
   }, []);
 
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
+    if (!stick.current) return;
+    bottom.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
   }, [blocks]);
 
   const refreshChats = async () => setChats(await listChats());
@@ -1284,6 +1291,7 @@ export default function WebChat({
   };
 
   const openChat = async (id: string) => {
+    stick.current = true; // a freshly opened thread starts pinned to the bottom
     if (id === chatId) {
       setOpen(false);
       return;
@@ -1326,6 +1334,7 @@ export default function WebChat({
   };
 
   const newChat = () => {
+    stick.current = true;
     // allowed even mid-generation: the server-side generation continues and
     // is re-attachable when the thread is reopened
     loadSeq.current++; // invalidate any in-flight thread load or generation attach
@@ -1882,7 +1891,16 @@ export default function WebChat({
             </div>
           )
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div
+            ref={pane}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            onScroll={() => {
+              const el = pane.current;
+              if (!el) return;
+              // near-bottom counts as bottom (sub-pixel/rounding slack)
+              stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+            }}
+          >
             <div className="mx-auto w-full max-w-3xl space-y-4 px-4 pb-32 pt-6">
               {blocks.map((b, i) =>
                 b.kind === "user" ? (
