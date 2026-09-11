@@ -512,9 +512,13 @@ fn build_system_prompt(
     );
     if client_tools {
         s.push_str(
-            " You have tools that operate on the user's workspace (read, bash, \
-             edit, write, glob, grep): inspect the workspace with them BEFORE \
-             answering anything that could be about the user's project or files.",
+            " You have tools (read, bash, edit, write, glob, grep) that execute on "
+            "the user's machine via the Guild desktop executor — you never run "
+            "anything yourself and there is no sandbox on your side. Inspect the "
+            "workspace with them BEFORE answering anything that could be about "
+            "the user's project or files. If a tool fails because the machine is "
+            "offline or unbound, say so plainly — never invent an execution "
+            "environment.",
         );
     }
     if has_web_search {
