@@ -557,21 +557,19 @@ function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
   return (
     <Frame
       icon={<Brain className="size-3 shrink-0 text-muted-foreground" />}
-      title={
+      title={(open) => (
         <>
           <span className="mr-3 font-medium text-foreground/80">
             {live ? "Thinking…" : "Thinking"}
           </span>
-          {head && (
-            <>
-              <span aria-hidden className="hidden select-none sm:inline" />
-              <span className="hidden max-w-72 truncate text-muted-foreground sm:inline">
-                {head.slice(0, 160)}
-              </span>
-            </>
+          {/* collapsed only: expanded, the full thoughts show below */}
+          {head && !open && (
+            <span className="hidden max-w-72 truncate text-muted-foreground sm:inline">
+              {head.slice(0, 160)}
+            </span>
           )}
         </>
-      }
+      )}
     >
       <div className="max-h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed text-muted-foreground">
         {text || "…"}
