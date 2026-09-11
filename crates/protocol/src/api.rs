@@ -367,8 +367,20 @@ pub enum ThreadEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         meta: Option<serde_json::Value>,
     },
-    /// Reserved for future compaction payloads; not produced yet.
-    Compaction { summary: String },
+    /// Compaction checkpoint (phase 3): the model-facing history before
+    /// this event is replaced by `summary` (plus a verbatim tail of
+    /// `keep_last` message-bearing events); everything after flows normally.
+    Compaction {
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tokens_before: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        keep_last: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<UsagePayload>,
+    },
     /// A client-tool call is awaiting user approval (phase 2). Log-only:
     /// excluded from model-facing history derivation.
     ApprovalRequest {
