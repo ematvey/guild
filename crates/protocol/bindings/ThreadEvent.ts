@@ -22,4 +22,4 @@ content: string, is_error: boolean,
  * provider-neutral render intent persisted with the event so UI
  * cards reproduce identically on replay. Opaque to the loop.
  */
-meta?: JsonValue | null, } | { "type": "compaction", summary: string, };
+meta?: JsonValue | null, } | { "type": "compaction", summary: string, } | { "type": "approval_request", call_id: string, name: string, arguments: string, } | { "type": "approval_decision", call_id: string, approved: boolean, reason?: string | null, };

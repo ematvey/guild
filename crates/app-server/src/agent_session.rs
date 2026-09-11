@@ -90,6 +90,8 @@ impl ModelTurn for GatewayTurn {
                 Ok(StreamEvent::ToolCompleted { .. }) => None,
                 // attach-endpoint only; never on the completion stream
                 Ok(StreamEvent::Idle) => None,
+                // Approval lifecycle frames are for interactive clients.
+                Ok(StreamEvent::ApprovalRequested { .. }) | Ok(StreamEvent::ApprovalResolved { .. }) => None,
                 Ok(StreamEvent::Error { code, message }) => {
                     Some(Err(ProviderError::Upstream(format!("[{code}] {message}"))))
                 }

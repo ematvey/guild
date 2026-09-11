@@ -270,6 +270,21 @@ pub enum StreamEvent {
         content: String,
         is_error: bool,
     },
+    /// A client-tool call is awaiting user approval (phase 2 gate). All
+    /// attached clients show an approval card; first Approve/Deny wins.
+    ApprovalRequested {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    /// The approval for `call_id` was decided (by any attached client, or by
+    /// the timeout). Updates the card on every client.
+    ApprovalResolved {
+        call_id: String,
+        approved: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     /// Fragment of the model's chain-of-thought reasoning. Accumulates into
     /// the current `reasoning` block of the in-flight assistant turn. On the
     /// attach catch-up path the FIRST frame after attaching carries the full
@@ -354,6 +369,21 @@ pub enum ThreadEvent {
     },
     /// Reserved for future compaction payloads; not produced yet.
     Compaction { summary: String },
+    /// A client-tool call is awaiting user approval (phase 2). Log-only:
+    /// excluded from model-facing history derivation.
+    ApprovalRequest {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    /// The decision for a prior `approval_request`. First answer wins; the
+    /// timeout auto-denies.
+    ApprovalDecision {
+        call_id: String,
+        approved: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
 }
 
 fn is_false(b: &bool) -> bool {

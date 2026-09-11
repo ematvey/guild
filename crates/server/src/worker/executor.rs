@@ -182,6 +182,7 @@ impl RoutineExecutor {
                 }
                 StreamEvent::ToolCallDelta { .. } => {}
                 StreamEvent::ThinkingDelta { .. } => {}
+                StreamEvent::ApprovalRequested { .. } | StreamEvent::ApprovalResolved { .. } => {}
                 StreamEvent::Error { code, message } => {
                     anyhow::bail!("completion stream error [{code}]: {message}");
                 }

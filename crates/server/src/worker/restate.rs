@@ -416,6 +416,8 @@ pub fn build_model_history(events: &[ThreadEvent]) -> Vec<Message> {
         match ev {
             ThreadEvent::UserMessage { content } => out.push(Message::user(content.clone())),
             ThreadEvent::SystemMessage { .. } | ThreadEvent::Compaction { .. } => {}
+            // Log-only lifecycle records: never part of model-facing history.
+            ThreadEvent::ApprovalRequest { .. } | ThreadEvent::ApprovalDecision { .. } => {}
             ThreadEvent::AssistantMessage { blocks, .. } => {
                 let mut text = String::new();
                 let mut reasoning = String::new();
