@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -13,6 +12,7 @@ import { Skeleton } from "@guild/ui/components/skeleton";
 import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
 import { ThemeToggle } from "../App";
+import { rpcCall } from "../transport";
 
 interface Block {
   kind: "text" | "user" | "tool_call" | "tool_result" | "done" | "error";
@@ -57,7 +57,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
 
   useEffect(() => {
     // discover enabled models from the org gateway; falls back to free text
-    invoke<any>("rpc_request", { method: "models.list", params: {} })
+    rpcCall("models.list", {})
       .then((res) => {
         const list: string[] = res?.result?.models ?? [];
         setModels(list);
@@ -147,10 +147,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
     lastText.current = -1;
     setBlocks((b) => [...b, { kind: "user", text: prompt }]);
     try {
-      await invoke("rpc_request", {
-        method: "agent.start",
-        params: { project_dir: projectDir, prompt, model },
-      });
+      await rpcCall("agent.start", { project_dir: projectDir, prompt, model });
     } catch (e) {
       setBusy(false);
       setBlocks((b) => [...b, { kind: "error", text: String(e) }]);
@@ -163,10 +160,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
     if (!approval) return;
     setApproval(null);
     try {
-      await invoke("rpc_request", {
-        method: "agent.approve",
-        params: { request_id: approval.requestId, decision: approve ? "approve" : "deny", reason },
-      });
+      await rpcCall("agent.approve", { request_id: approval.requestId, decision: approve ? "approve" : "deny", reason });
     } catch (e) {
       setBlocks((b) => [...b, { kind: "error", text: String(e) }]);
     }
@@ -175,10 +169,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
   const setPolicy = useCallback(async (policy: "ask" | "allow" | "never") => {
     setCommandPolicy(policy);
     try {
-      await invoke("rpc_request", {
-        method: "agent.policy.set",
-        params: { tool: "run_command", policy },
-      });
+      await rpcCall("agent.policy.set", { tool: "run_command", policy });
     } catch {
       // engine will still ask by default
     }
