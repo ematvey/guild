@@ -190,7 +190,32 @@ async fn thread(
     let store = state.store().await?;
     store.chats().get_chat(user.0.org_id, chat_id).await?;
     let events = store.thread().list_events(user.0.org_id, chat_id).await?;
-    Ok(Json(serde_json::json!({ "events": events })))
+    // Context-usage snapshot for the gauge (dsh-style filling gauge): tokens
+    // in of the LATEST assistant turn vs. the model route's context window.
+    // No turns yet → model null, 0 tokens. No route or NULL window → the
+    // 128000 fallback (matches the model-facing default).
+    const DEFAULT_CONTEXT_WINDOW: i64 = 128_000;
+    let mut tokens: i64 = 0;
+    let mut model: Option<String> = None;
+    for ev in events.iter().rev() {
+        if let ThreadEvent::AssistantMessage { usage, model: m, .. } = &ev.event {
+            tokens = i64::from(usage.tokens_in.unwrap_or(0));
+            model = Some(m.clone());
+            break;
+        }
+    }
+    let max = match &model {
+        Some(m) => store
+            .gateway()
+            .context_window(user.0.org_id, m)
+            .await?
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW),
+        None => DEFAULT_CONTEXT_WINDOW,
+    };
+    Ok(Json(serde_json::json!({
+        "events": events,
+        "context": { "tokens": tokens, "max": max, "model": model },
+    })))
 }
 
 /// Appends one thread event from a client. Used by the desktop engine path

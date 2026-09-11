@@ -386,7 +386,7 @@ pub async fn full_state() -> FullState {
         .unwrap();
     store
         .gateway()
-        .upsert_route(org_id, "gpt-test", "openai", true, 2.0, 4.0, None, false)
+        .upsert_route(org_id, "gpt-test", "openai", true, 2.0, 4.0, None, false, None)
         .await
         .unwrap();
     let chat = store

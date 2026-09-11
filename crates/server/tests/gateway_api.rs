@@ -155,3 +155,95 @@ async fn encrypted_key_roundtrips_through_resolve() {
     assert_eq!(route.api_key, "sk-test", "decrypted key matches");
     assert_eq!(route.provider, "openai");
 }
+
+/// Context-window (migration 0024) roundtrip: stored on upsert, resolved on
+/// the route, returned by the readout lookup; NULL (unset) and missing model
+/// resolve to None (the thread readout then applies its 128000 fallback).
+#[tokio::test]
+async fn route_context_window_roundtrip() {
+    let fs = full_state().await;
+    let store = fs.store();
+    let master = fs.state.config.master_key().unwrap();
+
+    store
+        .gateway()
+        .upsert_route(
+            fs.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000),
+        )
+        .await
+        .unwrap();
+    let route = store
+        .gateway()
+        .resolve_route(fs.org_id, "ctx-model", &master)
+        .await
+        .unwrap();
+    assert_eq!(route.context_window, Some(64000));
+    assert_eq!(
+        store
+            .gateway()
+            .context_window(fs.org_id, "ctx-model")
+            .await
+            .unwrap(),
+        Some(64000)
+    );
+
+    // unset column → None (seeded route has no context window)
+    let seeded = store
+        .gateway()
+        .resolve_route(fs.org_id, &fs.model, &master)
+        .await
+        .unwrap();
+    assert_eq!(seeded.context_window, None);
+    assert_eq!(
+        store
+            .gateway()
+            .context_window(fs.org_id, &fs.model)
+            .await
+            .unwrap(),
+        None
+    );
+
+    // no route at all → None
+    assert_eq!(
+        store
+            .gateway()
+            .context_window(fs.org_id, "no-such-model")
+            .await
+            .unwrap(),
+        None
+    );
+
+    // admin endpoint accepts an optional context_window
+    let app = guild_server::build_router(fs.state.clone());
+    let res = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/api/v1/admin/gateway/routes")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "ctx-model",
+                        "provider": "openai",
+                        "price_in": 1.0,
+                        "price_out": 2.0,
+                        "context_window": 96000
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        store
+            .gateway()
+            .context_window(fs.org_id, "ctx-model")
+            .await
+            .unwrap(),
+        Some(96000)
+    );
+}

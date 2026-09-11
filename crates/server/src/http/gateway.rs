@@ -206,6 +206,7 @@ async fn set_route(
     let enabled = body["enabled"].as_bool().unwrap_or(true);
     let quota_monthly_usd = body["quota_monthly_usd"].as_f64();
     let reasoning = body["reasoning"].as_bool().unwrap_or(false);
+    let context_window = body["context_window"].as_i64();
     let price_in = body["price_in"]
         .as_f64()
         .ok_or_else(|| ApiError::bad_request("missing price_in"))?;
@@ -224,6 +225,7 @@ async fn set_route(
             price_out,
             quota_monthly_usd,
             reasoning,
+            context_window,
         )
         .await?;
     Ok(Json(serde_json::json!({})))

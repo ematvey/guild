@@ -195,3 +195,123 @@ async fn thread_endpoint_returns_events_and_is_org_scoped() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+/// Context-usage snapshot in GET /thread (feat/gauge): `context` carries the
+/// tokens_in of the LATEST assistant event, the model name, and the route's
+/// context window — falling back to 128000 when the model has no route or
+/// its window is NULL.
+#[tokio::test]
+async fn thread_endpoint_context_snapshot_and_fallback() {
+    let ts = test_state_with_db().await;
+    let store = ts.store();
+    let user_id = store
+        .identity()
+        .ensure_bootstrap_admin("gauge@a.b", "hunter226")
+        .await
+        .unwrap();
+    let (_sid, token) = store.identity().create_session(user_id).await.unwrap();
+    let user = store.identity().validate_session(&token).await.unwrap();
+    let chat = store
+        .chats()
+        .create_chat(user.org_id, user.id, Some("gauge"))
+        .await
+        .unwrap();
+    // A route with an explicit context window for the model used below.
+    store
+        .gateway()
+        .upsert_route(
+            user.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000),
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(ts.state.clone());
+    let get_thread = |chat_id: uuid::Uuid| {
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/chats/{chat_id}/thread"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    // No turns yet: 0 tokens, model null, fallback window.
+    let res = get_thread(chat.id).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["context"]["tokens"], 0);
+    assert_eq!(v["context"]["max"], 128000);
+    assert!(v["context"]["model"].is_null());
+
+    // Assistant turn on a routed model: tokens_in surfaces, max from route.
+    store
+        .thread()
+        .append_event(
+            chat.id,
+            &ThreadEvent::UserMessage {
+                content: "hi".into(),
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .thread()
+        .append_event(
+            chat.id,
+            &ThreadEvent::AssistantMessage {
+                turn: 1,
+                step: 1,
+                blocks: vec![Block::Text { text: "answer".into() }],
+                usage: UsagePayload {
+                    tokens_in: Some(5000),
+                    tokens_out: Some(50),
+                    cost_usd: None,
+                },
+                model: "ctx-model".into(),
+                interrupted: None,
+            },
+        )
+        .await
+        .unwrap();
+    let res = get_thread(chat.id).await;
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["context"]["tokens"], 5000);
+    assert_eq!(v["context"]["max"], 64000);
+    assert_eq!(v["context"]["model"], "ctx-model");
+
+    // A later assistant event wins (latest, not first): NULL tokens_in → 0,
+    // and an unrouted model → 128000 fallback window.
+    store
+        .thread()
+        .append_event(
+            chat.id,
+            &ThreadEvent::AssistantMessage {
+                turn: 1,
+                step: 2,
+                blocks: vec![Block::Text { text: "more".into() }],
+                usage: UsagePayload {
+                    tokens_in: None,
+                    tokens_out: None,
+                    cost_usd: None,
+                },
+                model: "unrouted-model".into(),
+                interrupted: None,
+            },
+        )
+        .await
+        .unwrap();
+    let res = get_thread(chat.id).await;
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["context"]["tokens"], 0);
+    assert_eq!(v["context"]["max"], 128000);
+    assert_eq!(v["context"]["model"], "unrouted-model");
+}
