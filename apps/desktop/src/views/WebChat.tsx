@@ -476,16 +476,42 @@ function fmtK(n: number): string {
 /// read-only. Hidden entirely when the server reports no context data.
 function ContextGauge({ ctx }: { ctx: ThreadContext }) {
   const ratio = ctx.max > 0 ? Math.min(1, Math.max(0, ctx.tokens / ctx.max)) : 0;
-  const fill =
-    ratio > 0.9 ? "bg-destructive" : ratio >= 0.8 ? "bg-amber-500" : "bg-foreground";
+  const stroke =
+    ratio > 0.9 ? "stroke-destructive" : ratio >= 0.8 ? "stroke-amber-500" : "stroke-foreground";
+  // Radial gauge: a circle that fills clockwise as the context grows.
+  const size = 18;
+  const r = 7;
+  const c = 2 * Math.PI * r;
   return (
-    <span className="flex shrink-0 items-center gap-1.5">
-      <span
-        className="block h-1 w-[90px] overflow-hidden rounded-full bg-muted"
-        title={`~${fmtK(ctx.tokens)} / ${fmtK(ctx.max)} context tokens`}
+    <span className="flex shrink-0 items-center" title={`~${fmtK(ctx.tokens)} / ${fmtK(ctx.max)} context tokens`}>
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        className="-rotate-90"
       >
-        <span className={`block h-full rounded-full ${fill}`} style={{ width: `${ratio * 100}%` }} />
-      </span>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          className="stroke-muted"
+          strokeWidth="2.5"
+          fill="none"
+        />
+        {ratio > 0 && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            className={`${stroke} transition-[stroke-dashoffset] duration-500`}
+            strokeWidth="2.5"
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={c}
+            strokeDashoffset={c * (1 - ratio)}
+          />
+        )}
+      </svg>
     </span>
   );
 }
