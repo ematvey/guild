@@ -273,7 +273,7 @@ function AttachmentImageThumb({
 }
 
 /** Non-image attachment: compact chip with a type icon, name, size and an
- * optional ✕ (composer state) — Claude/ChatGPT file-chip pattern. */
+ * optional ✕ (composer state). */
 function AttachmentFileChip({
   att,
   onRemove,
@@ -564,8 +564,8 @@ function Frame({
   const titleNode = typeof title === "function" ? title(open) : title;
   return (
     // A clickable text row on the page — no chip background, full width, the
-    // row blends into the conversation (established chat-app pattern). The
-    // panel/card only exists below the row once it is opened.
+    // The row blends into the conversation; the panel only exists below
+    // the row once it is opened.
     <div className="flex w-full flex-col text-xs">
       <button
         onClick={() => setOpen((o) => !o)}
@@ -635,7 +635,7 @@ function toolKind(t: ToolBlock): string {
 }
 
 /// Human-facing tool names (collapsed header): raw wire names like
-/// `web_search` stay in the log; the chat shows established-app wording.
+/// `web_search` stay in the log.
 const TOOL_LABELS: Record<string, string> = {
   web_search: "Web search",
   web_fetch: "Web fetch",
@@ -763,10 +763,10 @@ function fmtK(n: number): string {
   return (s.endsWith(".0") ? Math.round(k).toString() : s) + "k";
 }
 
-/// Slim context-usage bar next to the model selector (task G2): fills as the
+/// Slim context-usage bar next to the model selector: fills as the
 /// thread's context grows; amber past 80% of the window, red past 90%.
-/// Compaction itself is automatic server-side (task M1) — the gauge is
-/// read-only. Hidden entirely when the server reports no context data.
+/// Compaction is automatic server-side — the gauge is read-only. Hidden
+/// entirely when the server reports no context data.
 function ContextGauge({ ctx }: { ctx: ThreadContext }) {
   const ratio = ctx.max > 0 ? Math.min(1, Math.max(0, ctx.tokens / ctx.max)) : 0;
   const stroke =
@@ -1023,8 +1023,8 @@ function ToolFrame({ t }: { t: ToolBlock }) {
         </>
       )}
       badge={
-        // Pills only signal trouble (established chat-app pattern): DONE is
-        // implicit, ERROR stays visible. A running frame opens expanded.
+        // Pills only signal trouble: DONE is implicit, ERROR stays visible.
+        // A running frame opens expanded.
         t.status === "error" ? <StatusPill status={t.status} /> : undefined
       }
       defaultOpen={t.status === "running"}
@@ -1155,8 +1155,8 @@ export default function WebChat({
   const overlay = route.overlay;
   const [threadLoading, setThreadLoading] = useState(() => route.chatId !== null); // /thread/<id> fetch in flight with nothing to show
   const [prompt, setPrompt] = useState("");
-  // Composer attachments (ChatGPT/Claude pattern): strip of previews above
-  // the input — image thumbnails with an overlay ✕, file chips with an icon.
+  // Composer attachments: strip of previews above the input — image
+  // thumbnails with an overlay ✕, file chips with an icon.
   const [pending, setPending] = useState<
     (MessageAttachmentMeta & { file?: File; previewUrl?: string })[]
   >([]);
@@ -1164,7 +1164,7 @@ export default function WebChat({
   pendingRef.current = pending;
   const fileInput = useRef<HTMLInputElement | null>(null);
   // Drag-and-drop target state: the whole chat pane accepts attachment
-  // drops (established chat-app pattern), with a drop-hint overlay.
+  // drops, with a drop-hint overlay.
   const [dragOver, setDragOver] = useState(false);
 
 
@@ -1199,8 +1199,7 @@ export default function WebChat({
   const bottom = useRef<HTMLDivElement>(null);
   // Sticky-scroll: while streaming, follow the generated text ONLY when the
   // pane is already at the bottom; scrolling up detaches into free scroll,
-  // scrolling back to the last character re-attaches (established chat-app
-  // behavior). The scroll handler keeps `stick.current` truthful.
+  // scrolling back to the last character re-attaches . The scroll handler keeps `stick.current` truthful.
   const pane = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const ta = useRef<HTMLTextAreaElement>(null);
@@ -1217,10 +1216,8 @@ export default function WebChat({
   useEffect(() => startEventStream(), []);
   loadStateRef.current = { busy, attaching, threadLoading };
 
-  // Deploy freshness: a long-lived tab keeps running the bundle it booted
-  // with, which drifts from the server after every deploy (removed endpoints
-  // then 404). Poll the served shell and reload once the bundle hash changes
-  // — but never while a turn is streaming or a thread is loading.
+  // Reload the page once the served bundle hash differs from the running
+  // one — never while a turn is streaming or a thread is loading.
   useEffect(() => {
     const currentBundle = () => {
       const m = document
@@ -1577,8 +1574,8 @@ export default function WebChat({
     setBusy(true);
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
-    // Focus stays in the composer after send (established chat-app
-    // behavior). Scheduled after the pending state commit: disabling the
+    // Focus stays in the composer after send. Scheduled after the pending
+    // state commit: disabling the
     // Send button during the same commit would otherwise move focus to
     // body and override a synchronous focus().
     requestAnimationFrame(() => ta.current?.focus());

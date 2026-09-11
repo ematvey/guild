@@ -33,8 +33,8 @@ type SectionId =
   | "models"
   | "integrations"
   | "registry";
-  // NOTE: no "releases" pane — desktop builds are dev-controlled, not
-  // admin-controlled (spec decision 2026-09-11).
+  // No "releases" pane: desktop releases are dev-controlled, not
+  // admin-controlled.
 
 interface SectionDef {
   id: SectionId;

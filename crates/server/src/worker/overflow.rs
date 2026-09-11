@@ -1,4 +1,4 @@
-//! Context-overflow detection for provider errors (task M1): a port of pi's
+//! Context-overflow detection for provider errors: a port of pi's
 //! `overflow.js` pattern lists. When a model call fails because the request
 //! exceeded the model's context window, the ChatRunner retries once after an
 //! auto-compaction instead of failing the whole turn. Rate-limit / throttling
