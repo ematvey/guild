@@ -49,7 +49,14 @@ export function ThemeToggle() {
   );
 }
 
-function WebLogin({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
+type Profile = {
+  email: string;
+  role: string;
+  display_name?: string;
+  avatar_url?: string;
+};
+
+function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +81,7 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (email: string) => void }) {
       // web mode is always same-origin (served by guild-server); an absolute
       // default would go cross-origin when tunneled (e.g. Moshi) and trip CORS
       const user = await apiLogin(window.location.origin, email, password);
-      onLoggedIn(user.email);
+      onLoggedIn(user);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
@@ -407,6 +414,14 @@ function AppInner() {
       clearToken();
       setEmail(null);
     };
+    const onLoggedIn = (profile: Profile) => {
+      // The login response carries the full profile; using it directly keeps
+      // the role in sync immediately (a later apiMe refresh is unnecessary).
+      setEmail(profile.email);
+      setRole(profile.role);
+      setDisplayName(profile.display_name ?? null);
+      setAvatarUrl(profile.avatar_url ?? null);
+    };
     return email ? (
       <WebChat
         email={email}
@@ -416,7 +431,7 @@ function AppInner() {
         onSignOut={signOut}
       />
     ) : (
-      <WebLogin onLoggedIn={setEmail} />
+      <WebLogin onLoggedIn={onLoggedIn} />
     );
   }
   return <DesktopApp />;
