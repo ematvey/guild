@@ -139,3 +139,7 @@ test-support = ["dep:wiremock", "dep:aws-sdk-s3"]
 [[test]]
 name = "pairing_api"
 required-features = ["test-support"]
+
+[[test]]
+name = "approval_api"
+required-features = ["test-support"]
