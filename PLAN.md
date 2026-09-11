@@ -46,6 +46,15 @@ codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
   edit form. Registry already conformed; Usage/Approvals left to the
   session editing them.
 
+## Desktop 0.3.11 (2026-09-12, latest)
+
+- Fixes the 0.3.10 desktop pairing breakage: protocol-version handshake
+  (crate-version compare desynced on every bump), webview API base
+  (same-origin fetches can't work on tauri://localhost — use the paired
+  server URL), legal Tauri 2.11 event names (no dots), bounded rpc_request,
+  release-desktop.sh builds with tauri/custom-protocol. All platforms
+  republished and signed; latest.json serves 0.3.11.
+
 ## Approval policy is user-scoped, not per-chat (2026-09-11, latest)
 
 - Per-thread approval settings made no sense — tool trust is a property of
