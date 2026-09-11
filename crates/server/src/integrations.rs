@@ -592,12 +592,20 @@ pub struct McpPluginTurn {
 }
 
 impl McpPluginTurn {
-    /// The tool names this plugin declares to the model, filtered by the
-    /// caller's role (spec §6/§7: a member never sees tools it cannot call).
-    pub fn allowed_specs(&self, role: &str) -> Vec<ToolSpec> {
+    /// The journaled tools this plugin exposes that `role` may call, with
+    /// their classes (spec §6/§7 policy filter).
+    pub fn allowed_infos(&self, role: &str) -> Vec<&McpToolInfo> {
         self.tools
             .iter()
             .filter(|t| mcp_tool_allowed(t, &self.row_config, role))
+            .collect()
+    }
+
+    /// The tool names this plugin declares to the model, filtered by the
+    /// caller's role (spec §7: a member never sees tools it cannot call).
+    pub fn allowed_specs(&self, role: &str) -> Vec<ToolSpec> {
+        self.allowed_infos(role)
+            .into_iter()
             .map(|t| t.spec.clone())
             .collect()
     }
