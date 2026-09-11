@@ -39,6 +39,14 @@ pub fn routes() -> Router<AppState> {
             axum::routing::get(list_integrations),
         )
         .route(
+            "/api/v1/admin/integrations/{name}/secrets",
+            axum::routing::put(set_integration_secret).get(list_integration_secrets),
+        )
+        .route(
+            "/api/v1/admin/integrations/{name}/secrets/{secret}",
+            axum::routing::delete(delete_integration_secret),
+        )
+        .route(
             "/api/v1/admin/integrations/{name}",
             axum::routing::put(upsert_integration).delete(delete_integration),
         )
@@ -100,13 +108,15 @@ async fn set_assistant_prompt(
 }
 
 /// Lists this org's integration plugins (configured and unconfigured).
+/// `available` holds the compiled-in kinds plus approved registry v2 plugins
+/// that have no configured row yet.
 async fn list_integrations(
     State(state): State<AppState>,
     admin: AdminUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
     let rows = store.integrations().list(admin.0.org_id).await?;
-    let available: Vec<serde_json::Value> = ["searxng", "superproxy"]
+    let mut available: Vec<serde_json::Value> = ["searxng", "superproxy"]
         .iter()
         .map(|n| {
             let category = crate::integrations::integration_by_name(n)
@@ -115,7 +125,80 @@ async fn list_integrations(
             json!({ "name": n, "category": category })
         })
         .collect();
+    for item in store
+        .registry()
+        .list_items(admin.0.org_id, "integration")
+        .await?
+    {
+        if item.review_status != "approved" || rows.iter().any(|r| r.name == item.slug) {
+            continue;
+        }
+        if let Some(manifest) = latest_integration_manifest(&store, admin.0.org_id, &item.slug).await? {
+            if manifest.mcp.is_some() {
+                available.push(json!({ "name": item.slug, "category": "mcp" }));
+            }
+        }
+    }
     Ok(Json(json!({ "integrations": rows, "available": available })))
+}
+
+/// Latest published manifest of one registry integration item, if any.
+async fn latest_integration_manifest(
+    store: &crate::store::Store,
+    org_id: Uuid,
+    slug: &str,
+) -> Result<Option<guild_core::registry::BundleManifest>, ApiError> {
+    let Some(v) = store
+        .registry()
+        .item_versions(org_id, "integration", slug)
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(None);
+    };
+    let stored = store
+        .registry()
+        .get_version(org_id, "integration", slug, &v.version)
+        .await?;
+    serde_json::from_value(stored.manifest)
+        .map(Some)
+        .map_err(|e| ApiError::internal(format!("stored manifest unparsable: {e}")))
+}
+
+/// Validates an MCP plugin row's config: mcp.url must be an absolute http(s)
+/// URL when present; tool_policy role keys ⊆ {member, admin} with class
+/// lists ⊆ {read, write, admin}.
+fn validate_mcp_config(config: &serde_json::Value) -> Result<(), ApiError> {
+    if let Some(url) = config["mcp"]["url"].as_str() {
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err(ApiError::bad_request(
+                "mcp.url must be an absolute http(s) URL",
+            ));
+        }
+    }
+    if let Some(policy) = config["tool_policy"].as_object() {
+        for (role, classes) in policy {
+            if !matches!(role.as_str(), "member" | "admin") {
+                return Err(ApiError::bad_request(
+                    "tool_policy role keys must be member or admin",
+                ));
+            }
+            let Some(classes) = classes.as_array() else {
+                return Err(ApiError::bad_request(
+                    "tool_policy role value must be a class list",
+                ));
+            };
+            for c in classes {
+                if !matches!(c.as_str(), Some("read") | Some("write") | Some("admin")) {
+                    return Err(ApiError::bad_request(
+                        "tool_policy classes must be read, write, or admin",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Configures one integration. The integration contributes tools to the chat
@@ -137,21 +220,154 @@ async fn upsert_integration(
     Path(name): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let Some(plugin) = crate::integrations::integration_by_name(&name) else {
-        return Err(ApiError::not_found(format!("unknown integration {name}")));
-    };
-    let config = body.get("config").cloned().unwrap_or(json!({}));
-    let enabled = body["enabled"].as_bool().unwrap_or(false);
-    // Validate via the plugin's own config check before saving.
-    if let Err(e) = plugin.tools(&config) {
-        return Err(ApiError::bad_request(format!("invalid integration config: {e}")));
-    }
     let store = state.store().await?;
+    let rows = store.integrations().list(admin.0.org_id).await?;
+    let existing = rows.iter().find(|r| r.name == name);
+    let enabled = body["enabled"].as_bool().unwrap_or(false);
+    match crate::integrations::integration_by_name(&name) {
+        Some(plugin) => {
+            let config = body
+                .get("config")
+                .cloned()
+                .unwrap_or_else(|| existing.map(|r| r.config.clone()).unwrap_or(json!({})));
+            // Validate via the plugin's own config check before saving.
+            if let Err(e) = plugin.tools(&config) {
+                return Err(ApiError::bad_request(format!(
+                    "invalid integration config: {e}"
+                )));
+            }
+            store
+                .integrations()
+                .upsert(admin.0.org_id, &name, &config, enabled)
+                .await?;
+        }
+        None => {
+            // v2 MCP plugin installed from the registry: config fields merge
+            // shallowly over the stored row so partial updates keep mcp/auth.
+            let Some(row) = existing else {
+                return Err(ApiError::not_found(format!("unknown integration {name}")));
+            };
+            let mut config = row.config.clone();
+            if let Some(patch) = body.get("config").and_then(|c| c.as_object()) {
+                if let Some(obj) = config.as_object_mut() {
+                    for (k, v) in patch {
+                        obj.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            validate_mcp_config(&config)?;
+            let enabled = body["enabled"].as_bool().unwrap_or(row.enabled);
+            if enabled {
+                if config["mcp"]["url"].as_str().is_none() {
+                    return Err(ApiError::bad_request(
+                        "mcp plugin needs an mcp.url before enabling",
+                    ));
+                }
+                let declared: Vec<String> = latest_integration_manifest(&store, admin.0.org_id, &name)
+                    .await?
+                    .and_then(|m| m.auth)
+                    .map(|a| a.secret_names)
+                    .unwrap_or_default();
+                let stored = store
+                    .integration_secrets()
+                    .list(admin.0.org_id, &name)
+                    .await?;
+                let missing: Vec<String> = declared
+                    .into_iter()
+                    .filter(|d| !stored.iter().any(|s| &s.name == d))
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(ApiError::conflict(
+                        "missing_secrets",
+                        format!("missing secrets: {}", missing.join(", ")),
+                    ));
+                }
+            }
+            store
+                .integrations()
+                .upsert(admin.0.org_id, &name, &config, enabled)
+                .await?;
+        }
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Upserts one integration secret (write-only; values never read back).
+async fn set_integration_secret(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let secret_name = body["name"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("missing name"))?;
+    let value = body["value"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("missing value"))?;
+    let store = state.store().await?;
+    integration_row(&store, admin.0.org_id, &name).await?;
+    let master = state.config.master_key().map_err(ApiError::from)?;
     store
-        .integrations()
-        .upsert(admin.0.org_id, &name, &config, enabled)
+        .integration_secrets()
+        .upsert(admin.0.org_id, &name, secret_name, value, &master)
         .await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Lists one integration's secret names + timestamps — never values.
+async fn list_integration_secrets(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    integration_row(&store, admin.0.org_id, &name).await?;
+    let secrets = store.integration_secrets().list(admin.0.org_id, &name).await?;
+    Ok(Json(json!({ "secrets": secrets })))
+}
+
+/// Removes one secret. If the integration is enabled and its manifest
+/// declares that secret, the row is auto-disabled (spec §9).
+async fn delete_integration_secret(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path((name, secret)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let row = integration_row(&store, admin.0.org_id, &name).await?;
+    store
+        .integration_secrets()
+        .delete(admin.0.org_id, &name, &secret)
+        .await?;
+    if row.enabled {
+        let declares = latest_integration_manifest(&store, admin.0.org_id, &name)
+            .await?
+            .and_then(|m| m.auth)
+            .map(|a| a.secret_names.contains(&secret))
+            .unwrap_or(false);
+        if declares {
+            store
+                .integrations()
+                .upsert(admin.0.org_id, &name, &row.config, false)
+                .await?;
+        }
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn integration_row(
+    store: &crate::store::Store,
+    org_id: Uuid,
+    name: &str,
+) -> Result<crate::store::integrations::IntegrationRow, ApiError> {
+    store
+        .integrations()
+        .list(org_id)
+        .await?
+        .into_iter()
+        .find(|r| r.name == name)
+        .ok_or_else(|| ApiError::not_found(format!("unknown integration {name}")))
 }
 
 async fn list_users(

@@ -471,10 +471,6 @@ pub enum ThreadEvent {
     },
 }
 
-fn is_false(b: &bool) -> bool {
-    !b
-}
-
 /// The fixed set of machine tools executed by the attached client, modeled on
 /// pi's core coding-agent tool set. Declared here so server and clients share
 /// one definition.
