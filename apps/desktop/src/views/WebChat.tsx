@@ -15,6 +15,7 @@ import {
   Download,
   FileText,
   Laptop,
+  Minimize2,
   Globe,
   Lightbulb,
   LogOut,
@@ -57,7 +58,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { useTheme } from "../theme";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { postApproval, postToolResult, setApproval, getApproval, type ApprovalPolicy } from "../transport";
+import { compactChat, postApproval, postToolResult, setApproval, getApproval, type ApprovalPolicy } from "../transport";
 import {
   bindChat,
   createChat,
@@ -98,6 +99,14 @@ interface ApprovalBlock {
   reason?: string;
 }
 
+/// One durable compaction event (compaction spec section E): the model's
+/// summary of everything before this point in the thread.
+interface CompactionBlock {
+  summary: string;
+  model?: string | null;
+  keepLast?: number | null;
+}
+
 /// Widget payload persisted on tool/result events (spec C.2). Loose: the
 /// server owns the shape, unknown fields are ignored by the widgets.
 interface ToolMeta {
@@ -117,12 +126,13 @@ interface ToolMeta {
 }
 
 interface Block {
-  kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval";
+  kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval" | "compaction";
   text: string;
   /// kind === "reasoning": the accumulated thinking text.
   reasoningText?: string;
   tool?: ToolBlock;
   approval?: ApprovalBlock;
+  compaction?: CompactionBlock;
 }
 
 /// Tools the desktop executor runs locally (mirrors server `client_tool_names`).
@@ -208,7 +218,18 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
         break; // orphan decision: the request block carries the story
       }
       case "compaction":
-        break; // reserved, not built yet
+        // Stream-positioned: pushed at its event position, in order with the
+        // messages around it.
+        blocks.push({
+          kind: "compaction",
+          text: "",
+          compaction: {
+            summary: ev.summary,
+            model: ev.model ?? undefined,
+            keepLast: ev.keep_last ?? null,
+          },
+        });
+        break;
     }
   }
   return blocks;
@@ -389,6 +410,30 @@ function ToolKindIcon({ kind }: { kind: string }) {
     default:
       return <Wrench className={cls} />;
   }
+}
+
+/// Collapsed system-style card for a compaction event: header names the
+/// event (and the summarization model); the body holds the summary and the
+/// retained-tail note. Always collapsed by default.
+function CompactionCard({ c }: { c: CompactionBlock }) {
+  return (
+    <Frame
+      icon={<Minimize2 className="size-3.5 shrink-0 text-muted-foreground" />}
+      title={
+        <>
+          <span>Thread compacted</span>
+          {c.model && <span className="text-muted-foreground"> — {c.model}</span>}
+        </>
+      }
+    >
+      <div className="space-y-2">
+        <div className={`max-h-64 overflow-y-auto leading-relaxed text-muted-foreground ${MD_CLASS}`}>
+          <Markdown remarkPlugins={[remarkGfm]}>{c.summary}</Markdown>
+        </div>
+        {c.keepLast != null && <p className="text-xs text-muted-foreground">kept last {c.keepLast} messages</p>}
+      </div>
+    </Frame>
+  );
 }
 
 function statusPillCls(ok: boolean): string {
@@ -703,6 +748,8 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [busy, setBusy] = useState(false);
   const [attaching, setAttaching] = useState(false); // receiving a server-side generation
+  const [compacting, setCompacting] = useState(false); // compaction POST sent, waiting for the event
+  const [compactNote, setCompactNote] = useState<string | null>(null); // transient header error note
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -718,6 +765,8 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const loadAbort = useRef<AbortController | null>(null); // in-flight thread-load fetch
   const sendAbort = useRef<AbortController | null>(null); // in-flight send stream
   const loadSeq = useRef(0); // guards against stale thread loads landing last
+  const maxSeqSeen = useRef(0); // highest thread-event seq rendered for the open chat
+  const compactNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingDeepLink = useRef(false); // true while the /thread/<id> from the URL is loading
 
   // App-lifetime presence connection: the server uses it to detect that
@@ -766,6 +815,19 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
 
   const refreshChats = async () => setChats(await listChats());
 
+  /// Reloads blocks from thread rows and tracks the high-water seq so a later
+  /// compaction poll only waits for events newer than what is on screen.
+  const applyThreadRows = (rows: ThreadEventRow[]) => {
+    for (const r of rows) if (r.seq > maxSeqSeen.current) maxSeqSeen.current = r.seq;
+    setBlocks(eventsToBlocks(rows));
+  };
+
+  const flashCompactNote = (text: string) => {
+    setCompactNote(text);
+    if (compactNoteTimer.current) clearTimeout(compactNoteTimer.current);
+    compactNoteTimer.current = setTimeout(() => setCompactNote(null), 6000);
+  };
+
   // latest closure for the popstate handler
   const popHandler = useRef<() => void>(() => {});
   popHandler.current = () => {
@@ -781,6 +843,8 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
       setChatId(null);
       setBlocks([]);
       setThreadLoading(false);
+      setCompacting(false);
+      setCompactNote(null);
     }
   };
 
@@ -806,7 +870,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     try {
       const rows: ThreadEventRow[] = await getThread(id, loadAc.signal);
       if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
-      setBlocks(eventsToBlocks(rows));
+      applyThreadRows(rows);
       setChatId(id);
       // A generation may still be running server-side (e.g. it outlived a
       // previous client, or the stream dropped earlier). Attach with
@@ -839,6 +903,8 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     setChatId(null);
     setBlocks([]);
     setThreadLoading(false);
+    setCompacting(false);
+    setCompactNote(null);
     setOpen(false);
     ta.current?.focus();
   };
@@ -938,7 +1004,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           // reconcile with durable state before (re)attaching
           const rows: ThreadEventRow[] = await getThread(cid, ac.signal);
           if (seq !== loadSeq.current || ac.signal.aborted) break;
-          setBlocks(eventsToBlocks(rows));
+          applyThreadRows(rows);
           term.v = "none";
           // The first delta after attach is the server's catch-up snapshot of
           // the in-flight turn (full buffer, not a delta) — or, when there is
@@ -1011,7 +1077,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             try {
               const final: ThreadEventRow[] = await getThread(cid, ac.signal);
               if (seq === loadSeq.current) {
-                setBlocks(eventsToBlocks(final));
+                applyThreadRows(final);
               }
             } catch {
               /* keep what we have */
@@ -1152,6 +1218,50 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     }
   };
 
+  /// Compacts the open thread: fire-and-forget POST, then poll the thread
+  /// log every 3s (up to 60s) until a compaction event newer than everything
+  /// currently rendered lands; then reload blocks. On timeout, surface a
+  /// small error note instead (compaction spec section E).
+  const compact = async () => {
+    if (!chatId || compacting || streaming) return;
+    const mySeq = loadSeq.current;
+    const baseline = maxSeqSeen.current;
+    setCompactNote(null);
+    setCompacting(true);
+    try {
+      await compactChat(chatId);
+    } catch (e) {
+      if (loadSeq.current !== mySeq) return;
+      setCompacting(false);
+      flashCompactNote(`compact failed: ${(e as Error).message}`);
+      return;
+    }
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      if (loadSeq.current !== mySeq) {
+        setCompacting(false); // user switched away; the new thread owns the UI
+        return;
+      }
+      try {
+        const rows = await getThread(chatId);
+        if (loadSeq.current !== mySeq) {
+          setCompacting(false);
+          return;
+        }
+        if (rows.some((r) => r.event.type === "compaction" && r.seq > baseline)) {
+          applyThreadRows(rows);
+          setCompacting(false);
+          return;
+        }
+      } catch {
+        /* network blip — keep polling until the deadline */
+      }
+    }
+    if (loadSeq.current !== mySeq) return; // switched away mid-poll
+    setCompacting(false);
+    flashCompactNote("compaction timed out — reopen the thread to check");
+  };
+
   const activeTitle =
     threadLoading && blocks.length === 0
       ? "Loading…"
@@ -1250,6 +1360,17 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
               {boundMachine}
             </span>
           )}
+          {compacting && (
+            <span className="flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+              <Spinner className="size-3" />
+              Compacting…
+            </span>
+          )}
+          {compactNote && (
+            <span className="shrink-0 rounded-md border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive">
+              {compactNote}
+            </span>
+          )}
         </header>
 
         {blocks.length === 0 ? (
@@ -1312,6 +1433,8 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                   <ToolFrame key={i} t={b.tool} />
                 ) : b.kind === "approval" && b.approval ? (
                   <ApprovalCard key={i} a={b.approval} chatId={chatId} />
+                ) : b.kind === "compaction" && b.compaction ? (
+                  <CompactionCard key={i} c={b.compaction} />
                 ) : b.kind === "error" ? (
                   <div
                     key={i}
@@ -1385,6 +1508,15 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                     </SelectContent>
                   </Select>
                 )}
+                <Button
+                  size="icon"
+                  className="size-7 shrink-0 rounded-full"
+                  onClick={() => void compact()}
+                  disabled={streaming || compacting || !chatId || blocks.length === 0}
+                  title="Summarize this thread to shrink context"
+                >
+                  {compacting ? <Spinner className="size-3.5" /> : <Minimize2 className="size-3.5" />}
+                </Button>
                 <Button
                   size="icon"
                   className="size-7 rounded-full"
