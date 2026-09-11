@@ -151,3 +151,7 @@ name = "mcp_plugin"
 [[test]]
 name = "disclosure"
 required-features = ["test-support"]
+
+[[test]]
+name = "admin_integration_policy"
+required-features = ["test-support"]
