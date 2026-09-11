@@ -311,19 +311,33 @@ export interface ThreadEventRow {
   created_at: string;
 }
 
+/// Context usage the server derives for a chat (task G1 contract): present
+/// on the thread response only when the server reports it — absent on
+/// pre-G1 servers, in which case the UI hides the gauge.
+export interface ThreadContext {
+  tokens: number;
+  max: number;
+  model: string | null;
+}
+
+export interface ThreadResult {
+  events: ThreadEventRow[];
+  context?: ThreadContext;
+}
+
 /** The durable thread: every persisted event for a chat, in write order. */
 export async function getThread(
   chatId: string,
   signal?: AbortSignal,
-): Promise<ThreadEventRow[]> {
+): Promise<ThreadResult> {
   const token = getToken();
   const res = await fetch(`/api/v1/chats/${chatId}/thread`, {
     headers: { authorization: `Bearer ${token}` },
     signal,
   });
-  if (!res.ok) return [];
+  if (!res.ok) return { events: [] };
   const v = await res.json().catch(() => ({}));
-  return v.events ?? [];
+  return { events: v.events ?? [], context: v.context ?? undefined };
 }
 
 export async function createChat(title: string): Promise<string | null> {
