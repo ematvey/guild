@@ -6,8 +6,8 @@ use crate::http::error::ApiError;
 use uuid::Uuid;
 
 /// (provider, base_url, encrypted key, price in, price out, enabled, quota,
-/// reasoning flag)
-type RouteQueryRow = (String, String, Option<String>, f64, f64, bool, Option<f64>, bool);
+/// reasoning flag, context window)
+type RouteQueryRow = (String, String, Option<String>, f64, f64, bool, Option<f64>, bool, Option<i64>);
 
 /// Resolved route for a model call. Plain data so it can be journaled
 /// through Restate run steps.
@@ -24,6 +24,9 @@ pub struct RouteRow {
     /// Route metadata: model produces chain-of-thought reasoning
     /// (reasoning_content) — design §B.3.
     pub reasoning: bool,
+    /// Model context window in tokens (migration 0024); None = unset —
+    /// callers fall back to their own default (thread readout: 128000).
+    pub context_window: Option<i64>,
 }
 
 pub struct GatewayStore<'a> {
@@ -67,16 +70,18 @@ impl<'a> GatewayStore<'a> {
         price_out: f64,
         quota_monthly_usd: Option<f64>,
         reasoning: bool,
+        context_window: Option<i64>,
     ) -> anyhow::Result<()> {
         sqlx::query(
-            "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+            "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
              ON CONFLICT (org_id, model) \
              DO UPDATE SET provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, \
                price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, \
                price_per_mtok_out_usd = EXCLUDED.price_per_mtok_out_usd, \
                quota_monthly_usd = EXCLUDED.quota_monthly_usd, \
-               reasoning = EXCLUDED.reasoning",
+               reasoning = EXCLUDED.reasoning, \
+               context_window = EXCLUDED.context_window",
         )
         .bind(org_id)
         .bind(model)
@@ -86,6 +91,7 @@ impl<'a> GatewayStore<'a> {
         .bind(price_out)
         .bind(quota_monthly_usd)
         .bind(reasoning)
+        .bind(context_window)
         .execute(self.pool)
         .await?;
         Ok(())
@@ -112,7 +118,7 @@ impl<'a> GatewayStore<'a> {
         let row: Option<RouteQueryRow> = sqlx::query_as(
             "SELECT r.provider, k.base_url, k.encrypted_key, \
                     r.price_per_mtok_in_usd, r.price_per_mtok_out_usd, r.enabled, \
-                    r.quota_monthly_usd, r.reasoning \
+                    r.quota_monthly_usd, r.reasoning, r.context_window \
              FROM model_routes r \
              LEFT JOIN provider_keys k ON k.org_id = r.org_id AND k.provider = r.provider \
              WHERE r.org_id = $1 AND r.model = $2",
@@ -121,8 +127,17 @@ impl<'a> GatewayStore<'a> {
         .bind(model)
         .fetch_optional(self.pool)
         .await?;
-        let Some((provider, base_url, encrypted, price_in, price_out, enabled, quota, reasoning)) =
-            row
+        let Some((
+            provider,
+            base_url,
+            encrypted,
+            price_in,
+            price_out,
+            enabled,
+            quota,
+            reasoning,
+            context_window,
+        )) = row
         else {
             return Err(ApiError::not_found(format!("no route for model {model}")));
         };
@@ -148,6 +163,25 @@ impl<'a> GatewayStore<'a> {
             price_out,
             quota_monthly_usd: quota,
             reasoning,
+            context_window,
         })
+    }
+
+    /// A model's configured context window for the org, or `None` when the
+    /// model has no route or the column is unset. Used by the thread readout
+    /// (context gauge) — no provider key needed, unlike `resolve_route`.
+    pub async fn context_window(
+        &self,
+        org_id: Uuid,
+        model: &str,
+    ) -> anyhow::Result<Option<i64>> {
+        let v: Option<Option<i64>> = sqlx::query_scalar(
+            "SELECT context_window FROM model_routes WHERE org_id = $1 AND model = $2",
+        )
+        .bind(org_id)
+        .bind(model)
+        .fetch_optional(self.pool)
+        .await?;
+        Ok(v.flatten())
     }
 }
