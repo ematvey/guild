@@ -318,6 +318,8 @@ where
             StreamEvent::ToolStarted { .. } | StreamEvent::ToolCompleted { .. } => {}
             // attach-endpoint only; never on the completion stream
             StreamEvent::Idle => {}
+            // Approval lifecycle frames are for interactive clients.
+            StreamEvent::ApprovalRequested { .. } | StreamEvent::ApprovalResolved { .. } => {}
             // Reasoning is display-only for plain-chat clients here.
             StreamEvent::ThinkingDelta { .. } => {}
         }
