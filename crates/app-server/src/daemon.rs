@@ -115,8 +115,9 @@ pub fn handshake(pair: Pair) -> anyhow::Result<Pair> {
 /// serve the new client (its rpc/timeout fixes would be missing). `None`
 /// skips the check (tests, CLI tools against foreign daemons).
 pub fn handshake_with(pair: Pair, expected_build: Option<&str>) -> anyhow::Result<Pair> {
-    use std::io::Read as _;
-    let Pair(mut rd, mut wr) = pair;
+    use std::io::{BufReader, Read as _};
+    let Pair(rd, mut wr) = pair;
+    let mut rd = BufReader::new(rd);
     let req = protocol::rpc::Request::new(0, "daemon.hello", serde_json::json!({}));
     writeln!(wr, "{}", serde_json::to_string(&req)?)?;
     wr.flush()?;
@@ -148,7 +149,7 @@ pub fn handshake_with(pair: Pair, expected_build: Option<&str>) -> anyhow::Resul
             );
         }
     }
-    Ok(Pair(rd, wr))
+    Ok(Pair(Box::new(rd), wr))
 }
 
 /// Full blocking client flow: connect → (spawn detached + wait) → handshake.
