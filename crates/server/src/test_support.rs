@@ -65,6 +65,62 @@ pub async fn test_state_with_db() -> TestState {
     TestState { state, db }
 }
 
+/// Local mock Restate ingress that records one-way sends as
+/// `(path, body)` pairs and answers 200 with an invocation id.
+pub struct MockIngress {
+    pub url: String,
+    pub requests: std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+}
+
+/// State backed by an isolated database, with `restate_url` pointed at a
+/// local mock ingress so one-way invokes (`complete_tool`,
+/// `complete_approval`, …) succeed and can be asserted on.
+pub async fn test_state_with_mock_ingress() -> (TestState, MockIngress) {
+    let db = Store::connect_test().await.expect("postgres testcontainer");
+    let requests: std::sync::Arc<
+        std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+    > = Default::default();
+    let captures = requests.clone();
+    let app = axum::Router::new()
+        .fallback(
+            |uri: axum::http::Uri,
+             axum::extract::State(captures): axum::extract::State<
+                std::sync::Arc<
+                    std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+                >,
+             >,
+             body: axum::body::Bytes| async move {
+                let parsed = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+                captures
+                    .lock()
+                    .unwrap()
+                    .push((uri.path().to_string(), parsed));
+                axum::Json(serde_json::json!({ "invocationId": "mock" }))
+            },
+        )
+        .with_state(requests.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut config = Config::test_config();
+    config.restate_url = format!("http://{addr}");
+    let state = AppState::with_store(std::sync::Arc::new(db.store.clone()), config);
+    (
+        TestState { state, db },
+        MockIngress {
+            url: format!("http://{addr}"),
+            requests,
+        },
+    )
+}
+
+/// Registers an (empty) in-flight generation for `chat_id` so attach tests
+/// exercise the in-flight path (pending-tool and approval replay, catch-up)
+/// instead of the immediate Idle frame.
+pub fn note_generation(state: &AppState, chat_id: uuid::Uuid) {
+    crate::http::gateway::ensure_generation(state, chat_id);
+}
+
 /// Full stack for gateway tests: Postgres + ClickHouse + a wiremock provider
 /// registered as an "openai" route serving model `gpt-test`.
 pub struct FullState {

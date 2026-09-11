@@ -14,7 +14,7 @@ use axum::{Json, Router};
 use futures::Stream;
 use futures::StreamExt;
 use guild_core::provider::ProviderError;
-use protocol::api::{ChatCompletionRequest, StreamEvent};
+use protocol::api::{ChatCompletionRequest, StreamEvent, ThreadEvent};
 use std::convert::Infallible;
 use serde_json::json;
 use std::collections::HashMap;
@@ -126,6 +126,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/v1/gateway/chat/{id}/tools/{call_id}/result",
             axum::routing::post(tool_result),
+        )
+        .route(
+            "/api/v1/gateway/chat/{id}/approvals/{call_id}",
+            axum::routing::post(approval_decision),
         )
         .route("/api/v1/admin/gateway/keys", axum::routing::post(set_key))
         .route(
@@ -473,6 +477,37 @@ async fn tool_result(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// Delivers an approval decision (phase 2, design §D) to the waiting
+/// ChatRunner workflow: resolves the `approval:{call_id}` awakeable there.
+/// Late decisions (after the timeout auto-denied) are ignored — first answer
+/// wins. Org-scoped: 404 for foreign chats.
+async fn approval_decision(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((chat_id, call_id)): Path<(Uuid, String)>,
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    let approved = req["approved"]
+        .as_bool()
+        .ok_or_else(|| ApiError::bad_request("missing approved"))?;
+    let reason = req.get("reason").and_then(|v| v.as_str()).map(str::to_string);
+    crate::http::internal::restate_send_one_way(
+        &state,
+        "ChatRunner",
+        &format!("{chat_id}/complete_approval"),
+        serde_json::to_value(crate::worker::restate::ApprovalReq {
+            call_id,
+            approved,
+            reason,
+        })
+        .expect("approval request serializes"),
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn attach_stream(
     State(state): State<AppState>,
     user: AuthUser,
@@ -506,6 +541,32 @@ async fn attach_stream(
         let th = thinking.read().await;
         (t.clone(), th.clone(), tx.subscribe())
     };
+    // Design §E: unresolved approval requests (a request event with no later
+    // ApprovalDecision — and no later tool result — for the same call_id)
+    // replay as ApprovalRequested frames so a late-attaching client still
+    // sees the pending card.
+    let events = store.thread().list_events(user.0.org_id, chat_id).await?;
+    let mut decided: std::collections::HashSet<&str> = Default::default();
+    for ev in &events {
+        match &ev.event {
+            ThreadEvent::ApprovalDecision { call_id, .. }
+            | ThreadEvent::ToolResult { call_id, .. } => {
+                decided.insert(call_id.as_str());
+            }
+            _ => {}
+        }
+    }
+    let approvals: Vec<(String, String, String)> = events
+        .iter()
+        .filter_map(|ev| match &ev.event {
+            ThreadEvent::ApprovalRequest { call_id, name, arguments }
+                if !decided.contains(call_id.as_str()) =>
+            {
+                Some((call_id.clone(), name.clone(), arguments.clone()))
+            }
+            _ => None,
+        })
+        .collect();
     // Replay suspended client tool calls so late attachers can execute them.
     let pending: Vec<(String, String, String)> = state
         .generations
@@ -536,6 +597,13 @@ async fn attach_stream(
                 name,
                 arguments,
                 executor: protocol::api::ToolExecutor::Client,
+            });
+        }
+        for (call_id, name, arguments) in approvals {
+            yield sse_event(StreamEvent::ApprovalRequested {
+                call_id,
+                name,
+                arguments,
             });
         }
         // forward the live tail

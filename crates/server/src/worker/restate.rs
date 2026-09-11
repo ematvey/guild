@@ -342,6 +342,18 @@ pub struct ToolResultReq {
     pub meta: Option<Value>,
 }
 
+/// Body of the `complete_approval` handler (phase 2, design §C/§D): an
+/// approval decision from any attached client. Sent one-way from the HTTP
+/// approvals endpoint; resolves the ChatRunner's `approval:{call_id}`
+/// awakeable. Shared with the timeout auto-deny.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ApprovalReq {
+    pub call_id: String,
+    pub approved: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// How many model/tool round-trips one turn may take.
 const CHAT_MAX_STEPS: usize = 25;
 /// How long the loop waits for a client to execute a client-side tool.
