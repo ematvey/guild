@@ -1403,7 +1403,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
       ) : (
         !collapsed && (
           <aside
-            className="relative flex shrink-0 flex-col border-r border-border bg-card"
+            className="relative flex shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground"
             style={{ width }}
           >
             {sidebar}
