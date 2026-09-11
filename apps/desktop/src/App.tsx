@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 // AgentView (local engine agent sessions) is not part of the shell —
 // machine tools run through the unified WebChat surface instead.
@@ -181,6 +182,15 @@ function DesktopApp() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [user, setUser] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  // Surface the build the webview is actually running — pairing hangs are
+  // almost always a stale binary or stale background daemon; make the
+  // version visible so that's checkable at a glance (web: not a Tauri
+  // context, hide it).
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   // Restore auth on mount (and after F5): the engine keeps the session and
   // persists it to token.json, so ask it instead of assuming logged-out.
@@ -352,6 +362,9 @@ function DesktopApp() {
                 use a pairing code instead
               </button>
             </>
+          )}
+          {appVersion && (
+            <p className="text-center text-[11px] text-muted-foreground/70">Guild v{appVersion}</p>
           )}
         </CardContent>
       </Card>

@@ -8,6 +8,12 @@ use std::sync::Mutex;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// Build identity (git commit at build time) embedded by protocol's build
+/// script. Every binary in one workspace build graph links the same value;
+/// the daemon reports it in daemon.hello and clients compare it so a new
+/// GUI never inherits a stale background daemon from an older install.
+pub const BUILD_ID: &str = env!("GUILD_BUILD_ID");
+
 /// Request from client to server (either side can be "client").
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

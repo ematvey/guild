@@ -46,6 +46,14 @@ codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
   edit form. Registry already conformed; Usage/Approvals left to the
   session editing them.
 
+## Desktop 0.3.12 (2026-09-12, latest)
+
+- Build-identity handshake: daemon.hello now carries the workspace build id
+  (git commit, protocol build.rs) and the GUI refuses + respawns any daemon
+  from a different build — a leftover background service of an older install
+  can no longer serve a new client (the Windows "Pairing…" hang after
+  upgrading). Pair screen shows the running version (Guild v0.3.12).
+
 ## Desktop 0.3.11 (2026-09-12, latest)
 
 - Fixes the 0.3.10 desktop pairing breakage: protocol-version handshake
