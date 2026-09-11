@@ -46,6 +46,17 @@ codebase; detailed milestone plans live in `docs/plans/`, deploy nuances in
   edit form. Registry already conformed; Usage/Approvals left to the
   session editing them.
 
+## Desktop 0.3.13 (2026-09-12, latest)
+
+- Poll-based rpc bridge: rpc_submit returns the request id in <1ms; a single
+  rpc_poll loop drains completed envelopes to the webview. No invoke stays
+  open for the duration of a daemon call, so the Windows-only hang (WebView2
+  silently losing long-lived WebResourceRequested responses on maintainer's
+  machine - daemon and pipe verified healthy in situ) cannot strand the UI.
+  120s sweep injects timeout envelopes; reader exit drains pollers too.
+- ipc trace (%TEMP%/guild-rpc.log) ships in every build; pipe_probe example
+  for in-situ client-flow bisection.
+
 ## Desktop 0.3.12 (2026-09-12, latest)
 
 - Build-identity handshake: daemon.hello now carries the workspace build id
