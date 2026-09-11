@@ -418,6 +418,7 @@ async fn chat(
         "model": req.model,
         "user_message": user_message,
         "client_tools": req.client_tools,
+        "attachment_ids": req.attachment_ids,
         "project_dir": req.project_dir,
         "client_id": headers
             .get("x-guild-client-id")
