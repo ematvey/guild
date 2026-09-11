@@ -1831,7 +1831,10 @@ export default function WebChat({
               }}
               rows={1}
               placeholder={models === null || model ? "Message Guild…" : "No model available"}
-              disabled={streaming || (models !== null && !model)}
+              // Not disabled while streaming: a disabled focused element
+              // blurs to body, and the composer must keep focus/caret
+              // during generation (send is guarded by `busy` anyway).
+              disabled={models !== null && !model}
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none "
             />
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
