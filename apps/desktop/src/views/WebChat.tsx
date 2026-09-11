@@ -526,7 +526,7 @@ function Frame({
     <div className="flex w-full flex-col text-xs">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-1.5 py-1 text-left outline-none transition-colors hover:text-foreground"
+        className="flex w-full items-center gap-2 py-1 text-left outline-none transition-colors hover:text-foreground"
       >
         {icon}
         <span className="min-w-0 flex-1 truncate text-muted-foreground">{title}</span>
@@ -538,7 +538,9 @@ function Frame({
         )}
       </button>
       {open && (
-        <div className="mb-2 rounded-lg border border-border bg-card px-3 py-2.5 text-xs">
+        // No card boundary: the content just continues below the row as
+        // smaller, grayer text, indented under the label.
+        <div className="mb-2 pl-[22px] text-xs text-muted-foreground">
           {children}
         </div>
       )}
@@ -562,7 +564,7 @@ function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
           </span>
           {head && (
             <>
-              <span aria-hidden className="hidden select-none text-muted-foreground/50 sm:inline">
+              <span aria-hidden className="mx-0.5 hidden select-none text-muted-foreground/40 sm:inline">
                 ·
               </span>
               <span className="hidden max-w-72 truncate text-muted-foreground sm:inline">
@@ -969,7 +971,7 @@ function ToolFrame({ t }: { t: ToolBlock }) {
         <>
           <span className="font-medium text-foreground/80">{toolLabel(t)}</span>
           {preview && (
-            <span aria-hidden className="select-none text-muted-foreground/50">
+            <span aria-hidden className="mx-0.5 select-none text-muted-foreground/40">
               ·
             </span>
           )}
