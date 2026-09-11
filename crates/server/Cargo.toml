@@ -37,6 +37,7 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
 restate-sdk = { version = "0.12", features = ["reqwest-client"] }
+rmcp = { version = "3.2", features = ["client", "transport-streamable-http-client-reqwest"] }
 async-trait.workspace = true
 eventsource-stream.workspace = true
 regex = "1"
@@ -47,6 +48,8 @@ aws-sdk-s3 = { version = "1", optional = true, default-features = false, feature
 [dev-dependencies]
 wiremock = "0.6"
 uuid.workspace = true
+# Fixture MCP server for plugin tests (features union with the client dep).
+rmcp = { version = "3.2", features = ["server", "transport-streamable-http-server"] }
 
 [[test]]
 name = "http_scaffold"
@@ -141,3 +144,6 @@ required-features = ["test-support"]
 [[test]]
 name = "approval_api"
 required-features = ["test-support"]
+
+[[test]]
+name = "mcp_plugin"
