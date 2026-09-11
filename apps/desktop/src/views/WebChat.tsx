@@ -1401,23 +1401,37 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           </SheetContent>
         </Sheet>
       ) : (
-        !collapsed && (
-          <aside
-            className="relative flex shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground"
-            style={{ width }}
-          >
-            {sidebar}
-            <div
-              className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
-              onMouseDown={startDrag}
-              title="Drag to resize"
-            />
-          </aside>
-        )
+        <aside
+          className="relative flex shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground"
+          style={{ width: collapsed ? 44 : width }}
+        >
+          {collapsed ? (
+            // Collapsed keeps the space pre-reserved: a slim rail instead of
+            // an unmount, so the central pane never reflows on toggle/load.
+            <div className="flex flex-1 flex-col items-center gap-2 py-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-muted-foreground"
+                onClick={() => setCollapsed(false)}
+                title="Open sidebar"
+              >
+                <PanelLeftOpen />
+              </Button>
+            </div>
+          ) : (
+            sidebar
+          )}
+          <div
+            className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
+            onMouseDown={startDrag}
+            title="Drag to resize"
+          />
+        </aside>
       )}
 
       {/* main column */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-sm">
           {isMobile ? (
             <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
@@ -1450,7 +1464,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           threadLoading ? (
             <ThreadSkeleton />
           ) : !chatId ? (
-          <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+          <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-32 py-8">
             <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
               <Bot className="size-7 text-muted-foreground" />
             </div>
@@ -1481,13 +1495,13 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             )}
           </div>
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+            <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-32 py-8">
               <p className="text-sm text-muted-foreground">No messages in this thread yet.</p>
             </div>
           )
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-6">
+            <div className="mx-auto w-full max-w-3xl space-y-4 px-4 pb-32 pt-6">
               {blocks.map((b, i) =>
                 b.kind === "user" ? (
                   <div
@@ -1537,9 +1551,10 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           </div>
         )}
 
-        {/* composer */}
-        <div className="p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
-          <div className="mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-sm">
+        {/* composer: floats over the chat content; the scroll pane runs
+            full-height behind it */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:p-4">
+          <div className="pointer-events-auto mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm">
             <Textarea
               ref={ta}
               value={prompt}
