@@ -298,14 +298,14 @@ pub mod superproxy {
                 let resp = req
                     .send()
                     .await
-                    .map_err(|e| format!("superproxy unreachable: {e}"))?;
+                    .map_err(|e| format!("search tool unreachable: {e}"))?;
                 if !resp.status().is_success() {
-                    return Err(format!("superproxy returned {}", resp.status()));
+                    return Err(format!("search tool returned {}", resp.status()));
                 }
                 let body: serde_json::Value = resp
                     .json()
                     .await
-                    .map_err(|e| format!("superproxy returned bad json: {e}"))?;
+                    .map_err(|e| format!("search tool returned bad json: {e}"))?;
 
                 let page_content = body["content"].as_str().unwrap_or("");
                 let title = body["title"]
