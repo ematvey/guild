@@ -513,12 +513,15 @@ function Frame({
   children,
 }: {
   icon: React.ReactNode;
-  title: React.ReactNode;
+  /** A node, or a render function receiving `open` (to e.g. hide the
+   * collapsed-row preview once the full content is shown below). */
+  title: React.ReactNode | ((open: boolean) => React.ReactNode);
   badge?: React.ReactNode;
   defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const titleNode = typeof title === "function" ? title(open) : title;
   return (
     // A clickable text row on the page — no chip background, full width, the
     // row blends into the conversation (established chat-app pattern). The
@@ -529,7 +532,7 @@ function Frame({
         className="flex w-full items-center gap-2 py-1 text-left outline-none transition-colors hover:text-foreground"
       >
         {icon}
-        <span className="min-w-0 flex-1 truncate text-muted-foreground">{title}</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{titleNode}</span>
         {badge}
         {open ? (
           <ChevronUp className="size-3 shrink-0 text-muted-foreground/60" />
@@ -963,13 +966,11 @@ function ToolFrame({ t }: { t: ToolBlock }) {
   return (
     <Frame
       icon={<ToolKindIcon kind={toolKind(t)} />}
-      title={
+      title={(open) => (
         <>
           <span className="mr-3 font-medium text-foreground/80">{toolLabel(t)}</span>
-          {preview && (
-            <span aria-hidden className="select-none" />
-          )}
-          {preview && (
+          {/* collapsed only: expanded, the full content shows below */}
+          {preview && !open && (
             <span
               className={`hidden max-w-72 truncate text-muted-foreground sm:inline ${
                 toolKind(t) === "search" ? "" : "font-mono"
@@ -980,7 +981,7 @@ function ToolFrame({ t }: { t: ToolBlock }) {
             </span>
           )}
         </>
-      }
+      )}
       badge={
         // Pills only signal trouble (established chat-app pattern): DONE is
         // implicit, ERROR stays visible. A running frame opens expanded.
