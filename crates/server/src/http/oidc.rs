@@ -247,12 +247,25 @@ async fn callback(
         .as_str()
         .ok_or_else(|| ApiError::unauthorized("idp returned no email claim"))?
         .to_string();
+    let display_name = userinfo["name"].as_str().map(str::to_string);
+    let avatar_url = userinfo["picture"].as_str().map(str::to_string);
 
-    // provision on first login, then hand out a session
+    // Provision on first login with the IdP profile, refresh it when the
+    // claims change, then hand out a session.
     let identity = store.identity();
     let user = match identity.find_by_email(org, &email).await? {
+        Some(u) if u.display_name != display_name || u.avatar_url != avatar_url => {
+            identity
+                .update_oidc_profile(u.id, display_name.as_deref(), avatar_url.as_deref())
+                .await?;
+            u
+        }
         Some(u) => u,
-        None => identity.create_oidc_user(org, &email).await?,
+        None => {
+            identity
+                .create_oidc_user(org, &email, display_name.as_deref(), avatar_url.as_deref())
+                .await?
+        }
     };
     let (_sid, token) = identity.create_session(user.id).await?;
 

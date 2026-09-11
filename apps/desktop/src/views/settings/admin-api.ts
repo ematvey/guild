@@ -65,6 +65,8 @@ export interface UserInfo {
   email: string;
   org_id: string;
   role: string;
+  display_name?: string;
+  avatar_url?: string;
 }
 
 export async function me(): Promise<UserInfo> {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -80,6 +80,12 @@ import {
 
 // Per-chat spend chip: lazy so recharts (charting) never lands in the main
 // chat bundle; renders nothing until a thread is open and the chunk arrives.
+
+// Per-chat spend chip: lazy so recharts (charting) never lands in the main
+// chat bundle; renders nothing until a thread is open and the chunk arrives.
+const ChatSpend = lazy(() =>
+  import("./ChatSpendChip").then((m) => ({ default: m.ChatSpendChip })),
+);
 
 interface ToolBlock {
   callId: string;
@@ -1144,12 +1150,16 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
 export default function WebChat({
   email,
   role = "member",
+  displayName,
+  avatarUrl,
   onSignOut,
 }: {
   email: string;
   role?: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
   onSignOut: () => void;
-}) {
+}) { {
   const [models, setModels] = useState<string[] | null>(null);
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
@@ -1753,6 +1763,8 @@ export default function WebChat({
       chats={chats}
       chatId={chatId}
       email={email}
+      displayName={displayName}
+      avatarUrl={avatarUrl}
       onNewChat={newChat}
       onOpenChat={openChat}
       onSignOut={onSignOut}
@@ -1867,6 +1879,11 @@ export default function WebChat({
               <Cpu className="size-3" />
               {boundMachine}
             </span>
+          )}
+          {chatId && (
+            <Suspense fallback={null}>
+              <ChatSpend chatId={chatId} busy={busy} />
+            </Suspense>
           )}
         </header>
 
@@ -2346,6 +2363,8 @@ function SidebarContent({
   chats,
   chatId,
   email,
+  displayName,
+  avatarUrl,
   onNewChat,
   onOpenChat,
   onSignOut,
@@ -2355,13 +2374,15 @@ function SidebarContent({
   chats: ChatSummary[] | null;
   chatId: string | null;
   email: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
   onSignOut: () => void;
   onOpenSettings: () => void;
   onOpenDevice: () => void;
 }) {
-  const initials = email.slice(0, 2).toUpperCase();
+  const initials = (displayName ?? email).slice(0, 2).toUpperCase();
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
@@ -2401,11 +2422,23 @@ function SidebarContent({
               className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent"
               title="Account"
             >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-                {initials}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={email}>
-                {email}
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt=""
+                  className="size-7 shrink-0 rounded-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
+                  {initials}
+                </span>
+              )}
+              <span
+                className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                title={email}
+              >
+                {displayName ?? email}
               </span>
               <ChevronUp className="size-3 shrink-0 text-muted-foreground" />
             </button>
