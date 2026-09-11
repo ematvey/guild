@@ -1644,6 +1644,8 @@ impl ChatRunner {
                         &call,
                         &server_tools,
                         format!("{step}.{idx}"),
+                        req.org_id,
+                        req.user_id,
                     )
                     .await?
                 };
@@ -2232,6 +2234,7 @@ async fn client_tool_step(
 /// model-facing history and the tool_result event (meta per spec §C.2). The
 /// model sees `content` only; meta rides to the client widget.
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 async fn server_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
@@ -2239,6 +2242,8 @@ async fn server_tool_step(
     call: &ToolCall,
     server_tools: &[integrations::ServerTool],
     _seq: String,
+    org_id: Uuid,
+    caller_id: Uuid,
 ) -> HandlerResult<(String, bool, Option<Value>)> {
     // Journaled: notify attached clients.
     let args_json = serde_json::to_string(&call.arguments)
@@ -2264,13 +2269,18 @@ async fn server_tool_step(
     })
     .await?;
 
-    // Journaled: execute the integration tool.
+    // Journaled: execute the integration tool. Rust plugins run directly;
+    // MCP plugin calls go through the pooled connection with the identity
+    // envelope + secret headers (connection state stays outside the journal —
+    // reconnecting on replay is safe, spec §8).
     let tools = server_tools.to_owned();
     let call2 = call.clone();
+    let st = state.clone();
     let (content, is_error, meta) = ctx
         .run(move || {
             let tools = tools.clone();
             let call = call2.clone();
+            let state = st.clone();
             async move {
                 let Some(tool) = tools.iter().find(|t| t.spec.name == call.name) else {
                     return Ok(Json((
@@ -2279,10 +2289,20 @@ async fn server_tool_step(
                         None,
                     )));
                 };
-                let out = tool
-                    .integration
-                    .execute(&tool.config, &call.name, call.arguments.clone())
-                    .await;
+                let identity = integrations::McpCallIdentity {
+                    org: org_id,
+                    caller: Some(caller_id),
+                    acting_as: None,
+                    call_id: Uuid::now_v7(),
+                };
+                let out = integrations::execute_server_tool(
+                    tool,
+                    &call.name,
+                    call.arguments.clone(),
+                    &state.mcp_pool,
+                    &identity,
+                )
+                .await;
                 Ok(Json(match out {
                     // ToolOutcome contract (spec §C.1): content is
                     // model-facing; meta is the tool-owned widget payload,
@@ -2316,7 +2336,7 @@ async fn server_tool_step(
         }
     })
     .await?;
-    let _ = state;
+    let _ = tx;
     Ok((content, is_error, meta))
 }
 

@@ -6,6 +6,7 @@ use crate::http::error::ApiError;
 use crate::s3::SharedObjectStore;
 use crate::store::Store;
 use crate::usage::SharedUsageSink;
+use crate::worker::mcp_pool::McpPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -64,6 +65,9 @@ pub struct AppState {
         Arc<std::sync::Mutex<HashMap<Uuid, crate::http::gateway::ActiveGeneration>>>,
     /// Connected machine executors (see `ExecutorGuard`), keyed by machine_id.
     pub executors: Arc<std::sync::Mutex<HashMap<String, Arc<ExecutorHandle>>>>,
+    /// Cached MCP client connections for integration plugins (outside the
+    /// Restate journal — reconnecting on replay is safe, spec §8).
+    pub mcp_pool: Arc<McpPool>,
 }
 
 impl AppState {
@@ -75,6 +79,7 @@ impl AppState {
             objects: Arc::new(OnceCell::new()),
             generations: Arc::new(std::sync::Mutex::new(HashMap::new())),
             executors: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            mcp_pool: Arc::new(McpPool::new()),
         }
     }
 
@@ -113,6 +118,7 @@ impl AppState {
             objects: Arc::new(OnceCell::new()),
             generations: Arc::new(std::sync::Mutex::new(HashMap::new())),
             executors: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            mcp_pool: Arc::new(McpPool::new()),
         }
     }
 

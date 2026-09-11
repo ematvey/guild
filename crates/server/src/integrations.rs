@@ -5,10 +5,16 @@
 //! contributes tools only while enabled.
 
 use crate::store::integrations::IntegrationRow;
+use crate::worker::mcp_pool::{McpPool, PoolKey, secrets_fingerprint};
+use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use futures::future::BoxFuture;
+use guild_core::registry::{tool_class, BundleManifest};
 use protocol::api::ToolSpec;
+use rmcp::model::CallToolRequestParams;
+use rmcp::service::{Peer, RoleClient};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// What kind of tool surface an integration contributes — used by the admin
 /// API/UI to group providers (serialized as `"search" | "fetch" | "other"`).
@@ -66,11 +72,231 @@ pub fn integration_by_name(name: &str) -> Option<Arc<dyn Integration>> {
     }
 }
 
+/// How a server tool executes: a compiled-in Rust plugin or a remote MCP
+/// server implementing the plugin contract (spec §3).
+#[derive(Clone)]
+pub enum ServerExecutor {
+    Rust(Arc<dyn Integration>),
+    Mcp(Box<McpEndpoint>),
+}
+
+/// One MCP plugin endpoint: the resolved connection facts (secrets decrypted
+/// at turn start, never persisted in logs or events).
+#[derive(Clone, Debug)]
+pub struct McpEndpoint {
+    pub slug: String,
+    pub url: String,
+    pub secrets: Vec<(String, String)>,
+    pub manifest: BundleManifest,
+}
+
+/// Identity carried on one MCP tool call (spec §5): the envelope headers
+/// are built from these values plus the resolved secrets.
+#[derive(Clone, Debug)]
+pub struct McpCallIdentity {
+    pub org: Uuid,
+    pub caller: Option<Uuid>,
+    pub acting_as: Option<String>,
+    pub call_id: Uuid,
+}
+
 /// Resolves the enabled integrations of one org into concrete server tools.
+#[derive(Clone)]
 pub struct ServerTool {
     pub spec: ToolSpec,
-    pub integration: Arc<dyn Integration>,
+    pub executor: ServerExecutor,
     pub config: serde_json::Value,
+}
+
+/// Guild-provided tool name for an MCP plugin tool: `int_<slug>_<tool>`.
+pub fn namespaced_tool(slug: &str, tool: &str) -> String {
+    format!("int_{slug}_{tool}")
+}
+
+/// Strips the `int_<slug>_` namespace back off.
+pub fn unnamespaced_tool<'a>(slug: &str, tool: &'a str) -> Option<&'a str> {
+    tool.strip_prefix(&format!("int_{slug}_"))
+}
+
+/// Tool-class rank for the policy rule (spec §6): read < write < admin.
+fn class_rank(class: &str) -> u8 {
+    match class {
+        "write" => 1,
+        "admin" => 2,
+        _ => 0,
+    }
+}
+
+/// Classes one role may call. Default policy (spec §6): member read-only,
+/// admin (and owner — owners are admins) everything; a stored
+/// `tool_policy` tightens or reshapes per role, never past the manifest.
+fn allowed_classes(org_policy: &Option<serde_json::Value>, role: &str) -> Vec<&'static str> {
+    let role = if role == "owner" { "admin" } else { role };
+    if let Some(policy) = org_policy
+        .as_ref()
+        .and_then(|p| p["tool_policy"].as_object())
+        .and_then(|tp| tp.get(role))
+        .and_then(|v| v.as_array())
+    {
+        let allowed: Vec<&'static str> = policy
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter_map(|s| match s {
+                "read" => Some("read"),
+                "write" => Some("write"),
+                "admin" => Some("admin"),
+                _ => None,
+            })
+            .collect();
+        return allowed;
+    }
+    match role {
+        "admin" => vec!["read", "write", "admin"],
+        _ => vec!["read"],
+    }
+}
+
+/// Policy rule (spec §6): the manifest class is the connector's declaration;
+/// the org can tighten, never loosen. A tool declared `admin` is callable
+/// only by admins regardless of any wider policy grant. Unknown tools are
+/// class `read` (spec §3).
+pub fn enforce_class(
+    manifest: &BundleManifest,
+    org_policy: &Option<serde_json::Value>,
+    role: &str,
+    tool: &str,
+) -> bool {
+    let class = tool_class(manifest, tool);
+    if class == "admin" && role != "admin" && role != "owner" {
+        return false;
+    }
+    allowed_classes(org_policy, role)
+        .iter()
+        .any(|c| class_rank(c) >= class_rank(class))
+}
+
+/// Resolves the acting identity for one call (spec §5): no override acts as
+/// the caller's own mapped identity (null when there is none); an override
+/// to a different identity is admin-only.
+#[allow(clippy::result_unit_err)] // the plan's cross-lane interface: Err carries no payload
+pub fn resolve_acting_as(
+    caller_email: Option<&str>,
+    override_: Option<&str>,
+    is_admin: bool,
+) -> Result<Option<String>, ()> {
+    match override_ {
+        None => Ok(caller_email.map(|s| s.to_string())),
+        Some(o) if Some(o) == caller_email || is_admin => Ok(Some(o.to_string())),
+        Some(_) => Err(()),
+    }
+}
+
+/// Builds the identity envelope (spec §5) plus secret headers (spec §4) for
+/// one MCP call. Secrets appear only here — never in logs or events.
+pub fn envelope_headers(
+    call_id: &Uuid,
+    org: &Uuid,
+    caller: Option<&Uuid>,
+    acting_as: Option<&str>,
+    secrets: &[(String, String)],
+) -> HeaderMap {
+    let mut map = HeaderMap::new();
+    if let Ok(v) = HeaderValue::from_str(&org.to_string()) {
+        map.insert("x-guild-org", v);
+    }
+    if let Some(c) = caller {
+        if let Ok(v) = HeaderValue::from_str(&c.to_string()) {
+            map.insert("x-guild-caller", v);
+        }
+    }
+    if let Some(a) = acting_as {
+        if let Ok(v) = HeaderValue::from_str(a) {
+            map.insert("x-guild-acting-as", v);
+        }
+    }
+    if let Ok(v) = HeaderValue::from_str(&call_id.to_string()) {
+        map.insert("x-guild-call-id", v);
+    }
+    for (name, value) in secrets {
+        let Ok(name) = HeaderName::from_lowercase(format!("x-guild-secret-{name}").as_bytes())
+        else {
+            continue; // undeclarable secret name — never leak it by other means
+        };
+        if let Ok(v) = HeaderValue::from_str(value) {
+            map.insert(name, v);
+        }
+    }
+    map
+}
+
+/// Calls one tool on an MCP peer and maps the result to the integration
+/// `ToolOutcome` contract. The tool name is the connector's raw name —
+/// namespacing is Guild-side only.
+pub async fn mcp_call_tool(
+    peer: &Peer<RoleClient>,
+    tool: &str,
+    args: serde_json::Value,
+) -> Result<ToolOutcome, String> {
+    let mut params = CallToolRequestParams::new(tool.to_string());
+    if let Some(obj) = args.as_object() {
+        params = params.with_arguments(obj.clone());
+    }
+    let result = peer
+        .call_tool(params)
+        .await
+        .map_err(|e| format!("mcp tool call failed: {e}"))?;
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            rmcp::model::ContentBlock::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if result.is_error.unwrap_or(false) {
+        return Err(format!("mcp tool error: {text}"));
+    }
+    Ok(ToolOutcome {
+        content: text,
+        meta: None,
+    })
+}
+
+/// Executes one resolved server tool. MCP calls go through the pool with the
+/// identity envelope + secret headers; Rust plugins execute directly.
+pub async fn execute_server_tool(
+    tool: &ServerTool,
+    mcp_tool: &str,
+    args: serde_json::Value,
+    pool: &McpPool,
+    identity: &McpCallIdentity,
+) -> Result<ToolOutcome, String> {
+    match &tool.executor {
+        ServerExecutor::Rust(plugin) => {
+            plugin.execute(&tool.config, mcp_tool, args).await
+        }
+        ServerExecutor::Mcp(endpoint) => {
+            let headers = envelope_headers(
+                &identity.call_id,
+                &identity.org,
+                identity.caller.as_ref(),
+                identity.acting_as.as_deref(),
+                &endpoint.secrets,
+            );
+            let key = PoolKey {
+                slug: endpoint.slug.clone(),
+                url: endpoint.url.clone(),
+                acting_as: identity.acting_as.clone(),
+                secrets_fingerprint: secrets_fingerprint(&endpoint.secrets),
+            };
+            let peer = pool
+                .get_or_connect(&key, &endpoint.url, headers)
+                .await
+                .map_err(|e| format!("integration {} unreachable: {e}", endpoint.slug))?;
+            mcp_call_tool(&peer, mcp_tool, args).await
+        }
+    }
 }
 
 pub fn resolve_server_tools(rows: &[IntegrationRow]) -> anyhow::Result<Vec<ServerTool>> {
@@ -82,7 +308,7 @@ pub fn resolve_server_tools(rows: &[IntegrationRow]) -> anyhow::Result<Vec<Serve
         for spec in plugin.tools(&row.config)? {
             out.push(ServerTool {
                 spec,
-                integration: plugin.clone(),
+                executor: ServerExecutor::Rust(plugin.clone()),
                 config: row.config.clone(),
             });
         }
