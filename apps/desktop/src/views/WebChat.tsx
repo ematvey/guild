@@ -76,7 +76,9 @@ import {
   type ChatSummary,
   type MachineInfo,
   type Release,
+  type ThreadContext,
   type ThreadEventRow,
+  type ThreadResult,
 } from "../transport";
 
 interface ToolBlock {
@@ -442,6 +444,52 @@ function statusPillCls(ok: boolean): string {
     : "border-destructive/40 bg-destructive/10 text-destructive";
 }
 
+/// Formats a token count as k with one decimal, trimming a trailing ".0"
+/// (12300 → "12.3k", 128000 → "128k").
+function fmtK(n: number): string {
+  const k = n / 1000;
+  const s = k.toFixed(1);
+  return (s.endsWith(".0") ? Math.round(k).toString() : s) + "k";
+}
+
+/// Slim context-usage bar next to the model selector (task G2): fills as the
+/// thread's context grows; amber past 80% of the window, red past 90%, where
+/// a subtle "Compact?" hint (only when the thread has messages) starts the
+/// existing compaction flow. Hidden entirely when the server reports no
+/// context data (pre-G1).
+function ContextGauge({
+  ctx,
+  hint,
+  onCompact,
+}: {
+  ctx: ThreadContext;
+  hint: boolean;
+  onCompact: () => void;
+}) {
+  const ratio = ctx.max > 0 ? Math.min(1, Math.max(0, ctx.tokens / ctx.max)) : 0;
+  const fill =
+    ratio > 0.9 ? "bg-destructive" : ratio >= 0.8 ? "bg-amber-500" : "bg-foreground";
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      <span
+        className="block h-1 w-[90px] overflow-hidden rounded-full bg-muted"
+        title={`~${fmtK(ctx.tokens)} / ${fmtK(ctx.max)} context tokens`}
+      >
+        <span className={`block h-full rounded-full ${fill}`} style={{ width: `${ratio * 100}%` }} />
+      </span>
+      {hint && (
+        <button
+          onClick={onCompact}
+          title="Context is nearly full — compact the thread to shrink it"
+          className="text-xs text-muted-foreground outline-none hover:text-foreground"
+        >
+          Compact?
+        </button>
+      )}
+    </span>
+  );
+}
+
 function TruncatedBadge() {
   return (
     <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
@@ -746,6 +794,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
   const [threadLoading, setThreadLoading] = useState(false); // /thread/<id> fetch in flight with nothing to show
   const [prompt, setPrompt] = useState("");
   const [blocks, setBlocks] = useState<Block[]>([]);
+  const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
   const [busy, setBusy] = useState(false);
   const [attaching, setAttaching] = useState(false); // receiving a server-side generation
   const [compacting, setCompacting] = useState(false); // compaction POST sent, waiting for the event
@@ -817,9 +866,12 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
 
   /// Reloads blocks from thread rows and tracks the high-water seq so a later
   /// compaction poll only waits for events newer than what is on screen.
-  const applyThreadRows = (rows: ThreadEventRow[]) => {
-    for (const r of rows) if (r.seq > maxSeqSeen.current) maxSeqSeen.current = r.seq;
-    setBlocks(eventsToBlocks(rows));
+  /// Also carries the server-reported context usage to the gauge; a server
+  /// without it (pre-G1) leaves the gauge hidden.
+  const applyThreadRows = (res: ThreadResult) => {
+    for (const r of res.events) if (r.seq > maxSeqSeen.current) maxSeqSeen.current = r.seq;
+    setCtx(res.context ?? null);
+    setBlocks(eventsToBlocks(res.events));
   };
 
   const flashCompactNote = (text: string) => {
@@ -842,6 +894,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
       attachAbort.current = null;
       setChatId(null);
       setBlocks([]);
+      setCtx(null);
       setThreadLoading(false);
       setCompacting(false);
       setCompactNote(null);
@@ -868,9 +921,9 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     const seq = ++loadSeq.current;
     setThreadLoading(true);
     try {
-      const rows: ThreadEventRow[] = await getThread(id, loadAc.signal);
+      const res: ThreadResult = await getThread(id, loadAc.signal);
       if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
-      applyThreadRows(rows);
+      applyThreadRows(res);
       setChatId(id);
       // A generation may still be running server-side (e.g. it outlived a
       // previous client, or the stream dropped earlier). Attach with
@@ -902,6 +955,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
     attachAbort.current = null;
     setChatId(null);
     setBlocks([]);
+    setCtx(null);
     setThreadLoading(false);
     setCompacting(false);
     setCompactNote(null);
@@ -1002,9 +1056,9 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         if (seq !== loadSeq.current || ac.signal.aborted) break;
         try {
           // reconcile with durable state before (re)attaching
-          const rows: ThreadEventRow[] = await getThread(cid, ac.signal);
+          const res: ThreadResult = await getThread(cid, ac.signal);
           if (seq !== loadSeq.current || ac.signal.aborted) break;
-          applyThreadRows(rows);
+          applyThreadRows(res);
           term.v = "none";
           // The first delta after attach is the server's catch-up snapshot of
           // the in-flight turn (full buffer, not a delta) — or, when there is
@@ -1071,11 +1125,12 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
           // re-read through a widened local: the SSE callbacks may have
           // reassigned term.v after the await, which TS narrowing can't see
           const outcome = term.v as "done" | "error" | "idle" | "none";
-          if (outcome === "idle") {
+          if (outcome === "idle" || outcome === "done") {
             // the generation may have completed between the reload and the
-            // attach; reload once more so the final events are on screen
+            // attach; reload once more so the final events — and the fresh
+            // context usage for the gauge — are on screen
             try {
-              const final: ThreadEventRow[] = await getThread(cid, ac.signal);
+              const final: ThreadResult = await getThread(cid, ac.signal);
               if (seq === loadSeq.current) {
                 applyThreadRows(final);
               }
@@ -1084,7 +1139,7 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
             }
             break;
           }
-          if (outcome !== "none") break; // done / error: real end
+          if (outcome !== "none") break; // error: real end
           // no terminal frame → dropped connection; fall through to backoff
         } catch {
           /* network error while loading or attaching → retry */
@@ -1186,6 +1241,14 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         // of surfacing a dead "network error"
         throw new DropError();
       }
+      // done: reload the durable thread once so the gauge's context usage
+      // reflects the completed turn (blocks rebuild to the same view)
+      try {
+        const res: ThreadResult = await getThread(cid);
+        if (loadSeq.current === mySeq) applyThreadRows(res);
+      } catch {
+        /* keep the streamed view */
+      }
       void refreshChats();
     } catch (e) {
       if (loadSeq.current !== mySeq) return; // deliberate switch away, not an error
@@ -1243,13 +1306,13 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
         return;
       }
       try {
-        const rows = await getThread(chatId);
+        const res: ThreadResult = await getThread(chatId);
         if (loadSeq.current !== mySeq) {
           setCompacting(false);
           return;
         }
-        if (rows.some((r) => r.event.type === "compaction" && r.seq > baseline)) {
-          applyThreadRows(rows);
+        if (res.events.some((r) => r.event.type === "compaction" && r.seq > baseline)) {
+          applyThreadRows(res);
           setCompacting(false);
           return;
         }
@@ -1494,6 +1557,13 @@ export default function WebChat({ email, onSignOut }: { email: string; onSignOut
                 <span />
               )}
               <div className="flex items-center gap-2">
+                {chatId && ctx && (
+                  <ContextGauge
+                    ctx={ctx}
+                    hint={ctx.tokens / (ctx.max || 1) > 0.9 && blocks.length > 0}
+                    onCompact={() => void compact()}
+                  />
+                )}
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
                     <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none">
