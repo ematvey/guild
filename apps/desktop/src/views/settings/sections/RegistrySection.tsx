@@ -1,188 +1,278 @@
-//! Registry section — port of the /admin console Registry view into the
-//! settings style: bundle list per kind, versions drill-down, review actions.
-//! (The console view has no upload UI; publishing stays API/CLI-side.)
+//! RegistrySection — admin settings: a rich list screen of registry items
+//! (skills / mcp / integrations) with a detail screen per item showing its
+//! versions and the review action (approve / revert to draft).
 
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, ArrowUpRight, Package, Pencil } from "lucide-react";
 import { api } from "../admin-api";
+import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
 
 interface ItemRow {
   slug: string;
-  description: string;
+  description: string | null;
   latest_version: string | null;
   review_status: string;
 }
 
 interface VersionRow {
   version: string;
-  published_at: string;
+  published_at: string | null;
 }
 
 const KINDS = ["skill", "mcp", "integration"] as const;
+type Kind = (typeof KINDS)[number];
+
+const KIND_LABELS: Record<Kind, string> = {
+  skill: "Skills",
+  mcp: "MCP servers",
+  integration: "Integrations",
+};
+
+const backBtn =
+  "mb-4 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
+const listCard =
+  "flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40";
+const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
+
+const reviewPill = (status: string) => (
+  <span
+    className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${
+      status === "approved"
+        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+        : "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+    }`}
+  >
+    {status}
+  </span>
+);
 
 export default function RegistrySection() {
-  const [kind, setKind] = useState<(typeof KINDS)[number]>("skill");
-  const [items, setItems] = useState<ItemRow[] | null>(null);
-  const [versions, setVersions] = useState<VersionRow[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [detail, setDetail] = useState<{ kind: Kind; slug: string } | null>(null);
+
+  if (detail) {
+    return (
+      <ItemDetail
+        kind={detail.kind}
+        slug={detail.slug}
+        onBack={() => setDetail(null)}
+      />
+    );
+  }
+  return <RegistryList onOpen={(kind, slug) => setDetail({ kind, slug })} />;
+}
+
+function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }) {
+  const [items, setItems] = useState<Record<Kind, ItemRow[] | null>>({
+    skill: null,
+    mcp: null,
+    integration: null,
+  });
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
-    setItems(null);
-    api<{ items: ItemRow[] }>("GET", `/api/v1/registry/${kind}`)
-      .then((r) => {
-        setItems(r.items ?? []);
-        setError(null);
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-  }, [kind]);
-
-  useEffect(reload, [reload]);
-
-  const openItem = async (slug: string) => {
-    setSelected(slug);
-    setVersions([]);
-    try {
-      const r = await api<{ versions: VersionRow[] }>("GET", `/api/v1/registry/${kind}/${slug}`);
-      setVersions(r.versions ?? []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    for (const kind of KINDS) {
+      api<{ items: ItemRow[] }>("GET", `/api/v1/registry/${kind}`)
+        .then((r) => setItems((s) => ({ ...s, [kind]: r.items })))
+        .catch((e) => {
+          setItems((s) => ({ ...s, [kind]: [] }));
+          setError(e instanceof Error ? e.message : String(e));
+        });
     }
-  };
+  }, []);
 
-  const review = async (slug: string, status: "approved" | "draft") => {
-    setError(null);
-    try {
-      await api("POST", `/api/v1/registry/${kind}/${slug}/review`, { status });
-      reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const total = KINDS.reduce((n, k) => n + (items[k]?.length ?? 0), 0);
 
   return (
-    <div className="space-y-4 pt-2">
-      {/* kind switcher */}
-      <div className="flex gap-2">
-        {KINDS.map((k) => (
-          <button
-            key={k}
-            className={`rounded-lg border px-3 py-1.5 text-sm capitalize transition-colors ${
-              kind === k
-                ? "border-foreground/40 bg-accent text-foreground"
-                : "border-border bg-card text-muted-foreground hover:bg-accent/50"
-            }`}
-            onClick={() => {
-              setKind(k);
-              setSelected(null);
-            }}
-          >
-            {k}
-          </button>
-        ))}
-      </div>
-
-      {error && (
-        <p className="rounded-lg border border-destructive/40 bg-card p-3 text-sm text-destructive">
-          {error}
-        </p>
-      )}
-
-      {/* bundles list */}
-      {items === null && !error ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-2/3 rounded-lg" />
-        </div>
-      ) : (
-        <div className="rounded-lg border border-border bg-card">
-          {items!.length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground">
-              Nothing published under {kind} yet.
+    <div className="space-y-6">
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {KINDS.map((kind) => (
+        <section key={kind}>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className={label}>{KIND_LABELS[kind]}</h3>
+            <span className="text-xs text-muted-foreground">
+              {items[kind] ? `${items[kind].length} items` : ""}
+            </span>
+          </div>
+          {items[kind] === null ? (
+            <Skeleton className="h-14 w-full rounded-lg" />
+          ) : items[kind]!.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+              Nothing published under {KIND_LABELS[kind].toLowerCase()} yet — publishing
+              happens through the registry API (`POST /api/v1/registry/{kind}`).
             </p>
           ) : (
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <tr className="border-b border-border">
-                  <th className="px-4 py-2 font-medium">Slug</th>
-                  <th className="px-4 py-2 font-medium">Description</th>
-                  <th className="px-4 py-2 font-medium">Latest</th>
-                  <th className="px-4 py-2 font-medium">Status</th>
-                  <th className="px-4 py-2 text-right font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items!.map((it) => (
-                  <tr key={it.slug} className="border-b border-border/60 last:border-b-0">
-                    <td className="px-4 py-2 font-mono text-xs">{it.slug}</td>
-                    <td className="max-w-48 truncate px-4 py-2 text-muted-foreground" title={it.description}>
-                      {it.description}
-                    </td>
-                    <td className="px-4 py-2 font-mono text-xs">{it.latest_version ?? "—"}</td>
-                    <td className="px-4 py-2">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs ${
-                          it.review_status === "approved"
-                            ? "bg-emerald-500/15 text-emerald-500"
-                            : "bg-amber-500/15 text-amber-500"
-                        }`}
-                      >
-                        {it.review_status}
-                      </span>
-                    </td>
-                    <td className="space-x-3 px-4 py-2 text-right text-xs">
-                      <button
-                        className="text-muted-foreground underline-offset-2 hover:underline"
-                        onClick={() => void openItem(it.slug)}
-                      >
-                        versions
-                      </button>
-                      {it.review_status === "draft" ? (
-                        <button
-                          className="text-emerald-500 underline-offset-2 hover:underline"
-                          onClick={() => void review(it.slug, "approved")}
-                        >
-                          approve
-                        </button>
-                      ) : (
-                        <button
-                          className="text-amber-500 underline-offset-2 hover:underline"
-                          onClick={() => void review(it.slug, "draft")}
-                        >
-                          revert to draft
-                        </button>
+            <div className="space-y-2">
+              {items[kind]!.map((it) => (
+                <button
+                  key={it.slug}
+                  className={listCard}
+                  onClick={() => onOpen(kind, it.slug)}
+                >
+                  <Package className="size-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-medium">{it.slug}</p>
+                      {it.latest_version && (
+                        <span className="rounded bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
+                          v{it.latest_version}
+                        </span>
                       )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                    {it.description && (
+                      <p className="truncate text-xs text-muted-foreground">{it.description}</p>
+                    )}
+                  </div>
+                  {reviewPill(it.review_status)}
+                  <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
+                </button>
+              ))}
+            </div>
           )}
-        </div>
+        </section>
+      ))}
+      {total === 0 && KINDS.every((k) => items[k] !== null) && (
+        <p className="text-xs text-muted-foreground">
+          The registry holds installable bundles for the desktop app; entries appear here
+          once published.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ItemDetail({
+  kind,
+  slug,
+  onBack,
+}: {
+  kind: Kind;
+  slug: string;
+  onBack: () => void;
+}) {
+  const [item, setItem] = useState<ItemRow | null>(null);
+  const [versions, setVersions] = useState<VersionRow[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    api<{ items: ItemRow[] }>("GET", `/api/v1/registry/${kind}`)
+      .then((r) => setItem(r.items.find((x) => x.slug === slug) ?? null))
+      .catch(() => setItem(null));
+    api<{ versions: VersionRow[] }>("GET", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}`)
+      .then((r) => setVersions(r.versions))
+      .catch((e) => {
+        setVersions([]);
+        setError(e instanceof Error ? e.message : String(e));
+      });
+  }, [kind, slug]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  return (
+    <div>
+      <button className={backBtn} onClick={onBack}>
+        <ArrowLeft className="size-4" /> Registry
+      </button>
+      <div className="mb-1 flex items-center gap-2">
+        <h3 className="text-base font-semibold">{slug}</h3>
+        <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
+          {kind}
+        </span>
+        {item && reviewPill(item.review_status)}
+      </div>
+      {item?.description && (
+        <p className="mb-4 max-w-xl text-sm text-muted-foreground">{item.description}</p>
       )}
 
-      {/* versions drill-down */}
-      {selected && (
-        <div className="rounded-lg border border-border bg-card p-4">
-          <p className="text-sm font-medium">
-            <span className="font-mono">{selected}</span> — versions
+      <div className="max-w-xl space-y-4">
+        <section>
+          <h4 className="mb-2">{label}Versions</h4>
+          {versions === null ? (
+            <Skeleton className="h-20 w-full rounded-lg" />
+          ) : versions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No versions published.</p>
+          ) : (
+            <div className="space-y-2">
+              {versions.map((v) => (
+                <div
+                  key={v.version}
+                  className="flex items-center justify-between rounded-lg border border-border px-4 py-2.5"
+                >
+                  <span className="font-mono text-sm">v{v.version}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {v.published_at ? new Date(v.published_at).toLocaleString() : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <h4 className="mb-2">{label}Review</h4>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Only approved items are installable from the desktop app.
           </p>
-          <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-            {versions.map((v) => (
-              <li key={v.version} className="font-mono text-xs">
-                {v.version} — {new Date(v.published_at).toLocaleString()}
-              </li>
-            ))}
-            {versions.length === 0 && <li className="text-xs">loading…</li>}
-          </ul>
-        </div>
-      )}
-
-      <p className="text-xs text-muted-foreground">
-        Bundles are published via the API (tar.gz per kind: skill, mcp, integration). Members can
-        only install approved items.
-      </p>
+          {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
+          <div className="flex gap-2">
+            {item?.review_status !== "approved" && (
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError(null);
+                  try {
+                    await api("POST", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}/review`, {
+                      status: "approved",
+                    });
+                    reload();
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Approve
+              </Button>
+            )}
+            {item?.review_status === "approved" && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError(null);
+                  try {
+                    await api("POST", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}/review`, {
+                      status: "draft",
+                    });
+                    reload();
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Revert to draft
+              </Button>
+            )}
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <ArrowUpRight className="size-3.5" /> publishing stays API-side
+            </span>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

@@ -32,7 +32,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/admin/integrations/{name}",
-            axum::routing::put(upsert_integration),
+            axum::routing::put(upsert_integration).delete(delete_integration),
         )
 }
 
@@ -57,6 +57,17 @@ async fn list_integrations(
 
 /// Configures one integration. The integration contributes tools to the chat
 /// loop only while enabled; config is validated on save.
+/// Removes an integration's configuration entirely.
+async fn delete_integration(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store.integrations().delete(admin.0.org_id, &name).await?;
+    Ok(Json(json!({})))
+}
+
 async fn upsert_integration(
     State(state): State<AppState>,
     admin: AdminUser,

@@ -1,8 +1,10 @@
-//! Integrations section — port of the /admin console Integrations view into
-//! the settings style. Available integrations grouped by category; configured
-//! integrations get an enable toggle + JSON config editor + Save.
+//! IntegrationsSection — admin settings: a rich list screen of available and
+//! configured integrations; clicking one opens a separate detail screen with
+//! the enable toggle, JSON config editor, save and delete (list → drill-in →
+//! back, mirroring established settings apps).
 
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, ArrowUpRight, Pencil, Plus, Trash2, Webhook } from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
@@ -26,91 +28,19 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: "Other",
 };
 
-function categoryLabel(category?: string): string {
-  return CATEGORY_LABELS[category ?? "other"] ?? CATEGORY_LABELS.other;
-}
+const categoryLabel = (c?: string) => CATEGORY_LABELS[c ?? "other"] ?? CATEGORY_LABELS.other;
 
-/** One configured integration: enable toggle + JSON config editor + Save. */
-function IntegrationCard({
-  name,
-  initialConfig,
-  enabled,
-  reload,
-}: {
-  name: string;
-  initialConfig: Record<string, unknown>;
-  enabled: boolean;
-  reload: () => void;
-}) {
-  const [text, setText] = useState(JSON.stringify(initialConfig ?? {}, null, 2));
-  const [isOn, setIsOn] = useState(enabled);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const save = async (nextEnabled: boolean) => {
-    setError(null);
-    let config: unknown;
-    try {
-      config = JSON.parse(text);
-    } catch {
-      setError("invalid JSON — fix the config before saving");
-      return;
-    }
-    setBusy(true);
-    try {
-      await api("PUT", `/api/v1/admin/integrations/${encodeURIComponent(name)}`, {
-        config,
-        enabled: nextEnabled,
-      });
-      setIsOn(nextEnabled);
-      reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-center gap-3">
-        <span className="font-mono text-sm font-medium">{name}</span>
-        <button
-          className={`rounded-full px-2 py-0.5 text-xs transition-colors ${
-            isOn ? "bg-emerald-500/15 text-emerald-500" : "bg-muted text-muted-foreground"
-          } disabled:opacity-50`}
-          disabled={busy}
-          title={isOn ? "Click to disable" : "Click to enable"}
-          onClick={() => void save(!isOn)}
-        >
-          {isOn ? "enabled" : "disabled"}
-        </button>
-        <Button
-          className="ml-auto"
-          variant="outline"
-          size="sm"
-          disabled={busy}
-          onClick={() => void save(isOn)}
-        >
-          {busy ? "Saving…" : "Save"}
-        </Button>
-      </div>
-      <Textarea
-        className="mt-3 min-h-24 font-mono text-xs"
-        spellCheck={false}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <p className="mt-1 text-xs text-muted-foreground">JSON config for this integration.</p>
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-    </div>
-  );
-}
+const backBtn =
+  "mb-4 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
+const listCard =
+  "flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40";
+const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 
 export default function IntegrationsSection() {
   const [rows, setRows] = useState<IntegrationRow[] | null>(null);
-  const [available, setAvailable] = useState<AvailableEntry[]>([]);
+  const [available, setAvailable] = useState<AvailableEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     api<{ integrations: IntegrationRow[]; available: AvailableEntry[] }>(
@@ -118,107 +48,255 @@ export default function IntegrationsSection() {
       "/api/v1/admin/integrations",
     )
       .then((r) => {
-        setRows(r.integrations ?? []);
-        setAvailable(r.available ?? []);
-        setError(null);
+        setRows(r.integrations);
+        setAvailable(r.available);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((e) => {
+        setRows([]);
+        setAvailable([]);
+        setError(e instanceof Error ? e.message : String(e));
+      });
   }, []);
 
-  useEffect(reload, [reload]);
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
-  if (error && rows === null) {
+  if (detail !== null) {
+    const configured = rows?.find((r) => r.name === detail);
     return (
-      <p className="rounded-lg border border-destructive/40 bg-card p-3 text-sm text-destructive">
-        {error}
-      </p>
+      <IntegrationDetail
+        name={detail}
+        category={available?.find((a) => a.name === detail)?.category}
+        initialConfig={configured?.config ?? null}
+        initialEnabled={configured?.enabled ?? false}
+        onChanged={reload}
+        onBack={() => {
+          reload();
+          setDetail(null);
+        }}
+      />
     );
   }
 
-  if (rows === null) {
-    return (
-      <div className="space-y-3 pt-2">
-        <Skeleton className="h-4 w-44" />
-        <div className="flex gap-2">
-          <Skeleton className="h-9 w-28 rounded-lg" />
-          <Skeleton className="h-9 w-28 rounded-lg" />
-        </div>
-        <Skeleton className="h-4 w-32" />
-        <Skeleton className="h-32 w-full rounded-lg" />
-        <Skeleton className="h-32 w-full rounded-lg" />
-      </div>
-    );
-  }
-
-  const configuredNames = new Set(rows.map((r) => r.name));
-
-  // Group available integrations by category (missing category → "other").
-  const groups = new Map<string, AvailableEntry[]>();
-  for (const a of available) {
-    const cat = categoryLabel(a.category);
-    const list = groups.get(cat) ?? [];
-    list.push(a);
-    groups.set(cat, list);
-  }
-  const sortedCats = [...groups.keys()].sort();
+  const availableNames = new Set((available ?? []).map((a) => a.name));
 
   return (
-    <div className="space-y-6 pt-2">
-      {error && <p className="text-xs text-destructive">{error}</p>}
-
-      <section className="space-y-3">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Available integrations
-        </h3>
-        <div className="rounded-lg border border-border bg-card p-4">
-          {sortedCats.map((cat) => (
-            <div key={cat} className={cat !== sortedCats[0] ? "mt-4" : undefined}>
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
-                {cat}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {groups.get(cat)!.map((a) => (
-                  <div
-                    key={a.name}
-                    className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
-                  >
-                    <span className="font-medium">{a.name}</span>
-                    {configuredNames.has(a.name) && (
-                      <span className="ml-2 text-xs text-emerald-500">configured</span>
-                    )}
-                  </div>
-                ))}
+    <div className="space-y-6">
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {rows === null || available === null ? (
+        <div className="space-y-2">
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
+        </div>
+      ) : (
+        (["fetch", "search", "other"] as const).map((cat) => {
+          const inCat = available.filter((a) => (a.category ?? "other") === cat);
+          if (inCat.length === 0) return null;
+          return (
+            <section key={cat}>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className={label}>{categoryLabel(cat)}</h3>
+                <span className="text-xs text-muted-foreground">
+                  {inCat.filter((a) => rows.some((r) => r.name === a.name && r.enabled)).length}{" "}
+                  enabled
+                </span>
               </div>
-            </div>
-          ))}
-          {available.length === 0 && (
-            <p className="text-sm text-muted-foreground">No integrations available.</p>
+              <div className="space-y-2">
+                {inCat.map((a) => {
+                  const cfg = rows.find((r) => r.name === a.name);
+                  return (
+                    <button
+                      key={a.name}
+                      className={listCard}
+                      onClick={() => setDetail(a.name)}
+                    >
+                      <Webhook className="size-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium">{a.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {!cfg
+                            ? "not configured"
+                            : cfg.enabled
+                              ? "enabled"
+                              : "configured, disabled"}
+                        </p>
+                      </div>
+                      {cfg && (
+                        <span
+                          className={`size-2 shrink-0 rounded-full ${
+                            cfg.enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
+                          }`}
+                        />
+                      )}
+                      <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })
+      )}
+      {availableNames.size === 0 && rows !== null && (
+        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+          No integrations are available in this build.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function IntegrationDetail({
+  name,
+  category,
+  initialConfig,
+  initialEnabled,
+  onChanged,
+  onBack,
+}: {
+  name: string;
+  category?: string;
+  initialConfig: Record<string, unknown> | null;
+  initialEnabled: boolean;
+  onChanged: () => void;
+  onBack: () => void;
+}) {
+  const configured = initialConfig !== null;
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const [text, setText] = useState(
+    configured ? JSON.stringify(initialConfig, null, 2) : "{\n  \n}",
+  );
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  return (
+    <div>
+      <button className={backBtn} onClick={onBack}>
+        <ArrowLeft className="size-4" /> Integrations
+      </button>
+      <div className="mb-1 flex items-center gap-2">
+        <h3 className="text-base font-semibold">{name}</h3>
+        <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
+          {categoryLabel(category)}
+        </span>
+      </div>
+      <p className="mb-4 text-xs text-muted-foreground">
+        {configured
+          ? "Configured — tools from this integration join the chat loop while enabled."
+          : "Not configured yet — save a config below to enable it."}
+      </p>
+
+      <div className="max-w-xl space-y-4">
+        <div className="flex items-center gap-3 rounded-lg border border-border px-4 py-3">
+          <label className="flex flex-1 items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="size-4 accent-foreground"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+              disabled={!configured}
+            />
+            <span>
+              Enabled
+              <span className="block text-xs text-muted-foreground">
+                Disabled integrations keep their config but contribute no tools.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div>
+          <p className="mb-1.5 flex items-center gap-2">
+            <span className={label}>Config (JSON)</span>
+            {!configured && (
+              <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                <Plus className="size-3" /> new
+              </span>
+            )}
+          </p>
+          <Textarea
+            className="min-h-40 font-mono text-xs"
+            spellCheck={false}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+        </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex items-center gap-2">
+          <Button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                const cfg = JSON.parse(text) as Record<string, unknown>;
+                await api("PUT", `/api/v1/admin/integrations/${encodeURIComponent(name)}`, {
+                  config: cfg,
+                  enabled,
+                });
+                setSaved(true);
+                onChanged();
+                setTimeout(() => setSaved(false), 2000);
+              } catch (e) {
+                setError(
+                  e instanceof SyntaxError
+                    ? `config is not valid JSON: ${e.message}`
+                    : e instanceof Error
+                      ? e.message
+                      : String(e),
+                );
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Saving…" : saved ? "Saved" : "Save"}
+          </Button>
+          {configured &&
+            (confirmDelete ? (
+              <>
+                <Button
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await api(
+                        "DELETE",
+                        `/api/v1/admin/integrations/${encodeURIComponent(name)}`,
+                      );
+                      onBack();
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Remove configuration
+                </Button>
+                <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                className="text-muted-foreground"
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 className="mr-1 size-3.5" /> Remove
+              </Button>
+            ))}
+          {!configured && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <ArrowUpRight className="size-3.5" /> saving creates the configuration
+            </span>
           )}
         </div>
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Configured
-        </h3>
-        {rows.length === 0 ? (
-          <p className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
-            Nothing configured for this org yet.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {rows.map((r) => (
-              <IntegrationCard
-                key={r.name}
-                name={r.name}
-                initialConfig={r.config}
-                enabled={r.enabled}
-                reload={reload}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      </div>
     </div>
   );
 }

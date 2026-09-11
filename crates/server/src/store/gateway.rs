@@ -58,6 +58,13 @@ pub struct AdminRouteRow {
     pub modalities: Vec<String>,
 }
 
+/// Admin-facing provider key row: metadata only, never the secret.
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct ProviderKeyRow {
+    pub provider: String,
+    pub base_url: String,
+}
+
 pub struct GatewayStore<'a> {
     pub(crate) pool: &'a sqlx::PgPool,
 }
@@ -126,6 +133,35 @@ impl<'a> GatewayStore<'a> {
         .bind(modalities)
         .execute(self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Provider keys for the org's admin settings (no secrets).
+    pub async fn list_keys(&self, org_id: Uuid) -> anyhow::Result<Vec<ProviderKeyRow>> {
+        let rows: Vec<ProviderKeyRow> = sqlx::query_as(
+            "SELECT provider, base_url FROM provider_keys WHERE org_id = $1 ORDER BY provider",
+        )
+        .bind(org_id)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn delete_key(&self, org_id: Uuid, provider: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM provider_keys WHERE org_id = $1 AND provider = $2")
+            .bind(org_id)
+            .bind(provider)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_route(&self, org_id: Uuid, model: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM model_routes WHERE org_id = $1 AND model = $2")
+            .bind(org_id)
+            .bind(model)
+            .execute(self.pool)
+            .await?;
         Ok(())
     }
 
