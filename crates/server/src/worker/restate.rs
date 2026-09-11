@@ -17,6 +17,7 @@ use crate::integrations;
 use crate::state::AppState;
 use crate::store::integrations::IntegrationRow;
 use crate::worker::executor::{tool_registry, Completion, RoutineConfig, RoutineExecutor};
+use crate::worker::overflow::is_context_overflow;
 use crate::worker::run::MAX_STEPS;
 use futures::StreamExt;
 use tokio::sync::broadcast;
@@ -402,6 +403,33 @@ pub(crate) fn too_short_to_compact(history: &[Message]) -> bool {
     message_bearing_count(history) < COMPACTION_MIN_MESSAGES
 }
 
+/// Tokens held back for the model's reply when auto-compacting (pi's
+/// reserveTokens semantics — task M1).
+pub(crate) const CONTEXT_RESERVE_TOKENS: i64 = 16_384;
+
+/// Pure auto-compact threshold (task M1): compact once per turn when the
+/// last known request size crosses the route's window minus the 16k reserve.
+pub(crate) fn should_auto_compact(last_tokens: u32, window: i64, compacted: bool) -> bool {
+    if compacted {
+        return false;
+    }
+    let threshold = window.saturating_sub(CONTEXT_RESERVE_TOKENS).max(0);
+    last_tokens > threshold as u32
+}
+
+/// Pure helper: `usage.tokens_in` of the LATEST `assistant_message` event —
+/// the last known model-request size (task M1 initial value).
+pub(crate) fn latest_tokens_in(events: &[ThreadEvent]) -> u32 {
+    events
+        .iter()
+        .rev()
+        .find_map(|ev| match ev {
+            ThreadEvent::AssistantMessage { usage, .. } => usage.tokens_in,
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
 /// Resolution payload of an approval awakeable — what the suspended turn
 /// reads when the decision arrives.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -682,6 +710,187 @@ macro_rules! clear_chatgen_kv {
     }};
 }
 
+/// Journaled load of a chat's full thread event log (shared by the turn
+/// start, auto-compaction and the compact handler).
+macro_rules! journaled_load_events {
+    ($ctx:expr, $state:expr, $org:expr, $chat_id:expr) => {{
+        let st = ($state).clone();
+        let org = ($org);
+        let chat_id = ($chat_id);
+        ($ctx)
+            .run(move || {
+                let state = st.clone();
+                async move {
+                    let store = state.store().await.map_err(api_err)?;
+                    let rows = store.thread().list_events(org, chat_id).await.map_err(api_err)?;
+                    Ok(Json(rows.into_iter().map(|r| r.event).collect::<Vec<_>>()))
+                }
+            })
+            .await?
+            .into_inner()
+    }};
+}
+
+/// Shared compaction core (task M1): summarizes the model-facing history
+/// derived from `events` with one journaled non-streaming model call and
+/// appends the durable `Compaction` checkpoint. Used by the explicit
+/// `compact` handler AND by the auto-compaction paths inside `generate`
+/// (threshold + overflow retry). Caller has already loaded the events.
+pub(crate) async fn compact_core(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    org_id: Uuid,
+    chat_id: Uuid,
+    events: &[ThreadEvent],
+) -> HandlerResult<()> {
+    let history = build_model_history(events);
+
+    // (b) Too-short threads cannot be compacted meaningfully.
+    if too_short_to_compact(&history) {
+        return Err(TerminalError::new("thread too short to compact").into());
+    }
+
+    // (c) Model selection (journaled, mirrors generate): the thread's
+    // latest assistant model; when no assistant event names one, fall
+    // back to the org's first enabled route. Route + quota resolved like
+    // any turn — on failure nothing is freed (no lock was taken).
+    let st = state.clone();
+    let chosen = latest_assistant_model(events);
+    let (model, route) = ctx
+        .run(move || {
+            let state = st.clone();
+            async move {
+                let store = state.store().await.map_err(api_err)?;
+                let model = match chosen {
+                    Some(m) => m,
+                    None => {
+                        let models = store.gateway().list_models(org_id).await?;
+                        models.into_iter().next().ok_or_else(|| {
+                            HandlerError::from(TerminalError::new(
+                                "no enabled route for this org",
+                            ))
+                        })?
+                    }
+                };
+                let master = state.config.master_key()?;
+                let route = store
+                    .gateway()
+                    .resolve_route(org_id, &model, &master)
+                    .await
+                    .map_err(api_terminal)?;
+                enforce_quota(&state, org_id, &model, &route)
+                    .await
+                    .map_err(api_terminal)?;
+                Ok(Json((model, route)))
+            }
+        })
+        .await?
+        .into_inner();
+
+    // (d) Journaled: ONE non-streaming model call with the compaction
+    // prompt — same provider machinery as generate (accumulate the
+    // stream), but nothing is broadcast and no buffers/lock exist.
+    let route2 = route.clone();
+    let model2 = model.clone();
+    let msgs = history.clone();
+    let (summary, tokens_in, tokens_out) = ctx
+        .run(move || {
+            let route = route2.clone();
+            let model = model2.clone();
+            async move {
+                let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
+                    "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
+                    "anthropic" => {
+                        Arc::new(guild_core::provider::AnthropicProvider::new())
+                    }
+                    other => {
+                        return Err(TerminalError::new(format!("unknown provider {other}"))
+                            .into())
+                    }
+                };
+                let preq = ProviderRequest {
+                    model: &model,
+                    system: Some(COMPACTION_PROMPT),
+                    messages: &msgs,
+                    api_key: &route.api_key,
+                    base_url: &route.base_url,
+                    tools: None,
+                };
+                let stream = provider.chat_stream(preq).await.map_err(|e| {
+                    HandlerError::from(TerminalError::new(format!("provider error: {e}")))
+                })?;
+                let mut text = String::new();
+                let mut tokens_in = 0u32;
+                let mut tokens_out = 0u32;
+                let mut pinned = Box::pin(stream);
+                while let Some(item) = pinned.next().await {
+                    match item {
+                        Ok(ProviderChunk::Text(chunk)) => {
+                            if !chunk.text_delta.is_empty() {
+                                text.push_str(&chunk.text_delta);
+                            }
+                            if let Some(t) = chunk.tokens_in {
+                                tokens_in = t;
+                            }
+                            if let Some(t) = chunk.tokens_out {
+                                tokens_out = t;
+                            }
+                        }
+                        // Reasoning / tool deltas are not wanted in a
+                        // summary — skipped, not accumulated.
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(TerminalError::new(format!(
+                                "provider error: {e}"
+                            ))
+                            .into())
+                        }
+                    }
+                }
+                Ok(Json((text, tokens_in, tokens_out)))
+            }
+        })
+        .await?
+        .into_inner();
+
+    // (e)+(f) Journaled: the durable checkpoint — one `Compaction` event
+    // with the summarization usage; NOTHING is broadcast (clients poll
+    // GET /thread, design §D/F).
+    let st = state.clone();
+    let model_name = model;
+    let summary2 = summary;
+    ctx.run(move || {
+        let state = st.clone();
+        async move {
+            let store = state.store().await.map_err(api_err)?;
+            let event = ThreadEvent::Compaction {
+                summary: summary2,
+                tokens_before: Some(tokens_in),
+                keep_last: Some(COMPACTION_KEEP_LAST),
+                model: Some(model_name),
+                usage: Some(UsagePayload {
+                    tokens_in: Some(tokens_in),
+                    tokens_out: Some(tokens_out),
+                    cost_usd: Some(UsageEvent::cost_usd(
+                        tokens_in,
+                        tokens_out,
+                        route.price_in,
+                        route.price_out,
+                    )),
+                }),
+            };
+            store
+                .thread()
+                .append_event(chat_id, &event)
+                .await
+                .map_err(api_err)?;
+            Ok(Json(()))
+        }
+    })
+    .await?;
+    Ok(())
+}
+
 #[object]
 impl ChatRunner {
     /// One chat turn as a durable ReAct loop: resolve route → load history →
@@ -726,22 +935,14 @@ impl ChatRunner {
 
         // Journaled: load the thread event log; the model-facing history and
         // the next turn number are derivations of it (spec §A.4, §B.4).
-        let st = state.clone();
-        let org = req.org_id;
-        let chat_id = req.chat_id;
-        let prior_events: Vec<ThreadEvent> = ctx
-            .run(move || {
-                let state = st.clone();
-                async move {
-                    let store = state.store().await.map_err(api_err)?;
-                    let rows = store.thread().list_events(org, chat_id).await.map_err(api_err)?;
-                    Ok(Json(rows.into_iter().map(|r| r.event).collect::<Vec<_>>()))
-                }
-            })
-            .await?
-            .into_inner();
+        let prior_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
         let turn_no = next_turn(&prior_events);
         let mut messages: Vec<Message> = build_model_history(&prior_events);
+        // Auto-compact tracking (task M1): last known model-request size,
+        // initialized from the latest assistant_message usage and updated
+        // with each completion's tokens_in; at most one compaction per turn.
+        let mut last_context_tokens = latest_tokens_in(&prior_events);
+        let mut compacted_this_turn = false;
 
         // Journaled: resolve this org's enabled integrations (admin-configured
         // server-side tools, e.g. web_search).
@@ -804,26 +1005,57 @@ impl ChatRunner {
         let state = state.clone();
         for step in 0..CHAT_MAX_STEPS {
             steps_used.store(step as u32, std::sync::atomic::Ordering::SeqCst);
-            // Journaled: one model call with the full tool surface.
-            let st = state.clone();
-            let route2 = route.clone();
-            let model2 = req.model.clone();
-            let msgs = messages.clone();
-            let specs = tool_specs.clone();
-            let system2 = system.clone();
-            let chat_id = req.chat_id;
-            let tx_loop = tx.clone();
-            let buf_loop = text_buf.clone();
-            let think_loop = thinking_buf.clone();
-            let completion: CompletionOut = ctx
-                .run(move || {
-                    let state = st.clone();
-                    let route = route2.clone();
-                    let model = model2.clone();
-                    let tx = tx_loop.clone();
-                    let text_buf = buf_loop.clone();
-                    let thinking_buf = think_loop.clone();
-                    async move {
+
+            // Auto-compact, proactive path (task M1): before each model call,
+            // when the last known request size crossed the route's window
+            // minus the 16k reserve, summarize the thread once and re-derive
+            // the model-facing messages from the event log.
+            let context_window = route.context_window.unwrap_or(128_000);
+            if should_auto_compact(last_context_tokens, context_window, compacted_this_turn) {
+                let all_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
+                let history = build_model_history(&all_events);
+                if too_short_to_compact(&history) {
+                    tracing::warn!(
+                        chat = %req.chat_id,
+                        "auto-compaction skipped: thread too short to compact"
+                    );
+                } else {
+                    tracing::info!(
+                        chat = %req.chat_id,
+                        "auto-compaction triggered: {last_context_tokens} > {context_window} - 16384"
+                    );
+                    compact_core(&ctx, &state, req.org_id, req.chat_id, &all_events).await?;
+                    let refreshed = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
+                    messages = build_model_history(&refreshed);
+                }
+                // Either way, do not re-attempt within this turn.
+                compacted_this_turn = true;
+            }
+
+            // Journaled: one model call with the full tool surface. On a
+            // context-overflow provider error (task M1): compact once,
+            // re-derive messages from the event log, retry the call once.
+            let mut msgs = messages.clone();
+            let completion: CompletionOut = loop {
+                let st = state.clone();
+                let route2 = route.clone();
+                let model2 = req.model.clone();
+                let specs = tool_specs.clone();
+                let system2 = system.clone();
+                let chat_id = req.chat_id;
+                let tx_loop = tx.clone();
+                let buf_loop = text_buf.clone();
+                let think_loop = thinking_buf.clone();
+                let attempt_msgs = msgs.clone();
+                let call = ctx
+                    .run(move || {
+                        let state = st.clone();
+                        let route = route2.clone();
+                        let model = model2.clone();
+                        let tx = tx_loop.clone();
+                        let text_buf = buf_loop.clone();
+                        let thinking_buf = think_loop.clone();
+                        async move {
                         let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
                             "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
                             "anthropic" => {
@@ -837,7 +1069,7 @@ impl ChatRunner {
                         let preq = ProviderRequest {
                             model: &model,
                             system: Some(system2.as_str()),
-                            messages: &msgs,
+                            messages: &attempt_msgs,
                             api_key: &route.api_key,
                             base_url: &route.base_url,
                             tools: Some(&specs),
@@ -925,8 +1157,47 @@ impl ChatRunner {
                         }))
                     }
                 })
-                .await?
-                .into_inner();
+                .await;
+                    let json = match call {
+                        Ok(json) => json,
+                        // ctx.run surfaces `Result<_, TerminalError>` (SDK
+                        // endpoint/context.rs); convert to the block's
+                        // HandlerError explicitly — a bare `return Err(e)`
+                        // would pin the async block's error type to
+                        // TerminalError and break every other `?` below.
+                        Err(e) => {
+                            // Overflow retry (task M1): a provider error
+                            // saying the request exceeded the context window
+                            // gets exactly one compaction + re-derivation +
+                            // retry per turn; every other error propagates
+                            // unchanged.
+                            if compacted_this_turn || !is_context_overflow(&e.to_string()) {
+                                return Err(HandlerError::from(e));
+                            }
+                            compacted_this_turn = true;
+                            let all_events =
+                                journaled_load_events!(ctx, state, req.org_id, req.chat_id);
+                            let history = build_model_history(&all_events);
+                            if too_short_to_compact(&history) {
+                                return Err(HandlerError::from(e));
+                            }
+                            tracing::info!(
+                                chat = %req.chat_id,
+                                "auto-compaction triggered by context-overflow error; retrying the model call once"
+                            );
+                            compact_core(&ctx, &state, req.org_id, req.chat_id, &all_events)
+                                .await?;
+                            let refreshed =
+                                journaled_load_events!(ctx, state, req.org_id, req.chat_id);
+                            msgs = build_model_history(&refreshed);
+                            continue;
+                        }
+                    };
+                    break json.into_inner();
+            };
+            if completion.tokens_in > 0 {
+                last_context_tokens = completion.tokens_in;
+            }
 
             let is_final = completion.tool_calls.is_empty();
 
@@ -1237,170 +1508,11 @@ impl ChatRunner {
             return Err(TerminalError::new("cannot compact while a generation is running").into());
         }
 
-        // Journaled: load the thread event log; the FULL model-facing
-        // history (the pre-compaction view being summarized) derives from it.
-        let st = state.clone();
-        let org = req.org_id;
-        let chat_id = req.chat_id;
-        let prior_events: Vec<ThreadEvent> = ctx
-            .run(move || {
-                let state = st.clone();
-                async move {
-                    let store = state.store().await.map_err(api_err)?;
-                    let rows = store.thread().list_events(org, chat_id).await.map_err(api_err)?;
-                    Ok(Json(rows.into_iter().map(|r| r.event).collect::<Vec<_>>()))
-                }
-            })
-            .await?
-            .into_inner();
-        let history = build_model_history(&prior_events);
-
-        // (b) Too-short threads cannot be compacted meaningfully.
-        if too_short_to_compact(&history) {
-            return Err(TerminalError::new("thread too short to compact").into());
-        }
-
-        // (c) Model selection (journaled, mirrors generate): the thread's
-        // latest assistant model; when no assistant event names one, fall
-        // back to the org's first enabled route. Route + quota resolved like
-        // any turn — on failure nothing is freed (no lock was taken).
-        let st = state.clone();
-        let org = req.org_id;
-        let chosen = latest_assistant_model(&prior_events);
-        let (model, route) = ctx
-            .run(move || {
-                let state = st.clone();
-                async move {
-                    let store = state.store().await.map_err(api_err)?;
-                    let model = match chosen {
-                        Some(m) => m,
-                        None => {
-                            let models = store.gateway().list_models(org).await?;
-                            models.into_iter().next().ok_or_else(|| {
-                                HandlerError::from(TerminalError::new(
-                                    "no enabled route for this org",
-                                ))
-                            })?
-                        }
-                    };
-                    let master = state.config.master_key()?;
-                    let route = store
-                        .gateway()
-                        .resolve_route(org, &model, &master)
-                        .await
-                        .map_err(api_terminal)?;
-                    enforce_quota(&state, org, &model, &route)
-                        .await
-                        .map_err(api_terminal)?;
-                    Ok(Json((model, route)))
-                }
-            })
-            .await?
-            .into_inner();
-
-        // (d) Journaled: ONE non-streaming model call with the compaction
-        // prompt — same provider machinery as generate (accumulate the
-        // stream), but nothing is broadcast and no buffers/lock exist.
-        let route2 = route.clone();
-        let model2 = model.clone();
-        let msgs = history.clone();
-        let (summary, tokens_in, tokens_out) = ctx
-            .run(move || {
-                let route = route2.clone();
-                let model = model2.clone();
-                async move {
-                    let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
-                        "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
-                        "anthropic" => {
-                            Arc::new(guild_core::provider::AnthropicProvider::new())
-                        }
-                        other => {
-                            return Err(TerminalError::new(format!("unknown provider {other}"))
-                                .into())
-                        }
-                    };
-                    let preq = ProviderRequest {
-                        model: &model,
-                        system: Some(COMPACTION_PROMPT),
-                        messages: &msgs,
-                        api_key: &route.api_key,
-                        base_url: &route.base_url,
-                        tools: None,
-                    };
-                    let stream = provider.chat_stream(preq).await.map_err(|e| {
-                        HandlerError::from(TerminalError::new(format!("provider error: {e}")))
-                    })?;
-                    let mut text = String::new();
-                    let mut tokens_in = 0u32;
-                    let mut tokens_out = 0u32;
-                    let mut pinned = Box::pin(stream);
-                    while let Some(item) = pinned.next().await {
-                        match item {
-                            Ok(ProviderChunk::Text(chunk)) => {
-                                if !chunk.text_delta.is_empty() {
-                                    text.push_str(&chunk.text_delta);
-                                }
-                                if let Some(t) = chunk.tokens_in {
-                                    tokens_in = t;
-                                }
-                                if let Some(t) = chunk.tokens_out {
-                                    tokens_out = t;
-                                }
-                            }
-                            // Reasoning / tool deltas are not wanted in a
-                            // summary — skipped, not accumulated.
-                            Ok(_) => {}
-                            Err(e) => {
-                                return Err(TerminalError::new(format!(
-                                    "provider error: {e}"
-                                ))
-                                .into())
-                            }
-                        }
-                    }
-                    Ok(Json((text, tokens_in, tokens_out)))
-                }
-            })
-            .await?
-            .into_inner();
-
-        // (e)+(f) Journaled: the durable checkpoint — one `Compaction` event
-        // with the summarization usage; NOTHING is broadcast (clients poll
-        // GET /thread, design §D/F).
-        let st = state.clone();
-        let chat_id = req.chat_id;
-        let model_name = model;
-        let summary2 = summary;
-        ctx.run(move || {
-            let state = st.clone();
-            async move {
-                let store = state.store().await.map_err(api_err)?;
-                let event = ThreadEvent::Compaction {
-                    summary: summary2,
-                    tokens_before: Some(tokens_in),
-                    keep_last: Some(COMPACTION_KEEP_LAST),
-                    model: Some(model_name),
-                    usage: Some(UsagePayload {
-                        tokens_in: Some(tokens_in),
-                        tokens_out: Some(tokens_out),
-                        cost_usd: Some(UsageEvent::cost_usd(
-                            tokens_in,
-                            tokens_out,
-                            route.price_in,
-                            route.price_out,
-                        )),
-                    }),
-                };
-                store
-                    .thread()
-                    .append_event(chat_id, &event)
-                    .await
-                    .map_err(api_err)?;
-                Ok(Json(()))
-            }
-        })
-        .await?;
-        Ok(())
+        // Journaled: load the thread event log; the shared core derives the
+        // pre-compaction history, runs the summarization call and appends
+        // the durable checkpoint (task M1 — also used by auto-compaction).
+        let prior_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
+        compact_core(&ctx, &state, req.org_id, req.chat_id, &prior_events).await
     }
 }
 
@@ -1978,6 +2090,59 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_compact_threshold_uses_window_minus_reserve() {
+        // Below the threshold: no compaction.
+        assert!(!should_auto_compact(111_616, 128_000, false));
+        // Over the threshold (128_000 - 16_384 = 111_616): compact.
+        assert!(should_auto_compact(111_617, 128_000, false));
+        // No window configured → 128k fallback applies.
+        assert!(should_auto_compact(200_000, 128_000, false));
+    }
+
+    #[test]
+    fn auto_compact_runs_at_most_once_per_turn() {
+        assert!(!should_auto_compact(200_000, 128_000, true));
+    }
+
+    #[test]
+    fn auto_compact_zero_tokens_never_triggers() {
+        assert!(!should_auto_compact(0, 128_000, false));
+    }
+
+    #[test]
+    fn latest_tokens_in_takes_the_last_assistant_usage() {
+        let events = vec![
+            ThreadEvent::UserMessage { content: "hi".into() },
+            ThreadEvent::AssistantMessage {
+                turn: 1,
+                step: 0,
+                blocks: vec![],
+                usage: UsagePayload {
+                    tokens_in: Some(900),
+                    tokens_out: Some(10),
+                    cost_usd: None,
+                },
+                model: "m".into(),
+                interrupted: None,
+            },
+            ThreadEvent::AssistantMessage {
+                turn: 1,
+                step: 1,
+                blocks: vec![],
+                usage: UsagePayload {
+                    tokens_in: Some(1500),
+                    tokens_out: Some(20),
+                    cost_usd: None,
+                },
+                model: "m".into(),
+                interrupted: None,
+            },
+        ];
+        assert_eq!(latest_tokens_in(&events), 1500);
+        assert_eq!(latest_tokens_in(&[]), 0);
+    }
 
     #[test]
     fn server_default_read_flows_state_changers_ask() {
