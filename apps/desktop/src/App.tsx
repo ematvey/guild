@@ -15,6 +15,16 @@ import { ThemeProvider, useTheme } from "./theme";
 const BAKED_URL: string =
   (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "http://localhost:18080";
 
+/// Bound any invoke: a wedged layer below us (daemon, IPC) must surface as
+/// an actionable error in the UI, never as an eternal spinner. The invoke
+/// itself keeps running in the background; the timer only gives up on it.
+function bounded<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+}
+
 function defaultServerUrl(): string {
   try {
     return localStorage.getItem("guild.serverUrl") ?? BAKED_URL;
@@ -198,11 +208,15 @@ function DesktopApp() {
     let cancelled = false;
     (async () => {
       try {
-        await invoke("start_engine");
-        const res = await invoke<any>("rpc_request", {
-          method: "session.info",
-          params: {},
-        });
+        await bounded(invoke("start_engine"), 30_000, "attach timed out");
+        const res = await bounded(
+          invoke<any>("rpc_request", {
+            method: "session.info",
+            params: {},
+          }),
+          20_000,
+          "session lookup timed out",
+        );
         if (!cancelled && res?.result?.email) await afterAuth(res.result.email);
       } catch {
         /* not logged in — stay on the pair screen */
@@ -217,7 +231,11 @@ function DesktopApp() {
   const afterAuth = async (fallbackEmail: string) => {
     // session.info is the source of truth for the connected server URL and
     // token (works for both pairing and manual login).
-    const info = await invoke<any>("rpc_request", { method: "session.info", params: {} });
+    const info = await bounded(
+      invoke<any>("rpc_request", { method: "session.info", params: {} }),
+      20_000,
+      "session lookup timed out",
+    );
     const baseUrl = info.result?.base_url ?? url;
     setUser(info.result?.email ?? fallbackEmail);
     // Engine mode shares the same session token in localStorage — fetch the
@@ -244,11 +262,13 @@ function DesktopApp() {
     setBusy(true);
     setError(null);
     try {
-      await invoke("start_engine");
-      const res = await invoke<any>("rpc_request", {
+      await bounded(invoke("start_engine"), 30_000,
+        "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
+      const res = await bounded(invoke<any>("rpc_request", {
         method: "pair",
         params: { code: code.trim() },
-      });
+      }), 45_000,
+        "pairing timed out. Check the server URL is reachable from this machine (open the health URL in a browser); quit leftover Guild background processes and try again. If it persists, run the CLI login test from a terminal.");
       if (res.error) throw new Error(res.error.message ?? "pairing failed");
       await afterAuth(res.result?.user?.email ?? "");
     } catch (e) {
@@ -262,11 +282,13 @@ function DesktopApp() {
     setBusy(true);
     setError(null);
     try {
-      await invoke("start_engine");
-      const res = await invoke<any>("rpc_request", {
+      await bounded(invoke("start_engine"), 30_000,
+        "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
+      const res = await bounded(invoke<any>("rpc_request", {
         method: "login",
         params: { base_url: url, email, password },
-      });
+      }), 45_000,
+        "sign-in timed out. Check the server URL is reachable from this machine, then quit leftover Guild background processes and try again.");
       if (res.error) throw new Error(res.error.message ?? "login failed");
       await afterAuth(res.result?.user?.email ?? email);
     } catch (e) {
