@@ -16,6 +16,8 @@ import {
   Users,
   Waypoints,
 } from "lucide-react";
+import { X } from "lucide-react";
+import { Button } from "@guild/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@guild/ui/components/dialog";
 import { apiMe } from "../../transport";
 import { useTheme } from "../../theme";
@@ -123,7 +125,16 @@ export function SettingsWindow({
             <div className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Bot className="size-4" />
             </div>
-            <span className="text-sm font-semibold">Settings</span>
+            <span className="min-w-0 flex-1 text-sm font-semibold">Settings</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0 rounded-md text-muted-foreground hover:text-foreground"
+              title="Close and go back to chat"
+              onClick={() => onOpenChange(false)}
+            >
+              <X className="size-4" />
+            </Button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
             {groups.map((g) => {
