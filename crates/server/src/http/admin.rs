@@ -116,7 +116,7 @@ async fn list_integrations(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
     let rows = store.integrations().list(admin.0.org_id).await?;
-    let mut available: Vec<serde_json::Value> = ["searxng", "superproxy"]
+    let mut available: Vec<serde_json::Value> = crate::integrations::integration_names()
         .iter()
         .map(|n| {
             let category = crate::integrations::integration_by_name(n)
@@ -236,6 +236,30 @@ async fn upsert_integration(
                     "invalid integration config: {e}"
                 )));
             }
+            // Enable gate (spec §9): a built-in row enables only when every
+            // secret its manifest declares is stored — same rule as MCP
+            // plugins. Secrets CRUD covers built-in slugs.
+            if enabled {
+                let declared = plugin
+                    .manifest()
+                    .auth
+                    .map(|a| a.secret_names)
+                    .unwrap_or_default();
+                let stored = store
+                    .integration_secrets()
+                    .list(admin.0.org_id, &name)
+                    .await?;
+                let missing: Vec<String> = declared
+                    .into_iter()
+                    .filter(|d| !stored.iter().any(|s| &s.name == d))
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(ApiError::conflict(
+                        "missing_secrets",
+                        format!("missing secrets: {}", missing.join(", ")),
+                    ));
+                }
+            }
             store
                 .integrations()
                 .upsert(admin.0.org_id, &name, &config, enabled)
@@ -306,7 +330,7 @@ async fn set_integration_secret(
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing value"))?;
     let store = state.store().await?;
-    integration_row(&store, admin.0.org_id, &name).await?;
+    known_integration(&store, admin.0.org_id, &name).await?;
     let master = state.config.master_key().map_err(ApiError::from)?;
     store
         .integration_secrets()
@@ -322,7 +346,7 @@ async fn list_integration_secrets(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    integration_row(&store, admin.0.org_id, &name).await?;
+    known_integration(&store, admin.0.org_id, &name).await?;
     let secrets = store.integration_secrets().list(admin.0.org_id, &name).await?;
     Ok(Json(json!({ "secrets": secrets })))
 }
@@ -335,25 +359,54 @@ async fn delete_integration_secret(
     Path((name, secret)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    let row = integration_row(&store, admin.0.org_id, &name).await?;
+    known_integration(&store, admin.0.org_id, &name).await?;
     store
         .integration_secrets()
         .delete(admin.0.org_id, &name, &secret)
         .await?;
-    if row.enabled {
-        let declares = latest_integration_manifest(&store, admin.0.org_id, &name)
-            .await?
-            .and_then(|m| m.auth)
-            .map(|a| a.secret_names.contains(&secret))
-            .unwrap_or(false);
+    let row = store
+        .integrations()
+        .list(admin.0.org_id)
+        .await?
+        .into_iter()
+        .find(|r| r.name == name);
+    if row.as_ref().is_some_and(|r| r.enabled) {
+        // The row's manifest declares its secrets: an in-code manifest for a
+        // built-in, the registry manifest for an MCP plugin.
+        let declares = match crate::integrations::integration_by_name(&name) {
+            Some(plugin) => plugin
+                .manifest()
+                .auth
+                .map(|a| a.secret_names.contains(&secret))
+                .unwrap_or(false),
+            None => latest_integration_manifest(&store, admin.0.org_id, &name)
+                .await?
+                .and_then(|m| m.auth)
+                .map(|a| a.secret_names.contains(&secret))
+                .unwrap_or(false),
+        };
         if declares {
             store
                 .integrations()
-                .upsert(admin.0.org_id, &name, &row.config, false)
+                .upsert(admin.0.org_id, &name, &row.unwrap().config, false)
                 .await?;
         }
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+/// A secrets-CRUD target must be a known integration: a configured row, or
+/// a compiled-in kind (built-ins have no install step, so their secrets can
+/// be staged before the row exists).
+async fn known_integration(
+    store: &crate::store::Store,
+    org_id: Uuid,
+    name: &str,
+) -> Result<(), ApiError> {
+    if crate::integrations::integration_by_name(name).is_some() {
+        return Ok(());
+    }
+    integration_row(store, org_id, name).await.map(|_| ())
 }
 
 async fn integration_row(
