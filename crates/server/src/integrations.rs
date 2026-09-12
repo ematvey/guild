@@ -72,6 +72,8 @@ pub trait Integration: Send + Sync {
     ) -> BoxFuture<'a, Result<ToolOutcome, String>>;
 }
 
+mod gitlab;
+mod github;
 mod hubspot;
 mod langfuse;
 
@@ -84,6 +86,8 @@ pub fn integration_names() -> &'static [&'static str] {
         "atlassian",
         "hubspot",
         "langfuse",
+        "github",
+        "gitlab",
         #[cfg(feature = "test-support")]
         "testplug",
     ]
@@ -97,6 +101,8 @@ pub fn integration_by_name(name: &str) -> Option<Arc<dyn Integration>> {
         "atlassian" => Some(Arc::new(atlassian::Atlassian)),
         "hubspot" => Some(Arc::new(hubspot::Hubspot)),
         "langfuse" => Some(Arc::new(langfuse::Langfuse)),
+        "github" => Some(Arc::new(github::Github)),
+        "gitlab" => Some(Arc::new(gitlab::Gitlab)),
         #[cfg(feature = "test-support")]
         "testplug" => Some(Arc::new(testplug::TestPlug)),
         _ => None,
@@ -379,10 +385,6 @@ pub mod testplug {
 
 pub mod slack;
 pub mod atlassian;
-
-pub mod google_workspace;
-
-mod atlassian;
 
 pub mod searxng {
     use super::{in_code_manifest, Category, Integration, ToolOutcome};
