@@ -1,7 +1,7 @@
 //! Slack connector: conversation and user reads plus message posts through
 //! the Slack Web API (`{base_url}/api/...`, `Authorization: Bearer`), and a
-//! plain-text post through an incoming webhook URL. Secrets: `bot_token`
-//! (Web API calls), `webhook_url` (incoming webhook). Config: none required;
+//! plain-text post through the Web API. Secrets: `bot_token` (Web API
+//! calls). Config: none required;
 //! an optional `base_url` overrides the `https://slack.com` default (tests
 //! and self-hosted proxies). Every tool class comes from the in-code
 //! manifest; secret values ride into `execute` per call and never reach
@@ -25,8 +25,7 @@ fn base_url(config: &serde_json::Value) -> Result<String, String> {
 
 /// Slack messaging integration. Tool surface: `conversations_list` (read),
 /// `conversations_history` (read), `users_list` (read), `post_message`
-/// (write, Web API `chat.postMessage`), `post_webhook` (write, incoming
-/// webhook).
+/// (write, Web API `chat.postMessage`).
 pub struct Slack;
 
 /// The resolved secret value for `name`, or an error naming the missing
@@ -110,13 +109,12 @@ impl Integration for Slack {
             "slack",
             "1.0.0",
             "Slack: list channels and users, read channel history, post messages",
-            &["bot_token", "webhook_url"],
+            &["bot_token"],
             &[
                 ("conversations_list", "read"),
                 ("conversations_history", "read"),
                 ("users_list", "read"),
                 ("post_message", "write"),
-                ("post_webhook", "write"),
             ],
         )
     }
@@ -158,13 +156,6 @@ impl Integration for Slack {
                 serde_json::json!({
                     "channel": { "type": "string", "description": "Channel ID or name, e.g. C0123456789 or #general" },
                     "text": { "type": "string", "description": "Message text (plain text or Slack mrkdwn)" }
-                }),
-            ),
-            spec(
-                "post_webhook",
-                "Post a message through the workspace's incoming webhook.",
-                serde_json::json!({
-                    "text": { "type": "string", "description": "Message text" }
                 }),
             ),
         ])
@@ -316,30 +307,6 @@ impl Integration for Slack {
                             "channel": body["channel"],
                             "ts": body["ts"],
                         })),
-                        meta: None,
-                    })
-                }
-                "post_webhook" => {
-                    let webhook_url = secret(secrets, "webhook_url")?;
-                    let text = args["text"].as_str().ok_or("post_webhook requires text")?;
-                    // Incoming webhooks are unauthenticated POST endpoints:
-                    // the URL itself carries the credential, so no auth header.
-                    let resp = reqwest::Client::new()
-                        .post(webhook_url)
-                        .json(&serde_json::json!({ "text": text }))
-                        .timeout(std::time::Duration::from_secs(30))
-                        .send()
-                        .await
-                        .map_err(|e| format!("slack webhook unreachable: {e}"))?;
-                    if !resp.status().is_success() {
-                        return Err(format!("slack webhook returned {}", resp.status()));
-                    }
-                    let body = resp.text().await.unwrap_or_default();
-                    if body.trim() != "ok" {
-                        return Err(format!("slack webhook error: {body}"));
-                    }
-                    Ok(ToolOutcome {
-                        content: "ok".to_string(),
                         meta: None,
                     })
                 }
