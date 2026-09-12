@@ -295,16 +295,13 @@ async fn langfuse_get_trace_fetches_full_body() {
 }
 
 #[tokio::test]
-async fn langfuse_list_prompts_renders_versions() {
+async fn langfuse_get_prompt_renders_one_prompt() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/public/prompts"))
+        .and(path("/api/public/prompts/support"))
         .and(header("authorization", "Basic cGs6c2s="))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "data": [
-                { "name": "support", "version": 3, "type": "chat" },
-                { "name": "summary", "version": 1, "type": "text" }
-            ]
+            "name": "support", "version": 3, "type": "chat"
         })))
         .expect(1)
         .mount(&server)
@@ -313,11 +310,11 @@ async fn langfuse_list_prompts_renders_versions() {
     let plugin = integration_by_name("langfuse").unwrap();
     let config = json!({ "base_url": server.uri() });
     let out = plugin
-        .execute(&config, "list_prompts", json!({}), &langfuse_secrets("https://x.test"), None)
+        .execute(&config, "get_prompt", json!({"name": "support"}), &langfuse_secrets("https://x.test"), None)
         .await
         .unwrap();
-    assert!(out.content.contains("support v3 (chat)"));
-    assert!(out.content.contains("summary v1 (text)"));
+    assert!(out.content.contains("support"));
+    assert!(out.content.contains("v3"));
     let meta = out.meta.unwrap();
     assert_eq!(meta["kind"], "prompts");
     assert_eq!(meta["count"], 2);
