@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
@@ -78,14 +78,6 @@ import {
   type ThreadResult,
 } from "../transport";
 
-// Per-chat spend chip: lazy so recharts (charting) never lands in the main
-// chat bundle; renders nothing until a thread is open and the chunk arrives.
-
-// Per-chat spend chip: lazy so recharts (charting) never lands in the main
-// chat bundle; renders nothing until a thread is open and the chunk arrives.
-const ChatSpend = lazy(() =>
-  import("./ChatSpendChip").then((m) => ({ default: m.ChatSpendChip })),
-);
 
 interface ToolBlock {
   callId: string;
@@ -1871,11 +1863,6 @@ export default function WebChat({
               <Cpu className="size-3" />
               {boundMachine}
             </span>
-          )}
-          {chatId && (
-            <Suspense fallback={null}>
-              <ChatSpend chatId={chatId} busy={busy} />
-            </Suspense>
           )}
         </header>
 
