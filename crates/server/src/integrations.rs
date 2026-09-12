@@ -83,9 +83,11 @@ pub fn integration_names() -> &'static [&'static str] {
     &[
         "searxng",
         "superproxy",
-        "atlassian",
+        "google_workspace",
         "hubspot",
         "langfuse",
+        "atlassian",
+        "slack",
         "github",
         "gitlab",
         #[cfg(feature = "test-support")]
@@ -98,9 +100,11 @@ pub fn integration_by_name(name: &str) -> Option<Arc<dyn Integration>> {
     match name {
         "searxng" => Some(Arc::new(searxng::Searxng)),
         "superproxy" => Some(Arc::new(superproxy::Superproxy)),
-        "atlassian" => Some(Arc::new(atlassian::Atlassian)),
+        "google_workspace" => Some(google_workspace::instance()),
         "hubspot" => Some(Arc::new(hubspot::Hubspot)),
         "langfuse" => Some(Arc::new(langfuse::Langfuse)),
+        "atlassian" => Some(Arc::new(atlassian::Atlassian)),
+        "slack" => Some(Arc::new(slack::Slack)),
         "github" => Some(Arc::new(github::Github)),
         "gitlab" => Some(Arc::new(gitlab::Gitlab)),
         #[cfg(feature = "test-support")]
@@ -385,6 +389,8 @@ pub mod testplug {
 
 pub mod slack;
 pub mod atlassian;
+
+pub mod google_workspace;
 
 pub mod searxng {
     use super::{in_code_manifest, Category, Integration, ToolOutcome};
