@@ -638,7 +638,18 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 function toolLabel(t: ToolBlock): string {
-  return TOOL_LABELS[t.name.toLowerCase()] ?? t.name;
+  const n = t.name.toLowerCase();
+  const direct = TOOL_LABELS[n];
+  if (direct) return direct;
+  // Integration tools are namespaced on the wire (`int_searxng_web_search`):
+  // the connector prefix is internal, the label is the bare tool name.
+  if (n.startsWith("int_")) {
+    for (const [key, label] of Object.entries(TOOL_LABELS)) {
+      if (n.endsWith("_" + key)) return label;
+    }
+    return n.slice(4).replace(/_/g, " ");
+  }
+  return t.name;
 }
 
 function argOf(t: ToolBlock, keys: string[]): string | undefined {
