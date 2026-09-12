@@ -1,9 +1,26 @@
 # Guild — current state of work
 
-Updated 2026-09-12 (integration plugins milestone 9). Read this before
-touching the codebase; detailed milestone plans live in `docs/plans/`,
-deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
-`~/workspace/hanging-commands.md`.
+Updated 2026-09-12 (UI pass: 16px text, floating scrollbars, settings
+sidebar). Read this before touching the codebase; detailed milestone plans
+live in `docs/plans/`, deploy nuances in `docs/deploy-nuances.md`,
+hang-patterns in `~/workspace/hanging-commands.md`.
+
+## UI pass — 16px text, floating scrollbars, settings sidebar (2026-09-12)
+
+- Body text moved to the 16px base: all `text-sm` usages in the desktop
+  app are now `text-base` (tiny `text-xs`/`[10px]` labels and pills
+  unchanged).
+- Floating scrollbars: native bars hidden (zero width, no reserved
+  gutter); `scroll-activity.ts` renders a floating thumb over each
+  scrolling container's right edge, visible only while it scrolls
+  (~0.7s after the last event). Horizontal scrollers have no indicator.
+- Settings sidebar resizable, sharing the chat sidebar width
+  (`lib/sidebar-width.ts`, one localStorage key + same-tab resync
+  event). Window-corner dialog X hidden for the fullscreen settings
+  dialog (DialogContent gained `hideClose`); sidebar close button kept;
+  Esc still closes.
+- Per-chat cost chip removed from the thread header
+  (ChatSpendChip.tsx deleted; /chats/{id}/usage endpoint untouched).
 
 ## Milestone 9 — integration plugin system (2026-09-12)
 
