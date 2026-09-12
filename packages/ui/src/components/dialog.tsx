@@ -11,8 +11,9 @@ const DialogClose = DialogPrimitive.Close;
 function DialogContent({
   className,
   children,
+  hideClose,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content>) {
+}: React.ComponentProps<typeof DialogPrimitive.Content> & { hideClose?: boolean }) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60" />
@@ -24,10 +25,12 @@ function DialogContent({
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm outline-none opacity-70 transition-opacity hover:opacity-100">
-          <X className="size-4" />
-          <span className="sr-only">Close</span>
-        </DialogPrimitive.Close>
+        {!hideClose && (
+          <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm outline-none opacity-70 transition-opacity hover:opacity-100">
+            <X className="size-4" />
+            <span className="sr-only">Close</span>
+          </DialogPrimitive.Close>
+        )}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );

@@ -2,7 +2,7 @@
 //! User sections for everyone; org sections appear for admins. Sections are
 //! lazy-imported so the chat bundle only pays for what opens.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Bot,
   Cpu,
@@ -22,6 +22,11 @@ import { Button } from "@guild/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@guild/ui/components/dialog";
 import { apiMe } from "../../transport";
 import { useTheme } from "../../theme";
+import {
+  clampSidebarWidth,
+  saveSidebarWidth,
+  storedSidebarWidth,
+} from "../../lib/sidebar-width";
 import { MachineSection } from "./sections/MachineSection";
 import { ApprovalsSection } from "./sections/ApprovalsSection";
 import { AssistantSection } from "./sections/AssistantSection";
@@ -109,18 +114,46 @@ export function SettingsWindow({
     ...(isAdmin ? [{ key: "org" as const, label: "Organization" }] : []),
   ];
 
+  // same resizable sidebar as the chat, sharing its stored width
+  const [width, setWidth] = useState(storedSidebarWidth);
+  const startDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = width;
+      const move = (ev: MouseEvent) => setWidth(clampSidebarWidth(startW + ev.clientX - startX));
+      const up = () => {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        setWidth((w) => {
+          saveSidebarWidth(w);
+          return w;
+        });
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    },
+    [width],
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-screen max-h-none w-screen max-w-none gap-0 rounded-none border-0 overflow-hidden p-0 sm:max-w-none">
+      <DialogContent
+        className="flex h-screen max-h-none w-screen max-w-none gap-0 rounded-none border-0 overflow-hidden p-0 sm:max-w-none"
+        hideClose
+      >
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <DialogDescription className="sr-only">Guild settings</DialogDescription>
-        {/* settings sidebar */}
-        <nav className="flex w-52 shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground">
+        {/* settings sidebar: same width as the chat sidebar, drag to resize */}
+        <nav
+          className="relative flex shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar text-sidebar-foreground transition-[width] duration-150"
+          style={{ width }}
+        >
           <div className="flex items-center gap-2 px-4 py-4">
             <div className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Bot className="size-4" />
             </div>
-            <span className="min-w-0 flex-1 text-sm font-semibold">Settings</span>
+            <span className="min-w-0 flex-1 text-base font-semibold">Settings</span>
             <Button
               variant="ghost"
               size="icon"
@@ -144,7 +177,7 @@ export function SettingsWindow({
                     <button
                       key={s.id}
                       onClick={() => onSectionChange(s.id)}
-                      className={`mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors ${
+                      className={`mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-base outline-none transition-colors ${
                         activeDef?.id === s.id
                           ? "bg-accent text-accent-foreground"
                           : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
@@ -171,6 +204,11 @@ export function SettingsWindow({
               </div>
             </div>
           </div>
+          <div
+            className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
+            onMouseDown={startDrag}
+            title="Drag to resize"
+          />
         </nav>
         {/* section pane */}
         <div className="min-w-0 flex-1 overflow-y-auto">
@@ -284,7 +322,7 @@ function LazySection({
       cancelled = true;
     };
   }, [load, name]);
-  if (error) return <p className="text-sm text-destructive">{error}</p>;
+  if (error) return <p className="text-base text-destructive">{error}</p>;
   if (!Comp)
     return (
       <div className="space-y-3 pt-2">
@@ -304,11 +342,11 @@ function AccountSection({ email }: { email: string }) {
     <div className="space-y-4 pt-2">
       <div className="rounded-lg border border-border bg-card p-4">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Email</p>
-        <p className="mt-1 text-sm">{email}</p>
+        <p className="mt-1 text-base">{email}</p>
       </div>
       <div className="rounded-lg border border-border bg-card p-4">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Role</p>
-        <p className="mt-1 text-sm capitalize">{role}</p>
+        <p className="mt-1 text-base capitalize">{role}</p>
         <p className="mt-1 text-xs text-muted-foreground">
           {role === "admin"
             ? "You can configure the organization: users, models, integrations and registry."
@@ -336,7 +374,7 @@ function AppearanceSection() {
           }`}
         >
           <div>
-            <p className="text-sm font-medium">{o.label}</p>
+            <p className="text-base font-medium">{o.label}</p>
             <p className="text-xs text-muted-foreground">{o.hint}</p>
           </div>
           <div

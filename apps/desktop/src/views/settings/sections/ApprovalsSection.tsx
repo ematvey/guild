@@ -91,7 +91,7 @@ export function ApprovalsSection() {
           <button
             key={m.id}
             onClick={() => setPolicyDefault(m.id)}
-            className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+            className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-base transition-colors ${
               policyDefault === m.id
                 ? "border-foreground/40 bg-accent"
                 : "border-border bg-card hover:bg-accent/50"

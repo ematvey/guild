@@ -23,18 +23,18 @@ export function MachineSection({
 
   return (
     <div className="space-y-3 pt-2">
-      <p className="text-sm text-muted-foreground">
+      <p className="text-base text-muted-foreground">
         Machine tools (read, bash, edit, write) execute on the machine bound to
         the chat, via the Guild desktop app running there.
       </p>
       {!chatId ? (
-        <p className="rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">
           Open a chat to bind it to a machine.
         </p>
       ) : machines === null ? (
         <Skeleton className="h-16 w-full rounded-lg" />
       ) : machines.length === 0 ? (
-        <p className="rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">
           No machines connected. Start the Guild desktop app on the machine you
           want to use as the executor.
         </p>
@@ -47,7 +47,7 @@ export function MachineSection({
                 await bindChat(chatId, m.machine_id);
                 onMachineChanged();
               }}
-              className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm outline-none transition-colors ${
+              className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-base outline-none transition-colors ${
                 currentMachineId === m.machine_id
                   ? "border-foreground/40 bg-accent"
                   : "border-border bg-card hover:bg-accent/50"

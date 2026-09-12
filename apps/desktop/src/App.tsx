@@ -115,7 +115,7 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
           />
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="text-base text-destructive">{error}</p>}
           <Button onClick={submit} disabled={busy}>
             {busy ? "Signing in…" : "Sign in"}
           </Button>
@@ -163,7 +163,7 @@ function UpdateToast() {
   if (!version) return null;
   return (
     <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-lg">
-      <span className="text-sm">
+      <span className="text-base">
         Update to <span className="font-medium">v{version}</span> ready
       </span>
       <Button
@@ -323,7 +323,7 @@ function DesktopApp() {
                 onKeyDown={(e) => e.key === "Enter" && code.trim() && pair()}
                 autoFocus
               />
-              {error && <p className="text-sm text-destructive">{error}</p>}
+              {error && <p className="text-base text-destructive">{error}</p>}
               <Button onClick={pair} disabled={busy || !code.trim()}>
                 {busy ? "Pairing…" : "Pair"}
               </Button>
@@ -351,7 +351,7 @@ function DesktopApp() {
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && login()}
               />
-              {error && <p className="text-sm text-destructive">{error}</p>}
+              {error && <p className="text-base text-destructive">{error}</p>}
               <Button onClick={login} disabled={busy}>
                 {busy ? "Signing in…" : "Sign in"}
               </Button>
@@ -382,7 +382,7 @@ export function Splash() {
       <div className="flex size-14 animate-pulse items-center justify-center rounded-2xl border border-border bg-card">
         <Bot className="size-7 text-muted-foreground" />
       </div>
-      <p className="text-sm text-muted-foreground">Loading Guild…</p>
+      <p className="text-base text-muted-foreground">Loading Guild…</p>
     </div>
   );
 }

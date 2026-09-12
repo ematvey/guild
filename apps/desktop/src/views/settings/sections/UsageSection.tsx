@@ -172,7 +172,7 @@ export default function UsageSection() {
 
   return (
     <div className="space-y-4 pt-2">
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-base text-destructive">{error}</p>}
 
       {/* spend stat cards */}
       <div className="grid grid-cols-2 gap-3">
@@ -208,7 +208,7 @@ export default function UsageSection() {
           {timeline === null ? (
             <div className="h-40 w-full animate-pulse rounded-md bg-accent" />
           ) : timeline.every((p) => p.cost === 0 && p.requests === 0) ? (
-            <p className="py-16 text-center text-sm text-muted-foreground">
+            <p className="py-16 text-center text-base text-muted-foreground">
               No usage in the last {period}.
             </p>
           ) : (
@@ -295,9 +295,9 @@ export default function UsageSection() {
             ))}
           </div>
         ) : rows.length === 0 ? (
-          <p className="p-4 text-sm text-muted-foreground">No usage in the last {period}.</p>
+          <p className="p-4 text-base text-muted-foreground">No usage in the last {period}.</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full text-base">
             <thead className="text-left text-xs text-muted-foreground">
               <tr>
                 <th className="px-4 py-2 font-medium capitalize">{group}</th>

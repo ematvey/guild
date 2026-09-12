@@ -183,7 +183,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
       {/* sidebar */}
       <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-card">
         <div className="flex items-center justify-between px-3 py-3">
-          <span className="text-sm font-semibold">Guild</span>
+          <span className="text-base font-semibold">Guild</span>
           <ThemeToggle />
         </div>
         <div className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">Project</div>
@@ -195,7 +195,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
           >
             <FolderOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm">
+              <span className="block truncate text-base">
                 {projectDir ? projectDir.split("/").pop() || projectDir : "Open project…"}
               </span>
               {projectDir && (
@@ -231,7 +231,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
 
       {/* main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 text-sm">
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 text-base">
           <span className="min-w-0 flex-1 truncate font-medium">
             {projectDir ? projectDir.split("/").pop() || projectDir : "Guild agent"}
           </span>
@@ -256,7 +256,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
                 "Open a project to begin"
               )}
             </h1>
-            <p className="mt-2 max-w-md text-center text-sm text-muted-foreground">
+            <p className="mt-2 max-w-md text-center text-base text-muted-foreground">
               The agent works directly in your project — reading and editing files, running commands
               {commandPolicy === "ask" ? " (with your approval)" : ""}.{" "}
               {noModels
@@ -307,25 +307,25 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
                     )}
                   </div>
                 ) : b.kind === "user" ? (
-                  <div key={i} className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-sm">
+                  <div key={i} className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-base">
                     {b.text}
                   </div>
                 ) : b.kind === "error" ? (
                   <div
                     key={i}
-                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-base text-destructive"
                   >
                     {b.text}
                   </div>
                 ) : (
-                  <div key={i} className="mr-auto w-fit max-w-[85%] whitespace-pre-wrap text-sm leading-relaxed">
+                  <div key={i} className="mr-auto w-fit max-w-[85%] whitespace-pre-wrap text-base leading-relaxed">
                     {b.text}
                     {busy && i === blocks.length - 1 && <Caret />}
                   </div>
                 ),
               )}
               {busy && blocks[blocks.length - 1]?.kind !== "text" && (
-                <div className="mr-auto w-fit max-w-[85%] text-sm">
+                <div className="mr-auto w-fit max-w-[85%] text-base">
                   <Caret />
                 </div>
               )}

@@ -22,7 +22,7 @@ interface UserRow {
 }
 
 const backBtn =
-  "mb-4 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
+  "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
 const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 
 export default function TeamsSection() {
@@ -58,7 +58,7 @@ export default function TeamsSection() {
 
   return (
     <div className="space-y-4">
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-base text-destructive">{error}</p>}
       <div className="flex items-center justify-between">
         <h3 className={label}>Organization teams</h3>
         <Button size="sm" onClick={() => setDetail("new")}>
@@ -71,7 +71,7 @@ export default function TeamsSection() {
           <Skeleton className="h-12 w-full rounded-lg" />
         </div>
       ) : teams.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
           No teams yet — teams group users inside the organization.
         </p>
       ) : (
@@ -84,7 +84,7 @@ export default function TeamsSection() {
             >
               <UsersRound className="size-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{t.name}</p>
+                <p className="truncate text-base font-medium">{t.name}</p>
                 <p className="text-xs text-muted-foreground">
                   {t.member_count === 1 ? "1 member" : `${t.member_count} members`}
                 </p>
@@ -232,7 +232,7 @@ function TeamDetail({
               onKeyDown={(e) => e.key === "Enter" && save()}
             />
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="text-base text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
             <Button disabled={busy || !name} onClick={save}>
               {busy ? "Saving…" : "Save"}
@@ -276,7 +276,7 @@ function TeamDetail({
               <div className="h-8 w-full animate-pulse rounded-md bg-accent" />
             </div>
           ) : members.length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground">No members yet.</p>
+            <p className="p-4 text-base text-muted-foreground">No members yet.</p>
           ) : (
             <ul>
               {members.map((m) => (
@@ -284,7 +284,7 @@ function TeamDetail({
                   key={m.id}
                   className="flex items-center gap-3 border-b border-border/60 px-4 py-2.5 last:border-b-0"
                 >
-                  <p className="min-w-0 flex-1 truncate text-sm">{m.email}</p>
+                  <p className="min-w-0 flex-1 truncate text-base">{m.email}</p>
                   <span className="rounded-full bg-accent px-2 py-0.5 text-[11px] font-medium capitalize text-muted-foreground">
                     {m.role}
                   </span>
@@ -304,7 +304,7 @@ function TeamDetail({
 
         <div className="flex items-center gap-2">
           <select
-            className="h-9 min-w-56 rounded-md border border-input bg-card px-2 text-sm"
+            className="h-9 min-w-56 rounded-md border border-input bg-card px-2 text-base"
             value={addUserId}
             onChange={(e) => setAddUserId(e.target.value)}
           >
@@ -320,7 +320,7 @@ function TeamDetail({
           </Button>
         </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="text-base text-destructive">{error}</p>}
         <div className="flex items-center gap-2">
           <Button onClick={() => setMode("edit")}>
             <Pencil className="mr-1 size-3.5" /> Edit

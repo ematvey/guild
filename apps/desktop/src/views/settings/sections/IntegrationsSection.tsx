@@ -85,7 +85,7 @@ const toggleClass = (policy: ToolPolicy, role: ToolRole, cls: ToolClass): ToolPo
 };
 
 const backBtn =
-  "mb-4 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
+  "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
 const listCard =
   "flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40";
 const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
@@ -140,7 +140,7 @@ export default function IntegrationsSection() {
 
   return (
     <div className="space-y-6">
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-base text-destructive">{error}</p>}
       {rows === null || available === null ? (
         <div className="space-y-2">
           <Skeleton className="h-14 w-full rounded-lg" />
@@ -181,7 +181,7 @@ export default function IntegrationsSection() {
                     >
                       <Webhook className="size-4 shrink-0 text-muted-foreground" />
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium">{a.name}</p>
+                        <p className="text-base font-medium">{a.name}</p>
                         <p className="text-xs text-muted-foreground">
                           {!cfg
                             ? "not configured"
@@ -207,7 +207,7 @@ export default function IntegrationsSection() {
         })
       )}
       {availableNames.size === 0 && (rows ?? []).length === 0 && (
-        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
           No integrations are available in this build.
         </p>
       )}
@@ -354,7 +354,7 @@ function IntegrationDetail({
       {mode === "edit" ? (
         <div className="mt-4 max-w-xl space-y-4">
           <div className="flex items-center gap-3 rounded-lg border border-border px-4 py-3">
-            <label className="flex flex-1 items-center gap-3 text-sm">
+            <label className="flex flex-1 items-center gap-3 text-base">
               <input
                 type="checkbox"
                 className="size-4 accent-foreground"
@@ -389,10 +389,10 @@ function IntegrationDetail({
               <div className="mt-2 grid grid-cols-2 gap-2">
                 {ROLES.map((role) => (
                   <div key={role} className="rounded-lg border border-border px-3 py-2">
-                    <p className="text-sm font-medium capitalize">{role}</p>
+                    <p className="text-base font-medium capitalize">{role}</p>
                     <div className="mt-1 space-y-1">
                       {TOOL_CLASSES.map((cls) => (
-                        <label key={cls} className="flex items-center gap-2 text-sm">
+                        <label key={cls} className="flex items-center gap-2 text-base">
                           <input
                             type="checkbox"
                             className="size-4 accent-foreground"
@@ -409,7 +409,7 @@ function IntegrationDetail({
             </div>
           )}
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="text-base text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
             <Button disabled={busy} onClick={save}>
               {busy ? "Saving…" : "Save"}
@@ -440,7 +440,7 @@ function IntegrationDetail({
         <div className="mt-4 max-w-xl space-y-4">
           <div className="rounded-lg border border-border bg-card p-4">
             <p className={label}>Status</p>
-            <p className="mt-1 text-sm">
+            <p className="mt-1 text-base">
               {initialEnabled ? "Enabled — tools join the chat loop" : "Configured, disabled"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -476,12 +476,12 @@ function IntegrationDetail({
               {secrets === null ? (
                 <Skeleton className="mt-2 h-8 w-56" />
               ) : secrets.length === 0 ? (
-                <p className="mt-2 text-sm text-muted-foreground">No secrets stored.</p>
+                <p className="mt-2 text-base text-muted-foreground">No secrets stored.</p>
               ) : (
                 <ul className="mt-2 space-y-1">
                   {secrets.map((s) =>
                     confirmSecret === s.name ? (
-                      <li key={s.name} className="flex items-center gap-2 text-sm">
+                      <li key={s.name} className="flex items-center gap-2 text-base">
                         <span className="font-mono text-xs">{s.name}</span>
                         <Button
                           variant="destructive"
@@ -496,7 +496,7 @@ function IntegrationDetail({
                         </Button>
                       </li>
                     ) : (
-                      <li key={s.name} className="flex items-center gap-2 text-sm">
+                      <li key={s.name} className="flex items-center gap-2 text-base">
                         <span className="font-mono text-xs">{s.name}</span>
                         <span className="text-xs text-muted-foreground">
                           updated {new Date(s.updated_at).toLocaleString()}
@@ -543,7 +543,7 @@ function IntegrationDetail({
             <div className="rounded-lg border border-border bg-card p-4">
               <p className={label}>Tool policy</p>
               {Object.keys(cleanPolicy(readPolicy(initialConfig))).length === 0 ? (
-                <p className="mt-1 text-sm text-muted-foreground">
+                <p className="mt-1 text-base text-muted-foreground">
                   Default — manifest tool classes apply to every role.
                 </p>
               ) : (
@@ -553,7 +553,7 @@ function IntegrationDetail({
                     if (!classes?.length) return null;
                     return (
                       <div key={role}>
-                        <p className="text-sm font-medium capitalize">{role}</p>
+                        <p className="text-base font-medium capitalize">{role}</p>
                         <p className="text-xs capitalize text-muted-foreground">
                           {classes.join(", ")}
                         </p>
@@ -565,7 +565,7 @@ function IntegrationDetail({
             </div>
           )}
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="text-base text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
             <Button onClick={() => setMode("edit")}>
               <Pencil className="mr-1 size-3.5" /> Edit

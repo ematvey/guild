@@ -30,10 +30,10 @@ type View = { kind: "list" } | { kind: "detail"; model: string } | { kind: "add"
 const listCard =
   "flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40";
 const backBtn =
-  "mb-4 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
+  "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
 const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 const field =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm";
+  "h-9 w-full rounded-md border border-input bg-background px-3 text-base";
 const row = "grid grid-cols-[130px_1fr] items-start gap-x-4 gap-y-3 py-2";
 
 const fmtUsd = (n: number) => `$${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}/Mtok`;
@@ -88,7 +88,7 @@ export default function ModelsSection() {
 
   return (
     <div className="space-y-6">
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-base text-destructive">{error}</p>}
 
       {/* provider keys */}
       <section>
@@ -101,7 +101,7 @@ export default function ModelsSection() {
         {keys === null ? (
           <Skeleton className="h-14 w-full rounded-lg" />
         ) : keys.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+          <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
             No provider keys yet — add one to enable model calls.
           </p>
         ) : (
@@ -110,7 +110,7 @@ export default function ModelsSection() {
               <div key={k.provider} className={listCard}>
                 <Key className="size-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">{k.provider}</p>
+                  <p className="text-base font-medium">{k.provider}</p>
                   <p className="truncate text-xs text-muted-foreground">{k.base_url}</p>
                 </div>
                 <KeyDelete provider={k.provider} onChanged={reload} />
@@ -140,7 +140,7 @@ export default function ModelsSection() {
             <Skeleton className="h-14 w-full rounded-lg" />
           </div>
         ) : routes.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+          <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
             No model routes — add one to make a model selectable in chats.
           </p>
         ) : (
@@ -159,7 +159,7 @@ export default function ModelsSection() {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-medium">{r.model}</p>
+                    <p className="truncate text-base font-medium">{r.model}</p>
                     <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
                       {r.provider}
                     </span>
@@ -390,7 +390,7 @@ function RouteDetail({
           </div>
           <div className={row}>
             <span className={label}>Status</span>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-2 text-base">
               <input
                 type="checkbox"
                 className="size-4 accent-foreground"
@@ -440,7 +440,7 @@ function RouteDetail({
           </div>
           <div className={row}>
             <span className={label}>Capabilities</span>
-            <div className="flex flex-wrap gap-4 text-sm">
+            <div className="flex flex-wrap gap-4 text-base">
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -470,7 +470,7 @@ function RouteDetail({
             </div>
           </div>
         </div>
-        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+        {error && <p className="mt-3 text-base text-destructive">{error}</p>}
         <div className="mt-5 flex items-center gap-2">
           <Button
             disabled={busy}
@@ -536,14 +536,14 @@ function RouteDetail({
       <div className="max-w-xl space-y-4">
         <div className="rounded-lg border border-border bg-card p-4">
           <p className={label}>Pricing</p>
-          <p className="mt-1 text-sm">
+          <p className="mt-1 text-base">
             {fmtUsd(r.price_per_mtok_in_usd)} in · {fmtUsd(r.price_per_mtok_out_usd)} out
             {r.quota_monthly_usd != null ? ` · cap ${fmtUsd(r.quota_monthly_usd)}/mo` : " · no cap"}
           </p>
         </div>
         <div className="rounded-lg border border-border bg-card p-4">
           <p className={label}>Context window</p>
-          <p className="mt-1 text-sm">
+          <p className="mt-1 text-base">
             {r.context_window != null ? `${(r.context_window / 1000).toFixed(0)}k tokens` : "provider default"}
           </p>
         </div>
@@ -556,7 +556,7 @@ function RouteDetail({
               </span>
             )}
             {r.modalities.length === 0 && !r.reasoning && (
-              <p className="text-sm text-muted-foreground">text only</p>
+              <p className="text-base text-muted-foreground">text only</p>
             )}
             {r.modalities.map((m) => (
               <span
@@ -569,7 +569,7 @@ function RouteDetail({
           </div>
         </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="text-base text-destructive">{error}</p>}
         <div className="flex items-center gap-2">
           <Button onClick={() => setMode("edit")}>
             <Pencil className="mr-1 size-3.5" /> Edit
@@ -649,7 +649,7 @@ function RouteAdd({
           pricing, context window and capabilities.
         </p>
       </div>
-      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+      {error && <p className="mt-3 text-base text-destructive">{error}</p>}
       <div className="mt-5 flex gap-2">
         <Button
           disabled={!model.trim() || busy}

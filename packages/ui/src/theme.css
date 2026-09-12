@@ -87,43 +87,31 @@
   }
 }
 
-/* Overlay-style scrollbars: no track, no accent color. The container keeps a
-   thin scrollbar gutter but the handle is invisible until the container is
-   hovered or scrolled, then shows as a small neutral handle. The
-   ::-webkit-scrollbar rules are for WebKitGTK (Tauri on Linux); engines that
-   support scrollbar-color (Chromium 121+, Firefox) use the standard props
-   instead and ignore the webkit ones. */
+/* Floating scrollbars: native bars are hidden and take no space; the
+   scroll tracker (apps/desktop scroll-activity.ts) renders a
+   .floating-scrollbar-thumb over each scrolling container's right edge
+   while it is being scrolled. */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-}
-
-*:hover {
-  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 45%, transparent) transparent;
+  scrollbar-width: none;
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 0;
+  height: 0;
+  display: none;
 }
 
-::-webkit-scrollbar-track,
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
+.floating-scrollbar-thumb {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  width: 6px;
   border-radius: 999px;
-  background: transparent;
-}
-
-*:hover::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
-}
-
-*::-webkit-scrollbar-thumb:hover,
-*::-webkit-scrollbar-thumb:active {
-  background: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  background: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
 }
 
 /* Focus indication policy: no global suppression. Each component declares its
