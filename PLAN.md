@@ -405,6 +405,33 @@ retry-then-fail-fast ✓ · coherent model answers ✓ · machine chip in header
 
 ## Known gaps / next up
 
+## Resolved 2026-09-12: Windows pairing hang (desktop)
+
+**Root cause** (diagnosed in situ on the user's Windows box via WSL SSH + a
+daemon-side trace): the GUI's reader thread did a blocking read on a
+duplicated *synchronous* named-pipe handle. Windows serializes I/O on the
+file object, so the concurrent first rpc write queued behind the parked read
+and never ran \u2014 every fresh launch froze deterministically at its first
+daemon call. Unix sockets have independent fds, which is why no local test
+ever reproduced it.
+
+**Fix** (`48f9156`, released as desktop **0.3.14**):
+- Windows client is now a **tokio named-pipe client** (mirrors the daemon's
+  ServerOptions side): true concurrent read/write, async handshake carrying
+  build identity + daemon pid.
+- A **supervisor task** owns the daemon lifecycle: pings every 20s; on
+  repeated silence sends `daemon.shutdown`, then taskkills the wedged daemon
+  by pid and respawns \u2014 a wedged daemon can never hang the UI again.
+- `daemon.hello` reports its `pid`; `Pair` carries the raw read handle;
+  `release-clients.sh` defaults BASE to `https://guild.example.com` so
+  updater URLs work without the user's SSH tunnel.
+
+**Verified end-to-end on the user's machine**: 0.3.14 silently installed,
+attach/handshake/ping/session.info/machine.info all < 1ms through the new
+path, and the machine registered on the server (`machines` \u2192 `WORKSTATION`) with
+the session restored in the webview. Paired against the public URL directly
+(no tunnel).
+
 1. **Phase 2 — approvals as protocol events** (agreed design, not built):
    workflow requests approval → broadcast to ALL attached clients → first
    Approve/Deny wins via `complete_tool`-style answer, recorded server-side;
