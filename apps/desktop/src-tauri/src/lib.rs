@@ -2,6 +2,7 @@
 //! (guild-app-server's per-user daemon) and bridges JSON-RPC line protocol
 //! over the daemon socket (spec §3.1, §3.2, §3.3, §6).
 
+#[cfg(unix)]
 use guild_app_server::daemon::Pair;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -35,13 +36,26 @@ pub struct UpdateState {
 
 #[derive(Default)]
 pub struct EngineState {
-    engine: Mutex<Option<Arc<Engine>>>,
+    /// Shared cell: the Windows supervisor task replaces the engine when the
+    /// daemon wedges, so it must be an Arc the tasks can hold (std Mutex only
+    /// - no tokio dependency in the lock itself).
+    cell: Arc<Mutex<Option<Arc<Engine>>>>,
     handle: Mutex<Option<AppHandle>>,
     next_id: AtomicU64,
 }
 
 pub struct Engine {
+    #[cfg(unix)]
     stdin: Arc<Mutex<Box<dyn Write + Send>>>,
+    #[cfg(windows)]
+    /// Outbound lines for the writer task. Unbounded channel: submit never
+    /// blocks the runtime (sync stdin writes on tokio workers froze it once).
+    writer: tokio::sync::mpsc::UnboundedSender<String>,
+    #[cfg(windows)]
+    dead: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(windows)]
+    /// Daemon pid from daemon.hello - the supervisor kills it on wedge.
+    daemon_pid: Option<u32>,
     responses: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>>,
     /// Completed JSON-RPC envelopes for poll-based clients: every response
     /// lands here regardless of transport, so the webview never needs a
@@ -73,10 +87,363 @@ pub fn parse_line(line: &str) -> Option<EngineLine> {
     }
 }
 
-/// Attaches to (or spawns) the per-user daemon and builds the Engine from
-/// the socket pair. The daemon survives this app's exit; if it dies, the
-/// reader thread clears the handle and the next start_engine re-attaches.
+/// Attaches to (or spawns) the per-user daemon and builds the Engine.
+/// Unix: sync socket pair + blocking reader thread (no serialization issue).
+/// Windows: tokio named-pipe client - the std duplicated synchronous handles
+/// serialize I/O on the file object, which deadlocked the first concurrent
+/// write against the blocking reader (root cause of the pairing hang).
 pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
+    #[cfg(unix)]
+    {
+        attach_engine_unix(app).await
+    }
+    #[cfg(windows)]
+    {
+        // The supervisor owns the lifecycle; it has usually already attached.
+        let state: State<EngineState> = app.state();
+        for _ in 0..100 {
+            if state.cell.lock().unwrap().is_some() {
+                ipc_trace("attach", "engine ready (supervisor)");
+                return state.cell.lock().unwrap().clone().ok_or("engine gone".to_string());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Err("daemon did not become ready in 10s".into())
+    }
+}
+
+/// Ping-id space: far above frontend ids so poll sweeps never touch them.
+#[cfg(windows)]
+static PING_ID: AtomicU64 = AtomicU64::new(u64::MAX / 2);
+
+#[cfg(windows)]
+fn kill_daemon_pid(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    ipc_trace("supervisor", &format!("killing daemon pid {pid}"));
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/PID", &pid.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+}
+
+/// Windows supervisor: ensures an engine exists, pings it, and force-
+/// respawns a silent (wedged) daemon. A daemon that accepts connections but
+/// stops responding must never hang the UI: two ping misses, a graceful
+/// daemon.shutdown, one more miss, then taskkill by pid and a fresh attach.
+#[cfg(windows)]
+async fn supervisor_task(
+    cell: Arc<Mutex<Option<Arc<Engine>>>>,
+    app: AppHandle,
+    bin: String,
+) {
+    let mut misses: u32 = 0;
+    loop {
+        let engine = { let g = cell.lock().unwrap(); g.clone() };
+        let Some(engine) = engine else {
+            match attach_engine_windows_inner(&cell, &app, &bin).await {
+                Ok(e) => {
+                    let mut g = cell.lock().unwrap();
+                    if g.is_none() {
+                        *g = Some(e);
+                    }
+                    misses = 0;
+                }
+                Err(e) => {
+                    ipc_trace("supervisor", &format!("attach failed: {e}"));
+                    let _ = app.emit(
+                        "rpc-event",
+                        serde_json::json!({
+                            "protocol": PROTOCOL_VERSION, "event": "rpc.error",
+                            "payload": {"message": format!("daemon attach failed: {e}")}
+                        }),
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
+            }
+            continue;
+        };
+        // Liveness ping on the reserved id space.
+        let ping_id = PING_ID.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = tokio::sync::oneshot::channel::<Value>();
+        engine.responses.lock().unwrap().insert(ping_id, tx);
+        let sent = engine
+            .writer
+            .send(envelope(ping_id, "daemon.hello", &serde_json::json!({})).to_string())
+            .is_ok();
+        let ok = sent
+            && tokio::time::timeout(std::time::Duration::from_secs(8), rx)
+                .await
+                .map(|r| r.is_ok())
+                .unwrap_or(false);
+        if ok {
+            misses = 0;
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            continue;
+        }
+        misses += 1;
+        ipc_trace("supervisor", &format!("ping miss #{misses}"));
+        if misses < 2 {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            continue;
+        }
+        // Graceful attempt first: a merely-busy daemon answers shutdown and
+        // the next ping succeeds, so a healthy-but-slow daemon is never killed.
+        ipc_trace("supervisor", "daemon unresponsive - sending daemon.shutdown");
+        let _ = engine
+            .writer
+            .send(envelope(PING_ID.fetch_add(1, Ordering::SeqCst), "daemon.shutdown", &serde_json::json!({})).to_string());
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let ping_id = PING_ID.fetch_add(1, Ordering::SeqCst);
+        let (tx2, rx2) = tokio::sync::oneshot::channel::<Value>();
+        engine.responses.lock().unwrap().insert(ping_id, tx2);
+        let _ = engine
+            .writer
+            .send(envelope(ping_id, "daemon.hello", &serde_json::json!({})).to_string());
+        let recovered = tokio::time::timeout(std::time::Duration::from_secs(5), rx2)
+            .await
+            .map(|r| r.is_ok())
+            .unwrap_or(false);
+        if recovered {
+            ipc_trace("supervisor", "daemon recovered after shutdown probe");
+            misses = 0;
+            continue;
+        }
+        ipc_trace("supervisor", "daemon wedged - killing and respawning");
+        if let Some(pid) = engine.daemon_pid {
+            kill_daemon_pid(pid);
+        }
+        {
+            let mut g = cell.lock().unwrap();
+            let same = matches!(&*g, Some(e) if Arc::ptr_eq(e, &engine));
+            if same {
+                *g = None;
+            }
+        }
+        misses = 0;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
+/// Windows engine construction: tokio named-pipe client + async handshake
+/// (build identity + daemon pid) + reader/writer tasks.
+#[cfg(windows)]
+async fn attach_engine_windows_inner(
+    cell: &Arc<Mutex<Option<Arc<Engine>>>>,
+    app: &AppHandle,
+    bin: &str,
+) -> Result<Arc<Engine>, String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let path = guild_app_server::daemon::client_pipe_path().map_err(|e| e.to_string())?;
+
+    let mut stream = None;
+    for _ in 0..100u32 {
+        match tokio::net::windows::named_pipe::ClientOptions::new().open(&path) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                ipc_trace("attach", "no daemon listening - spawning detached");
+                let b = bin.to_string();
+                let _ = tokio::task::spawn_blocking(move || {
+                    guild_app_server::daemon::spawn_detached(std::path::Path::new(&b))
+                })
+                .await;
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            }
+            Err(_) => {
+                // ERROR_PIPE_BUSY or transient - a listening instance may
+                // appear shortly.
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    }
+    let stream = stream.ok_or_else(|| "daemon pipe never became available (20s)".to_string())?;
+    ipc_trace("attach-ok", "");
+
+    let (rd, mut wr) = tokio::io::split(stream);
+    let mut reader = tokio::io::BufReader::new(rd);
+    let mut daemon_pid = None;
+    let mut handshook = false;
+    'outer: for _ in 0..4u32 {
+        let hello = serde_json::json!({
+            "jsonrpc": "2.0", "id": 0, "protocol": PROTOCOL_VERSION,
+            "method": "daemon.hello", "params": {},
+        });
+        wr.write_all(format!("{hello}\n").as_bytes())
+            .await
+            .map_err(|e| format!("hello write: {e}"))?;
+        wr.flush().await.map_err(|e| format!("hello flush: {e}"))?;
+        let mut line = String::new();
+        tokio::time::timeout(std::time::Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .map_err(|_| "handshake: daemon silent for 5s".to_string())?
+            .map_err(|e| format!("handshake read: {e}"))?;
+        let v: Value = serde_json::from_str(line.trim()).map_err(|e| format!("handshake parse: {e}"))?;
+        let build = v["result"]["build"].as_str().unwrap_or("").to_string();
+        if build != guild_app_server::protocol::rpc::BUILD_ID {
+            ipc_trace("handshake", &format!("build mismatch (daemon {build}) - replacing daemon"));
+            let sd = serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "protocol": PROTOCOL_VERSION,
+                "method": "daemon.shutdown", "params": {},
+            });
+            let _ = wr.write_all(format!("{sd}\n").as_bytes()).await;
+            let _ = wr.flush().await;
+            if let Some(p) = v["result"]["pid"].as_u64() {
+                kill_daemon_pid(p as u32);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            let b = bin.to_string();
+            let _ = tokio::task::spawn_blocking(move || {
+                guild_app_server::daemon::spawn_detached(std::path::Path::new(&b))
+            })
+            .await;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // Reopen: split consumed the stream, so recurse once via the loop
+            // by reopening into fresh halves.
+            match tokio::net::windows::named_pipe::ClientOptions::new().open(&path) {
+                Ok(s) => {
+                    let (r2, w2) = tokio::io::split(s);
+                    reader = tokio::io::BufReader::new(r2);
+                    wr = w2;
+                    continue 'outer;
+                }
+                Err(_) => continue 'outer,
+            }
+        }
+        daemon_pid = v["result"]["pid"].as_u64().map(|p| p as u32);
+        handshook = true;
+        break;
+    }
+    if !handshook {
+        return Err("daemon handshake failed after retries".into());
+    }
+    ipc_trace("handshake-ok", &format!("daemon_pid={:?}", daemon_pid));
+
+    let (writer_tx, mut writer_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let engine = Arc::new(Engine {
+        writer: writer_tx,
+        dead: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        daemon_pid,
+        responses: Arc::new(Mutex::new(HashMap::new())),
+        results: Arc::new(Mutex::new(HashMap::new())),
+        submitted: Arc::new(Mutex::new(HashMap::new())),
+    });
+
+    // Writer task: bounded write; a stuck pipe (daemon not reading) marks the
+    // engine dead instead of blocking a runtime worker.
+    {
+        let dead = engine.dead.clone();
+        let mut wr = wr;
+        tokio::spawn(async move {
+            while let Some(line) = writer_rx.recv().await {
+                let t0 = std::time::Instant::now();
+                let op = async {
+                    wr.write_all(line.as_bytes()).await?;
+                    wr.write_all(b"\n").await?;
+                    wr.flush().await
+                };
+                match tokio::time::timeout(std::time::Duration::from_secs(5), op).await {
+                    Ok(Ok(())) => {
+                        ipc_trace("write-ok", &format!("{}B in {:?}", line.len(), t0.elapsed()))
+                    }
+                    Ok(Err(e)) => {
+                        ipc_trace("write-fail", &format!("err={e}"));
+                        dead.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    Err(_) => {
+                        ipc_trace("write-fail", "timeout (daemon not reading)");
+                        dead.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            }
+            ipc_trace("writer-exit", "");
+        });
+    }
+
+    // Reader task: same demux as the unix thread, async.
+    {
+        let mut reader = reader;
+        let responses = engine.responses.clone();
+        let results = engine.results.clone();
+        let submitted = engine.submitted.clone();
+        let app_handle = app.clone();
+        let cell2 = cell.clone();
+        let eng2 = engine.clone();
+        tokio::spawn(async move {
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => {
+                        ipc_trace("reader-exit", "eof");
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        ipc_trace("reader-exit", &format!("err={e}"));
+                        break;
+                    }
+                }
+                match parse_line(&line) {
+                    Some(EngineLine::Response { id, value }) => {
+                        ipc_trace("resp", &format!("id={id} bytes={}", line.len()));
+                        results.lock().unwrap().insert(id, value.clone());
+                        if let Some(sender) = responses.lock().unwrap().remove(&id) {
+                            let _ = sender.send(value);
+                        }
+                    }
+                    Some(EngineLine::Event(ev)) => {
+                        let _ = app_handle.emit("rpc-event", ev);
+                    }
+                    None => {
+                        let _ = app_handle.emit(
+                            "rpc-event",
+                            serde_json::json!({
+                                "protocol": PROTOCOL_VERSION, "event": "rpc.error",
+                                "payload": {"message": format!("unparseable daemon line: {line}")}
+                            }),
+                        );
+                    }
+                }
+            }
+            // Daemon gone: fail pending rpcs, drop the engine if it is ours.
+            {
+                let mut sub = submitted.lock().unwrap();
+                let mut res = results.lock().unwrap();
+                for id in sub.keys() {
+                    res.insert(
+                        *id,
+                        serde_json::json!({"id": *id, "error": {"message": "engine dropped the request"}}),
+                    );
+                }
+                sub.clear();
+                responses.lock().unwrap().clear();
+            }
+            let same = { let g = cell2.lock().unwrap(); matches!(&*g, Some(e) if Arc::ptr_eq(e, &eng2)) };
+            if same {
+                *cell2.lock().unwrap() = None;
+            }
+            let _ = app_handle.emit(
+                "rpc-event",
+                serde_json::json!({
+                    "protocol": PROTOCOL_VERSION, "event": "rpc.error",
+                    "payload": {"message": "daemon connection lost"}
+                }),
+            );
+        });
+    }
+
+    Ok(engine)
+}
+
+/// Unix path: sync socket pair + blocking reader thread (safe there: the
+/// read and write fds are independent, no kernel serialization).
+#[cfg(unix)]
+async fn attach_engine_unix(app: &AppHandle) -> Result<Arc<Engine>, String> {
     // The daemon should be a copy of this binary (single-binary design);
     // GUILD_DAEMON_BIN overrides for dev.
     let bin = std::env::var("GUILD_DAEMON_BIN").unwrap_or_else(|_| {
@@ -91,7 +458,7 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
     .await
     .map_err(|e| format!("daemon attach join: {e}"))?
     .map_err(|e| format!("daemon attach failed: {e}"))?;
-    let Pair(read, write) = pair;
+    let Pair(read, write, raw_read) = pair;
     ipc_trace("attach-ok", "");
 
     let engine = Arc::new(Engine {
@@ -108,11 +475,14 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
     let app_handle = app.clone();
     std::thread::spawn(move || {
         ipc_trace("reader-start", "");
-        let mut reader = BufReader::new(read);
+        // LineReader: on Windows the read half must be peek-polled, never
+        // blocked, or it parks the file object's I/O lock and starves the
+        // concurrent writer (the original first-rpc deadlock).
+        let mut reader = guild_app_server::daemon::LineReader::new(read, raw_read);
         loop {
             let mut line = String::new();
             match reader.read_line(&mut line) {
-                Ok(0) => {
+                Ok(false) => {
                     ipc_trace("reader-exit", "eof");
                     break;
                 }
@@ -120,7 +490,7 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
                     ipc_trace("reader-exit", &format!("err={e}"));
                     break;
                 }
-                Ok(_) => {}
+                Ok(true) => {}
             }
             match parse_line(&line) {
                 Some(EngineLine::Response { id, value }) => {
@@ -163,7 +533,7 @@ pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
             pending.clear();
         }
         let state: State<EngineState> = app_handle.state();
-        *state.engine.lock().unwrap() = None;
+        *state.cell.lock().unwrap() = None;
         let _ = app_handle.emit(
             "rpc-event",
             serde_json::json!({
@@ -198,7 +568,7 @@ pub mod commands {
             .clone()
             .expect("app handle set at setup");
         // Drop the guard before awaiting: tauri command futures must be Send.
-        if state.engine.lock().unwrap().is_some() {
+        if state.cell.lock().unwrap().is_some() {
             ipc_trace("start-engine", "already-attached");
             return Ok(());
         }
@@ -211,7 +581,7 @@ pub mod commands {
             }
         };
         ipc_trace("start-engine", &format!("attached in {:?}", t0.elapsed()));
-        let mut guard = state.engine.lock().unwrap();
+        let mut guard = state.cell.lock().unwrap();
         if guard.is_none() {
             // another concurrent attach may have won; its handle is equally
             // good (both are daemon connections)
@@ -232,7 +602,7 @@ pub mod commands {
         params: Value,
     ) -> Result<u64, String> {
         let engine = {
-            let guard = state.engine.lock().unwrap();
+            let guard = state.cell.lock().unwrap();
             guard
                 .clone()
                 .ok_or_else(|| "engine not started".to_string())?
@@ -240,6 +610,7 @@ pub mod commands {
         let id = state.next_id.fetch_add(1, Ordering::SeqCst);
         ipc_trace("rpc-start", &format!("id={id} method={method}"));
         engine.submitted.lock().unwrap().insert(id, std::time::Instant::now());
+        #[cfg(unix)]
         {
             let mut stdin = engine.stdin.lock().unwrap();
             if let Err(e) = stdin
@@ -249,7 +620,27 @@ pub mod commands {
             {
                 ipc_trace("write-fail", &format!("id={id} err={e}"));
                 engine.submitted.lock().unwrap().remove(&id);
-                *state.engine.lock().unwrap() = None;
+                *state.cell.lock().unwrap() = None;
+                return Err(format!("engine write failed: {e}"));
+            }
+        }
+        #[cfg(windows)]
+        {
+            if engine.dead.load(Ordering::SeqCst) {
+                engine.submitted.lock().unwrap().remove(&id);
+                let mut g = state.cell.lock().unwrap();
+                let same = matches!(&*g, Some(e) if Arc::ptr_eq(e, &engine));
+                if same {
+                    *g = None;
+                }
+                return Err("engine connection lost - reconnecting".to_string());
+            }
+            if let Err(e) = engine
+                .writer
+                .send(envelope(id, &method, &params).to_string())
+            {
+                ipc_trace("write-fail", &format!("id={id} err={e}"));
+                engine.submitted.lock().unwrap().remove(&id);
                 return Err(format!("engine write failed: {e}"));
             }
         }
@@ -263,7 +654,7 @@ pub mod commands {
     #[tauri::command]
     pub async fn rpc_poll(state: State<'_, EngineState>) -> Result<Vec<Value>, String> {
         let engine = {
-            let guard = state.engine.lock().unwrap();
+            let guard = state.cell.lock().unwrap();
             guard.clone()
         };
         let Some(engine) = engine else { return Ok(vec![]) };
@@ -330,7 +721,7 @@ pub mod commands {
         params: Value,
     ) -> Result<Value, String> {
         let engine = {
-            let guard = state.engine.lock().unwrap();
+            let guard = state.cell.lock().unwrap();
             guard
                 .clone()
                 .ok_or_else(|| "engine not started".to_string())?
@@ -342,6 +733,7 @@ pub mod commands {
         // inside #[tauri::command] scopes; oneshot stays unambiguous.
         let (tx, rx) = tokio::sync::oneshot::channel::<Value>();
         engine.responses.lock().unwrap().insert(id, tx);
+        #[cfg(unix)]
         {
             let mut stdin = engine.stdin.lock().unwrap();
             if let Err(e) = stdin
@@ -352,8 +744,20 @@ pub mod commands {
                 // write failed → daemon is gone or wedged; drop the handle so
                 // the next start_engine re-attaches (respawning if needed).
                 ipc_trace("write-fail", &format!("id={id} err={e}"));
-                *state.engine.lock().unwrap() = None;
+                *state.cell.lock().unwrap() = None;
                 return Err(format!("engine write failed: {e}"));
+            }
+        }
+        #[cfg(windows)]
+        {
+            if engine
+                .writer
+                .send(envelope(id, &method, &params).to_string())
+                .is_err()
+            {
+                ipc_trace("write-fail", &format!("id={id} err=channel closed"));
+                *state.cell.lock().unwrap() = None;
+                return Err("engine write failed: channel closed".into());
             }
         }
         ipc_trace("write-ok", &format!("id={id}"));
@@ -374,7 +778,7 @@ pub mod commands {
                 engine.responses.lock().unwrap().remove(&id);
                 // the connection is wedged: force a fresh attach next time
                 let state: State<EngineState> = app.state();
-                *state.engine.lock().unwrap() = None;
+                *state.cell.lock().unwrap() = None;
                 ipc_trace("rpc-timeout", &format!("id={id} after {:?}", t0.elapsed()));
                 Err("engine timed out".into())
             }
@@ -502,6 +906,17 @@ pub fn run() {
         .setup(|app| {
             let state: State<EngineState> = app.state();
             *state.handle.lock().unwrap() = Some(app.handle().clone());
+            #[cfg(windows)]
+            {
+                // The supervisor owns the daemon lifecycle: attach, liveness
+                // pings, and force-respawn of a wedged daemon. Spawned once.
+                let cell = state.cell.clone();
+                let app_handle = app.handle().clone();
+                let bin = std::env::current_exe()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "guild".to_string());
+                tauri::async_runtime::spawn(supervisor_task(cell, app_handle, bin));
+            }
             start_update_checker(app.handle().clone());
             Ok(())
         })

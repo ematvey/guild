@@ -25,7 +25,7 @@ fn main() {
         }
     };
     println!("[probe] attach ok in {:?} (incl. handshake)", t0.elapsed());
-    let daemon::Pair(read, mut write) = pair;
+    let daemon::Pair(read, mut write, _) = pair;
 
     // Reader thread exactly like the GUI's lib.rs.
     let (tx, rx) = std::sync::mpsc::channel::<String>();

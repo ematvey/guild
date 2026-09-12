@@ -176,6 +176,7 @@ where
     // Reader thread → request channel (unbounded send is sync-safe).
     let (req_tx, mut req_rx) = mpsc::unbounded_channel::<Incoming>();
     std::thread::spawn(move || {
+        crate::dtrace::dtrace("conn: reader thread started");
         let reader = std::io::BufReader::new(reader);
         use std::io::BufRead;
         for line in reader.lines() {
@@ -183,20 +184,27 @@ where
             if line.trim().is_empty() {
                 continue;
             }
+            crate::dtrace::dtrace(&format!("conn: reader got {} bytes: {}", line.len(), &line.chars().take(120).collect::<String>()));
             if req_tx.send(line_to_incoming(&line)).is_err() {
                 break;
             }
         }
+        crate::dtrace::dtrace("conn: reader thread exited (EOF or error)");
     });
 
     // Single ordered writer: responses and events both flow through here.
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
     let writer_thread = std::thread::spawn(move || {
         let mut w = writer;
+        crate::dtrace::dtrace("conn: writer thread started");
         while let Some(v) = out_rx.blocking_recv() {
-            let _ = writeln!(w, "{v}");
-            let _ = w.flush();
+            crate::dtrace::dtrace(&format!("conn: writer writing {} bytes: {}", v.to_string().len(), &v.to_string().chars().take(120).collect::<String>()));
+            let t0 = std::time::Instant::now();
+            let r = writeln!(w, "{v}");
+            let f = w.flush();
+            crate::dtrace::dtrace(&format!("conn: writer done in {:?} writeln={:?} flush={:?}", t0.elapsed(), r.is_ok(), f.is_ok()));
         }
+        crate::dtrace::dtrace("conn: writer thread exiting (out_tx dropped)");
         w
     });
 
@@ -253,6 +261,10 @@ where
 }
 
 async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+    let t0 = std::time::Instant::now();
+    let method = req.method.clone();
+    let rid = req.id;
+    crate::dtrace::dtrace(&format!("dispatch: START {} id={:?}", method, rid));
     match req.method.as_str() {
         "login" => login_task(shared.session.clone(), req, out_tx).await,
         "pair" => pair_task(shared.session.clone(), req, out_tx).await,
@@ -352,12 +364,13 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "agent.policy.get" => policy_get(shared.session.clone(), req, out_tx),
         "daemon.hello" => {
             // Version + protocol handshake for daemon clients (wire method
-            // exists before any client uses it).
+            // exists before any client uses it). `pid` lets the GUI's
+            // supervisor kill a wedged daemon outright.
             let _ = out_tx.send(response_value(
                 req.id,
                 Ok(Response::ok(
                     req.id,
-                    json!({"version": env!("CARGO_PKG_VERSION"), "protocol": PROTOCOL_VERSION, "build": protocol::rpc::BUILD_ID}),
+                    json!({"version": env!("CARGO_PKG_VERSION"), "protocol": PROTOCOL_VERSION, "build": protocol::rpc::BUILD_ID, "pid": std::process::id()}),
                 )),
             ));
         }
@@ -381,6 +394,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             ));
         }
     }
+    crate::dtrace::dtrace(&format!("dispatch: END {} in {:?}", method, t0.elapsed()));
 }
 
 fn param<'a>(req: &'a Request, key: &str) -> anyhow::Result<&'a str> {

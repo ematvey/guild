@@ -46,14 +46,27 @@ pub fn socket_path() -> anyhow::Result<PathBuf> {
     )))
 }
 
-/// One duplex connection to the daemon: (read half, write half).
-pub struct Pair(pub Box<dyn std::io::Read + Send>, pub Box<dyn std::io::Write + Send>);
+/// One duplex connection to the daemon: (read half, write half, raw read
+/// handle). The raw handle exists only on Windows: the GUI's reader thread
+/// needs PeekNamedPipe there because a blocking read on a duplicated
+/// synchronous pipe handle parks the file object's I/O lock and starves the
+/// concurrent writer (the original first-rpc deadlock).
+pub struct Pair(
+    pub Box<dyn std::io::Read + Send>,
+    pub Box<dyn std::io::Write + Send>,
+    pub Option<isize>,
+);
+
+/// Line reader safe to run concurrently with a writer on the same pipe.
+/// Windows path polls with PeekNamedPipe (never parks the file object lock)
+/// and only consumes bytes already available; Unix path is a plain blocking
+/// read_line (separate fds, no serialization)."
 
 #[cfg(unix)]
 pub fn try_connect_at(path: &Path) -> anyhow::Result<Pair> {
     let s = std::os::unix::net::UnixStream::connect(path)
         .with_context(|| format!("connect {}", path.display()))?;
-    Ok(Pair(Box::new(s.try_clone()?), Box::new(s)))
+    Ok(Pair(Box::new(s.try_clone()?), Box::new(s), None))
 }
 
 #[cfg(windows)]
@@ -64,7 +77,13 @@ pub fn try_connect_at(path: &Path) -> anyhow::Result<Pair> {
         .write(true)
         .open(path)
         .with_context(|| format!("connect {}", path.display()))?;
-    Ok(Pair(Box::new(f.try_clone()?), Box::new(f)))
+    let rd = f.try_clone()?;
+    // Peek must use the READ half's own handle: the inbound queue is what we
+    // poll, and using the write half's handle left the client blind to
+    // responses in situ (the daemon wrote them; the client never saw them).
+    use std::os::windows::io::AsRawHandle;
+    let raw = rd.as_raw_handle() as isize;
+    Ok(Pair(Box::new(rd), Box::new(f), Some(raw)))
 }
 
 pub fn try_connect() -> anyhow::Result<Pair> {
@@ -116,7 +135,7 @@ pub fn handshake(pair: Pair) -> anyhow::Result<Pair> {
 /// skips the check (tests, CLI tools against foreign daemons).
 pub fn handshake_with(pair: Pair, expected_build: Option<&str>) -> anyhow::Result<Pair> {
     use std::io::{BufReader, Read as _};
-    let Pair(rd, mut wr) = pair;
+    let Pair(rd, mut wr, raw) = pair;
     let mut rd = BufReader::new(rd);
     let req = protocol::rpc::Request::new(0, "daemon.hello", serde_json::json!({}));
     writeln!(wr, "{}", serde_json::to_string(&req)?)?;
@@ -149,7 +168,7 @@ pub fn handshake_with(pair: Pair, expected_build: Option<&str>) -> anyhow::Resul
             );
         }
     }
-    Ok(Pair(Box::new(rd), wr))
+    Ok(Pair(Box::new(rd), wr, raw))
 }
 
 /// Full blocking client flow: connect → (spawn detached + wait) → handshake.
@@ -279,18 +298,31 @@ async fn windows_accept_loop(
         .first_pipe_instance(true)
         .create(&pipe_name)?;
     loop {
+        crate::dtrace::dtrace("accept: waiting for client (listening instance ready)");
         tokio::select! {
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow_and_update() {
+                    crate::dtrace::dtrace("accept: shutdown signal, exiting");
                     return Ok(());
                 }
             }
             connected = server.connect() => {
                 connected.context("daemon pipe connect")?;
+                crate::dtrace::dtrace("accept: client connected to instance");
                 let client = server;
-                server = ServerOptions::new().create(&pipe_name)?; // next client
+                match ServerOptions::new().create(&pipe_name) {
+                    Ok(s) => {
+                        crate::dtrace::dtrace("accept: next listening instance created");
+                        server = s;
+                    }
+                    Err(e) => {
+                        crate::dtrace::dtrace(&format!("accept: FAILED to create next instance: {e} (serving current client with no new listener)"));
+                        return Err(e.into());
+                    }
+                }
                 let shared = shared.clone();
                 tokio::task::spawn_blocking(move || {
+                    crate::dtrace::dtrace("conn: run_connection starting (spawn_blocking)");
                     let rt = tokio::runtime::Handle::current();
                     let (rd, wr) = tokio::io::split(client);
                     // SyncIoBridge bridges the async halves to the std
@@ -298,6 +330,7 @@ async fn windows_accept_loop(
                     let rd = tokio_util::io::SyncIoBridge::new(rd);
                     let wr = tokio_util::io::SyncIoBridge::new(wr);
                     let _ = rt.block_on(run_connection(&shared, rd, wr));
+                    crate::dtrace::dtrace("conn: run_connection returned");
                 });
             }
         }
@@ -314,4 +347,102 @@ mod tests {
         assert_eq!(s.len(), 16);
         assert_eq!(s, user_pipe_suffix("maintainer"));
     }
+}
+
+/// Line reader that may run concurrently with a writer on the same pipe.
+/// See [`Pair`] for why the Windows path peeks instead of blocking.
+pub struct LineReader {
+    inner: std::io::BufReader<Box<dyn std::io::Read + Send>>,
+    raw: Option<isize>,
+}
+
+impl LineReader {
+    pub fn new(read: Box<dyn std::io::Read + Send>, raw: Option<isize>) -> Self {
+        Self {
+            inner: std::io::BufReader::new(read),
+            raw,
+        }
+    }
+
+    /// Reads one line into `out` (without the newline). Ok(false) = EOF.
+    pub fn read_line(&mut self, out: &mut String) -> std::io::Result<bool> {
+        #[cfg(windows)]
+        if let Some(h) = self.raw {
+            out.clear();
+            loop {
+                // Fast path: bytes already buffered by a previous peek.
+                {
+                    let buf = self.inner.buffer();
+                    if !buf.is_empty() {
+                        match buf.iter().position(|&b| b == b'\n') {
+                            Some(pos) => {
+                                out.push_str(&String::from_utf8_lossy(&buf[..pos]));
+                                self.inner.consume(pos + 1);
+                                return Ok(true);
+                            }
+                            None => {
+                                out.push_str(&String::from_utf8_lossy(buf));
+                                let n = buf.len();
+                                self.inner.consume(n);
+                            }
+                        }
+                    }
+                }
+                if peek_available(h)? == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                    continue;
+                }
+                // Data is available, so fill_buf returns without blocking.
+                let buf = self.inner.fill_buf()?;
+                if buf.is_empty() {
+                    return Ok(false); // EOF
+                }
+                let n = buf.len();
+                out.push_str(&String::from_utf8_lossy(buf));
+                self.inner.consume(n);
+            }
+        }
+        use std::io::BufRead as _;
+        let n = self.inner.read_line(out)?;
+        Ok(n != 0)
+    }
+}
+
+#[cfg(windows)]
+fn peek_available(raw: isize) -> std::io::Result<u32> {
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+    let mut avail: u32 = 0;
+    let ok = unsafe {
+        PeekNamedPipe(
+            raw as HANDLE,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut avail,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(avail)
+}
+
+/// Test/experiment seam: peek the inbound queue via a raw handle.
+#[cfg(windows)]
+pub fn peek_available_pub(raw: isize) -> u32 {
+    peek_available(raw).unwrap_or(u32::MAX)
+}
+#[cfg(not(windows))]
+pub fn peek_available_pub(_raw: isize) -> u32 {
+    0
+}
+
+/// Windows-only: the pipe path as a string for tokio's async named-pipe
+/// client (the GUI uses the tokio client; std handles deadlock under
+/// concurrent read+write on this platform).
+#[cfg(windows)]
+pub fn client_pipe_path() -> anyhow::Result<String> {
+    Ok(socket_path()?.to_string_lossy().into_owned())
 }
