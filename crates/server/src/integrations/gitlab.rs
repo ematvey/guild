@@ -169,6 +169,7 @@ impl Integration for Gitlab {
         tool: &'a str,
         args: serde_json::Value,
         secrets: &'a [(String, String)],
+        _acting_as: Option<&'a str>,
     ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
         Box::pin(async move {
             let tok = token(secrets)?;

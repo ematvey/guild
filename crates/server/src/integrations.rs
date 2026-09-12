@@ -62,13 +62,16 @@ pub trait Integration: Send + Sync {
     /// supplied a broken config — the integration contributes nothing.
     fn tools(&self, config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>>;
     /// Runs one tool. `secrets` carries the resolved store values for the
-    /// credentials; config keeps non-secret settings only.
+    /// credentials; config keeps non-secret settings only. `acting_as` is
+    /// the call's resolved external identity (spec §5) — None acts as the
+    /// connector's default subject.
     fn execute<'a>(
         &'a self,
         config: &'a serde_json::Value,
         tool: &'a str,
         args: serde_json::Value,
         secrets: &'a [(String, String)],
+        acting_as: Option<&'a str>,
     ) -> BoxFuture<'a, Result<ToolOutcome, String>>;
 }
 
@@ -365,6 +368,7 @@ pub mod testplug {
             tool: &'a str,
             _args: serde_json::Value,
             secrets: &'a [(String, String)],
+            _acting_as: Option<&'a str>,
         ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
             Box::pin(async move {
                 match tool {
@@ -451,6 +455,7 @@ pub mod searxng {
             tool: &'a str,
             args: serde_json::Value,
             _secrets: &'a [(String, String)],
+            _acting_as: Option<&'a str>,
         ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
             Box::pin(async move {
                 if tool != "web_search" {
@@ -607,6 +612,7 @@ pub mod superproxy {
             tool: &'a str,
             args: serde_json::Value,
             secrets: &'a [(String, String)],
+            _acting_as: Option<&'a str>,
         ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
             Box::pin(async move {
                 if tool != "web_fetch" {
@@ -795,58 +801,70 @@ pub async fn resolve_plugins(state: &AppState, org: Uuid) -> anyhow::Result<Vec<
     let master_key = state.config.master_key()?;
     let mut out = Vec::new();
     for row in rows {
-        if let Some(plugin) = integration_by_name(&row.name) {
-            // Built-in plugin: tools come from tools(config), classes from
-            // the in-code manifest — the same snapshot shape as MCP plugins.
-            let manifest = plugin.manifest();
-            let secret_names = manifest
-                .auth
-                .as_ref()
-                .map(|a| a.secret_names.clone())
-                .unwrap_or_default();
-            // Presence check only — values ride to execute() at call time.
-            if let Err(e) = store
-                .integration_secrets()
-                .resolve(org, &row.name, &secret_names, &master_key)
-                .await
-            {
-                tracing::warn!("integration {}: secrets unresolved, skipping: {e}", row.name);
-                continue;
-            }
-            let specs = match plugin.tools(&row.config) {
-                Ok(specs) => specs,
-                Err(e) => {
-                    tracing::warn!("integration {}: broken config, skipping: {e}", row.name);
-                    continue;
-                }
-            };
-            let tools = specs
-                .into_iter()
-                .map(|spec| {
-                    let class = tool_class(&manifest, &spec.name).to_string();
-                    PluginToolInfo {
-                        spec: ToolSpec {
-                            name: namespaced_tool(&row.name, &spec.name),
-                            ..spec
-                        },
-                        class,
-                    }
-                })
-                .collect();
-            out.push(PluginTurn {
-                executor: PluginExecutor::Rust,
-                slug: row.name.clone(),
-                description: manifest.description.clone(),
-                tools,
-                guide_object_key: None,
-                row_config: row.config.clone(),
-                secret_names,
-                identity_key: manifest
+        // An installed v2 bundle is the admin's explicit choice — a row
+        // carrying an mcp.url resolves as MCP even when a compiled-in
+        // connector of the same slug exists (see upsert_integration).
+        if row.config["mcp"]["url"].as_str().is_none() {
+            if let Some(plugin) = integration_by_name(&row.name) {
+                // Built-in plugin: tools come from tools(config), classes
+                // from the in-code manifest — the same snapshot shape as
+                // MCP plugins.
+                let manifest = plugin.manifest();
+                let secret_names = manifest
                     .auth
                     .as_ref()
-                    .map(|a| a.identity_key.clone())
-                    .unwrap_or_else(|| "email".into()),
-            });
+                    .map(|a| a.secret_names.clone())
+                    .unwrap_or_default();
+                // Presence check only — values ride to execute() at call
+                // time.
+                if let Err(e) = store
+                    .integration_secrets()
+                    .resolve(org, &row.name, &secret_names, &master_key)
+                    .await
+                {
+                    tracing::warn!(
+                        "integration {}: secrets unresolved, skipping: {e}",
+                        row.name
+                    );
+                    continue;
+                }
+                let specs = match plugin.tools(&row.config) {
+                    Ok(specs) => specs,
+                    Err(e) => {
+                        tracing::warn!("integration {}: broken config, skipping: {e}", row.name);
+                        continue;
+                    }
+                };
+                let tools = specs
+                    .into_iter()
+                    .map(|spec| {
+                        let class = tool_class(&manifest, &spec.name).to_string();
+                        PluginToolInfo {
+                            spec: ToolSpec {
+                                name: namespaced_tool(&row.name, &spec.name),
+                                ..spec
+                            },
+                            class,
+                        }
+                    })
+                    .collect();
+                out.push(PluginTurn {
+                    executor: PluginExecutor::Rust,
+                    slug: row.name.clone(),
+                    description: manifest.description.clone(),
+                    tools,
+                    guide_object_key: None,
+                    row_config: row.config.clone(),
+                    secret_names,
+                    identity_key: manifest
+                        .auth
+                        .as_ref()
+                        .map(|a| a.identity_key.clone())
+                        .unwrap_or_else(|| "email".into()),
+                });
+                continue;
+            }
+            // Unknown kind with no mcp.url — nothing to resolve.
             continue;
         }
         // MCP plugin: tools come from the plugin server's list_tools, classes
@@ -1021,7 +1039,7 @@ pub async fn call_plugin(
                 .await
                 .map_err(|e| format!("secrets unavailable: {e}"))?;
             plugin
-                .execute(&turn.row_config, raw_tool, args, &secrets)
+                .execute(&turn.row_config, raw_tool, args, &secrets, acting_as)
                 .await
         }
         PluginExecutor::Mcp => {

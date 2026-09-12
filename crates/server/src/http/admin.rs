@@ -118,6 +118,10 @@ async fn list_integrations(
     let rows = store.integrations().list(admin.0.org_id).await?;
     let mut available: Vec<serde_json::Value> = crate::integrations::integration_names()
         .iter()
+        // A compiled-in kind with an existing row is configured — it leaves
+        // the available list (an installed registry bundle of the same slug
+        // shadows it, see upsert_integration).
+        .filter(|n| !rows.iter().any(|r| r.name == **n))
         .map(|n| {
             let category = crate::integrations::integration_by_name(n)
                 .map(|p| p.category().to_string())
@@ -224,95 +228,100 @@ async fn upsert_integration(
     let rows = store.integrations().list(admin.0.org_id).await?;
     let existing = rows.iter().find(|r| r.name == name);
     let enabled = body["enabled"].as_bool().unwrap_or(false);
-    match crate::integrations::integration_by_name(&name) {
-        Some(plugin) => {
-            let config = body
-                .get("config")
-                .cloned()
-                .unwrap_or_else(|| existing.map(|r| r.config.clone()).unwrap_or(json!({})));
-            // Validate via the plugin's own config check before saving.
-            if let Err(e) = plugin.tools(&config) {
-                return Err(ApiError::bad_request(format!(
-                    "invalid integration config: {e}"
-                )));
-            }
-            // Enable gate (spec §9): a built-in row enables only when every
-            // secret its manifest declares is stored — same rule as MCP
-            // plugins. Secrets CRUD covers built-in slugs.
-            if enabled {
-                let declared = plugin
-                    .manifest()
-                    .auth
-                    .map(|a| a.secret_names)
-                    .unwrap_or_default();
-                let stored = store
-                    .integration_secrets()
-                    .list(admin.0.org_id, &name)
-                    .await?;
-                let missing: Vec<String> = declared
-                    .into_iter()
-                    .filter(|d| !stored.iter().any(|s| &s.name == d))
-                    .collect();
-                if !missing.is_empty() {
-                    return Err(ApiError::conflict(
-                        "missing_secrets",
-                        format!("missing secrets: {}", missing.join(", ")),
-                    ));
+    // An installed registry v2 bundle of this slug (or an existing row
+    // already resolved to MCP) is the admin's explicit choice — it shadows
+    // any compiled-in connector of the same name. Built-ins apply only when
+    // no v2 bundle claims the slug.
+    let registry_manifest = latest_integration_manifest(&store, admin.0.org_id, &name).await?;
+    let v2_claimed = registry_manifest
+        .as_ref()
+        .map(|m| m.mcp.is_some())
+        .unwrap_or(false)
+        || existing
+            .map(|r| r.config["mcp"]["url"].as_str().is_some())
+            .unwrap_or(false);
+    if v2_claimed {
+        // v2 MCP plugin installed from the registry: config fields merge
+        // shallowly over the stored row so partial updates keep mcp/auth.
+        let Some(row) = existing else {
+            return Err(ApiError::not_found(format!("unknown integration {name}")));
+        };
+        let mut config = row.config.clone();
+        if let Some(patch) = body.get("config").and_then(|c| c.as_object()) {
+            if let Some(obj) = config.as_object_mut() {
+                for (k, v) in patch {
+                    obj.insert(k.clone(), v.clone());
                 }
             }
-            store
-                .integrations()
-                .upsert(admin.0.org_id, &name, &config, enabled)
-                .await?;
         }
-        None => {
-            // v2 MCP plugin installed from the registry: config fields merge
-            // shallowly over the stored row so partial updates keep mcp/auth.
-            let Some(row) = existing else {
-                return Err(ApiError::not_found(format!("unknown integration {name}")));
-            };
-            let mut config = row.config.clone();
-            if let Some(patch) = body.get("config").and_then(|c| c.as_object()) {
-                if let Some(obj) = config.as_object_mut() {
-                    for (k, v) in patch {
-                        obj.insert(k.clone(), v.clone());
-                    }
-                }
+        validate_mcp_config(&config)?;
+        let enabled = body["enabled"].as_bool().unwrap_or(row.enabled);
+        if enabled {
+            if config["mcp"]["url"].as_str().is_none() {
+                return Err(ApiError::bad_request(
+                    "mcp plugin needs an mcp.url before enabling",
+                ));
             }
-            validate_mcp_config(&config)?;
-            let enabled = body["enabled"].as_bool().unwrap_or(row.enabled);
-            if enabled {
-                if config["mcp"]["url"].as_str().is_none() {
-                    return Err(ApiError::bad_request(
-                        "mcp plugin needs an mcp.url before enabling",
-                    ));
-                }
-                let declared: Vec<String> = latest_integration_manifest(&store, admin.0.org_id, &name)
-                    .await?
-                    .and_then(|m| m.auth)
-                    .map(|a| a.secret_names)
-                    .unwrap_or_default();
-                let stored = store
-                    .integration_secrets()
-                    .list(admin.0.org_id, &name)
-                    .await?;
-                let missing: Vec<String> = declared
-                    .into_iter()
-                    .filter(|d| !stored.iter().any(|s| &s.name == d))
-                    .collect();
-                if !missing.is_empty() {
-                    return Err(ApiError::conflict(
-                        "missing_secrets",
-                        format!("missing secrets: {}", missing.join(", ")),
-                    ));
-                }
+            let declared = registry_manifest
+                .and_then(|m| m.auth)
+                .map(|a| a.secret_names)
+                .unwrap_or_default();
+            let stored = store.integration_secrets().list(admin.0.org_id, &name).await?;
+            let missing: Vec<String> = declared
+                .into_iter()
+                .filter(|d| !stored.iter().any(|s| &s.name == d))
+                .collect();
+            if !missing.is_empty() {
+                return Err(ApiError::conflict(
+                    "missing_secrets",
+                    format!("missing secrets: {}", missing.join(", ")),
+                ));
             }
-            store
-                .integrations()
-                .upsert(admin.0.org_id, &name, &config, enabled)
-                .await?;
+        }
+        store
+            .integrations()
+            .upsert(admin.0.org_id, &name, &config, enabled)
+            .await?;
+        return Ok(Json(json!({ "ok": true })));
+    }
+    let Some(plugin) = crate::integrations::integration_by_name(&name) else {
+        return Err(ApiError::not_found(format!("unknown integration {name}")));
+    };
+    let config = body
+        .get("config")
+        .cloned()
+        .unwrap_or_else(|| existing.map(|r| r.config.clone()).unwrap_or(json!({})));
+    // Validate via the plugin's own config check before saving.
+    if let Err(e) = plugin.tools(&config) {
+        return Err(ApiError::bad_request(format!(
+            "invalid integration config: {e}"
+        )));
+    }
+    // Enable gate (spec §9): a built-in row enables only when every secret
+    // its manifest declares is stored — same rule as MCP plugins. Secrets
+    // CRUD covers built-in slugs.
+    if enabled {
+        let declared = plugin
+            .manifest()
+            .auth
+            .map(|a| a.secret_names)
+            .unwrap_or_default();
+        let stored = store.integration_secrets().list(admin.0.org_id, &name).await?;
+        let missing: Vec<String> = declared
+            .into_iter()
+            .filter(|d| !stored.iter().any(|s| &s.name == d))
+            .collect();
+        if !missing.is_empty() {
+            return Err(ApiError::conflict(
+                "missing_secrets",
+                format!("missing secrets: {}", missing.join(", ")),
+            ));
         }
     }
+    store
+        .integrations()
+        .upsert(admin.0.org_id, &name, &config, enabled)
+        .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -371,19 +380,28 @@ async fn delete_integration_secret(
         .into_iter()
         .find(|r| r.name == name);
     if row.as_ref().is_some_and(|r| r.enabled) {
-        // The row's manifest declares its secrets: an in-code manifest for a
-        // built-in, the registry manifest for an MCP plugin.
-        let declares = match crate::integrations::integration_by_name(&name) {
-            Some(plugin) => plugin
-                .manifest()
-                .auth
-                .map(|a| a.secret_names.contains(&secret))
-                .unwrap_or(false),
-            None => latest_integration_manifest(&store, admin.0.org_id, &name)
-                .await?
+        // The row's manifest declares its secrets: the registry manifest
+        // when a v2 bundle claims the slug (it shadows a same-named
+        // built-in, see upsert_integration), the in-code manifest otherwise.
+        let registry_manifest = latest_integration_manifest(&store, admin.0.org_id, &name).await?;
+        let v2_claimed = registry_manifest
+            .as_ref()
+            .map(|m| m.mcp.is_some())
+            .unwrap_or(false)
+            || row
+                .as_ref()
+                .map(|r| r.config["mcp"]["url"].as_str().is_some())
+                .unwrap_or(false);
+        let declares = if v2_claimed {
+            registry_manifest
                 .and_then(|m| m.auth)
                 .map(|a| a.secret_names.contains(&secret))
-                .unwrap_or(false),
+                .unwrap_or(false)
+        } else {
+            crate::integrations::integration_by_name(&name)
+                .and_then(|p| p.manifest().auth)
+                .map(|a| a.secret_names.contains(&secret))
+                .unwrap_or(false)
         };
         if declares {
             store

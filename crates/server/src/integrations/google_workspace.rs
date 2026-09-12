@@ -189,15 +189,17 @@ async fn access_token(
     Ok(token)
 }
 
-/// Access token for the call's acting identity — `admin_email` until the
-/// unified execute interface passes `acting_as` through.
+/// Access token for the call's acting identity: `acting_as` (the caller's
+/// mapped email or an admin override) when present, else the `admin_email`
+/// secret — the domain-wide delegation default subject.
 async fn access_token_for(
     connector: &GoogleWorkspace,
     config: &serde_json::Value,
     secrets: &[(String, String)],
+    acting_as: Option<&str>,
 ) -> Result<String, String> {
     let admin_email = secret(secrets, "admin_email")?;
-    let sub = acting_identity(None, &admin_email);
+    let sub = acting_identity(acting_as, &admin_email);
     access_token(connector, config, secrets, &sub).await
 }
 
@@ -622,32 +624,31 @@ impl Integration for GoogleWorkspace {
         tool: &'a str,
         args: serde_json::Value,
         secrets: &'a [(String, String)],
+        acting_as: Option<&'a str>,
     ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
         Box::pin(async move {
             // Dispatch first: an unknown tool fails without touching the
-            // network. The unified execute interface carries no per-call
-            // identity yet (spec §5 resolves it Guild-side for MCP plugins)
-            // — the default subject is admin_email; `acting_identity` takes
-            // the acting_as value the moment the interface passes it through.
+            // network. Per-call identity (spec §5): acting_as is the DWD
+            // `sub`; the default subject is admin_email.
             match tool {
                 "gmail_search" => {
-                    let token = access_token_for(self, config, secrets).await?;
+                    let token = access_token_for(self, config, secrets, acting_as).await?;
                     gmail_search(config, &args, &token).await
                 }
                 "gmail_get_message" => {
-                    let token = access_token_for(self, config, secrets).await?;
+                    let token = access_token_for(self, config, secrets, acting_as).await?;
                     gmail_get_message(config, &args, &token).await
                 }
                 "calendar_list_events" => {
-                    let token = access_token_for(self, config, secrets).await?;
+                    let token = access_token_for(self, config, secrets, acting_as).await?;
                     calendar_list_events(config, &args, &token).await
                 }
                 "drive_search" => {
-                    let token = access_token_for(self, config, secrets).await?;
+                    let token = access_token_for(self, config, secrets, acting_as).await?;
                     drive_search(config, &args, &token).await
                 }
                 "directory_users" => {
-                    let token = access_token_for(self, config, secrets).await?;
+                    let token = access_token_for(self, config, secrets, acting_as).await?;
                     directory_users(config, &args, secrets, &token).await
                 }
                 other => Err(format!("google_workspace integration has no tool {other}")),

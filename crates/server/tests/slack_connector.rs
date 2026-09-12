@@ -50,7 +50,7 @@ async fn conversations_list_maps_channels_and_sends_bearer() {
     assert_eq!(plugin.category(), Category::Other);
 
     let out = plugin
-        .execute(&server_config(&server), "conversations_list", json!({}), &secrets_with(None))
+        .execute(&server_config(&server), "conversations_list", json!({}), &secrets_with(None), None)
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_str(&out.content).unwrap();
@@ -100,8 +100,7 @@ async fn conversations_history_maps_messages_and_error_envelope() {
             &server_config(&server),
             "conversations_history",
             json!({ "channel": "C0123456789" }),
-            &secrets_with(None),
-        )
+            &secrets_with(None), None)
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_str(&out.content).unwrap();
@@ -112,7 +111,7 @@ async fn conversations_history_maps_messages_and_error_envelope() {
     assert_eq!(out.meta.as_ref().unwrap()["has_more"], false);
 
     let err = plugin
-        .execute(&server_config(&server), "users_list", json!({}), &secrets_with(None))
+        .execute(&server_config(&server), "users_list", json!({}), &secrets_with(None), None)
         .await
         .unwrap_err();
     assert!(err.contains("invalid_auth"), "got: {err}");
@@ -154,8 +153,7 @@ async fn post_message_posts_json_with_bearer_and_maps_error() {
             &server_config(&server),
             "post_message",
             json!({ "channel": "C0123456789", "text": "ship it" }),
-            &secrets_with(None),
-        )
+            &secrets_with(None), None)
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_str(&out.content).unwrap();
@@ -167,8 +165,7 @@ async fn post_message_posts_json_with_bearer_and_maps_error() {
             &server_config(&server),
             "post_message",
             json!({ "channel": "C missing", "text": "x" }),
-            &secrets_with(None),
-        )
+            &secrets_with(None), None)
         .await
         .unwrap_err();
     assert!(err.contains("channel_not_found"), "got: {err}");
@@ -197,8 +194,7 @@ async fn post_webhook_posts_text_without_auth_header() {
             &server_config(&server),
             "post_webhook",
             json!({ "text": "via webhook" }),
-            &secrets_with(Some(&webhook_url)),
-        )
+            &secrets_with(Some(&webhook_url)), None)
         .await
         .unwrap();
     assert_eq!(out.content, "ok");
@@ -224,15 +220,14 @@ async fn post_webhook_maps_http_error_and_missing_secret() {
             &server_config(&server),
             "post_webhook",
             json!({ "text": "x" }),
-            &secrets_with(Some(&webhook_url)),
-        )
+            &secrets_with(Some(&webhook_url)), None)
         .await
         .unwrap_err();
     assert!(err.contains("404"), "got: {err}");
 
     // No webhook_url secret stored: the tool names the missing credential.
     let err = plugin
-        .execute(&server_config(&server), "post_webhook", json!({ "text": "x" }), &[])
+        .execute(&server_config(&server), "post_webhook", json!({ "text": "x" }), &[], None)
         .await
         .unwrap_err();
     assert!(err.contains("webhook_url"), "got: {err}");
