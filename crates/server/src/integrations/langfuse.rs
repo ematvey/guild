@@ -2,7 +2,7 @@
 //! public API (`/api/public/...`), authenticated with basic auth over the
 //! public/secret key pair.
 
-use super::{in_code_manifest, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use guild_core::registry::BundleManifest;
 use futures::future::BoxFuture;
 use protocol::api::ToolSpec;
@@ -73,6 +73,7 @@ impl Integration for Langfuse {
                 ("list_traces", "read"),
                 ("get_trace", "read"),
                 ("get_prompt", "read"),
+                ("api", "write"),
             ],
         )
     }
@@ -114,6 +115,7 @@ impl Integration for Langfuse {
                     "required": ["name"]
                 }),
             },
+            api_tool_spec("Langfuse"),
         ])
     }
 
@@ -137,6 +139,16 @@ impl Integration for Langfuse {
                 "list_traces" => list_traces(&base, &public_key, &secret_key, &args).await,
                 "get_trace" => get_trace(&base, &public_key, &secret_key, &args).await,
                 "get_prompt" => get_prompt(&base, &public_key, &secret_key, &args).await,
+                "api" => {
+                    call_vendor_api(
+                        &base,
+                        &ApiAuth::Basic(public_key.to_string(), secret_key.to_string()),
+                        &args,
+                        12_000,
+                        &[],
+                    )
+                    .await
+                }
                 other => Err(format!("langfuse integration has no tool {other}")),
             }
         })

@@ -378,5 +378,78 @@ fn crm_manifests_declare_expected_secrets_and_classes() {
         ]
     );
     let classes = langfuse.tools.expect("tools").classes;
-    assert!(classes.values().all(|c| c == "read"));
+    assert!(classes.values().all(|c| c == "read" || c == "write"));
+}
+
+#[tokio::test]
+async fn hubspot_api_passes_through_path_query_body_and_auth() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/crm/v3/objects/deals"))
+        .and(query_param("limit", "2"))
+        .and(header("authorization", format!("Bearer {FAKE_TOKEN}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"results": []})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/crm/v3/objects/deals/batch/create"))
+        .and(body_partial_json(json!({"inputs": []})))
+        .respond_with(ResponseTemplate::new(201).set_body_string("{}"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("hubspot").unwrap();
+    let config = json!({ "base_url": server.uri() });
+    let out = plugin
+        .execute(
+            &config,
+            "api",
+            json!({"path": "/crm/v3/objects/deals", "query": {"limit": "2"}}),
+            &hubspot_secrets(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.meta.unwrap()["status"], 200);
+    let out = plugin
+        .execute(
+            &config,
+            "api",
+            json!({"method": "POST", "path": "/crm/v3/objects/deals/batch/create", "body": {"inputs": []}}),
+            &hubspot_secrets(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.meta.unwrap()["status"], 201);
+}
+
+#[tokio::test]
+async fn hubspot_api_maps_errors_and_rejects_bad_paths() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/nope"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("missing"))
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("hubspot").unwrap();
+    let config = json!({ "base_url": server.uri() });
+    let err = plugin
+        .execute(&config, "api", json!({"path": "/nope"}), &hubspot_secrets(), None)
+        .await
+        .unwrap_err();
+    assert!(err.contains("404"));
+    let err = plugin
+        .execute(&config, "api", json!({"path": "nope"}), &hubspot_secrets(), None)
+        .await
+        .unwrap_err();
+    assert!(err.contains("must start with /"));
+    let err = plugin
+        .execute(&config, "api", json!({"path": "/x", "method": "TRACE"}), &hubspot_secrets(), None)
+        .await
+        .unwrap_err();
+    assert!(err.contains("not allowed"));
 }

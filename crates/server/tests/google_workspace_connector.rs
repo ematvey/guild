@@ -6,7 +6,7 @@
 
 use guild_server::integrations::{google_workspace, integration_by_name, Integration};
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const FAKE_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----
@@ -196,7 +196,7 @@ fn registered_with_impersonated_auth_manifest_and_read_tools() {
         vec!["service_account_json", "admin_email"]
     );
     let tools = manifest.tools.expect("tools manifest");
-    assert_eq!(tools.classes.len(), 5);
+    assert_eq!(tools.classes.len(), 6);
     for name in [
         "gmail_search",
         "gmail_get_message",
@@ -206,6 +206,8 @@ fn registered_with_impersonated_auth_manifest_and_read_tools() {
     ] {
         assert_eq!(tools.classes[name], "read", "tool {name} is read-class");
     }
+    // The api tool exposes the write-capable REST surface.
+    assert_eq!(tools.classes["api"], "write");
 }
 
 #[test]
@@ -499,4 +501,30 @@ async fn unknown_tool_is_an_error() {
         .await;
     let err = outcome.expect_err("unknown tool");
     assert!(err.contains("no tool"), "error: {err}");
+}
+
+#[tokio::test]
+async fn api_passthrough_carries_identity_token() {
+    let server = MockServer::start().await;
+    mount_token_endpoint(&server, 3600).await;
+    Mock::given(method("GET"))
+        .and(path("/drive/v3/files"))
+        .and(header("authorization", format!("Bearer {FAKE_ACCESS_TOKEN}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"files": []})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("google_workspace").unwrap();
+    let out = plugin
+        .execute(
+            &config(&server),
+            "api",
+            json!({"path": "/drive/v3/files", "query": {"pageSize": "5"}}),
+            &secrets(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.meta.unwrap()["status"], 200);
 }

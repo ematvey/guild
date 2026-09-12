@@ -8,7 +8,7 @@
 //! RS256 JWT is exchanged for an access token whose `sub` carries the
 //! acting identity; tokens cache in-process until near expiry.
 
-use super::{in_code_manifest, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
 use base64::Engine;
 use futures::future::BoxFuture;
@@ -539,6 +539,7 @@ impl Integration for GoogleWorkspace {
                 ("calendar_list_events", "read"),
                 ("drive_search", "read"),
                 ("directory_users", "read"),
+                ("api", "write"),
             ],
         );
         if let Some(auth) = manifest.auth.as_mut() {
@@ -615,6 +616,7 @@ impl Integration for GoogleWorkspace {
                     }
                 }),
             },
+            api_tool_spec("Google API"),
         ])
     }
 
@@ -630,6 +632,14 @@ impl Integration for GoogleWorkspace {
             // Dispatch first: an unknown tool fails without touching the
             // network. Per-call identity (spec §5): acting_as is the DWD
             // `sub`; the default subject is admin_email.
+            if tool == "api" {
+                let token = access_token_for(self, config, secrets, acting_as).await?;
+                let base = config["api_base"]
+                    .as_str()
+                    .unwrap_or(DEFAULT_API_BASE)
+                    .trim_end_matches('/');
+                return call_vendor_api(base, &ApiAuth::Bearer(token), &args, 12_000, &[]).await;
+            }
             match tool {
                 "gmail_search" => {
                     let token = access_token_for(self, config, secrets, acting_as).await?;

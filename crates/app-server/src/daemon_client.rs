@@ -152,6 +152,7 @@ mod tests {
         DaemonClient::from_pair(Pair(
             Box::new(client_side.try_clone().unwrap()),
             Box::new(client_side),
+            None,
         ))
     }
 

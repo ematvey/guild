@@ -11,7 +11,7 @@
 //!   storage-format body, returned as plain text
 //! - `confluence_create_page` (write) — `POST /wiki/rest/api/content`
 
-use super::{in_code_manifest, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
@@ -169,6 +169,7 @@ impl Integration for Atlassian {
                 ("confluence_search", "read"),
                 ("confluence_get_page", "read"),
                 ("confluence_create_page", "write"),
+                ("api", "write"),
             ],
         )
     }
@@ -249,6 +250,7 @@ impl Integration for Atlassian {
                     "required": ["space_key", "title", "content"]
                 }),
             },
+            api_tool_spec("Atlassian"),
         ])
     }
 
@@ -263,6 +265,16 @@ impl Integration for Atlassian {
         Box::pin(async move {
             let creds = creds(secrets)?;
             let client = reqwest::Client::new();
+            if tool == "api" {
+                return call_vendor_api(
+                    &creds.site,
+                    &ApiAuth::Basic(creds.email.clone(), creds.token.clone()),
+                    &args,
+                    12_000,
+                    &[],
+                )
+                .await;
+            }
             match tool {
                 "jira_search" => {
                     let jql = args["jql"].as_str().ok_or("jira_search requires jql")?;

@@ -2,7 +2,7 @@
 //! `https://gitlab.com/api/v4` (self-hosted instances). Secret: `token` —
 //! sent as the `PRIVATE-TOKEN` header.
 
-use super::{in_code_manifest, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
@@ -100,6 +100,7 @@ impl Integration for Gitlab {
                 ("list_issues", "read"),
                 ("list_mrs", "read"),
                 ("create_issue", "write"),
+                ("api", "write"),
             ],
         )
     }
@@ -160,6 +161,7 @@ impl Integration for Gitlab {
                     "required": ["project", "title"]
                 }),
             },
+            api_tool_spec("GitLab"),
         ])
     }
 
@@ -174,6 +176,10 @@ impl Integration for Gitlab {
         Box::pin(async move {
             let tok = token(secrets)?;
             let base = base_url(config);
+            if tool == "api" {
+                return call_vendor_api(&base, &ApiAuth::PrivateToken(tok), &args, 12_000, &[])
+                    .await;
+            }
             match tool {
                 "list_projects" => {
                     let search = args["search"].as_str().unwrap_or("");

@@ -678,6 +678,120 @@ pub mod superproxy {
     }
 }
 
+// ---------- generic vendor REST pass-through (the `api` tool) ----------
+
+/// Auth schemes the connectors' `api` tools use.
+pub(super) enum ApiAuth {
+    Bearer(String),
+    Basic(String, String),
+    PrivateToken(String),
+}
+
+/// The shared tool spec for a connector's `api` tool: the vendor's whole
+/// REST surface behind one call — real filters, associations, batch, and
+/// pagination, everything the narrow named tools don't cover.
+pub(super) fn api_tool_spec(vendor: &str) -> ToolSpec {
+    ToolSpec {
+        name: "api".into(),
+        description: format!(
+            "Call any {vendor} REST endpoint directly — the full API surface \
+             beyond the named tools. Args: method (GET/POST/PATCH/PUT/DELETE, \
+             default GET), path (starts with /), query (object of strings), \
+             body (JSON object). Use the named tools for simple lookups; use \
+             this for filters, associations, batch operations, and anything \
+             else the API supports."
+        ),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "method": { "type": "string",
+                    "description": "HTTP method, default GET" },
+                "path": { "type": "string",
+                    "description": "Endpoint path starting with /" },
+                "query": { "type": "object",
+                    "description": "Query parameters as strings" },
+                "body": { "type": "object",
+                    "description": "JSON request body (POST/PATCH/PUT)" }
+            },
+            "required": ["path"]
+        }),
+    }
+}
+
+/// Runs one generic vendor REST call. `path` must start with `/`; the
+/// method is whitelisted; the body is sent as JSON when present. The raw
+/// response text is the content, truncated to `max_chars`.
+pub(super) async fn call_vendor_api(
+    base: &str,
+    auth: &ApiAuth,
+    args: &serde_json::Value,
+    max_chars: usize,
+    extra_headers: &[(&str, &str)],
+) -> Result<ToolOutcome, String> {
+    let path = args["path"]
+        .as_str()
+        .ok_or("api requires path (starting with /)")?;
+    if !path.starts_with('/') {
+        return Err("api path must start with /".to_string());
+    }
+    let method = args["method"].as_str().unwrap_or("GET").to_uppercase();
+    let method = match method.as_str() {
+        "GET" | "POST" | "PATCH" | "PUT" | "DELETE" => method,
+        other => return Err(format!("api method {other} not allowed")),
+    };
+    let mut req = reqwest::Client::new()
+        .request(method.parse().unwrap(), format!("{base}{path}"))
+        .timeout(std::time::Duration::from_secs(60));
+    match auth {
+        ApiAuth::Bearer(t) => req = req.bearer_auth(t),
+        ApiAuth::Basic(u, p) => req = req.basic_auth(u, Some(p)),
+        ApiAuth::PrivateToken(t) => {
+            req = req.header("PRIVATE-TOKEN", t);
+        }
+    }
+    for (name, value) in extra_headers {
+        req = req.header(*name, *value);
+    }
+    if let Some(q) = args["query"].as_object() {
+        for (k, v) in q {
+            if let Some(s) = v.as_str() {
+                req = req.query(&[(k.as_str(), s)]);
+            } else {
+                req = req.query(&[(k.as_str(), v.to_string().as_str())]);
+            }
+        }
+    }
+    if let Some(b) = args["body"].as_object() {
+        req = req.json(b);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("api call failed: {e}"))?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("api body unreadable: {e}"))?;
+    if !status.is_success() {
+        let head: String = text.chars().take(300).collect();
+        return Err(format!("api returned {status}: {head}"));
+    }
+    let truncated = text.chars().count() > max_chars;
+    let content: String = text.chars().take(max_chars).collect();
+    Ok(ToolOutcome {
+        content: if truncated {
+            format!("{content}\n\n[truncated]")
+        } else {
+            content
+        },
+        meta: Some(serde_json::json!({
+            "card": "api", "kind": "api",
+            "status": status.as_u16(), "truncated": truncated,
+        })),
+    })
+}
+
 // ---------- plugin turn state + disclosure (spec §7) ----------
 
 /// One tool of a plugin (built-in or MCP) as journaled at turn start

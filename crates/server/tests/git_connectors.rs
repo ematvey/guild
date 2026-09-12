@@ -469,3 +469,25 @@ fn github_and_gitlab_manifests_declare_the_token_secret_and_classes() {
     assert_eq!(classes["create_issue"], "write");
     assert_eq!(classes["list_mrs"], "read");
 }
+
+#[tokio::test]
+async fn github_api_passthrough_sends_agent_headers() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/owner/repo"))
+        .and(header("authorization", format!("Bearer {FAKE_GITHUB_TOKEN}")))
+        .and(header("user-agent", "guild-integration-github"))
+        .and(header("accept", "application/vnd.github+json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"full_name": "owner/repo"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("github").unwrap();
+    let config = json!({ "api_url": server.uri() });
+    let out = plugin
+        .execute(&config, "api", json!({"path": "/repos/owner/repo"}), &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
+        .await
+        .unwrap();
+    assert!(out.content.contains("owner/repo"));
+}
