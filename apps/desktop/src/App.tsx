@@ -13,7 +13,7 @@ import { IS_TAURI, apiLogin, apiMe, clearToken, rpcCall, setToken } from "./tran
 import { ThemeProvider, useTheme } from "./theme";
 
 const BAKED_URL: string =
-  (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "http://localhost:18080";
+  (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
 
 /// Bound any invoke: a wedged layer below us (daemon, IPC) must surface as
 /// an actionable error in the UI, never as an eternal spinner. The invoke
