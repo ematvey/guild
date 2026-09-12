@@ -72,7 +72,7 @@ impl Integration for Langfuse {
             &[
                 ("list_traces", "read"),
                 ("get_trace", "read"),
-                ("list_prompts", "read"),
+                ("get_prompt", "read"),
             ],
         )
     }
@@ -102,11 +102,16 @@ impl Integration for Langfuse {
                 }),
             },
             ToolSpec {
-                name: "list_prompts".into(),
-                description: "List Langfuse prompt names with their latest versions.".into(),
+                name: "get_prompt".into(),
+                description: "Fetch one Langfuse prompt by name (latest or a specific version)."
+                    .into(),
                 parameters: serde_json::json!({
                     "type": "object",
-                    "properties": {}
+                    "properties": {
+                        "name": { "type": "string", "description": "Prompt name" },
+                        "version": { "type": "number", "description": "Specific version (default: latest)" }
+                    },
+                    "required": ["name"]
                 }),
             },
         ])
@@ -131,7 +136,7 @@ impl Integration for Langfuse {
             match tool {
                 "list_traces" => list_traces(&base, &public_key, &secret_key, &args).await,
                 "get_trace" => get_trace(&base, &public_key, &secret_key, &args).await,
-                "list_prompts" => list_prompts(&base, &public_key, &secret_key).await,
+                "get_prompt" => get_prompt(&base, &public_key, &secret_key, &args).await,
                 other => Err(format!("langfuse integration has no tool {other}")),
             }
         })
@@ -201,24 +206,33 @@ async fn get_trace(
 }
 
 /// GET `/api/public/prompts` and render one line per prompt.
-async fn list_prompts(base: &str, public_key: &str, secret_key: &str) -> Result<ToolOutcome, String> {
-    let body = get(base, "/api/public/prompts", public_key, secret_key).await?;
-    let prompts = body["data"].as_array().cloned().unwrap_or_default();
-
-    let mut content = String::new();
-    for (i, prompt) in prompts.iter().enumerate() {
-        let name = prompt["name"].as_str().unwrap_or("(unnamed)");
-        let version = prompt["version"].as_u64().unwrap_or(0);
-        let kind = prompt["type"].as_str().unwrap_or("text");
-        content.push_str(&format!("{}. {name} v{version} ({kind})\n", i + 1));
-    }
-    if content.is_empty() {
-        content = "No prompts.".to_string();
-    }
+/// Langfuse has no "list all prompts" endpoint — /api/public/prompts always
+/// requires a `name`.
+async fn get_prompt(
+    base: &str,
+    public_key: &str,
+    secret_key: &str,
+    args: &serde_json::Value,
+) -> Result<ToolOutcome, String> {
+    let name = args["name"]
+        .as_str()
+        .ok_or("get_prompt requires name")?
+        .to_string();
+    let version = args["version"].as_u64();
+    let path = match version {
+        Some(v) => format!("/api/public/prompts/{name}?version={v}"),
+        None => format!("/api/public/prompts/{name}"),
+    };
+    let body = get(base, &path, public_key, secret_key).await?;
+    let prompt_name = body["name"].as_str().unwrap_or(&name);
+    let version = body["version"].as_u64().unwrap_or(0);
+    let kind = body["type"].as_str().unwrap_or("text");
+    let content = format!("{prompt_name} v{version} ({kind})\n\n{}", serde_json::to_string_pretty(&body["prompt"]).unwrap_or_default());
     let meta = serde_json::json!({
         "card": "langfuse",
-        "kind": "prompts",
-        "count": prompts.len(),
+        "kind": "prompt",
+        "name": prompt_name,
+        "version": version,
     });
     Ok(ToolOutcome {
         content,
