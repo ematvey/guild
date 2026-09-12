@@ -61,8 +61,7 @@ async fn jira_search_posts_jql_with_basic_auth() {
             &json!({}),
             "jira_search",
             json!({ "jql": "project = PROJ ORDER BY updated DESC" }),
-            &secrets(&server.uri()),
-        )
+            &secrets(&server.uri()), None)
         .await
         .unwrap();
     assert!(out.content.contains("PROJ-1 — Fix login [In Progress] (Alice)"));
@@ -102,8 +101,7 @@ async fn jira_get_issue_renders_block_with_browse_url() {
             &json!({}),
             "jira_get_issue",
             json!({ "issue_key": "PROJ-1" }),
-            &secrets(&server.uri()),
-        )
+            &secrets(&server.uri()), None)
         .await
         .unwrap();
     assert!(out.content.starts_with("PROJ-1 — Fix login"));
@@ -144,8 +142,7 @@ async fn confluence_search_queries_cql() {
             &json!({}),
             "confluence_search",
             json!({ "cql": "space = PROJ AND type = page", "limit": 2 }),
-            &secrets(&server.uri()),
-        )
+            &secrets(&server.uri()), None)
         .await
         .unwrap();
     assert!(out.content.contains("Onboarding (id 101): How to get started"));
@@ -183,8 +180,7 @@ async fn confluence_get_page_strips_storage_markup() {
             &json!({}),
             "confluence_get_page",
             json!({ "page_id": "101" }),
-            &secrets(&server.uri()),
-        )
+            &secrets(&server.uri()), None)
         .await
         .unwrap();
     assert_eq!(
@@ -229,8 +225,7 @@ async fn confluence_create_page_posts_storage_body() {
             &json!({}),
             "confluence_create_page",
             json!({ "space_key": "PROJ", "title": "Meeting notes", "content": "<p>hello</p>" }),
-            &secrets(&server.uri()),
-        )
+            &secrets(&server.uri()), None)
         .await
         .unwrap();
     assert!(out.content.contains("Created page 777 (Meeting notes)"));
@@ -267,8 +262,7 @@ async fn atlassian_errors_map_to_err() {
             &json!({}),
             "jira_search",
             json!({ "jql": "project = PROJ" }),
-            &secrets(&server.uri()),
-        )
+            &secrets(&server.uri()), None)
         .await
         .unwrap_err();
     assert!(err.contains("401"), "unexpected error: {err}");
@@ -280,15 +274,14 @@ async fn atlassian_errors_map_to_err() {
             &json!({}),
             "confluence_search",
             json!({ "cql": "space = PROJ" }),
-            &secrets(&server.uri()),
-        )
+            &secrets(&server.uri()), None)
         .await
         .unwrap_err();
     assert!(err.contains("500"), "unexpected error: {err}");
 
     // Unknown tool name.
     let err = plugin
-        .execute(&json!({}), "jira_create", json!({}), &secrets(&server.uri()))
+        .execute(&json!({}), "jira_create", json!({}), &secrets(&server.uri()), None)
         .await
         .unwrap_err();
     assert!(err.contains("no tool jira_create"));
@@ -302,8 +295,7 @@ async fn atlassian_requires_all_three_secrets() {
             &json!({}),
             "jira_search",
             json!({ "jql": "project = PROJ" }),
-            &[("email".to_string(), EMAIL.to_string())],
-        )
+            &[("email".to_string(), EMAIL.to_string())], None)
         .await
         .unwrap_err();
     assert!(err.contains("missing: site, token"), "unexpected: {err}");

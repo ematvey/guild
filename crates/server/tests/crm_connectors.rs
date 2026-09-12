@@ -48,8 +48,7 @@ async fn hubspot_search_contacts_sends_bearer_and_renders_hits() {
             &json!({ "base_url": server.uri() }),
             "search_contacts",
             json!({ "query": "jane" }),
-            &hubspot_secrets(),
-        )
+            &hubspot_secrets(), None)
         .await
         .unwrap();
     assert!(out.content.contains("101 Jane Doe jane@example.com"));
@@ -83,8 +82,7 @@ async fn hubspot_search_companies_renders_hits() {
             &json!({ "base_url": server.uri() }),
             "search_companies",
             json!({ "query": "acme", "limit": 5 }),
-            &hubspot_secrets(),
-        )
+            &hubspot_secrets(), None)
         .await
         .unwrap();
     assert!(out.content.contains("202 Acme acme.com"));
@@ -114,8 +112,7 @@ async fn hubspot_search_deals_renders_hits() {
             &json!({ "base_url": server.uri() }),
             "search_deals",
             json!({ "query": "deal" }),
-            &hubspot_secrets(),
-        )
+            &hubspot_secrets(), None)
         .await
         .unwrap();
     assert!(out.content.contains("303 Big deal 1000"));
@@ -138,8 +135,7 @@ async fn hubspot_search_errors_map_to_err() {
             &json!({ "base_url": server.uri() }),
             "search_contacts",
             json!({ "query": "x" }),
-            &hubspot_secrets(),
-        )
+            &hubspot_secrets(), None)
         .await
         .unwrap_err();
     assert!(err.contains("hubspot returned 401"));
@@ -149,14 +145,14 @@ async fn hubspot_search_errors_map_to_err() {
         .execute(
             &json!({ "base_url": server.uri() }),
             "create_ticket",
-            json!({}), &hubspot_secrets())
+            json!({}), &hubspot_secrets(), None)
         .await
         .unwrap_err();
     assert!(err.contains("no tool create_ticket"));
 
     // Missing token secret.
     let err = plugin
-        .execute(&json!({}), "search_contacts", json!({ "query": "x" }), &[])
+        .execute(&json!({}), "search_contacts", json!({ "query": "x" }), &[], None)
         .await
         .unwrap_err();
     assert!(err.contains("token"));
@@ -184,8 +180,7 @@ async fn hubspot_update_deal_patches_properties() {
             &json!({ "base_url": server.uri() }),
             "update_deal",
             json!({ "id": "555", "properties": { "amount": "999" } }),
-            &hubspot_secrets(),
-        )
+            &hubspot_secrets(), None)
         .await
         .unwrap();
     assert!(out.content.contains("555"));
@@ -211,8 +206,7 @@ async fn hubspot_update_deal_errors_map_to_err() {
             &json!({ "base_url": server.uri() }),
             "update_deal",
             json!({ "id": "404", "properties": { "amount": "1" } }),
-            &hubspot_secrets(),
-        )
+            &hubspot_secrets(), None)
         .await
         .unwrap_err();
     assert!(err.contains("hubspot returned 404"));
@@ -222,7 +216,7 @@ async fn hubspot_update_deal_errors_map_to_err() {
         .execute(
             &json!({ "base_url": server.uri() }),
             "update_deal",
-            json!({}), &hubspot_secrets())
+            json!({}), &hubspot_secrets(), None)
         .await
         .unwrap_err();
     assert!(err.contains("requires id"));
@@ -257,8 +251,7 @@ async fn langfuse_list_traces_sends_basic_auth_and_config_base_url_wins() {
             &config,
             "list_traces",
             json!({}),
-            &langfuse_secrets("https://cloud.langfuse.com"),
-        )
+            &langfuse_secrets("https://cloud.langfuse.com"), None)
         .await
         .unwrap();
     assert!(out.content.contains("tr-1 chat"));
@@ -291,8 +284,7 @@ async fn langfuse_get_trace_fetches_full_body() {
             &config,
             "get_trace",
             json!({ "trace_id": "tr-9" }),
-            &langfuse_secrets("https://cloud.langfuse.com"),
-        )
+            &langfuse_secrets("https://cloud.langfuse.com"), None)
         .await
         .unwrap();
     assert!(out.content.contains("tr-9"));
@@ -321,7 +313,7 @@ async fn langfuse_list_prompts_renders_versions() {
     let plugin = integration_by_name("langfuse").unwrap();
     let config = json!({ "base_url": server.uri() });
     let out = plugin
-        .execute(&config, "list_prompts", json!({}), &langfuse_secrets("https://x.test"))
+        .execute(&config, "list_prompts", json!({}), &langfuse_secrets("https://x.test"), None)
         .await
         .unwrap();
     assert!(out.content.contains("support v3 (chat)"));
@@ -344,21 +336,21 @@ async fn langfuse_errors_map_to_err() {
     let plugin = integration_by_name("langfuse").unwrap();
     let config = json!({ "base_url": server.uri() });
     let err = plugin
-        .execute(&config, "list_traces", json!({}), &langfuse_secrets("https://x.test"))
+        .execute(&config, "list_traces", json!({}), &langfuse_secrets("https://x.test"), None)
         .await
         .unwrap_err();
     assert!(err.contains("langfuse returned 500"));
 
     // Unknown tool name.
     let err = plugin
-        .execute(&config, "delete_prompt", json!({}), &langfuse_secrets("https://x.test"))
+        .execute(&config, "delete_prompt", json!({}), &langfuse_secrets("https://x.test"), None)
         .await
         .unwrap_err();
     assert!(err.contains("no tool delete_prompt"));
 
     // Missing secrets — no config override to hide it either.
     let err = plugin
-        .execute(&json!({}), "list_traces", json!({}), &[])
+        .execute(&json!({}), "list_traces", json!({}), &[], None)
         .await
         .unwrap_err();
     assert!(err.contains("public_key"));

@@ -40,7 +40,7 @@ async fn superproxy_fetch_builds_content_and_meta() {
 
     let config = superproxy_config(&server, None);
     let out = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://example.com/a" }), &[])
+        .execute(&config, "web_fetch", json!({ "url": "https://example.com/a" }), &[], None)
         .await
         .unwrap();
     assert_eq!(out.content, "# Example Page\n\nhello body");
@@ -71,7 +71,7 @@ async fn superproxy_sends_bearer_token_when_configured() {
     let plugin = integration_by_name("superproxy").unwrap();
     let config = superproxy_config(&server, Some("sekrit"));
     let out = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://example.com/b" }), &[])
+        .execute(&config, "web_fetch", json!({ "url": "https://example.com/b" }), &[], None)
         .await
         .unwrap();
     // No title in response -> no title header, no meta.title.
@@ -101,8 +101,7 @@ async fn superproxy_truncates_long_content() {
             &config,
             "web_fetch",
             json!({ "url": "https://example.com/long", "max_chars": 1000 }),
-            &[],
-        )
+            &[], None)
         .await
         .unwrap();
     assert_eq!(out.content.len(), 1000 + "\n\n[truncated]".len());
@@ -122,14 +121,14 @@ async fn superproxy_errors_map_to_err() {
     let plugin = integration_by_name("superproxy").unwrap();
     let config = superproxy_config(&server, None);
     let err = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://x.test/" }), &[])
+        .execute(&config, "web_fetch", json!({ "url": "https://x.test/" }), &[], None)
         .await
         .unwrap_err();
     assert!(err.contains("502"));
 
     // Unknown tool name.
     let err = plugin
-        .execute(&config, "web_search", json!({}), &[])
+        .execute(&config, "web_search", json!({}), &[], None)
         .await
         .unwrap_err();
     assert!(err.contains("no tool web_search"));
@@ -161,7 +160,7 @@ async fn searxng_search_builds_meta_with_sources() {
 
     let config = json!({ "base_url": server.uri() });
     let out = plugin
-        .execute(&config, "web_search", json!({ "query": "rust", "count": 5 }), &[])
+        .execute(&config, "web_search", json!({ "query": "rust", "count": 5 }), &[], None)
         .await
         .unwrap();
     assert!(out.content.starts_with("1. Rust home"));
@@ -218,7 +217,7 @@ async fn superproxy_prefers_stored_secret_over_config_token() {
     let config = superproxy_config(&server, Some("config-token"));
     let secrets = vec![("token".to_string(), "store-token".to_string())];
     let out = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://example.com/c" }), &secrets)
+        .execute(&config, "web_fetch", json!({ "url": "https://example.com/c" }), &secrets, None)
         .await
         .unwrap();
     assert_eq!(out.content, "body");

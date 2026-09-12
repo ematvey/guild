@@ -44,8 +44,7 @@ async fn github_search_repositories_happy_path_with_auth() {
             &config,
             "search_repositories",
             json!({ "query": "rust web" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
-        )
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
         .await
         .unwrap();
     assert!(out.content.contains("1. owner/repo (Rust, ★42)"));
@@ -77,8 +76,7 @@ async fn github_list_issues_filters_out_pull_requests() {
             &config,
             "list_issues",
             json!({ "owner": "octo", "repo": "repo" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
-        )
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
         .await
         .unwrap();
     assert!(out.content.contains("#7 [open] bug (@octo)"));
@@ -109,8 +107,7 @@ async fn github_list_pulls_renders_branches() {
             &config,
             "list_pulls",
             json!({ "owner": "octo", "repo": "repo" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
-        )
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
         .await
         .unwrap();
     assert!(out.content.contains("#12 [open] fix thing (fix-branch→main, @octo)"));
@@ -143,8 +140,7 @@ async fn github_get_file_decodes_base64_content() {
             &config,
             "get_file",
             json!({ "owner": "octo", "repo": "repo", "path": "src/main.rs", "ref": "main" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
-        )
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
         .await
         .unwrap();
     assert_eq!(out.content, "hello guild\n");
@@ -173,8 +169,7 @@ async fn github_create_issue_posts_payload_and_reports_url() {
             &config,
             "create_issue",
             json!({ "owner": "octo", "repo": "repo", "title": "new bug", "body": "details" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
-        )
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
         .await
         .unwrap();
     assert!(out.content.contains("#99"));
@@ -200,8 +195,7 @@ async fn github_maps_errors_per_family() {
             &config,
             "search_repositories",
             json!({ "query": "x" }),
-            &secrets,
-        )
+            &secrets, None)
         .await
         .unwrap_err();
     assert!(err.contains("auth failed (403)"), "{err}");
@@ -220,8 +214,7 @@ async fn github_maps_errors_per_family() {
             &config,
             "create_issue",
             json!({ "owner": "octo", "repo": "repo", "title": "" }),
-            &secrets,
-        )
+            &secrets, None)
         .await
         .unwrap_err();
     assert!(err.contains("rejected the request"), "{err}");
@@ -238,8 +231,7 @@ async fn github_maps_errors_per_family() {
             &config,
             "get_file",
             json!({ "owner": "octo", "repo": "repo", "path": "nope.txt" }),
-            &secrets,
-        )
+            &secrets, None)
         .await
         .unwrap_err();
     assert!(err.contains("not found"), "{err}");
@@ -255,15 +247,14 @@ async fn github_maps_errors_per_family() {
             &config,
             "list_pulls",
             json!({ "owner": "octo", "repo": "repo" }),
-            &secrets,
-        )
+            &secrets, None)
         .await
         .unwrap_err();
     assert!(err.contains("github returned 500"), "{err}");
 
     // Missing secret never reaches the network.
     let err = plugin
-        .execute(&config, "search_repositories", json!({ "query": "x" }), &[])
+        .execute(&config, "search_repositories", json!({ "query": "x" }), &[], None)
         .await
         .unwrap_err();
     assert!(err.contains("'token' is not stored"), "{err}");
@@ -294,8 +285,7 @@ async fn gitlab_list_projects_happy_path_with_private_token() {
             &config,
             "list_projects",
             json!({ "search": "api" }),
-            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
-        )
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())], None)
         .await
         .unwrap();
     assert!(out.content.contains("1. backend (acme/backend)"));
@@ -326,8 +316,7 @@ async fn gitlab_list_issues_encodes_project_path() {
             &config,
             "list_issues",
             json!({ "project": "acme/backend" }),
-            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
-        )
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())], None)
         .await
         .unwrap();
     assert!(out.content.contains("!5 [opened] crash on start (@dev)"));
@@ -357,8 +346,7 @@ async fn gitlab_list_mrs_renders_branches() {
             &config,
             "list_mrs",
             json!({ "project": "42" }),
-            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
-        )
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())], None)
         .await
         .unwrap();
     assert!(out.content.contains("!9 [opened] add endpoint (feat/api→main, @dev)"));
@@ -386,8 +374,7 @@ async fn gitlab_create_issue_posts_payload_and_reports_url() {
             &config,
             "create_issue",
             json!({ "project": "42", "title": "new bug", "description": "details" }),
-            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
-        )
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())], None)
         .await
         .unwrap();
     assert!(out.content.contains("!11"));
@@ -412,7 +399,7 @@ async fn gitlab_maps_errors_per_family() {
         .mount(&server)
         .await;
     let err = plugin
-        .execute(&config, "list_projects", json!({}), &secrets)
+        .execute(&config, "list_projects", json!({}), &secrets, None)
         .await
         .unwrap_err();
     assert!(err.contains("auth failed"), "{err}");
@@ -431,8 +418,7 @@ async fn gitlab_maps_errors_per_family() {
             &config,
             "create_issue",
             json!({ "project": "42", "title": "" }),
-            &secrets,
-        )
+            &secrets, None)
         .await
         .unwrap_err();
     assert!(err.contains("rejected the request"), "{err}");
@@ -448,15 +434,14 @@ async fn gitlab_maps_errors_per_family() {
             &config,
             "list_mrs",
             json!({ "project": "999" }),
-            &secrets,
-        )
+            &secrets, None)
         .await
         .unwrap_err();
     assert!(err.contains("not found"), "{err}");
 
     // Missing secret never reaches the network.
     let err = plugin
-        .execute(&config, "list_projects", json!({}), &[])
+        .execute(&config, "list_projects", json!({}), &[], None)
         .await
         .unwrap_err();
     assert!(err.contains("'token' is not stored"), "{err}");
