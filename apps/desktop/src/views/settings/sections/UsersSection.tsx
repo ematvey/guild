@@ -54,7 +54,7 @@ const roleBadge = (role: string) =>
     : "bg-accent text-muted-foreground";
 
 const backBtn =
-  "mb-4 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
+  "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
 const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 
 export default function UsersSection() {
@@ -114,7 +114,7 @@ export default function UsersSection() {
 
   return (
     <div className="space-y-4">
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-base text-destructive">{error}</p>}
       <div className="flex items-center justify-between">
         <h3 className={label}>Organization users</h3>
         <Button size="sm" onClick={() => setDetail("new")}>
@@ -127,7 +127,7 @@ export default function UsersSection() {
           <Skeleton className="h-12 w-full rounded-lg" />
         </div>
       ) : users.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
           No users yet — add the first one.
         </p>
       ) : (
@@ -139,7 +139,7 @@ export default function UsersSection() {
               onClick={() => setDetail(u.id)}
             >
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm">{u.email}</p>
+                <p className="truncate text-base">{u.email}</p>
                 <p className="text-xs text-muted-foreground">
                   {u.identity_type === "password" ? "password sign-in" : u.identity_type}
                 </p>
@@ -227,7 +227,7 @@ function UserDetail({
           <div>
             <p className={label}>Role</p>
             <select
-              className="mt-1.5 h-9 rounded-md border border-input bg-card px-2 text-sm"
+              className="mt-1.5 h-9 rounded-md border border-input bg-card px-2 text-base"
               value={role}
               onChange={(e) => setRole(e.target.value)}
             >
@@ -236,7 +236,7 @@ function UserDetail({
             </select>
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="text-base text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
             <Button
               disabled={busy || (creating && (!email || !password))}
@@ -305,12 +305,12 @@ function UserDetail({
         </div>
         <div className="rounded-lg border border-border bg-card p-4">
           <p className={label}>Sign-in</p>
-          <p className="mt-1 text-sm">
+          <p className="mt-1 text-base">
             {user!.identity_type === "password" ? "password" : user!.identity_type}
           </p>
         </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="text-base text-destructive">{error}</p>}
         <div className="flex items-center gap-2">
           <Button onClick={() => setMode("edit")}>
             <Pencil className="mr-1 size-3.5" /> Edit

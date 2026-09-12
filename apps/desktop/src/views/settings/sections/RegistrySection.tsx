@@ -30,7 +30,7 @@ const KIND_LABELS: Record<Kind, string> = {
 };
 
 const backBtn =
-  "mb-4 flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
+  "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
 const listCard =
   "flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40";
 const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
@@ -89,7 +89,7 @@ function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }
 
   return (
     <div className="space-y-6">
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-base text-destructive">{error}</p>}
       {KINDS.map((kind) => (
         <section key={kind}>
           <div className="mb-2 flex items-center justify-between">
@@ -101,7 +101,7 @@ function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }
           {items[kind] === null ? (
             <Skeleton className="h-14 w-full rounded-lg" />
           ) : items[kind]!.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+            <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
               Nothing published under {KIND_LABELS[kind].toLowerCase()} yet — publishing
               happens through the registry API (`POST /api/v1/registry/{kind}`).
             </p>
@@ -116,7 +116,7 @@ function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }
                   <Package className="size-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-medium">{it.slug}</p>
+                      <p className="truncate text-base font-medium">{it.slug}</p>
                       {it.latest_version && (
                         <span className="rounded bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
                           v{it.latest_version}
@@ -188,7 +188,7 @@ function ItemDetail({
         {item && reviewPill(item.review_status)}
       </div>
       {item?.description && (
-        <p className="mb-4 max-w-xl text-sm text-muted-foreground">{item.description}</p>
+        <p className="mb-4 max-w-xl text-base text-muted-foreground">{item.description}</p>
       )}
 
       <div className="max-w-xl space-y-4">
@@ -197,7 +197,7 @@ function ItemDetail({
           {versions === null ? (
             <Skeleton className="h-20 w-full rounded-lg" />
           ) : versions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No versions published.</p>
+            <p className="text-base text-muted-foreground">No versions published.</p>
           ) : (
             <div className="space-y-2">
               {versions.map((v) => (
@@ -205,7 +205,7 @@ function ItemDetail({
                   key={v.version}
                   className="flex items-center justify-between rounded-lg border border-border px-4 py-2.5"
                 >
-                  <span className="font-mono text-sm">v{v.version}</span>
+                  <span className="font-mono text-base">v{v.version}</span>
                   <span className="text-xs text-muted-foreground">
                     {v.published_at ? new Date(v.published_at).toLocaleString() : ""}
                   </span>
@@ -220,7 +220,7 @@ function ItemDetail({
           <p className="mb-2 text-xs text-muted-foreground">
             Only approved items are installable from the desktop app.
           </p>
-          {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
+          {error && <p className="mb-2 text-base text-destructive">{error}</p>}
           <div className="flex gap-2">
             {item?.review_status !== "approved" && (
               <Button

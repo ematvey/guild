@@ -72,11 +72,11 @@ export default function SsoSection() {
         <div className="max-w-xl space-y-4">
           <div className="rounded-lg border border-border bg-card p-4">
             <p className={label}>Issuer URL</p>
-            <p className="mt-1 break-all text-sm">{cfg.issuer}</p>
+            <p className="mt-1 break-all text-base">{cfg.issuer}</p>
           </div>
           <div className="rounded-lg border border-border bg-card p-4">
             <p className={label}>Client ID</p>
-            <p className="mt-1 break-all font-mono text-sm">{cfg.client_id}</p>
+            <p className="mt-1 break-all font-mono text-base">{cfg.client_id}</p>
           </div>
           <div className="rounded-lg border border-border bg-card p-4">
             <p className={label}>Redirect URI (registered at the identity provider)</p>
@@ -85,7 +85,7 @@ export default function SsoSection() {
             </p>
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="text-base text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
             <Button onClick={() => setMode("edit")}>
               <Pencil className="mr-1 size-3.5" /> Edit
@@ -197,7 +197,7 @@ function SsoForm({
           />
         </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="text-base text-destructive">{error}</p>}
         <div className="flex items-center gap-2">
           <Button
             disabled={busy || !issuer || !clientId || (!keepSecret && !clientSecret)}

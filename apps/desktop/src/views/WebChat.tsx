@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import {
   ArrowUp,
   Bot,
@@ -491,14 +492,6 @@ const SUGGESTIONS = [
   { icon: FileText, title: "Draft a message", prompt: "Draft a message to " },
   { icon: MessageSquare, title: "Summarize text", prompt: "Summarize the following:\n\n" },
 ];
-
-const WIDTH_KEY = "guild.sidebarWidth";
-const MIN_W = 200;
-const MAX_W = 420;
-
-function clampWidth(w: number): number {
-  return Math.min(MAX_W, Math.max(MIN_W, w));
-}
 
 /// Shown while a deep-linked thread's messages are in flight (the URL says
 /// /thread/<id> but the view has nothing to render yet). Without this, the
@@ -1208,10 +1201,13 @@ export default function WebChat({
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
-  const [width, setWidth] = useState<number>(() => {
-    const stored = Number(localStorage.getItem(WIDTH_KEY));
-    return stored ? clampWidth(stored) : 256;
-  });
+  const [width, setWidth] = useState<number>(() => storedSidebarWidth());
+  // settings may resize the shared width while this sidebar stays mounted
+  useEffect(() => {
+    const resync = () => setWidth(storedSidebarWidth());
+    window.addEventListener("guild:sidebar-width-changed", resync);
+    return () => window.removeEventListener("guild:sidebar-width-changed", resync);
+  }, []);
   const bottom = useRef<HTMLDivElement>(null);
   // Sticky-scroll: while streaming, follow the generated text ONLY when the
   // pane is already at the bottom; scrolling up detaches into free scroll,
@@ -1776,14 +1772,14 @@ export default function WebChat({
       const startX = e.clientX;
       const startW = width;
       const move = (ev: MouseEvent) => {
-        const w = clampWidth(startW + ev.clientX - startX);
+        const w = clampSidebarWidth(startW + ev.clientX - startX);
         setWidth(w);
       };
       const up = () => {
         document.removeEventListener("mousemove", move);
         document.removeEventListener("mouseup", up);
         setWidth((w) => {
-          localStorage.setItem(WIDTH_KEY, String(w));
+          saveSidebarWidth(w);
           return w;
         });
       };
@@ -1845,12 +1841,12 @@ export default function WebChat({
       >
         {dragOver && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
-            <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-sm text-muted-foreground shadow-lg">
+            <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-base text-muted-foreground shadow-lg">
               Drop files to attach
             </div>
           </div>
         )}
-        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-sm">
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
           {isMobile ? (
             <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
               <Menu />
@@ -1892,7 +1888,7 @@ export default function WebChat({
               <Bot className="size-7 text-muted-foreground" />
             </div>
             <h1 className="mt-6 text-center text-2xl font-semibold tracking-tight">What should we work on?</h1>
-            <p className="mt-2 text-center text-sm text-muted-foreground">
+            <p className="mt-2 text-center text-base text-muted-foreground">
               Chat with the org gateway
               {models !== null && models.length === 0 ? " — no models configured yet" : ""}.
             </p>
@@ -1907,7 +1903,7 @@ export default function WebChat({
                   }}
                 >
                   <s.icon className="size-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">{s.title}</span>
+                  <span className="text-base font-medium">{s.title}</span>
                 </Card>
               ))}
             </div>
@@ -1919,7 +1915,7 @@ export default function WebChat({
           </div>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-32 py-8">
-              <p className="text-sm text-muted-foreground">No messages in this thread yet.</p>
+              <p className="text-base text-muted-foreground">No messages in this thread yet.</p>
             </div>
           )
         ) : (
@@ -1938,7 +1934,7 @@ export default function WebChat({
                 b.kind === "user" ? (
                   <div
                     key={i}
-                    className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-sm"
+                    className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-base"
                   >
                     {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
                     {b.attachments && b.attachments.length > 0 && (
@@ -1967,14 +1963,14 @@ export default function WebChat({
                 ) : b.kind === "error" ? (
                   <div
                     key={i}
-                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-base text-destructive"
                   >
                     {b.text}
                   </div>
                 ) : (
                   <div
                     key={i}
-                    className={`max-w-none space-y-2 text-sm leading-relaxed ${MD_CLASS}`}
+                    className={`max-w-none space-y-2 text-base leading-relaxed ${MD_CLASS}`}
                   >
                     <Markdown remarkPlugins={[remarkGfm]}>
                       {/* streaming caret rides INSIDE the markdown source so
@@ -1987,7 +1983,7 @@ export default function WebChat({
               {/* caret only while reply text is actually streaming; tool
                   blocks have their own status, silence shows nothing */}
               {streaming && blocks.length === 0 && (
-                <div className="max-w-none text-sm">
+                <div className="max-w-none text-base">
                   <Caret />
                 </div>
               )}
@@ -2215,7 +2211,7 @@ function DeviceSetupDialog({
           <DialogTitle>Set up a device</DialogTitle>
         </DialogHeader>
         <div className="min-w-0 space-y-4 text-left">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-base text-muted-foreground">
             The desktop app runs a Guild agent on your machine — it can work directly in your
             projects and with your files, which the browser chat can't. Chat alone stays right here.
           </p>
@@ -2250,7 +2246,7 @@ function DeviceSetupDialog({
                   className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm" title={r.filename}>
+                    <p className="truncate text-base" title={r.filename}>
                       {platformLabel(r.platform)}
                     </p>
                     <p className="text-xs text-muted-foreground">
@@ -2337,7 +2333,7 @@ function ChatListItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full overflow-hidden rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors ${
+      className={`w-full overflow-hidden rounded-md px-2 py-1.5 text-left text-base outline-none transition-colors ${
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -2382,10 +2378,10 @@ function SidebarContent({
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
-        <span className="text-sm font-semibold">Guild</span>
+        <span className="text-base font-semibold">Guild</span>
       </div>
       <div className="px-2">
-        <Button variant="ghost" className="w-full justify-start gap-2 text-sm" onClick={onNewChat}>
+        <Button variant="ghost" className="w-full justify-start gap-2 text-base" onClick={onNewChat}>
           <Plus /> New chat
         </Button>
       </div>
