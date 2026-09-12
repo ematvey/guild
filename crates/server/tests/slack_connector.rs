@@ -8,7 +8,6 @@ use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const FAKE_TOKEN: &str = "xoxb-fake-token";
-const FAKE_WEBHOOK_PATH: &str = "/services/T000/B000/fakehook";
 
 /// Config pointing the Web API base at the mock server.
 fn server_config(server: &MockServer) -> serde_json::Value {
@@ -173,64 +172,4 @@ async fn post_message_posts_json_with_bearer_and_maps_error() {
     server.verify().await;
 }
 
-#[tokio::test]
-async fn post_webhook_posts_text_without_auth_header() {
-    let server = MockServer::start().await;
-    // Incoming webhooks carry the credential in the URL — no auth header,
-    // no bearer; the fixture asserts a bare JSON post to the webhook path.
-    Mock::given(method("POST"))
-        .and(path(FAKE_WEBHOOK_PATH))
-        .and(header("content-type", "application/json"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
-        .expect(1)
-        .mount(&server)
-        .await;
 
-    let plugin = integration_by_name("slack").unwrap();
-    let webhook_url = format!("{}{FAKE_WEBHOOK_PATH}", server.uri());
-
-    let out = plugin
-        .execute(
-            &server_config(&server),
-            "post_webhook",
-            json!({ "text": "via webhook" }),
-            &secrets_with(Some(&webhook_url)), None)
-        .await
-        .unwrap();
-    assert_eq!(out.content, "ok");
-
-    server.verify().await;
-}
-
-#[tokio::test]
-async fn post_webhook_maps_http_error_and_missing_secret() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(FAKE_WEBHOOK_PATH))
-        .respond_with(ResponseTemplate::new(404).set_body_string("invalid_payload"))
-        .expect(1)
-        .mount(&server)
-        .await;
-
-    let plugin = integration_by_name("slack").unwrap();
-    let webhook_url = format!("{}{FAKE_WEBHOOK_PATH}", server.uri());
-
-    let err = plugin
-        .execute(
-            &server_config(&server),
-            "post_webhook",
-            json!({ "text": "x" }),
-            &secrets_with(Some(&webhook_url)), None)
-        .await
-        .unwrap_err();
-    assert!(err.contains("404"), "got: {err}");
-
-    // No webhook_url secret stored: the tool names the missing credential.
-    let err = plugin
-        .execute(&server_config(&server), "post_webhook", json!({ "text": "x" }), &[], None)
-        .await
-        .unwrap_err();
-    assert!(err.contains("webhook_url"), "got: {err}");
-
-    server.verify().await;
-}

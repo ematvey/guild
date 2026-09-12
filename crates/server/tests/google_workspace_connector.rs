@@ -249,7 +249,7 @@ async fn gmail_search_exchanges_jwt_and_lists_messages() {
     server.verify().await;
 
     let assertion = captured_assertion(&server).await;
-    verify_service_account_jwt(&assertion, ADMIN_EMAIL, &cfg["token_url"].as_str().unwrap());
+    verify_service_account_jwt(&assertion, ADMIN_EMAIL, cfg["token_url"].as_str().unwrap());
 
     let requests = server.received_requests().await.unwrap();
     let api_req = requests
