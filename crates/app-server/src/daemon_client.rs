@@ -16,7 +16,7 @@ pub struct DaemonClient {
 
 impl DaemonClient {
     pub fn from_pair(pair: Pair) -> Self {
-        let Pair(rd, wr) = pair;
+        let Pair(rd, wr, _) = pair;
         Self {
             reader: BufReader::new(rd),
             writer: wr,

@@ -2460,6 +2460,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "windows-sys 0.61.2",
  "wiremock",
 ]
 
@@ -2492,7 +2493,7 @@ dependencies = [
 
 [[package]]
 name = "guild-desktop"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "anyhow",
  "ed25519-dalek",

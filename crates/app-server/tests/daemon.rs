@@ -37,7 +37,7 @@ fn attach_spawns_and_survives_client_exit() {
 
     let pair = guild_app_server::daemon::attach(std::path::Path::new(env!("CARGO_BIN_EXE_guild-app-server")))
         .expect("attach spawns and handshakes");
-    let Pair(mut rd, mut wr) = pair;
+    let Pair(mut rd, mut wr, _) = pair;
 
     // use the connection, then drop it — the daemon must keep running
     writeln!(wr, "{}", req(1, "daemon.hello", json!({}))).unwrap();
@@ -59,7 +59,7 @@ fn attach_spawns_and_survives_client_exit() {
 
     // clean up the spawned daemon via shutdown
     let pair = try_connect_at(&path).unwrap();
-    let Pair(mut rd, mut wr) = pair;
+    let Pair(mut rd, mut wr, _) = pair;
     writeln!(wr, "{}", req(1, "daemon.shutdown", json!({}))).unwrap();
     wr.flush().unwrap();
     let mut line = Vec::new();
