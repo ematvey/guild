@@ -26,7 +26,7 @@
 #     scripts/release-clients.sh
 set -euo pipefail
 
-BASE="${BASE:-http://localhost:8080}"
+BASE="${BASE:-https://guild.example.com}"
 TOKEN="${TOKEN:?set TOKEN to an admin session token}"
 VERSION="${VERSION:?set VERSION, e.g. 0.1.0}"
 export SDKROOT="${SDKROOT:-$HOME/macos-sdks/MacOSX11.3.sdk}"
