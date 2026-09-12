@@ -7,7 +7,7 @@
 //! manifest; secret values ride into `execute` per call and never reach
 //! logs or results.
 
-use crate::integrations::{in_code_manifest, Category, Integration, ToolOutcome};
+use crate::integrations::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use guild_core::registry::BundleManifest;
 use futures::future::BoxFuture;
 use protocol::api::ToolSpec;
@@ -115,6 +115,7 @@ impl Integration for Slack {
                 ("conversations_history", "read"),
                 ("users_list", "read"),
                 ("post_message", "write"),
+                ("api", "write"),
             ],
         )
     }
@@ -158,6 +159,7 @@ impl Integration for Slack {
                     "text": { "type": "string", "description": "Message text (plain text or Slack mrkdwn)" }
                 }),
             ),
+            api_tool_spec("Slack Web API"),
         ])
     }
 
@@ -171,6 +173,17 @@ impl Integration for Slack {
     ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
         Box::pin(async move {
             let base = base_url(config)?;
+            if tool == "api" {
+                let token = secret(secrets, "bot_token")?;
+                return call_vendor_api(
+                    &base,
+                    &ApiAuth::Bearer(token.to_string()),
+                    &args,
+                    12_000,
+                    &[],
+                )
+                .await;
+            }
             match tool {
                 "conversations_list" => {
                     let token = secret(secrets, "bot_token")?;

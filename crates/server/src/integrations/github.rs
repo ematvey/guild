@@ -3,7 +3,7 @@
 //! Secret: `token` — sent as `Authorization: Bearer`; `User-Agent` is
 //! mandatory on every GitHub API request.
 
-use super::{in_code_manifest, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use base64::Engine;
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
@@ -111,6 +111,7 @@ impl Integration for Github {
                 ("list_pulls", "read"),
                 ("get_file", "read"),
                 ("create_issue", "write"),
+                ("api", "write"),
             ],
         )
     }
@@ -189,6 +190,7 @@ impl Integration for Github {
                     "required": ["owner", "repo", "title"]
                 }),
             },
+            api_tool_spec("GitHub"),
         ])
     }
 
@@ -203,6 +205,16 @@ impl Integration for Github {
         Box::pin(async move {
             let tok = token(secrets)?;
             let api = api_url(config);
+            if tool == "api" {
+                return call_vendor_api(
+                    &api,
+                    &ApiAuth::Bearer(tok),
+                    &args,
+                    12_000,
+                    &[("User-Agent", USER_AGENT), ("Accept", "application/vnd.github+json")],
+                )
+                .await;
+            }
             match tool {
                 "search_repositories" => {
                     let query = args["query"]

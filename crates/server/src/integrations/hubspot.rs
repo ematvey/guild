@@ -2,7 +2,7 @@
 //! updates through the CRM v3 API. Auth is a private-app access token sent
 //! as `Authorization: Bearer`.
 
-use super::{in_code_manifest, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use guild_core::registry::BundleManifest;
 use futures::future::BoxFuture;
 use protocol::api::ToolSpec;
@@ -78,6 +78,7 @@ impl Integration for Hubspot {
                 ("search_companies", "read"),
                 ("search_deals", "read"),
                 ("update_deal", "write"),
+                ("api", "write"),
             ],
         )
     }
@@ -116,6 +117,7 @@ impl Integration for Hubspot {
                     "required": ["id", "properties"]
                 }),
             },
+            api_tool_spec("HubSpot"),
         ])
     }
 
@@ -134,6 +136,16 @@ impl Integration for Hubspot {
 
             if tool == "update_deal" {
                 return update_deal(&base_url(_config), &token, &args).await;
+            }
+            if tool == "api" {
+                return call_vendor_api(
+                    &base_url(_config),
+                    &ApiAuth::Bearer(token),
+                    &args,
+                    12_000,
+                    &[],
+                )
+                .await;
             }
             let Some((_, object)) = SEARCH_TOOLS.iter().find(|(name, _)| *name == tool) else {
                 return Err(format!("hubspot integration has no tool {tool}"));

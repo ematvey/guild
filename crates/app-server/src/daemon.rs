@@ -60,8 +60,7 @@ pub struct Pair(
 /// Line reader safe to run concurrently with a writer on the same pipe.
 /// Windows path polls with PeekNamedPipe (never parks the file object lock)
 /// and only consumes bytes already available; Unix path is a plain blocking
-/// read_line (separate fds, no serialization)."
-
+/// read_line (separate fds, no serialization).
 #[cfg(unix)]
 pub fn try_connect_at(path: &Path) -> anyhow::Result<Pair> {
     let s = std::os::unix::net::UnixStream::connect(path)
@@ -353,6 +352,8 @@ mod tests {
 /// See [`Pair`] for why the Windows path peeks instead of blocking.
 pub struct LineReader {
     inner: std::io::BufReader<Box<dyn std::io::Read + Send>>,
+    /// Raw descriptor for the Windows PeekNamedPipe path; unused on Unix.
+    #[cfg_attr(not(windows), allow(dead_code))]
     raw: Option<isize>,
 }
 
