@@ -159,3 +159,7 @@ required-features = ["test-support"]
 [[test]]
 name = "integration_tools_api"
 required-features = ["test-support"]
+
+[[test]]
+name = "builtin_plugin"
+required-features = ["test-support"]

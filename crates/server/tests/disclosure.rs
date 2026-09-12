@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use guild_server::integrations::{
-    call_mcp_plugin, fetch_guide, mcp_index_line, mcp_tool_allowed, parse_auto_tool,
-    resolve_mcp_plugins, AutoTool, McpPluginTurn,
+    call_plugin, fetch_guide, index_line, parse_auto_tool, resolve_plugins, tool_allowed,
+    AutoTool, PluginExecutor, PluginTurn,
 };
 use guild_server::store::Store;
 use guild_server::test_support::{full_state, test_state_with_db};
@@ -182,7 +182,7 @@ async fn turn_start_resolves_mcp_plugin_with_namespaced_tools() {
     let url = spawn_fixture().await;
     let (org, _) = install_plugin(&ts.store(), &url, None).await;
 
-    let turns = resolve_mcp_plugins(&ts.state, org).await.unwrap();
+    let turns = resolve_plugins(&ts.state, org).await.unwrap();
     assert_eq!(turns.len(), 1);
     let turn = &turns[0];
     assert_eq!(turn.slug, "hubspot");
@@ -200,7 +200,7 @@ async fn turn_start_resolves_mcp_plugin_with_namespaced_tools() {
     assert!(turn.guide_object_key.is_none());
     // Index line (spec §7.1).
     assert_eq!(
-        mcp_index_line(turn),
+        index_line(turn),
         "Integration hubspot: HubSpot CRM tools — call int_hubspot_list_tools to discover its tools."
     );
 }
@@ -209,7 +209,7 @@ async fn turn_start_resolves_mcp_plugin_with_namespaced_tools() {
 async fn turn_start_skips_unreachable_mcp_server() {
     let ts = test_state_with_db().await;
     let (org, _) = install_plugin(&ts.store(), "http://127.0.0.1:1/mcp", None).await;
-    let turns = resolve_mcp_plugins(&ts.state, org).await.unwrap();
+    let turns = resolve_plugins(&ts.state, org).await.unwrap();
     assert!(turns.is_empty(), "broken plugin contributes nothing");
 }
 
@@ -223,7 +223,7 @@ async fn turn_start_skips_plugin_with_missing_secrets() {
         .delete(org, "hubspot", "api_key")
         .await
         .unwrap();
-    let turns = resolve_mcp_plugins(&ts.state, org).await.unwrap();
+    let turns = resolve_plugins(&ts.state, org).await.unwrap();
     assert!(turns.is_empty());
 }
 
@@ -234,7 +234,7 @@ async fn disclosure_filters_tools_by_role() {
     let ts = test_state_with_db().await;
     let url = spawn_fixture().await;
     let (org, _) = install_plugin(&ts.store(), &url, None).await;
-    let turn = &resolve_mcp_plugins(&ts.state, org).await.unwrap()[0];
+    let turn = &resolve_plugins(&ts.state, org).await.unwrap()[0];
 
     // Default policy: member read-only — echo visible, admin tool hidden.
     let member: Vec<String> = turn
@@ -266,13 +266,14 @@ async fn disclosure_filters_tools_by_role() {
 
     // The pure enforcement fn agrees (spec §6).
     let info = &turn.tools[1];
-    assert!(!mcp_tool_allowed(info, &turn.row_config, "member"));
-    assert!(mcp_tool_allowed(info, &turn.row_config, "admin"));
+    assert!(!tool_allowed(info, &turn.row_config, "member"));
+    assert!(tool_allowed(info, &turn.row_config, "admin"));
 }
 
 #[test]
 fn auto_tools_are_recognized_and_namespaced() {
-    let turn = McpPluginTurn {
+    let turn = PluginTurn {
+        executor: PluginExecutor::Mcp,
         slug: "hubspot".into(),
         description: "d".into(),
         tools: vec![],
@@ -301,10 +302,10 @@ async fn mcp_call_carries_identity_and_roundtrips() {
     let ts = test_state_with_db().await;
     let url = spawn_fixture().await;
     let (org, _) = install_plugin(&ts.store(), &url, None).await;
-    let turn = resolve_mcp_plugins(&ts.state, org).await.unwrap().remove(0);
+    let turn = resolve_plugins(&ts.state, org).await.unwrap().remove(0);
 
     // Acting as the caller's email (the identity_key=email join).
-    let out = call_mcp_plugin(
+    let out = call_plugin(
         &ts.state,
         &turn,
         "echo",
@@ -318,7 +319,7 @@ async fn mcp_call_carries_identity_and_roundtrips() {
 
     // A changed acting_as creates a separate pooled connection (the
     // envelope rides the connection), and the call still works.
-    let out = call_mcp_plugin(&ts.state, &turn, "echo", json!({ "text": "x" }), org, None)
+    let out = call_plugin(&ts.state, &turn, "echo", json!({ "text": "x" }), org, None)
         .await
         .unwrap();
     assert_eq!(out.content, "echo: x");
@@ -374,7 +375,7 @@ async fn guide_tool_returns_skill_md_from_object_storage() {
         .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 
-    let turn = resolve_mcp_plugins(&ts.state, org).await.unwrap();
+    let turn = resolve_plugins(&ts.state, org).await.unwrap();
     let key = turn[0].guide_object_key.as_ref().expect("guide pointer");
     let body = fetch_guide(&ts.state, key).await.unwrap();
     assert!(body.contains("USE THE SEARCH FIRST"), "{body}");

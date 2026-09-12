@@ -1,7 +1,7 @@
 //! Integration plugin tests: superproxy web_fetch against a mock gateway,
 //! searxng web_search meta shape (spec C.2/D).
 
-use guild_server::integrations::{integration_by_name, Category};
+use guild_server::integrations::{integration_by_name, integration_names, Category};
 use serde_json::json;
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -40,7 +40,7 @@ async fn superproxy_fetch_builds_content_and_meta() {
 
     let config = superproxy_config(&server, None);
     let out = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://example.com/a" }))
+        .execute(&config, "web_fetch", json!({ "url": "https://example.com/a" }), &[], None)
         .await
         .unwrap();
     assert_eq!(out.content, "# Example Page\n\nhello body");
@@ -71,7 +71,7 @@ async fn superproxy_sends_bearer_token_when_configured() {
     let plugin = integration_by_name("superproxy").unwrap();
     let config = superproxy_config(&server, Some("sekrit"));
     let out = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://example.com/b" }))
+        .execute(&config, "web_fetch", json!({ "url": "https://example.com/b" }), &[], None)
         .await
         .unwrap();
     // No title in response -> no title header, no meta.title.
@@ -101,7 +101,7 @@ async fn superproxy_truncates_long_content() {
             &config,
             "web_fetch",
             json!({ "url": "https://example.com/long", "max_chars": 1000 }),
-        )
+            &[], None)
         .await
         .unwrap();
     assert_eq!(out.content.len(), 1000 + "\n\n[truncated]".len());
@@ -121,14 +121,14 @@ async fn superproxy_errors_map_to_err() {
     let plugin = integration_by_name("superproxy").unwrap();
     let config = superproxy_config(&server, None);
     let err = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://x.test/" }))
+        .execute(&config, "web_fetch", json!({ "url": "https://x.test/" }), &[], None)
         .await
         .unwrap_err();
     assert!(err.contains("502"));
 
     // Unknown tool name.
     let err = plugin
-        .execute(&config, "web_search", json!({}))
+        .execute(&config, "web_search", json!({}), &[], None)
         .await
         .unwrap_err();
     assert!(err.contains("no tool web_search"));
@@ -160,7 +160,7 @@ async fn searxng_search_builds_meta_with_sources() {
 
     let config = json!({ "base_url": server.uri() });
     let out = plugin
-        .execute(&config, "web_search", json!({ "query": "rust", "count": 5 }))
+        .execute(&config, "web_search", json!({ "query": "rust", "count": 5 }), &[], None)
         .await
         .unwrap();
     assert!(out.content.starts_with("1. Rust home"));
@@ -174,4 +174,52 @@ async fn searxng_search_builds_meta_with_sources() {
     assert_eq!(sources[0]["url"], "https://rust-lang.org");
     assert_eq!(sources[0]["title"], "Rust home");
     assert_eq!(sources[0]["snippet"], "a language");
+}
+
+// ---------- unified interface: manifest + secrets (milestone 10, C1) ----------
+
+#[test]
+fn built_in_manifests_carry_slug_version_and_classes() {
+    for name in integration_names() {
+        let plugin = integration_by_name(name).unwrap_or_else(|| panic!("{name} resolves"));
+        let m = plugin.manifest();
+        assert_eq!(m.kind, "integration");
+        assert_eq!(m.slug, *name);
+        assert_eq!(plugin.name(), *name as &str);
+        // In-code manifests carry no mcp field and no registry bundle.
+        assert!(m.mcp.is_none(), "{name} manifest has an mcp field");
+        let classes = m.tools.expect("classes").classes;
+        assert!(!classes.is_empty(), "{name} declares tool classes");
+    }
+}
+
+#[test]
+fn superproxy_declares_no_required_secrets_for_backwards_compat() {
+    // The gateway token stays optional (config fallback), so the enable
+    // gate must not require a stored secret.
+    let m = integration_by_name("superproxy").unwrap().manifest();
+    assert_eq!(m.auth.expect("auth").secret_names, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn superproxy_prefers_stored_secret_over_config_token() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(header("authorization", "Bearer store-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "url": "https://example.com/c", "status": 200, "content": "body"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("superproxy").unwrap();
+    let config = superproxy_config(&server, Some("config-token"));
+    let secrets = vec![("token".to_string(), "store-token".to_string())];
+    let out = plugin
+        .execute(&config, "web_fetch", json!({ "url": "https://example.com/c" }), &secrets, None)
+        .await
+        .unwrap();
+    assert_eq!(out.content, "body");
+    server.verify().await;
 }
