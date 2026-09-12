@@ -316,8 +316,9 @@ async fn langfuse_get_prompt_renders_one_prompt() {
     assert!(out.content.contains("support"));
     assert!(out.content.contains("v3"));
     let meta = out.meta.unwrap();
-    assert_eq!(meta["kind"], "prompts");
-    assert_eq!(meta["count"], 2);
+    assert_eq!(meta["kind"], "prompt");
+    assert_eq!(meta["name"], "support");
+    assert_eq!(meta["version"], 3);
 
     server.verify().await;
 }
