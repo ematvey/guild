@@ -1,0 +1,226 @@
+//! Langfuse observability integration: traces and prompts through the
+//! public API (`/api/public/...`), authenticated with basic auth over the
+//! public/secret key pair.
+
+use super::{in_code_manifest, Category, Integration, ToolOutcome};
+use guild_core::registry::BundleManifest;
+use futures::future::BoxFuture;
+use protocol::api::ToolSpec;
+
+/// Langfuse connector. Config `{ "base_url": "…" }` overrides the stored
+/// `host` secret (test seam); the keys are stored secrets.
+pub struct Langfuse;
+
+fn secret<'a>(secrets: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    secrets
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, value)| value.as_str())
+}
+
+/// The API base URL: the config `base_url` wins, the `host` secret is the
+/// default. Trailing slashes are stripped either way.
+fn base_url(
+    config: &serde_json::Value,
+    secrets: &[(String, String)],
+) -> Result<String, String> {
+    if let Some(url) = config["base_url"].as_str() {
+        return Ok(url.trim_end_matches('/').to_string());
+    }
+    let host = secret(secrets, "host").ok_or("langfuse requires the host secret (or a config base_url)")?;
+    Ok(host.trim_end_matches('/').to_string())
+}
+
+/// Performs one GET against the public API with basic auth and maps
+/// non-2xx / malformed responses to errors.
+async fn get(
+    base: &str,
+    path_and_query: &str,
+    public_key: &str,
+    secret_key: &str,
+) -> Result<serde_json::Value, String> {
+    let resp = reqwest::Client::new()
+        .get(format!("{base}{path_and_query}"))
+        .basic_auth(public_key, Some(secret_key))
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("langfuse unreachable: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("langfuse returned {}", resp.status()));
+    }
+    resp.json()
+        .await
+        .map_err(|e| format!("langfuse returned bad json: {e}"))
+}
+
+impl Integration for Langfuse {
+    fn name(&self) -> &'static str {
+        "langfuse"
+    }
+
+    fn category(&self) -> Category {
+        Category::Other
+    }
+
+    fn manifest(&self) -> BundleManifest {
+        in_code_manifest(
+            "langfuse",
+            "1.0.0",
+            "Langfuse LLM observability: list and inspect traces, list prompts",
+            &["host", "public_key", "secret_key"],
+            &[
+                ("list_traces", "read"),
+                ("get_trace", "read"),
+                ("list_prompts", "read"),
+            ],
+        )
+    }
+
+    fn tools(&self, _config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
+        Ok(vec![
+            ToolSpec {
+                name: "list_traces".into(),
+                description: "List recent Langfuse traces (id, name, timestamp).".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "limit": { "type": "number",
+                            "description": "1-50 traces, default 10" }
+                    }
+                }),
+            },
+            ToolSpec {
+                name: "get_trace".into(),
+                description: "Fetch one Langfuse trace with its full body by id.".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "trace_id": { "type": "string" }
+                    },
+                    "required": ["trace_id"]
+                }),
+            },
+            ToolSpec {
+                name: "list_prompts".into(),
+                description: "List Langfuse prompt names with their latest versions.".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+        ])
+    }
+
+    fn execute<'a>(
+        &'a self,
+        config: &'a serde_json::Value,
+        tool: &'a str,
+        args: serde_json::Value,
+        secrets: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
+        Box::pin(async move {
+            let public_key = secret(secrets, "public_key")
+                .ok_or("langfuse requires the public_key secret")?
+                .to_string();
+            let secret_key = secret(secrets, "secret_key")
+                .ok_or("langfuse requires the secret_key secret")?
+                .to_string();
+            let base = base_url(config, secrets)?;
+            match tool {
+                "list_traces" => list_traces(&base, &public_key, &secret_key, &args).await,
+                "get_trace" => get_trace(&base, &public_key, &secret_key, &args).await,
+                "list_prompts" => list_prompts(&base, &public_key, &secret_key).await,
+                other => Err(format!("langfuse integration has no tool {other}")),
+            }
+        })
+    }
+}
+
+/// GET `/api/public/traces?limit=n` and render one line per trace.
+async fn list_traces(
+    base: &str,
+    public_key: &str,
+    secret_key: &str,
+    args: &serde_json::Value,
+) -> Result<ToolOutcome, String> {
+    let limit = args["limit"].as_u64().unwrap_or(10).clamp(1, 50) as usize;
+    let body = get(base, &format!("/api/public/traces?limit={limit}"), public_key, secret_key).await?;
+    let traces = body["data"].as_array().cloned().unwrap_or_default();
+
+    let mut content = String::new();
+    for (i, trace) in traces.iter().take(limit).enumerate() {
+        let id = trace["id"].as_str().unwrap_or("?");
+        let name = trace["name"].as_str().unwrap_or("(unnamed)");
+        let timestamp = trace["timestamp"].as_str().unwrap_or("");
+        content.push_str(&format!("{}. {id} {name} {timestamp}\n", i + 1));
+    }
+    if content.is_empty() {
+        content = "No traces.".to_string();
+    }
+    let meta = serde_json::json!({
+        "card": "langfuse",
+        "kind": "traces",
+        "count": traces.len().min(limit),
+    });
+    Ok(ToolOutcome {
+        content,
+        meta: Some(meta),
+    })
+}
+
+/// GET `/api/public/traces/{id}` and return the full trace body.
+async fn get_trace(
+    base: &str,
+    public_key: &str,
+    secret_key: &str,
+    args: &serde_json::Value,
+) -> Result<ToolOutcome, String> {
+    let trace_id = args["trace_id"]
+        .as_str()
+        .ok_or("get_trace requires trace_id")?;
+    let trace = get(
+        base,
+        &format!("/api/public/traces/{trace_id}"),
+        public_key,
+        secret_key,
+    )
+    .await?;
+    let content = serde_json::to_string_pretty(&trace)
+        .map_err(|e| format!("langfuse trace unserializable: {e}"))?;
+    let meta = serde_json::json!({
+        "card": "langfuse",
+        "kind": "trace",
+        "id": trace["id"],
+    });
+    Ok(ToolOutcome {
+        content,
+        meta: Some(meta),
+    })
+}
+
+/// GET `/api/public/prompts` and render one line per prompt.
+async fn list_prompts(base: &str, public_key: &str, secret_key: &str) -> Result<ToolOutcome, String> {
+    let body = get(base, "/api/public/prompts", public_key, secret_key).await?;
+    let prompts = body["data"].as_array().cloned().unwrap_or_default();
+
+    let mut content = String::new();
+    for (i, prompt) in prompts.iter().enumerate() {
+        let name = prompt["name"].as_str().unwrap_or("(unnamed)");
+        let version = prompt["version"].as_u64().unwrap_or(0);
+        let kind = prompt["type"].as_str().unwrap_or("text");
+        content.push_str(&format!("{}. {name} v{version} ({kind})\n", i + 1));
+    }
+    if content.is_empty() {
+        content = "No prompts.".to_string();
+    }
+    let meta = serde_json::json!({
+        "card": "langfuse",
+        "kind": "prompts",
+        "count": prompts.len(),
+    });
+    Ok(ToolOutcome {
+        content,
+        meta: Some(meta),
+    })
+}
