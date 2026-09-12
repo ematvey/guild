@@ -75,20 +75,16 @@ pub struct MockIngress {
 /// State backed by an isolated database, with `restate_url` pointed at a
 /// local mock ingress so one-way invokes (`complete_tool`,
 /// `complete_approval`, …) succeed and can be asserted on.
+type CapturedRequests =
+    std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>;
+
 pub async fn test_state_with_mock_ingress() -> (TestState, MockIngress) {
     let db = Store::connect_test().await.expect("postgres testcontainer");
-    let requests: std::sync::Arc<
-        std::sync::Mutex<Vec<(String, serde_json::Value)>>,
-    > = Default::default();
-    let captures = requests.clone();
+    let requests: CapturedRequests = Default::default();
     let app = axum::Router::new()
         .fallback(
             |uri: axum::http::Uri,
-             axum::extract::State(captures): axum::extract::State<
-                std::sync::Arc<
-                    std::sync::Mutex<Vec<(String, serde_json::Value)>>,
-                >,
-             >,
+             axum::extract::State(captures): axum::extract::State<CapturedRequests>,
              body: axum::body::Bytes| async move {
                 let parsed = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
                 captures
@@ -352,7 +348,7 @@ pub async fn full_state() -> FullState {
         master_key_hex: "00".repeat(32),
         jwt_secret: "test-secret".into(),
         s3_url: infra.s3_url.clone(),
-        s3_bucket: s3_bucket,
+        s3_bucket,
         s3_access_key_id: infra.s3_access_key_id.clone(),
         s3_secret_access_key: infra.s3_secret_access_key.clone(),
         restate_url: "http://placeholder:8080".into(),

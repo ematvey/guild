@@ -2420,7 +2420,7 @@ async fn server_tool_step(
                 let out = match &tool.executor {
                     integrations::ServerExecutor::Rust(plugin) => {
                         plugin
-                            .execute(&tool.config, &call.name, call.arguments.clone())
+                            .execute(&tool.config, &call.name, call.arguments.clone(), &[])
                             .await
                     }
                     // MCP targets were handled above; this arm is only

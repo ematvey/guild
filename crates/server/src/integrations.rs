@@ -47,21 +47,41 @@ pub struct ToolOutcome {
     pub meta: Option<serde_json::Value>,
 }
 
-/// One integration plugin. `config` is the admin-supplied JSON (e.g. the
-/// searxng base URL); `tools(config)` validates the config and declares the
-/// tool surface it contributes.
+/// One integration plugin. `config` is the admin-supplied JSON with the
+/// non-secret settings only (e.g. the searxng base URL); `tools(config)`
+/// validates the config and declares the tool surface it contributes.
 pub trait Integration: Send + Sync {
     fn name(&self) -> &'static str;
     fn category(&self) -> Category;
+    /// The in-code manifest (kind `integration`, slug = name, semver,
+    /// description, `auth.secret_names`, `tools.classes`) — the same manifest
+    /// shape a registry bundle carries, so built-ins and MCP plugins share
+    /// disclosure, policy, and the enable gate. No `mcp` field and no
+    /// registry bundle: the manifest lives in code.
+    fn manifest(&self) -> BundleManifest;
     /// Validate config and declare tools. An error here means the admin
     /// supplied a broken config — the integration contributes nothing.
     fn tools(&self, config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>>;
+    /// Runs one tool. `secrets` carries the resolved store values for the
+    /// credentials; config keeps non-secret settings only.
     fn execute<'a>(
         &'a self,
         config: &'a serde_json::Value,
         tool: &'a str,
         args: serde_json::Value,
+        secrets: &'a [(String, String)],
     ) -> BoxFuture<'a, Result<ToolOutcome, String>>;
+}
+
+/// The compiled-in integration kinds — keep in sync with
+/// [`integration_by_name`].
+pub fn integration_names() -> &'static [&'static str] {
+    &[
+        "searxng",
+        "superproxy",
+        #[cfg(feature = "test-support")]
+        "testplug",
+    ]
 }
 
 /// The registry of available integration kinds (code-level plugins).
@@ -69,8 +89,43 @@ pub fn integration_by_name(name: &str) -> Option<Arc<dyn Integration>> {
     match name {
         "searxng" => Some(Arc::new(searxng::Searxng)),
         "superproxy" => Some(Arc::new(superproxy::Superproxy)),
+        #[cfg(feature = "test-support")]
+        "testplug" => Some(Arc::new(testplug::TestPlug)),
         _ => None,
     }
+}
+
+/// Builds an in-code manifest in the registry's v2 shape and validates it
+/// against the same rules a published bundle must pass (legal tool classes,
+/// namespaced-name length) — built-ins reuse the registry validation, they
+/// do not fork it.
+pub fn in_code_manifest(
+    name: &str,
+    version: &str,
+    description: &str,
+    secret_names: &[&str],
+    classes: &[(&str, &str)],
+) -> BundleManifest {
+    let manifest = BundleManifest {
+        kind: "integration".to_string(),
+        slug: name.to_string(),
+        version: version.to_string(),
+        description: description.to_string(),
+        auth: Some(guild_core::registry::AuthManifest {
+            secret_names: secret_names.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }),
+        tools: Some(guild_core::registry::ToolsManifest {
+            classes: classes
+                .iter()
+                .map(|(tool, class)| (tool.to_string(), class.to_string()))
+                .collect(),
+        }),
+        ..Default::default()
+    };
+    guild_core::registry::validate_v2(&manifest)
+        .expect("in-code manifest violates the registry manifest rules");
+    manifest
 }
 
 /// How a server tool executes: a compiled-in Rust plugin or a remote MCP
@@ -275,7 +330,7 @@ pub async fn execute_server_tool(
 ) -> Result<ToolOutcome, String> {
     match &tool.executor {
         ServerExecutor::Rust(plugin) => {
-            plugin.execute(&tool.config, mcp_tool, args).await
+            plugin.execute(&tool.config, mcp_tool, args, &[]).await
         }
         ServerExecutor::Mcp(endpoint) => {
             let headers = envelope_headers(
@@ -317,8 +372,85 @@ pub fn resolve_server_tools(rows: &[IntegrationRow]) -> anyhow::Result<Vec<Serve
     Ok(out)
 }
 
+/// Test-only built-in plugin (compiled with the `test-support` feature):
+/// declares a required secret plus a read and an admin tool, so the
+/// unified-resolution tests can exercise the enable gate, secrets
+/// resolution into execute, class enforcement, and the script API end to
+/// end. Its tools never touch the network.
+#[cfg(feature = "test-support")]
+pub mod testplug {
+    use super::{in_code_manifest, Category, Integration, ToolOutcome};
+    use futures::future::BoxFuture;
+    use guild_core::registry::BundleManifest;
+    use protocol::api::ToolSpec;
+
+    pub struct TestPlug;
+
+    impl Integration for TestPlug {
+        fn name(&self) -> &'static str {
+            "testplug"
+        }
+
+        fn category(&self) -> Category {
+            Category::Other
+        }
+
+        fn manifest(&self) -> BundleManifest {
+            in_code_manifest(
+                "testplug",
+                "0.1.0",
+                "Test tools for the unified plugin interface",
+                &["api_key"],
+                &[("secret_echo", "read"), ("admin_op", "admin")],
+            )
+        }
+
+        fn tools(&self, _config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
+            Ok(vec![
+                ToolSpec {
+                    name: "secret_echo".into(),
+                    description: "Reports whether the declared secret resolved.".into(),
+                    parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                },
+                ToolSpec {
+                    name: "admin_op".into(),
+                    description: "An operation reserved for admins.".into(),
+                    parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                },
+            ])
+        }
+
+        fn execute<'a>(
+            &'a self,
+            _config: &'a serde_json::Value,
+            tool: &'a str,
+            _args: serde_json::Value,
+            secrets: &'a [(String, String)],
+        ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
+            Box::pin(async move {
+                match tool {
+                    // Reflects secret resolution without ever echoing the value.
+                    "secret_echo" => {
+                        let present = secrets.iter().any(|(name, _)| name == "api_key");
+                        Ok(ToolOutcome {
+                            content: format!("api_key present: {present}"),
+                            meta: None,
+                        })
+                    }
+                    "admin_op" => Ok(ToolOutcome {
+                        content: "admin ok".to_string(),
+                        meta: None,
+                    }),
+                    other => Err(format!("testplug integration has no tool {other}")),
+                }
+            })
+        }
+    }
+}
+
 pub mod searxng {
-    use super::{Category, Integration, ToolOutcome};
+    use super::{in_code_manifest, Category, Integration, ToolOutcome};
+    use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
     use protocol::api::ToolSpec;
 
@@ -340,6 +472,16 @@ pub mod searxng {
 
         fn category(&self) -> Category {
             Category::Search
+        }
+
+        fn manifest(&self) -> BundleManifest {
+            in_code_manifest(
+                "searxng",
+                "1.0.0",
+                "Web search through a SearxNG instance",
+                &[],
+                &[("web_search", "read")],
+            )
         }
 
         fn tools(&self, config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
@@ -364,6 +506,7 @@ pub mod searxng {
             config: &'a serde_json::Value,
             tool: &'a str,
             args: serde_json::Value,
+            _secrets: &'a [(String, String)],
         ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
             Box::pin(async move {
                 if tool != "web_search" {
@@ -433,14 +576,18 @@ pub mod searxng {
 }
 
 pub mod superproxy {
-    use super::{Category, Integration, ToolOutcome};
+    use super::{in_code_manifest, Category, Integration, ToolOutcome};
+    use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
     use protocol::api::ToolSpec;
 
     const DEFAULT_MAX_CHARS: usize = 8000;
 
     /// Superproxy fetch integration (spec D). Config:
-    /// `{ "base_url": "http://host:15505", "token"?: "…" }`.
+    /// `{ "base_url": "http://host:15505", "token"?: "…" }`. The gateway
+    /// token is a secret: the stored `token` secret wins; the config `token`
+    /// remains as a fallback so existing configs keep working — new
+    /// deployments store the secret instead.
     /// Exposes one tool: `web_fetch` — markdown page fetch through the
     /// superproxy gateway (SSRF-screened, cached).
     pub struct Superproxy;
@@ -479,6 +626,18 @@ pub mod superproxy {
             Category::Fetch
         }
 
+        fn manifest(&self) -> BundleManifest {
+            // No declared secrets: the gateway token is optional (legacy
+            // config fallback), so the enable gate must not require it.
+            in_code_manifest(
+                "superproxy",
+                "1.0.0",
+                "Fetch web pages as markdown through the superproxy gateway",
+                &[],
+                &[("web_fetch", "read")],
+            )
+        }
+
         fn tools(&self, config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
             config_parts(config)?; // validates
             Ok(vec![ToolSpec {
@@ -503,6 +662,7 @@ pub mod superproxy {
             config: &'a serde_json::Value,
             tool: &'a str,
             args: serde_json::Value,
+            secrets: &'a [(String, String)],
         ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
             Box::pin(async move {
                 if tool != "web_fetch" {
@@ -514,7 +674,13 @@ pub mod superproxy {
                     .to_string();
                 let max_chars = args["max_chars"].as_u64().unwrap_or(DEFAULT_MAX_CHARS as u64)
                     as usize;
-                let (base, token) = config_parts(config).map_err(|e| e.to_string())?;
+                let (base, config_token) = config_parts(config).map_err(|e| e.to_string())?;
+                // The stored secret wins; the config token is the legacy fallback.
+                let token = secrets
+                    .iter()
+                    .find(|(name, _)| name == "token")
+                    .map(|(_, value)| value.clone())
+                    .or(config_token);
                 let mut req = reqwest::Client::new()
                     .get(format!("{base}/v1/fetch"))
                     .query(&[("url", target.as_str()), ("format", "markdown")])
