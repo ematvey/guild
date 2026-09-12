@@ -8,10 +8,8 @@ use std::sync::Arc;
 use axum::http::{HeaderMap, HeaderName};
 use guild_server::integrations::{
     enforce_class, envelope_headers, mcp_call_tool, namespaced_tool, resolve_acting_as,
-    McpCallIdentity, McpEndpoint, ServerExecutor, ServerTool,
 };
 use guild_server::worker::mcp_pool::{McpPool, PoolKey};
-use protocol::api::ToolSpec;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -310,45 +308,6 @@ fn envelope_headers_omit_absent_fields() {
 }
 
 // ---------- executor plumbing ----------
-
-#[tokio::test]
-async fn server_tool_dispatches_mcp_executor() {
-    let url = spawn_fixture().await;
-    let manifest: guild_core::registry::BundleManifest =
-        serde_json::from_value(mcp_manifest(json!({ "echo": "read" }))).unwrap();
-    let endpoint = McpEndpoint {
-        slug: "hubspot".into(),
-        url: url.clone(),
-        secrets: vec![],
-        manifest,
-    };
-    let tool = ServerTool {
-        spec: ToolSpec {
-            name: "int_hubspot_echo".into(),
-            description: "Echoes".into(),
-            parameters: json!({}),
-        },
-        executor: ServerExecutor::Mcp(Box::new(endpoint)),
-        config: json!({}),
-    };
-    let pool = McpPool::new();
-    let identity = McpCallIdentity {
-        org: Uuid::now_v7(),
-        caller: None,
-        acting_as: None,
-        call_id: Uuid::now_v7(),
-    };
-    let out = guild_server::integrations::execute_server_tool(
-        &tool,
-        "echo",
-        json!({ "text": "roundtrip" }),
-        &pool,
-        &identity,
-    )
-    .await
-    .unwrap();
-    assert_eq!(out.content, "echo: roundtrip");
-}
 
 #[test]
 fn namespaced_tool_builds_int_prefix() {

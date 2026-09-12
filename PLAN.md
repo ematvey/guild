@@ -1,9 +1,45 @@
 # Guild — current state of work
 
-Updated 2026-09-12 (UI pass: 16px text, floating scrollbars, settings
-sidebar). Read this before touching the codebase; detailed milestone plans
-live in `docs/plans/`, deploy nuances in `docs/deploy-nuances.md`,
-hang-patterns in `~/workspace/hanging-commands.md`.
+Updated 2026-09-12 (integration plugins milestone 10). Read this before
+touching the codebase; detailed milestone plans live in `docs/plans/`,
+deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
+`~/workspace/hanging-commands.md`.
+
+## Milestone 10 — unified plugins + real connectors (2026-09-12)
+
+- Built-in and MCP integrations sit behind one interface: every
+  `Integration` carries an in-code manifest (`in_code_manifest`, validated
+  by the registry's own `validate_v2`), `execute` receives resolved
+  secrets and the call's `acting_as` identity, and one resolver
+  (`resolve_plugins` → `PluginTurn`) covers both kinds — same classes,
+  policy filter, auto-tools, script API, and audit. An installed registry
+  v2 bundle of a slug shadows a same-named built-in
+  (`upsert_integration`, available list, secret-delete, resolver all
+  follow that rule).
+- Seven compiled-in connectors ship, all seeded with the credentials from
+  internal project and live-smoked through the script API on :18080: slack
+  (conversations, users, post_message), github (search, issues, PRs,
+  files, create_issue), gitlab (self-hosted via `base_url` config,
+  projects, issues, MRs, create_issue), atlassian (Jira + Confluence,
+  basic auth), google_workspace (service-account JWT → DWD `sub` =
+  acting identity; Gmail/Calendar/Drive/Directory), hubspot (CRM search;
+  the internal project key is read-scoped so `update_deal` cannot fire live),
+  langfuse (traces, `get_prompt` — the API requires a name, so there is
+  no list-all tool).
+- Slack's incoming-webhook tool was dropped: no webhook URL exists in
+  internal project; `post_message` covers posting.
+- Live smoke results: every read tool returned real vendor data; the
+  slack write path fired for real (test message in #general);
+  `create_issue`/`create_page` writes are wiremock-verified only (firing
+  them would leave persistent artifacts in shared repos). hubspot
+  `update_deal` is wiremock-verified only (read-scoped key).
+- Secrets loaded via the admin API from `~/acme/internal project/.credentials`
+  (loader script: `~/workspace/projects/m10-load-secrets.sh`, values
+  never echoed). gitlab's `base_url` is the full API root
+  (`https://gitlab.acme.dev/api/v4`); langfuse host is a secret.
+- Plan: `docs/plans/2026-09-12-milestone-10-unified-plugins.md`; branch
+  `integrations-v2-connectors`.
+
 
 ## UI pass — 16px text, floating scrollbars, settings sidebar (2026-09-12)
 

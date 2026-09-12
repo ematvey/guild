@@ -4,9 +4,8 @@
 //! admins then enable it per org via the admin API — an integration
 //! contributes tools only while enabled.
 
-use crate::store::integrations::IntegrationRow;
 use crate::state::AppState;
-use crate::worker::mcp_pool::{McpPool, PoolKey, secrets_fingerprint};
+use crate::worker::mcp_pool::{PoolKey, secrets_fingerprint};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use futures::future::BoxFuture;
 use guild_core::registry::{tool_class, BundleManifest};
@@ -47,21 +46,56 @@ pub struct ToolOutcome {
     pub meta: Option<serde_json::Value>,
 }
 
-/// One integration plugin. `config` is the admin-supplied JSON (e.g. the
-/// searxng base URL); `tools(config)` validates the config and declares the
-/// tool surface it contributes.
+/// One integration plugin. `config` is the admin-supplied JSON with the
+/// non-secret settings only (e.g. the searxng base URL); `tools(config)`
+/// validates the config and declares the tool surface it contributes.
 pub trait Integration: Send + Sync {
     fn name(&self) -> &'static str;
     fn category(&self) -> Category;
+    /// The in-code manifest (kind `integration`, slug = name, semver,
+    /// description, `auth.secret_names`, `tools.classes`) — the same manifest
+    /// shape a registry bundle carries, so built-ins and MCP plugins share
+    /// disclosure, policy, and the enable gate. No `mcp` field and no
+    /// registry bundle: the manifest lives in code.
+    fn manifest(&self) -> BundleManifest;
     /// Validate config and declare tools. An error here means the admin
     /// supplied a broken config — the integration contributes nothing.
     fn tools(&self, config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>>;
+    /// Runs one tool. `secrets` carries the resolved store values for the
+    /// credentials; config keeps non-secret settings only. `acting_as` is
+    /// the call's resolved external identity (spec §5) — None acts as the
+    /// connector's default subject.
     fn execute<'a>(
         &'a self,
         config: &'a serde_json::Value,
         tool: &'a str,
         args: serde_json::Value,
+        secrets: &'a [(String, String)],
+        acting_as: Option<&'a str>,
     ) -> BoxFuture<'a, Result<ToolOutcome, String>>;
+}
+
+mod gitlab;
+mod github;
+mod hubspot;
+mod langfuse;
+
+/// The compiled-in integration kinds — keep in sync with
+/// [`integration_by_name`].
+pub fn integration_names() -> &'static [&'static str] {
+    &[
+        "searxng",
+        "superproxy",
+        "google_workspace",
+        "hubspot",
+        "langfuse",
+        "atlassian",
+        "slack",
+        "github",
+        "gitlab",
+        #[cfg(feature = "test-support")]
+        "testplug",
+    ]
 }
 
 /// The registry of available integration kinds (code-level plugins).
@@ -69,44 +103,60 @@ pub fn integration_by_name(name: &str) -> Option<Arc<dyn Integration>> {
     match name {
         "searxng" => Some(Arc::new(searxng::Searxng)),
         "superproxy" => Some(Arc::new(superproxy::Superproxy)),
+        "google_workspace" => Some(google_workspace::instance()),
+        "hubspot" => Some(Arc::new(hubspot::Hubspot)),
+        "langfuse" => Some(Arc::new(langfuse::Langfuse)),
+        "atlassian" => Some(Arc::new(atlassian::Atlassian)),
+        "slack" => Some(Arc::new(slack::Slack)),
+        "github" => Some(Arc::new(github::Github)),
+        "gitlab" => Some(Arc::new(gitlab::Gitlab)),
+        #[cfg(feature = "test-support")]
+        "testplug" => Some(Arc::new(testplug::TestPlug)),
         _ => None,
     }
 }
 
-/// How a server tool executes: a compiled-in Rust plugin or a remote MCP
-/// server implementing the plugin contract (spec §3).
-#[derive(Clone)]
-pub enum ServerExecutor {
-    Rust(Arc<dyn Integration>),
-    Mcp(Box<McpEndpoint>),
+/// Builds an in-code manifest in the registry's v2 shape and validates it
+/// against the same rules a published bundle must pass (legal tool classes,
+/// namespaced-name length) — built-ins reuse the registry validation, they
+/// do not fork it.
+pub fn in_code_manifest(
+    name: &str,
+    version: &str,
+    description: &str,
+    secret_names: &[&str],
+    classes: &[(&str, &str)],
+) -> BundleManifest {
+    let manifest = BundleManifest {
+        kind: "integration".to_string(),
+        slug: name.to_string(),
+        version: version.to_string(),
+        description: description.to_string(),
+        auth: Some(guild_core::registry::AuthManifest {
+            secret_names: secret_names.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }),
+        tools: Some(guild_core::registry::ToolsManifest {
+            classes: classes
+                .iter()
+                .map(|(tool, class)| (tool.to_string(), class.to_string()))
+                .collect(),
+        }),
+        ..Default::default()
+    };
+    guild_core::registry::validate_v2(&manifest)
+        .expect("in-code manifest violates the registry manifest rules");
+    manifest
 }
 
-/// One MCP plugin endpoint: the resolved connection facts (secrets decrypted
-/// at turn start, never persisted in logs or events).
-#[derive(Clone, Debug)]
-pub struct McpEndpoint {
-    pub slug: String,
-    pub url: String,
-    pub secrets: Vec<(String, String)>,
-    pub manifest: BundleManifest,
-}
-
-/// Identity carried on one MCP tool call (spec §5): the envelope headers
-/// are built from these values plus the resolved secrets.
-#[derive(Clone, Debug)]
-pub struct McpCallIdentity {
-    pub org: Uuid,
-    pub caller: Option<Uuid>,
-    pub acting_as: Option<String>,
-    pub call_id: Uuid,
-}
-
-/// Resolves the enabled integrations of one org into concrete server tools.
-#[derive(Clone)]
-pub struct ServerTool {
-    pub spec: ToolSpec,
-    pub executor: ServerExecutor,
-    pub config: serde_json::Value,
+/// How a plugin executes: a compiled-in Rust plugin or a remote MCP server
+/// implementing the plugin contract (spec §3). One turn-start snapshot type
+/// covers both kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginExecutor {
+    Rust,
+    Mcp,
 }
 
 /// Guild-provided tool name for an MCP plugin tool: `int_<slug>_<tool>`.
@@ -264,61 +314,91 @@ pub async fn mcp_call_tool(
     })
 }
 
-/// Executes one resolved server tool. MCP calls go through the pool with the
-/// identity envelope + secret headers; Rust plugins execute directly.
-pub async fn execute_server_tool(
-    tool: &ServerTool,
-    mcp_tool: &str,
-    args: serde_json::Value,
-    pool: &McpPool,
-    identity: &McpCallIdentity,
-) -> Result<ToolOutcome, String> {
-    match &tool.executor {
-        ServerExecutor::Rust(plugin) => {
-            plugin.execute(&tool.config, mcp_tool, args).await
+/// Test-only built-in plugin (compiled with the `test-support` feature):
+/// declares a required secret plus a read and an admin tool, so the
+/// unified-resolution tests can exercise the enable gate, secrets
+/// resolution into execute, class enforcement, and the script API end to
+/// end. Its tools never touch the network.
+#[cfg(feature = "test-support")]
+pub mod testplug {
+    use super::{in_code_manifest, Category, Integration, ToolOutcome};
+    use futures::future::BoxFuture;
+    use guild_core::registry::BundleManifest;
+    use protocol::api::ToolSpec;
+
+    pub struct TestPlug;
+
+    impl Integration for TestPlug {
+        fn name(&self) -> &'static str {
+            "testplug"
         }
-        ServerExecutor::Mcp(endpoint) => {
-            let headers = envelope_headers(
-                &identity.call_id,
-                &identity.org,
-                identity.caller.as_ref(),
-                identity.acting_as.as_deref(),
-                &endpoint.secrets,
-            );
-            let key = PoolKey {
-                slug: endpoint.slug.clone(),
-                url: endpoint.url.clone(),
-                acting_as: identity.acting_as.clone(),
-                secrets_fingerprint: secrets_fingerprint(&endpoint.secrets),
-            };
-            let peer = pool
-                .get_or_connect(&key, &endpoint.url, headers)
-                .await
-                .map_err(|e| format!("integration {} unreachable: {e}", endpoint.slug))?;
-            mcp_call_tool(&peer, mcp_tool, args).await
+
+        fn category(&self) -> Category {
+            Category::Other
+        }
+
+        fn manifest(&self) -> BundleManifest {
+            in_code_manifest(
+                "testplug",
+                "0.1.0",
+                "Test tools for the unified plugin interface",
+                &["api_key"],
+                &[("secret_echo", "read"), ("admin_op", "admin")],
+            )
+        }
+
+        fn tools(&self, _config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
+            Ok(vec![
+                ToolSpec {
+                    name: "secret_echo".into(),
+                    description: "Reports whether the declared secret resolved.".into(),
+                    parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                },
+                ToolSpec {
+                    name: "admin_op".into(),
+                    description: "An operation reserved for admins.".into(),
+                    parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                },
+            ])
+        }
+
+        fn execute<'a>(
+            &'a self,
+            _config: &'a serde_json::Value,
+            tool: &'a str,
+            _args: serde_json::Value,
+            secrets: &'a [(String, String)],
+            _acting_as: Option<&'a str>,
+        ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
+            Box::pin(async move {
+                match tool {
+                    // Reflects secret resolution without ever echoing the value.
+                    "secret_echo" => {
+                        let present = secrets.iter().any(|(name, _)| name == "api_key");
+                        Ok(ToolOutcome {
+                            content: format!("api_key present: {present}"),
+                            meta: None,
+                        })
+                    }
+                    "admin_op" => Ok(ToolOutcome {
+                        content: "admin ok".to_string(),
+                        meta: None,
+                    }),
+                    other => Err(format!("testplug integration has no tool {other}")),
+                }
+            })
         }
     }
 }
 
-pub fn resolve_server_tools(rows: &[IntegrationRow]) -> anyhow::Result<Vec<ServerTool>> {
-    let mut out = Vec::new();
-    for row in rows {
-        let Some(plugin) = integration_by_name(&row.name) else {
-            continue; // unknown kind — ignore rather than fail the turn
-        };
-        for spec in plugin.tools(&row.config)? {
-            out.push(ServerTool {
-                spec,
-                executor: ServerExecutor::Rust(plugin.clone()),
-                config: row.config.clone(),
-            });
-        }
-    }
-    Ok(out)
-}
+pub mod slack;
+pub mod atlassian;
+
+pub mod google_workspace;
 
 pub mod searxng {
-    use super::{Category, Integration, ToolOutcome};
+    use super::{in_code_manifest, Category, Integration, ToolOutcome};
+    use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
     use protocol::api::ToolSpec;
 
@@ -340,6 +420,16 @@ pub mod searxng {
 
         fn category(&self) -> Category {
             Category::Search
+        }
+
+        fn manifest(&self) -> BundleManifest {
+            in_code_manifest(
+                "searxng",
+                "1.0.0",
+                "Web search through a SearxNG instance",
+                &[],
+                &[("web_search", "read")],
+            )
         }
 
         fn tools(&self, config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
@@ -364,6 +454,8 @@ pub mod searxng {
             config: &'a serde_json::Value,
             tool: &'a str,
             args: serde_json::Value,
+            _secrets: &'a [(String, String)],
+            _acting_as: Option<&'a str>,
         ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
             Box::pin(async move {
                 if tool != "web_search" {
@@ -433,14 +525,18 @@ pub mod searxng {
 }
 
 pub mod superproxy {
-    use super::{Category, Integration, ToolOutcome};
+    use super::{in_code_manifest, Category, Integration, ToolOutcome};
+    use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
     use protocol::api::ToolSpec;
 
     const DEFAULT_MAX_CHARS: usize = 8000;
 
     /// Superproxy fetch integration (spec D). Config:
-    /// `{ "base_url": "http://host:15505", "token"?: "…" }`.
+    /// `{ "base_url": "http://host:15505", "token"?: "…" }`. The gateway
+    /// token is a secret: the stored `token` secret wins; the config `token`
+    /// remains as a fallback so existing configs keep working — new
+    /// deployments store the secret instead.
     /// Exposes one tool: `web_fetch` — markdown page fetch through the
     /// superproxy gateway (SSRF-screened, cached).
     pub struct Superproxy;
@@ -479,6 +575,18 @@ pub mod superproxy {
             Category::Fetch
         }
 
+        fn manifest(&self) -> BundleManifest {
+            // No declared secrets: the gateway token is optional (legacy
+            // config fallback), so the enable gate must not require it.
+            in_code_manifest(
+                "superproxy",
+                "1.0.0",
+                "Fetch web pages as markdown through the superproxy gateway",
+                &[],
+                &[("web_fetch", "read")],
+            )
+        }
+
         fn tools(&self, config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
             config_parts(config)?; // validates
             Ok(vec![ToolSpec {
@@ -503,6 +611,8 @@ pub mod superproxy {
             config: &'a serde_json::Value,
             tool: &'a str,
             args: serde_json::Value,
+            secrets: &'a [(String, String)],
+            _acting_as: Option<&'a str>,
         ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
             Box::pin(async move {
                 if tool != "web_fetch" {
@@ -514,7 +624,13 @@ pub mod superproxy {
                     .to_string();
                 let max_chars = args["max_chars"].as_u64().unwrap_or(DEFAULT_MAX_CHARS as u64)
                     as usize;
-                let (base, token) = config_parts(config).map_err(|e| e.to_string())?;
+                let (base, config_token) = config_parts(config).map_err(|e| e.to_string())?;
+                // The stored secret wins; the config token is the legacy fallback.
+                let token = secrets
+                    .iter()
+                    .find(|(name, _)| name == "token")
+                    .map(|(_, value)| value.clone())
+                    .or(config_token);
                 let mut req = reqwest::Client::new()
                     .get(format!("{base}/v1/fetch"))
                     .query(&[("url", target.as_str()), ("format", "markdown")])
@@ -562,28 +678,31 @@ pub mod superproxy {
     }
 }
 
-// ---------- MCP plugin turn state + disclosure (spec §7) ----------
+// ---------- plugin turn state + disclosure (spec §7) ----------
 
-/// One tool of an MCP plugin as journaled at turn start (namespaced spec +
-/// the manifest class). Secret values are never journaled — they are
-/// re-resolved from the store at call time.
+/// One tool of a plugin (built-in or MCP) as journaled at turn start
+/// (namespaced spec + the manifest class). Secret values are never journaled
+/// — they are re-resolved from the store at call time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpToolInfo {
+pub struct PluginToolInfo {
     pub spec: ToolSpec,
     pub class: String,
 }
 
-/// Turn-start resolution snapshot for one MCP plugin (journaled). Carries
-/// everything the turn needs: the tool list, the system-prompt index line,
-/// and the guide pointer — never secret values.
+/// Turn-start resolution snapshot for one enabled plugin — built-in Rust
+/// and MCP plugins resolve through the same journaled shape. Carries
+/// everything the turn needs: the executor kind, the tool list, the
+/// system-prompt index line, and the guide pointer — never secret values.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpPluginTurn {
+pub struct PluginTurn {
+    pub executor: PluginExecutor,
     pub slug: String,
     pub description: String,
-    pub tools: Vec<McpToolInfo>,
+    pub tools: Vec<PluginToolInfo>,
     /// Object-storage key of the first cookbook skill's bundle (guide tool).
     pub guide_object_key: Option<String>,
-    /// The installed row's config (mcp url, auth shape, tool_policy).
+    /// The installed row's config (non-secret settings, tool_policy, and for
+    /// MCP plugins the mcp url / auth shape).
     pub row_config: serde_json::Value,
     /// Declared secret names — values are resolved at call time only.
     pub secret_names: Vec<String>,
@@ -591,13 +710,13 @@ pub struct McpPluginTurn {
     pub identity_key: String,
 }
 
-impl McpPluginTurn {
+impl PluginTurn {
     /// The journaled tools this plugin exposes that `role` may call, with
     /// their classes (spec §6/§7 policy filter).
-    pub fn allowed_infos(&self, role: &str) -> Vec<&McpToolInfo> {
+    pub fn allowed_infos(&self, role: &str) -> Vec<&PluginToolInfo> {
         self.tools
             .iter()
-            .filter(|t| mcp_tool_allowed(t, &self.row_config, role))
+            .filter(|t| tool_allowed(t, &self.row_config, role))
             .collect()
     }
 
@@ -621,7 +740,8 @@ impl McpPluginTurn {
 /// Whether one journaled tool may be called by `role` under the row's
 /// `tool_policy` (spec §6: manifest class is the floor; a stored policy
 /// tightens; admin-class tools are admin-only — owners count as admins).
-pub fn mcp_tool_allowed(info: &McpToolInfo, row_config: &serde_json::Value, role: &str) -> bool {
+/// The same filter guards built-in and MCP plugin tools.
+pub fn tool_allowed(info: &PluginToolInfo, row_config: &serde_json::Value, role: &str) -> bool {
     let class = info.class.as_str();
     if class == "admin" && role != "admin" && role != "owner" {
         return false;
@@ -632,7 +752,7 @@ pub fn mcp_tool_allowed(info: &McpToolInfo, row_config: &serde_json::Value, role
 }
 
 /// The system-prompt index line for one enabled integration (spec §7.1).
-pub fn mcp_index_line(turn: &McpPluginTurn) -> String {
+pub fn index_line(turn: &PluginTurn) -> String {
     format!(
         "Integration {}: {} — call {} to discover its tools.",
         turn.slug,
@@ -650,7 +770,7 @@ pub enum AutoTool {
 }
 
 /// Recognizes an auto-tool call: `int_<slug>_list_tools` / `int_<slug>_guide`.
-pub fn parse_auto_tool(turns: &[McpPluginTurn], name: &str) -> Option<(usize, AutoTool)> {
+pub fn parse_auto_tool(turns: &[PluginTurn], name: &str) -> Option<(usize, AutoTool)> {
     for (i, turn) in turns.iter().enumerate() {
         let [list, guide] = turn.auto_tool_names();
         if name == list {
@@ -663,16 +783,14 @@ pub fn parse_auto_tool(turns: &[McpPluginTurn], name: &str) -> Option<(usize, Au
     None
 }
 
-/// Turn-start resolution for MCP plugins (spec §7/§8): resolves enabled rows
-/// with an `mcp.url`, the registry manifest, the tool list (connect via the
-/// pool), and the guide pointer. Secrets are checked (declared names must be
-/// stored) but only their presence — values ride the pool connection at call
-/// time. A broken plugin degrades: skipped with a warning, the turn
-/// continues without it.
-pub async fn resolve_mcp_plugins(
-    state: &AppState,
-    org: Uuid,
-) -> anyhow::Result<Vec<McpPluginTurn>> {
+/// Turn-start resolution for the enabled plugins of one org (spec §7/§8) —
+/// built-in Rust plugins and MCP plugins resolve through the same snapshot:
+/// the tool list with manifest classes, the index line, and the guide
+/// pointer. Secrets are checked (declared names must be stored) but only
+/// their presence — values are re-resolved from the store at call time. A
+/// broken plugin degrades: skipped with a warning, the turn continues
+/// without it.
+pub async fn resolve_plugins(state: &AppState, org: Uuid) -> anyhow::Result<Vec<PluginTurn>> {
     use guild_core::registry::tool_class;
     let store = state.store().await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
     let rows = store
@@ -683,8 +801,76 @@ pub async fn resolve_mcp_plugins(
     let master_key = state.config.master_key()?;
     let mut out = Vec::new();
     for row in rows {
+        // An installed v2 bundle is the admin's explicit choice — a row
+        // carrying an mcp.url resolves as MCP even when a compiled-in
+        // connector of the same slug exists (see upsert_integration).
+        if row.config["mcp"]["url"].as_str().is_none() {
+            if let Some(plugin) = integration_by_name(&row.name) {
+                // Built-in plugin: tools come from tools(config), classes
+                // from the in-code manifest — the same snapshot shape as
+                // MCP plugins.
+                let manifest = plugin.manifest();
+                let secret_names = manifest
+                    .auth
+                    .as_ref()
+                    .map(|a| a.secret_names.clone())
+                    .unwrap_or_default();
+                // Presence check only — values ride to execute() at call
+                // time.
+                if let Err(e) = store
+                    .integration_secrets()
+                    .resolve(org, &row.name, &secret_names, &master_key)
+                    .await
+                {
+                    tracing::warn!(
+                        "integration {}: secrets unresolved, skipping: {e}",
+                        row.name
+                    );
+                    continue;
+                }
+                let specs = match plugin.tools(&row.config) {
+                    Ok(specs) => specs,
+                    Err(e) => {
+                        tracing::warn!("integration {}: broken config, skipping: {e}", row.name);
+                        continue;
+                    }
+                };
+                let tools = specs
+                    .into_iter()
+                    .map(|spec| {
+                        let class = tool_class(&manifest, &spec.name).to_string();
+                        PluginToolInfo {
+                            spec: ToolSpec {
+                                name: namespaced_tool(&row.name, &spec.name),
+                                ..spec
+                            },
+                            class,
+                        }
+                    })
+                    .collect();
+                out.push(PluginTurn {
+                    executor: PluginExecutor::Rust,
+                    slug: row.name.clone(),
+                    description: manifest.description.clone(),
+                    tools,
+                    guide_object_key: None,
+                    row_config: row.config.clone(),
+                    secret_names,
+                    identity_key: manifest
+                        .auth
+                        .as_ref()
+                        .map(|a| a.identity_key.clone())
+                        .unwrap_or_else(|| "email".into()),
+                });
+                continue;
+            }
+            // Unknown kind with no mcp.url — nothing to resolve.
+            continue;
+        }
+        // MCP plugin: tools come from the plugin server's list_tools, classes
+        // from the registry manifest.
         let Some(url) = row.config["mcp"]["url"].as_str() else {
-            continue; // v1 (compiled-in) row — handled by resolve_server_tools
+            continue; // unknown kind with no mcp url — ignore rather than fail the turn
         };
         let manifest = match registry_manifest(&store, org, &row.name).await {
             Ok(m) => m,
@@ -734,7 +920,7 @@ pub async fn resolve_mcp_plugins(
         let tools = listed
             .tools
             .into_iter()
-            .map(|t| McpToolInfo {
+            .map(|t| PluginToolInfo {
                 spec: ToolSpec {
                     name: namespaced_tool(&row.name, &t.name),
                     description: t.description.map(|d| d.into_owned()).unwrap_or_default(),
@@ -744,7 +930,8 @@ pub async fn resolve_mcp_plugins(
             })
             .collect();
         let guide_object_key = guide_object_key(&store, org, &manifest).await?;
-        out.push(McpPluginTurn {
+        out.push(PluginTurn {
+            executor: PluginExecutor::Mcp,
             slug: row.name.clone(),
             description: manifest.description.clone(),
             tools,
@@ -817,12 +1004,13 @@ async fn guide_object_key(
     Ok(Some(stored.object_key))
 }
 
-/// Executes one call against an MCP plugin's server: re-resolves the
-/// declared secrets (journaled snapshots never carry values), connects via
-/// the pool with the identity envelope, and calls the raw tool name.
-pub async fn call_mcp_plugin(
+/// Executes one call against a resolved plugin: re-resolves the secrets
+/// (journaled snapshots never carry values), then runs the built-in plugin
+/// directly or connects to the MCP server via the pool with the identity
+/// envelope, and calls the raw tool name.
+pub async fn call_plugin(
     state: &AppState,
-    turn: &McpPluginTurn,
+    turn: &PluginTurn,
     raw_tool: &str,
     args: serde_json::Value,
     org: Uuid,
@@ -830,34 +1018,61 @@ pub async fn call_mcp_plugin(
 ) -> Result<ToolOutcome, String> {
     let store = state.store().await.map_err(|e| format!("store error: {e:?}"))?;
     let master_key = state.config.master_key().map_err(|e| e.to_string())?;
-    let secrets = store
-        .integration_secrets()
-        .resolve(org, &turn.slug, &turn.secret_names, &master_key)
-        .await
-        .map_err(|e| format!("secrets unavailable: {e}"))?;
-    let url = turn.row_config["mcp"]["url"]
-        .as_str()
-        .ok_or("mcp url missing")?
-        .to_string();
-    let headers = envelope_headers(
-        &Uuid::now_v7(),
-        &org,
-        None,
-        acting_as,
-        &secrets,
-    );
-    let key = PoolKey {
-        slug: turn.slug.clone(),
-        url: url.clone(),
-        acting_as: acting_as.map(str::to_string),
-        secrets_fingerprint: secrets_fingerprint(&secrets),
-    };
-    let peer = state
-        .mcp_pool
-        .get_or_connect(&key, &url, headers)
-        .await
-        .map_err(|e| format!("integration {} unreachable: {e}", turn.slug))?;
-    mcp_call_tool(&peer, raw_tool, args).await
+    match turn.executor {
+        PluginExecutor::Rust => {
+            let plugin = integration_by_name(&turn.slug)
+                .ok_or_else(|| format!("unknown integration {}", turn.slug))?;
+            // Every stored secret of the slug rides to execute() — the
+            // built-in picks what it needs (superproxy's optional gateway
+            // token included); values never reach logs or events.
+            let names = store
+                .integration_secrets()
+                .list(org, &turn.slug)
+                .await
+                .map_err(|e| format!("secrets unavailable: {e:?}"))?
+                .into_iter()
+                .map(|s| s.name)
+                .collect::<Vec<_>>();
+            let secrets = store
+                .integration_secrets()
+                .resolve(org, &turn.slug, &names, &master_key)
+                .await
+                .map_err(|e| format!("secrets unavailable: {e}"))?;
+            plugin
+                .execute(&turn.row_config, raw_tool, args, &secrets, acting_as)
+                .await
+        }
+        PluginExecutor::Mcp => {
+            let secrets = store
+                .integration_secrets()
+                .resolve(org, &turn.slug, &turn.secret_names, &master_key)
+                .await
+                .map_err(|e| format!("secrets unavailable: {e}"))?;
+            let url = turn.row_config["mcp"]["url"]
+                .as_str()
+                .ok_or("mcp url missing")?
+                .to_string();
+            let headers = envelope_headers(
+                &Uuid::now_v7(),
+                &org,
+                None,
+                acting_as,
+                &secrets,
+            );
+            let key = PoolKey {
+                slug: turn.slug.clone(),
+                url: url.clone(),
+                acting_as: acting_as.map(str::to_string),
+                secrets_fingerprint: secrets_fingerprint(&secrets),
+            };
+            let peer = state
+                .mcp_pool
+                .get_or_connect(&key, &url, headers)
+                .await
+                .map_err(|e| format!("integration {} unreachable: {e}", turn.slug))?;
+            mcp_call_tool(&peer, raw_tool, args).await
+        }
+    }
 }
 
 /// Fetches and unpacks the guide body (SKILL.md, falling back to README) of

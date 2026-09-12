@@ -1,12 +1,11 @@
 //! Script-facing integration tool API (spec §7): the same policy-filtered
-//! MCP plugin tools the chat loop uses, reachable over HTTPS so scripts can
-//! call them with session or org-API-key auth. Every operation is a
-//! controlled, audited server call.
+//! plugin tools the chat loop uses — built-in and MCP plugins alike —
+//! reachable over HTTPS so scripts can call them with session or
+//! org-API-key auth. Every operation is a controlled, audited server call.
 
 use crate::http::error::ApiError;
 use crate::integrations::{
-    call_mcp_plugin, mcp_tool_allowed, resolve_acting_as, resolve_mcp_plugins,
-    unnamespaced_tool,
+    call_plugin, resolve_acting_as, resolve_plugins, tool_allowed, unnamespaced_tool,
 };
 use crate::state::AppState;
 use axum::extract::{FromRequestParts, Path, State};
@@ -84,14 +83,14 @@ impl FromRequestParts<AppState> for IntegrationCaller {
     }
 }
 
-/// The resolved MCP plugins of the caller's org — a broken plugin contributes
+/// The resolved plugins of the caller's org — a broken plugin contributes
 /// nothing (spec §8).
-async fn turns(state: &AppState, org: Uuid) -> Vec<crate::integrations::McpPluginTurn> {
-    resolve_mcp_plugins(state, org).await.unwrap_or_default()
+async fn turns(state: &AppState, org: Uuid) -> Vec<crate::integrations::PluginTurn> {
+    resolve_plugins(state, org).await.unwrap_or_default()
 }
 
-/// `GET /api/v1/integrations` — enabled MCP plugins for the caller's org,
-/// policy-filtered to a count only.
+/// `GET /api/v1/integrations` — enabled plugins (built-in and MCP) for the
+/// caller's org, policy-filtered to a count only.
 async fn list_integrations(
     State(state): State<AppState>,
     caller: IntegrationCaller,
@@ -161,7 +160,7 @@ async fn execute_tool(
                 || unnamespaced_tool(&turn.slug, &tool) == Some(info.spec.name.as_str())
         })
         .ok_or_else(|| ApiError::not_found("no such tool"))?;
-    if !mcp_tool_allowed(info, &turn.row_config, &caller.role) {
+    if !tool_allowed(info, &turn.row_config, &caller.role) {
         return Err(ApiError::forbidden());
     }
     // Identity (spec §5): acting as the caller's own mapped identity; an
@@ -184,7 +183,7 @@ async fn execute_tool(
     if !args.is_object() {
         return Err(ApiError::bad_request("body must be a JSON object"));
     }
-    let outcome = call_mcp_plugin(&state, turn, raw, args, caller.org, acting_as.as_deref())
+    let outcome = call_plugin(&state, turn, raw, args, caller.org, acting_as.as_deref())
         .await;
     // Journaled audit (spec §8): the identity record for the script call.
     let store = state.store().await?;
