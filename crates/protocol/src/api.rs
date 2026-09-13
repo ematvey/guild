@@ -246,27 +246,6 @@ pub struct ChatCompletionRequest {
     pub attachment_ids: Vec<Uuid>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields))]
-pub struct MessageRow {
-    pub id: Uuid,
-    pub chat_id: Uuid,
-    pub role: String,
-    pub content: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tokens_in: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tokens_out: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cost_usd: Option<f64>,
-    pub created_at: DateTime<Utc>,
-}
-
 /// Frames streamed from the gateway on `POST /api/v1/gateway/chat`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]

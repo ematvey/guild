@@ -34,8 +34,6 @@ export function apiUrl(path: string): string {
 export const TOKEN_KEY = "guild_token";
 const CLIENT_ID_KEY = "guild_client_id";
 const MACHINE_ID_KEY = "guild_machine_id";
-let machineNameCache: string | null = null;
-
 /** Stable machine identity (per app install): the executor key machine
  * tools are bound to. */
 export function machineId(): string {
@@ -114,21 +112,6 @@ export async function rpcCall(
 }
 
 /** Human label of this machine (hostname via the engine). */
-export async function machineName(): Promise<string> {
-  if (machineNameCache) return machineNameCache;
-  try {
-    if (IS_TAURI) {
-      const res = await rpcCall("machine.info", {});
-      machineNameCache = res?.result?.name || machineId().slice(0, 8);
-    } else {
-      machineNameCache = machineId().slice(0, 8);
-    }
-  } catch {
-    machineNameCache = machineId().slice(0, 8);
-  }
-  return machineNameCache ?? machineId().slice(0, 8);
-}
-
 /** Stable per-app-instance identity — the presence key for client-tool
  * termination detection (server resolves suspended client tools when the
  * app holding this id disconnects). */
@@ -153,34 +136,16 @@ export function startEventStream(): () => void {
   if (IS_TAURI) return () => {};
   let stopped = false;
   let controller: AbortController | null = null;
-  let heartbeat: ReturnType<typeof setInterval> | null = null;
   const run = async () => {
     while (!stopped) {
       controller = new AbortController();
       try {
         let url = apiUrl(`/api/v1/events/stream?client_id=${encodeURIComponent(clientId())}`);
-        if (IS_TAURI) {
-          url += `&machine_id=${encodeURIComponent(machineId())}&machine_name=${encodeURIComponent(await machineName())}`;
-        }
         const res = await fetch(url, {
           headers: { authorization: `Bearer ${getToken()}` },
           signal: controller.signal,
         });
         if (!res.ok || !res.body) throw new Error(`event stream: ${res.status}`);
-        if (IS_TAURI && !heartbeat) {
-          // Executor liveness: the server cannot detect a dead client from
-          // an idle SSE stream, so the executor pings explicitly.
-          heartbeat = setInterval(() => {
-            void fetch(apiUrl("/api/v1/machines/heartbeat"), {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                authorization: `Bearer ${getToken()}`,
-              },
-              body: JSON.stringify({ machine_id: machineId() }),
-            }).catch(() => {});
-          }, 5000);
-        }
         // drain; events are not consumed yet
         const reader = res.body.getReader();
         for (;;) {
@@ -198,7 +163,6 @@ export function startEventStream(): () => void {
   return () => {
     stopped = true;
     controller?.abort();
-    if (heartbeat) clearInterval(heartbeat);
   };
 } // shared with the settings window client code
 
@@ -340,20 +304,6 @@ export async function listChats(): Promise<ChatSummary[]> {
   if (!res.ok) return [];
   const v = await res.json().catch(() => ({}));
   return v.chats ?? [];
-}
-
-export async function getMessages(
-  chatId: string,
-  signal?: AbortSignal,
-): Promise<ChatMessage[]> {
-  const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/messages`), {
-    headers: { authorization: `Bearer ${token}` },
-    signal,
-  });
-  if (!res.ok) return [];
-  const v = await res.json().catch(() => ({}));
-  return v.messages ?? [];
 }
 
 // ---- Thread events (shapes mirror crates/protocol/bindings/ThreadEvent.ts;
@@ -705,30 +655,6 @@ export async function createPairingToken(ttlMinutes = 30): Promise<PairingToken>
 
 export function pairingCode(serverUrl: string, secret: string): string {
   return `g1|${serverUrl.replace(/\/$/, "")}|${secret}`;
-}
-
-/// Delivers the result of a client-side tool call to the waiting chat
-/// workflow. Late results (after the server timed the call out) are ignored.
-/// `meta` is the tool's widget payload (spec C.2); the server persists it
-/// verbatim on the tool_result event.
-export async function postToolResult(
-  chatId: string,
-  callId: string,
-  content: string,
-  isError: boolean,
-  meta?: unknown,
-): Promise<void> {
-  const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${chatId}/tools/${callId}/result`), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify(
-      meta === undefined
-        ? { content, is_error: isError }
-        : { content, is_error: isError, meta },
-    ),
-  });
-  if (!res.ok) throw new Error(`tool result rejected (${res.status})`);
 }
 
 // ---- Approvals (design spec 2026-09-12 sections D + F) ----
