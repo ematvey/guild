@@ -112,19 +112,12 @@ fn verify_state(state: &AppState, token: &str) -> Result<OidcState, ApiError> {
     Ok(data.claims)
 }
 
-/// The browser-facing base URL (scheme + host) of this request: the IdP
-/// redirect_uri and the post-login app redirect both come from it, so they
-/// match whatever origin the user actually reached the server on.
-fn request_origin(headers: &axum::http::HeaderMap) -> String {
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("http");
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("localhost");
-    format!("{scheme}://{host}")
+/// The IdP `redirect_uri` and the post-login app redirect both come from the
+/// configured API base URL — raw `Host`/`X-Forwarded-Proto` headers are
+/// attacker-controlled on the direct-HTTP deployment and must not shape
+/// security-relevant URLs.
+fn server_origin(state: &AppState) -> String {
+    state.config.api_url.trim_end_matches('/').to_string()
 }
 
 #[derive(Deserialize, Debug)]
@@ -153,7 +146,6 @@ async fn fetch_discovery(issuer: &str) -> Result<Discovery, ApiError> {
 /// Starts the OIDC login: 302 to the IdP's authorization endpoint.
 async fn login(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
     let org: Uuid = q
@@ -165,7 +157,7 @@ async fn login(
         return Err(ApiError::not_found("no oidc config for org"));
     };
     let discovery = fetch_discovery(&row.issuer).await?;
-    let app_origin = request_origin(&headers);
+    let app_origin = server_origin(&state);
     let redirect_uri = format!("{app_origin}/api/v1/auth/oidc/callback");
     let auth_url = reqwest::Url::parse_with_params(
         &discovery.authorization_endpoint,
