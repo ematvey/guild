@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-// AgentView (local engine agent sessions) is not part of the shell —
-// machine tools run through the unified WebChat surface instead.
 import WebChat from "./views/WebChat";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
@@ -305,8 +303,7 @@ function DesktopApp() {
     // Unified shell: the desktop webview runs the same chat UI as the
     // browser, talking HTTP to the same server; only machine-tool execution
     // (and the executor registration that makes it possible) is desktop-
-    // specific. AgentView (local engine sessions) stays available for
-    // engine-side debugging but is no longer the primary surface.
+    // specific.
     return (
       <>
         <WebChat

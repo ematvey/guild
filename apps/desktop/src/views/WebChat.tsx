@@ -1284,7 +1284,6 @@ export default function WebChat({
   const sendAbort = useRef<AbortController | null>(null); // in-flight send stream
   const loadSeq = useRef(0); // guards against stale thread loads landing last
   const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
-  const maxSeqSeen = useRef(0); // highest thread-event seq rendered for the open chat
 
   // App-lifetime presence connection: the server uses it to detect that
   // this app instance is gone and resolve suspended client tools without
@@ -1365,7 +1364,6 @@ export default function WebChat({
   /// Also carries the server-reported context usage to the gauge; a server
   /// without it (pre-G1) leaves the gauge hidden.
   const applyThreadRows = (res: ThreadResult) => {
-    for (const r of res.events) if (r.seq > maxSeqSeen.current) maxSeqSeen.current = r.seq;
     setCtx(res.context ?? null);
     setBlocks(eventsToBlocks(res.events));
   };
@@ -1403,8 +1401,7 @@ export default function WebChat({
       sendAbort.current = null;
       attachAbort.current?.abort();
       attachAbort.current = null;
-      maxSeqSeen.current = 0;
-      setBlocks([]);
+        setBlocks([]);
       setCtx(null);
       setThreadLoading(false);
       return;

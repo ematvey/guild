@@ -323,8 +323,6 @@ impl Store {
         routines::RoutineStore { pool: &self.pool }
     }
 
-    /// Access for stores added in later tasks; unused until then.
-    #[allow(dead_code)]
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }

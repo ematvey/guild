@@ -50,16 +50,6 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   return text ? JSON.parse(text) : (undefined as T);
 }
 
-export async function apiBytes(path: string): Promise<ArrayBuffer> {
-  const token = getToken();
-  const res = await fetch(apiUrl(path), { headers: token ? { authorization: `Bearer ${token}` } : {} });
-  if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new ApiError(v?.error?.code ?? "unknown", v?.error?.message ?? res.statusText);
-  }
-  return res.arrayBuffer();
-}
-
 export interface UserInfo {
   id: string;
   email: string;
@@ -79,7 +69,7 @@ export async function login(email: string, password: string): Promise<UserInfo> 
   return r.user;
 }
 
-/** Streams a chat completion; onEvent gets each SSE frame's parsed JSON. */
+
 export async function streamChat(
   chatId: string,
   model: string,
