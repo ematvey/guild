@@ -453,18 +453,19 @@ function AppearanceSection() {
   const options: { id: string; label: string; hint: string }[] = [
     { id: "light", label: "Light", hint: "Warm beige sidebar, white canvas" },
     { id: "dark", label: "Dark", hint: "Near-black canvas, warm sidebar" },
+    { id: "system", label: "System", hint: "Follow the OS setting" },
   ];
   return (
     <div className="space-y-5">
       <PageHeader
         title="Appearance"
-        description="Light or dark canvas; applies to this device."
+        description="Light, dark, or follow the OS; applies to this device."
       />
       <div className="max-w-xl space-y-3">
         {options.map((o) => (
           <button
             key={o.id}
-            onClick={() => setTheme(o.id as "light" | "dark")}
+            onClick={() => setTheme(o.id as "light" | "dark" | "system")}
             className={`flex w-full items-center justify-between rounded-lg border p-4 text-left transition-colors ${
               theme === o.id ? "border-foreground/40 bg-accent" : "border-border bg-card hover:bg-accent/50"
             }`}
