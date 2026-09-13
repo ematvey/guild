@@ -41,10 +41,17 @@ impl Store {
     }
 
     /// Applies embedded migrations in filename order, tracked in
-    /// `schema_history` (idempotent).
+    /// `schema_history` (idempotent). Concurrent migrators (api and worker
+    /// processes share the database) serialize on a transaction-scoped
+    /// advisory lock; a stored content hash rejects edited migration files.
     async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS schema_history (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "ALTER TABLE schema_history ADD COLUMN IF NOT EXISTS content_hash TEXT",
         )
         .execute(pool)
         .await?;
@@ -180,13 +187,39 @@ impl Store {
             ),
         ];
         for (name, sql) in MIGRATIONS {
-            let applied: Option<i64> =
-                sqlx::query_scalar("SELECT 1::int8 FROM schema_history WHERE name = $1")
+            let hash = {
+                use sha2::{Digest, Sha256};
+                hex::encode(Sha256::digest(sql.as_bytes()))
+            };
+            let mut tx = pool.begin().await?;
+            // Serialize migrators and re-check inside the lock, so two
+            // processes never apply the same migration twice.
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtext('guild:migrations'))")
+                .execute(&mut *tx)
+                .await?;
+            let applied: Option<Option<String>> =
+                sqlx::query_scalar("SELECT content_hash FROM schema_history WHERE name = $1")
                     .bind(name)
-                    .fetch_optional(pool)
+                    .fetch_optional(&mut *tx)
                     .await?;
-            if applied.is_some() {
-                continue;
+            match applied {
+                // Applied and hashed: same content → done, changed content
+                // → refuse (an edited migration would corrupt the schema).
+                Some(Some(h)) => {
+                    if h != hash {
+                        anyhow::bail!(
+                            "migration {name} changed since it was applied (hash mismatch)"
+                        );
+                    }
+                    tx.rollback().await?;
+                    continue;
+                }
+                // Applied before hashes were recorded — leave as is.
+                Some(None) => {
+                    tx.rollback().await?;
+                    continue;
+                }
+                None => {}
             }
             // Split on ';'. Comment lines are stripped first — a ';' inside a
             // `--` comment would otherwise break the statement split.
@@ -203,8 +236,9 @@ impl Store {
                 }
                 sqlx::query(stmt).execute(&mut *tx).await?;
             }
-            sqlx::query("INSERT INTO schema_history (name) VALUES ($1)")
+            sqlx::query("INSERT INTO schema_history (name, content_hash) VALUES ($1, $2)")
                 .bind(name)
+                .bind(&hash)
                 .execute(&mut *tx)
                 .await?;
             tx.commit().await?;
