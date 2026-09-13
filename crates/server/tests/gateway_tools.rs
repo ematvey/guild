@@ -166,3 +166,69 @@ async fn messages_endpoints_are_gone() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+// Ignored like the test above: needs an embedded Restate runtime.
+// Regression coverage for the overflow-retry path: the provider rejects the
+// first model call with a context-overflow error, compaction runs, and the
+// retried call succeeds — the compacted history must carry into the rest of
+// the turn instead of the stale pre-compaction messages.
+#[ignore = "gateway chat needs an embedded Restate runtime in tests; placeholder restate_url"]
+#[tokio::test]
+async fn overflow_retry_completes_turn_with_compacted_history() {
+    let fake = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    // First request → overflow error frame; second → text completion.
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(|req: &wiremock::Request| {
+            static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+            let _ = req;
+            if FIRST.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                wiremock::ResponseTemplate::new(400).set_body_string(
+                    "prompt is too long: 900000 tokens > 8192 maximum context length",
+                )
+            } else {
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+                    )
+            }
+        })
+        .mount(&fake)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(fs.org_id, "openai", &fake.uri(), "sk-test", &master)
+        .await
+        .unwrap();
+
+    let app = guild_server::build_router(fs.state.clone());
+    let res = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/v1/gateway/chat")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "chat_id": fs.chat_id,
+                        "model": fs.model,
+                        "messages": [{"role": "user", "content": "hi"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("delta"), "{text}");
+    assert!(!text.contains("error"), "{text}");
+}

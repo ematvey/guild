@@ -457,7 +457,9 @@ struct ApprovalResolution {
 
 /// Pure dedupe core of `complete_approval`: a present state key (the
 /// awakeable id) yields resolve+clear; an absent key (first answer already
-/// won, timed out, or nobody waiting) is a no-op.
+/// won, timed out, or nobody waiting) is a no-op. The handler performs the
+/// clear itself — virtual-object serialization makes read+clear atomic
+/// against other decision deliveries.
 fn approval_on_decision(pending: Option<String>, req: ApprovalReq) -> Option<(String, ApprovalResolution)> {
     pending.map(|awakeable_id| {
         (
@@ -1110,6 +1112,7 @@ pub(crate) async fn compact_core(
                     api_key: &route.api_key,
                     base_url: &route.base_url,
                     tools: None,
+                    max_tokens: 0,
                 };
                 let stream = provider.chat_stream(preq).await.map_err(|e| {
                     HandlerError::from(TerminalError::new(format!("provider error: {e}")))
@@ -1446,6 +1449,7 @@ impl ChatRunner {
             // context-overflow provider error: compact once,
             // re-derive messages from the event log, retry the call once.
             let mut msgs = messages.clone();
+            let mut retry_compacted = false;
             let completion: CompletionOut = loop {
                 let st = state.clone();
                 let org2 = req.org_id;
@@ -1496,6 +1500,7 @@ impl ChatRunner {
                             api_key: &route.api_key,
                             base_url: &route.base_url,
                             tools: Some(&specs),
+                            max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
                         };
                         let stream = provider.chat_stream(preq).await.map_err(|e| {
                             let _ = tx.send(StreamEvent::Error {
@@ -1614,6 +1619,7 @@ impl ChatRunner {
                             let refreshed =
                                 journaled_load_events!(ctx, state, req.org_id, req.chat_id);
                             msgs = build_model_history(&refreshed, &media_map, &route.modalities);
+                            retry_compacted = true;
                             continue;
                         }
                     };
@@ -1621,6 +1627,13 @@ impl ChatRunner {
             };
             if completion.tokens_in > 0 {
                 last_context_tokens = completion.tokens_in;
+            }
+            // The overflow retry compacted and re-derived history: propagate
+            // it to the step-level `messages`, or the next step (and the
+            // persisted turn) would run on the pre-compaction history and
+            // overflow again with the retry already spent.
+            if retry_compacted {
+                messages = msgs;
             }
 
             let is_final = completion.tool_calls.is_empty();
@@ -1914,10 +1927,13 @@ impl ChatRunner {
     }
 
     /// Delivers an approval decision to the waiting generate loop (phase 2
-    /// gate). Shared handler mirroring `complete_tool`: first answer wins;
-    /// late answers (after the key was cleared) and replays no-op. The key
-    /// itself is cleared by the waiting turn (shared handlers have no write
-    /// state access in the SDK).
+    /// gate). Shared handlers have no write-state access in the SDK, so the
+    /// actual claim (atomic read+clear) happens in the write handler
+    /// `claim_approval`, invoked on this object itself: invocations on one
+    /// object key run serially, so the claim is the whole critical section —
+    /// a concurrent user or timer decision arriving afterwards sees no key
+    /// and no-ops. First answer wins deterministically; late answers and
+    /// replays no-op.
     #[handler]
     async fn complete_approval(
         &self,
@@ -1928,9 +1944,32 @@ impl ChatRunner {
         let key = approval_state_key(&req.call_id);
         let pending: Option<String> =
             ctx.get(key.as_str()).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        if pending.is_none() {
+            return Ok(()); // first answer already won, or nobody waiting
+        }
+        ctx.object_client::<ChatRunnerClient>(ctx.key())
+            .claim_approval(Json(req))
+            .send();
+        Ok(())
+    }
+
+    /// Write-side claim of an approval decision: serialized against every
+    /// other invocation on this chat object, so read+clear here is the
+    /// whole critical section for the user-vs-timer decision race.
+    #[handler]
+    async fn claim_approval(
+        &self,
+        ctx: ObjectContext<'_>,
+        req: Json<ApprovalReq>,
+    ) -> HandlerResult<()> {
+        let req = req.into_inner();
+        let key = approval_state_key(&req.call_id);
+        let pending: Option<String> =
+            ctx.get(key.as_str()).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         let Some((awakeable_id, resolution)) = approval_on_decision(pending, req) else {
             return Ok(()); // first answer already won, or nobody waiting
         };
+        ctx.clear(&key);
         ctx.resolve_awakeable(&awakeable_id, Json(resolution));
         Ok(())
     }
@@ -2154,9 +2193,10 @@ async fn client_tool_step(
             .await?;
 
             // Journaled awakeable + durable timeout: the first decision (a
-            // user, or the auto-deny timer) resolves the promise; the loser
-            // no-ops on the cleared state key. Resolution replays from the
-            // journal like the client-tool result.
+            // user, or the auto-deny timer) claims the state key atomically
+            // in complete_approval and resolves the promise; the loser sees
+            // no key and no-ops. Resolution replays from the journal like
+            // the client-tool result.
             let (awakeable_id, promise) = ctx.awakeable::<Json<ApprovalResolution>>();
             ctx.set(&approval_state_key(&call.id), awakeable_id.clone());
             ctx.object_client::<ChatRunnerClient>(&chat_id.to_string())
@@ -2627,6 +2667,22 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
     // In-flight turns dispatched by an older workflow version cannot replay
     // after this deploy and would jam their chats — purge them first.
     purge_stale_chat_generations(&state).await;
+    // Hourly prune of expired sessions and dead pairing tokens (startup +
+    // interval; unpruned they accumulate forever).
+    let prune_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Ok(store) = prune_state.store().await {
+                let sessions = store.identity().prune_expired_sessions().await.unwrap_or(0);
+                let tokens = store.pairing().prune_dead_tokens().await.unwrap_or(0);
+                if sessions + tokens > 0 {
+                    tracing::info!("pruned {sessions} expired sessions, {tokens} dead pairing tokens");
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        }
+    });
+
     // Listen first: Restate probes the advertised URI during registration.
     let server = tokio::spawn(async move {
         // One journaled completion can legitimately run for minutes without

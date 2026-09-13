@@ -34,8 +34,6 @@ export function apiUrl(path: string): string {
 export const TOKEN_KEY = "guild_token";
 const CLIENT_ID_KEY = "guild_client_id";
 const MACHINE_ID_KEY = "guild_machine_id";
-let machineNameCache: string | null = null;
-
 /** Stable machine identity (per app install): the executor key machine
  * tools are bound to. */
 export function machineId(): string {
@@ -114,21 +112,6 @@ export async function rpcCall(
 }
 
 /** Human label of this machine (hostname via the engine). */
-export async function machineName(): Promise<string> {
-  if (machineNameCache) return machineNameCache;
-  try {
-    if (IS_TAURI) {
-      const res = await rpcCall("machine.info", {});
-      machineNameCache = res?.result?.name || machineId().slice(0, 8);
-    } else {
-      machineNameCache = machineId().slice(0, 8);
-    }
-  } catch {
-    machineNameCache = machineId().slice(0, 8);
-  }
-  return machineNameCache ?? machineId().slice(0, 8);
-}
-
 /** Stable per-app-instance identity — the presence key for client-tool
  * termination detection (server resolves suspended client tools when the
  * app holding this id disconnects). */
@@ -153,34 +136,16 @@ export function startEventStream(): () => void {
   if (IS_TAURI) return () => {};
   let stopped = false;
   let controller: AbortController | null = null;
-  let heartbeat: ReturnType<typeof setInterval> | null = null;
   const run = async () => {
     while (!stopped) {
       controller = new AbortController();
       try {
         let url = apiUrl(`/api/v1/events/stream?client_id=${encodeURIComponent(clientId())}`);
-        if (IS_TAURI) {
-          url += `&machine_id=${encodeURIComponent(machineId())}&machine_name=${encodeURIComponent(await machineName())}`;
-        }
         const res = await fetch(url, {
           headers: { authorization: `Bearer ${getToken()}` },
           signal: controller.signal,
         });
         if (!res.ok || !res.body) throw new Error(`event stream: ${res.status}`);
-        if (IS_TAURI && !heartbeat) {
-          // Executor liveness: the server cannot detect a dead client from
-          // an idle SSE stream, so the executor pings explicitly.
-          heartbeat = setInterval(() => {
-            void fetch(apiUrl("/api/v1/machines/heartbeat"), {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                authorization: `Bearer ${getToken()}`,
-              },
-              body: JSON.stringify({ machine_id: machineId() }),
-            }).catch(() => {});
-          }, 5000);
-        }
         // drain; events are not consumed yet
         const reader = res.body.getReader();
         for (;;) {
@@ -198,7 +163,6 @@ export function startEventStream(): () => void {
   return () => {
     stopped = true;
     controller?.abort();
-    if (heartbeat) clearInterval(heartbeat);
   };
 } // shared with the settings window client code
 
@@ -276,12 +240,13 @@ export async function apiMe(): Promise<{
   };
 }
 
-export async function listModels(): Promise<string[]> {
+export async function listModels(): Promise<string[] | null> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/gateway/models"), {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  // null = request failed (distinguishable from a legitimately empty list)
+  if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
   return v.models ?? [];
 }
@@ -300,11 +265,12 @@ export interface MachineInfo {
 }
 
 /** Connected machine executors for this account. */
-export async function listMachines(): Promise<MachineInfo[]> {
+export async function listMachines(): Promise<MachineInfo[] | null> {
   const res = await fetch(apiUrl("/api/v1/machines"), {
     headers: { authorization: `Bearer ${getToken()}` },
   });
-  if (!res.ok) return [];
+  // null = request failed (distinguishable from a legitimately empty list)
+  if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
   return v?.machines ?? [];
 }
@@ -332,28 +298,15 @@ export interface ChatMessage {
   tool_call_id?: string;
 }
 
-export async function listChats(): Promise<ChatSummary[]> {
+export async function listChats(): Promise<ChatSummary[] | null> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/chats"), {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  // null = request failed (distinguishable from a legitimately empty list)
+  if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
   return v.chats ?? [];
-}
-
-export async function getMessages(
-  chatId: string,
-  signal?: AbortSignal,
-): Promise<ChatMessage[]> {
-  const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/messages`), {
-    headers: { authorization: `Bearer ${token}` },
-    signal,
-  });
-  if (!res.ok) return [];
-  const v = await res.json().catch(() => ({}));
-  return v.messages ?? [];
 }
 
 // ---- Thread events (shapes mirror crates/protocol/bindings/ThreadEvent.ts;
@@ -529,7 +482,7 @@ export async function uploadAttachment(
   file: File,
 ): Promise<MessageAttachmentMeta> {
   const res = await fetch(
-    `/api/v1/chats/${chatId}/attachments?filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`,
+    apiUrl(`/api/v1/chats/${chatId}/attachments?filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`),
     {
       method: "POST",
       headers: { authorization: `Bearer ${getToken()}` },
@@ -707,51 +660,6 @@ export function pairingCode(serverUrl: string, secret: string): string {
   return `g1|${serverUrl.replace(/\/$/, "")}|${secret}`;
 }
 
-/// Delivers the result of a client-side tool call to the waiting chat
-/// workflow. Late results (after the server timed the call out) are ignored.
-/// `meta` is the tool's widget payload (spec C.2); the server persists it
-/// verbatim on the tool_result event.
-export async function postToolResult(
-  chatId: string,
-  callId: string,
-  content: string,
-  isError: boolean,
-  meta?: unknown,
-): Promise<void> {
-  const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${chatId}/tools/${callId}/result`), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify(
-      meta === undefined
-        ? { content, is_error: isError }
-        : { content, is_error: isError, meta },
-    ),
-  });
-  if (!res.ok) throw new Error(`tool result rejected (${res.status})`);
-}
-
-// ---- Usage (spec §4.5; charts) ----
-
-export interface UsagePoint {
-  bucket: string; // RFC 3339
-  cost_usd: number;
-}
-
-/// Per-chat spend over time (chat-path usage events use session_id = chat
-/// id). Empty points when the chat has no recorded spend.
-export async function getChatUsage(chatId: string): Promise<{ points: UsagePoint[]; total: number }> {
-  const token = getToken();
-  const res = await fetch(
-    `/api/v1/usage/series?group_by=none&bucket=day&chat_id=${encodeURIComponent(chatId)}`,
-    { headers: { authorization: `Bearer ${token}` } },
-  );
-  if (!res.ok) throw new Error(`usage series failed (${res.status})`);
-  const v = await res.json().catch(() => ({}));
-  const rows = (v?.rows ?? []) as UsagePoint[];
-  return { points: rows, total: rows.reduce((s, r) => s + r.cost_usd, 0) };
-}
-
 // ---- Approvals (design spec 2026-09-12 sections D + F) ----
 
 export type ApprovalPolicy = {
@@ -845,12 +753,13 @@ export interface Release {
   created_at: string;
 }
 
-export async function listReleases(): Promise<Release[]> {
+export async function listReleases(): Promise<Release[] | null> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/releases"), {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  // null = request failed (distinguishable from a legitimately empty list)
+  if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
   return v.releases ?? [];
 }

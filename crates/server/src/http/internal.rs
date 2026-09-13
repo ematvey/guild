@@ -121,9 +121,13 @@ async fn create(
     if routine.enabled && routine.trigger_kind == "interval" {
         forward_tick(&state, &routine).await?;
     }
-    Ok(Json(
-        serde_json::to_value(&routine).expect("routine serializes"),
-    ))
+    let mut value = serde_json::to_value(&routine).expect("routine serializes");
+    // The plaintext webhook token is shown once, at creation; only its hash
+    // is stored.
+    if routine.trigger_kind == "webhook" {
+        value["webhook_token"] = json!(webhook_token);
+    }
+    Ok(Json(value))
 }
 
 pub fn new_hook_token() -> String {
@@ -387,6 +391,7 @@ async fn internal_completion(
         api_key: &route.api_key,
         base_url: &route.base_url,
         tools: req.tools.as_deref(),
+        max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
     };
     let prov_stream = provider
         .chat_stream(preq)

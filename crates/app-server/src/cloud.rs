@@ -135,9 +135,7 @@ impl CloudClient {
             "{}/api/v1/gateway/models",
             self.base_url.trim_end_matches('/')
         );
-        let resp = self
-            .http()
-            .get(&url)
+        let resp = Self::timed(self.http().get(&url))
             .bearer_auth(&self.token)
             .send()
             .await?;
@@ -158,9 +156,7 @@ impl CloudClient {
 
     pub async fn create_chat(&self, title: Option<&str>) -> Result<Uuid, CloudError> {
         let url = format!("{}/api/v1/chats", self.base_url.trim_end_matches('/'));
-        let resp = self
-            .http()
-            .post(&url)
+        let resp = Self::timed(self.http().post(&url))
             .bearer_auth(&self.token)
             .json(&CreateChatRequest {
                 title: title.map(Into::into),
@@ -190,8 +186,9 @@ impl CloudClient {
             messages: messages.to_vec(),
             tools: None,
             system: None,
-            // the desktop engine executes machine tools client-side
-            client_tools: true,
+            // plain chat answers no client tools: declaring them would
+            // suspend the turn until the server-side tool timeout
+            client_tools: false,
                 attachment_ids: Vec::new(),
             project_dir: None,
         })
@@ -222,7 +219,23 @@ impl CloudClient {
                 match ev {
                     Ok(ev) => match serde_json::from_str::<StreamEvent>(&ev.data) {
                         Ok(parsed) => Some(Ok(parsed)),
-                        Err(e) => Some(Err(CloudError::Request(format!("bad stream frame: {e}")))),
+                        // Unknown frame shapes (new server StreamEvent
+                        // variants) are skipped, not fatal: a running client
+                        // must survive a server adding frames. The `type`
+                        // tag makes any *existing* variant's payload still
+                        // parse-or-fail the same way.
+                        Err(e) => {
+                            if serde_json::from_str::<serde_json::Value>(&ev.data)
+                                .map(|v| v.get("type").is_some())
+                                .unwrap_or(false)
+                            {
+                                None
+                            } else {
+                                Some(Err(CloudError::Request(format!(
+                                    "bad stream frame: {e}"
+                                ))))
+                            }
+                        }
                     },
                     Err(e) => Some(Err(CloudError::Request(format!("stream error: {e}")))),
                 }
@@ -255,9 +268,7 @@ impl CloudClient {
             "{}/api/v1/chats/{chat_id}/thread",
             self.base_url.trim_end_matches('/')
         );
-        let resp = self
-            .http()
-            .post(&url)
+        let resp = Self::timed(self.http().post(&url))
             .bearer_auth(&self.token)
             .json(&event)
             .send()
@@ -271,11 +282,19 @@ impl CloudClient {
         self.http()
     }
 
+    /// Shared client: connect-level timeout only. No total timeout — the
+    /// SSE stream endpoints rely on the connect bound plus server keepalive;
+    /// a client-level cap killed long turns at 10 minutes.
     fn http(&self) -> reqwest::Client {
         reqwest::Client::builder()
-            .timeout(Duration::from_secs(600))
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("reqwest client builds")
+    }
+
+    /// Request-level cap for plain JSON calls (login, me, thread appends).
+    fn timed(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        rb.timeout(Duration::from_secs(30))
     }
 
     /// Public for the registry client.

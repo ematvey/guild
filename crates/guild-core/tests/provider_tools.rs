@@ -63,6 +63,7 @@ async fn openai_tool_call_fragments_assemble() {
         api_key: "k",
         base_url: &server.uri(),
         tools: Some(&[]),
+        max_tokens: 0,
     };
     let stream = p.chat_stream(req).await.unwrap();
     let chunks: Vec<ProviderChunk> = stream.map(|r| r.unwrap()).collect().await;
@@ -113,6 +114,7 @@ async fn anthropic_tool_call_blocks_assemble() {
             description: "d".into(),
             parameters: serde_json::json!({"type": "object"}),
         }]),
+        max_tokens: 0,
     };
     let stream = p.chat_stream(req).await.unwrap();
     let chunks: Vec<ProviderChunk> = stream.map(|r| r.unwrap()).collect().await;

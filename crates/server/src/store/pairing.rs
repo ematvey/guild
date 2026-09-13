@@ -119,4 +119,15 @@ impl<'a> PairingStore<'a> {
         }
         Ok(())
     }
+
+    /// Deletes redeemed and expired pairing tokens (enrollment rows are only
+    /// needed until redeemed or expired). Returns the number removed.
+    pub async fn prune_dead_tokens(&self) -> anyhow::Result<u64> {
+        let res = sqlx::query(
+            "DELETE FROM pairing_tokens WHERE used_at IS NOT NULL OR expires_at <= now()",
+        )
+        .execute(self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
 }

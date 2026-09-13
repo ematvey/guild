@@ -60,6 +60,9 @@ pub struct McpHandle {
     pub name: String,
     service: Service,
     tools: Vec<ToolSpec>,
+    /// Wire tool name → raw MCP tool name (server names may contain '_';
+    /// parsing the wire name back is unreliable).
+    raw_names: std::collections::HashMap<String, String>,
 }
 
 impl McpHandle {
@@ -89,19 +92,25 @@ impl McpHandle {
             anyhow::bail!("mcp server {name}: needs command or url");
         };
         let listed = service.peer().list_tools(None).await?;
-        let tools = listed
-            .tools
-            .into_iter()
-            .map(|t| ToolSpec {
-                name: format!("mcp_{name}_{}", t.name),
+        // Wire tool name → raw MCP tool name. Parsing the wire name back out
+        // of `mcp_{server}_{tool}` mis-splits when the server name contains
+        // '_', so the raw name is carried from the tool listing instead.
+        let mut raw_names = std::collections::HashMap::new();
+        let mut tools = Vec::new();
+        for t in listed.tools {
+            let wire = format!("mcp_{name}_{}", t.name);
+            raw_names.insert(wire.clone(), t.name.to_string());
+            tools.push(ToolSpec {
+                name: wire,
                 description: t.description.map(|d| d.into_owned()).unwrap_or_default(),
                 parameters: Value::Object((*t.input_schema).clone()),
-            })
-            .collect();
+            });
+        }
         Ok(Self {
             name: name.to_string(),
             service,
             tools,
+            raw_names,
         })
     }
 
@@ -111,7 +120,8 @@ impl McpHandle {
             .map(|spec| {
                 let service = self.service.peer().clone();
                 let spec = spec.clone();
-                Arc::new(McpTool { spec, service }) as Arc<dyn Tool>
+                let raw_name = self.raw_names.get(&spec.name).cloned();
+                Arc::new(McpTool { spec, service, raw_name }) as Arc<dyn Tool>
             })
             .collect()
     }
@@ -121,6 +131,8 @@ impl McpHandle {
 pub struct McpTool {
     spec: ToolSpec,
     service: rmcp::service::Peer<RoleClient>,
+    /// The tool's name on its MCP server, as listed at connect time.
+    raw_name: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -134,15 +146,13 @@ impl Tool for McpTool {
     }
 
     async fn run(&self, _workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
-        let raw_name = self
-            .spec
-            .name
-            .strip_prefix("mcp_")
-            .and_then(|rest| rest.split_once('_'))
-            .map(|(_, tool)| tool)
-            .unwrap_or("?")
-            .to_string();
-        let mut params = CallToolRequestParams::new(raw_name.clone());
+        let raw_name = self.raw_name.clone().ok_or_else(|| {
+            ToolFailure::Execution(format!(
+                "mcp tool {} is no longer listed on its server",
+                self.spec.name
+            ))
+        })?;
+        let mut params = CallToolRequestParams::new(raw_name);
         if let Some(obj) = args.as_object() {
             params = params.with_arguments(obj.clone());
         }

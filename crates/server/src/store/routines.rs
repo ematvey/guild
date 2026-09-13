@@ -188,7 +188,7 @@ impl<'a> RoutineStore<'a> {
         summary: Option<&str>,
         error: Option<&str>,
     ) -> Result<(), ApiError> {
-        sqlx::query(
+        let res = sqlx::query(
             "UPDATE routine_runs SET status = $2, summary = $3, error = $4, finished_at = now() WHERE id = $1",
         )
         .bind(run_id)
@@ -197,6 +197,11 @@ impl<'a> RoutineStore<'a> {
         .bind(error)
         .execute(self.pool)
         .await?;
+        if res.rows_affected() == 0 {
+            // A vanished run row means the record was removed mid-run; the
+            // run's outcome must not disappear without a trace.
+            tracing::warn!(run = %run_id, "finish_run matched no rows");
+        }
         Ok(())
     }
 

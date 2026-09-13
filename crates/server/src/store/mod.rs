@@ -34,16 +34,18 @@ impl Store {
             .max_connections(10)
             .connect(database_url)
             .await?;
-        let migrations = "";
-        let _ = migrations;
         Self::run_migrations(&pool).await?;
         Ok(Self { pool })
     }
 
     /// Applies embedded migrations in filename order, tracked in
-    /// `schema_history` (idempotent). Concurrent migrators (api and worker
-    /// processes share the database) serialize on a transaction-scoped
-    /// advisory lock; a stored content hash rejects edited migration files.
+    /// `schema_history` (idempotent, locked, checksummed): a
+    /// transaction-scoped advisory lock serializes concurrent migrators
+    /// (api and worker processes share the database); each migration's
+    /// sha256 is stored at apply time and compared on every boot, so an
+    /// edited file errors instead of silently drifting.
+    ///
+    /// Migrations are append-only: editing an applied file fails the boot.
     async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS schema_history (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
@@ -55,7 +57,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 33] = [
+        const MIGRATIONS: [(&str, &str); 36] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -185,38 +187,60 @@ impl Store {
                 "0033_routine_webhook_token_hash",
                 include_str!("../../migrations/0033_routine_webhook_token_hash.sql"),
             ),
+            (
+                "0034_user_fk_actions",
+                include_str!("../../migrations/0034_user_fk_actions.sql"),
+            ),
+            (
+                "0035_max_output_tokens",
+                include_str!("../../migrations/0035_max_output_tokens.sql"),
+            ),
+            (
+                "0036_org_fks",
+                include_str!("../../migrations/0036_org_fks.sql"),
+            ),
         ];
         for (name, sql) in MIGRATIONS {
-            let hash = {
-                use sha2::{Digest, Sha256};
-                hex::encode(Sha256::digest(sql.as_bytes()))
-            };
+            let hash = migration_hash(sql);
             let mut tx = pool.begin().await?;
-            // Serialize migrators and re-check inside the lock, so two
-            // processes never apply the same migration twice.
-            sqlx::query("SELECT pg_advisory_xact_lock(hashtext('guild:migrations'))")
+            // Advisory lock held to the end of the transaction: a second
+            // boot waits here, then re-checks history inside the lock, so
+            // two processes never apply the same migration twice.
+            sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                .bind(MIGRATION_LOCK_ID)
                 .execute(&mut *tx)
                 .await?;
-            let applied: Option<Option<String>> =
+            let stored: Option<Option<String>> =
                 sqlx::query_scalar("SELECT content_hash FROM schema_history WHERE name = $1")
                     .bind(name)
                     .fetch_optional(&mut *tx)
                     .await?;
-            match applied {
+            match stored {
                 // Applied and hashed: same content → done, changed content
-                // → refuse (an edited migration would corrupt the schema).
+                // → refuse (migrations are append-only; revert the edit or
+                // add a new file).
                 Some(Some(h)) => {
                     if h != hash {
                         anyhow::bail!(
-                            "migration {name} changed since it was applied (hash mismatch)"
+                            "migration {name} drifted: applied checksum {h}, embedded {hash} — \
+                             migrations are append-only; revert the edit or add a new file"
                         );
                     }
                     tx.rollback().await?;
                     continue;
                 }
-                // Applied before hashes were recorded — leave as is.
+                // Applied before hashes were recorded: grandfather the file
+                // (it matches what shipped) by recording its hash.
                 Some(None) => {
-                    tx.rollback().await?;
+                    sqlx::query(
+                        "UPDATE schema_history SET content_hash = $2 \
+                         WHERE name = $1 AND content_hash IS NULL",
+                    )
+                    .bind(name)
+                    .bind(&hash)
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
                     continue;
                 }
                 None => {}
@@ -228,7 +252,6 @@ impl Store {
                 .filter(|l| !l.trim_start().starts_with("--"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let mut tx = pool.begin().await?;
             for stmt in sql.split(';') {
                 let stmt = stmt.trim();
                 if stmt.is_empty() {
@@ -318,11 +341,22 @@ impl Store {
         routines::RoutineStore { pool: &self.pool }
     }
 
-    /// Access for stores added in later tasks; unused until then.
-    #[allow(dead_code)]
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
+}
+
+/// Advisory-lock id for the migration runner: one fixed bigint every
+/// instance of this binary agrees on (ASCII "GUILDMGR" for recognizability
+/// in pg_locks).
+const MIGRATION_LOCK_ID: i64 = 0x4755_494C_444D_4752;
+
+/// sha256 hex of one migration file — the checksum stored in schema_history.
+fn migration_hash(sql: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(sql.as_bytes());
+    hex::encode(h.finalize())
 }
 
 #[cfg(feature = "test-support")]

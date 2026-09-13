@@ -3,6 +3,7 @@
 //! settings dialog (design: settings window, Machine section).
 
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Cpu } from "lucide-react";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { bindChat, listMachines, type MachineInfo } from "../../../transport";
@@ -11,6 +12,12 @@ import { PageHeader } from "../components/page-header";
 // Last successful machine list; a remount renders it immediately and
 // refreshes in the background instead of blinking the skeleton.
 let lastMachines: MachineInfo[] | null = null;
+
+/** Drops the cached machine list; sign-out must call this so one user's
+ * machine inventory does not leak into the next session. */
+export function clearMachinesCache(): void {
+  lastMachines = null;
+}
 
 export function MachineSection({
   currentMachineId,
@@ -24,6 +31,10 @@ export function MachineSection({
   const [machines, setMachines] = useState<MachineInfo[] | null>(lastMachines);
   useEffect(() => {
     void listMachines().then((m) => {
+      if (m === null) {
+        toast.error("Could not load machines");
+        return; // keep the last good list on screen
+      }
       lastMachines = m;
       setMachines(m);
     });
@@ -52,7 +63,11 @@ export function MachineSection({
             <button
               key={m.machine_id}
               onClick={async () => {
-                await bindChat(chatId, m.machine_id);
+                const res = await bindChat(chatId, m.machine_id);
+                if (res === null) {
+                  toast.error("Binding failed");
+                  return;
+                }
                 onMachineChanged();
               }}
               className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-base outline-none transition-colors ${
