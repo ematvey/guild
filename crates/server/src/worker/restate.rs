@@ -457,7 +457,9 @@ struct ApprovalResolution {
 
 /// Pure dedupe core of `complete_approval`: a present state key (the
 /// awakeable id) yields resolve+clear; an absent key (first answer already
-/// won, timed out, or nobody waiting) is a no-op.
+/// won, timed out, or nobody waiting) is a no-op. The handler performs the
+/// clear itself — virtual-object serialization makes read+clear atomic
+/// against other decision deliveries.
 fn approval_on_decision(pending: Option<String>, req: ApprovalReq) -> Option<(String, ApprovalResolution)> {
     pending.map(|awakeable_id| {
         (
@@ -1893,10 +1895,13 @@ impl ChatRunner {
     }
 
     /// Delivers an approval decision to the waiting generate loop (phase 2
-    /// gate). Shared handler mirroring `complete_tool`: first answer wins;
-    /// late answers (after the key was cleared) and replays no-op. The key
-    /// itself is cleared by the waiting turn (shared handlers have no write
-    /// state access in the SDK).
+    /// gate). Shared handlers have no write-state access in the SDK, so the
+    /// actual claim (atomic read+clear) happens in the write handler
+    /// `claim_approval`, invoked on this object itself: invocations on one
+    /// object key run serially, so the claim is the whole critical section —
+    /// a concurrent user or timer decision arriving afterwards sees no key
+    /// and no-ops. First answer wins deterministically; late answers and
+    /// replays no-op.
     #[handler]
     async fn complete_approval(
         &self,
@@ -1907,9 +1912,32 @@ impl ChatRunner {
         let key = approval_state_key(&req.call_id);
         let pending: Option<String> =
             ctx.get(key.as_str()).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        if pending.is_none() {
+            return Ok(()); // first answer already won, or nobody waiting
+        }
+        ctx.object_client::<ChatRunnerClient>(ctx.key())
+            .claim_approval(Json(req))
+            .send();
+        Ok(())
+    }
+
+    /// Write-side claim of an approval decision: serialized against every
+    /// other invocation on this chat object, so read+clear here is the
+    /// whole critical section for the user-vs-timer decision race.
+    #[handler]
+    async fn claim_approval(
+        &self,
+        ctx: ObjectContext<'_>,
+        req: Json<ApprovalReq>,
+    ) -> HandlerResult<()> {
+        let req = req.into_inner();
+        let key = approval_state_key(&req.call_id);
+        let pending: Option<String> =
+            ctx.get(key.as_str()).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         let Some((awakeable_id, resolution)) = approval_on_decision(pending, req) else {
             return Ok(()); // first answer already won, or nobody waiting
         };
+        ctx.clear(&key);
         ctx.resolve_awakeable(&awakeable_id, Json(resolution));
         Ok(())
     }
@@ -2133,9 +2161,10 @@ async fn client_tool_step(
             .await?;
 
             // Journaled awakeable + durable timeout: the first decision (a
-            // user, or the auto-deny timer) resolves the promise; the loser
-            // no-ops on the cleared state key. Resolution replays from the
-            // journal like the client-tool result.
+            // user, or the auto-deny timer) claims the state key atomically
+            // in complete_approval and resolves the promise; the loser sees
+            // no key and no-ops. Resolution replays from the journal like
+            // the client-tool result.
             let (awakeable_id, promise) = ctx.awakeable::<Json<ApprovalResolution>>();
             ctx.set(&approval_state_key(&call.id), awakeable_id.clone());
             ctx.object_client::<ChatRunnerClient>(&chat_id.to_string())
