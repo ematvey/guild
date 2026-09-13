@@ -80,22 +80,28 @@ impl<'a> IdentityStore<'a> {
         email: &str,
         password: &str,
     ) -> anyhow::Result<Uuid> {
+        // The check-and-insert runs under an advisory lock inside one
+        // transaction: two concurrent bootstraps must not both pass the
+        // "no users yet" check.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('guild:bootstrap'))")
+            .execute(&mut *tx)
+            .await?;
         let user: Option<UserRow> =
             sqlx::query_as("SELECT id, org_id, email, role, identity_type, display_name, avatar_url FROM users WHERE email = $1")
                 .bind(email)
-                .fetch_optional(self.pool)
+                .fetch_optional(&mut *tx)
                 .await?;
         if let Some(u) = user {
             return Ok(u.id);
         }
         let any: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(self.pool)
+            .fetch_one(&mut *tx)
             .await?;
         anyhow::ensure!(any == 0, "org already has users");
         let org_id = Uuid::now_v7();
         let user_id = Uuid::now_v7();
         let hash = hash_password(password)?;
-        let mut tx = self.pool.begin().await?;
         sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, $2)")
             .bind(org_id)
             .bind("org")
