@@ -112,7 +112,12 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
           <CardTitle className="text-xl">Guild</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <Input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
           <Input
             placeholder="Password"
             type="password"
@@ -358,7 +363,12 @@ function DesktopApp() {
           ) : (
             <>
               <Input placeholder="Server URL" value={url} onChange={(e) => setUrl(e.target.value)} />
-              <Input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Input
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && login()}
+              />
               <Input
                 placeholder="Password"
                 type="password"
