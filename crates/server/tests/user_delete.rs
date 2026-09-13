@@ -8,7 +8,7 @@ use uuid::Uuid;
 async fn delete_user_cascades_owned_rows() {
     let db: TestDb = Store::connect_test().await.unwrap();
     let store = &db.store;
-    let admin_id = store
+    let _ = store
         .identity()
         .ensure_bootstrap_admin("a@b.c", "hunter226")
         .await

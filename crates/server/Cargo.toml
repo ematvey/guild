@@ -183,3 +183,7 @@ required-features = ["test-support"]
 [[test]]
 name = "integration_secrets"
 required-features = ["test-support"]
+
+[[test]]
+name = "migrations"
+required-features = ["test-support"]

@@ -34,20 +34,27 @@ impl Store {
             .max_connections(10)
             .connect(database_url)
             .await?;
-        let migrations = "";
-        let _ = migrations;
         Self::run_migrations(&pool).await?;
         Ok(Self { pool })
     }
 
     /// Applies embedded migrations in filename order, tracked in
-    /// `schema_history` (idempotent).
+    /// `schema_history` (idempotent, locked, checksummed):
+    /// - a transaction-scoped advisory lock serializes concurrent starts
+    ///   (two instances booting together cannot double-apply);
+    /// - each migration's sha256 is stored at apply time and compared on
+    ///   every boot — an edited file errors instead of silently drifting;
+    /// - the advisory lock is taken inside the same transaction as the DDL,
+    ///   so a crashed apply releases it and rolls back together.
     async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS schema_history (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
         )
         .execute(pool)
         .await?;
+        sqlx::query("ALTER TABLE schema_history ADD COLUMN IF NOT EXISTS hash TEXT")
+            .execute(pool)
+            .await?;
         const MIGRATIONS: [(&str, &str); 32] = [
             (
                 "0001_identity",
@@ -176,13 +183,33 @@ impl Store {
             ),
         ];
         for (name, sql) in MIGRATIONS {
-            let applied: Option<i64> =
-                sqlx::query_scalar("SELECT 1::int8 FROM schema_history WHERE name = $1")
+            let hash = migration_hash(sql);
+            let stored: Option<Option<String>> =
+                sqlx::query_scalar("SELECT hash FROM schema_history WHERE name = $1")
                     .bind(name)
                     .fetch_optional(pool)
                     .await?;
-            if applied.is_some() {
-                continue;
+            match stored {
+                Some(Some(h)) => {
+                    if h != hash {
+                        anyhow::bail!(
+                            "migration {name} drifted: applied checksum {h}, embedded {hash} — \
+                             migrations are append-only; revert the edit or add a new file"
+                        );
+                    }
+                    continue;
+                }
+                // Applied before checksums existed: grandfather the file
+                // (it matches what shipped) by recording its hash.
+                Some(None) => {
+                    sqlx::query("UPDATE schema_history SET hash = $2 WHERE name = $1 AND hash IS NULL")
+                        .bind(name)
+                        .bind(&hash)
+                        .execute(pool)
+                        .await?;
+                    continue;
+                }
+                None => {}
             }
             // Split on ';'. Comment lines are stripped first — a ';' inside a
             // `--` comment would otherwise break the statement split.
@@ -192,6 +219,21 @@ impl Store {
                 .collect::<Vec<_>>()
                 .join("\n");
             let mut tx = pool.begin().await?;
+            // Advisory lock held to the end of the DDL transaction: a second
+            // boot waits here, then re-checks history inside the lock.
+            sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                .bind(MIGRATION_LOCK_ID)
+                .execute(&mut *tx)
+                .await?;
+            let raced: Option<i64> =
+                sqlx::query_scalar("SELECT 1::int8 FROM schema_history WHERE name = $1")
+                    .bind(name)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            if raced.is_some() {
+                tx.commit().await?;
+                continue;
+            }
             for stmt in sql.split(';') {
                 let stmt = stmt.trim();
                 if stmt.is_empty() {
@@ -199,8 +241,9 @@ impl Store {
                 }
                 sqlx::query(stmt).execute(&mut *tx).await?;
             }
-            sqlx::query("INSERT INTO schema_history (name) VALUES ($1)")
+            sqlx::query("INSERT INTO schema_history (name, hash) VALUES ($1, $2)")
                 .bind(name)
+                .bind(&hash)
                 .execute(&mut *tx)
                 .await?;
             tx.commit().await?;
@@ -285,6 +328,19 @@ impl Store {
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
+}
+
+/// Advisory-lock id for the migration runner: one fixed bigint every
+/// instance of this binary agrees on (ASCII "GUILDMGR" for recognizability
+/// in pg_locks).
+const MIGRATION_LOCK_ID: i64 = 0x4755_494C_444D_4752;
+
+/// sha256 hex of one migration file — the checksum stored in schema_history.
+fn migration_hash(sql: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(sql.as_bytes());
+    hex::encode(h.finalize())
 }
 
 #[cfg(feature = "test-support")]
