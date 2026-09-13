@@ -490,8 +490,8 @@ function RouteDetail({
           back={{ label: "Models", onClick: onBack }}
         />
         <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
-          <Field label="Model id">
-            <Input value={draft.model} onChange={(e) => patch({ model: e.target.value })} />
+          <Field label="Model id" hint="Immutable — the id keys the route; editing it would create a second route.">
+            <Input value={draft.model} disabled />
           </Field>
           <Field label="Provider">
             <Select value={draft.provider} onValueChange={(v) => patch({ provider: v })}>
