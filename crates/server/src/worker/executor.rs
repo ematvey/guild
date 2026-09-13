@@ -364,7 +364,11 @@ impl Tool for StoragePutTool {
 
 fn truncate(s: &str) -> String {
     if s.len() > 8 * 1024 {
-        format!("{}[truncated]", &s[..8 * 1024])
+        let mut cut = 8 * 1024;
+        while !s.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}[truncated]", &s[..cut])
     } else {
         s.to_string()
     }
@@ -383,4 +387,23 @@ pub fn tool_registry(exec: &RoutineExecutor, org_id: Uuid, allowed: &[String]) -
         }
     }
     reg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate;
+
+    #[test]
+    fn truncate_never_splits_a_char() {
+        // multi-byte char straddling the 8 KiB boundary must not panic
+        let s = "é".repeat(4096 + 1); // 2 bytes each; boundary lands mid-char
+        let t = truncate(&s);
+        assert!(t.ends_with("[truncated]"));
+        assert!(t.starts_with("é"));
+    }
+
+    #[test]
+    fn truncate_leaves_short_output_alone() {
+        assert_eq!(truncate("hello"), "hello");
+    }
 }
