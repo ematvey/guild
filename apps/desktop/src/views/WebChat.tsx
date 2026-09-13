@@ -2677,7 +2677,10 @@ function SidebarContent({
           <DropdownMenuItem onClick={onOpenSettings}>Settings</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
-            Sign out
+            {/* Desktop: the engine keeps its session and restore re-logs-in,
+                so this clears this window's token only (full engine sign-out
+                needs an engine logout RPC that does not exist yet). */}
+            {isTauri ? "Sign out (this window only)" : "Sign out"}
           </DropdownMenuItem>
         </UserBadge>
       </div>
