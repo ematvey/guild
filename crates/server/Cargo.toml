@@ -20,6 +20,7 @@ sqlx.workspace = true
 hex.workspace = true
 sha2.workspace = true
 hmac.workspace = true
+subtle.workspace = true
 ed25519-dalek.workspace = true
 jsonwebtoken.workspace = true
 uuid.workspace = true

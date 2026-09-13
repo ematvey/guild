@@ -253,7 +253,9 @@ async fn hook(
         .ok_or_else(|| ApiError::unauthorized("missing hook token"))?;
     let store = state.store().await?;
     let routine = store.routines().get_by_slug(org_id, &slug).await?;
-    if routine.webhook_token != token {
+    // Constant-time: the token gates a public webhook endpoint.
+    use subtle::ConstantTimeEq;
+    if !bool::from(routine.webhook_token.as_bytes().ct_eq(token.as_bytes())) {
         return Err(ApiError::unauthorized("bad hook token"));
     }
     if !routine.enabled {
@@ -281,7 +283,9 @@ async fn require_internal_token(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(|| ApiError::unauthorized("missing internal token"))?;
-    if got != expected {
+    // Constant-time: the bearer gates the worker-facing internal API.
+    use subtle::ConstantTimeEq;
+    if !bool::from(got.as_bytes().ct_eq(expected.as_bytes())) {
         return Err(ApiError::unauthorized("bad internal token"));
     }
     Ok(())

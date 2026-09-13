@@ -66,7 +66,9 @@ fn verify_signature(state: &AppState, id: Uuid, exp: i64, sig: &str) -> Result<(
         Hmac::<sha2::Sha256>::new_from_slice(state.config.jwt_secret.as_bytes()).expect("hmac key");
     mac.update(format!("{id}:{exp}").as_bytes());
     let expected = hex::encode(mac.finalize().into_bytes());
-    if expected != sig {
+    // Constant-time: the signature gates authenticated downloads.
+    use subtle::ConstantTimeEq;
+    if !bool::from(expected.as_bytes().ct_eq(sig.as_bytes())) {
         return Err(ApiError::unauthorized("bad download signature"));
     }
     Ok(())
