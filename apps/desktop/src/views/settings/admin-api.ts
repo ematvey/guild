@@ -70,43 +70,6 @@ export async function login(email: string, password: string): Promise<UserInfo> 
 }
 
 
-export async function streamChat(
-  chatId: string,
-  model: string,
-  prompt: string,
-  onEvent: (ev: Record<string, unknown>) => void,
-): Promise<void> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ chat_id: chatId, model, messages: [{ role: "user", content: prompt }] }),
-  });
-  if (!res.ok || !res.body) {
-    const v = await res.json().catch(() => ({}));
-    throw new ApiError(v?.error?.code ?? "unknown", v?.error?.message ?? res.statusText);
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const frames = buf.split("\n\n");
-    buf = frames.pop() ?? "";
-    for (const frame of frames) {
-      const line = frame.split("\n").find((l) => l.startsWith("data: "));
-      if (!line) continue;
-      try {
-        onEvent(JSON.parse(line.slice(6)));
-      } catch {
-        // ignore malformed frames
-      }
-    }
-  }
-}
-
 export interface PairingToken {
   id: string;
   secret: string;

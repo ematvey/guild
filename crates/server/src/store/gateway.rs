@@ -42,7 +42,7 @@ pub struct RouteRow {
     /// Model context window in tokens (migration 0024); None = unset —
     /// callers fall back to their own default (thread readout: 128000).
     pub context_window: Option<i64>,
-    /// Max output tokens per model call (migration 0033); None = provider
+    /// Max output tokens per model call (migration 0035); None = provider
     /// default. Anthropic requires an explicit max_tokens — this is the
     /// route-configurable knob.
     pub max_output_tokens: Option<i64>,
