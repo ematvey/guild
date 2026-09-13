@@ -551,6 +551,7 @@ async fn create_user(
     let password = body["password"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing password"))?;
+    ensure_min_password_len(password)?;
     let role = body["role"].as_str().unwrap_or("member");
     if !matches!(role, "admin" | "member") {
         return Err(ApiError::bad_request("role must be admin or member"));
@@ -565,11 +566,24 @@ async fn create_user(
     ))
 }
 
+/// Minimum accepted password length for admin-managed accounts.
+fn ensure_min_password_len(password: &str) -> Result<(), ApiError> {
+    if password.chars().count() < 8 {
+        return Err(ApiError::bad_request(
+            "password must be at least 8 characters",
+        ));
+    }
+    Ok(())
+}
+
 async fn delete_user(
     State(state): State<AppState>,
     admin: AdminUser,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if user_id == admin.0.id {
+        return Err(ApiError::bad_request("cannot delete yourself"));
+    }
     let store = state.store().await?;
     store
         .identity()
@@ -596,10 +610,28 @@ async fn update_user(
         _ => None,
     };
     let password = body["password"].as_str().filter(|p| !p.is_empty());
+    if let Some(p) = password {
+        ensure_min_password_len(p)?;
+    }
     if role.is_none() && password.is_none() {
         return Err(ApiError::bad_request("nothing to update"));
     }
     let store = state.store().await?;
+    // An admin must not demote themselves, and the org's last admin must
+    // not lose the admin role — otherwise no one can administer the org.
+    let target = store.identity().get_user(user_id).await?;
+    if target.role == "admin" && role == Some("member") {
+        if target.id == admin.0.id {
+            return Err(ApiError::bad_request("cannot demote yourself"));
+        }
+        let admins = store.identity().list_users(admin.0.org_id).await?;
+        if admins.iter().filter(|u| u.role == "admin").count() <= 1 {
+            return Err(ApiError::conflict(
+                "last_admin",
+                "cannot demote the last admin",
+            ));
+        }
+    }
     let user = store
         .identity()
         .update_user(admin.0.org_id, user_id, role, password)
