@@ -1263,6 +1263,9 @@ export default function WebChat({
   // deploy-freshness poll below must not read stale closure state).
   const loadStateRef = useRef({ busy: false, attaching: false, threadLoading: false });
   const [attaching, setAttaching] = useState(false); // receiving a server-side generation
+  // Watching a dropped generation for reattach (network send path): the
+  // composer must stay disabled until the watch settles.
+  const [reattaching, setReattaching] = useState(false);
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -1933,22 +1936,27 @@ export default function WebChat({
       const wac = new AbortController();
       attachAbort.current?.abort();
       attachAbort.current = wac;
-      const r = await watchGeneration(cid, mySeq, wac);
-      if (r.terminal === "done") {
-        void refreshChats();
-      } else if (r.terminal === "idle" && !r.sawContent) {
-        setBlocks((b) => [
-          ...b,
-          { kind: "error", text: "connection dropped before the reply started — try sending again" },
-        ]);
-      } else if (r.terminal === "none") {
-        setBlocks((b) => [
-          ...b,
-          {
-            kind: "error",
-            text: "lost connection and could not reattach — the reply may still arrive; reopen this thread to catch up",
-          },
-        ]);
+      setReattaching(true);
+      try {
+        const r = await watchGeneration(cid, mySeq, wac);
+        if (r.terminal === "done") {
+          void refreshChats();
+        } else if (r.terminal === "idle" && !r.sawContent) {
+          setBlocks((b) => [
+            ...b,
+            { kind: "error", text: "connection dropped before the reply started — try sending again" },
+          ]);
+        } else if (r.terminal === "none") {
+          setBlocks((b) => [
+            ...b,
+            {
+              kind: "error",
+              text: "lost connection and could not reattach — the reply may still arrive; reopen this thread to catch up",
+            },
+          ]);
+        }
+      } finally {
+        setReattaching(false);
       }
       return;
     } finally {
@@ -1962,7 +1970,7 @@ export default function WebChat({
       ? "Loading…"
       : (chats?.find((c) => c.id === chatId)?.title ?? "New chat");
   const boundMachine = chats?.find((c) => c.id === chatId)?.machine_label ?? null;
-  const streaming = busy || attaching;
+  const streaming = busy || attaching || reattaching;
 
   const sidebar = (
     <SidebarContent
@@ -2343,7 +2351,9 @@ export default function WebChat({
                   size="icon"
                   className="size-7 rounded-full"
                   onClick={() => void send()}
-                  disabled={busy || !model || (!prompt.trim() && pending.length === 0)}
+                  disabled={
+                    streaming || !model || (!prompt.trim() && pending.length === 0)
+                  }
                   title="Send"
                 >
                   {busy ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
