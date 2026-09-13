@@ -532,7 +532,7 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "execute",
-            "Run a shell command (sh -c) in the project directory and return combined stdout+stderr. Non-zero exits are reported, not errors.",
+            "Run a shell command in the project directory (sh on Unix/macOS, cmd on Windows) and return combined stdout+stderr. Non-zero exits are reported, not errors.",
             serde_json::json!({
                 "command": str_prop,
                 "cwd": str_prop,
