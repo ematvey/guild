@@ -490,6 +490,7 @@ async fn execute_tool(
                         "content": out.output_for_model,
                         "is_error": false,
                         "meta": out.meta,
+                        "images": out.images,
                     })),
                     Err(e) => Ok(serde_json::json!({ "content": e.to_string(), "is_error": true })),
                 },

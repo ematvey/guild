@@ -37,10 +37,29 @@ impl AnthropicProvider {
         let mut messages: Vec<serde_json::Value> = Vec::new();
         for m in req.messages {
             if m.role == "tool" {
+                // Anthropic tool_result: plain string when text-only; image
+                // parts ride as content blocks (text + base64 images).
+                let content: serde_json::Value = if m.images.is_empty() {
+                    serde_json::Value::String(m.content.clone())
+                } else {
+                    let mut blocks: Vec<serde_json::Value> = Vec::new();
+                    if !m.content.is_empty() {
+                        blocks.push(serde_json::json!({"type": "text", "text": m.content}));
+                    }
+                    for uri in &m.images {
+                        if let Some((media_type, data)) = parse_data_uri(uri) {
+                            blocks.push(serde_json::json!({
+                                "type": "image",
+                                "source": {"type": "base64", "media_type": media_type, "data": data},
+                            }));
+                        }
+                    }
+                    serde_json::Value::Array(blocks)
+                };
                 let result = serde_json::json!({
                     "type": "tool_result",
                     "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
-                    "content": m.content,
+                    "content": content,
                 });
                 if let Some(last) = messages.last_mut() {
                     if last["role"] == "user" && last["content"].is_array() {
@@ -346,5 +365,28 @@ mod tests {
         let result = &body["messages"][2]["content"][0];
         assert_eq!(result["type"], "tool_result");
         assert_eq!(result["tool_use_id"], "c1");
+        assert_eq!(result["content"], "contents");
+    }
+
+    #[test]
+    fn tool_result_images_become_content_blocks() {
+        let msgs = vec![Message::tool_result("c1", "[image attached]")
+            .with_images(vec!["data:image/png;base64,QUJD".into()])];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+        };
+        let body = AnthropicProvider::body(&req);
+        let result = &body["messages"][0]["content"][0];
+        assert_eq!(result["type"], "tool_result");
+        assert_eq!(result["content"][0]["type"], "text");
+        let image = &result["content"][1];
+        assert_eq!(image["type"], "image");
+        assert_eq!(image["source"]["media_type"], "image/png");
+        assert_eq!(image["source"]["data"], "QUJD");
     }
 }

@@ -196,7 +196,7 @@ version/platform, verify sha256 server-side, and abort on any mismatch.
 
 The desktop app self-updates against the server it is paired/logged into:
 
-1. On launch (and every 6h), the app requests `GET /api/v1/updates/latest.json`
+1. On launch (and every 15 minutes), the app requests `GET /api/v1/updates/latest.json`
    on the stored server URL. The endpoint is public and serves the Tauri
    updater static-JSON manifest for the newest **fully signed** desktop
    version: per-platform minisign signatures + short-lived signed download

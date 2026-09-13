@@ -40,7 +40,7 @@ async fn thread_store_append_list_roundtrip_and_org_scope() {
             },
             Block::ToolCall {
                 id: "call_1".into(),
-                name: "bash".into(),
+                name: "execute".into(),
                 arguments: "{\"cmd\":\"ls\"}".into(),
             },
         ],
@@ -56,7 +56,7 @@ async fn thread_store_append_list_roundtrip_and_org_scope() {
         turn: 1,
         step: 2,
         call_id: "call_1".into(),
-        name: "bash".into(),
+        name: "execute".into(),
         content: "file.rs".into(),
         is_error: false,
         meta: Some(json!({"card": "terminal", "exit_code": 0})),

@@ -15,12 +15,10 @@ eventsource-stream.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 async-stream = "0.3"
+base64.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 jsonschema = { version = "0.55", default-features = false }
-globset = "0.4"
-ignore = "0.4"
-regex = "1"
 similar = "3"
 tokio = { version = "1", features = ["process", "time", "fs"] }
 tar = "0.4"

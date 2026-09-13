@@ -290,6 +290,7 @@ async fn attach_replays_unresolved_approval_requests() {
                 content: "done".into(),
                 is_error: false,
                 meta: None,
+                images: Vec::new(),
             },
         )
         .await

@@ -249,9 +249,6 @@ async fn run_turn(
     registry.add(Arc::new(guild_core::tools::fs::ReadFile));
     registry.add(Arc::new(guild_core::tools::fs::WriteFile));
     registry.add(Arc::new(guild_core::tools::fs::EditFile));
-    registry.add(Arc::new(guild_core::tools::fs::GlobTool));
-    registry.add(Arc::new(guild_core::tools::fs::GrepTool));
-    registry.add(Arc::new(guild_core::tools::git::GitTool));
     if state.config.allow_shell_tools {
         registry.add(Arc::new(guild_core::tools::shell::RunCommand));
     }
@@ -378,6 +375,7 @@ async fn run_turn(
                                         content: m.content.clone(),
                                         is_error: false,
                                         meta: None,
+                                        images: Vec::new(),
                                     },
                                 )
                                 .await;
