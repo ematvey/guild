@@ -93,7 +93,16 @@ const AUTH_KINDS: [&str; 3] = ["org_secret", "org_secret_impersonated", "per_use
 
 /// Validates a manifest's shape and allowed kinds.
 pub fn validate_manifest(m: &BundleManifest) -> anyhow::Result<()> {
+    // Slugs land in namespaced tool names and filesystem paths: keep them to
+    // lowercase letters, digits and dashes.
     anyhow::ensure!(!m.slug.is_empty(), "manifest slug is empty");
+    anyhow::ensure!(m.slug.len() <= 64, "manifest slug is too long");
+    anyhow::ensure!(
+        m.slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+        "manifest slug must be [a-z0-9-]"
+    );
     anyhow::ensure!(!m.version.is_empty(), "manifest version is empty");
     anyhow::ensure!(
         matches!(m.kind.as_str(), "skill" | "mcp" | "integration"),
@@ -268,11 +277,20 @@ pub fn read_bundle_file(bundle: &[u8], path: &str) -> anyhow::Result<Option<Vec<
     Ok(None)
 }
 
+/// Network-delivered bundles are untrusted: a decompressed bundle may not
+/// exceed this total size (bundle-bomb guard).
+const MAX_BUNDLE_TOTAL: u64 = 256 * 1024 * 1024;
+
 pub fn extract(bundle: &[u8], dest: &Path) -> anyhow::Result<BundleManifest> {
+    extract_with_cap(bundle, dest, MAX_BUNDLE_TOTAL)
+}
+
+fn extract_with_cap(bundle: &[u8], dest: &Path, cap: u64) -> anyhow::Result<BundleManifest> {
     std::fs::create_dir_all(dest)?;
     let gz = flate2::read::GzDecoder::new(bundle);
     let mut tar = tar::Archive::new(gz);
     let mut manifest: Option<BundleManifest> = None;
+    let mut total: u64 = 0;
     for entry in tar.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.to_path_buf();
@@ -293,6 +311,13 @@ pub fn extract(bundle: &[u8], dest: &Path) -> anyhow::Result<BundleManifest> {
             header_type.is_file() || header_type.is_dir(),
             "bundle entry is a special file: {}",
             path.display()
+        );
+        // Count every entry against the decompressed-size cap before it
+        // reaches the disk.
+        total = total.saturating_add(entry.size());
+        anyhow::ensure!(
+            total <= cap,
+            "bundle decompressed size exceeds the cap ({cap} bytes)"
         );
         if path == std::path::Path::new("manifest.json") {
             let mut body = String::new();
@@ -473,5 +498,45 @@ mod tests {
         assert!(extract(&bytes, &dest).is_err());
         assert!(!dest.join("evil.txt").exists());
         fs::remove_dir_all(&dest).unwrap();
+    }
+
+    #[test]
+    fn manifest_slug_charset_is_enforced() {
+        for bad in ["Deploy Check", "a/b", "hub_spot", "UPPER", "a.b"] {
+            let m = BundleManifest {
+                kind: "skill".into(),
+                slug: bad.into(),
+                ..v2_manifest()
+            };
+            assert!(validate_manifest(&m).is_err(), "slug {bad:?} must be rejected");
+        }
+        let good = BundleManifest {
+            kind: "skill".into(),
+            slug: "deploy-check-2".into(),
+            ..v2_manifest()
+        };
+        validate_manifest(&good).unwrap();
+    }
+
+    #[test]
+    fn extract_caps_decompressed_size() {
+        // A bundle whose entries exceed the caller's cap is rejected before
+        // anything lands on disk (the real cap is 256 MB; the test passes a
+        // tiny one).
+        let dir = scratch("capped-src");
+        fs::write(dir.join("a.txt"), "aaaaaaaaaa").unwrap();
+        let manifest = BundleManifest {
+            kind: "skill".into(),
+            slug: "capped".into(),
+            ..v2_manifest()
+        };
+        let bytes = pack(&dir, &manifest).unwrap();
+        let dest = scratch("capped-dest");
+        assert!(extract_with_cap(&bytes, &dest, 4).is_err());
+        assert!(!dest.join("a.txt").exists());
+        // A generous cap extracts normally.
+        extract_with_cap(&bytes, &dest, MAX_BUNDLE_TOTAL).unwrap();
+        fs::remove_dir_all(&dest).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
