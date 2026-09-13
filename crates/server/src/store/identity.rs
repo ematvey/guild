@@ -363,39 +363,44 @@ impl<'a> IdentityStore<'a> {
         .ok_or_else(|| ApiError::not_found("no such user"))
     }
 
-    /// Deletes a user; refuses to remove the org's last admin.
+    /// Deletes a user inside one transaction; refuses to remove the org's
+    /// last admin. The admin count is re-evaluated in the same statement that
+    /// deletes, so a concurrent role change cannot race the check.
     pub async fn delete_user(&self, org_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin().await?;
         let target: Option<(String,)> =
-            sqlx::query_as("SELECT role FROM users WHERE org_id = $1 AND id = $2")
+            sqlx::query_as("SELECT role FROM users WHERE org_id = $1 AND id = $2 FOR UPDATE")
                 .bind(org_id)
                 .bind(user_id)
-                .fetch_optional(self.pool)
+                .fetch_optional(&mut *tx)
                 .await?;
         let Some((role,)) = target else {
             return Err(ApiError::not_found("no such user"));
         };
-        if role == "admin" {
-            let admins: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM users WHERE org_id = $1 AND role = 'admin'",
+        let deleted = if role == "admin" {
+            sqlx::query(
+                "DELETE FROM users WHERE id = $1 AND (role <> 'admin' OR \
+                 (SELECT COUNT(*) FROM users WHERE org_id = $2 AND role = 'admin' AND id <> $1) > 0)",
             )
+            .bind(user_id)
             .bind(org_id)
-            .fetch_one(self.pool)
-            .await?;
-            if admins <= 1 {
-                return Err(ApiError::conflict(
-                    "last_admin",
-                    "cannot delete the last admin",
-                ));
-            }
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+        } else {
+            sqlx::query("DELETE FROM users WHERE id = $1")
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+        };
+        if deleted == 0 {
+            return Err(ApiError::conflict(
+                "last_admin",
+                "cannot delete the last admin",
+            ));
         }
-        sqlx::query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1")
-            .bind(user_id)
-            .execute(self.pool)
-            .await?;
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(user_id)
-            .execute(self.pool)
-            .await?;
+        tx.commit().await?;
         Ok(())
     }
 
