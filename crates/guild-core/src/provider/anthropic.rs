@@ -115,7 +115,11 @@ impl AnthropicProvider {
         }
         let mut body = serde_json::json!({
             "model": req.model,
-            "max_tokens": DEFAULT_MAX_TOKENS,
+            "max_tokens": if req.max_tokens > 0 {
+                req.max_tokens
+            } else {
+                DEFAULT_MAX_TOKENS
+            },
             "messages": messages,
             "stream": true,
         });
@@ -367,6 +371,7 @@ mod tests {
             api_key: "k",
             base_url: "http://x",
             tools: None,
+            max_tokens: 0,
         };
         let body = AnthropicProvider::body(&req);
         let blocks = &body["messages"][1]["content"];
@@ -389,6 +394,7 @@ mod tests {
             api_key: "k",
             base_url: "http://x",
             tools: None,
+            max_tokens: 0,
         };
         let body = AnthropicProvider::body(&req);
         let result = &body["messages"][0]["content"][0];

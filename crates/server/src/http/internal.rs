@@ -380,6 +380,7 @@ async fn internal_completion(
         api_key: &route.api_key,
         base_url: &route.base_url,
         tools: req.tools.as_deref(),
+        max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
     };
     let prov_stream = provider
         .chat_stream(preq)

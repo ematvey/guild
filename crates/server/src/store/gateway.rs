@@ -6,7 +6,7 @@ use crate::http::error::ApiError;
 use uuid::Uuid;
 
 /// (provider, base_url, encrypted key, price in, price out, enabled, quota,
-/// reasoning flag, context window)
+/// reasoning flag, context window, max output tokens)
 type RouteQueryRow = (
     String,
     String,
@@ -16,6 +16,7 @@ type RouteQueryRow = (
     bool,
     Option<f64>,
     bool,
+    Option<i64>,
     Option<i64>,
     Vec<String>,
 );
@@ -41,6 +42,10 @@ pub struct RouteRow {
     /// Model context window in tokens (migration 0024); None = unset —
     /// callers fall back to their own default (thread readout: 128000).
     pub context_window: Option<i64>,
+    /// Max output tokens per model call (migration 0033); None = provider
+    /// default. Anthropic requires an explicit max_tokens — this is the
+    /// route-configurable knob.
+    pub max_output_tokens: Option<i64>,
 }
 
 /// Admin-facing route row: everything except the decrypted key (derive:
@@ -55,6 +60,7 @@ pub struct AdminRouteRow {
     pub quota_monthly_usd: Option<f64>,
     pub reasoning: bool,
     pub context_window: Option<i64>,
+    pub max_output_tokens: Option<i64>,
     pub modalities: Vec<String>,
 }
 
@@ -107,11 +113,12 @@ impl<'a> GatewayStore<'a> {
         quota_monthly_usd: Option<f64>,
         reasoning: bool,
         context_window: Option<i64>,
+        max_output_tokens: Option<i64>,
         modalities: &[String],
     ) -> anyhow::Result<()> {
         sqlx::query(
-            "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window, modalities) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+            "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window, max_output_tokens, modalities) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
              ON CONFLICT (org_id, model) \
              DO UPDATE SET provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, \
                price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, \
@@ -119,6 +126,7 @@ impl<'a> GatewayStore<'a> {
                quota_monthly_usd = EXCLUDED.quota_monthly_usd, \
                reasoning = EXCLUDED.reasoning, \
                context_window = EXCLUDED.context_window, \
+               max_output_tokens = EXCLUDED.max_output_tokens, \
                modalities = EXCLUDED.modalities",
         )
         .bind(org_id)
@@ -130,6 +138,7 @@ impl<'a> GatewayStore<'a> {
         .bind(quota_monthly_usd)
         .bind(reasoning)
         .bind(context_window)
+        .bind(max_output_tokens)
         .bind(modalities)
         .execute(self.pool)
         .await?;
@@ -179,7 +188,7 @@ impl<'a> GatewayStore<'a> {
     /// provider key itself is never returned).
     pub async fn list_routes(&self, org_id: Uuid) -> anyhow::Result<Vec<AdminRouteRow>> {
         let rows: Vec<AdminRouteRow> = sqlx::query_as(
-            "SELECT model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window, modalities \
+            "SELECT model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, quota_monthly_usd, reasoning, context_window, max_output_tokens, modalities \
              FROM model_routes WHERE org_id = $1 ORDER BY model",
         )
         .bind(org_id)
@@ -199,7 +208,8 @@ impl<'a> GatewayStore<'a> {
         let row: Option<RouteQueryRow> = sqlx::query_as(
             "SELECT r.provider, k.base_url, k.encrypted_key, \
                     r.price_per_mtok_in_usd, r.price_per_mtok_out_usd, r.enabled, \
-                    r.quota_monthly_usd, r.reasoning, r.context_window, r.modalities \
+                    r.quota_monthly_usd, r.reasoning, r.context_window, \
+                    r.max_output_tokens, r.modalities \
              FROM model_routes r \
              LEFT JOIN provider_keys k ON k.org_id = r.org_id AND k.provider = r.provider \
              WHERE r.org_id = $1 AND r.model = $2",
@@ -218,6 +228,7 @@ impl<'a> GatewayStore<'a> {
             quota,
             reasoning,
             context_window,
+            max_output_tokens,
             modalities,
         )) = row
         else {
@@ -246,6 +257,7 @@ impl<'a> GatewayStore<'a> {
             quota_monthly_usd: quota,
             reasoning,
             context_window,
+            max_output_tokens,
             modalities,
         })
     }
