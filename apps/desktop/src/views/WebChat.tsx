@@ -2216,14 +2216,30 @@ export default function WebChat({
                   <AttachmentImageThumb
                     key={a.id}
                     att={a}
-                    onRemove={() => setPending((p) => p.filter((x) => x.id !== a.id))}
+                    onRemove={() =>
+                      setPending((p) =>
+                        p.filter((x) => {
+                          if (x.id !== a.id) return true;
+                          if (x.previewUrl) URL.revokeObjectURL(x.previewUrl);
+                          return false;
+                        }),
+                      )
+                    }
                   />
                 ))}
                 {pending.filter((a) => a.modality !== "image").map((a) => (
                   <AttachmentFileChip
                     key={a.id}
                     att={a}
-                    onRemove={() => setPending((p) => p.filter((x) => x.id !== a.id))}
+                    onRemove={() =>
+                      setPending((p) =>
+                        p.filter((x) => {
+                          if (x.id !== a.id) return true;
+                          if (x.previewUrl) URL.revokeObjectURL(x.previewUrl);
+                          return false;
+                        }),
+                      )
+                    }
                   />
                 ))}
               </div>
