@@ -416,6 +416,32 @@ pub(crate) fn ensure_generation(
     (g.tx.clone(), g.text.clone(), g.thinking.clone())
 }
 
+/// Atomic check+insert: returns the generation's stream parts or 409 when a
+/// generation is already running for the chat. One lock covers both, so two
+/// concurrent sends cannot both start a ChatRunner invocation.
+pub(crate) fn try_begin_generation(
+    state: &AppState,
+    chat_id: Uuid,
+) -> Result<
+    (
+        broadcast::Sender<StreamEvent>,
+        Arc<RwLock<String>>,
+        Arc<RwLock<String>>,
+    ),
+    ApiError,
+> {
+    let mut gens = state.generations.lock().unwrap();
+    if gens.contains_key(&chat_id) {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "generation_in_progress",
+            "a generation is already running for this chat — wait for it to finish",
+        ));
+    }
+    drop(gens);
+    Ok(ensure_generation(state, chat_id))
+}
+
 async fn chat(
     State(state): State<AppState>,
     user: AuthUser,
@@ -428,23 +454,13 @@ async fn chat(
     // durable Restate workflow (ChatRunner::generate) — see worker/restate.rs.
     let chat = store.chats().get_chat(user.0.org_id, req.chat_id).await?;
 
-    // One generation per chat at a time — checked BEFORE invoking, so a
-    // rejected send leaves nothing behind. The user turn itself is persisted
+    // One generation per chat at a time — reserved atomically (check+insert
+    // under one lock), so a rejected send leaves nothing behind and two
+    // concurrent sends cannot both invoke. The user turn itself is persisted
     // by the ChatRunner workflow (journaled), never here — attach/replay
     // stays consistent with the event log (spec §B.4).
-    if state.generations.lock().unwrap().contains_key(&req.chat_id) {
-        return Err(ApiError::new(
-            axum::http::StatusCode::CONFLICT,
-            "generation_in_progress",
-            "a generation is already running for this chat — wait for it to finish",
-        ));
-    }
-
-    // Placeholder generation: clients (including the caller) attach to this
-    // via the SSE body below or the attach endpoint; the ChatRunner workflow
-    // broadcasts deltas through it. The buffers start empty because history
-    // is already on screen.
-    let (tx, _text_buf, _thinking_buf) = ensure_generation(&state, req.chat_id);
+    let (tx, _text_buf, _thinking_buf) =
+        try_begin_generation(&state, req.chat_id)?;
 
     // Fire-and-forget invocation via the Restate ingress; the workflow runs
     // detached, so this HTTP request ending (or the client disconnecting)
@@ -711,4 +727,24 @@ async fn attach_stream(
         }
     };
     Ok(Sse::new(out).keep_alive(KeepAlive::default()).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    /// The reservation is atomic: the second concurrent send hits 409 while
+    /// the first holds the slot, and the slot frees cleanly.
+    #[test]
+    fn try_begin_generation_is_atomic() {
+        let state = crate::state::AppState::from_config(Config::test_config());
+        let chat = Uuid::now_v7();
+        assert!(try_begin_generation(&state, chat).is_ok());
+        let err = try_begin_generation(&state, chat).unwrap_err();
+        assert_eq!(err.code, "generation_in_progress");
+        assert_eq!(err.status, axum::http::StatusCode::CONFLICT);
+        state.generations.lock().unwrap().remove(&chat);
+        assert!(try_begin_generation(&state, chat).is_ok());
+   }
 }
