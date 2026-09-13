@@ -51,6 +51,11 @@ fn hash_password(password: &str) -> anyhow::Result<String> {
         .to_string())
 }
 
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
+}
+
 fn verify_password(password: &str, hash: &str) -> bool {
     match PasswordHash::new(hash) {
         Ok(parsed) => Argon2::default()
@@ -299,8 +304,10 @@ impl<'a> IdentityStore<'a> {
         let token = random_token();
         let id = Uuid::now_v7();
         let expires = Utc::now() + Duration::days(30);
-        sqlx::query("INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)")
-            .bind(&token)
+        // Only the sha256 hash is stored (api keys and pairing codes do the
+        // same): a database dump must not convert into session theft.
+        sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
+            .bind(sha256_hex(token.as_bytes()))
             .bind(user_id)
             .bind(expires)
             .execute(self.pool)
@@ -312,17 +319,17 @@ impl<'a> IdentityStore<'a> {
         sqlx::query_as(
             "SELECT u.id, u.org_id, u.email, u.role, u.identity_type, u.display_name, u.avatar_url FROM sessions s \
              JOIN users u ON u.id = s.user_id \
-             WHERE s.token = $1 AND s.revoked_at IS NULL AND s.expires_at > now()",
+             WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()",
         )
-        .bind(token)
+        .bind(sha256_hex(token.as_bytes()))
         .fetch_optional(self.pool)
         .await?
         .ok_or_else(|| ApiError::unauthorized("invalid or expired session"))
     }
 
     pub async fn revoke_session(&self, token: &str) -> anyhow::Result<()> {
-        sqlx::query("UPDATE sessions SET revoked_at = now() WHERE token = $1")
-            .bind(token)
+        sqlx::query("UPDATE sessions SET revoked_at = now() WHERE token_hash = $1")
+            .bind(sha256_hex(token.as_bytes()))
             .execute(self.pool)
             .await?;
         Ok(())
@@ -339,7 +346,9 @@ impl<'a> IdentityStore<'a> {
     }
 
     /// Updates a managed user (role change and/or password reset); omitted
-    /// fields stay unchanged. The user must belong to the org.
+    /// fields stay unchanged. The user must belong to the org. A password
+    /// reset revokes the user's sessions — the old credentials must not
+    /// keep working.
     pub async fn update_user(
         &self,
         org_id: Uuid,
@@ -351,7 +360,7 @@ impl<'a> IdentityStore<'a> {
             Some(p) => Some(hash_password(p).map_err(ApiError::from)?),
             None => None,
         };
-        sqlx::query_as(
+        let row = sqlx::query_as::<_, UserListRow>(
             "UPDATE users SET role = COALESCE($2::text, role), \
              password_hash = COALESCE($3::text, password_hash) \
              WHERE id = $1 AND org_id = $4 \
@@ -363,7 +372,14 @@ impl<'a> IdentityStore<'a> {
         .bind(org_id)
         .fetch_optional(self.pool)
         .await?
-        .ok_or_else(|| ApiError::not_found("no such user"))
+        .ok_or_else(|| ApiError::not_found("no such user"))?;
+        if password.is_some() {
+            sqlx::query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1")
+                .bind(user_id)
+                .execute(self.pool)
+                .await?;
+        }
+        Ok(row)
     }
 
     /// Deletes a user; refuses to remove the org's last admin.
@@ -446,7 +462,60 @@ mod tests {
         let (_sid, token) = store.identity().create_session(user.id).await.unwrap();
         let validated = store.identity().validate_session(&token).await.unwrap();
         assert_eq!(validated.id, user.id);
+
+        // Only the hash is stored — the plaintext token is nowhere in the row.
+        let stored: String =
+            sqlx::query_scalar("SELECT token_hash FROM sessions WHERE user_id = $1")
+                .bind(user.id)
+                .fetch_one(db.store.pool())
+                .await
+                .unwrap();
+        assert_ne!(stored, token);
+        assert_eq!(stored.len(), 64);
+
         store.identity().revoke_session(&token).await.unwrap();
         assert!(store.identity().validate_session(&token).await.is_err());
+    }
+
+    /// A password reset through the admin path revokes existing sessions.
+    #[tokio::test]
+    async fn password_reset_revokes_sessions() {
+        let db = Store::connect_test().await.unwrap();
+        let store = &db.store;
+        let org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+            .bind(org)
+            .execute(db.store.pool())
+            .await
+            .unwrap();
+        let admin = store
+            .identity()
+            .create_user(org, "admin@example.org", "hunter226", "admin")
+            .await
+            .unwrap();
+        let member = store
+            .identity()
+            .create_user(org, "member@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let (_sid, token) = store.identity().create_session(member.id).await.unwrap();
+        assert!(store.identity().validate_session(&token).await.is_ok());
+
+        store
+            .identity()
+            .update_user(org, member.id, None, Some("newpass99"))
+            .await
+            .unwrap();
+        assert!(store.identity().validate_session(&token).await.is_err());
+
+        // Role-only updates keep sessions alive.
+        let (_sid2, token2) = store.identity().create_session(member.id).await.unwrap();
+        store
+            .identity()
+            .update_user(org, member.id, Some("admin"), None)
+            .await
+            .unwrap();
+        assert!(store.identity().validate_session(&token2).await.is_ok());
+        let _ = admin;
     }
 }
