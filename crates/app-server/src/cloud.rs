@@ -218,7 +218,23 @@ impl CloudClient {
                 match ev {
                     Ok(ev) => match serde_json::from_str::<StreamEvent>(&ev.data) {
                         Ok(parsed) => Some(Ok(parsed)),
-                        Err(e) => Some(Err(CloudError::Request(format!("bad stream frame: {e}")))),
+                        // Unknown frame shapes (new server StreamEvent
+                        // variants) are skipped, not fatal: a running client
+                        // must survive a server adding frames. The `type`
+                        // tag makes any *existing* variant's payload still
+                        // parse-or-fail the same way.
+                        Err(e) => {
+                            if serde_json::from_str::<serde_json::Value>(&ev.data)
+                                .map(|v| v.get("type").is_some())
+                                .unwrap_or(false)
+                            {
+                                None
+                            } else {
+                                Some(Err(CloudError::Request(format!(
+                                    "bad stream frame: {e}"
+                                ))))
+                            }
+                        }
                     },
                     Err(e) => Some(Err(CloudError::Request(format!("stream error: {e}")))),
                 }
