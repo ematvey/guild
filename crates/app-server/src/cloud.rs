@@ -186,8 +186,9 @@ impl CloudClient {
             messages: messages.to_vec(),
             tools: None,
             system: None,
-            // the desktop engine executes machine tools client-side
-            client_tools: true,
+            // plain chat answers no client tools: declaring them would
+            // suspend the turn until the server-side tool timeout
+            client_tools: false,
                 attachment_ids: Vec::new(),
             project_dir: None,
         })
