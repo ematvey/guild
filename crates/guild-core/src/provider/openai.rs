@@ -187,6 +187,17 @@ impl ModelProvider for OpenAiProvider {
                 let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) else {
                     continue;
                 };
+                if v.get("error").is_some() {
+                    // Mid-stream error payload from OpenAI-compatible
+                    // providers: surface it instead of silently ending the
+                    // turn with an empty assistant message.
+                    let msg = v["error"]["message"]
+                        .as_str()
+                        .map(String::from)
+                        .unwrap_or_else(|| v["error"].to_string());
+                    yield Err(ProviderError::Upstream(msg));
+                    break;
+                }
                 if let Some(chunk) = Self::parse_frame(&data) {
                     yield Ok(chunk);
                 }
