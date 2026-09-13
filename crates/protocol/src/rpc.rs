@@ -184,16 +184,9 @@ impl<R: Read, W: Write> Connection<R, W> {
         loop {
             line.clear();
             match self.reader.read_line(&mut line) {
-                Ok(0) => {
-                    return if line.is_empty() {
-                        None
-                    } else {
-                        Some(Err(RpcError::new(
-                            RpcError::PARSE_ERROR,
-                            "unterminated line",
-                        )))
-                    }
-                }
+                // The buffer is cleared at the top, so EOF always reads as an
+                // empty line — a truncated final line is silently dropped.
+                Ok(0) => return None,
                 Ok(_) => {
                     if line.trim().is_empty() {
                         continue; // skip blank separator lines
