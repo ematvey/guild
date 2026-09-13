@@ -1429,6 +1429,7 @@ impl ChatRunner {
             // context-overflow provider error: compact once,
             // re-derive messages from the event log, retry the call once.
             let mut msgs = messages.clone();
+            let mut retry_compacted = false;
             let completion: CompletionOut = loop {
                 let st = state.clone();
                 let route2 = route.clone();
@@ -1584,6 +1585,7 @@ impl ChatRunner {
                             let refreshed =
                                 journaled_load_events!(ctx, state, req.org_id, req.chat_id);
                             msgs = build_model_history(&refreshed, &media_map, &route.modalities);
+                            retry_compacted = true;
                             continue;
                         }
                     };
@@ -1591,6 +1593,13 @@ impl ChatRunner {
             };
             if completion.tokens_in > 0 {
                 last_context_tokens = completion.tokens_in;
+            }
+            // The overflow retry compacted and re-derived history: propagate
+            // it to the step-level `messages`, or the next step (and the
+            // persisted turn) would run on the pre-compaction history and
+            // overflow again with the retry already spent.
+            if retry_compacted {
+                messages = msgs;
             }
 
             let is_final = completion.tool_calls.is_empty();
