@@ -62,6 +62,21 @@ pub fn build_router(state: AppState) -> Router {
         .merge(usage::routes())
         .fallback(web::fallback)
         .layer(axum::middleware::from_fn(log_requests))
-        .layer(tower_http::cors::CorsLayer::very_permissive())
+        // Origin allow-list: same-origin requests don't hit CORS at all;
+        // the desktop webview (tauri://localhost on macOS,
+        // http(s)://tauri.localhost elsewhere) and the vite dev server are
+        // the only cross-origin clients. Blanket-permissive CORS let any
+        // page drive an authenticated session's API from a browser.
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin([
+                    "tauri://localhost".parse::<axum::http::HeaderValue>().unwrap(),
+                    "http://tauri.localhost".parse().unwrap(),
+                    "https://tauri.localhost".parse().unwrap(),
+                    "http://localhost:1420".parse().unwrap(),
+                ])
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any),
+        )
         .with_state(state)
 }

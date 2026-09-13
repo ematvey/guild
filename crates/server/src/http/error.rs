@@ -54,13 +54,17 @@ impl ApiError {
 
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
-        ApiError::internal(e.to_string())
+        // Details go to the log, not the response body — error chains can
+        // carry SQL and storage internals.
+        tracing::error!("internal error: {e:?}");
+        ApiError::internal("internal server error")
     }
 }
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
-        ApiError::internal(e.to_string())
+        tracing::error!("database error: {e}");
+        ApiError::internal("internal server error")
     }
 }
 
