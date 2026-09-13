@@ -13,6 +13,7 @@ pub struct UserRow {
     pub org_id: Uuid,
     pub email: String,
     pub role: String,
+    pub identity_type: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
 }
@@ -32,6 +33,7 @@ struct AuthRow {
     org_id: Uuid,
     email: String,
     role: String,
+    identity_type: String,
     password_hash: String,
     display_name: Option<String>,
     avatar_url: Option<String>,
@@ -74,7 +76,7 @@ impl<'a> IdentityStore<'a> {
         password: &str,
     ) -> anyhow::Result<Uuid> {
         let user: Option<UserRow> =
-            sqlx::query_as("SELECT id, org_id, email, role, display_name, avatar_url FROM users WHERE email = $1")
+            sqlx::query_as("SELECT id, org_id, email, role, identity_type, display_name, avatar_url FROM users WHERE email = $1")
                 .bind(email)
                 .fetch_optional(self.pool)
                 .await?;
@@ -120,7 +122,7 @@ impl<'a> IdentityStore<'a> {
         let row: Result<UserRow, sqlx::Error> = sqlx::query_as(
             "INSERT INTO users (id, org_id, email, password_hash, role, identity_type) \
              VALUES ($1, $2, $3, $4, $5, 'managed') \
-             RETURNING id, org_id, email, role, display_name, avatar_url",
+             RETURNING id, org_id, email, role, identity_type, display_name, avatar_url",
         )
         .bind(id)
         .bind(org_id)
@@ -156,7 +158,7 @@ impl<'a> IdentityStore<'a> {
         org_id: Uuid,
         email: &str,
     ) -> Result<Option<UserRow>, ApiError> {
-        sqlx::query_as("SELECT id, org_id, email, role, display_name, avatar_url FROM users WHERE org_id = $1 AND email = $2")
+        sqlx::query_as("SELECT id, org_id, email, role, identity_type, display_name, avatar_url FROM users WHERE org_id = $1 AND email = $2")
             .bind(org_id)
             .bind(email)
             .fetch_optional(self.pool)
@@ -168,7 +170,7 @@ impl<'a> IdentityStore<'a> {
     /// Email lookup across orgs (bootstrap/single-org flows).
     pub async fn find_by_email_any(&self, email: &str) -> anyhow::Result<Option<UserRow>> {
         let user: Option<UserRow> =
-            sqlx::query_as("SELECT id, org_id, email, role, display_name, avatar_url FROM users WHERE email = $1")
+            sqlx::query_as("SELECT id, org_id, email, role, identity_type, display_name, avatar_url FROM users WHERE email = $1")
                 .bind(email)
                 .fetch_optional(self.pool)
                 .await?;
@@ -176,7 +178,7 @@ impl<'a> IdentityStore<'a> {
     }
 
     pub async fn get_user(&self, id: Uuid) -> Result<UserRow, ApiError> {
-        sqlx::query_as("SELECT id, org_id, email, role, display_name, avatar_url FROM users WHERE id = $1")
+        sqlx::query_as("SELECT id, org_id, email, role, identity_type, display_name, avatar_url FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(self.pool)
             .await?
@@ -229,7 +231,7 @@ impl<'a> IdentityStore<'a> {
         let hash = hash_password(&unusable).map_err(ApiError::from)?;
         let id = Uuid::now_v7();
         sqlx::query_as(
-            "INSERT INTO users (id, org_id, email, password_hash, role, identity_type, display_name, avatar_url)              VALUES ($1, $2, $3, $4, 'member', 'oidc', $5, $6)              RETURNING id, org_id, email, role, display_name, avatar_url",
+            "INSERT INTO users (id, org_id, email, password_hash, role, identity_type, display_name, avatar_url)              VALUES ($1, $2, $3, $4, 'member', 'oidc', $5, $6)              RETURNING id, org_id, email, role, identity_type, display_name, avatar_url",
         )
         .bind(id)
         .bind(org_id)
@@ -262,7 +264,7 @@ impl<'a> IdentityStore<'a> {
 
     pub async fn authenticate(&self, email: &str, password: &str) -> Result<UserRow, ApiError> {
         let row: Option<AuthRow> = sqlx::query_as(
-            "SELECT id, org_id, email, role, password_hash, display_name, avatar_url FROM users WHERE email = $1",
+            "SELECT id, org_id, email, role, identity_type, password_hash, display_name, avatar_url FROM users WHERE email = $1",
         )
         .bind(email)
         .fetch_optional(self.pool)
@@ -286,6 +288,7 @@ impl<'a> IdentityStore<'a> {
             org_id: auth.org_id,
             email: auth.email,
             role: auth.role,
+            identity_type: auth.identity_type,
             display_name: auth.display_name,
             avatar_url: auth.avatar_url,
         })
@@ -307,7 +310,7 @@ impl<'a> IdentityStore<'a> {
 
     pub async fn validate_session(&self, token: &str) -> Result<UserRow, ApiError> {
         sqlx::query_as(
-            "SELECT u.id, u.org_id, u.email, u.role, u.display_name, u.avatar_url FROM sessions s \
+            "SELECT u.id, u.org_id, u.email, u.role, u.identity_type, u.display_name, u.avatar_url FROM sessions s \
              JOIN users u ON u.id = s.user_id \
              WHERE s.token = $1 AND s.revoked_at IS NULL AND s.expires_at > now()",
         )
