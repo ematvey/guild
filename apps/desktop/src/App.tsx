@@ -191,7 +191,10 @@ function DesktopApp() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [user, setUser] = useState<string | null>(null);
+  // undefined = auth still resolving (splash screen), null = known logged
+  // out, string = logged in. The pair/sign-in card must never flash while
+  // the restore is still in flight.
+  const [user, setUser] = useState<string | null | undefined>(undefined);
   const [appVersion, setAppVersion] = useState<string | null>(null);
 
   // Surface the build the webview is actually running — pairing hangs are
@@ -210,9 +213,11 @@ function DesktopApp() {
       try {
         await bounded(invoke("start_engine"), 30_000, "attach timed out");
         const res = await rpcCall("session.info", {}, 20_000);
-        if (!cancelled && res?.result?.email) await afterAuth(res.result.email);
+        if (cancelled) return;
+        if (res?.result?.email) await afterAuth(res.result.email);
+        else setUser(null);
       } catch {
-        /* not logged in — stay on the pair screen */
+        if (!cancelled) setUser(null); // not logged in — show the pair screen
       }
     })();
     return () => {
@@ -226,17 +231,19 @@ function DesktopApp() {
     // token (works for both pairing and manual login).
     const info = await rpcCall("session.info", {}, 20_000);
     const baseUrl = info.result?.base_url ?? url;
+    // Resolve the server profile before entering the shell: the splash holds
+    // until the IdP name/avatar are known, so the sidebar never flashes the
+    // bare-email fallback.
+    let me: Awaited<ReturnType<typeof apiMe>> = null;
+    try {
+      me = await apiMe();
+    } catch {
+      /* fall back to member / bare email below */
+    }
     setUser(info.result?.email ?? fallbackEmail);
-    // Engine mode shares the same session token in localStorage — fetch the
-    // role for settings gating and the IdP profile for the sidebar (fallback
-    // member / bare email on any failure).
-    apiMe()
-      .then((u) => {
-        setRole(u?.role ?? "member");
-        setDisplayName(u?.display_name ?? null);
-        setAvatarUrl(u?.avatar_url ?? null);
-      })
-      .catch(() => setRole("member"));
+    setRole(me?.role ?? "member");
+    setDisplayName(me?.display_name ?? null);
+    setAvatarUrl(me?.avatar_url ?? null);
     try {
       localStorage.setItem("guild.serverUrl", baseUrl);
       // Unified shell: the webview talks to the same server over HTTP, so the
@@ -287,6 +294,7 @@ function DesktopApp() {
     window.location.reload();
   };
 
+  if (user === undefined) return <Splash />;
   if (user) {
     // Unified shell: the desktop webview runs the same chat UI as the
     // browser, talking HTTP to the same server; only machine-tool execution
@@ -376,13 +384,14 @@ function DesktopApp() {
 }
 
 /// Branded full-screen loading state — shown while auth/session resolves.
+/// Just the logo, pulsing; no default (logged-out) UI may render before the
+/// session state is actually known.
 export function Splash() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background text-foreground">
+    <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
       <div className="flex size-14 animate-pulse items-center justify-center rounded-2xl border border-border bg-card">
         <Bot className="size-7 text-muted-foreground" />
       </div>
-      <p className="text-base text-muted-foreground">Loading Guild…</p>
     </div>
   );
 }

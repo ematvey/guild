@@ -1,8 +1,9 @@
 //! ModelsSection — admin settings: provider keys and model routes as a rich
 //! list screen with separate add / detail (edit + delete) screens.
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { SectionDetailProps } from "../section-nav";
+import { useCachedGet } from "../use-cached-api";
 import { ArrowLeft, Key, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
@@ -45,28 +46,21 @@ export default function ModelsSection({
   detail = null,
   onDetailChange,
 }: SectionDetailProps) {
-  const [routes, setRoutes] = useState<RouteRow[] | null>(null);
-  const [keys, setKeys] = useState<KeyRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const routesRes = useCachedGet<{ routes: RouteRow[] }>("/api/v1/admin/gateway/routes");
+  const keysRes = useCachedGet<{ keys: KeyRow[] }>("/api/v1/admin/gateway/keys");
+  const routes = routesRes.data?.routes ?? null;
+  const keys = keysRes.data?.keys ?? null;
+  const error = routesRes.error;
+  const reload = useMemo(
+    () => () => {
+      routesRes.reload();
+      keysRes.reload();
+    },
+    [routesRes.reload, keysRes.reload],
+  );
   // URL-driven view: null = list, "add" = add flow, otherwise the model id.
   const view: View =
     detail === null ? { kind: "list" } : detail === "add" ? { kind: "add" } : { kind: "detail", model: detail };
-
-  const reload = useCallback(() => {
-    api<{ routes: RouteRow[] }>("GET", "/api/v1/admin/gateway/routes")
-      .then((r) => setRoutes(r.routes))
-      .catch((e) => {
-        setRoutes([]);
-        setError(e instanceof Error ? e.message : String(e));
-      });
-    api<{ keys: KeyRow[] }>("GET", "/api/v1/admin/gateway/keys")
-      .then((r) => setKeys(r.keys))
-      .catch(() => setKeys([]));
-  }, []);
-
-  useEffect(() => {
-    reload();
-  }, [reload]);
 
   if (view.kind === "detail") {
     return (
@@ -320,13 +314,11 @@ function AddKey({ onChanged }: { onChanged: () => void }) {
 }
 
 function useRouteField(model: string) {
-  const [f, setF] = useState<RouteRow | null>(null);
-  useEffect(() => {
-    api<{ routes: RouteRow[] }>("GET", "/api/v1/admin/gateway/routes")
-      .then((r) => setF(r.routes.find((x) => x.model === model) ?? null))
-      .catch(() => setF(null));
-  }, [model]);
-  return f;
+  const res = useCachedGet<{ routes: RouteRow[] }>("/api/v1/admin/gateway/routes");
+  return useMemo(
+    () => res.data?.routes.find((x) => x.model === model) ?? null,
+    [res.data, model],
+  );
 }
 
 function RouteDetail({

@@ -42,13 +42,11 @@ import {
   DialogTitle,
 } from "@guild/ui/components/dialog";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
+import { UserBadge } from "../components/user-badge";
 import { Caret } from "@guild/ui/components/caret";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Separator } from "@guild/ui/components/separator";
@@ -1243,6 +1241,12 @@ export default function WebChat({
   };
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
+  // Per-chat rendered-block cache: reopening a thread shows its last
+  // rendered content immediately while the fresh thread rows load in place,
+  // so switching chats never flashes a skeleton over known content.
+  const threadCacheRef = useRef<Map<string, Block[]>>(new Map());
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
   const [busy, setBusy] = useState(false);
   // Latest busy/attaching/threadLoading values for stable-ref consumers (the
   // deploy-freshness poll below must not read stale closure state).
@@ -1366,10 +1370,21 @@ export default function WebChat({
 
   // Load (or clear) the thread whenever the URL-driven chatId changes — one
   // path for deep links, back/forward, sidebar picks and "new chat" alike.
+  const prevLoadedChatRef = useRef<string | null>(chatId);
   useEffect(() => {
     // Restore this thread's workspace folder (desktop); a new chat falls
     // back to the last used one.
     if (isTauri) setProjectDir(storedDir(chatId) ?? storedDir(null));
+    const prev = prevLoadedChatRef.current;
+    prevLoadedChatRef.current = chatId;
+    if (prev !== null && prev !== chatId && blocksRef.current.length > 0) {
+      // Bound the cache: drop the oldest entry past 20 threads.
+      if (threadCacheRef.current.size >= 20) {
+        const oldest = threadCacheRef.current.keys().next().value;
+        if (oldest !== undefined) threadCacheRef.current.delete(oldest);
+      }
+      threadCacheRef.current.set(prev, blocksRef.current);
+    }
     if (!chatId) {
       loadSeq.current++; // invalidate any in-flight load or generation attach
       loadAbort.current?.abort();
@@ -1401,13 +1416,15 @@ export default function WebChat({
     sendAbort.current = null;
     attachAbort.current?.abort(); // replaced when the new thread's attach starts
     const seq = ++loadSeq.current;
-    setThreadLoading(true);
-    setBlocks([]);
+    const cached = threadCacheRef.current.get(chatId) ?? null;
+    setThreadLoading(cached === null);
+    setBlocks(cached ?? []);
     setCtx(null);
     (async () => {
       try {
         const res: ThreadResult = await getThread(chatId, loadAc.signal);
         if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
+        threadCacheRef.current.set(chatId, eventsToBlocks(res.events));
         applyThreadRows(res);
         // The app process executes tools — push the folder for this chat.
         if (isTauri) void pushChatDir(chatId, storedDir(chatId) ?? storedDir(null));
@@ -2267,13 +2284,9 @@ export default function WebChat({
                     Run in folder…
                   </Button>
                 ))}
-            {models === null ? (
-                <Skeleton className="h-7 w-28 rounded-md" />
-              ) : models.length === 0 ? (
-                <span className="text-muted-foreground">no models</span>
-              ) : (
-                <span />
-              )}
+            {models !== null && models.length === 0 && (
+              <span className="text-muted-foreground">no models</span>
+            )}
               </div>
               <div className="flex items-center gap-2">
                 {chatId && ctx && <ContextGauge ctx={ctx} />}
@@ -2334,9 +2347,13 @@ export default function WebChat({
         }
         email={email}
         role={role}
+        displayName={displayName}
+        avatarUrl={avatarUrl}
         chatId={chatId}
         currentMachineId={chats?.find((c) => c.id === chatId)?.machine_id ?? null}
         onMachineChanged={() => void refreshChats()}
+        onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
+        onSignOut={onSignOut}
       />
     </div>
   );
@@ -2596,7 +2613,6 @@ function SidebarContent({
   onOpenSettings: () => void;
   onOpenDevice: () => void;
 }) {
-  const initials = (displayName ?? email).slice(0, 2).toUpperCase();
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
@@ -2630,42 +2646,14 @@ function SidebarContent({
       </div>
       <Separator />
       <div className="p-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent"
-              title="Account"
-            >
-              {avatarUrl ? (
-                <img
-                  src={avatarUrl}
-                  alt=""
-                  className="size-7 shrink-0 rounded-full object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-                  {initials}
-                </span>
-              )}
-              <span
-                className="min-w-0 flex-1 truncate text-muted-foreground"
-                title={email}
-              >
-                {displayName ?? email}
-              </span>
-              <ChevronUp className="size-3 shrink-0 text-muted-foreground" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start" className="w-56">
-            <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
-            <DropdownMenuItem onClick={onOpenSettings}>Settings</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
-              Sign out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
+          <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
+          <DropdownMenuItem onClick={onOpenSettings}>Settings</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
+            Sign out
+          </DropdownMenuItem>
+        </UserBadge>
       </div>
     </div>
   );

@@ -116,6 +116,33 @@ async fn put_json(
     (status, v)
 }
 
+async fn post_json(
+    app: &axum::Router,
+    uri: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(json!({}));
+    (status, v)
+}
+
 async fn get_json(app: &axum::Router, uri: &str, token: &str) -> serde_json::Value {
     let res = app
         .clone()
@@ -153,11 +180,15 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
 
     let status = publish_and_install(&app, &token, "hubspot", "1.0.0", true).await;
     assert_eq!(status, StatusCode::OK);
+    let id = hubspot_row(&get_json(&app, "/api/v1/admin/integrations", &token).await)["id"]
+        .as_str()
+        .expect("row id")
+        .to_string();
 
     // invalid tool_policy role keys and class names → 400
     let (status, _) = put_json(
         &app,
-        "/api/v1/admin/integrations/hubspot",
+        &format!("/api/v1/admin/integrations/{id}"),
         &token,
         json!({"config": {"tool_policy": {"ghost": ["read"]}}}),
     )
@@ -165,7 +196,7 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = put_json(
         &app,
-        "/api/v1/admin/integrations/hubspot",
+        &format!("/api/v1/admin/integrations/{id}"),
         &token,
         json!({"config": {"tool_policy": {"member": ["sudo"]}}}),
     )
@@ -174,7 +205,7 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
     // invalid mcp url → 400
     let (status, _) = put_json(
         &app,
-        "/api/v1/admin/integrations/hubspot",
+        &format!("/api/v1/admin/integrations/{id}"),
         &token,
         json!({"config": {"mcp": {"url": "ftp://x"}}}),
     )
@@ -184,7 +215,7 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
     // enabling without the declared secret → 409 missing_secrets with names
     let (status, body) = put_json(
         &app,
-        "/api/v1/admin/integrations/hubspot",
+        &format!("/api/v1/admin/integrations/{id}"),
         &token,
         json!({"enabled": true}),
     )
@@ -200,7 +231,7 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
     // store the secret, then enabling succeeds
     let (status, _) = put_json(
         &app,
-        "/api/v1/admin/integrations/hubspot/secrets",
+        &format!("/api/v1/admin/integrations/{id}/secrets"),
         &token,
         json!({"name": "api_key", "value": "sk-live-123"}),
     )
@@ -208,7 +239,7 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
     assert_eq!(status, StatusCode::OK);
 
     // listing exposes names + updated_at only, never values
-    let v = get_json(&app, "/api/v1/admin/integrations/hubspot/secrets", &token).await;
+    let v = get_json(&app, &format!("/api/v1/admin/integrations/{id}/secrets"), &token).await;
     let items = v["secrets"].as_array().expect("secrets list");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["name"], "api_key");
@@ -218,7 +249,7 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
 
     let (status, _) = put_json(
         &app,
-        "/api/v1/admin/integrations/hubspot",
+        &format!("/api/v1/admin/integrations/{id}"),
         &token,
         json!({"enabled": true}),
     )
@@ -233,7 +264,7 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri("/api/v1/admin/integrations/hubspot/secrets/api_key")
+                .uri(format!("/api/v1/admin/integrations/{id}/secrets/api_key"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -270,5 +301,92 @@ async fn available_lists_unconfigured_v2_plugins() {
     assert!(
         available.iter().all(|e| e["name"] != "hubspot"),
         "configured hubspot must not be in available: {available:?}"
+    );
+}
+
+#[tokio::test]
+async fn create_configures_an_available_connector() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+
+    let status = publish_and_install(&app, &token, "freshdesk", "1.0.0", false).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Creating the configuration returns the row with its id; the id is
+    // then the object's address (update, secrets, delete).
+    let (status, body) = post_json(
+        &app,
+        "/api/v1/admin/integrations",
+        &token,
+        json!({ "name": "freshdesk" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["id"].as_str().expect("created row id").to_string();
+    assert_eq!(body["name"], "freshdesk");
+    assert_eq!(body["enabled"], false);
+
+    // A second create for the same connector conflicts.
+    let (status, body) = post_json(
+        &app,
+        "/api/v1/admin/integrations",
+        &token,
+        json!({ "name": "freshdesk" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "already_configured");
+
+    // Unknown connectors are rejected.
+    let (status, _) = post_json(
+        &app,
+        "/api/v1/admin/integrations",
+        &token,
+        json!({ "name": "no-such-connector" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The created row is listed, and updates address it by id.
+    let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
+    let row = v["integrations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == json!(id))
+        .expect("created row listed");
+    assert_eq!(row["name"], "freshdesk");
+    let (status, _) = put_json(
+        &app,
+        &format!("/api/v1/admin/integrations/{id}"),
+        &token,
+        json!({ "enabled": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Deleting by id removes the row; the connector becomes available again.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/admin/integrations/{id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
+    assert!(
+        v["available"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["name"] == "freshdesk"),
+        "deleted connector back in available"
     );
 }

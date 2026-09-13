@@ -1,17 +1,18 @@
 //! IntegrationsSection — admin settings: a list screen of available and
-//! configured integrations; the detail screen holds the enable toggle,
-//! JSON config editor, save and delete. MCP plugin rows additionally show
-//! the mcp url, secret names with timestamps, a write-only secret form,
-//! and a per-role tool-policy editor.
+//! configured integrations; the detail screen (addressed by the row's id,
+//! /settings/integrations/<id>) holds the enable toggle, JSON config
+//! editor, save and delete. MCP plugin rows additionally show the mcp url,
+//! secret names with timestamps, a write-only secret form, and a per-role
+//! tool-policy editor.
 
 import { useState } from "react";
 import type { SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
 import {
   ArrowLeft,
-  ArrowUpRight,
   KeyRound,
   Pencil,
+  Plus,
   Trash2,
   Webhook,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import { Skeleton } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
 
 interface IntegrationRow {
+  id: string;
   org_id: string;
   name: string;
   config: Record<string, unknown>;
@@ -106,9 +108,11 @@ export default function IntegrationsSection({
   const error = list.error;
   const reload = list.reload;
 
+  const [actionError, setActionError] = useState<string | null>(null);
+
   if (detail !== null) {
-    // Deep-linked detail: wait for the lists before resolving the slug —
-    // otherwise a not-yet-loaded row renders as "not configured".
+    // Deep-linked detail: wait for the list before resolving the id —
+    // otherwise a not-yet-loaded row would render as not-found.
     if (rows === null || available === null) {
       return (
         <div className="space-y-2">
@@ -117,17 +121,26 @@ export default function IntegrationsSection({
         </div>
       );
     }
-    const configured = rows?.find((r) => r.name === detail);
+    const configured = rows.find((r) => r.id === detail);
+    if (!configured) {
+      return (
+        <div>
+          <button className={backBtn} onClick={() => onDetailChange(null)}>
+            <ArrowLeft className="size-4" /> Integrations
+          </button>
+          <p className="text-base text-muted-foreground">
+            This integration no longer exists.
+          </p>
+        </div>
+      );
+    }
     return (
       <IntegrationDetail
-        name={detail}
-        category={
-          rows?.find((r) => r.name === detail)?.category ??
-          available?.find((a) => a.name === detail)?.category ??
-          "other"
-        }
-        initialConfig={configured?.config ?? null}
-        initialEnabled={configured?.enabled ?? false}
+        id={configured.id}
+        name={configured.name}
+        category={configured.category ?? "other"}
+        initialConfig={configured.config}
+        initialEnabled={configured.enabled}
         onChanged={reload}
         onBack={() => {
           reload();
@@ -139,9 +152,30 @@ export default function IntegrationsSection({
 
   const availableNames = new Set((available ?? []).map((a) => a.name));
 
+  /// Opens a detail page by id. A not-yet-configured connector has no row
+  /// (and no id) yet: creating its configuration is the first click's job —
+  /// the row starts disabled and the navigation lands on its id.
+  const openIntegration = async (name: string, rowId: string | null) => {
+    setActionError(null);
+    if (rowId) {
+      onDetailChange(rowId);
+      return;
+    }
+    try {
+      const created = await api<{ id: string }>("POST", "/api/v1/admin/integrations", {
+        name,
+      });
+      reload();
+      onDetailChange(created.id);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   return (
     <div className="space-y-6">
       {error && <p className="text-base text-destructive">{error}</p>}
+      {actionError && <p className="text-base text-destructive">{actionError}</p>}
       {rows === null || available === null ? (
         <div className="space-y-2">
           <Skeleton className="h-14 w-full rounded-lg" />
@@ -151,51 +185,53 @@ export default function IntegrationsSection({
         (["fetch", "search", "other", "mcp"] as const).map((cat) => {
           // Rows carry their category from the API; available entries hold
           // the catalog category of kinds with no configured row yet.
-          const inCat = [
-            ...(rows ?? []).filter((r) => (r.category ?? "other") === cat),
-            ...available.filter((a) => (a.category ?? "other") === cat),
-          ];
-          if (inCat.length === 0) return null;
+          const rowItems = (rows ?? []).filter((r) => (r.category ?? "other") === cat);
+          const availItems = available.filter((a) => (a.category ?? "other") === cat);
+          if (rowItems.length === 0 && availItems.length === 0) return null;
           return (
             <section key={cat}>
               <div className="mb-2 flex items-center justify-between">
                 <h3 className={label}>{categoryLabel(cat)}</h3>
                 <span className="text-xs text-muted-foreground">
-                  {inCat.filter((a) => rows.some((r) => r.name === a.name && r.enabled)).length}{" "}
-                  enabled
+                  {rowItems.filter((r) => r.enabled).length} enabled
                 </span>
               </div>
               <div className="space-y-2">
-                {inCat.map((a) => {
-                  const cfg = rows.find((r) => r.name === a.name);
-                  return (
-                    <button
-                      key={a.name}
-                      className={listCard}
-                      onClick={() => onDetailChange(a.name)}
-                    >
-                      <Webhook className="size-4 shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-base font-medium">{a.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {!cfg
-                            ? "not configured"
-                            : cfg.enabled
-                              ? "enabled"
-                              : "configured, disabled"}
-                        </p>
-                      </div>
-                      {cfg && (
-                        <span
-                          className={`size-2 shrink-0 rounded-full ${
-                            cfg.enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
-                          }`}
-                        />
-                      )}
-                      <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
-                    </button>
-                  );
-                })}
+                {rowItems.map((r) => (
+                  <button
+                    key={r.id}
+                    className={listCard}
+                    onClick={() => onDetailChange(r.id)}
+                  >
+                    <Webhook className="size-4 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-medium">{r.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {r.enabled ? "enabled" : "configured, disabled"}
+                      </p>
+                    </div>
+                    <span
+                      className={`size-2 shrink-0 rounded-full ${
+                        r.enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
+                      }`}
+                    />
+                    <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
+                  </button>
+                ))}
+                {availItems.map((a) => (
+                  <button
+                    key={`available-${a.name}`}
+                    className={listCard}
+                    onClick={() => openIntegration(a.name, null)}
+                  >
+                    <Webhook className="size-4 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-medium">{a.name}</p>
+                      <p className="text-xs text-muted-foreground">not configured</p>
+                    </div>
+                    <Plus className="size-3.5 shrink-0 text-muted-foreground/60" />
+                  </button>
+                ))}
               </div>
             </section>
           );
@@ -211,6 +247,7 @@ export default function IntegrationsSection({
 }
 
 function IntegrationDetail({
+  id,
   name,
   category,
   initialConfig,
@@ -218,22 +255,20 @@ function IntegrationDetail({
   onChanged,
   onBack,
 }: {
+  id: string;
   name: string;
   category?: string;
-  initialConfig: Record<string, unknown> | null;
+  initialConfig: Record<string, unknown>;
   initialEnabled: boolean;
   onChanged: () => void;
   onBack: () => void;
 }) {
-  const configured = initialConfig !== null;
   const isMcp =
-    configured && typeof initialConfig?.mcp === "object" && initialConfig.mcp !== null;
+    typeof initialConfig?.mcp === "object" && initialConfig.mcp !== null;
   // The saved integration is facts first; editing is an explicit mode.
-  const [mode, setMode] = useState<"view" | "edit">(configured ? "view" : "edit");
+  const [mode, setMode] = useState<"view" | "edit">("view");
   const [enabled, setEnabled] = useState(initialEnabled);
-  const [text, setText] = useState(
-    configured ? JSON.stringify(initialConfig, null, 2) : "{\n  \n}",
-  );
+  const [text, setText] = useState(JSON.stringify(initialConfig, null, 2));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -246,9 +281,7 @@ function IntegrationDetail({
     readPolicy(initialConfig),
   );
 
-  const secretsPath = configured
-    ? `/api/v1/admin/integrations/${encodeURIComponent(name)}/secrets`
-    : null;
+  const secretsPath = `/api/v1/admin/integrations/${id}/secrets`;
   const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(secretsPath);
   const secrets = secretsRes.data?.secrets ?? null;
   const reloadSecrets = secretsRes.reload;
@@ -262,7 +295,7 @@ function IntegrationDetail({
       const clean = cleanPolicy(policy);
       if (Object.keys(clean).length > 0) cfg.tool_policy = clean;
       else delete cfg.tool_policy;
-      await api("PUT", `/api/v1/admin/integrations/${encodeURIComponent(name)}`, {
+      await api("PUT", `/api/v1/admin/integrations/${id}`, {
         config: cfg,
         enabled,
       });
@@ -286,11 +319,10 @@ function IntegrationDetail({
     setBusy(true);
     setError(null);
     try {
-      await api(
-        "PUT",
-        `/api/v1/admin/integrations/${encodeURIComponent(name)}/secrets`,
-        { name: secretName.trim(), value: secretValue },
-      );
+      await api("PUT", `/api/v1/admin/integrations/${id}/secrets`, {
+        name: secretName.trim(),
+        value: secretValue,
+      });
       setSecretName("");
       setSecretValue("");
       reloadSecrets();
@@ -308,7 +340,7 @@ function IntegrationDetail({
     try {
       await api(
         "DELETE",
-        `/api/v1/admin/integrations/${encodeURIComponent(name)}/secrets/${encodeURIComponent(secret)}`,
+        `/api/v1/admin/integrations/${id}/secrets/${encodeURIComponent(secret)}`,
       );
       setConfirmSecret(null);
       onChanged();
@@ -331,8 +363,8 @@ function IntegrationDetail({
           {categoryLabel(category)}
         </span>
         <span
-          className={`size-2 rounded-full ${configured && initialEnabled ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
-          title={configured ? (initialEnabled ? "enabled" : "disabled") : "not configured"}
+          className={`size-2 rounded-full ${initialEnabled ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+          title={initialEnabled ? "enabled" : "disabled"}
         />
       </div>
 
@@ -399,25 +431,18 @@ function IntegrationDetail({
             <Button disabled={busy} onClick={save}>
               {busy ? "Saving…" : "Save"}
             </Button>
-            {configured && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setText(JSON.stringify(initialConfig, null, 2));
-                  setEnabled(initialEnabled);
-                  setPolicy(readPolicy(initialConfig));
-                  setError(null);
-                  setMode("view");
-                }}
-              >
-                Cancel
-              </Button>
-            )}
-            {!configured && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <ArrowUpRight className="size-3.5" /> saving creates the configuration
-              </span>
-            )}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setText(JSON.stringify(initialConfig, null, 2));
+                setEnabled(initialEnabled);
+                setPolicy(readPolicy(initialConfig));
+                setError(null);
+                setMode("view");
+              }}
+            >
+              Cancel
+            </Button>
           </div>
         </div>
       ) : (
@@ -563,7 +588,7 @@ function IntegrationDetail({
                   onClick={async () => {
                     setBusy(true);
                     try {
-                      await api("DELETE", `/api/v1/admin/integrations/${encodeURIComponent(name)}`);
+                      await api("DELETE", `/api/v1/admin/integrations/${id}`);
                       onBack();
                     } finally {
                       setBusy(false);

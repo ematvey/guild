@@ -3,9 +3,9 @@
 //! selector. The period and group live in the URL (?period=&group=), so
 //! back/forward, reloads and deep links restore the exact view.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { api } from "../admin-api";
+import { quantizeIso, useCachedGet } from "../use-cached-api";
 import {
   ChartContainer,
   ChartTooltip,
@@ -61,14 +61,11 @@ const hourLabel = (iso: string) =>
 const fullStamp = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric" });
 
 export default function UsageSection() {
-  const [summary, setSummary] = useState<{ today_cost_usd: number; month_cost_usd: number } | null>(
-    null,
-  );
-  const [rows, setRows] = useState<UsageRow[] | null>(null);
-  const [timeline, setTimeline] = useState<
-    { label: string; stamp: string; cost: number; requests: number }[] | null
-  >(null);
-  const [error, setError] = useState<string | null>(null);
+  const summaryRes = useCachedGet<{
+    today_cost_usd: number;
+    month_cost_usd: number;
+  }>("/api/v1/usage/summary");
+  const summary = summaryRes.data;
   const [{ period, group }, setView] = useState(readQuery);
 
   // Back/forward: re-read period + group from the URL.
@@ -89,75 +86,53 @@ export default function UsageSection() {
     setView(merged);
   };
 
-  useEffect(() => {
-    setError(null);
-    api<{ today_cost_usd: number; month_cost_usd: number }>("GET", "/api/v1/usage/summary")
-      .then(setSummary)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
+  // Query paths quantize timestamps to 10-minute buckets so cache keys
+  // repeat across navigations instead of changing every mount.
+  const from = quantizeIso(600_000, Date.now() - PERIOD_MS[period]);
+  const to = quantizeIso(600_000);
+  const breakdownRes = useCachedGet<{ rows: UsageRow[] }>(
+    `/api/v1/usage?group_by=${group}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+  );
+  const seriesRes = useCachedGet<{ rows: SeriesRow[] }>(
+    `/api/v1/usage/series?group_by=none&bucket=${period === "24h" ? "hour" : "day"}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+  );
+  const rows = breakdownRes.data?.rows ?? null;
+  const error = summaryRes.error ?? breakdownRes.error ?? seriesRes.error;
 
-  useEffect(() => {
-    let cancelled = false;
-    setRows(null);
-    setTimeline(null);
-    const from = new Date(Date.now() - PERIOD_MS[period]).toISOString();
-    const to = new Date().toISOString();
-    // zero-filled timeline keeps lines continuous across traffic gaps
+  // zero-filled timeline keeps lines continuous across traffic gaps
+  const timeline = useMemo<
+    { label: string; stamp: string; cost: number; requests: number }[] | null
+  >(() => {
+    const series = seriesRes.data?.rows;
+    if (!series) return null;
     const buckets = period === "24h" ? 24 : PERIOD_MS[period] / 86_400_000;
     const labelOf = period === "24h" ? hourLabel : dayLabel;
-    void (async () => {
-      try {
-        const [breakdown, series] = await Promise.all([
-          api<{ rows: UsageRow[] }>(
-            "GET",
-            `/api/v1/usage?group_by=${group}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-          ),
-          api<{ rows: SeriesRow[] }>(
-            "GET",
-            `/api/v1/usage/series?group_by=none&bucket=${period === "24h" ? "hour" : "day"}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-          ),
-        ]);
-        if (cancelled) return;
-        setRows(breakdown.rows);
-        // sum across groups → single timeline; keyed by epoch ms (server
-        // buckets arrive as RFC 3339 UTC instants)
-        const byStamp = new Map<number, { cost: number; requests: number }>();
-        for (const r of series.rows) {
-          const key = new Date(r.bucket).getTime();
-          const cur = byStamp.get(key) ?? { cost: 0, requests: 0 };
-          byStamp.set(key, { cost: cur.cost + r.cost_usd, requests: cur.requests + r.requests });
-        }
-        const points: { label: string; stamp: string; cost: number; requests: number }[] = [];
-        const step = PERIOD_MS[period] / buckets;
-        const start = Date.now() - PERIOD_MS[period];
-        for (let i = 1; i <= buckets; i++) {
-          // bucket START times, aligned to UTC hour/day boundaries to match
-          // the server's toStartOfHour/toStartOfDay buckets
-          const tMs =
-            period === "24h"
-              ? Math.floor((start + i * step) / 3_600_000) * 3_600_000
-              : Math.floor((start + i * step) / 86_400_000) * 86_400_000;
-          const iso = new Date(tMs).toISOString();
-          points.push({
-            label: labelOf(iso),
-            stamp: iso,
-            cost: byStamp.get(tMs)?.cost ?? 0,
-            requests: byStamp.get(tMs)?.requests ?? 0,
-          });
-        }
-        setTimeline(points);
-      } catch (e) {
-        if (!cancelled) {
-          setRows([]);
-          setTimeline([]);
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [period, group]);
+    const byStamp = new Map<number, { cost: number; requests: number }>();
+    for (const r of series) {
+      const key = new Date(r.bucket).getTime();
+      const cur = byStamp.get(key) ?? { cost: 0, requests: 0 };
+      byStamp.set(key, { cost: cur.cost + r.cost_usd, requests: cur.requests + r.requests });
+    }
+    const points: { label: string; stamp: string; cost: number; requests: number }[] = [];
+    const step = PERIOD_MS[period] / buckets;
+    const start = Date.now() - PERIOD_MS[period];
+    for (let i = 1; i <= buckets; i++) {
+      // bucket START times, aligned to UTC hour/day boundaries to match
+      // the server's toStartOfHour/toStartOfDay buckets
+      const tMs =
+        period === "24h"
+          ? Math.floor((start + i * step) / 3_600_000) * 3_600_000
+          : Math.floor((start + i * step) / 86_400_000) * 86_400_000;
+      const iso = new Date(tMs).toISOString();
+      points.push({
+        label: labelOf(iso),
+        stamp: iso,
+        cost: byStamp.get(tMs)?.cost ?? 0,
+        requests: byStamp.get(tMs)?.requests ?? 0,
+      });
+    }
+    return points;
+  }, [seriesRes.data, period]);
 
   const barRows = (rows ?? [])
     .slice()

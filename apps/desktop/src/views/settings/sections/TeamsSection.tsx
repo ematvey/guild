@@ -2,8 +2,9 @@
 //! teams plus an "Add team" entry; the detail screen holds members
 //! (add/remove) and delete.
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import type { SectionDetailProps } from "../section-nav";
+import { useCachedGet } from "../use-cached-api";
 import { ArrowLeft, Pencil, Plus, Trash2, UsersRound, X } from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
@@ -30,19 +31,10 @@ export default function TeamsSection({
   detail = null,
   onDetailChange,
 }: SectionDetailProps) {
-  const [teams, setTeams] = useState<TeamRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(() => {
-    api<{ teams: TeamRow[] }>("GET", "/api/v1/admin/teams")
-      .then((r) => setTeams(r.teams))
-      .catch((e) => {
-        setTeams([]);
-        setError(e instanceof Error ? e.message : String(e));
-      });
-  }, []);
-
-  useEffect(reload, [reload]);
+  const teamsRes = useCachedGet<{ teams: TeamRow[] }>("/api/v1/admin/teams");
+  const teams = teamsRes.data?.teams ?? null;
+  const error = teamsRes.error;
+  const reload = teamsRes.reload;
 
   if (detail !== null) {
     // Deep-linked team page: wait for the list before resolving the id —
@@ -122,22 +114,15 @@ function TeamDetail({
   // The saved team is facts first; renaming is an explicit edit mode.
   const [mode, setMode] = useState<"view" | "edit">(creating ? "edit" : "view");
   const [name, setName] = useState(team?.name ?? "");
-  const [members, setMembers] = useState<UserRow[] | null>(creating ? [] : null);
-  const [orgUsers, setOrgUsers] = useState<UserRow[] | null>(null);
   const [addUserId, setAddUserId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-
-  useEffect(() => {
-    if (creating) return;
-    api<{ members: UserRow[] }>("GET", `/api/v1/admin/teams/${team!.id}/members`)
-      .then((r) => setMembers(r.members))
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-    api<{ users: UserRow[] }>("GET", "/api/v1/admin/users")
-      .then((r) => setOrgUsers(r.users))
-      .catch(() => setOrgUsers([]));
-  }, [creating, team]);
+  const membersRes = useCachedGet<{ members: UserRow[] }>(
+    creating ? null : `/api/v1/admin/teams/${team!.id}/members`,
+  );
+  const members = creating ? [] : (membersRes.data?.members ?? null);
+  const orgUsers = useCachedGet<{ users: UserRow[] }>("/api/v1/admin/users").data?.users ?? null;
 
   const save = async () => {
     if (busy || !name) return;
@@ -169,11 +154,7 @@ function TeamDetail({
         user_id: addUserId,
       });
       setAddUserId("");
-      const r = await api<{ members: UserRow[] }>(
-        "GET",
-        `/api/v1/admin/teams/${team!.id}/members`,
-      );
-      setMembers(r.members);
+      membersRes.reload();
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -188,11 +169,7 @@ function TeamDetail({
     setBusy(true);
     try {
       await api("DELETE", `/api/v1/admin/teams/${team!.id}/members/${userId}`);
-      const r = await api<{ members: UserRow[] }>(
-        "GET",
-        `/api/v1/admin/teams/${team!.id}/members`,
-      );
-      setMembers(r.members);
+      membersRes.reload();
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
