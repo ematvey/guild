@@ -60,6 +60,7 @@ async fn thread_store_append_list_roundtrip_and_org_scope() {
         content: "file.rs".into(),
         is_error: false,
         meta: Some(json!({"card": "terminal", "exit_code": 0})),
+        images: Vec::new(),
     };
 
     let row0 = store

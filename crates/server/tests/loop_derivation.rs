@@ -47,6 +47,7 @@ fn derivation_builds_model_history_with_reasoning_replay() {
             content: "fn main() {}".into(),
             is_error: false,
             meta: None,
+            images: Vec::new(),
         },
         assistant(1, 1, vec![Block::Text { text: "final answer".into() }]),
         ThreadEvent::UserMessage { content: "again".into(), attachments: Vec::new() },
@@ -115,6 +116,7 @@ fn turn_numbering_continues_from_events() {
             content: "y".into(),
             is_error: false,
             meta: None,
+            images: Vec::new(),
         },
         assistant(3, 2, vec![Block::Text { text: "a2".into() }]),
     ];

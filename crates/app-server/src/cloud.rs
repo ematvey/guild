@@ -249,6 +249,7 @@ impl CloudClient {
             content: content.to_string(),
             is_error,
             meta,
+            images: Vec::new(),
         };
         let url = format!(
             "{}/api/v1/chats/{chat_id}/thread",
