@@ -244,6 +244,18 @@ impl AppState {
             .map(|h| h.name.clone())
     }
 
+    /// True when `machine_id` is registered (by stream connect or heartbeat)
+    /// and belongs to the given user or their org — the bind-check for chat
+    /// machine bindings. Freshness is not required: an offline-but-known
+    /// machine still binds (tool dispatch just waits for it to reconnect).
+    pub fn machine_bindable(&self, machine_id: &str, user_id: Uuid, org_id: Uuid) -> bool {
+        self.executors
+            .lock()
+            .unwrap()
+            .get(machine_id)
+            .is_some_and(|h| h.user_id == user_id || h.org_id == org_id)
+    }
+
     /// Connected executors belonging to `user_id`.
     pub fn machines_of_user(&self, user_id: Uuid) -> Vec<(String, String)> {
         let now = chrono::Utc::now().timestamp();
