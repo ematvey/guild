@@ -477,9 +477,10 @@ pub enum ThreadEvent {
     },
 }
 
-/// The fixed set of machine tools executed by the attached client. Names and
-/// schemas mirror the guild-core built-in registry (tools/mod.rs) — one
-/// definition shared by server and clients.
+/// The fixed set of machine tools executed by the attached client. This is
+/// the single definition of the built-in tool schemas: the guild-core
+/// registry re-exports these specs verbatim, so what the model is told and
+/// what the executor validates can never drift.
 pub fn client_tool_specs() -> Vec<ToolSpec> {
     fn spec(
         name: &str,
@@ -502,7 +503,7 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
     vec![
         spec(
             "read_file",
-            "Read a text file from the workspace. Returns up to 2000 lines starting at `offset` (1-based).",
+            "Read a text file relative to the project directory. Returns up to `limit` lines (default 2000) starting at `offset` (1-based). Image files (png/jpg/gif/webp) are returned as attached images for viewing.",
             serde_json::json!({
                 "path": str_prop,
                 "offset": num_prop,
@@ -511,13 +512,13 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
             &["path"],
         ),
         spec(
-            "execute",
-            "Run a shell command (sh -c) in the workspace and return combined stdout+stderr.",
+            "write_file",
+            "Create a file or overwrite it with `content`. Parent directories are created automatically.",
             serde_json::json!({
-                "command": str_prop,
-                "timeout_ms": num_prop
+                "path": str_prop,
+                "content": str_prop
             }),
-            &["command"],
+            &["path", "content"],
         ),
         spec(
             "edit_file",
@@ -530,15 +531,21 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
             &["path", "oldText", "newText"],
         ),
         spec(
-            "write_file",
-            "Create a file or overwrite it with `content`. Parent directories are created automatically.",
+            "execute",
+            "Run a shell command (sh -c) in the project directory and return combined stdout+stderr. Non-zero exits are reported, not errors.",
             serde_json::json!({
-                "path": str_prop,
-                "content": str_prop
+                "command": str_prop,
+                "cwd": str_prop,
+                "timeout_ms": { "type": "integer" }
             }),
-            &["path", "content"],
+            &["command"],
         ),
     ]
+}
+
+/// The spec for one built-in client tool by name (see `client_tool_specs`).
+pub fn client_tool_spec(name: &str) -> Option<ToolSpec> {
+    client_tool_specs().into_iter().find(|s| s.name == name)
 }
 
 #[cfg(test)]

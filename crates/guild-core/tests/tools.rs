@@ -52,13 +52,13 @@ async fn edit_file_uniqueness_rules() {
     std::fs::write(dir.join("a.txt"), "alpha\nbeta\nalpha\n").unwrap();
     // not found
     let err = EditFile
-        .run(&dir, json!({"path": "a.txt", "old": "zzz", "new": "q"}))
+        .run(&dir, json!({"path": "a.txt", "oldText": "zzz", "newText": "q"}))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("not found"));
     // ambiguous
     let err = EditFile
-        .run(&dir, json!({"path": "a.txt", "old": "alpha", "new": "q"}))
+        .run(&dir, json!({"path": "a.txt", "oldText": "alpha", "newText": "q"}))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("2 times"));
@@ -66,7 +66,7 @@ async fn edit_file_uniqueness_rules() {
     let out = EditFile
         .run(
             &dir,
-            json!({"path": "a.txt", "old": "beta", "new": "gamma"}),
+            json!({"path": "a.txt", "oldText": "beta", "newText": "gamma"}),
         )
         .await
         .unwrap();
@@ -144,7 +144,7 @@ async fn escape_rejection_consistent_across_fs_tools() {
     for (tool, args) in [
         ("read_file", json!({"path": "../../etc/passwd"})),
         ("write_file", json!({"path": "../../etc/x", "content": "x"})),
-        ("edit_file", json!({"path": "../x", "old": "a", "new": "b"})),
+        ("edit_file", json!({"path": "../x", "oldText": "a", "newText": "b"})),
     ] {
         let err = ToolRegistry::builtins()
             .run(tool, &dir, args)
@@ -184,4 +184,45 @@ async fn read_file_attaches_images_as_data_uris() {
     assert!(out.output_for_model.contains("binary file"), "{}", out.output_for_model);
     assert!(out.images.is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test]
+async fn read_file_offset_limit_paging() {
+    let dir = scratch("paging");
+    let body: String = (1..=50).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(dir.join("a.txt"), &body).unwrap();
+    let out = ReadFile
+        .run(&dir, json!({"path": "a.txt", "offset": 10, "limit": 5}))
+        .await
+        .unwrap();
+    assert_eq!(out.output_for_model, "line 10\nline 11\nline 12\nline 13\nline 14");
+    let meta = out.meta.unwrap();
+    assert_eq!(meta["offset"], 10);
+    assert_eq!(meta["limit"], 5);
+    assert_eq!(meta["total_lines"], 50);
+    // offset past the end yields empty output
+    let out = ReadFile
+        .run(&dir, json!({"path": "a.txt", "offset": 60}))
+        .await
+        .unwrap();
+    assert_eq!(out.output_for_model, "");
+    // defaults: no offset/limit reads everything
+    let out = ReadFile.run(&dir, json!({"path": "a.txt"})).await.unwrap();
+    assert!(out.output_for_model.starts_with("line 1\n"));
+    assert!(out.output_for_model.ends_with("line 50"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The protocol's client-tool declaration is the single source of truth: the
+/// registry must re-export it verbatim so what the model sees matches what
+/// the executor validates.
+#[test]
+fn registry_specs_match_client_tool_specs() {
+    let declared = protocol::api::client_tool_specs();
+    let reg = ToolRegistry::builtins();
+    let actual = reg.specs();
+    assert_eq!(actual, declared, "registry specs drifted from protocol declaration");
+    for s in &declared {
+        assert!(reg.get(&s.name).is_some(), "registry missing tool {}", s.name);
+    }
 }
