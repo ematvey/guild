@@ -2,7 +2,6 @@
 //! hands: scoped to the project dir, schema-validated, approval-gated.
 
 pub mod fs;
-pub mod git;
 pub mod shell;
 
 use async_trait::async_trait;
@@ -33,6 +32,9 @@ pub struct ToolOutcome {
     /// Widget payload for the UI (spec C.2): card kind + tool-owned render
     /// hints, persisted with the tool_result event. Opaque to the loop.
     pub meta: Option<serde_json::Value>,
+    /// Image parts (data URIs) attached to the tool result for vision-capable
+    /// models — e.g. read_file on an image attaches it for direct viewing.
+    pub images: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -68,10 +70,7 @@ impl ToolRegistry {
         r.add(Arc::new(fs::ReadFile));
         r.add(Arc::new(fs::WriteFile));
         r.add(Arc::new(fs::EditFile));
-        r.add(Arc::new(fs::GlobTool));
-        r.add(Arc::new(fs::GrepTool));
         r.add(Arc::new(shell::RunCommand));
-        r.add(Arc::new(git::GitTool));
         r
     }
 

@@ -338,6 +338,10 @@ struct ToolResultPayload {
     is_error: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     meta: Option<Value>,
+    /// Image parts (data URIs) the executing client attached — persisted on
+    /// the tool_result event and sent to vision-capable models.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    images: Vec<String>,
 }
 
 /// Body of the `complete_tool` handler.
@@ -351,6 +355,10 @@ pub struct ToolResultReq {
     /// `tool_result` event (spec §C.2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
+    /// Image parts (data URIs) read_file attached; sent to models whose
+    /// route supports the image modality, dropped otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
 }
 
 /// Body of the `complete_approval` handler (phase 2 gate): a user decision
@@ -471,7 +479,7 @@ pub(crate) const CLIENT_TOOL_TIMEOUT: std::time::Duration = std::time::Duration:
 pub(crate) const APPROVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 fn client_tool_names() -> &'static [&'static str] {
-    &["read_file", "execute", "edit_file", "write_file", "glob", "grep"]
+    &["read_file", "execute", "edit_file", "write_file"]
 }
 
 fn state_key(call_id: &str) -> String {
@@ -488,11 +496,7 @@ fn approval_state_key(call_id: &str) -> String {
 fn server_default_policy() -> ApprovalPolicy {
     serde_json::from_value(json!({
         "default": "ask",
-        "overrides": {
-            "read_file": "allow",
-            "glob": "allow",
-            "grep": "allow"
-        }
+        "overrides": { "read_file": "allow" }
     }))
     .expect("server default policy is valid")
 }
@@ -535,7 +539,7 @@ fn build_system_prompt(
     let mut s = String::from(persona);
     if client_tools {
         s.push_str(
-            " You have tools (read_file, execute, edit_file, write_file, glob, grep) that execute on \
+            " You have tools (read_file, execute, edit_file, write_file) that execute on \
              the user's machine via the Guild desktop executor — you never run \
              anything yourself and there is no sandbox on your side. Inspect the \
              workspace with them BEFORE answering anything that could be about \
@@ -894,8 +898,8 @@ pub fn build_model_history(
                     reasoning: if reasoning.is_empty() { None } else { Some(reasoning) },
                 });
             }
-            ThreadEvent::ToolResult { call_id, content, .. } => {
-                buffer.push(Message::tool_result(call_id, content));
+            ThreadEvent::ToolResult { call_id, content, images, .. } => {
+                buffer.push(Message::tool_result(call_id, content).with_images(images.clone()));
             }
         }
     }
@@ -1675,7 +1679,7 @@ impl ChatRunner {
             // Execute each requested tool call in order.
             for (idx, call) in completion.tool_calls.iter().enumerate() {
                 let is_client_tool = client_tool_names().contains(&call.name.as_str());
-                let (content, is_error, meta) = if is_client_tool {
+                let (content, is_error, meta, tool_images) = if is_client_tool {
                     let payload = client_tool_step(
                         &ctx,
                         &state,
@@ -1689,9 +1693,14 @@ impl ChatRunner {
                         req.origin_machine_id.clone(),
                     )
                     .await?;
-                    (payload.content, payload.is_error, payload.meta)
+                    (
+                        payload.content,
+                        payload.is_error,
+                        payload.meta,
+                        payload.images,
+                    )
                 } else {
-                    server_tool_step(
+                    let (content3, is_error3, meta3) = server_tool_step(
                         &ctx,
                         &state,
                         &tx,
@@ -1703,11 +1712,14 @@ impl ChatRunner {
                         &mcp_caller_role,
                         Some(mcp_caller_email.as_str()),
                     )
-                    .await?
+                    .await?;
+                    (content3, is_error3, meta3, Vec::new())
                 };
 
                 // Journaled: persist the tool_result event with turn/step and
-                // the executor's widget meta (spec §C.2).
+                // the executor's widget meta (spec §C.2). Image parts ride
+                // only when the route supports the image modality (spec §4.3);
+                // gating at persist time keeps replay identical.
                 let st = state.clone();
                 let chat_id = req.chat_id;
                 let call2 = call.clone();
@@ -1715,6 +1727,12 @@ impl ChatRunner {
                 let meta2 = meta.clone();
                 let turn2 = turn_no;
                 let step2 = step as u32;
+                let event_images = if route.modalities.iter().any(|m| m == "image") {
+                    tool_images.clone()
+                } else {
+                    Vec::new()
+                };
+                let persisted_images = event_images.clone();
                 ctx.run(move || {
                     let state = st.clone();
                     let call = call2.clone();
@@ -1728,6 +1746,7 @@ impl ChatRunner {
                             content: content2.clone(),
                             is_error,
                             meta: meta2.clone(),
+                            images: persisted_images,
                         };
                         store
                             .thread()
@@ -1742,7 +1761,7 @@ impl ChatRunner {
                 messages.push(Message {
                     role: "tool".into(),
                     content,
-                    images: Vec::new(),
+                    images: event_images,
                     audio: Vec::new(),
                     tool_calls: None,
                     tool_call_id: Some(call.id.clone()),
@@ -1858,6 +1877,7 @@ impl ChatRunner {
                 content: req.content.clone(),
                 is_error: req.is_error,
                 meta: req.meta.clone(),
+                images: req.images.clone(),
             }),
         );
         Ok(())
@@ -1979,6 +1999,7 @@ async fn client_tool_step(
                     .to_string(),
             is_error: false,
             meta: None,
+            images: Vec::new(),
         });
     };
     // Fail fast when the bound machine is offline (journaled snapshot).
@@ -2001,6 +2022,7 @@ async fn client_tool_step(
             ),
             is_error: false,
             meta: None,
+            images: Vec::new(),
         });
     }
 
@@ -2048,6 +2070,7 @@ async fn client_tool_step(
                 content: "denied by policy".to_string(),
                 is_error: true,
                 meta: None,
+                images: Vec::new(),
             });
         }
         Approval::Allow => {}
@@ -2174,6 +2197,7 @@ async fn client_tool_step(
                     },
                     is_error: true,
                     meta: None,
+                    images: Vec::new(),
                 });
             }
             // Approved: fall through to the ToolStarted/suspend flow.
@@ -2244,6 +2268,7 @@ async fn client_tool_step(
             ),
             is_error: true,
             meta: None,
+            images: Vec::new(),
         }))
         .send_after(CLIENT_TOOL_TIMEOUT);
 
@@ -2253,6 +2278,7 @@ async fn client_tool_step(
             content: format!("client tool failed: {t}"),
             is_error: true,
             meta: None,
+            images: Vec::new(),
         },
     };
 
@@ -2682,8 +2708,6 @@ mod tests {
     fn server_default_read_flows_state_changers_ask() {
         let p = server_default_policy();
         assert_eq!(p.for_tool("read_file", Approval::Ask), Approval::Allow);
-        assert_eq!(p.for_tool("glob", Approval::Ask), Approval::Allow);
-        assert_eq!(p.for_tool("grep", Approval::Ask), Approval::Allow);
         assert_eq!(p.for_tool("execute", Approval::Ask), Approval::Ask);
         assert_eq!(p.for_tool("edit_file", Approval::Ask), Approval::Ask);
         assert_eq!(p.for_tool("write_file", Approval::Ask), Approval::Ask);
@@ -2903,6 +2927,7 @@ mod tests {
                 content: "fn main() {}".into(),
                 is_error: false,
                 meta: None,
+                images: Vec::new(),
             },
         ];
         let msgs = build_model_history(&events, &Default::default(), &[]);
@@ -2968,6 +2993,7 @@ mod tests {
                 content: "x".into(),
                 is_error: false,
                 meta: None,
+                images: Vec::new(),
             },
         ];
         assert_eq!(latest_assistant_model(&events).as_deref(), Some("model-b"));

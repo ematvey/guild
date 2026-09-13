@@ -164,6 +164,7 @@ impl Tool for McpTool {
             return Err(ToolFailure::Execution(format!("mcp tool error: {text}")));
         }
         Ok(ToolOutcome {
+            images: Vec::new(),
             output_for_model: text,
             ui_summary: Some(format!("mcp::{}", self.spec.name)),
             diff: None,

@@ -211,8 +211,6 @@ const CLIENT_TOOL_NAMES = [
   "execute",
   "edit_file",
   "write_file",
-  "glob",
-  "grep",
 ];
 
 function modalityOf(contentType: string): string {
@@ -686,8 +684,6 @@ const TOOL_LABELS: Record<string, string> = {
   read_file: "Read",
   edit_file: "Edit",
   write_file: "Write",
-  glob: "Glob",
-  grep: "Grep",
   // pre-rename wire names, kept so old thread history renders
   bash: "Execute",
   shell: "Execute",

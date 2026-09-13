@@ -1,21 +1,38 @@
-//! File tools: read, write, edit, glob, grep — all scoped to the project dir.
+//! File tools: read, write, edit — all scoped to the project dir.
 
 use super::{diff_text, resolve_scoped, truncate, Approval, Tool, ToolFailure, ToolOutcome};
 use async_trait::async_trait;
-use globset::GlobBuilder;
+use base64::Engine as _;
 use protocol::api::ToolSpec;
-use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
 
 pub struct ReadFile;
+
+/// Image extensions the model-facing providers accept (OpenAI image_url and
+/// Anthropic base64 image blocks share this set).
+fn image_mime(ext: &str) -> Option<&'static str> {
+    match ext {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// Cap on an attached image's raw size — Anthropic rejects base64 images
+/// over 5 MB; leave headroom for the request as a whole.
+const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
 #[async_trait]
 impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".into(),
-            description: "Read a text file relative to the project directory.".into(),
+            description: "Read a text file relative to the project directory. Image files \
+                          (png/jpg/gif/webp) are returned as attached images for viewing."
+                .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
@@ -35,19 +52,82 @@ impl Tool for ReadFile {
                 .as_str()
                 .ok_or_else(|| ToolFailure::InvalidInput("missing path".into()))?,
         )?;
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|e| ToolFailure::Execution(format!("read {}: {e}", path.display())))?;
+        let display = path.display().to_string();
+        let mut meta = serde_json::json!({ "card": "read", "path": display });
+
+        // Image file: attach as a data URI (provider serialization turns it
+        // into the right content block; the turn drops it when the route has
+        // no image modality).
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if let Some(mime) = image_mime(&ext) {
+            let bytes = tokio::fs::read(&path)
+                .await
+                .map_err(|e| ToolFailure::Execution(format!("read {display}: {e}")))?;
+            let kb = bytes.len() / 1024;
+            meta["size_kb"] = serde_json::json!(kb);
+            if bytes.len() > MAX_IMAGE_BYTES {
+                return Ok(ToolOutcome {
+                    images: Vec::new(),
+                    output_for_model: format!(
+                        "[image file: {display} ({kb} KB) — too large to attach (limit 4 MB)]"
+                    ),
+                    ui_summary: None,
+                    diff: None,
+                    meta: Some(meta),
+                });
+            }
+            let uri = format!(
+                "data:{mime};base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&bytes)
+            );
+            return Ok(ToolOutcome {
+                images: vec![uri],
+                output_for_model: format!(
+                    "[image file: {display} ({kb} KB) — the image is attached to this result; describe what you see when asked]"
+                ),
+                ui_summary: None,
+                diff: None,
+                meta: Some(meta),
+            });
+        }
+
+        let content = match tokio::fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                let size = tokio::fs::metadata(&path)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                return Ok(ToolOutcome {
+                    images: Vec::new(),
+                    output_for_model: format!(
+                        "[binary file: {display} ({size} bytes) — this tool returns text only]"
+                    ),
+                    ui_summary: None,
+                    diff: None,
+                    meta: Some(meta),
+                });
+            }
+            Err(e) => {
+                return Err(ToolFailure::Execution(format!(
+                    "read {display}: {e}"
+                )))
+            }
+        };
         let total_lines = content.lines().count();
-        let mut meta = serde_json::json!({ "card": "read", "path": path.display().to_string() });
         if let Some(offset) = args["offset"].as_u64() {
             meta["offset"] = serde_json::json!(offset);
         }
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            meta["lang"] = serde_json::json!(ext.to_ascii_lowercase());
+        if !ext.is_empty() {
+            meta["lang"] = serde_json::json!(ext);
         }
         meta["total_lines"] = serde_json::json!(total_lines);
         Ok(ToolOutcome {
+            images: Vec::new(),
             output_for_model: truncate(content),
             ui_summary: None,
             diff: None,
@@ -97,6 +177,7 @@ impl Tool for WriteFile {
             .map_err(|e| ToolFailure::Execution(format!("write {}: {e}", path.display())))?;
         let n = content.len();
         Ok(ToolOutcome {
+            images: Vec::new(),
             output_for_model: format!("wrote {n} bytes to {}", path.display()),
             ui_summary: Some(format!("write {}", path.display())),
             diff: Some(diff_text(&old, content, &path)),
@@ -164,6 +245,7 @@ impl Tool for EditFile {
                     .await
                     .map_err(|e| ToolFailure::Execution(format!("write {}: {e}", path.display())))?;
                 Ok(ToolOutcome {
+            images: Vec::new(),
                     output_for_model: format!("edited {}", path.display()),
                     ui_summary: Some(format!("edit {}", path.display())),
                     diff: Some(diff_text(&content, &updated, &path)),
@@ -174,146 +256,5 @@ impl Tool for EditFile {
                 })
             }
         }
-    }
-}
-
-pub struct GlobTool;
-
-#[async_trait]
-impl Tool for GlobTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "glob".into(),
-            description: "List files matching a glob pattern (gitignore-aware), relative to the project directory.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {"pattern": {"type": "string"}},
-                "required": ["pattern"],
-            }),
-        }
-    }
-
-    fn default_policy(&self) -> Approval {
-        Approval::Allow
-    }
-
-    async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
-        let pattern = args["pattern"]
-            .as_str()
-            .ok_or_else(|| ToolFailure::InvalidInput("missing pattern".into()))?;
-        let glob = GlobBuilder::new(pattern)
-            .literal_separator(true)
-            .build()
-            .map_err(|e| ToolFailure::InvalidInput(format!("bad glob: {e}")))?;
-        let matcher = glob.compile_matcher();
-        let mut matches: Vec<String> = Vec::new();
-        let walker = ignore::WalkBuilder::new(workdir).require_git(false).build();
-        for entry in walker {
-            let Ok(entry) = entry else { continue };
-            let path = entry.path();
-            let rel = path.strip_prefix(workdir).unwrap_or(path);
-            if rel.as_os_str().is_empty() {
-                continue;
-            }
-            if matcher.is_match(rel) || matcher.is_match(path) {
-                matches.push(rel.to_string_lossy().into_owned());
-                if matches.len() >= 200 {
-                    matches.push("[limit reached]".into());
-                    break;
-                }
-            }
-        }
-        Ok(ToolOutcome {
-            output_for_model: if matches.is_empty() {
-                "no matches".into()
-            } else {
-                truncate(matches.join("\n"))
-            },
-            ui_summary: None,
-            diff: None,
-            meta: None,
-        })
-    }
-}
-
-pub struct GrepTool;
-
-#[async_trait]
-impl Tool for GrepTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "grep".into(),
-            description:
-                "Search file contents with a regex (gitignore-aware). Returns path:line: line."
-                    .into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {"pattern": {"type": "string"}},
-                "required": ["pattern"],
-            }),
-        }
-    }
-
-    fn default_policy(&self) -> Approval {
-        Approval::Allow
-    }
-
-    async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
-        let pattern = args["pattern"]
-            .as_str()
-            .ok_or_else(|| ToolFailure::InvalidInput("missing pattern".into()))?;
-        let re = Regex::new(pattern)
-            .map_err(|e| ToolFailure::InvalidInput(format!("bad regex: {e}")))?;
-        let mut out: Vec<String> = Vec::new();
-        let mut truncated = false;
-        let walker = ignore::WalkBuilder::new(workdir).require_git(false).build();
-        for entry in walker {
-            let Ok(entry) = entry else { continue };
-            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                continue;
-            }
-            let path = entry.path();
-            if path
-                .file_name()
-                .map(|n| n.to_string_lossy().contains("target"))
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            let Ok(content) = tokio::fs::read_to_string(path).await else {
-                continue;
-            };
-            for (i, line) in content.lines().enumerate() {
-                if re.is_match(line) {
-                    out.push(format!(
-                        "{}:{}: {}",
-                        path.strip_prefix(workdir).unwrap_or(path).display(),
-                        i + 1,
-                        line.trim()
-                    ));
-                    if out.len() >= 100 {
-                        truncated = true;
-                        break;
-                    }
-                }
-            }
-            if truncated {
-                break;
-            }
-        }
-        let mut body = out.join("\n");
-        if truncated {
-            body.push_str("\n[limit reached]");
-        }
-        Ok(ToolOutcome {
-            output_for_model: if body.is_empty() {
-                "no matches".into()
-            } else {
-                body
-            },
-            ui_summary: None,
-            diff: None,
-            meta: None,
-        })
     }
 }

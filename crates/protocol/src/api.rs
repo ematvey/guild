@@ -114,10 +114,11 @@ pub struct Chat {
 pub struct Message {
     pub role: String,
     pub content: String,
-    /// User-turn image parts (data URIs, e.g. `data:image/png;base64,…`).
-    /// Serialized as `image_url` content parts on OpenAI-shape routes and
-    /// base64 image blocks on Anthropic routes — only when the resolved
-    /// route supports the image modality.
+    /// Image parts (data URIs, e.g. `data:image/png;base64,…`). Serialized
+    /// as `image_url` content parts on OpenAI-shape routes and base64 image
+    /// blocks on Anthropic routes — on user turns and tool results (read_file
+    /// on an image) alike, only when the resolved route supports the image
+    /// modality.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
     /// User-turn audio parts (base64 + `wav`/`mp3` per the OpenAI
@@ -439,6 +440,11 @@ pub enum ThreadEvent {
         /// cards reproduce identically on replay. Opaque to the loop.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         meta: Option<serde_json::Value>,
+        /// Image parts (data URIs) attached to the model-facing tool result
+        /// (e.g. read_file on an image), gated by the route's image modality
+        /// at persist time. Empty on old events (serde default).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<String>,
     },
     /// Compaction checkpoint (phase 3): the model-facing history before
     /// this event is replaced by `summary` (plus a verbatim tail of
@@ -531,22 +537,6 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
                 "content": str_prop
             }),
             &["path", "content"],
-        ),
-        spec(
-            "glob",
-            "List files matching a glob pattern (gitignore-aware), relative to the workspace.",
-            serde_json::json!({
-                "pattern": str_prop
-            }),
-            &["pattern"],
-        ),
-        spec(
-            "grep",
-            "Search file contents with a regex (gitignore-aware). Returns path:line: line.",
-            serde_json::json!({
-                "pattern": str_prop
-            }),
-            &["pattern"],
         ),
     ]
 }

@@ -217,11 +217,14 @@ pub async fn run_agent(
                 }
             };
             hooks.on_tool_result(&call, &outcome).await;
-            let result_text = match outcome {
-                Ok(o) => o.output_for_model,
-                Err(f) => format!("tool failed: {f}"),
+            let (result_text, result_images) = match outcome {
+                Ok(o) => (o.output_for_model, o.images),
+                Err(f) => (format!("tool failed: {f}"), Vec::new()),
             };
-            history.push(Message::tool_result(call.id.clone(), result_text));
+            history.push(
+                Message::tool_result(call.id.clone(), result_text)
+                    .with_images(result_images),
+            );
         }
     }
 }

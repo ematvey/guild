@@ -305,6 +305,7 @@ impl Tool for HttpCallTool {
             .await
             .map_err(|e| ToolFailure::Execution(e.to_string()))?;
         Ok(ToolOutcome {
+            images: Vec::new(),
             output_for_model: format!("status {status}: {}", truncate(&body)),
             ui_summary: Some(format!("{method} {url} → {status}")),
             diff: None,
@@ -352,6 +353,7 @@ impl Tool for StoragePutTool {
             .await
             .map_err(|e| ToolFailure::Execution(e.to_string()))?;
         Ok(ToolOutcome {
+            images: Vec::new(),
             output_for_model: format!("stored under runs/{key}"),
             ui_summary: Some(format!("stored {key}")),
             diff: None,

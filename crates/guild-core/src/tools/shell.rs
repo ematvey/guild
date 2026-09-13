@@ -76,6 +76,7 @@ impl Tool for RunCommand {
             output.push_str(&stderr);
         }
         Ok(ToolOutcome {
+            images: Vec::new(),
             output_for_model: truncate(output),
             ui_summary: Some(format!("$ {command}")),
             diff: None,
