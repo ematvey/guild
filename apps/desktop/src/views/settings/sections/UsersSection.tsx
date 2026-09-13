@@ -1,17 +1,41 @@
-//! UsersSection — admin settings, integration-style: a list screen of org
-//! users plus an "Add user" entry; the detail screen holds role, password
-//! reset and delete.
+//! UsersSection — org users as a searchable, sortable data table; the detail
+//! page shows the user as fact cards with explicit edit/delete actions.
 
 import { useMemo, useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { quantizeIso, useCachedGet } from "../use-cached-api";
-import { ArrowLeft, Pencil, UserPlus } from "lucide-react";
 import { Area, AreaChart } from "recharts";
+import { Ellipsis, Trash2, UserPlus, Users } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@guild/ui/components/alert-dialog";
 import { ChartContainer, type ChartConfig } from "@guild/ui/components/chart";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { DataTable } from "@guild/ui/components/data-table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@guild/ui/components/dropdown-menu";
+import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
+import { Skeleton } from "@guild/ui/components/skeleton";
+import { PageHeader } from "../components/page-header";
+import { Field } from "../components/field";
+import { EmptyState } from "../components/empty-state";
+import { FactCard, FactGrid } from "../components/fact-card";
 
 interface UserRow {
   id: string;
@@ -35,7 +59,7 @@ const sparkConfig = {
 function SpendSparkline({ points }: { points: { bucket: string; cost: number }[] }) {
   if (points.length === 0) return null;
   return (
-    <ChartContainer config={sparkConfig} className="aspect-auto h-7 w-24">
+    <ChartContainer config={sparkConfig} className="aspect-auto h-7 w-20">
       <AreaChart data={points} margin={{ top: 2, bottom: 2, left: 0, right: 0 }}>
         <Area
           dataKey="cost"
@@ -50,26 +74,27 @@ function SpendSparkline({ points }: { points: { bucket: string; cost: number }[]
   );
 }
 
-const roleBadge = (role: string) =>
-  role === "admin"
-    ? "bg-primary/10 text-primary"
-    : "bg-accent text-muted-foreground";
+function RoleBadge({ role }: { role: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className={
+        role === "admin"
+          ? "border-transparent bg-primary/10 text-primary"
+          : "border-transparent bg-accent text-muted-foreground"
+      }
+    >
+      {role}
+    </Badge>
+  );
+}
 
-const backBtn =
-  "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
-const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
-
-export default function UsersSection({
-  detail = null,
-  onDetailChange,
-}: SectionDetailProps) {
+export default function UsersSection({ detail = null, onDetailChange }: SectionDetailProps) {
   const usersRes = useCachedGet<{ users: UserRow[] }>("/api/v1/admin/users");
   const users = usersRes.data?.users ?? null;
   const error = usersRes.error;
   const reload = usersRes.reload;
   // 30-day per-user spend (one series call, pivoted client-side by email).
-  // Timestamps quantize to 10 minutes so the cache key repeats across
-  // navigations instead of changing every mount.
   const seriesPath = useMemo(() => {
     const from = quantizeIso(600_000, Date.now() - 30 * 24 * 3_600_000);
     const to = quantizeIso(600_000);
@@ -77,10 +102,7 @@ export default function UsersSection({
   }, []);
   const seriesRes = useCachedGet<{ rows: SeriesRow[] }>(seriesPath);
   const spend = useMemo(() => {
-    const map: Record<
-      string,
-      { points: { bucket: string; cost: number }[]; total: number }
-    > = {};
+    const map: Record<string, { points: { bucket: string; cost: number }[]; total: number }> = {};
     for (const row of seriesRes.data?.rows ?? []) {
       const e = map[row.group] ?? { points: [], total: 0 };
       e.points.push({ bucket: row.bucket, cost: row.cost_usd });
@@ -89,6 +111,66 @@ export default function UsersSection({
     }
     return map;
   }, [seriesRes.data]);
+
+  const columns = useMemo<ColumnDef<UserRow, any>[]>(
+    () => [
+      {
+        accessorKey: "email",
+        header: "Email",
+        cell: ({ row }) => (
+          <div className="min-w-0">
+            <p className="truncate font-medium">{row.original.email}</p>
+            <p className="text-xs text-muted-foreground">
+              {row.original.identity_type === "password" ? "password sign-in" : row.original.identity_type}
+            </p>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "role",
+        header: "Role",
+        cell: ({ row }) => <RoleBadge role={row.original.role} />,
+      },
+      {
+        id: "spend",
+        header: "Spend · 30d",
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-2 tabular-nums text-muted-foreground">
+            <SpendSparkline points={spend[row.original.email]?.points ?? []} />
+            {spend[row.original.email] && (
+              <span>${spend[row.original.email].total.toFixed(4)}</span>
+            )}
+          </div>
+        ),
+      },
+      {
+        id: "actions",
+        header: "",
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-muted-foreground"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Ellipsis className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                <DropdownMenuItem onClick={() => onDetailChange(row.original.id)}>
+                  Open
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ),
+      },
+    ],
+    [spend, onDetailChange],
+  );
 
   if (detail !== null) {
     // Deep-linked user page: wait for the list before resolving the id —
@@ -111,56 +193,36 @@ export default function UsersSection({
   }
 
   return (
-    <div className="space-y-4">
-      {error && <p className="text-base text-destructive">{error}</p>}
-      <div className="flex items-center justify-between">
-        <h3 className={label}>Organization users</h3>
-        <Button size="sm" onClick={() => onDetailChange("new")}>
-          <UserPlus className="mr-1 size-3.5" /> Add user
-        </Button>
-      </div>
-      {users === null ? (
-        <div className="space-y-2">
-          <Skeleton className="h-12 w-full rounded-lg" />
-          <Skeleton className="h-12 w-full rounded-lg" />
-        </div>
-      ) : users.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
-          No users yet — add the first one.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {users.map((u) => (
-            <button
-              key={u.id}
-              className="flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40"
-              onClick={() => onDetailChange(u.id)}
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-base">{u.email}</p>
-                <p className="text-xs text-muted-foreground">
-                  {u.identity_type === "password" ? "password sign-in" : u.identity_type}
-                </p>
-              </div>
-              <div
-                className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground"
-                title="Spend, last 30 days"
-              >
-                <SpendSparkline points={spend[u.email]?.points ?? []} />
-                {spend[u.email] && (
-                  <span className="tabular-nums">${spend[u.email].total.toFixed(4)}</span>
-                )}
-              </div>
-              <span
-                className={`rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${roleBadge(u.role)}`}
-              >
-                {u.role}
-              </span>
-              <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
-            </button>
-          ))}
-        </div>
-      )}
+    <div>
+      <PageHeader
+        title="Users"
+        description="Everyone who signs in to this organization."
+        actions={
+          <Button size="sm" onClick={() => onDetailChange("new")}>
+            <UserPlus className="size-3.5" /> Add user
+          </Button>
+        }
+      />
+      {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+      <DataTable
+        columns={columns}
+        data={users}
+        search={(u) => `${u.email} ${u.role}`}
+        searchPlaceholder="Search users…"
+        onRowClick={(u) => onDetailChange(u.id)}
+        empty={
+          <EmptyState
+            icon={Users}
+            title="No users yet"
+            hint="Add the first member of the organization."
+            action={
+              <Button size="sm" onClick={() => onDetailChange("new")}>
+                <UserPlus className="size-3.5" /> Add user
+              </Button>
+            }
+          />
+        }
+      />
     </div>
   );
 }
@@ -179,7 +241,7 @@ function UserDetail({
 }) {
   const creating = user === null;
   // Configured users are facts first; editing is an explicit mode.
-  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [mode, setMode] = useState<"view" | "edit">(creating ? "edit" : "view");
   const [email, setEmail] = useState(user?.email ?? "");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState(user?.role ?? "member");
@@ -187,86 +249,101 @@ function UserDetail({
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (creating) {
+        const created = await api<{ id: string }>("POST", "/api/v1/admin/users", {
+          email,
+          password,
+          role,
+        });
+        toast.success("User added", { description: email });
+        onChanged();
+        onCreated(created.id);
+      } else {
+        const body: Record<string, string> = { role };
+        if (password) body.password = password;
+        await api("PUT", `/api/v1/admin/users/${user!.id}`, body);
+        toast.success("User updated", { description: user!.email });
+        onChanged();
+        setMode("view");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("Save failed", { description: msg });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api("DELETE", `/api/v1/admin/users/${user!.id}`);
+      toast.success("User deleted", { description: user!.email });
+      onChanged();
+      onBack();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("Delete failed", { description: msg });
+      setBusy(false);
+    }
+  };
+
   if (creating || mode === "edit") {
     return (
       <div>
-        <button className={backBtn} onClick={onBack}>
-          <ArrowLeft className="size-4" /> Users
-        </button>
-        <h3 className="mb-1 text-base font-semibold">
-          {creating ? "Add user" : "Edit user"}
-        </h3>
-        <p className="mb-4 text-xs text-muted-foreground">
-          {creating
-            ? "The user signs in with this email and password."
-            : "Change the role or set a new password; leave the password blank to keep the current one."}
-        </p>
-
-        <div className="max-w-xl space-y-4">
+        <PageHeader
+          title={creating ? "Add user" : "Edit user"}
+          description={
+            creating
+              ? "The user signs in with this email and password."
+              : "Change the role or set a new password; leave the password blank to keep the current one."
+          }
+          back={{ label: "Users", onClick: onBack }}
+        />
+        <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
           {creating && (
-            <div>
-              <p className={label}>Email</p>
+            <Field label="Email">
               <Input
-                className="mt-1.5"
                 type="email"
                 placeholder="user@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
-            </div>
+            </Field>
           )}
-          <div>
-            <p className={label}>{creating ? "Password" : "New password"}</p>
+          <Field
+            label={creating ? "Password" : "New password"}
+            hint={creating ? undefined : "Leave blank to keep the current password."}
+          >
             <Input
-              className="mt-1.5"
               type="password"
-              placeholder={creating ? "password" : "leave blank to keep the current one"}
+              placeholder={creating ? "password" : "••••••••"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-          </div>
-          <div>
-            <p className={label}>Role</p>
-            <select
-              className="mt-1.5 h-9 rounded-md border border-input bg-card px-2 text-base"
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-            >
-              <option value="member">member</option>
-              <option value="admin">admin</option>
-            </select>
-          </div>
-
-          {error && <p className="text-base text-destructive">{error}</p>}
+          </Field>
+          <Field label="Role">
+            <Select value={role} onValueChange={setRole}>
+              <SelectTrigger className="max-w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="member">member</SelectItem>
+                <SelectItem value="admin">admin</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
-            <Button
-              disabled={busy || (creating && (!email || !password))}
-              onClick={async () => {
-                setBusy(true);
-                setError(null);
-                try {
-                  if (creating) {
-                    const created = await api<{ id: string }>("POST", "/api/v1/admin/users", {
-                      email,
-                      password,
-                      role,
-                    });
-                    onChanged();
-                    onCreated(created.id);
-                  } else {
-                    const body: Record<string, string> = { role };
-                    if (password) body.password = password;
-                    await api("PUT", `/api/v1/admin/users/${user!.id}`, body);
-                    onChanged();
-                    setMode("view");
-                  }
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e));
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
+            <Button disabled={busy || (creating && (!email || !password))} onClick={save}>
               {busy ? "Saving…" : "Save"}
             </Button>
             {!creating && (
@@ -291,70 +368,48 @@ function UserDetail({
   // view mode: the saved user as facts, with explicit actions
   return (
     <div>
-      <button className={backBtn} onClick={onBack}>
-        <ArrowLeft className="size-4" /> Users
-      </button>
-      <h3 className="mb-1 text-base font-semibold">{user!.email}</h3>
-      <p className="mb-4 text-xs text-muted-foreground">
-        Organization user — role and sign-in method below.
-      </p>
-
-      <div className="max-w-xl space-y-4">
-        <div className="rounded-lg border border-border bg-card p-4">
-          <p className={label}>Role</p>
-          <span
-            className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${roleBadge(user!.role)}`}
-          >
-            {user!.role}
-          </span>
-        </div>
-        <div className="rounded-lg border border-border bg-card p-4">
-          <p className={label}>Sign-in</p>
-          <p className="mt-1 text-base">
-            {user!.identity_type === "password" ? "password" : user!.identity_type}
-          </p>
-        </div>
-
-        {error && <p className="text-base text-destructive">{error}</p>}
-        <div className="flex items-center gap-2">
-          <Button onClick={() => setMode("edit")}>
-            <Pencil className="mr-1 size-3.5" /> Edit
-          </Button>
-          {confirmDelete ? (
-            <>
-              <Button
-                variant="destructive"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  setError(null);
-                  try {
-                    await api("DELETE", `/api/v1/admin/users/${user!.id}`);
-                    onChanged();
-                    onBack();
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : String(e));
-                    setBusy(false);
-                  }
-                }}
-              >
-                Delete user
-              </Button>
-              <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <Button
-              variant="ghost"
-              className="text-muted-foreground"
-              onClick={() => setConfirmDelete(true)}
-            >
-              Delete
+      <PageHeader
+        title={user!.email}
+        description="Organization user — role and sign-in method below."
+        back={{ label: "Users", onClick: onBack }}
+        actions={
+          <>
+            <Button onClick={() => setMode("edit")}>Edit</Button>
+            <Button variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
+              <Trash2 className="size-3.5" /> Delete
             </Button>
-          )}
-        </div>
-      </div>
+          </>
+        }
+      />
+      <FactGrid>
+        <FactCard label="Role">
+          <RoleBadge role={user!.role} />
+        </FactCard>
+        <FactCard label="Sign-in">
+          {user!.identity_type === "password" ? "password" : user!.identity_type}
+        </FactCard>
+      </FactGrid>
+      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete user?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {user!.email} loses access immediately. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={busy}
+              onClick={remove}
+            >
+              {busy ? "Deleting…" : "Delete user"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

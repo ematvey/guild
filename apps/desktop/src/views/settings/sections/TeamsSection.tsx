@@ -1,15 +1,31 @@
-//! TeamsSection — admin settings, integration-style: a list screen of org
-//! teams plus an "Add team" entry; the detail screen holds members
-//! (add/remove) and delete.
+//! TeamsSection — org teams as a data table; the detail page shows the team
+//! with a members table, add-member row, rename and delete actions.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
-import { ArrowLeft, Pencil, Plus, Trash2, UsersRound, X } from "lucide-react";
+import { Plus, Trash2, UsersRound, X } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@guild/ui/components/alert-dialog";
+import { DataTable } from "@guild/ui/components/data-table";
+import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
+import { Skeleton } from "@guild/ui/components/skeleton";
+import { PageHeader } from "../components/page-header";
+import { Field } from "../components/field";
+import { EmptyState } from "../components/empty-state";
 
 interface TeamRow {
   id: string;
@@ -23,18 +39,36 @@ interface UserRow {
   role: string;
 }
 
-const backBtn =
-  "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
-const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
-
-export default function TeamsSection({
-  detail = null,
-  onDetailChange,
-}: SectionDetailProps) {
+export default function TeamsSection({ detail = null, onDetailChange }: SectionDetailProps) {
   const teamsRes = useCachedGet<{ teams: TeamRow[] }>("/api/v1/admin/teams");
   const teams = teamsRes.data?.teams ?? null;
   const error = teamsRes.error;
   const reload = teamsRes.reload;
+
+  const columns = useMemo<ColumnDef<TeamRow, any>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Team",
+        cell: ({ row }) => (
+          <div className="flex items-center gap-3">
+            <UsersRound className="size-4 text-muted-foreground" />
+            <span className="font-medium">{row.original.name}</span>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "member_count",
+        header: "Members",
+        cell: ({ row }) => (
+          <span className="tabular-nums text-muted-foreground">
+            {row.original.member_count === 1 ? "1 member" : `${row.original.member_count} members`}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
 
   if (detail !== null) {
     // Deep-linked team page: wait for the list before resolving the id —
@@ -57,43 +91,36 @@ export default function TeamsSection({
   }
 
   return (
-    <div className="space-y-4">
-      {error && <p className="text-base text-destructive">{error}</p>}
-      <div className="flex items-center justify-between">
-        <h3 className={label}>Organization teams</h3>
-        <Button size="sm" onClick={() => onDetailChange("new")}>
-          <Plus className="mr-1 size-3.5" /> Add team
-        </Button>
-      </div>
-      {teams === null ? (
-        <div className="space-y-2">
-          <Skeleton className="h-12 w-full rounded-lg" />
-          <Skeleton className="h-12 w-full rounded-lg" />
-        </div>
-      ) : teams.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
-          No teams yet — teams group users inside the organization.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {teams.map((t) => (
-            <button
-              key={t.id}
-              className="flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40"
-              onClick={() => onDetailChange(t.id)}
-            >
-              <UsersRound className="size-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-base font-medium">{t.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {t.member_count === 1 ? "1 member" : `${t.member_count} members`}
-                </p>
-              </div>
-              <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
-            </button>
-          ))}
-        </div>
-      )}
+    <div>
+      <PageHeader
+        title="Teams"
+        description="Teams group users inside the organization."
+        actions={
+          <Button size="sm" onClick={() => onDetailChange("new")}>
+            <Plus className="size-3.5" /> Add team
+          </Button>
+        }
+      />
+      {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+      <DataTable
+        columns={columns}
+        data={teams}
+        search={(t) => t.name}
+        searchPlaceholder="Search teams…"
+        onRowClick={(t) => onDetailChange(t.id)}
+        empty={
+          <EmptyState
+            icon={UsersRound}
+            title="No teams yet"
+            hint="Create a team to group users for model routes and approvals."
+            action={
+              <Button size="sm" onClick={() => onDetailChange("new")}>
+                <Plus className="size-3.5" /> Add team
+              </Button>
+            }
+          />
+        }
+      />
     </div>
   );
 }
@@ -131,15 +158,19 @@ function TeamDetail({
     try {
       if (creating) {
         const created = await api<{ id: string }>("POST", "/api/v1/admin/teams", { name });
+        toast.success("Team created", { description: name });
         onChanged();
         onCreated(created.id);
       } else {
         await api("PUT", `/api/v1/admin/teams/${team!.id}`, { name });
+        toast.success("Team renamed", { description: name });
         onChanged();
         setMode("view");
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("Save failed", { description: msg });
     } finally {
       setBusy(false);
     }
@@ -150,29 +181,36 @@ function TeamDetail({
     setError(null);
     setBusy(true);
     try {
+      const added = addable.find((u) => u.id === addUserId);
       await api("POST", `/api/v1/admin/teams/${team!.id}/members`, {
         user_id: addUserId,
       });
+      toast.success("Member added", { description: added?.email });
       setAddUserId("");
       membersRes.reload();
       onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("Could not add member", { description: msg });
     } finally {
       setBusy(false);
     }
   };
 
-  const removeMember = async (userId: string) => {
+  const removeMember = async (user: UserRow) => {
     if (busy) return;
     setError(null);
     setBusy(true);
     try {
-      await api("DELETE", `/api/v1/admin/teams/${team!.id}/members/${userId}`);
+      await api("DELETE", `/api/v1/admin/teams/${team!.id}/members/${user.id}`);
+      toast.success("Member removed", { description: user.email });
       membersRes.reload();
       onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("Could not remove member", { description: msg });
     } finally {
       setBusy(false);
     }
@@ -184,10 +222,13 @@ function TeamDetail({
     setError(null);
     try {
       await api("DELETE", `/api/v1/admin/teams/${team!.id}`);
+      toast.success("Team deleted", { description: team!.name });
       onChanged();
       onBack();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("Delete failed", { description: msg });
       setBusy(false);
     }
   };
@@ -198,29 +239,25 @@ function TeamDetail({
   if (creating || mode === "edit") {
     return (
       <div>
-        <button className={backBtn} onClick={onBack}>
-          <ArrowLeft className="size-4" /> Teams
-        </button>
-        <h3 className="mb-1 text-base font-semibold">
-          {creating ? "Add team" : "Edit team"}
-        </h3>
-        <p className="mb-4 text-xs text-muted-foreground">
-          {creating
-            ? "Name the team; members are managed after creation."
-            : "Rename the team; members are managed on the team page."}
-        </p>
-        <div className="max-w-xl space-y-4">
-          <div>
-            <p className={label}>Team name</p>
+        <PageHeader
+          title={creating ? "Add team" : "Edit team"}
+          description={
+            creating
+              ? "Name the team; members are managed after creation."
+              : "Rename the team; members are managed on the team page."
+          }
+          back={{ label: "Teams", onClick: onBack }}
+        />
+        <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
+          <Field label="Team name">
             <Input
-              className="mt-1.5"
               placeholder="e.g. platform"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && save()}
             />
-          </div>
-          {error && <p className="text-base text-destructive">{error}</p>}
+          </Field>
+          {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
             <Button disabled={busy || !name} onClick={save}>
               {busy ? "Saving…" : "Save"}
@@ -245,54 +282,59 @@ function TeamDetail({
 
   // view mode: the saved team as facts, members managed in place
   return (
-    <div>
-      <button className={backBtn} onClick={onBack}>
-        <ArrowLeft className="size-4" /> Teams
-      </button>
-      <h3 className="mb-1 text-base font-semibold">{team?.name || "…"}</h3>
-      <p className="mb-4 text-xs text-muted-foreground">
-        Members of this team. Adding or removing takes effect immediately.
-      </p>
+    <div className="space-y-5">
+      <PageHeader
+        title={team?.name || "…"}
+        description="Members of this team. Adding or removing takes effect immediately."
+        back={{ label: "Teams", onClick: onBack }}
+        actions={
+          <>
+            <Button onClick={() => setMode("edit")}>Edit</Button>
+            <Button variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
+              <Trash2 className="size-3.5" /> Delete
+            </Button>
+          </>
+        }
+      />
 
-      <div className="max-w-xl space-y-4">
-        <div className="rounded-lg border border-border bg-card">
-          <div className="border-b border-border px-4 py-3">
-            <p className={label}>Members</p>
-          </div>
-          {members === null ? (
-            <div className="space-y-2 p-4">
-              <div className="h-8 w-full animate-pulse rounded-md bg-accent" />
-            </div>
-          ) : members.length === 0 ? (
-            <p className="p-4 text-base text-muted-foreground">No members yet.</p>
-          ) : (
-            <ul>
-              {members.map((m) => (
-                <li
-                  key={m.id}
-                  className="flex items-center gap-3 border-b border-border/60 px-4 py-2.5 last:border-b-0"
-                >
-                  <p className="min-w-0 flex-1 truncate text-base">{m.email}</p>
-                  <span className="rounded-full bg-accent px-2 py-0.5 text-[11px] font-medium capitalize text-muted-foreground">
-                    {m.role}
-                  </span>
-                  <button
-                    className="text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
-                    disabled={busy}
-                    title="Remove from team"
-                    onClick={() => removeMember(m.id)}
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+      <div className="rounded-lg border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <p className="text-sm font-medium">Members</p>
+          <Badge variant="secondary">{members?.length ?? "…"}</Badge>
         </div>
-
-        <div className="flex items-center gap-2">
+        {members === null ? (
+          <div className="space-y-2 p-4">
+            <Skeleton className="h-9 w-full rounded-md" />
+            <Skeleton className="h-9 w-full rounded-md" />
+          </div>
+        ) : members.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-muted-foreground">No members yet.</p>
+        ) : (
+          <ul>
+            {members.map((m) => (
+              <li
+                key={m.id}
+                className="flex items-center gap-3 border-b border-border/60 px-4 py-2.5 last:border-b-0"
+              >
+                <p className="min-w-0 flex-1 truncate text-sm">{m.email}</p>
+                <Badge variant="secondary" className="capitalize">
+                  {m.role}
+                </Badge>
+                <button
+                  className="text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
+                  disabled={busy}
+                  title="Remove from team"
+                  onClick={() => removeMember(m)}
+                >
+                  <X className="size-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex items-center gap-2 border-t border-border px-4 py-3">
           <select
-            className="h-9 min-w-56 rounded-md border border-input bg-card px-2 text-base"
+            className="h-8 min-w-56 rounded-md border border-input bg-transparent px-2 text-sm"
             value={addUserId}
             onChange={(e) => setAddUserId(e.target.value)}
           >
@@ -304,35 +346,33 @@ function TeamDetail({
             ))}
           </select>
           <Button size="sm" disabled={!addUserId || busy} onClick={addMember}>
-            <Plus className="mr-1 size-3.5" /> Add
+            <Plus className="size-3.5" /> Add
           </Button>
-        </div>
-
-        {error && <p className="text-base text-destructive">{error}</p>}
-        <div className="flex items-center gap-2">
-          <Button onClick={() => setMode("edit")}>
-            <Pencil className="mr-1 size-3.5" /> Edit
-          </Button>
-          {confirmDelete ? (
-            <>
-              <Button variant="destructive" disabled={busy} onClick={removeTeam}>
-                Delete team
-              </Button>
-              <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <Button
-              variant="ghost"
-              className="text-muted-foreground"
-              onClick={() => setConfirmDelete(true)}
-            >
-              <Trash2 className="mr-1 size-3.5" /> Delete team
-            </Button>
-          )}
         </div>
       </div>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete team?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{team!.name}” is removed for all members. Users are not deleted. This cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={busy}
+              onClick={removeTeam}
+            >
+              {busy ? "Deleting…" : "Delete team"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

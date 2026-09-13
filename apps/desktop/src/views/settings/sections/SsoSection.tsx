@@ -1,24 +1,34 @@
-//! SsoSection — admin settings for OIDC single sign-on. Clean state machine:
-//! "view" when configured (saved facts + Edit/Remove), "edit" when changing
-//! an existing config (blank secret = keep current), "new" when configuring
-//! from scratch. Enabling it puts a "Continue with SSO" button on the
-//! sign-in page.
+//! SsoSection — OIDC single sign-on. State machine: "view" when configured
+//! (saved facts + Edit/Remove), "edit" when changing an existing config
+//! (blank secret = keep current), "new" when configuring from scratch.
+//! Enabling it puts a "Continue with SSO" button on the sign-in page.
 
 import { useEffect, useState } from "react";
-import { KeyRound, Pencil, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "../admin-api";
 import { peekCached, useCachedGet } from "../use-cached-api";
 import { Button } from "@guild/ui/components/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@guild/ui/components/alert-dialog";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Input } from "@guild/ui/components/input";
+import { PageHeader } from "../components/page-header";
+import { Field } from "../components/field";
+import { FactCard, FactGrid } from "../components/fact-card";
 
 interface OidcConfig {
   configured: boolean;
   issuer?: string;
   client_id?: string;
 }
-
-const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 
 export default function SsoSection() {
   const cfgRes = useCachedGet<OidcConfig>("/api/v1/admin/oidc");
@@ -27,7 +37,7 @@ export default function SsoSection() {
   const [localError, setLocalError] = useState<string | null>(null);
   const error = localError ?? cfgRes.error;
   const reload = cfgRes.reload;
-  const [mode, setMode] = useState<"view" | "edit" | "new">(() => {
+  const [mode, setMode] = useState<"view" | "edit" | "new" | "remove">(() => {
     const c = peekCached<OidcConfig>("/api/v1/admin/oidc");
     return c ? (c.configured ? "view" : "new") : "view";
   });
@@ -37,9 +47,24 @@ export default function SsoSection() {
     if (cfg) setMode(cfg.configured ? "view" : "new");
   }, [cfg?.configured]);
 
+  const remove = async () => {
+    setLocalError(null);
+    try {
+      await api("DELETE", "/api/v1/admin/oidc");
+      toast.success("SSO removed", {
+        description: "The sign-in page no longer offers “Continue with SSO”.",
+      });
+      reload();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setLocalError(msg);
+      toast.error("Could not remove SSO", { description: msg });
+    }
+  };
+
   if (cfg === null) {
     return (
-      <div className="space-y-3 pt-2">
+      <div className="space-y-3">
         <Skeleton className="h-24 w-full max-w-xl rounded-lg" />
       </div>
     );
@@ -47,61 +72,42 @@ export default function SsoSection() {
 
   const configured = cfg.configured;
 
-  const header = (
-    <div className="mb-1 flex items-center gap-2">
-      <KeyRound className="size-4 text-muted-foreground" />
-      <h3 className="text-base font-semibold">Single sign-on (OIDC)</h3>
-      <span
-        className={`size-2 rounded-full ${configured ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
-        title={configured ? "configured" : "not configured"}
-      />
-    </div>
-  );
-
-  if (mode === "view" && configured) {
+  if (configured && (mode === "view" || mode === "remove")) {
     return (
-      <div>
-        {header}
-        <p className="mb-4 text-xs text-muted-foreground">
-          Configured — the sign-in page offers “Continue with SSO”; users sign in
-          through the org's identity provider and are provisioned on first login.
-        </p>
-
-        <div className="max-w-xl space-y-4">
-          <div className="rounded-lg border border-border bg-card p-4">
-            <p className={label}>Issuer URL</p>
-            <p className="mt-1 break-all text-base">{cfg.issuer}</p>
-          </div>
-          <div className="rounded-lg border border-border bg-card p-4">
-            <p className={label}>Client ID</p>
-            <p className="mt-1 break-all font-mono text-base">{cfg.client_id}</p>
-          </div>
-          <div className="rounded-lg border border-border bg-card p-4">
-            <p className={label}>Redirect URI (registered at the identity provider)</p>
-            <p className="mt-1 break-all font-mono text-xs">
+      <div className="space-y-5">
+        <PageHeader
+          title="Single sign-on (OIDC)"
+          description="Configured — the sign-in page offers “Continue with SSO”; users sign in through the org's identity provider and are provisioned on first login."
+          actions={
+            <>
+              <Button onClick={() => setMode("edit")}>Edit</Button>
+              <Button variant="outline" className="text-destructive" onClick={() => setMode("remove")}>
+                Remove
+              </Button>
+            </>
+          }
+        />
+        <FactGrid>
+          <FactCard label="Issuer URL">
+            <p className="break-all text-sm">{cfg.issuer}</p>
+          </FactCard>
+          <FactCard label="Client ID">
+            <p className="break-all font-mono text-sm">{cfg.client_id}</p>
+          </FactCard>
+          <FactCard label="Redirect URI (registered at the identity provider)" className="sm:col-span-2">
+            <p className="break-all font-mono text-sm">
               {`${window.location.origin}/api/v1/auth/oidc/callback`}
             </p>
-          </div>
-
-          {error && <p className="text-base text-destructive">{error}</p>}
-          <div className="flex items-center gap-2">
-            <Button onClick={() => setMode("edit")}>
-              <Pencil className="mr-1 size-3.5" /> Edit
-            </Button>
-            <RemoveButton
-              busy={false}
-              onRemove={async () => {
-                setLocalError(null);
-                try {
-                  await api("DELETE", "/api/v1/admin/oidc");
-                  reload();
-                } catch (e) {
-                  setLocalError(e instanceof Error ? e.message : String(e));
-                }
-              }}
-            />
-          </div>
-        </div>
+          </FactCard>
+        </FactGrid>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <SsoRemoveDialog
+          open={mode === "remove"}
+          onOpenChange={(open) => {
+            if (!open) setMode("view");
+          }}
+          onRemove={remove}
+        />
       </div>
     );
   }
@@ -110,12 +116,15 @@ export default function SsoSection() {
   return (
     <SsoForm
       key={mode + (cfg.issuer ?? "") + (cfg.client_id ?? "")}
-      title={editing ? "Edit SSO configuration" : "Configure single sign-on (OIDC)"}
+      title={editing ? "Edit SSO configuration" : "Single sign-on (OIDC)"}
       initialIssuer={editing ? (cfg.issuer ?? "") : ""}
       initialClientId={editing ? (cfg.client_id ?? "") : ""}
       keepSecret={editing}
       onCancel={editing ? () => reload() : undefined}
-      onSaved={reload}
+      onSaved={() => {
+        reload();
+        setMode("view");
+      }}
     />
   );
 }
@@ -152,9 +161,12 @@ function SsoForm({
       const body: Record<string, string> = { issuer, client_id: clientId };
       if (clientSecret) body.client_secret = clientSecret;
       await api("PUT", "/api/v1/admin/oidc", body);
+      toast.success("SSO configuration saved");
       onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("Save failed", { description: msg });
     } finally {
       setBusy(false);
     }
@@ -162,40 +174,38 @@ function SsoForm({
 
   return (
     <div>
-      <h3 className="mb-4 text-base font-semibold">{title}</h3>
-      <div className="max-w-xl space-y-4">
-        <div>
-          <p className={label}>Issuer URL</p>
+      <PageHeader
+        title={title}
+        description="Users sign in through the org's identity provider and are provisioned on first login."
+        back={onCancel ? { label: "Back to SSO", onClick: onCancel } : undefined}
+      />
+      <div className="max-w-xl space-y-5 rounded-lg border border-border bg-card p-5">
+        <Field
+          label="Issuer URL"
+          hint={"Discovery runs at <issuer>/.well-known/openid-configuration."}
+        >
           <Input
-            className="mt-1.5"
             placeholder="https://accounts.google.com"
             value={issuer}
             onChange={(e) => setIssuer(e.target.value)}
           />
-          <p className="mt-1 text-xs text-muted-foreground">
-            Discovery runs at {"<issuer>"}/.well-known/openid-configuration.
-          </p>
-        </div>
-        <div>
-          <p className={label}>Client ID</p>
+        </Field>
+        <Field label="Client ID">
+          <Input value={clientId} onChange={(e) => setClientId(e.target.value)} />
+        </Field>
+        <Field
+          label="Client secret"
+          hint={keepSecret ? "Leave blank to keep the current one." : undefined}
+        >
           <Input
-            className="mt-1.5"
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-          />
-        </div>
-        <div>
-          <p className={label}>Client secret</p>
-          <Input
-            className="mt-1.5"
             type="password"
-            placeholder={keepSecret ? "leave blank to keep the current one" : "client secret"}
+            placeholder={keepSecret ? "••••••••" : "client secret"}
             value={clientSecret}
             onChange={(e) => setClientSecret(e.target.value)}
           />
-        </div>
+        </Field>
 
-        {error && <p className="text-base text-destructive">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex items-center gap-2">
           <Button
             disabled={busy || !issuer || !clientId || (!keepSecret && !clientSecret)}
@@ -214,35 +224,44 @@ function SsoForm({
   );
 }
 
-/// Remove with a two-step confirm, kept as its own tiny component so the
-/// confirm state lives and dies with the button.
-function RemoveButton({
-  busy,
+/// Confirmation dialog for removing the SSO configuration; state lives and
+/// dies with this component.
+function SsoRemoveDialog({
+  open,
+  onOpenChange,
   onRemove,
 }: {
-  busy: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onRemove: () => Promise<void>;
 }) {
-  const [confirm, setConfirm] = useState(false);
-  if (confirm) {
-    return (
-      <>
-        <Button variant="destructive" disabled={busy} onClick={onRemove}>
-          Remove configuration
-        </Button>
-        <Button variant="ghost" onClick={() => setConfirm(false)}>
-          Cancel
-        </Button>
-      </>
-    );
-  }
+  const [busy, setBusy] = useState(false);
   return (
-    <Button
-      variant="ghost"
-      className="text-muted-foreground"
-      onClick={() => setConfirm(true)}
-    >
-      <Trash2 className="mr-1 size-3.5" /> Remove
-    </Button>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove SSO configuration?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The sign-in page drops the “Continue with SSO” button; users fall back to
+            password sign-in. This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await onRemove();
+              setBusy(false);
+              onOpenChange(false);
+            }}
+          >
+            {busy ? "Removing…" : "Remove configuration"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
