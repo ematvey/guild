@@ -2637,6 +2637,22 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
     // In-flight turns dispatched by an older workflow version cannot replay
     // after this deploy and would jam their chats — purge them first.
     purge_stale_chat_generations(&state).await;
+    // Hourly prune of expired sessions and dead pairing tokens (startup +
+    // interval; unpruned they accumulate forever).
+    let prune_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Ok(store) = prune_state.store().await {
+                let sessions = store.identity().prune_expired_sessions().await.unwrap_or(0);
+                let tokens = store.pairing().prune_dead_tokens().await.unwrap_or(0);
+                if sessions + tokens > 0 {
+                    tracing::info!("pruned {sessions} expired sessions, {tokens} dead pairing tokens");
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        }
+    });
+
     // Listen first: Restate probes the advertised URI during registration.
     let server = tokio::spawn(async move {
         // One journaled completion can legitimately run for minutes without

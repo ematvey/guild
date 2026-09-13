@@ -404,6 +404,15 @@ impl<'a> IdentityStore<'a> {
         Ok(())
     }
 
+    /// Deletes expired sessions (rows outlive their TTL; unpruned they
+    /// accumulate forever). Returns the number removed.
+    pub async fn prune_expired_sessions(&self) -> anyhow::Result<u64> {
+        let res = sqlx::query("DELETE FROM sessions WHERE expires_at <= now()")
+            .execute(self.pool)
+            .await?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn any_users(&self) -> anyhow::Result<bool> {
         let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
             .fetch_one(self.pool)
