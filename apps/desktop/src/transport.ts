@@ -529,7 +529,7 @@ export async function uploadAttachment(
   file: File,
 ): Promise<MessageAttachmentMeta> {
   const res = await fetch(
-    `/api/v1/chats/${chatId}/attachments?filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`,
+    apiUrl(`/api/v1/chats/${chatId}/attachments?filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`),
     {
       method: "POST",
       headers: { authorization: `Bearer ${getToken()}` },
@@ -729,27 +729,6 @@ export async function postToolResult(
     ),
   });
   if (!res.ok) throw new Error(`tool result rejected (${res.status})`);
-}
-
-// ---- Usage (spec §4.5; charts) ----
-
-export interface UsagePoint {
-  bucket: string; // RFC 3339
-  cost_usd: number;
-}
-
-/// Per-chat spend over time (chat-path usage events use session_id = chat
-/// id). Empty points when the chat has no recorded spend.
-export async function getChatUsage(chatId: string): Promise<{ points: UsagePoint[]; total: number }> {
-  const token = getToken();
-  const res = await fetch(
-    `/api/v1/usage/series?group_by=none&bucket=day&chat_id=${encodeURIComponent(chatId)}`,
-    { headers: { authorization: `Bearer ${token}` } },
-  );
-  if (!res.ok) throw new Error(`usage series failed (${res.status})`);
-  const v = await res.json().catch(() => ({}));
-  const rows = (v?.rows ?? []) as UsagePoint[];
-  return { points: rows, total: rows.reduce((s, r) => s + r.cost_usd, 0) };
 }
 
 // ---- Approvals (design spec 2026-09-12 sections D + F) ----
