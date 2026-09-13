@@ -4,8 +4,9 @@
 //! the mcp url, secret names with timestamps, a write-only secret form,
 //! and a per-role tool-policy editor.
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import type { SectionDetailProps } from "../section-nav";
+import { useCachedGet } from "../use-cached-api";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -96,29 +97,14 @@ export default function IntegrationsSection({
   detail = null,
   onDetailChange,
 }: SectionDetailProps) {
-  const [rows, setRows] = useState<IntegrationRow[] | null>(null);
-  const [available, setAvailable] = useState<AvailableEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(() => {
-    api<{ integrations: IntegrationRow[]; available: AvailableEntry[] }>(
-      "GET",
-      "/api/v1/admin/integrations",
-    )
-      .then((r) => {
-        setRows(r.integrations);
-        setAvailable(r.available);
-      })
-      .catch((e) => {
-        setRows([]);
-        setAvailable([]);
-        setError(e instanceof Error ? e.message : String(e));
-      });
-  }, []);
-
-  useEffect(() => {
-    reload();
-  }, [reload]);
+  const list = useCachedGet<{
+    integrations: IntegrationRow[];
+    available: AvailableEntry[];
+  }>("/api/v1/admin/integrations");
+  const rows = list.data?.integrations ?? null;
+  const available = list.data?.available ?? null;
+  const error = list.error;
+  const reload = list.reload;
 
   if (detail !== null) {
     // Deep-linked detail: wait for the lists before resolving the slug —
@@ -252,7 +238,6 @@ function IntegrationDetail({
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // MCP plugin facts: stored secret names + timestamps, never values.
-  const [secrets, setSecrets] = useState<SecretEntry[] | null>(null);
   const [secretName, setSecretName] = useState("");
   const [secretValue, setSecretValue] = useState("");
   const [confirmSecret, setConfirmSecret] = useState<string | null>(null);
@@ -261,19 +246,12 @@ function IntegrationDetail({
     readPolicy(initialConfig),
   );
 
-  const reloadSecrets = useCallback(() => {
-    if (!configured) return;
-    api<{ secrets: SecretEntry[] }>(
-      "GET",
-      `/api/v1/admin/integrations/${encodeURIComponent(name)}/secrets`,
-    )
-      .then((r) => setSecrets(r.secrets))
-      .catch(() => setSecrets([]));
-  }, [configured, name]);
-
-  useEffect(() => {
-    reloadSecrets();
-  }, [reloadSecrets]);
+  const secretsPath = configured
+    ? `/api/v1/admin/integrations/${encodeURIComponent(name)}/secrets`
+    : null;
+  const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(secretsPath);
+  const secrets = secretsRes.data?.secrets ?? null;
+  const reloadSecrets = secretsRes.reload;
 
   const save = async () => {
     if (busy) return;
@@ -315,7 +293,6 @@ function IntegrationDetail({
       );
       setSecretName("");
       setSecretValue("");
-      setSecrets(null);
       reloadSecrets();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -334,7 +311,6 @@ function IntegrationDetail({
         `/api/v1/admin/integrations/${encodeURIComponent(name)}/secrets/${encodeURIComponent(secret)}`,
       );
       setConfirmSecret(null);
-      setSecrets(null);
       onChanged();
       reloadSecrets();
     } catch (e) {
