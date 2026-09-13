@@ -1,7 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use guild_server::test_support::{insert_org_with_chat, test_state_with_db};
-use protocol::api::{Block, ThreadEvent, UsagePayload};
+use guild_server::test_support::{insert_org_with_chat, test_state_with_db};use protocol::api::{Block, ThreadEvent, UsagePayload};
 use serde_json::json;
 use tower::ServiceExt;
 
@@ -150,4 +149,145 @@ async fn create_list_thread_and_org_isolation() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let _ = user_row;
+}
+
+/// Machine bindings must reference a machine registered (by stream connect
+/// or heartbeat) to the caller's user or org; unknown or foreign machines
+/// are rejected. Unbinding stays open.
+#[tokio::test]
+async fn machine_binding_requires_a_registered_machine() {
+    let ts = test_state_with_db().await;
+    let store = ts.store();
+    let user = store
+        .identity()
+        .ensure_bootstrap_admin("a@b.c", "hunter226")
+        .await
+        .unwrap();
+    let (_sid, token) = store.identity().create_session(user).await.unwrap();
+    let app = guild_server::build_router(ts.state.clone());
+
+    // register the caller's machine by heartbeat
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/machines/heartbeat")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"machine_id": "desk-1", "machine_name": "Desk"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // bind at creation
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/chats")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"title": "bound", "machine_id": "desk-1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let chat: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(chat["machine_id"], "desk-1");
+    assert_eq!(chat["machine_label"], "Desk");
+    let chat_id = chat["id"].as_str().unwrap().to_string();
+
+    // unknown machine → rejected, at creation and on bind
+    for uri in [
+        "/api/v1/chats".to_string(),
+        format!("/api/v1/chats/{chat_id}/machine"),
+    ] {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&uri)
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"machine_id": "never-seen"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{uri}");
+    }
+
+    // a machine registered under another org is foreign
+    let other_org = uuid::Uuid::now_v7();
+    sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'other')")
+        .bind(other_org)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let outsider = store
+        .identity()
+        .create_user(other_org, "o@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let (_osid, otok) = store.identity().create_session(outsider.id).await.unwrap();
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/machines/heartbeat")
+                .header("authorization", format!("Bearer {otok}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"machine_id": "foreign-1", "machine_name": "F"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/chats/{chat_id}/machine"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"machine_id": "foreign-1"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // unbind still works
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/chats/{chat_id}/machine"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"machine_id": ""}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 }

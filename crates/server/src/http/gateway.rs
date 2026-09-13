@@ -419,8 +419,11 @@ pub(crate) fn ensure_generation(
 }
 
 /// Atomic check+insert: returns the generation's stream parts or 409 when a
-/// generation is already running for the chat. One lock covers both, so two
-/// concurrent sends cannot both start a ChatRunner invocation.
+/// generation is already running for the chat. One lock acquisition covers
+/// both the check and the insert, so two concurrent sends cannot both start
+/// a ChatRunner invocation. The restate worker and test support use
+/// `ensure_generation` directly — they re-attach to a running generation
+/// instead of reserving a new one.
 pub(crate) fn try_begin_generation(
     state: &AppState,
     chat_id: Uuid,
@@ -432,7 +435,7 @@ pub(crate) fn try_begin_generation(
     ),
     ApiError,
 > {
-    let gens = state.generations.lock().unwrap();
+    let mut gens = state.generations.lock().unwrap();
     if gens.contains_key(&chat_id) {
         return Err(ApiError::new(
             axum::http::StatusCode::CONFLICT,
@@ -440,8 +443,16 @@ pub(crate) fn try_begin_generation(
             "a generation is already running for this chat — wait for it to finish",
         ));
     }
-    drop(gens);
-    Ok(ensure_generation(state, chat_id))
+    let (tx, _) = broadcast::channel::<StreamEvent>(1024);
+    let gen = ActiveGeneration {
+        tx: tx.clone(),
+        text: Arc::new(RwLock::new(String::new())),
+        thinking: Arc::new(RwLock::new(String::new())),
+        pending_tools: Arc::new(std::sync::Mutex::new(HashMap::new())),
+    };
+    gens.insert(chat_id, gen);
+    let g = gens.get(&chat_id).unwrap();
+    Ok((g.tx.clone(), g.text.clone(), g.thinking.clone()))
 }
 
 async fn chat(

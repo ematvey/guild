@@ -1,5 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use guild_core::registry::BundleManifest;
 use guild_server::test_support::full_state;
 use serde_json::json;
 use tower::ServiceExt;
@@ -304,4 +305,116 @@ async fn republishing_older_version_is_refused() {
     // current version still republishes in place
     let res = publish(&app, "skill", "regress", "2.0.0", &token).await;
     assert_eq!(res.status(), StatusCode::OK);
+}
+
+/// Installing a webhook-trigger routine bundle returns the plaintext hook
+/// token exactly once (only the hash is stored); interval bundles return
+/// none, and the hash never appears in any response.
+#[tokio::test]
+async fn install_returns_webhook_token_once() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+
+    let routine_bundle = |slug: &str, trigger_kind: &str| {
+        let dir = std::env::temp_dir().join(format!(
+            "guild-reg-routine-{slug}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("routine.json"),
+            json!({
+                "name": "Demo routine",
+                "trigger_kind": trigger_kind,
+                "prompt": "Do the thing.",
+                "model": "gpt-test",
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let manifest = BundleManifest {
+            kind: "integration".into(),
+            slug: slug.into(),
+            version: "1.0.0".into(),
+            description: "demo integration".into(),
+            ..Default::default()
+        };
+        let bytes = guild_core::registry::pack(&dir, &manifest).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        bytes
+    };
+
+    async fn install(
+        app: &axum::Router,
+        token: &str,
+        slug: &str,
+        bytes: Vec<u8>,
+    ) -> serde_json::Value {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/api/v1/registry/integration?slug={slug}&version=1.0.0"
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/gzip")
+                    .body(Body::from(bytes))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "publish {slug}");
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/registry/integration/{slug}/review"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"status": "approved"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "review {slug}");
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/registry/integration/{slug}/install"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "install {slug}");
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            v["routine"]["webhook_token_hash"].is_null(),
+            "hash must not serialize"
+        );
+        v
+    }
+
+    let webhook = install(&app, &token, "hook-demo", routine_bundle("hook-demo", "webhook")).await;
+    let plain = webhook["routine"]["webhook_token"]
+        .as_str()
+        .expect("webhook install returns the plaintext token once");
+    assert!(!plain.is_empty());
+
+    let interval = install(&app, &token, "tick-demo", routine_bundle("tick-demo", "interval")).await;
+    assert!(
+        interval["routine"]["webhook_token"].is_null(),
+        "interval routine has no webhook token"
+    );
 }

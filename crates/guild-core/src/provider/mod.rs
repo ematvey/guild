@@ -70,7 +70,7 @@ pub struct ProviderRequest<'a> {
     /// Declared tools for agentic turns (None = plain chat).
     pub tools: Option<&'a [ToolSpec]>,
     /// Max output tokens per call. 0 = provider default. Anthropic requires
-    /// an explicit max_tokens; routes configure it (migration 0033).
+    /// an explicit max_tokens; routes configure it (migration 0035).
     pub max_tokens: u32,
 }
 

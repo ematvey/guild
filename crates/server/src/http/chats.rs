@@ -54,6 +54,9 @@ async fn machines(State(state): State<AppState>, user: AuthUser) -> Result<Json<
 }
 
 /// Binds (or with empty machine_id, unbinds) a chat to an executor machine.
+/// The chat must belong to the caller (admin bypass), and the machine must
+/// be registered to the caller or their org — an arbitrary machine_id string
+/// would let a chat dispatch tools on someone else's desktop.
 async fn set_machine(
     State(state): State<AppState>,
     user: AuthUser,
@@ -61,6 +64,11 @@ async fn set_machine(
     Json(req): Json<Value>,
 ) -> Result<Json<Chat>, ApiError> {
     let machine_id = req["machine_id"].as_str().filter(|s| !s.is_empty());
+    if let Some(mid) = machine_id {
+        if !state.machine_bindable(mid, user.0.id, user.0.org_id) {
+            return Err(ApiError::bad_request("unknown machine"));
+        }
+    }
     let label = req["machine_label"]
         .as_str()
         .filter(|s| !s.is_empty())
@@ -72,6 +80,12 @@ async fn set_machine(
             .machine_label(mid)
             .unwrap_or_else(|| label.unwrap_or_else(|| mid.to_string()))
     });
+    let chat = state
+        .store()
+        .await?
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
     let chat = state
         .store()
         .await?
@@ -108,9 +122,13 @@ async fn create(
         .create_chat(user.0.org_id, user.0.id, req.title.as_deref())
         .await?;
     // Desktop apps auto-bind their own machine at creation so machine tools
-    // work from the first turn.
+    // work from the first turn; the machine must be registered to this user
+    // or org, same as the bind endpoint.
     let chat = match req.machine_id.as_deref() {
         Some(mid) if !mid.is_empty() => {
+            if !state.machine_bindable(mid, user.0.id, user.0.org_id) {
+                return Err(ApiError::bad_request("unknown machine"));
+            }
             let label = state.machine_label(mid).unwrap_or_else(|| mid.to_string());
             store
                 .chats()
