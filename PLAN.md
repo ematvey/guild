@@ -1,6 +1,26 @@
 # Guild — current state of work
 
-Updated 2026-09-12 (integration plugins milestone 10). Read this before
+Updated 2026-09-13 (run-in-folder restored). Read this before
+touching the codebase; detailed milestone plans live in `docs/plans/`,
+deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
+`~/workspace/hanging-commands.md`.
+
+## Run in folder, context-aware UI (2026-09-13)
+
+- The desktop chat regains "run in folder" (lost when AgentView was retired
+  from the surface): a composer chip — "Run in folder…" picks the workspace
+  before sending, chip shows the folder with an ✕. Web (browser) clients
+  render none of it; the chip is desktop-only (`isTauri`).
+- Per chat: folder remembered in localStorage (`guild.dir:<chatId>`, plus
+  `guild.dir:last` as the default for new chats), restored on thread switch;
+  sent per turn as `project_dir` on the gateway request (server plumbing
+  pre-existed — build_system_prompt names the workspace); the local tool
+  executor runs in that folder (mid-turn blind folder picker kept only as a
+  fallback when no folder is set).
+- Deployed to the compose stack (:18080) — browser UI live. Desktop clients
+  need a client release to pick up the new UI (webview serves the bundled
+  dist); tauri.conf.json bumped to 0.3.15, release not yet published
+  (needs an admin token for scripts/release-clients.sh).
 touching the codebase; detailed milestone plans live in `docs/plans/`,
 deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
