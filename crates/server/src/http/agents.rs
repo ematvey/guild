@@ -96,7 +96,7 @@ async fn session_history(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let store = state.store().await?;
-    let session = store.agent_sessions().get(user.0.org_id, id).await?;
+    let session = store.agent_sessions().get(user.0.org_id, id, &user.0).await?;
     let rows = store
         .thread()
         .list_events(user.0.org_id, session.chat_id)
@@ -211,7 +211,7 @@ async fn run_turn(
         .to_string();
 
     let store = state.store().await?;
-    let session = store.agent_sessions().get(user.0.org_id, id).await?;
+    let session = store.agent_sessions().get(user.0.org_id, id, &user.0).await?;
     let master = state.config.master_key()?;
     let route = store
         .gateway()

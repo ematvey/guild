@@ -1,6 +1,7 @@
 //! Server-side agent sessions over workspace directories (M6 task 3).
 
 use crate::http::error::ApiError;
+use crate::store::identity::UserRow;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -79,13 +80,24 @@ impl<'a> AgentSessionStore<'a> {
         .map_err(Into::into)
     }
 
-    pub async fn get(&self, org_id: Uuid, id: Uuid) -> Result<AgentSessionRow, ApiError> {
+    /// Fetches one session the caller owns (admins bypass) — an org-scoped
+    /// lookup alone would let a member run turns in another member's agent
+    /// session and spend the org's money there.
+    pub async fn get(
+        &self,
+        org_id: Uuid,
+        id: Uuid,
+        caller: &UserRow,
+    ) -> Result<AgentSessionRow, ApiError> {
+        let is_admin = caller.role == "admin";
         sqlx::query_as(
             "SELECT id, org_id, user_id, chat_id, workspace_name, created_at \
-             FROM agent_sessions WHERE org_id = $1 AND id = $2",
+             FROM agent_sessions WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)",
         )
         .bind(org_id)
         .bind(id)
+        .bind(caller.id)
+        .bind(is_admin)
         .fetch_optional(self.pool)
         .await
         .map_err(ApiError::from)?

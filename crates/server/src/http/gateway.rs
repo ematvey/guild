@@ -426,7 +426,7 @@ async fn chat(
     // Org scoping: chat must belong to the caller's org. Route resolution,
     // quota, history, completion, persistence and usage all happen inside the
     // durable Restate workflow (ChatRunner::generate) — see worker/restate.rs.
-    let chat = store.chats().get_chat(user.0.org_id, req.chat_id).await?;
+    let chat = store.chats().get_chat(user.0.org_id, req.chat_id, &user.0).await?;
 
     // One generation per chat at a time — checked BEFORE invoking, so a
     // rejected send leaves nothing behind. The user turn itself is persisted
@@ -533,7 +533,7 @@ async fn tool_result(
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
     let content = req["content"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing content"))?;
@@ -560,7 +560,7 @@ async fn approval_decision(
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
     let approved = req["approved"]
         .as_bool()
         .ok_or_else(|| ApiError::bad_request("missing approved"))?;
@@ -591,7 +591,7 @@ async fn compact_chat(
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
     crate::http::internal::restate_send_one_way(
         &state,
         "ChatRunner",
@@ -612,7 +612,7 @@ async fn attach_stream(
     Path(chat_id): Path<Uuid>,
 ) -> Result<axum::response::Response, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
     let gen = state
         .generations
         .lock()
