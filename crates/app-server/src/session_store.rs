@@ -24,7 +24,22 @@ pub fn default_path() -> anyhow::Result<PathBuf> {
 
 pub fn save(path: &Path, session: &StoredSession) -> anyhow::Result<()> {
     let json = serde_json::to_string(session)?;
-    std::fs::write(path, json)?;
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    f.write_all(json.as_bytes())?;
+    // Owner-only permissions — the file holds the bearer token. Set after
+    // the write so pre-existing world-readable files are tightened too.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = f.metadata()?.permissions();
+        perms.set_mode(0o600);
+        f.set_permissions(perms)?;
+    }
     Ok(())
 }
 
@@ -54,6 +69,13 @@ mod tests {
             email: Some("a@b".into()),
         };
         save(&path, &s).unwrap();
+        // The token file must be owner-only.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
         assert_eq!(load(&path).unwrap().token, "t");
         clear(&path).unwrap();
         assert!(load(&path).is_none());
