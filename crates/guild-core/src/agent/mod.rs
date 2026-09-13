@@ -208,8 +208,15 @@ pub async fn run_agent(
                 Approval::Ask => hooks.request_approval(&call).await,
             };
             let outcome = match decision {
+                // The denial reason carries the attribution already
+                // ("disabled by policy", the user's reason, an approval
+                // timeout) — no extra "denied by user" wrapper on top.
                 ApprovalDecision::Deny { reason } => {
-                    Err(ToolFailure::Execution(format!("denied by user: {reason}")))
+                    Err(ToolFailure::Execution(if reason.is_empty() {
+                        "denied".into()
+                    } else {
+                        reason
+                    }))
                 }
                 ApprovalDecision::Approve => {
                     registry
@@ -220,7 +227,7 @@ pub async fn run_agent(
             hooks.on_tool_result(&call, &outcome).await;
             let (result_text, result_images) = match outcome {
                 Ok(o) => (o.output_for_model, o.images),
-                Err(f) => (format!("tool failed: {f}"), Vec::new()),
+                Err(f) => (f.to_string(), Vec::new()),
             };
             history.push(
                 Message::tool_result(call.id.clone(), result_text)
