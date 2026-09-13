@@ -133,21 +133,34 @@ pub fn handshake(pair: Pair) -> anyhow::Result<Pair> {
 /// serve the new client (its rpc/timeout fixes would be missing). `None`
 /// skips the check (tests, CLI tools against foreign daemons).
 pub fn handshake_with(pair: Pair, expected_build: Option<&str>) -> anyhow::Result<Pair> {
-    use std::io::{BufReader, Read as _};
+    use std::io::{BufRead as _, BufReader};
     let Pair(rd, mut wr, raw) = pair;
     let mut rd = BufReader::new(rd);
     let req = protocol::rpc::Request::new(0, "daemon.hello", serde_json::json!({}));
     writeln!(wr, "{}", serde_json::to_string(&req)?)?;
     wr.flush()?;
-    let mut line = Vec::new();
-    for b in rd.by_ref().bytes() {
-        let b = b?;
-        if b == b'\n' {
+    // The daemon broadcasts events to every connection, so during a live
+    // stream the first frames on this fresh pair are events, not our hello
+    // response — skip every frame until the id-0 response arrives.
+    let mut hello: Option<serde_json::Value> = None;
+    loop {
+        let mut line = String::new();
+        let n = rd.read_line(&mut line)?;
+        if n == 0 {
+            anyhow::bail!("daemon closed the connection before the hello response");
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        if v.get("event").is_some() || v.get("method").is_some() {
+            continue;
+        }
+        if v.get("id").and_then(|i| i.as_u64()) == Some(0) {
+            hello = Some(v);
             break;
         }
-        line.push(b);
     }
-    let v: serde_json::Value = serde_json::from_slice(&line)?;
+    let v = hello.expect("hello response read above");
     let daemon_protocol = v["result"]["protocol"].as_u64().unwrap_or(0);
     if daemon_protocol != u64::from(protocol::rpc::PROTOCOL_VERSION) {
         let req = protocol::rpc::Request::new(1, "daemon.shutdown", serde_json::json!({}));
