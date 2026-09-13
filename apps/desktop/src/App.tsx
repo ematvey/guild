@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/c
 import { Input } from "@guild/ui/components/input";
 import { Bot } from "lucide-react";
 import { IS_TAURI, apiLogin, apiMe, clearToken, rpcCall, setToken } from "./transport";
+import { clearApiCache } from "./views/settings/use-cached-api";
+import { clearMachinesCache } from "./views/settings/sections/MachineSection";
 import { ThemeProvider, useTheme } from "./theme";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 
@@ -291,6 +293,8 @@ function DesktopApp() {
     // Drop the webview token; the engine keeps its session, so the next
     // restore re-logs-in automatically (full engine sign-out is phase 2).
     clearToken();
+    clearApiCache();
+    clearMachinesCache();
     setUser(null);
     window.location.reload();
   };
@@ -438,6 +442,8 @@ function AppInner() {
   if (!IS_TAURI) {
     const signOut = () => {
       clearToken();
+      clearApiCache();
+      clearMachinesCache();
       setEmail(null);
     };
     const onLoggedIn = (profile: Profile) => {
