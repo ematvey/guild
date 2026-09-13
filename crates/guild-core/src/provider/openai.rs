@@ -335,6 +335,7 @@ mod tests {
             api_key: "k",
             base_url: "http://x",
             tools: Some(&tools),
+            max_tokens: 0,
         };
         let body = OpenAiProvider::body(&req);
         assert_eq!(body["tools"][0]["function"]["name"], "read_file");
@@ -365,6 +366,7 @@ mod tests {
             api_key: "k",
             base_url: "http://x",
             tools: None,
+            max_tokens: 0,
         };
         let body = OpenAiProvider::body(&req);
         assert_eq!(body["messages"][1]["reasoning_content"], "chain of thought");
@@ -391,6 +393,7 @@ mod tests {
             api_key: "k",
             base_url: "http://x",
             tools: None,
+            max_tokens: 0,
         };
         let body = OpenAiProvider::body(&req);
         assert!(body["messages"][0].get("reasoning_content").is_none());

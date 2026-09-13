@@ -52,6 +52,7 @@ interface RouteRow {
   quota_monthly_usd: number | null;
   reasoning: boolean;
   context_window: number | null;
+  max_output_tokens: number | null;
   modalities: string[];
 }
 
@@ -453,6 +454,9 @@ function RouteDetail({
         ...(draft.quota_monthly_usd != null ? { quota_monthly_usd: draft.quota_monthly_usd } : {}),
         reasoning: draft.reasoning,
         ...(draft.context_window != null ? { context_window: draft.context_window } : {}),
+        ...(draft.max_output_tokens != null
+          ? { max_output_tokens: draft.max_output_tokens }
+          : {}),
         modalities: draft.modalities,
       });
       toast.success("Route saved", { description: draft.model });
@@ -543,6 +547,17 @@ function RouteDetail({
                 placeholder="128000"
                 onChange={(e) =>
                   patch({ context_window: e.target.value === "" ? null : Number(e.target.value) })
+                }
+              />
+            </Field>
+            <Field label="Max output tokens" hint="Per model call; empty = provider default. Anthropic requires this when you want long answers.">
+              <Input
+                value={draft.max_output_tokens != null ? String(draft.max_output_tokens) : ""}
+                placeholder="4096"
+                onChange={(e) =>
+                  patch({
+                    max_output_tokens: e.target.value === "" ? null : Number(e.target.value),
+                  })
                 }
               />
             </Field>

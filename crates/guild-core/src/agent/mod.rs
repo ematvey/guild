@@ -96,6 +96,7 @@ impl ModelTurn for ProviderTurn<'_> {
                 api_key: self.api_key,
                 base_url: self.base_url,
                 tools: Some(tools),
+                max_tokens: 0,
             })
             .await
     }

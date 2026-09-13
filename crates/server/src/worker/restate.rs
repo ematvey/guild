@@ -1098,6 +1098,7 @@ pub(crate) async fn compact_core(
                     api_key: &route.api_key,
                     base_url: &route.base_url,
                     tools: None,
+                    max_tokens: 0,
                 };
                 let stream = provider.chat_stream(preq).await.map_err(|e| {
                     HandlerError::from(TerminalError::new(format!("provider error: {e}")))
@@ -1469,6 +1470,7 @@ impl ChatRunner {
                             api_key: &route.api_key,
                             base_url: &route.base_url,
                             tools: Some(&specs),
+                            max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
                         };
                         let stream = provider.chat_stream(preq).await.map_err(|e| {
                             let _ = tx.send(StreamEvent::Error {
