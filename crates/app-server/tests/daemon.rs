@@ -7,7 +7,7 @@ use guild_app_server::daemon::{run_daemon_on, try_connect_at, Pair};
 use guild_app_server::jsonrpc_loop::Session;
 use protocol::rpc::Request;
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
