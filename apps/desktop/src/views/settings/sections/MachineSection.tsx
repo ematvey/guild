@@ -12,6 +12,12 @@ import { PageHeader } from "../components/page-header";
 // refreshes in the background instead of blinking the skeleton.
 let lastMachines: MachineInfo[] | null = null;
 
+/** Drops the cached machine list; sign-out must call this so one user's
+ * machine inventory does not leak into the next session. */
+export function clearMachinesCache(): void {
+  lastMachines = null;
+}
+
 export function MachineSection({
   currentMachineId,
   onMachineChanged,

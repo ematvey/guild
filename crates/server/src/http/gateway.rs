@@ -430,7 +430,7 @@ pub(crate) fn try_begin_generation(
     ),
     ApiError,
 > {
-    let mut gens = state.generations.lock().unwrap();
+    let gens = state.generations.lock().unwrap();
     if gens.contains_key(&chat_id) {
         return Err(ApiError::new(
             axum::http::StatusCode::CONFLICT,
