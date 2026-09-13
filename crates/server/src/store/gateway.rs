@@ -43,6 +43,36 @@ pub struct RouteRow {
     pub context_window: Option<i64>,
 }
 
+/// Route metadata without the decrypted key — safe to journal in durable
+/// workflow storage, where step outputs persist. The secret is re-resolved
+/// inside each provider-call step instead of traveling through the journal.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RouteMeta {
+    pub provider: String,
+    pub base_url: String,
+    pub price_in: f64,
+    pub price_out: f64,
+    pub quota_monthly_usd: Option<f64>,
+    pub reasoning: bool,
+    pub modalities: Vec<String>,
+    pub context_window: Option<i64>,
+}
+
+impl RouteRow {
+    pub fn meta(&self) -> RouteMeta {
+        RouteMeta {
+            provider: self.provider.clone(),
+            base_url: self.base_url.clone(),
+            price_in: self.price_in,
+            price_out: self.price_out,
+            quota_monthly_usd: self.quota_monthly_usd,
+            reasoning: self.reasoning,
+            modalities: self.modalities.clone(),
+            context_window: self.context_window,
+        }
+    }
+}
+
 /// Admin-facing route row: everything except the decrypted key (derive:
 /// Serialize for the admin settings GET).
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
