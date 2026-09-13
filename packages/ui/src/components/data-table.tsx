@@ -102,20 +102,36 @@ export function DataTable<T>({
                   {hg.headers.map((header) => {
                     const canSort = header.column.getCanSort();
                     const dir = header.column.getIsSorted();
+                    const label = header.isPlaceholder
+                      ? null
+                      : flexRender(header.column.columnDef.header, header.getContext());
                     return (
                       <th
                         key={header.id}
-                        className={cn(
-                          "px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground",
-                          canSort && "cursor-pointer select-none hover:text-foreground",
-                        )}
-                        onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+                        aria-sort={
+                          dir === "asc"
+                            ? "ascending"
+                            : dir === "desc"
+                              ? "descending"
+                              : canSort
+                                ? "none"
+                                : undefined
+                        }
+                        className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground"
                       >
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(header.column.columnDef.header, header.getContext())}
-                        {dir === "asc" && <span className="ml-1">↑</span>}
-                        {dir === "desc" && <span className="ml-1">↓</span>}
+                        {canSort ? (
+                          <button
+                            type="button"
+                            onClick={header.column.getToggleSortingHandler()}
+                            className="inline-flex cursor-pointer select-none items-center gap-1 hover:text-foreground focus-visible:outline focus-visible:outline-foreground/60"
+                          >
+                            {label}
+                            {dir === "asc" && <span aria-hidden>↑</span>}
+                            {dir === "desc" && <span aria-hidden>↓</span>}
+                          </button>
+                        ) : (
+                          label
+                        )}
                       </th>
                     );
                   })}
@@ -139,9 +155,20 @@ export function DataTable<T>({
                   <tr
                     key={row.id}
                     onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                    onKeyDown={
+                      onRowClick
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onRowClick(row.original);
+                            }
+                          }
+                        : undefined
+                    }
+                    tabIndex={onRowClick ? 0 : undefined}
                     className={cn(
                       "border-b border-border/60 transition-colors last:border-b-0",
-                      onRowClick && "cursor-pointer hover:bg-accent/40",
+                      onRowClick && "cursor-pointer hover:bg-accent/40 focus-visible:outline focus-visible:outline-foreground/60",
                     )}
                   >
                     {row.getVisibleCells().map((cell) => (
