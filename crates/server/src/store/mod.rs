@@ -55,7 +55,7 @@ impl Store {
         sqlx::query("ALTER TABLE schema_history ADD COLUMN IF NOT EXISTS hash TEXT")
             .execute(pool)
             .await?;
-        const MIGRATIONS: [(&str, &str); 33] = [
+        const MIGRATIONS: [(&str, &str); 34] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -184,6 +184,10 @@ impl Store {
             (
                 "0033_max_output_tokens",
                 include_str!("../../migrations/0033_max_output_tokens.sql"),
+            ),
+            (
+                "0034_org_fks",
+                include_str!("../../migrations/0034_org_fks.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {
