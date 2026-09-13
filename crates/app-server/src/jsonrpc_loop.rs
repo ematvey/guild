@@ -328,6 +328,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             });
         }
         "tool.run" => {
+            let shared_run = shared.clone();
             let out_tx = out_tx.clone();
             tokio::spawn(async move {
                 let result = async {
@@ -338,6 +339,17 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
                     let tool = registry
                         .get(&name)
                         .with_context(|| format!("unknown tool {name}"))?;
+                    // Route through the session's approval policy: a direct
+                    // RPC run must not bypass what the agent loop honors.
+                    // Ask is refused here — this path has no approval card;
+                    // such tools go through a chat turn instead.
+                    let policy = shared_run.session.lock().unwrap().policy.clone();
+                    let approval = policy.for_tool(&name, tool.default_policy());
+                    if approval != Approval::Allow {
+                        anyhow::bail!(
+                            "tool {name} is not allowed by the approval policy ({approval:?})"
+                        );
+                    }
                     match tool.run(std::path::Path::new(&workdir), args).await {
                         Ok(out) => Ok(Response::ok(
                             req.id,
