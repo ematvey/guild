@@ -36,12 +36,27 @@ impl Tool for RunCommand {
             .unwrap_or(DEFAULT_TIMEOUT_MS)
             .min(MAX_TIMEOUT_MS);
 
-        let child = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(&command)
+        // Shell selection: sh on Unix, cmd /c on Windows clients (this
+        // binary runs on the user's desktop, not only on servers).
+        #[cfg(unix)]
+        let mut cmd = {
+            let mut c = tokio::process::Command::new("sh");
+            c.arg("-c").arg(&command);
+            c
+        };
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = tokio::process::Command::new("cmd");
+            c.arg("/c").arg(&command);
+            c
+        };
+        let child = cmd
             .current_dir(&cwd)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            // On timeout the wait future is dropped with the child inside:
+            // kill_on_drop reaps it instead of leaking an orphan process.
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| ToolFailure::Execution(format!("spawn failed: {e}")))?;
 

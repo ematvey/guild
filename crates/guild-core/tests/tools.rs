@@ -226,3 +226,29 @@ fn registry_specs_match_client_tool_specs() {
         assert!(reg.get(&s.name).is_some(), "registry missing tool {}", s.name);
     }
 }
+
+/// A timed-out command must not survive as an orphan process: the child is
+/// killed when the wait future is dropped (kill_on_drop).
+#[tokio::test]
+async fn execute_timeout_kills_the_child() {
+    let dir = scratch("shell-kill");
+    let marker = format!("guild-test-marker-{}", std::process::id());
+    let err = RunCommand
+        .run(
+            &dir,
+            json!({"command": format!("sleep 30 #{marker}"), "timeout_ms": 150}),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("timed out"));
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let probe = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("ps -eo args | grep '{marker}' || true"))
+        .output()
+        .await
+        .unwrap();
+    let out = String::from_utf8_lossy(&probe.stdout).to_string();
+    assert!(!out.contains("sleep 30"), "orphan survived: {out}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
