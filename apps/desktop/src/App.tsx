@@ -236,10 +236,11 @@ function DesktopApp() {
     const baseUrl = info.result?.base_url ?? url;
     // Resolve the server profile before entering the shell: the splash holds
     // until the IdP name/avatar are known, so the sidebar never flashes the
-    // bare-email fallback.
+    // bare-email fallback. Bounded: an unreachable server must not hang the
+    // splash forever — fall back to the bare-email member profile.
     let me: Awaited<ReturnType<typeof apiMe>> = null;
     try {
-      me = await apiMe();
+      me = await bounded(apiMe(), 10_000, "profile lookup timed out");
     } catch {
       /* fall back to member / bare email below */
     }
