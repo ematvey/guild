@@ -558,6 +558,9 @@ export async function streamChat(
   onEvent: (ev: StreamFrame) => void,
   signal?: AbortSignal,
   attachmentIds: string[] = [],
+  // Desktop only: local folder the agent works in (goes into the system
+  // prompt as the workspace directory). Web sends nothing.
+  projectDir?: string | null,
 ): Promise<void> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
@@ -577,6 +580,7 @@ export async function streamChat(
       // 5-minute client-tool timeout
       client_tools: IS_TAURI,
       attachment_ids: attachmentIds,
+      project_dir: projectDir || undefined,
     }),
     signal,
   });

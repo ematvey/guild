@@ -26,6 +26,7 @@ import {
   PanelLeftOpen,
   Plus,
   Search,
+  FolderOpen,
   X as XIcon,
   SquareTerminal,
   Cpu,
@@ -474,6 +475,26 @@ function upsertThinking(blocks: Block[], content: string, replace: boolean): Blo
 /// Client-side tools need the desktop runtime (local files, shell); in a plain
 /// browser they stay pending until the server-side timeout releases the turn.
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/// Per-chat workspace folder ("run in folder"), desktop only: web clients
+/// never show the picker and never send a project_dir. `null` chatId is the
+/// last-used default a new chat starts from.
+const dirKey = (chatId: string | null) => (chatId ? `guild.dir:${chatId}` : "guild.dir:last");
+const storedDir = (chatId: string | null): string | null => {
+  try {
+    return localStorage.getItem(dirKey(chatId));
+  } catch {
+    return null;
+  }
+};
+const saveDir = (chatId: string | null, dir: string | null) => {
+  try {
+    if (dir) localStorage.setItem(dirKey(chatId), dir);
+    else localStorage.removeItem(dirKey(chatId));
+  } catch {
+    /* storage unavailable — the choice just won't survive a reload */
+  }
+};
 
 /// Sentinel for a send stream that ended without a terminal frame: not a
 /// user-facing error — the send path converts it into a reattach watch.
@@ -1312,6 +1333,9 @@ export default function WebChat({
   // Load (or clear) the thread whenever the URL-driven chatId changes — one
   // path for deep links, back/forward, sidebar picks and "new chat" alike.
   useEffect(() => {
+    // Restore this thread's workspace folder (desktop); a new chat falls
+    // back to the last used one.
+    if (isTauri) setProjectDir(storedDir(chatId) ?? storedDir(null));
     if (!chatId) {
       loadSeq.current++; // invalidate any in-flight load or generation attach
       loadAbort.current?.abort();
@@ -1398,6 +1422,22 @@ export default function WebChat({
   const executingTools = useRef<Set<string>>(new Set());
   const workDirRef = useRef<string | null>(null);
 
+  // Workspace folder ("run in folder"): desktop only. A new chat starts
+  // from the last used folder; an existing chat restores its own (the
+  // chatId effect below re-reads it on every switch).
+  const [projectDir, setProjectDir] = useState<string | null>(() =>
+    isTauri ? storedDir(route.chatId) ?? storedDir(null) : null,
+  );
+  const projectDirRef = useRef(projectDir);
+  projectDirRef.current = projectDir;
+  const pickProjectDir = (dir: string | null) => {
+    setProjectDir(dir);
+    saveDir(chatId, dir);
+    saveDir(null, dir); // next new chat starts here
+    if (dir) workDirRef.current = dir;
+    else workDirRef.current = null; // cleared → tools prompt again
+  };
+
   /// Handles tool lifecycle events from either stream (send or attach):
   /// renders the tool chip and, for client-executed tools in the desktop
   /// runtime, runs the tool locally and posts the result back.
@@ -1417,7 +1457,7 @@ export default function WebChat({
       executingTools.current.add(callId);
       void (async () => {
         try {
-          let dir = workDirRef.current;
+          let dir = projectDirRef.current ?? workDirRef.current;
           if (!dir) {
             const picked = await openDialog({ directory: true, multiple: false });
             if (typeof picked !== "string") throw new Error("no workspace folder selected");
@@ -1612,6 +1652,7 @@ export default function WebChat({
       if (cid && loadSeq.current === mySeq) {
         // Move the URL to the new thread; the live send stream must not be
         // interrupted by a refetch (the chatId effect skips via skipLoadRef).
+        if (projectDirRef.current) saveDir(cid, projectDirRef.current);
         skipLoadRef.current = cid;
         pushRoute({ chatId: cid, overlay: null });
         void refreshChats();
@@ -1699,6 +1740,7 @@ export default function WebChat({
         },
         ac.signal,
         attachmentIds,
+        projectDirRef.current,
       );
       if (!gotDone) {
         // stream ended without a terminal frame: the connection dropped while
@@ -2055,6 +2097,39 @@ export default function WebChat({
                 >
                   <Plus className="size-4" />
                 </Button>
+                {isTauri && (projectDir ? (
+                  <span
+                    className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-xs text-muted-foreground"
+                    title={projectDir}
+                  >
+                    <FolderOpen className="size-3.5 shrink-0" />
+                    <span className="truncate">
+                      {projectDir.split(/[\\/]/).pop() || projectDir}
+                    </span>
+                    <button
+                      type="button"
+                      title="Stop working in this folder"
+                      className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
+                      onClick={() => pickProjectDir(null)}
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  </span>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 gap-1 rounded-full px-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={async () => {
+                      const picked = await openDialog({ directory: true, multiple: false });
+                      if (typeof picked === "string") pickProjectDir(picked);
+                    }}
+                    title="Let the agent read and edit files in a local folder"
+                  >
+                    <FolderOpen className="size-3.5" />
+                    Run in folder…
+                  </Button>
+                ))}
             {models === null ? (
                 <Skeleton className="h-7 w-28 rounded-md" />
               ) : models.length === 0 ? (
