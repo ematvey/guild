@@ -213,9 +213,25 @@ impl RoutineExecutor {
         if let Some(b) = body {
             req = req.body(b);
         }
-        let resp = req.send().await?;
+        let mut resp = req.send().await?;
         let status = resp.status().as_u16();
-        let text = resp.text().await.unwrap_or_default();
+        // Bounded read: a huge (or endless) response body must not balloon
+        // the worker's memory. Anything past the cap is dropped.
+        let mut body: Vec<u8> = Vec::new();
+        let mut capped = false;
+        while let Some(chunk) = resp.chunk().await? {
+            if body.len() + chunk.len() > MAX_HTTP_RESPONSE_BYTES {
+                let take = MAX_HTTP_RESPONSE_BYTES - body.len();
+                body.extend_from_slice(&chunk[..take]);
+                capped = true;
+                break;
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let mut text = String::from_utf8_lossy(&body).to_string();
+        if capped {
+            text.push_str("[response truncated at 1 MiB]");
+        }
         Ok((status, text))
     }
 
@@ -245,6 +261,9 @@ impl RoutineExecutor {
         Ok(())
     }
 }
+
+/// Memory cap on an http_call response body.
+const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 
 fn urlencode(s: &str) -> String {
     let mut out = String::new();
