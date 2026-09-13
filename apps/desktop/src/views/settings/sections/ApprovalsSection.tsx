@@ -6,7 +6,10 @@
 import { useEffect, useState } from "react";
 import { Button } from "@guild/ui/components/button";
 import { Textarea } from "@guild/ui/components/textarea";
+import { toast } from "sonner";
 import { getApproval, setApproval, type ApprovalPolicy } from "../../../transport";
+import { PageHeader } from "../components/page-header";
+import { Field } from "../components/field";
 
 export function ApprovalsSection() {
   const [policyDefault, setPolicyDefault] = useState<"server" | "ask" | "allow" | "never">("server");
@@ -66,9 +69,12 @@ export function ApprovalsSection() {
     try {
       await setApproval(policy);
       setSaved(true);
+      toast.success("Approval policy saved");
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {
-      setError((e as Error).message);
+      const msg = (e as Error).message;
+      setError(msg);
+      toast.error("Save failed", { description: msg });
     } finally {
       setSaving(false);
     }
@@ -82,10 +88,11 @@ export function ApprovalsSection() {
   ];
 
   return (
-    <div className="space-y-4 pt-2">
-      <p className="text-xs text-muted-foreground">
-        Applies to every chat you run — tool trust is yours, not per-conversation.
-      </p>
+    <div className="space-y-5">
+      <PageHeader
+        title="Approvals"
+        description="Applies to every chat you run — tool trust is yours, not per-conversation."
+      />
       <div className="space-y-1.5">
         {modes.map((m) => (
           <button
@@ -110,16 +117,15 @@ export function ApprovalsSection() {
         ))}
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Per-tool overrides (JSON, optional)
-        </label>
-        <Textarea
-          value={overridesText}
-          onChange={(e) => setOverridesText(e.target.value)}
-          rows={3}
-          placeholder={'{"overrides": {"bash": "allow"}}'}
-          className="font-mono text-xs"
-        />
+        <Field label="Per-tool overrides (JSON, optional)">
+          <Textarea
+            value={overridesText}
+            onChange={(e) => setOverridesText(e.target.value)}
+            rows={3}
+            placeholder={'{"overrides": {"bash": "allow"}}'}
+            className="font-mono text-xs"
+          />
+        </Field>
         <p className="text-xs text-muted-foreground">
           Keys are tool names, values are ask / allow / never.
         </p>

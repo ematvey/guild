@@ -1,14 +1,20 @@
-//! RegistrySection — admin settings: a rich list screen of registry items
-//! (skills / mcp / integrations) with a detail screen per item showing its
+//! RegistrySection — registry items (skills / mcp / integrations) in one
+//! data table with a kind column; the item detail page shows description,
 //! versions and the review action (approve / revert to draft).
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
-import { ArrowLeft, ArrowUpRight, Package, Pencil } from "lucide-react";
+import { ArrowUpRight, Package } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
+import { DataTable } from "@guild/ui/components/data-table";
+import { Badge } from "@guild/ui/components/badge";
 import { Skeleton } from "@guild/ui/components/skeleton";
+import { PageHeader } from "../components/page-header";
+import { FactCard, FactGrid } from "../components/fact-card";
 
 interface ItemRow {
   slug: string;
@@ -26,28 +32,25 @@ const KINDS = ["skill", "mcp", "integration"] as const;
 type Kind = (typeof KINDS)[number];
 
 const KIND_LABELS: Record<Kind, string> = {
-  skill: "Skills",
-  mcp: "MCP servers",
-  integration: "Integrations",
+  skill: "Skill",
+  mcp: "MCP server",
+  integration: "Integration",
 };
 
-const backBtn =
-  "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
-const listCard =
-  "flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40";
-const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
-
-const reviewPill = (status: string) => (
-  <span
-    className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${
-      status === "approved"
-        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-        : "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-    }`}
-  >
-    {status}
-  </span>
-);
+function ReviewBadge({ status }: { status: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className={
+        status === "approved"
+          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          : "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+      }
+    >
+      {status}
+    </Badge>
+  );
+}
 
 export default function RegistrySection({
   detail = null,
@@ -78,63 +81,69 @@ function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }
     integration: integration.data?.items ?? null,
   };
   const error = skill.error ?? mcp.error ?? integration.error;
+  // null while any kind is still loading so the table shows skeletons, not a
+  // premature "empty" state.
+  const data = KINDS.every((k) => items[k] !== null)
+    ? KINDS.flatMap((k) => (items[k] ?? []).map((it) => ({ ...it, kind: k as Kind })))
+    : null;
 
-  const total = KINDS.reduce((n, k) => n + (items[k]?.length ?? 0), 0);
+  const columns = useMemo<ColumnDef<ItemRow & { kind: Kind }, any>[]>(
+    () => [
+      {
+        accessorKey: "slug",
+        header: "Slug",
+        cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-3">
+            <Package className="size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <p className="truncate font-medium">{row.original.slug}</p>
+              {row.original.description && (
+                <p className="truncate text-xs text-muted-foreground">
+                  {row.original.description}
+                </p>
+              )}
+            </div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "kind",
+        header: "Kind",
+        cell: ({ row }) => <Badge variant="secondary">{KIND_LABELS[row.original.kind]}</Badge>,
+      },
+      {
+        accessorKey: "latest_version",
+        header: "Version",
+        cell: ({ row }) => (
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">
+            {row.original.latest_version ? `v${row.original.latest_version}` : "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "review_status",
+        header: "Review",
+        cell: ({ row }) => <ReviewBadge status={row.original.review_status} />,
+      },
+    ],
+    [],
+  );
 
   return (
-    <div className="space-y-6">
-      {error && <p className="text-base text-destructive">{error}</p>}
-      {KINDS.map((kind) => (
-        <section key={kind}>
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className={label}>{KIND_LABELS[kind]}</h3>
-            <span className="text-xs text-muted-foreground">
-              {items[kind] ? `${items[kind].length} items` : ""}
-            </span>
-          </div>
-          {items[kind] === null ? (
-            <Skeleton className="h-14 w-full rounded-lg" />
-          ) : items[kind]!.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
-              Nothing published under {KIND_LABELS[kind].toLowerCase()} yet — publishing
-              happens through the registry API (`POST /api/v1/registry/{kind}`).
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {items[kind]!.map((it) => (
-                <button
-                  key={it.slug}
-                  className={listCard}
-                  onClick={() => onOpen(kind, it.slug)}
-                >
-                  <Package className="size-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-base font-medium">{it.slug}</p>
-                      {it.latest_version && (
-                        <span className="rounded bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
-                          v{it.latest_version}
-                        </span>
-                      )}
-                    </div>
-                    {it.description && (
-                      <p className="truncate text-xs text-muted-foreground">{it.description}</p>
-                    )}
-                  </div>
-                  {reviewPill(it.review_status)}
-                  <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-      ))}
-      {total === 0 && KINDS.every((k) => items[k] !== null) && (
-        <p className="text-xs text-muted-foreground">
-          The registry holds installable bundles for the desktop app; entries appear here
-          once published.
-        </p>
-      )}
+    <div>
+      <PageHeader
+        title="Registry"
+        description="Installable bundles for the desktop app; entries appear here once published through the registry API."
+      />
+      {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+      <DataTable
+        columns={columns}
+        data={data}
+        search={(r) => `${r.slug} ${r.kind} ${r.description ?? ""} ${r.review_status}`}
+        searchPlaceholder="Search registry…"
+        onRowClick={(r) => onOpen(r.kind, r.slug)}
+        pageSize={15}
+      />
     </div>
   );
 }
@@ -162,104 +171,94 @@ function ItemDetail({
     versionsRes.reload();
   };
 
+  const review = async (status: "approved" | "draft") => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api("POST", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}/review`, {
+        status,
+      });
+      toast.success(status === "approved" ? "Approved" : "Reverted to draft", {
+        description: slug,
+      });
+      reload();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("Review failed", { description: msg });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div>
-      <button className={backBtn} onClick={onBack}>
-        <ArrowLeft className="size-4" /> Registry
-      </button>
-      <div className="mb-1 flex items-center gap-2">
-        <h3 className="text-base font-semibold">{slug}</h3>
-        <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
-          {kind}
-        </span>
-        {item && reviewPill(item.review_status)}
-      </div>
-      {item?.description && (
-        <p className="mb-4 max-w-xl text-base text-muted-foreground">{item.description}</p>
-      )}
-
-      <div className="max-w-xl space-y-4">
-        <section>
-          <h4 className="mb-2">{label}Versions</h4>
-          {versions === null ? (
-            <Skeleton className="h-20 w-full rounded-lg" />
-          ) : versions.length === 0 ? (
-            <p className="text-base text-muted-foreground">No versions published.</p>
+    <div className="space-y-5">
+      <PageHeader
+        title={slug}
+        description={item?.description ?? undefined}
+        back={{ label: "Registry", onClick: onBack }}
+        actions={
+          item?.review_status !== "approved" ? (
+            <Button size="sm" disabled={busy} onClick={() => review("approved")}>
+              Approve
+            </Button>
           ) : (
-            <div className="space-y-2">
-              {versions.map((v) => (
-                <div
-                  key={v.version}
-                  className="flex items-center justify-between rounded-lg border border-border px-4 py-2.5"
-                >
-                  <span className="font-mono text-base">v{v.version}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {v.published_at ? new Date(v.published_at).toLocaleString() : ""}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => review("draft")}
+            >
+              Revert to draft
+            </Button>
+          )
+        }
+      />
 
-        <section>
-          <h4 className="mb-2">{label}Review</h4>
-          <p className="mb-2 text-xs text-muted-foreground">
-            Only approved items are installable from the desktop app.
-          </p>
-          {error && <p className="mb-2 text-base text-destructive">{error}</p>}
-          <div className="flex gap-2">
-            {item?.review_status !== "approved" && (
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  setError(null);
-                  try {
-                    await api("POST", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}/review`, {
-                      status: "approved",
-                    });
-                    reload();
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : String(e));
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                Approve
-              </Button>
-            )}
-            {item?.review_status === "approved" && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  setError(null);
-                  try {
-                    await api("POST", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}/review`, {
-                      status: "draft",
-                    });
-                    reload();
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : String(e));
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                Revert to draft
-              </Button>
-            )}
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <ArrowUpRight className="size-3.5" /> publishing stays API-side
-            </span>
-          </div>
-        </section>
+      <FactGrid>
+        <FactCard label="Kind">
+          <Badge variant="secondary">{KIND_LABELS[kind]}</Badge>
+        </FactCard>
+        <FactCard label="Review status">
+          {item ? <ReviewBadge status={item.review_status} /> : "…"}
+        </FactCard>
+        <FactCard label="Latest version">
+          <span className="font-mono">
+            {item?.latest_version ? `v${item.latest_version}` : "—"}
+          </span>
+        </FactCard>
+        <FactCard label="Installability">
+          {item?.review_status === "approved"
+            ? "Installable from the desktop app"
+            : "Not installable until approved"}
+        </FactCard>
+      </FactGrid>
+
+      <div className="rounded-lg border border-border bg-card p-4">
+        <p className="text-sm font-medium">Versions</p>
+        {versions === null ? (
+          <Skeleton className="mt-3 h-12 w-full rounded-md" />
+        ) : versions.length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">No versions published.</p>
+        ) : (
+          <ul className="mt-2 divide-y divide-border/60">
+            {versions.map((v) => (
+              <li key={v.version} className="flex items-center justify-between py-2 text-sm">
+                <span className="font-mono">v{v.version}</span>
+                <span className="text-xs text-muted-foreground">
+                  {v.published_at ? new Date(v.published_at).toLocaleString() : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <p className="flex items-center gap-1 text-xs text-muted-foreground">
+        <ArrowUpRight className="size-3.5" /> publishing stays API-side
+        ({`POST /api/v1/registry/${kind}`})
+      </p>
     </div>
   );
 }

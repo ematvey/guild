@@ -1,26 +1,37 @@
-//! IntegrationsSection — admin settings: a list screen of available and
-//! configured integrations; the detail screen (addressed by the row's id,
-//! /settings/integrations/<id>) holds the enable toggle, JSON config
-//! editor, save and delete. MCP plugin rows additionally show the mcp url,
-//! secret names with timestamps, a write-only secret form, and a per-role
-//! tool-policy editor.
+//! IntegrationsSection — available and configured integrations in one data
+//! table (status column distinguishes configured / not configured); the
+//! detail page (addressed by the row's id, /settings/integrations/<id>)
+//! holds the enable toggle, JSON config editor, save and remove. MCP plugin
+//! rows additionally show the mcp url, secret names with timestamps, a
+//! write-only secret form, and a per-role tool-policy editor.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
-import {
-  ArrowLeft,
-  KeyRound,
-  Pencil,
-  Plus,
-  Trash2,
-  Webhook,
-} from "lucide-react";
+import { KeyRound, Plug, Plus, Trash2, Webhook } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@guild/ui/components/alert-dialog";
+import { DataTable } from "@guild/ui/components/data-table";
+import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
+import { PageHeader } from "../components/page-header";
+import { Field } from "../components/field";
+import { EmptyState } from "../components/empty-state";
+import { FactCard, FactGrid } from "../components/fact-card";
 
 interface IntegrationRow {
   id: string;
@@ -47,10 +58,10 @@ type ToolRole = "member" | "admin";
 type ToolPolicy = Partial<Record<ToolRole, ToolClass[]>>;
 
 const CATEGORY_LABELS: Record<string, string> = {
-  fetch: "Fetch providers",
-  search: "Search providers",
+  fetch: "Fetch provider",
+  search: "Search provider",
   other: "Other",
-  mcp: "MCP plugins",
+  mcp: "MCP plugin",
 };
 
 const categoryLabel = (c?: string) => CATEGORY_LABELS[c ?? "other"] ?? CATEGORY_LABELS.other;
@@ -89,11 +100,21 @@ const toggleClass = (policy: ToolPolicy, role: ToolRole, cls: ToolClass): ToolPo
   return { ...policy, [role]: next };
 };
 
-const backBtn =
-  "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
-const listCard =
-  "flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40";
-const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
+function StatusBadge({ enabled }: { enabled: boolean }) {
+  return (
+    <Badge
+      variant="outline"
+      className="border-transparent bg-accent text-muted-foreground"
+    >
+      <span
+        className={`mr-1.5 inline-block size-1.5 rounded-full ${
+          enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
+        }`}
+      />
+      {enabled ? "enabled" : "disabled"}
+    </Badge>
+  );
+}
 
 export default function IntegrationsSection({
   detail = null,
@@ -108,7 +129,82 @@ export default function IntegrationsSection({
   const error = list.error;
   const reload = list.reload;
 
-  const [actionError, setActionError] = useState<string | null>(null);
+  // A unified table row: configured integrations plus not-yet-configured
+  // catalog entries (status "not configured"; clicking one creates the row).
+  const tableRows = useMemo<
+    { key: string; name: string; category?: string; row?: IntegrationRow }[]
+  >(() => {
+    if (rows === null || available === null) return [];
+    const configuredNames = new Set(rows.map((r) => r.name));
+    return [
+      ...rows.map((r) => ({ key: r.id, name: r.name, category: r.category, row: r })),
+      ...available
+        .filter((a) => !configuredNames.has(a.name))
+        .map((a) => ({ key: `available-${a.name}`, name: a.name, category: a.category })),
+    ];
+  }, [rows, available]);
+
+  /// Opens a detail page by id. A not-yet-configured connector has no row
+  /// (and no id) yet: creating its configuration is the first click's job —
+  /// the row starts disabled and the navigation lands on its id.
+  const openIntegration = async (entry: (typeof tableRows)[number]) => {
+    if (entry.row) {
+      onDetailChange(entry.row.id);
+      return;
+    }
+    try {
+      const created = await api<{ id: string }>("POST", "/api/v1/admin/integrations", {
+        name: entry.name,
+      });
+      toast.success("Integration created", { description: entry.name });
+      reload();
+      onDetailChange(created.id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error("Could not create integration", { description: msg });
+    }
+  };
+
+  const columns = useMemo<ColumnDef<(typeof tableRows)[number], any>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Integration",
+        cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-3">
+            <Webhook className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate font-medium">{row.original.name}</span>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "category",
+        header: "Type",
+        cell: ({ row }) => <Badge variant="secondary">{categoryLabel(row.original.category)}</Badge>,
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: ({ row }) =>
+          row.original.row ? (
+            <StatusBadge enabled={row.original.row.enabled} />
+          ) : (
+            <span className="text-xs text-muted-foreground">not configured</span>
+          ),
+      },
+      {
+        id: "actions",
+        header: "",
+        cell: ({ row }) =>
+          row.original.row ? null : (
+            <div className="flex justify-end">
+              <Plus className="size-4 text-muted-foreground/60" />
+            </div>
+          ),
+      },
+    ],
+    [],
+  );
 
   if (detail !== null) {
     // Deep-linked detail: wait for the list before resolving the id —
@@ -125,12 +221,11 @@ export default function IntegrationsSection({
     if (!configured) {
       return (
         <div>
-          <button className={backBtn} onClick={() => onDetailChange(null)}>
-            <ArrowLeft className="size-4" /> Integrations
-          </button>
-          <p className="text-base text-muted-foreground">
-            This integration no longer exists.
-          </p>
+          <PageHeader
+            title="Integrations"
+            back={{ label: "Integrations", onClick: () => onDetailChange(null) }}
+          />
+          <p className="text-sm text-muted-foreground">This integration no longer exists.</p>
         </div>
       );
     }
@@ -150,98 +245,27 @@ export default function IntegrationsSection({
     );
   }
 
-  const availableNames = new Set((available ?? []).map((a) => a.name));
-
-  /// Opens a detail page by id. A not-yet-configured connector has no row
-  /// (and no id) yet: creating its configuration is the first click's job —
-  /// the row starts disabled and the navigation lands on its id.
-  const openIntegration = async (name: string, rowId: string | null) => {
-    setActionError(null);
-    if (rowId) {
-      onDetailChange(rowId);
-      return;
-    }
-    try {
-      const created = await api<{ id: string }>("POST", "/api/v1/admin/integrations", {
-        name,
-      });
-      reload();
-      onDetailChange(created.id);
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
   return (
-    <div className="space-y-6">
-      {error && <p className="text-base text-destructive">{error}</p>}
-      {actionError && <p className="text-base text-destructive">{actionError}</p>}
-      {rows === null || available === null ? (
-        <div className="space-y-2">
-          <Skeleton className="h-14 w-full rounded-lg" />
-          <Skeleton className="h-14 w-full rounded-lg" />
-        </div>
-      ) : (
-        (["fetch", "search", "other", "mcp"] as const).map((cat) => {
-          // Rows carry their category from the API; available entries hold
-          // the catalog category of kinds with no configured row yet.
-          const rowItems = (rows ?? []).filter((r) => (r.category ?? "other") === cat);
-          const availItems = available.filter((a) => (a.category ?? "other") === cat);
-          if (rowItems.length === 0 && availItems.length === 0) return null;
-          return (
-            <section key={cat}>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className={label}>{categoryLabel(cat)}</h3>
-                <span className="text-xs text-muted-foreground">
-                  {rowItems.filter((r) => r.enabled).length} enabled
-                </span>
-              </div>
-              <div className="space-y-2">
-                {rowItems.map((r) => (
-                  <button
-                    key={r.id}
-                    className={listCard}
-                    onClick={() => onDetailChange(r.id)}
-                  >
-                    <Webhook className="size-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-base font-medium">{r.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {r.enabled ? "enabled" : "configured, disabled"}
-                      </p>
-                    </div>
-                    <span
-                      className={`size-2 shrink-0 rounded-full ${
-                        r.enabled ? "bg-emerald-500" : "bg-muted-foreground/40"
-                      }`}
-                    />
-                    <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
-                  </button>
-                ))}
-                {availItems.map((a) => (
-                  <button
-                    key={`available-${a.name}`}
-                    className={listCard}
-                    onClick={() => openIntegration(a.name, null)}
-                  >
-                    <Webhook className="size-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-base font-medium">{a.name}</p>
-                      <p className="text-xs text-muted-foreground">not configured</p>
-                    </div>
-                    <Plus className="size-3.5 shrink-0 text-muted-foreground/60" />
-                  </button>
-                ))}
-              </div>
-            </section>
-          );
-        })
-      )}
-      {availableNames.size === 0 && (rows ?? []).length === 0 && (
-        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-base text-muted-foreground">
-          No integrations are available in this build.
-        </p>
-      )}
+    <div>
+      <PageHeader
+        title="Integrations"
+        description="Connectors and MCP plugins that contribute tools to chats. Click a not-configured connector to set it up."
+      />
+      {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+      <DataTable
+        columns={columns}
+        data={rows !== null && available !== null ? tableRows : null}
+        search={(r) => `${r.name} ${categoryLabel(r.category)}`}
+        searchPlaceholder="Search integrations…"
+        onRowClick={openIntegration}
+        empty={
+          <EmptyState
+            icon={Plug}
+            title="No integrations available"
+            hint="This build ships no connectors or registry plugins."
+          />
+        }
+      />
     </div>
   );
 }
@@ -286,6 +310,12 @@ function IntegrationDetail({
   const secrets = secretsRes.data?.secrets ?? null;
   const reloadSecrets = secretsRes.reload;
 
+  const fail = (e: unknown, title: string) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    setError(msg);
+    toast.error(title, { description: msg });
+  };
+
   const save = async () => {
     if (busy) return;
     setBusy(true);
@@ -299,15 +329,15 @@ function IntegrationDetail({
         config: cfg,
         enabled,
       });
+      toast.success("Integration saved", { description: name });
       onChanged();
       setMode("view");
     } catch (e) {
-      setError(
+      fail(
         e instanceof SyntaxError
-          ? `config is not valid JSON: ${e.message}`
-          : e instanceof Error
-            ? e.message
-            : String(e),
+          ? new Error(`config is not valid JSON: ${e.message}`)
+          : e,
+        "Save failed",
       );
     } finally {
       setBusy(false);
@@ -323,11 +353,12 @@ function IntegrationDetail({
         name: secretName.trim(),
         value: secretValue,
       });
+      toast.success("Secret saved", { description: secretName.trim() });
       setSecretName("");
       setSecretValue("");
       reloadSecrets();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      fail(e, "Could not save secret");
     } finally {
       setBusy(false);
     }
@@ -342,74 +373,216 @@ function IntegrationDetail({
         "DELETE",
         `/api/v1/admin/integrations/${id}/secrets/${encodeURIComponent(secret)}`,
       );
+      toast.success("Secret deleted", { description: secret });
       setConfirmSecret(null);
       onChanged();
       reloadSecrets();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      fail(e, "Could not delete secret");
     } finally {
       setBusy(false);
     }
   };
 
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await api("DELETE", `/api/v1/admin/integrations/${id}`);
+      toast.success("Integration removed", { description: name });
+      onBack();
+    } catch (e) {
+      fail(e, "Could not remove integration");
+      setBusy(false);
+    }
+  };
+
   return (
-    <div>
-      <button className={backBtn} onClick={onBack}>
-        <ArrowLeft className="size-4" /> Integrations
-      </button>
-      <div className="mb-1 flex items-center gap-2">
-        <h3 className="text-base font-semibold">{name}</h3>
-        <span className="rounded bg-muted px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
-          {categoryLabel(category)}
-        </span>
-        <span
-          className={`size-2 rounded-full ${initialEnabled ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
-          title={initialEnabled ? "enabled" : "disabled"}
-        />
+    <div className="space-y-5">
+      <PageHeader
+        title={name}
+        description={
+          initialEnabled
+            ? "Enabled — tools join the chat loop."
+            : "Configured but disabled; the config is kept, no tools are contributed."
+        }
+        back={{ label: "Integrations", onClick: onBack }}
+        actions={
+          <>
+            <Button onClick={() => setMode("edit")}>Edit</Button>
+            <Button
+              variant="outline"
+              className="text-destructive"
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 className="size-3.5" /> Remove
+            </Button>
+          </>
+        }
+      />
+
+      {/* view: saved facts + explicit actions */}
+      <FactGrid>
+        <FactCard label="Type">
+          <Badge variant="secondary">{categoryLabel(category)}</Badge>
+        </FactCard>
+        <FactCard label="Status">
+          <StatusBadge enabled={initialEnabled} />
+        </FactCard>
+        {isMcp && (
+          <FactCard label="Connection" className="sm:col-span-2">
+            <p className="break-all font-mono text-xs">
+              {String((initialConfig.mcp as Record<string, unknown>).url ?? "(no url)")}
+            </p>
+          </FactCard>
+        )}
+      </FactGrid>
+
+      <div className="rounded-lg border border-border bg-card p-4">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Config</p>
+        <pre className="mt-2 overflow-x-auto font-mono text-xs leading-relaxed">
+          {JSON.stringify(initialConfig, null, 2)}
+        </pre>
       </div>
 
-      {mode === "edit" ? (
-        <div className="mt-4 max-w-xl space-y-4">
-          <div className="flex items-center gap-3 rounded-lg border border-border px-4 py-3">
-            <label className="flex flex-1 items-center gap-3 text-base">
-              <input
-                type="checkbox"
-                className="size-4 accent-foreground"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-              />
-              <span>
-                Enabled
-                <span className="block text-xs text-muted-foreground">
-                  Disabled integrations keep their config but contribute no tools.
-                </span>
-              </span>
-            </label>
+      {isMcp && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-1.5">
+            <KeyRound className="size-3.5 text-muted-foreground" />
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Secrets
+            </p>
           </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Passed to the MCP server as headers on connect; values are never shown or returned by
+            the API.
+          </p>
+          {secrets === null ? (
+            <Skeleton className="mt-3 h-8 w-56" />
+          ) : secrets.length === 0 ? (
+            <p className="mt-3 text-sm text-muted-foreground">No secrets stored.</p>
+          ) : (
+            <ul className="mt-3 divide-y divide-border/60">
+              {secrets.map((s) => (
+                <li key={s.name} className="flex items-center gap-3 py-2 text-sm">
+                  <span className="font-mono text-xs">{s.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    updated {new Date(s.updated_at).toLocaleString()}
+                  </span>
+                  <button
+                    className="ml-auto text-muted-foreground transition-colors hover:text-destructive"
+                    title="Delete secret"
+                    onClick={() => setConfirmSecret(s.name)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border/60 pt-3">
+            <div>
+              <p className="mb-1 text-xs text-muted-foreground">Name</p>
+              <Input
+                className="h-8 w-40 font-mono text-xs"
+                value={secretName}
+                onChange={(e) => setSecretName(e.target.value)}
+                placeholder="e.g. api_key"
+              />
+            </div>
+            <div>
+              <p className="mb-1 text-xs text-muted-foreground">Value (write-only)</p>
+              <Input
+                className="h-8 w-56 font-mono text-xs"
+                type="password"
+                value={secretValue}
+                onChange={(e) => setSecretValue(e.target.value)}
+                placeholder="add or replace"
+              />
+            </div>
+            <Button
+              size="sm"
+              className="h-8"
+              disabled={busy || !secretName.trim() || !secretValue}
+              onClick={saveSecret}
+            >
+              {busy ? "Saving…" : "Save secret"}
+            </Button>
+          </div>
+        </div>
+      )}
 
-          <div>
-            <p className={label}>Config (JSON)</p>
+      {isMcp && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Tool policy
+          </p>
+          {Object.keys(cleanPolicy(readPolicy(initialConfig))).length === 0 ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Default — manifest tool classes apply to every role.
+            </p>
+          ) : (
+            <div className="mt-2 grid grid-cols-2 gap-3">
+              {ROLES.map((role) => {
+                const classes = readPolicy(initialConfig)[role];
+                if (!classes?.length) return null;
+                return (
+                  <div key={role}>
+                    <p className="text-sm font-medium capitalize">{role}</p>
+                    <p className="text-xs capitalize text-muted-foreground">
+                      {classes.join(", ")}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+
+      {mode === "edit" && (
+        <div className="space-y-5 rounded-lg border border-border bg-card p-5">
+          <PageHeader title="Edit integration" />
+          <label className="flex items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 accent-foreground"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
+            <span>
+              Enabled
+              <span className="block text-xs text-muted-foreground">
+                Disabled integrations keep their config but contribute no tools.
+              </span>
+            </span>
+          </label>
+
+          <Field
+            label="Config (JSON)"
+            hint="Merged with the tool policy below on save."
+          >
             <Textarea
-              className="mt-1.5 min-h-40 font-mono text-xs"
+              className="min-h-40 font-mono text-xs"
               spellCheck={false}
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
-          </div>
+          </Field>
 
           {isMcp && (
-            <div>
-              <p className={label}>Tool policy (saved into config.tool_policy)</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Classes each role may call; unchecked roles get the manifest defaults.
-              </p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+            <Field
+              label="Tool policy"
+              hint="Classes each role may call; unchecked roles get the manifest defaults."
+            >
+              <div className="grid grid-cols-2 gap-3">
                 {ROLES.map((role) => (
-                  <div key={role} className="rounded-lg border border-border px-3 py-2">
-                    <p className="text-base font-medium capitalize">{role}</p>
-                    <div className="mt-1 space-y-1">
+                  <div key={role} className="rounded-lg border border-border px-3 py-2.5">
+                    <p className="text-sm font-medium capitalize">{role}</p>
+                    <div className="mt-1.5 space-y-1.5">
                       {TOOL_CLASSES.map((cls) => (
-                        <label key={cls} className="flex items-center gap-2 text-base">
+                        <label key={cls} className="flex items-center gap-2 text-sm">
                           <input
                             type="checkbox"
                             className="size-4 accent-foreground"
@@ -423,10 +596,10 @@ function IntegrationDetail({
                   </div>
                 ))}
               </div>
-            </div>
+            </Field>
           )}
 
-          {error && <p className="text-base text-destructive">{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center gap-2">
             <Button disabled={busy} onClick={save}>
               {busy ? "Saving…" : "Save"}
@@ -445,174 +618,54 @@ function IntegrationDetail({
             </Button>
           </div>
         </div>
-      ) : (
-        // view: saved facts + explicit actions
-        <div className="mt-4 max-w-xl space-y-4">
-          <div className="rounded-lg border border-border bg-card p-4">
-            <p className={label}>Status</p>
-            <p className="mt-1 text-base">
-              {initialEnabled ? "Enabled — tools join the chat loop" : "Configured, disabled"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Disabled integrations keep their config but contribute no tools.
-            </p>
-          </div>
-          <div className="rounded-lg border border-border bg-card p-4">
-            <p className={label}>Config</p>
-            <pre className="mt-1 overflow-x-auto font-mono text-xs">
-              {JSON.stringify(initialConfig, null, 2)}
-            </pre>
-          </div>
-
-          {isMcp && (
-            <div className="rounded-lg border border-border bg-card p-4">
-              <p className={label}>Connection</p>
-              <p className="mt-1 font-mono text-xs break-all">
-                {String((initialConfig.mcp as Record<string, unknown>).url ?? "(no url)")}
-              </p>
-            </div>
-          )}
-
-          {isMcp && (
-            <div className="rounded-lg border border-border bg-card p-4">
-              <div className="flex items-center gap-1.5">
-                <KeyRound className="size-3.5 text-muted-foreground" />
-                <p className={label}>Secrets</p>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Passed to the MCP server as headers on connect; values are
-                never shown or returned by the API.
-              </p>
-              {secrets === null ? (
-                <Skeleton className="mt-2 h-8 w-56" />
-              ) : secrets.length === 0 ? (
-                <p className="mt-2 text-base text-muted-foreground">No secrets stored.</p>
-              ) : (
-                <ul className="mt-2 space-y-1">
-                  {secrets.map((s) =>
-                    confirmSecret === s.name ? (
-                      <li key={s.name} className="flex items-center gap-2 text-base">
-                        <span className="font-mono text-xs">{s.name}</span>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          disabled={busy}
-                          onClick={() => deleteSecret(s.name)}
-                        >
-                          Delete secret
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setConfirmSecret(null)}>
-                          Cancel
-                        </Button>
-                      </li>
-                    ) : (
-                      <li key={s.name} className="flex items-center gap-2 text-base">
-                        <span className="font-mono text-xs">{s.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          updated {new Date(s.updated_at).toLocaleString()}
-                        </span>
-                        <button
-                          className="text-xs text-muted-foreground transition-colors hover:text-destructive"
-                          onClick={() => setConfirmSecret(s.name)}
-                        >
-                          <Trash2 className="size-3" />
-                        </button>
-                      </li>
-                    ),
-                  )}
-                </ul>
-              )}
-              <div className="mt-3 flex items-end gap-2">
-                <div>
-                  <p className="text-xs text-muted-foreground">Name</p>
-                  <Input
-                    className="h-8 w-40 font-mono text-xs"
-                    value={secretName}
-                    onChange={(e) => setSecretName(e.target.value)}
-                    placeholder="e.g. api_key"
-                  />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Value (write-only)</p>
-                  <Input
-                    className="h-8 w-56 font-mono text-xs"
-                    type="password"
-                    value={secretValue}
-                    onChange={(e) => setSecretValue(e.target.value)}
-                    placeholder="add or replace"
-                  />
-                </div>
-                <Button size="sm" disabled={busy || !secretName.trim() || !secretValue} onClick={saveSecret}>
-                  {busy ? "Saving…" : "Save secret"}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {isMcp && (
-            <div className="rounded-lg border border-border bg-card p-4">
-              <p className={label}>Tool policy</p>
-              {Object.keys(cleanPolicy(readPolicy(initialConfig))).length === 0 ? (
-                <p className="mt-1 text-base text-muted-foreground">
-                  Default — manifest tool classes apply to every role.
-                </p>
-              ) : (
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  {ROLES.map((role) => {
-                    const classes = readPolicy(initialConfig)[role];
-                    if (!classes?.length) return null;
-                    return (
-                      <div key={role}>
-                        <p className="text-base font-medium capitalize">{role}</p>
-                        <p className="text-xs capitalize text-muted-foreground">
-                          {classes.join(", ")}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {error && <p className="text-base text-destructive">{error}</p>}
-          <div className="flex items-center gap-2">
-            <Button onClick={() => setMode("edit")}>
-              <Pencil className="mr-1 size-3.5" /> Edit
-            </Button>
-            {confirmDelete ? (
-              <>
-                <Button
-                  variant="destructive"
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await api("DELETE", `/api/v1/admin/integrations/${id}`);
-                      onBack();
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  Remove configuration
-                </Button>
-                <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
-                  Cancel
-                </Button>
-              </>
-            ) : (
-              <Button
-                variant="ghost"
-                className="text-muted-foreground"
-                onClick={() => setConfirmDelete(true)}
-              >
-                <Trash2 className="mr-1 size-3.5" /> Remove
-              </Button>
-            )}
-          </div>
-        </div>
       )}
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The configuration and stored secrets are deleted; tools disappear from chats.
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={busy}
+              onClick={remove}
+            >
+              {busy ? "Removing…" : "Remove configuration"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={confirmSecret !== null}
+        onOpenChange={(open) => !open && setConfirmSecret(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete secret?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{confirmSecret}” is removed; calls that need it start failing. This cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={busy}
+              onClick={() => confirmSecret && deleteSecret(confirmSecret)}
+            >
+              {busy ? "Deleting…" : "Delete secret"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

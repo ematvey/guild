@@ -868,8 +868,8 @@ pub fn start_update_checker(app: AppHandle) {
         rt.block_on(async move {
             loop {
                 check_and_prepare_update(&app).await;
-                // re-check every 6 hours while the app is open
-                tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+                // re-check every 15 minutes while the app is open
+                tokio::time::sleep(std::time::Duration::from_secs(15 * 60)).await;
             }
         });
     });

@@ -11,6 +11,7 @@ import { Input } from "@guild/ui/components/input";
 import { Bot } from "lucide-react";
 import { IS_TAURI, apiLogin, apiMe, clearToken, rpcCall, setToken } from "./transport";
 import { ThemeProvider, useTheme } from "./theme";
+import { ThemedToaster } from "@guild/ui/components/toaster";
 
 const BAKED_URL: string =
   (import.meta as any).env?.VITE_DEFAULT_SERVER_URL ?? "https://guild.example.com";
@@ -466,6 +467,7 @@ export default function App() {
   return (
     <ThemeProvider>
       <AppInner />
+      <ThemedToaster />
     </ThemeProvider>
   );
 }

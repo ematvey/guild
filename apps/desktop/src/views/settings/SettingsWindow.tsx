@@ -28,6 +28,8 @@ import {
 import { UserBadge } from "../../components/user-badge";
 import type { SectionDetailProps } from "./section-nav";
 import { useTheme } from "../../theme";
+import { PageHeader } from "./components/page-header";
+import { FactCard, FactGrid } from "./components/fact-card";
 import {
   clampSidebarWidth,
   saveSidebarWidth,
@@ -191,19 +193,22 @@ export function SettingsWindow({
               if (items.length === 0) return null;
               return (
                 <div key={g.key} className="mb-3">
-                  <p className="px-2 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                  <p className="px-2 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
                     {g.label}
                   </p>
                   {items.map((s) => (
                     <button
                       key={s.id}
                       onClick={() => onSectionChange(s.id)}
-                      className={`mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-base outline-none transition-colors ${
+                      className={`relative mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors ${
                         activeDef?.id === s.id
                           ? "bg-accent text-accent-foreground"
                           : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                       }`}
                     >
+                      {activeDef?.id === s.id && (
+                        <span className="absolute inset-y-1.5 -left-2 w-0.5 rounded-full bg-foreground/40" />
+                      )}
                       {s.icon}
                       {s.label}
                     </button>
@@ -265,8 +270,7 @@ function SectionPane({
   onDetailChange: (detail: string | null) => void;
 }) {
   return (
-    <div className="mx-auto max-w-2xl px-6 py-6">
-      <h2 className="mb-7 text-base font-semibold">{def.label}</h2>
+    <div className="mx-auto max-w-4xl px-8 py-8">
       <SectionBody
         id={def.id}
         email={email}
@@ -422,20 +426,24 @@ function AccountSection({ email }: { email: string }) {
     apiMe().then((u) => setRole(u?.role ?? "member"));
   }, []);
   return (
-    <div className="space-y-4 pt-2">
-      <div className="rounded-lg border border-border bg-card p-4">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Email</p>
-        <p className="mt-1 text-base">{email}</p>
-      </div>
-      <div className="rounded-lg border border-border bg-card p-4">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Role</p>
-        <p className="mt-1 text-base capitalize">{role}</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {role === "admin"
-            ? "You can configure the organization: users, models, integrations and registry."
-            : "Ask an org admin for model or integration changes."}
-        </p>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="Account"
+        description="Your sign-in and role in this organization."
+      />
+      <FactGrid>
+        <FactCard label="Email">
+          <p className="break-all text-sm">{email}</p>
+        </FactCard>
+        <FactCard label="Role">
+          <p className="text-sm capitalize">{role}</p>
+        </FactCard>
+      </FactGrid>
+      <p className="text-sm text-muted-foreground">
+        {role === "admin"
+          ? "You can configure the organization: users, teams, models, integrations and registry."
+          : "Ask an org admin for model or integration changes."}
+      </p>
     </div>
   );
 }
@@ -447,26 +455,32 @@ function AppearanceSection() {
     { id: "dark", label: "Dark", hint: "Near-black canvas, warm sidebar" },
   ];
   return (
-    <div className="space-y-3 pt-2">
-      {options.map((o) => (
-        <button
-          key={o.id}
-          onClick={() => setTheme(o.id as "light" | "dark")}
-          className={`flex w-full items-center justify-between rounded-lg border p-4 text-left transition-colors ${
-            theme === o.id ? "border-foreground/40 bg-accent" : "border-border bg-card hover:bg-accent/50"
-          }`}
-        >
-          <div>
-            <p className="text-base font-medium">{o.label}</p>
-            <p className="text-xs text-muted-foreground">{o.hint}</p>
-          </div>
-          <div
-            className={`size-4 rounded-full border-2 ${
-              theme === o.id ? "border-foreground bg-foreground" : "border-border"
+    <div className="space-y-5">
+      <PageHeader
+        title="Appearance"
+        description="Light or dark canvas; applies to this device."
+      />
+      <div className="max-w-xl space-y-3">
+        {options.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => setTheme(o.id as "light" | "dark")}
+            className={`flex w-full items-center justify-between rounded-lg border p-4 text-left transition-colors ${
+              theme === o.id ? "border-foreground/40 bg-accent" : "border-border bg-card hover:bg-accent/50"
             }`}
-          />
-        </button>
-      ))}
+          >
+            <div>
+              <p className="text-sm font-medium">{o.label}</p>
+              <p className="text-xs text-muted-foreground">{o.hint}</p>
+            </div>
+            <div
+              className={`size-4 rounded-full border-2 ${
+                theme === o.id ? "border-foreground bg-foreground" : "border-border"
+              }`}
+            />
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

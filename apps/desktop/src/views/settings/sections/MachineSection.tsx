@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Cpu } from "lucide-react";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { bindChat, listMachines, type MachineInfo } from "../../../transport";
+import { PageHeader } from "../components/page-header";
 
 // Last successful machine list; a remount renders it immediately and
 // refreshes in the background instead of blinking the skeleton.
@@ -29,11 +30,11 @@ export function MachineSection({
   }, []);
 
   return (
-    <div className="space-y-3 pt-2">
-      <p className="text-base text-muted-foreground">
-        Machine tools (read, bash, edit, write) execute on the machine bound to
-        the chat, via the Guild desktop app running there.
-      </p>
+    <div className="space-y-4">
+      <PageHeader
+        title="Machine"
+        description="Machine tools (read, bash, edit, write) execute on the machine bound to the chat, via the Guild desktop app running there."
+      />
       {!chatId ? (
         <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">
           Open a chat to bind it to a machine.

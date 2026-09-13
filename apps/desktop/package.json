@@ -10,11 +10,12 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@guild/ui": "file:../../packages/ui",
+    "@tanstack/react-table": "^8.21.3",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.4.2",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "@tauri-apps/plugin-dialog": "^2.4.2",
-    "@guild/ui": "file:../../packages/ui",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
