@@ -1,9 +1,38 @@
 # Guild — current state of work
 
-Updated 2026-09-13 (seamless settings navigation). Read this before
+Updated 2026-09-13 (admin UI rework). Read this before
 touching the codebase; detailed milestone plans live in `docs/plans/`,
 deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
+
+## Admin UI rework: data tables + polish kit (2026-09-13, branch `admin-ui-rework`)
+
+- Full settings rework, design decision in `docs/admin-ui-options.md`, plan
+  in `docs/plans/2026-09-13-admin-ui-rework.md`. Foundation: generic
+  **DataTable** (`packages/ui/src/components/data-table.tsx`, TanStack
+  Table v8 — search, sortable columns, pagination, row click, loading
+  skeleton, empty state), **AlertDialog** confirm dialogs and a themed
+  **sonner Toaster** (`packages/ui`, mounted once in App). Settings-local
+  primitives in `apps/desktop/src/views/settings/components/`:
+  PageHeader (title + description + actions + breadcrumb back), Field,
+  EmptyState, FactCard/FactGrid.
+- Reworked sections: Users (table w/ 30d spend sparkline + fact-card detail
+  + AlertDialog delete), Teams (table + members card), Models (keys cards +
+  routes table + dialog-driven add key + fact-card detail), Integrations
+  (one unified table — configured rows + not-configured catalog entries with
+  status column; detail keeps JSON config, secrets, tool policy, all deletes
+  confirmed via dialogs), Registry (unified table w/ kind + review columns,
+  fact-card detail), SSO (fact cards + remove dialog), Usage (header restyle,
+  text-sm tables), Approvals/Assistant (Field + toasts), Account/Appearance
+  (PageHeader + FactGrid). Sidebar active rows get a leading indicator bar;
+  content column widened to max-w-4xl; every section renders its own
+  PageHeader (the SectionPane title was removed).
+- All destructive actions (delete user/team/route/key/integration/secret/SSO)
+  are AlertDialogs with semantic red confirm buttons; all save/delete/add
+  actions toast success/failure. Endpoint shapes and URL routing unchanged.
+- Verified: tsc + vite clean; deployed to :18080 (compose build+up);
+  browser-clicked users list/detail, teams, models, integrations, SSO and
+  the delete-team confirm dialog (cancelled, nothing deleted).
 
 ## Seamless navigation: stale-while-revalidate everywhere (2026-09-13)
 

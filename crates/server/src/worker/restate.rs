@@ -531,7 +531,7 @@ fn build_system_prompt(
     let mut s = String::from(persona);
     if client_tools {
         s.push_str(
-            " You have tools (read, bash, edit, write, glob, grep) that execute on \
+            " You have tools (read, bash, edit, write) that execute on \
              the user's machine via the Guild desktop executor — you never run \
              anything yourself and there is no sandbox on your side. Inspect the \
              workspace with them BEFORE answering anything that could be about \

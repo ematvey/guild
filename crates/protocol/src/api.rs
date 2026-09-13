@@ -471,9 +471,9 @@ pub enum ThreadEvent {
     },
 }
 
-/// The fixed set of machine tools executed by the attached client, modeled on
-/// pi's core coding-agent tool set. Declared here so server and clients share
-/// one definition.
+/// The fixed set of machine tools executed by the attached client. Names and
+/// schemas mirror the guild-core built-in registry (tools/mod.rs) — one
+/// definition shared by server and clients.
 pub fn client_tool_specs() -> Vec<ToolSpec> {
     fn spec(
         name: &str,
@@ -495,7 +495,7 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
     let num_prop = serde_json::json!({ "type": "number" });
     vec![
         spec(
-            "read",
+            "read_file",
             "Read a text file from the workspace. Returns up to 2000 lines starting at `offset` (1-based).",
             serde_json::json!({
                 "path": str_prop,
@@ -505,8 +505,8 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
             &["path"],
         ),
         spec(
-            "bash",
-            "Run a shell command in the workspace and return combined stdout+stderr.",
+            "execute",
+            "Run a shell command (sh -c) in the workspace and return combined stdout+stderr.",
             serde_json::json!({
                 "command": str_prop,
                 "timeout_ms": num_prop
