@@ -20,10 +20,14 @@ const BAKED_URL: string =
 /// an actionable error in the UI, never as an eternal spinner. The invoke
 /// itself keeps running in the background; the timer only gives up on it.
 function bounded<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const loser = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  // The losing side must not surface an unhandled rejection when the race
+  // settles the other way, and the timer must not keep the event loop alive.
+  loser.catch(() => {});
+  return Promise.race([p, loser]).finally(() => clearTimeout(timer));
 }
 
 function defaultServerUrl(): string {
