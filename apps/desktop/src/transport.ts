@@ -240,12 +240,13 @@ export async function apiMe(): Promise<{
   };
 }
 
-export async function listModels(): Promise<string[]> {
+export async function listModels(): Promise<string[] | null> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/gateway/models"), {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  // null = request failed (distinguishable from a legitimately empty list)
+  if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
   return v.models ?? [];
 }
@@ -264,11 +265,12 @@ export interface MachineInfo {
 }
 
 /** Connected machine executors for this account. */
-export async function listMachines(): Promise<MachineInfo[]> {
+export async function listMachines(): Promise<MachineInfo[] | null> {
   const res = await fetch(apiUrl("/api/v1/machines"), {
     headers: { authorization: `Bearer ${getToken()}` },
   });
-  if (!res.ok) return [];
+  // null = request failed (distinguishable from a legitimately empty list)
+  if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
   return v?.machines ?? [];
 }
@@ -296,12 +298,13 @@ export interface ChatMessage {
   tool_call_id?: string;
 }
 
-export async function listChats(): Promise<ChatSummary[]> {
+export async function listChats(): Promise<ChatSummary[] | null> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/chats"), {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  // null = request failed (distinguishable from a legitimately empty list)
+  if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
   return v.chats ?? [];
 }
@@ -750,12 +753,13 @@ export interface Release {
   created_at: string;
 }
 
-export async function listReleases(): Promise<Release[]> {
+export async function listReleases(): Promise<Release[] | null> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/releases"), {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  // null = request failed (distinguishable from a legitimately empty list)
+  if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
   return v.releases ?? [];
 }
