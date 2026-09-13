@@ -31,6 +31,10 @@ pub struct StoredVersion {
 impl<'a> RegistryStore<'a> {
     /// Publishes (or republishes) a version. New versions of an approved
     /// item reset to draft; republishing the current version keeps status.
+    /// The item row is read and locked inside the transaction (no TOCTOU),
+    /// and republishing an older version is refused: it would overwrite a
+    /// superseded release and regress latest_version (which resolve_plugins
+    /// serves).
     #[allow(clippy::too_many_arguments)]
     pub async fn upsert_version(
         &self,
@@ -43,18 +47,37 @@ impl<'a> RegistryStore<'a> {
         object_key: &str,
         publisher: Uuid,
     ) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin().await?;
         let item: Option<(Uuid, Option<String>, String)> = sqlx::query_as(
             "SELECT id, latest_version, review_status FROM registry_items \
-             WHERE org_id = $1 AND kind = $2 AND slug = $3",
+             WHERE org_id = $1 AND kind = $2 AND slug = $3 FOR UPDATE",
         )
         .bind(org_id)
         .bind(kind)
         .bind(slug)
-        .fetch_optional(self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
-        let mut tx = self.pool.begin().await?;
         let item_id = match item {
             Some((id, latest, status)) => {
+                // Guard: an already-published version that is no longer the
+                // latest is superseded — republishing it would overwrite the
+                // old release's bundle and regress latest_version. Brand-new
+                // versions pass and advance latest.
+                if latest.as_deref() != Some(version) {
+                    let exists: Option<i64> = sqlx::query_scalar(
+                        "SELECT 1::int8 FROM registry_versions WHERE item_id = $1 AND version = $2",
+                    )
+                    .bind(id)
+                    .bind(version)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                    if exists.is_some() {
+                        return Err(ApiError::conflict(
+                            "version_superseded",
+                            "this version was already superseded by a newer release — publish a new version instead",
+                        ));
+                    }
+                }
                 let status = if latest.as_deref() == Some(version) {
                     status
                 } else {
