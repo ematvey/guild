@@ -2,8 +2,9 @@
 //! (skills / mcp / integrations) with a detail screen per item showing its
 //! versions and the review action (approve / revert to draft).
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import type { SectionDetailProps } from "../section-nav";
+import { useCachedGet } from "../use-cached-api";
 import { ArrowLeft, ArrowUpRight, Package, Pencil } from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
@@ -66,27 +67,17 @@ export default function RegistrySection({
 }
 
 function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }) {
-  const [items, setItems] = useState<Record<Kind, ItemRow[] | null>>({
-    skill: null,
-    mcp: null,
-    integration: null,
-  });
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(() => {
-    for (const kind of KINDS) {
-      api<{ items: ItemRow[] }>("GET", `/api/v1/registry/${kind}`)
-        .then((r) => setItems((s) => ({ ...s, [kind]: r.items })))
-        .catch((e) => {
-          setItems((s) => ({ ...s, [kind]: [] }));
-          setError(e instanceof Error ? e.message : String(e));
-        });
-    }
-  }, []);
-
-  useEffect(() => {
-    reload();
-  }, [reload]);
+  const skill = useCachedGet<{ items: ItemRow[] }>("/api/v1/registry/skill");
+  const mcp = useCachedGet<{ items: ItemRow[] }>("/api/v1/registry/mcp");
+  const integration = useCachedGet<{ items: ItemRow[] }>(
+    "/api/v1/registry/integration",
+  );
+  const items: Record<Kind, ItemRow[] | null> = {
+    skill: skill.data?.items ?? null,
+    mcp: mcp.data?.items ?? null,
+    integration: integration.data?.items ?? null,
+  };
+  const error = skill.error ?? mcp.error ?? integration.error;
 
   const total = KINDS.reduce((n, k) => n + (items[k]?.length ?? 0), 0);
 
@@ -157,26 +148,19 @@ function ItemDetail({
   slug: string;
   onBack: () => void;
 }) {
-  const [item, setItem] = useState<ItemRow | null>(null);
-  const [versions, setVersions] = useState<VersionRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const itemsRes = useCachedGet<{ items: ItemRow[] }>(`/api/v1/registry/${kind}`);
+  const versionsRes = useCachedGet<{ versions: VersionRow[] }>(
+    `/api/v1/registry/${kind}/${encodeURIComponent(slug)}`,
+  );
+  const item = itemsRes.data?.items.find((x) => x.slug === slug) ?? null;
+  const versions = versionsRes.data?.versions ?? null;
 
-  const reload = useCallback(() => {
-    api<{ items: ItemRow[] }>("GET", `/api/v1/registry/${kind}`)
-      .then((r) => setItem(r.items.find((x) => x.slug === slug) ?? null))
-      .catch(() => setItem(null));
-    api<{ versions: VersionRow[] }>("GET", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}`)
-      .then((r) => setVersions(r.versions))
-      .catch((e) => {
-        setVersions([]);
-        setError(e instanceof Error ? e.message : String(e));
-      });
-  }, [kind, slug]);
-
-  useEffect(() => {
-    reload();
-  }, [reload]);
+  const reload = () => {
+    itemsRes.reload();
+    versionsRes.reload();
+  };
 
   return (
     <div>

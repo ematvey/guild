@@ -7,6 +7,10 @@ import { Cpu } from "lucide-react";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { bindChat, listMachines, type MachineInfo } from "../../../transport";
 
+// Last successful machine list; a remount renders it immediately and
+// refreshes in the background instead of blinking the skeleton.
+let lastMachines: MachineInfo[] | null = null;
+
 export function MachineSection({
   currentMachineId,
   onMachineChanged,
@@ -16,9 +20,12 @@ export function MachineSection({
   onMachineChanged: () => void;
   chatId: string | null;
 }) {
-  const [machines, setMachines] = useState<MachineInfo[] | null>(null);
+  const [machines, setMachines] = useState<MachineInfo[] | null>(lastMachines);
   useEffect(() => {
-    void listMachines().then(setMachines);
+    void listMachines().then((m) => {
+      lastMachines = m;
+      setMachines(m);
+    });
   }, []);
 
   return (

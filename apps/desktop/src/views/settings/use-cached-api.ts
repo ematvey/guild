@@ -9,6 +9,13 @@ import { api } from "./admin-api";
 
 const cache = new Map<string, unknown>();
 
+/** Last successful response for a GET path, if one is cached. Lets a section
+ * initialize non-fetch state (like edit modes) from data before the first
+ * render. */
+export function peekCached<T>(path: string): T | undefined {
+  return cache.get(path) as T | undefined;
+}
+
 /** Buckets a timestamp to `ms` granularity, so query paths carrying from/to
  * dates repeat across navigations within the window instead of producing a
  * new cache key every mount. */

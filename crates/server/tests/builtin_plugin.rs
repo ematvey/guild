@@ -200,18 +200,45 @@ async fn get_json(app: &axum::Router, uri: &str, token: &str) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+async fn post_json(
+    app: &axum::Router,
+    uri: &str,
+    token: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(json!({})))
+}
+
 #[tokio::test]
 async fn builtin_enable_gate_and_secret_lifecycle() {
     let fs = full_state().await;
     let app = guild_server::build_router(fs.state.clone());
     let token = fs.token.clone();
 
-    // Enabling without the declared secret → 409 missing_secrets with names.
-    let (status, body) = put_json(
+    // Creating with enable-on but without the declared secret → 409
+    // missing_secrets with names.
+    let (status, body) = post_json(
         &app,
-        "/api/v1/admin/integrations/testplug",
+        "/api/v1/admin/integrations",
         &token,
-        json!({ "config": {}, "enabled": true }),
+        json!({ "name": "testplug", "config": {}, "enabled": true }),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -222,16 +249,27 @@ async fn builtin_enable_gate_and_secret_lifecycle() {
         body["error"]["message"]
     );
 
-    // Secrets CRUD works for built-in slugs; enabling then succeeds.
+    // Create the (disabled) row; its id is the object's address.
+    let (status, body) = post_json(
+        &app,
+        "/api/v1/admin/integrations",
+        &token,
+        json!({ "name": "testplug", "config": {}, "enabled": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["id"].as_str().expect("created row id").to_string();
+
+    // Secrets CRUD via the id; enabling then succeeds.
     let (status, _) = put_json(
         &app,
-        "/api/v1/admin/integrations/testplug/secrets",
+        &format!("/api/v1/admin/integrations/{id}/secrets"),
         &token,
         json!({ "name": "api_key", "value": "sk-123" }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let v = get_json(&app, "/api/v1/admin/integrations/testplug/secrets", &token).await;
+    let v = get_json(&app, &format!("/api/v1/admin/integrations/{id}/secrets"), &token).await;
     let items = v["secrets"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["name"], "api_key");
@@ -240,7 +278,7 @@ async fn builtin_enable_gate_and_secret_lifecycle() {
 
     let (status, _) = put_json(
         &app,
-        "/api/v1/admin/integrations/testplug",
+        &format!("/api/v1/admin/integrations/{id}"),
         &token,
         json!({ "config": {}, "enabled": true }),
     )
@@ -253,7 +291,7 @@ async fn builtin_enable_gate_and_secret_lifecycle() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri("/api/v1/admin/integrations/testplug/secrets/api_key")
+                .uri(format!("/api/v1/admin/integrations/{id}/secrets/api_key"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -269,6 +307,7 @@ async fn builtin_enable_gate_and_secret_lifecycle() {
         .find(|r| r["name"] == "testplug")
         .expect("testplug row listed");
     assert_eq!(row["enabled"], false);
+    assert_eq!(row["id"], json!(id));
 }
 
 // ---------- script API: execution, class enforcement, audit ----------

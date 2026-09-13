@@ -4,9 +4,10 @@
 //! from scratch. Enabling it puts a "Continue with SSO" button on the
 //! sign-in page.
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { KeyRound, Pencil, Trash2 } from "lucide-react";
 import { api } from "../admin-api";
+import { peekCached, useCachedGet } from "../use-cached-api";
 import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Input } from "@guild/ui/components/input";
@@ -20,24 +21,21 @@ interface OidcConfig {
 const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 
 export default function SsoSection() {
-  const [cfg, setCfg] = useState<OidcConfig | null>(null);
-  const [mode, setMode] = useState<"view" | "edit" | "new">("view");
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(() => {
-    api<OidcConfig>("GET", "/api/v1/admin/oidc")
-      .then((r) => {
-        setCfg(r);
-        setMode(r.configured ? "view" : "new");
-      })
-      .catch((e) => {
-        setCfg({ configured: false });
-        setMode("new");
-        setError(e instanceof Error ? e.message : String(e));
-      });
-  }, []);
-
-  useEffect(reload, [reload]);
+  const cfgRes = useCachedGet<OidcConfig>("/api/v1/admin/oidc");
+  // A failed refresh with nothing cached falls back to the unconfigured flow.
+  const cfg = cfgRes.data ?? (cfgRes.error ? { configured: false } : null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const error = localError ?? cfgRes.error;
+  const reload = cfgRes.reload;
+  const [mode, setMode] = useState<"view" | "edit" | "new">(() => {
+    const c = peekCached<OidcConfig>("/api/v1/admin/oidc");
+    return c ? (c.configured ? "view" : "new") : "view";
+  });
+  // The fresh fetch landing aligns the mode with the saved config; while the
+  // user is mid-session `configured` does not flip (only after a save).
+  useEffect(() => {
+    if (cfg) setMode(cfg.configured ? "view" : "new");
+  }, [cfg?.configured]);
 
   if (cfg === null) {
     return (
@@ -93,12 +91,12 @@ export default function SsoSection() {
             <RemoveButton
               busy={false}
               onRemove={async () => {
-                setError(null);
+                setLocalError(null);
                 try {
                   await api("DELETE", "/api/v1/admin/oidc");
                   reload();
                 } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e));
+                  setLocalError(e instanceof Error ? e.message : String(e));
                 }
               }}
             />

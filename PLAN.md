@@ -1,9 +1,56 @@
 # Guild — current state of work
 
-Updated 2026-09-13 (URL-addressed settings sub-pages). Read this before
+Updated 2026-09-13 (seamless settings navigation). Read this before
 touching the codebase; detailed milestone plans live in `docs/plans/`,
 deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
+
+## Seamless navigation: stale-while-revalidate everywhere (2026-09-13)
+
+- Settings sections no longer flash a skeleton on every navigation. A
+  module-level GET cache (`apps/desktop/src/views/settings/use-cached-api.ts`)
+  keeps the last successful response per path; `useCachedGet` renders the
+  cached value immediately on mount and refreshes in the background, so
+  back/forward and section switches update content in place. Skeletons
+  appear only on the first-ever load of a path; a failed refresh keeps the
+  cached content on screen. Query paths with dates (usage series, spend)
+  quantize timestamps to 10-minute buckets (`quantizeIso`) so cache keys
+  repeat across navigations.
+- Rewired onto it: Integrations (list + secrets), Users (list + 30-day
+  spend), Teams (list + members + org users), Models (routes + keys +
+  detail), Registry (3 kinds + item detail), SSO, Usage (summary +
+  breakdown + timeline), Machine (module-level last list). WebChat keeps a
+  per-chat rendered-block cache (bounded, 20 threads): reopening a thread
+  shows its last rendered content while the fresh thread rows load in
+  place, so chat switches don't skeleton-flash either.
+- Desktop 0.3.17 released (all 4 platforms, installer format, updater
+  signatures verified) and compose server rebuilt on :18080 — both
+  include this, the integration id-addressing below, and the earlier
+  integration-category fix (rows carry `category`, so configured built-ins
+  like gitlab no longer show under "MCP plugins"). devbox's desktop app
+  upgraded in place (silent NSIS + relaunch).
+
+## Integrations are id-addressed db objects (2026-09-13)
+
+- Every configured integration — built-in connector or registry MCP plugin
+  — is a db row with a stable id. Migration 0030: `integrations.id UUID`
+  becomes the primary key; `(org_id, name)` stays UNIQUE, so the resolver,
+  secrets store (still keyed by connector slug) and tool namespacing
+  (`int_<slug>_<tool>`) are unchanged.
+- Admin API: rows carry `id`; `POST /api/v1/admin/integrations {name}`
+  creates a configuration row (409 `already_configured` if one exists,
+  404 for unknown connectors) and returns the row; `PUT` / `DELETE` and
+  the secrets endpoints moved to `/api/v1/admin/integrations/{id}[/secrets]`
+  — the by-name routes are gone. Secrets can only be staged on an existing
+  row now (the UI creates the disabled row first).
+- UI: the integrations list opens detail pages by id
+  (`/settings/integrations/<id>`, deep-linkable); clicking a not-yet-
+  configured connector creates its disabled row and lands on its id; a
+  deep link to a deleted id renders a not-found note.
+- Tests updated to the id flow (builtin_plugin, admin_integration_policy
+  incl. a new create/conflict/unknown/delete round-trip test); all 27
+  integration tests green, desktop tsc + vite clean. Deploy + desktop
+  release happen with the concurrent 0.3.17 build (peer session).
 
 ## Single-process desktop (2026-09-13)
 

@@ -62,6 +62,7 @@ services:
 
   restate:
     image: docker.io/restatedev/restate:latest
+    restart: unless-stopped
     # Ingress stays internal (worker role talks to it over the compose
     # network); the admin/UI port is published for operators.
     ports:
@@ -71,6 +72,7 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${GUILD_HTTP_PORT:-8080}:8080"
     env_file: config.env

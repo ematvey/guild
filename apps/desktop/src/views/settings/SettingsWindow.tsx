@@ -21,6 +21,11 @@ import { X } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@guild/ui/components/dialog";
 import { apiMe } from "../../transport";
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@guild/ui/components/dropdown-menu";
+import { UserBadge } from "../../components/user-badge";
 import type { SectionDetailProps } from "./section-nav";
 import { useTheme } from "../../theme";
 import {
@@ -61,9 +66,13 @@ export function SettingsWindow({
   onOpenChange,
   email,
   role,
+  displayName,
+  avatarUrl,
   chatId,
   currentMachineId,
   onMachineChanged,
+  onOpenDevice,
+  onSignOut,
   section,
   detail,
   onSectionChange,
@@ -73,9 +82,14 @@ export function SettingsWindow({
   onOpenChange: (open: boolean) => void;
   email: string;
   role: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
   chatId: string | null;
   currentMachineId: string | null;
   onMachineChanged: () => void;
+  /** Opens the device-setup dialog (replaces this overlay). */
+  onOpenDevice: () => void;
+  onSignOut: () => void;
   /** Active section, driven by the URL (/settings/<section>); null = default. */
   section: string | null;
   /** Sub-page inside the section (/settings/<section>/<detail>); null = list. */
@@ -198,18 +212,15 @@ export function SettingsWindow({
               );
             })}
           </div>
-          <div className="border-t border-border/60 px-3 py-3">
-            <div className="flex items-center gap-2">
-              <div className="flex size-7 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-                {email.slice(0, 2).toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium">{email}</p>
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {isAdmin ? "admin" : "member"}
-                </p>
-              </div>
-            </div>
+          <div className="border-t border-border/60 p-2">
+            {/* same account badge as the chat sidebar */}
+            <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
+              <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
+                Sign out
+              </DropdownMenuItem>
+            </UserBadge>
           </div>
           <div
             className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"

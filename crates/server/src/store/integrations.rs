@@ -1,6 +1,7 @@
 //! Admin-configured integration plugins (org-scoped server-side tools).
 //! Configured explicitly by an org admin; an integration contributes tools to
-//! the chat loop only while it is enabled.
+//! the chat loop only while it is enabled. Every configured integration is a
+//! db row with a stable id; the connector slug stays unique per org.
 
 use crate::http::error::ApiError;
 use serde::Serialize;
@@ -8,6 +9,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, serde::Deserialize)]
 pub struct IntegrationRow {
+    pub id: Uuid,
     pub org_id: Uuid,
     pub name: String,
     pub config: serde_json::Value,
@@ -19,22 +21,57 @@ pub struct IntegrationStore<'a> {
 }
 
 impl<'a> IntegrationStore<'a> {
-    /// Idempotent upsert: replaces config and enabled flag.
+    /// Idempotent upsert: replaces config and enabled flag; returns the
+    /// row's stable id (inserts generate one, conflicts keep the existing).
     pub async fn upsert(
         &self,
         org_id: Uuid,
         name: &str,
         config: &serde_json::Value,
         enabled: bool,
-    ) -> Result<(), ApiError> {
-        sqlx::query(
+    ) -> Result<Uuid, ApiError> {
+        let (id,): (Uuid,) = sqlx::query_as(
             "INSERT INTO integrations (org_id, name, config, enabled) \
              VALUES ($1, $2, $3, $4) \
              ON CONFLICT (org_id, name) \
-             DO UPDATE SET config = $3, enabled = $4, updated_at = now()",
+             DO UPDATE SET config = $3, enabled = $4, updated_at = now() \
+             RETURNING id",
         )
         .bind(org_id)
         .bind(name)
+        .bind(config)
+        .bind(enabled)
+        .fetch_one(self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    /// Fetches one configured integration by id.
+    pub async fn get(&self, org_id: Uuid, id: Uuid) -> Result<Option<IntegrationRow>, ApiError> {
+        Ok(sqlx::query_as(
+            "SELECT id, org_id, name, config, enabled FROM integrations \
+             WHERE org_id = $1 AND id = $2",
+        )
+        .bind(org_id)
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await?)
+    }
+
+    /// Replaces config and enabled flag of one integration by id.
+    pub async fn update(
+        &self,
+        org_id: Uuid,
+        id: Uuid,
+        config: &serde_json::Value,
+        enabled: bool,
+    ) -> Result<(), ApiError> {
+        sqlx::query(
+            "UPDATE integrations SET config = $3, enabled = $4, updated_at = now() \
+             WHERE org_id = $1 AND id = $2",
+        )
+        .bind(org_id)
+        .bind(id)
         .bind(config)
         .bind(enabled)
         .execute(self.pool)
@@ -42,12 +79,12 @@ impl<'a> IntegrationStore<'a> {
         Ok(())
     }
 
-    /// Removes an integration's configuration entirely (the available
-    /// integration can be re-added later).
-    pub async fn delete(&self, org_id: Uuid, name: &str) -> Result<(), ApiError> {
-        sqlx::query("DELETE FROM integrations WHERE org_id = $1 AND name = $2")
+    /// Removes one integration's configuration by id (the connector can be
+    /// re-added later as a fresh row with a fresh id).
+    pub async fn delete(&self, org_id: Uuid, id: Uuid) -> Result<(), ApiError> {
+        sqlx::query("DELETE FROM integrations WHERE org_id = $1 AND id = $2")
             .bind(org_id)
-            .bind(name)
+            .bind(id)
             .execute(self.pool)
             .await?;
         Ok(())
@@ -55,7 +92,7 @@ impl<'a> IntegrationStore<'a> {
 
     pub async fn list(&self, org_id: Uuid) -> Result<Vec<IntegrationRow>, ApiError> {
         Ok(sqlx::query_as(
-            "SELECT org_id, name, config, enabled FROM integrations \
+            "SELECT id, org_id, name, config, enabled FROM integrations \
              WHERE org_id = $1 ORDER BY name",
         )
         .bind(org_id)
@@ -66,7 +103,7 @@ impl<'a> IntegrationStore<'a> {
     /// Enabled integrations only — the set the chat loop resolves tools from.
     pub async fn list_enabled(&self, org_id: Uuid) -> Result<Vec<IntegrationRow>, ApiError> {
         Ok(sqlx::query_as(
-            "SELECT org_id, name, config, enabled FROM integrations \
+            "SELECT id, org_id, name, config, enabled FROM integrations \
              WHERE org_id = $1 AND enabled ORDER BY name",
         )
         .bind(org_id)
