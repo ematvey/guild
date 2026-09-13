@@ -6,6 +6,11 @@ use uuid::Uuid;
 async fn secrets_upsert_list_resolve_delete() {
     let db = Store::connect_test().await.unwrap();
     let org = Uuid::now_v7();
+    sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+        .bind(org)
+        .execute(db.store.pool())
+        .await
+        .unwrap();
     // same key the test harness config uses (hex "00"*32)
     let master: [u8; 32] = [0u8; 32];
 
@@ -65,6 +70,11 @@ async fn secrets_upsert_list_resolve_delete() {
 async fn integration_delete_removes_secrets() {
     let db = Store::connect_test().await.unwrap();
     let org = Uuid::now_v7();
+    sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+        .bind(org)
+        .execute(db.store.pool())
+        .await
+        .unwrap();
     let master: [u8; 32] = [0u8; 32];
 
     let id = db

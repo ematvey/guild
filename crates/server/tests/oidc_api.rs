@@ -49,6 +49,7 @@ async fn fake_idp(user_email: &str) -> wiremock::MockServer {
             if auth == "Bearer idp-access-token" {
                 wiremock::ResponseTemplate::new(200).set_body_json(json!({
                     "email": email,
+                    "email_verified": true,
                     "sub": "user-1",
                     "name": "Sso User",
                     "picture": format!("{avatar_uri}/avatar.png"),

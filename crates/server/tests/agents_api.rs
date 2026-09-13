@@ -192,7 +192,7 @@ async fn workspace_session_turn_executes_tools_and_persists() {
     let events = v["events"].as_array().unwrap();
     assert_eq!(
         events[4]["event"]["content"],
-        "tool failed: execution failed: denied by user: disabled by policy"
+        "execution failed: disabled by policy"
     );
     assert_eq!(events[4]["event"]["name"], "execute");
     assert_eq!(events[5]["event"]["blocks"][0]["text"], "workspace updated");
@@ -239,6 +239,7 @@ async fn agent_turn_enforces_route_quota() {
             2.0,
             Some(0.0),
             false,
+            None,
             None,
             &[],
         )

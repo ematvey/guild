@@ -28,17 +28,7 @@ const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 #[async_trait]
 impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "read_file".into(),
-            description: "Read a text file relative to the project directory. Image files \
-                          (png/jpg/gif/webp) are returned as attached images for viewing."
-                .into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {"path": {"type": "string"}},
-                "required": ["path"],
-            }),
-        }
+        protocol::api::client_tool_spec("read_file").expect("built-in read_file spec")
     }
 
     fn default_policy(&self) -> Approval {
@@ -119,16 +109,18 @@ impl Tool for ReadFile {
             }
         };
         let total_lines = content.lines().count();
-        if let Some(offset) = args["offset"].as_u64() {
-            meta["offset"] = serde_json::json!(offset);
-        }
+        let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;
+        let limit = args["limit"].as_u64().unwrap_or(2000).max(1) as usize;
+        let page: Vec<&str> = content.lines().skip(offset - 1).take(limit).collect();
+        meta["offset"] = serde_json::json!(offset);
+        meta["limit"] = serde_json::json!(limit);
         if !ext.is_empty() {
             meta["lang"] = serde_json::json!(ext);
         }
         meta["total_lines"] = serde_json::json!(total_lines);
         Ok(ToolOutcome {
             images: Vec::new(),
-            output_for_model: truncate(content),
+            output_for_model: truncate(page.join("\n")),
             ui_summary: None,
             diff: None,
             meta: Some(meta),
@@ -141,15 +133,7 @@ pub struct WriteFile;
 #[async_trait]
 impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "write_file".into(),
-            description: "Create or overwrite a file with the given content.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-                "required": ["path", "content"],
-            }),
-        }
+        protocol::api::client_tool_spec("write_file").expect("built-in write_file spec")
     }
 
     fn default_policy(&self) -> Approval {
@@ -194,19 +178,7 @@ pub struct EditFile;
 #[async_trait]
 impl Tool for EditFile {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "edit_file".into(),
-            description: "Replace the unique occurrence of `old` with `new` in a file. `old` must appear exactly once.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "old": {"type": "string"},
-                    "new": {"type": "string"},
-                },
-                "required": ["path", "old", "new"],
-            }),
-        }
+        protocol::api::client_tool_spec("edit_file").expect("built-in edit_file spec")
     }
 
     fn default_policy(&self) -> Approval {
@@ -220,12 +192,12 @@ impl Tool for EditFile {
                 .as_str()
                 .ok_or_else(|| ToolFailure::InvalidInput("missing path".into()))?,
         )?;
-        let old = args["old"]
+        let old = args["oldText"]
             .as_str()
-            .ok_or_else(|| ToolFailure::InvalidInput("missing old".into()))?;
-        let new = args["new"]
+            .ok_or_else(|| ToolFailure::InvalidInput("missing oldText".into()))?;
+        let new = args["newText"]
             .as_str()
-            .ok_or_else(|| ToolFailure::InvalidInput("missing new".into()))?;
+            .ok_or_else(|| ToolFailure::InvalidInput("missing newText".into()))?;
         let content = tokio::fs::read_to_string(&path)
             .await
             .map_err(|e| ToolFailure::Execution(format!("read {}: {e}", path.display())))?;

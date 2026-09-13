@@ -100,8 +100,8 @@ pub fn validate_manifest(m: &BundleManifest) -> anyhow::Result<()> {
     anyhow::ensure!(
         m.slug
             .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
-        "manifest slug must be [a-z0-9-]"
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'),
+        "manifest slug must be [a-z0-9_-]"
     );
     anyhow::ensure!(!m.version.is_empty(), "manifest version is empty");
     anyhow::ensure!(
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn manifest_slug_charset_is_enforced() {
-        for bad in ["Deploy Check", "a/b", "hub_spot", "UPPER", "a.b"] {
+        for bad in ["Deploy Check", "a/b", "UPPER", "a.b"] {
             let m = BundleManifest {
                 kind: "skill".into(),
                 slug: bad.into(),
@@ -516,6 +516,14 @@ mod tests {
             ..v2_manifest()
         };
         validate_manifest(&good).unwrap();
+        // underscores are legal: existing connector slugs use them
+        // (google_workspace), and tool namespacing no longer re-parses them.
+        let underscored = BundleManifest {
+            kind: "integration".into(),
+            slug: "hub_spot".into(),
+            ..v2_manifest()
+        };
+        validate_manifest(&underscored).unwrap();
     }
 
     #[test]

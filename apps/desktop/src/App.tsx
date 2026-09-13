@@ -2,14 +2,14 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-// AgentView (local engine agent sessions) is not part of the shell —
-// machine tools run through the unified WebChat surface instead.
 import WebChat from "./views/WebChat";
 import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
 import { Bot } from "lucide-react";
 import { IS_TAURI, apiLogin, apiMe, clearToken, rpcCall, setToken } from "./transport";
+import { clearApiCache } from "./views/settings/use-cached-api";
+import { clearMachinesCache } from "./views/settings/sections/MachineSection";
 import { ThemeProvider, useTheme } from "./theme";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 
@@ -20,10 +20,14 @@ const BAKED_URL: string =
 /// an actionable error in the UI, never as an eternal spinner. The invoke
 /// itself keeps running in the background; the timer only gives up on it.
 function bounded<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const loser = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  // The losing side must not surface an unhandled rejection when the race
+  // settles the other way, and the timer must not keep the event loop alive.
+  loser.catch(() => {});
+  return Promise.race([p, loser]).finally(() => clearTimeout(timer));
 }
 
 function defaultServerUrl(): string {
@@ -108,7 +112,12 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
           <CardTitle className="text-xl">Guild</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <Input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
           <Input
             placeholder="Password"
             type="password"
@@ -234,10 +243,11 @@ function DesktopApp() {
     const baseUrl = info.result?.base_url ?? url;
     // Resolve the server profile before entering the shell: the splash holds
     // until the IdP name/avatar are known, so the sidebar never flashes the
-    // bare-email fallback.
+    // bare-email fallback. Bounded: an unreachable server must not hang the
+    // splash forever — fall back to the bare-email member profile.
     let me: Awaited<ReturnType<typeof apiMe>> = null;
     try {
-      me = await apiMe();
+      me = await bounded(apiMe(), 10_000, "profile lookup timed out");
     } catch {
       /* fall back to member / bare email below */
     }
@@ -291,6 +301,8 @@ function DesktopApp() {
     // Drop the webview token; the engine keeps its session, so the next
     // restore re-logs-in automatically (full engine sign-out is phase 2).
     clearToken();
+    clearApiCache();
+    clearMachinesCache();
     setUser(null);
     window.location.reload();
   };
@@ -300,8 +312,7 @@ function DesktopApp() {
     // Unified shell: the desktop webview runs the same chat UI as the
     // browser, talking HTTP to the same server; only machine-tool execution
     // (and the executor registration that makes it possible) is desktop-
-    // specific. AgentView (local engine sessions) stays available for
-    // engine-side debugging but is no longer the primary surface.
+    // specific.
     return (
       <>
         <WebChat
@@ -352,7 +363,12 @@ function DesktopApp() {
           ) : (
             <>
               <Input placeholder="Server URL" value={url} onChange={(e) => setUrl(e.target.value)} />
-              <Input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Input
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && login()}
+              />
               <Input
                 placeholder="Password"
                 type="password"
@@ -438,6 +454,8 @@ function AppInner() {
   if (!IS_TAURI) {
     const signOut = () => {
       clearToken();
+      clearApiCache();
+      clearMachinesCache();
       setEmail(null);
     };
     const onLoggedIn = (profile: Profile) => {

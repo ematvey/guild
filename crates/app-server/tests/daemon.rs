@@ -7,7 +7,7 @@ use guild_app_server::daemon::{run_daemon_on, try_connect_at, Pair};
 use guild_app_server::jsonrpc_loop::Session;
 use protocol::rpc::Request;
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -189,3 +189,48 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     let _ = std::fs::remove_file(&path);
 }
 
+
+/// Regression: the daemon broadcasts events to all connections, so a fresh
+/// connection can receive an event before its hello response. The handshake
+/// must skip event frames instead of declaring a protocol mismatch (which
+/// used to shut down a daemon serving another client).
+#[test]
+fn handshake_skips_leading_event_frames() {
+    let dir = std::env::temp_dir().join(format!(
+        "guild-daemon-hs-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sock = dir.join("hs.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+    let handle = std::thread::spawn(move || {
+        let (conn, _) = listener.accept().unwrap();
+        let mut w = conn.try_clone().unwrap();
+        // simulate a live broadcast racing the handshake
+        let event = protocol::rpc::Event::new("stream.delta", json!({"content": "x"}));
+        writeln!(w, "{}", serde_json::to_string(&event).unwrap()).unwrap();
+        w.flush().unwrap();
+        let resp = protocol::rpc::Response::ok(
+            0,
+            json!({"protocol": protocol::rpc::PROTOCOL_VERSION, "version": "t", "build": "t"}),
+        );
+        writeln!(w, "{}", serde_json::to_string(&resp).unwrap()).unwrap();
+        w.flush().unwrap();
+        // keep the connection open until the client is done reading
+        std::thread::sleep(Duration::from_millis(300));
+    });
+    let conn = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let pair = Pair(
+        Box::new(conn.try_clone().unwrap()),
+        Box::new(conn),
+        None,
+    );
+    let pair = guild_app_server::daemon::handshake(pair).expect("handshake survives the event");
+    drop(pair);
+    handle.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}

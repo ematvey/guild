@@ -226,7 +226,7 @@ async fn approval_deny_reaches_model_as_tool_result() {
     assert_eq!(result.final_text, "understood, skipping.");
     assert_eq!(
         history[2].content,
-        "tool failed: execution failed: denied by user: too dangerous"
+        "execution failed: too dangerous"
     );
 }
 
@@ -294,5 +294,5 @@ async fn tool_failure_becomes_model_readable_result() {
     .await
     .unwrap();
     assert_eq!(result.final_text, "noted, it's missing.");
-    assert!(history[2].content.starts_with("tool failed:"));
+    assert!(history[2].content.contains("missing.txt"));
 }

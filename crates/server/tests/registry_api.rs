@@ -14,7 +14,7 @@ fn demo_bundle(slug: &str, version: &str) -> Vec<u8> {
     std::fs::create_dir_all(dir.join(slug)).unwrap();
     std::fs::write(
         dir.join(slug).join("SKILL.md"),
-        "---\nname: demo\ndescription: demo skill\n---\nbody",
+        format!("---\nname: {slug}\ndescription: demo skill\n---\nbody"),
     )
     .unwrap();
     std::fs::create_dir_all(dir.join(slug).join("assets")).unwrap();
@@ -247,10 +247,61 @@ async fn review_flow_gates_member_download() {
 async fn publish_validates_manifest_against_query() {
     let fs = full_state().await;
     let app = guild_server::build_router(fs.state.clone());
-    // manifest says slug "demo" but query says "other" → 400
-    let res = publish(&app, "skill", "other", "1.0.0", &fs.token).await;
+    // manifest says slug "demo" but query says "other" → 400 (the bundle is
+    // built directly: the publish() helper derives the manifest name from
+    // the slug, which would make them agree)
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/registry/skill?slug=other&version=1.0.0")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/gzip")
+                .body(Body::from(demo_bundle("demo", "1.0.0")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     // invalid kind
     let res = publish(&app, "weapons", "demo", "1.0.0", &fs.token).await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Republishing a superseded version must be refused: it would overwrite an
+/// old release's bundle and regress latest_version (which resolve_plugins
+/// serves). Republishing the CURRENT version stays allowed.
+#[tokio::test]
+async fn republishing_older_version_is_refused() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+
+    let res = publish(&app, "skill", "regress", "1.0.0", &token).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = publish(&app, "skill", "regress", "2.0.0", &token).await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // old version → conflict, latest stays 2.0.0
+    let res = publish(&app, "skill", "regress", "1.0.0", &token).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/registry/skill")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["items"][0]["latest_version"], "2.0.0");
+
+    // current version still republishes in place
+    let res = publish(&app, "skill", "regress", "2.0.0", &token).await;
+    assert_eq!(res.status(), StatusCode::OK);
 }

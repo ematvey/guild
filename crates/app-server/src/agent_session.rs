@@ -13,6 +13,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+/// How long an approval request waits for a UI decision before auto-denying
+/// (mirrors the server-side approval gate).
+const APPROVAL_WAIT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -160,15 +164,24 @@ impl AgentHooks for SessionHooks {
             }
         };
         self.send("agent.tool_result", payload);
-        // durable record, right away: keeps server ordering correct
+        // Durable record, right away: keeps server ordering correct. A
+        // failed sync diverges the server-side event log from the local
+        // history — resume derivation would then replay a turn missing this
+        // result — so the error is logged, never silently dropped.
         if let (Some(cloud), Some(chat_id)) = (&self.cloud, self.chat_id) {
             let (content, is_error, meta) = match outcome {
                 Ok(o) => (o.output_for_model.clone(), false, o.meta.clone()),
                 Err(e) => (e.to_string(), true, None),
             };
-            let _ = cloud
+            if let Err(e) = cloud
                 .append_tool_message(chat_id, call, &content, is_error, meta)
-                .await;
+                .await
+            {
+                crate::dtrace::dtrace(&format!(
+                    "tool-result sync failed (chat {chat_id}, call {}): {e}",
+                    call.id
+                ));
+            }
         }
     }
 
@@ -180,13 +193,18 @@ impl AgentHooks for SessionHooks {
             "agent.approval_request",
             serde_json::json!({ "request_id": request_id, "tool": call.name, "arguments": call.arguments }),
         );
-        match rx.await {
-            Ok(decision) => decision,
-            Err(_) => ApprovalDecision::Deny {
-                reason: "approval channel closed".into(),
-            },
-        }
+        match tokio::time::timeout(APPROVAL_WAIT, rx).await {
+        Ok(Ok(decision)) => decision,
+        // Sender dropped (session closed) or the wait timed out — deny so
+        // the turn proceeds instead of hanging forever on a silent client.
+        Ok(Err(_)) => ApprovalDecision::Deny {
+            reason: "approval channel closed".into(),
+        },
+        Err(_) => ApprovalDecision::Deny {
+            reason: "no approval decision within 5 minutes".into(),
+        },
     }
+}
 
     async fn on_done(&self, summary: &str) {
         self.send("agent.done", serde_json::json!({ "summary": summary }));

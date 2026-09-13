@@ -63,6 +63,7 @@ async fn openai_stream_yields_deltas_then_usage() {
         api_key: "sk-test",
         base_url: &server.uri(),
         tools: None,
+            max_tokens: 0,
     };
     let stream = p.chat_stream(req).await.unwrap();
     let chunks: Vec<_> = stream
@@ -106,6 +107,7 @@ async fn anthropic_stream_yields_deltas_then_usage() {
         api_key: "ak-test",
         base_url: &server.uri(),
         tools: None,
+            max_tokens: 0,
     };
     let stream = p.chat_stream(req).await.unwrap();
     let chunks: Vec<_> = stream
@@ -140,7 +142,76 @@ async fn provider_auth_error_is_mapped() {
         api_key: "bad",
         base_url: &server.uri(),
         tools: None,
+            max_tokens: 0,
     };
     let err = p.chat_stream(req).await.err().unwrap();
     assert!(matches!(err, guild_core::ProviderError::Auth));
+}
+
+#[tokio::test]
+async fn openai_midstream_error_frame_surfaces() {
+    let server = MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"par\"}}]}\n\n\
+             data: {\"error\":{\"message\":\"provider exploded mid-stream\",\"type\":\"server_error\"}}\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let p = OpenAiProvider::new();
+    let msgs = vec![Message::user("hi")];
+    let req = ProviderRequest {
+        model: "m",
+        system: None,
+        messages: &msgs,
+        api_key: "k",
+        base_url: &server.uri(),
+        tools: None,
+            max_tokens: 0,
+    };
+    let stream = p.chat_stream(req).await.unwrap();
+    let items: Vec<_> = stream.collect().await;
+    let last = items.last().unwrap();
+    let err = last.as_ref().unwrap_err();
+    assert!(err.to_string().contains("provider exploded mid-stream"), "{err}");
+}
+
+#[tokio::test]
+async fn anthropic_midstream_error_frame_surfaces() {
+    let server = MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse(
+            "event: content_block_delta\n\
+             data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"par\"}}\n\n\
+             event: error\n\
+             data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let p = AnthropicProvider::new();
+    let msgs = vec![Message::user("hi")];
+    let req = ProviderRequest {
+        model: "m",
+        system: None,
+        messages: &msgs,
+        api_key: "k",
+        base_url: &server.uri(),
+        tools: None,
+            max_tokens: 0,
+    };
+    let stream = p.chat_stream(req).await.unwrap();
+    let items: Vec<_> = stream.collect().await;
+    let last = items.last().unwrap();
+    let err = last.as_ref().unwrap_err();
+    assert!(err.to_string().contains("overloaded_error"), "{err}");
 }

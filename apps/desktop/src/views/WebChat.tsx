@@ -46,6 +46,7 @@ import {
   DropdownMenuSeparator,
 } from "@guild/ui/components/dropdown-menu";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
+import { toast } from "sonner";
 import { UserBadge } from "../components/user-badge";
 import { Caret } from "@guild/ui/components/caret";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
@@ -121,7 +122,7 @@ interface ChatRoute {
   overlay: ChatOverlay;
 }
 
-const parseChatRoute = (pathname: string): ChatRoute => {
+export const parseChatRoute = (pathname: string): ChatRoute => {
   const parts = pathname
     .replace(/^\/+|\/+$/g, "")
     .split("/")
@@ -142,7 +143,7 @@ const parseChatRoute = (pathname: string): ChatRoute => {
   return { chatId, overlay: null };
 };
 
-const chatRoutePath = (chatId: string | null, overlay: ChatOverlay): string => {
+export const chatRoutePath = (chatId: string | null, overlay: ChatOverlay): string => {
   const base = chatId ? `/thread/${encodeURIComponent(chatId)}` : "";
   if (overlay?.kind === "device") return `${base}/device`;
   // Settings is chat-independent — top-level URL even when opened over a
@@ -192,9 +193,12 @@ interface ToolMeta {
   lang?: string;
 }
 
-interface Block {
+export interface Block {
   kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval" | "compaction";
   text: string;
+  /// Stable React key. Derived blocks use the source event's seq (plus an
+  /// in-event index); streaming-built blocks use a live counter.
+  key: string;
   /// kind === "user": context attachment chips (metadata only; images may
   /// carry a local preview URL for optimistic rendering).
   attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
@@ -203,6 +207,12 @@ interface Block {
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
+}
+
+let liveKeyCounter = 0;
+/// Key for blocks the stream builds (no source event seq to derive from).
+function liveKey(): string {
+  return `live-${++liveKeyCounter}`;
 }
 
 /// Tools the desktop executor runs locally (mirrors protocol `client_tool_specs`).
@@ -357,12 +367,15 @@ function AttachmentFileChip({
 /// Tool calls, reasoning and text are all resident thread parts — nothing
 /// disappears on refresh: every assistant block is replayed in stream order
 /// and tool results fill their matching frames.
-function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
-  const events = [...rows].sort((a, b) => a.seq - b.seq).map((r) => r.event);
+export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
+  const sorted = [...rows].sort((a, b) => a.seq - b.seq);
   const blocks: Block[] = [];
   const byCallId = new Map<string, ToolBlock>();
   const byApprovalId = new Map<string, ApprovalBlock>();
-  for (const ev of events) {
+  for (const row of sorted) {
+    const ev = row.event;
+    const seqKey = (n: number) => `${row.seq}:${n}`;
+    let inEvent = 0;
     switch (ev.type) {
       case "user_message": {
         // Event content is the model-facing turn: typed text plus inlined
@@ -373,6 +386,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
           kind: "user",
           text: at >= 0 ? ev.content.slice(0, at) : ev.content,
           attachments: ev.attachments,
+          key: seqKey(inEvent++),
         });
         break;
       }
@@ -381,9 +395,9 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
       case "assistant_message":
         for (const b of ev.blocks) {
           if (b.type === "reasoning") {
-            blocks.push({ kind: "reasoning", text: "", reasoningText: b.text });
+            blocks.push({ kind: "reasoning", text: "", reasoningText: b.text, key: seqKey(inEvent++) });
           } else if (b.type === "text") {
-            blocks.push({ kind: "text", text: b.text });
+            blocks.push({ kind: "text", text: b.text, key: seqKey(inEvent++) });
           } else {
             const tb: ToolBlock = {
               callId: b.id,
@@ -393,7 +407,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
               status: "done", // filled by the matching tool_result below
             };
             byCallId.set(b.id, tb);
-            blocks.push({ kind: "tool", text: "", tool: tb });
+            blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(inEvent++) });
           }
         }
         break;
@@ -418,6 +432,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
               content: ev.content,
               meta,
             },
+            key: seqKey(inEvent++),
           });
         }
         break;
@@ -430,7 +445,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
           status: "pending", // flipped by the matching decision below
         };
         byApprovalId.set(ev.call_id, a);
-        blocks.push({ kind: "approval", text: "", approval: a });
+        blocks.push({ kind: "approval", text: "", approval: a, key: seqKey(inEvent++) });
         break;
       }
       case "approval_decision": {
@@ -447,6 +462,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
         blocks.push({
           kind: "compaction",
           text: "",
+          key: seqKey(inEvent++),
           compaction: {
             summary: ev.summary,
             model: ev.model ?? undefined,
@@ -462,15 +478,15 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
 /// ApprovalRequested inserts a pending card into the current blocks;
 /// re-attach replays may fire it again for a card we already render, so
 /// this is an upsert, not a blind append.
-function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
+export function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
   const i = blocks.findIndex((x) => x.kind === "approval" && x.approval?.callId === a.callId);
-  if (i < 0) return [...blocks, { kind: "approval", text: "", approval: a }];
-  return blocks.map((x, j) => (j === i ? { kind: "approval", text: "", approval: { ...a } } : x));
+  if (i < 0) return [...blocks, { kind: "approval", text: "", approval: a, key: `approval-${a.callId}` }];
+  return blocks.map((x, j) => (j === i ? { ...x, approval: { ...a } } : x));
 }
 
 /// ApprovalResolved flips the matching card (no-op when it is absent, e.g.
 /// the stream resolved before we rendered the request).
-function resolveApproval(
+export function resolveApproval(
   blocks: Block[],
   callId: string,
   approved: boolean,
@@ -480,11 +496,7 @@ function resolveApproval(
   if (i < 0) return blocks;
   return blocks.map((x, j) =>
     j === i && x.approval
-      ? {
-          kind: "approval",
-          text: "",
-          approval: { ...x.approval, status: approved ? "approved" : "denied", reason },
-        }
+      ? { ...x, approval: { ...x.approval, status: approved ? "approved" : "denied", reason } }
       : x,
   );
 }
@@ -496,9 +508,9 @@ function upsertThinking(blocks: Block[], content: string, replace: boolean): Blo
   const last = blocks[blocks.length - 1];
   if (last?.kind === "reasoning") {
     const text = replace ? content : last.reasoningText + content;
-    return [...blocks.slice(0, -1), { kind: "reasoning", text: "", reasoningText: text }];
+    return [...blocks.slice(0, -1), { ...last, reasoningText: text }];
   }
-  return [...blocks, { kind: "reasoning", text: "", reasoningText: content }];
+  return [...blocks, { kind: "reasoning", text: "", reasoningText: content, key: liveKey() }];
 }
 
 /// Client-side tools need the desktop runtime (local files, shell); in a plain
@@ -742,7 +754,7 @@ function toolPreview(t: ToolBlock): string | undefined {
 /// Fallback for search results arriving WITHOUT persisted meta (older
 /// events): parses the numbered "N. Title / URL / snippet…" list the server
 /// composes into source cards.
-function parseSearchResults(content: string): { url: string; title?: string; snippet?: string }[] {
+export function parseSearchResults(content: string): { url: string; title?: string; snippet?: string }[] {
   const out: { url: string; title?: string; snippet?: string }[] = [];
   let cur: { url: string; title?: string; snippet?: string } | null = null;
   for (const l of content.split("\n")) {
@@ -1291,6 +1303,9 @@ export default function WebChat({
   // deploy-freshness poll below must not read stale closure state).
   const loadStateRef = useRef({ busy: false, attaching: false, threadLoading: false });
   const [attaching, setAttaching] = useState(false); // receiving a server-side generation
+  // Watching a dropped generation for reattach (network send path): the
+  // composer must stay disabled until the watch settles.
+  const [reattaching, setReattaching] = useState(false);
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -1313,7 +1328,6 @@ export default function WebChat({
   const sendAbort = useRef<AbortController | null>(null); // in-flight send stream
   const loadSeq = useRef(0); // guards against stale thread loads landing last
   const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
-  const maxSeqSeen = useRef(0); // highest thread-event seq rendered for the open chat
 
   // App-lifetime presence connection: the server uses it to detect that
   // this app instance is gone and resolve suspended client tools without
@@ -1357,6 +1371,10 @@ export default function WebChat({
 
   useEffect(() => {
     listModels().then((m) => {
+      if (m === null) {
+        toast.error("Could not load models");
+        return;
+      }
       setModels(m);
       if (m.length > 0) setModel((cur) => cur || m[0]);
     });
@@ -1387,14 +1405,20 @@ export default function WebChat({
     bottom.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
   }, [blocks]);
 
-  const refreshChats = async () => setChats(await listChats());
+  const refreshChats = async () => {
+    const c = await listChats();
+    if (c === null) {
+      toast.error("Could not load chats");
+      return;
+    }
+    setChats(c);
+  };
 
   /// Reloads blocks from thread rows and tracks the high-water seq so a later
   /// compaction poll only waits for events newer than what is on screen.
   /// Also carries the server-reported context usage to the gauge; a server
   /// without it (pre-G1) leaves the gauge hidden.
   const applyThreadRows = (res: ThreadResult) => {
-    for (const r of res.events) if (r.seq > maxSeqSeen.current) maxSeqSeen.current = r.seq;
     setCtx(res.context ?? null);
     setBlocks(eventsToBlocks(res.events));
   };
@@ -1432,8 +1456,7 @@ export default function WebChat({
       sendAbort.current = null;
       attachAbort.current?.abort();
       attachAbort.current = null;
-      maxSeqSeen.current = 0;
-      setBlocks([]);
+        setBlocks([]);
       setCtx(null);
       setThreadLoading(false);
       return;
@@ -1549,8 +1572,8 @@ export default function WebChat({
     if (ev.type === "delta" && ev.content) {
       setBlocks((b) => {
         const last = b[b.length - 1];
-        if (last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
-        return [...b, { kind: "text", text: ev.content! }];
+        if (last?.kind === "text") return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
+        return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
       });
     } else if (ev.type === "thinking_delta" && ev.content) {
       setBlocks((b) => upsertThinking(b, ev.content!, false));
@@ -1575,7 +1598,7 @@ export default function WebChat({
         ),
       );
     } else if (ev.type === "error") {
-      setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error" }]);
+      setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error", key: liveKey() }]);
     }
   };
   const applyRef = useRef(applyStreamEvent);
@@ -1634,7 +1657,7 @@ export default function WebChat({
       const executor = ev.executor === "client" ? "client" : "server";
       setBlocks((b) => [
         ...b,
-        { kind: "tool", text: "", tool: { callId, name, args, executor, status: "running" } },
+        { kind: "tool", text: "", tool: { callId, name, args, executor, status: "running" }, key: `tool-${callId}` },
       ]);
     } else if (ev.type === "tool_completed") {
       const status: "done" | "error" = ev.is_error ? "error" : "done";
@@ -1643,7 +1666,7 @@ export default function WebChat({
         b.map((x) => {
           const t = x.tool;
           if (x.kind !== "tool" || !t || t.callId !== callId) return x;
-          return { kind: "tool", text: "", tool: { ...t, status, content } };
+          return { ...x, tool: { ...t, status, content } };
         }),
       );
     }
@@ -1707,8 +1730,8 @@ export default function WebChat({
                 firstDelta = false;
                 setBlocks((b) => {
                   const last = b[b.length - 1];
-                  if (!seed && last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
-                  return [...b, { kind: "text", text: ev.content! }];
+                  if (!seed && last?.kind === "text") return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
+                  return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
                 });
               } else if (ev.type === "thinking_delta" && ev.content) {
                 showAttaching();
@@ -1785,7 +1808,7 @@ export default function WebChat({
     }
     if (term.v === "error" && lastError !== null) {
       // (kept as-is: reached only when the loop broke on an error frame)
-      setBlocks((b) => [...b, { kind: "error", text: lastError! }]);
+      setBlocks((b) => [...b, { kind: "error", text: lastError!, key: liveKey() }]);
     }
     return { terminal: term.v as "done" | "error" | "idle" | "none", sawContent };
   };
@@ -1807,6 +1830,7 @@ export default function WebChat({
       {
         kind: "user",
         text,
+        key: liveKey(),
         attachments: pendingRef.current.map((a) => ({
           id: `pending-${a.id}`,
           filename: a.filename,
@@ -1832,7 +1856,7 @@ export default function WebChat({
     }
     if (!cid) {
       if (loadSeq.current === mySeq) {
-        setBlocks((b) => [...b, { kind: "error", text: "chat create failed" }]);
+        setBlocks((b) => [...b, { kind: "error", text: "chat create failed", key: liveKey() }]);
       }
       setBusy(false);
       return;
@@ -1854,6 +1878,7 @@ export default function WebChat({
               ...b,
               {
                 kind: "error",
+                key: liveKey(),
                 text: `attachment upload failed (${a.filename}): ${e instanceof Error ? e.message : String(e)}`,
               },
             ]);
@@ -1873,7 +1898,7 @@ export default function WebChat({
             setBusy(false);
             setBlocks((b) => [
               ...b,
-              { kind: "error", text: e instanceof Error ? e.message : String(e) },
+              { kind: "error", text: e instanceof Error ? e.message : String(e), key: liveKey() },
             ]);
           }
         }
@@ -1896,8 +1921,8 @@ export default function WebChat({
             // text block, or start a new one after a tool block
             setBlocks((b) => {
               const last = b[b.length - 1];
-              if (last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
-              return [...b, { kind: "text", text: ev.content! }];
+              if (last?.kind === "text") return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
+              return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
             });
           } else if (ev.type === "thinking_delta" && ev.content) {
             // live deltas: the send stream has no catch-up snapshot, every
@@ -1924,7 +1949,7 @@ export default function WebChat({
               ),
             );
           } else if (ev.type === "error") {
-            setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error" }]);
+            setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error", key: liveKey() }]);
           }
         },
         ac.signal,
@@ -1953,22 +1978,28 @@ export default function WebChat({
       const wac = new AbortController();
       attachAbort.current?.abort();
       attachAbort.current = wac;
-      const r = await watchGeneration(cid, mySeq, wac);
-      if (r.terminal === "done") {
-        void refreshChats();
-      } else if (r.terminal === "idle" && !r.sawContent) {
-        setBlocks((b) => [
-          ...b,
-          { kind: "error", text: "connection dropped before the reply started — try sending again" },
-        ]);
-      } else if (r.terminal === "none") {
-        setBlocks((b) => [
-          ...b,
-          {
-            kind: "error",
-            text: "lost connection and could not reattach — the reply may still arrive; reopen this thread to catch up",
-          },
-        ]);
+      setReattaching(true);
+      try {
+        const r = await watchGeneration(cid, mySeq, wac);
+        if (r.terminal === "done") {
+          void refreshChats();
+        } else if (r.terminal === "idle" && !r.sawContent) {
+          setBlocks((b) => [
+            ...b,
+            { kind: "error", text: "connection dropped before the reply started — try sending again", key: liveKey() },
+          ]);
+        } else if (r.terminal === "none") {
+          setBlocks((b) => [
+            ...b,
+            {
+              kind: "error",
+              key: liveKey(),
+              text: "lost connection and could not reattach — the reply may still arrive; reopen this thread to catch up",
+            },
+          ]);
+        }
+      } finally {
+        setReattaching(false);
       }
       return;
     } finally {
@@ -1982,7 +2013,7 @@ export default function WebChat({
       ? "Loading…"
       : (chats?.find((c) => c.id === chatId)?.title ?? "New chat");
   const boundMachine = chats?.find((c) => c.id === chatId)?.machine_label ?? null;
-  const streaming = busy || attaching;
+  const streaming = busy || attaching || reattaching;
 
   const sidebar = (
     <SidebarContent
@@ -2166,7 +2197,7 @@ export default function WebChat({
               {blocks.map((b, i) =>
                 b.kind === "user" ? (
                   <div
-                    key={i}
+                    key={b.key}
                     className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5"
                   >
                     {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
@@ -2183,26 +2214,26 @@ export default function WebChat({
                   </div>
                 ) : b.kind === "reasoning" ? (
                   <ReasoningFrame
-                    key={i}
+                    key={b.key}
                     text={b.reasoningText ?? ""}
                     live={streaming && i === blocks.length - 1}
                   />
                 ) : b.kind === "tool" && b.tool ? (
-                  <ToolFrame key={i} t={b.tool} />
+                  <ToolFrame key={b.key} t={b.tool} />
                 ) : b.kind === "approval" && b.approval ? (
-                  <ApprovalCard key={i} a={b.approval} chatId={chatId} />
+                  <ApprovalCard key={b.key} a={b.approval} chatId={chatId} />
                 ) : b.kind === "compaction" && b.compaction ? (
-                  <CompactionCard key={i} c={b.compaction} />
+                  <CompactionCard key={b.key} c={b.compaction} />
                 ) : b.kind === "error" ? (
                   <div
-                    key={i}
+                    key={b.key}
                     className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive"
                   >
                     {b.text}
                   </div>
                 ) : (
                   <div
-                    key={i}
+                    key={b.key}
                     className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS}`}
                   >
                     <Markdown remarkPlugins={[remarkGfm]}>
@@ -2245,14 +2276,30 @@ export default function WebChat({
                   <AttachmentImageThumb
                     key={a.id}
                     att={a}
-                    onRemove={() => setPending((p) => p.filter((x) => x.id !== a.id))}
+                    onRemove={() =>
+                      setPending((p) =>
+                        p.filter((x) => {
+                          if (x.id !== a.id) return true;
+                          if (x.previewUrl) URL.revokeObjectURL(x.previewUrl);
+                          return false;
+                        }),
+                      )
+                    }
                   />
                 ))}
                 {pending.filter((a) => a.modality !== "image").map((a) => (
                   <AttachmentFileChip
                     key={a.id}
                     att={a}
-                    onRemove={() => setPending((p) => p.filter((x) => x.id !== a.id))}
+                    onRemove={() =>
+                      setPending((p) =>
+                        p.filter((x) => {
+                          if (x.id !== a.id) return true;
+                          if (x.previewUrl) URL.revokeObjectURL(x.previewUrl);
+                          return false;
+                        }),
+                      )
+                    }
                   />
                 ))}
               </div>
@@ -2347,7 +2394,9 @@ export default function WebChat({
                   size="icon"
                   className="size-7 rounded-full"
                   onClick={() => void send()}
-                  disabled={busy || !model || (!prompt.trim() && pending.length === 0)}
+                  disabled={
+                    streaming || !model || (!prompt.trim() && pending.length === 0)
+                  }
                   title="Send"
                 >
                   {busy ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
@@ -2411,7 +2460,7 @@ function detectOs(): DesktopOs {
 
 const OS_KEY: Record<DesktopOs, string> = { mac: "darwin", windows: "windows", linux: "linux" };
 
-function compareVersions(a: string, b: string): number {
+export function compareVersions(a: string, b: string): number {
   const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
   const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -2455,6 +2504,10 @@ function DeviceSetupDialog({
     setReleases(null);
     setPairCode(null);
     listReleases().then((r) => {
+      if (r === null) {
+        toast.error("Could not load releases");
+        return;
+      }
       const desktop = r.filter((x) => x.kind === "desktop");
       // show only the latest version's installers, one per platform
       const latest = desktop.reduce<string | null>(
@@ -2690,7 +2743,10 @@ function SidebarContent({
           <DropdownMenuItem onClick={onOpenSettings}>Settings</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
-            Sign out
+            {/* Desktop: the engine keeps its session and restore re-logs-in,
+                so this clears this window's token only (full engine sign-out
+                needs an engine logout RPC that does not exist yet). */}
+            {isTauri ? "Sign out (this window only)" : "Sign out"}
           </DropdownMenuItem>
         </UserBadge>
       </div>

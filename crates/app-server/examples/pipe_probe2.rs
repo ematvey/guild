@@ -3,7 +3,7 @@
 //! precisely. Usage: pipe_probe2 <path to guild-desktop.exe>
 
 use guild_app_server::daemon::{self, Pair};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 

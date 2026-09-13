@@ -224,7 +224,7 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
     store
         .gateway()
         .upsert_route(
-            user.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000), &[],
+            user.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000), None, &[],
         )
         .await
         .unwrap();
