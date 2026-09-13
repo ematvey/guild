@@ -89,17 +89,19 @@ impl UsageSink {
             .and_hms_opt(0, 0, 0)
             .unwrap()
             .and_utc();
-        // uuid + model are injected as quoted literals; model comes from the
-        // org's own route table (admin-configured), not user input.
-        let query = format!(
-            "SELECT coalesce(sum(cost_usd), 0) FROM usage_events \
-             WHERE org_id = toUUID('{org}') AND model = '{model}' \
-             AND ts >= toDateTime({ts})",
-            org = org_id.simple(),
-            model = model.replace(char::is_whitespace, ""),
-            ts = start_of_month.timestamp()
-        );
-        match self.client.query(&query).fetch_one::<f64>().await {
+        // Bound parameters: model is admin-configured free text and must
+        // never be interpolated into the query text.
+        let query = "SELECT coalesce(sum(cost_usd), 0) FROM usage_events \
+             WHERE org_id = toUUID(?) AND model = ? AND ts >= toDateTime(?)";
+        match self
+            .client
+            .query(query)
+            .bind(org_id.simple().to_string())
+            .bind(model)
+            .bind(start_of_month.timestamp())
+            .fetch_one::<f64>()
+            .await
+        {
             Ok(v) => Ok(v),
             Err(e) if e.to_string().contains("UNKNOWN_TABLE") => Ok(0.0),
             Err(e) => Err(e.into()),
