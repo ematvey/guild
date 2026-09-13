@@ -253,16 +253,26 @@ function useAttachmentPreview(
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let dead = false;
+    let minted: string | null = null;
     if (att.previewUrl) {
+      // The composer owns previewUrl (revoked on send/remove) — only URLs
+      // minted here are revoked on unmount/re-fetch.
       setUrl(att.previewUrl);
       return;
     }
     if (att.id.startsWith("pending-") || att.modality !== "image") return;
     void attachmentBlobUrl(att.id).then((u) => {
-      if (!dead) setUrl(u);
+      if (dead) {
+        if (u) URL.revokeObjectURL(u);
+        return;
+      }
+      minted = u;
+      setUrl(u);
     });
     return () => {
       dead = true;
+      if (minted) URL.revokeObjectURL(minted);
+      setUrl(null);
     };
   }, [att.id, att.modality, att.previewUrl]);
   return url;
@@ -1884,6 +1894,10 @@ export default function WebChat({
             ]);
           }
         }
+      }
+      // Sent attachments leave the composer: revoke their preview URLs.
+      for (const a of pendingRef.current) {
+        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
       }
       setPending([]);
       if (isTauri) {

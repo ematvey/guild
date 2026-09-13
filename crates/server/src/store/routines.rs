@@ -18,7 +18,9 @@ pub struct RoutineRow {
     pub model: String,
     pub allowed_tools: serde_json::Value,
     /// sha256 of the webhook bearer token — the plaintext is shown once at
-    /// creation and never stored.
+    /// creation and never stored. Not serialized: list/get responses must
+    /// not leak the hash (ApiKeyRow omits key_hash the same way).
+    #[serde(skip_serializing)]
     pub webhook_token_hash: String,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,

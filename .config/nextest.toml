@@ -17,11 +17,14 @@
 # workspace, so the required-features gate on guild-server's tests/*.rs does
 # not keep them out of a plain run. The default filter excludes guild-server
 # integration test targets (they need the host Postgres, wiremock and real
-# sockets); guild-server's own fast lib tests stay in.
+# sockets) plus the DB-backed stragglers inside otherwise-DB-free targets:
+# four guild-server lib tests bootstrap a test database, and guild-app-server's
+# engine_stdio/registry_client targets call serve_full(). All of them stay in
+# the "full" profile.
 
 [profile.default]
-# The fast set: everything except guild-server's integration test targets.
-default-filter = 'not(package(guild-server) & kind(test))'
+# The fast set: everything except the DB-backed tests listed above.
+default-filter = 'not(package(guild-server) & kind(test)) & not(package(guild-app-server) & (binary(engine_stdio) | binary(registry_client))) & not(package(guild-server) & (test(chat_access_is_owner_scoped_with_admin_bypass) | test(unverified_or_managed_email_does_not_yield_a_session) | test(bootstrap_admin_once_then_login_and_session) | test(password_reset_revokes_sessions)))'
 # A test running longer than this is a stuck test (deadlock, missed wakeup),
 # not a slow test: mark it, then kill the whole binary after repeats so one
 # hung test cannot wedge the run.
