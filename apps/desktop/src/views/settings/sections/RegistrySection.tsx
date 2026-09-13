@@ -3,6 +3,7 @@
 //! versions and the review action (approve / revert to draft).
 
 import { useCallback, useEffect, useState } from "react";
+import type { SectionDetailProps } from "../section-nav";
 import { ArrowLeft, ArrowUpRight, Package, Pencil } from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
@@ -47,19 +48,21 @@ const reviewPill = (status: string) => (
   </span>
 );
 
-export default function RegistrySection() {
-  const [detail, setDetail] = useState<{ kind: Kind; slug: string } | null>(null);
-
-  if (detail) {
+export default function RegistrySection({
+  detail = null,
+  onDetailChange,
+}: SectionDetailProps) {
+  const [kind, slug] = (detail ?? "").split("/");
+  if (detail && (KINDS as readonly string[]).includes(kind) && slug) {
     return (
       <ItemDetail
-        kind={detail.kind}
-        slug={detail.slug}
-        onBack={() => setDetail(null)}
+        kind={kind as Kind}
+        slug={slug}
+        onBack={() => onDetailChange(null)}
       />
     );
   }
-  return <RegistryList onOpen={(kind, slug) => setDetail({ kind, slug })} />;
+  return <RegistryList onOpen={(k, s) => onDetailChange(`${k}/${s}`)} />;
 }
 
 function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }) {

@@ -21,6 +21,7 @@ import { X } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@guild/ui/components/dialog";
 import { apiMe } from "../../transport";
+import type { SectionDetailProps } from "./section-nav";
 import { useTheme } from "../../theme";
 import {
   clampSidebarWidth,
@@ -64,7 +65,9 @@ export function SettingsWindow({
   currentMachineId,
   onMachineChanged,
   section,
+  detail,
   onSectionChange,
+  onDetailChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -75,8 +78,12 @@ export function SettingsWindow({
   onMachineChanged: () => void;
   /** Active section, driven by the URL (/settings/<section>); null = default. */
   section: string | null;
+  /** Sub-page inside the section (/settings/<section>/<detail>); null = list. */
+  detail: string | null;
   /** Section picks push a new URL so back/forward walk section history. */
   onSectionChange: (id: SectionId) => void;
+  /** Sub-page navigation: an id opens that detail page, null returns to the list. */
+  onDetailChange: (detail: string | null) => void;
 }) {
   const isAdmin = role === "admin";
   const sections: SectionDef[] = [
@@ -219,6 +226,8 @@ export function SettingsWindow({
               chatId={chatId}
               currentMachineId={currentMachineId}
               onMachineChanged={onMachineChanged}
+              detail={detail}
+              onDetailChange={onDetailChange}
             />
           )}
         </div>
@@ -233,12 +242,16 @@ function SectionPane({
   chatId,
   currentMachineId,
   onMachineChanged,
+  detail,
+  onDetailChange,
 }: {
   def: SectionDef;
   email: string;
   chatId: string | null;
   currentMachineId: string | null;
   onMachineChanged: () => void;
+  detail: string | null;
+  onDetailChange: (detail: string | null) => void;
 }) {
   return (
     <div className="mx-auto max-w-2xl px-6 py-6">
@@ -249,6 +262,8 @@ function SectionPane({
         chatId={chatId}
         currentMachineId={currentMachineId}
         onMachineChanged={onMachineChanged}
+        detail={detail}
+        onDetailChange={onDetailChange}
       />
     </div>
   );
@@ -260,12 +275,16 @@ function SectionBody({
   chatId,
   currentMachineId,
   onMachineChanged,
+  detail,
+  onDetailChange,
 }: {
   id: SectionId;
   email: string;
   chatId: string | null;
   currentMachineId: string | null;
   onMachineChanged: () => void;
+  detail: string | null;
+  onDetailChange: (detail: string | null) => void;
 }) {
   switch (id) {
     case "account":
@@ -283,21 +302,70 @@ function SectionBody({
     case "approvals":
       return <ApprovalsSection />;
     case "usage":
-      return <LazySection load={() => import("./sections/UsageSection")} name="UsageSection" />;
+      return (
+        <LazySection
+          load={() => import("./sections/UsageSection")}
+          name="UsageSection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
     case "assistant":
       return <AssistantSection />;
     case "users":
-      return <LazySection load={() => import("./sections/UsersSection")} name="UsersSection" />;
+      return (
+        <LazySection
+          load={() => import("./sections/UsersSection")}
+          name="UsersSection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
     case "teams":
-      return <LazySection load={() => import("./sections/TeamsSection")} name="TeamsSection" />;
+      return (
+        <LazySection
+          load={() => import("./sections/TeamsSection")}
+          name="TeamsSection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
     case "models":
-      return <LazySection load={() => import("./sections/ModelsSection")} name="ModelsSection" />;
+      return (
+        <LazySection
+          load={() => import("./sections/ModelsSection")}
+          name="ModelsSection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
     case "integrations":
-      return <LazySection load={() => import("./sections/IntegrationsSection")} name="IntegrationsSection" />;
+      return (
+        <LazySection
+          load={() => import("./sections/IntegrationsSection")}
+          name="IntegrationsSection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
     case "sso":
-      return <LazySection load={() => import("./sections/SsoSection")} name="SsoSection" />;
+      return (
+        <LazySection
+          load={() => import("./sections/SsoSection")}
+          name="SsoSection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
     case "registry":
-      return <LazySection load={() => import("./sections/RegistrySection")} name="RegistrySection" />;
+      return (
+        <LazySection
+          load={() => import("./sections/RegistrySection")}
+          name="RegistrySection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
   }
 }
 
@@ -305,11 +373,15 @@ function SectionBody({
 function LazySection({
   load,
   name,
+  detail,
+  onDetailChange,
 }: {
-  load: () => Promise<{ default: React.ComponentType }>;
+  load: () => Promise<{ default: React.ComponentType<SectionDetailProps> }>;
   name: string;
+  detail: string | null;
+  onDetailChange: (detail: string | null) => void;
 }) {
-  const [Comp, setComp] = useState<React.ComponentType | null>(null);
+  const [Comp, setComp] = useState<React.ComponentType<SectionDetailProps> | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -330,7 +402,7 @@ function LazySection({
         <div className="h-24 w-full animate-pulse rounded-lg bg-accent" />
       </div>
     );
-  return <Comp />;
+  return <Comp detail={detail} onDetailChange={onDetailChange} />;
 }
 
 function AccountSection({ email }: { email: string }) {

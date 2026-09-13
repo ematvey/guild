@@ -58,7 +58,18 @@ import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsWindow } from "./settings/SettingsWindow";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { attachmentBlobUrl, postApproval, postToolResult, rpcCall, uploadAttachment } from "../transport";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  attachmentBlobUrl,
+  chatSnapshot,
+  machineId,
+  postApproval,
+  pushChatDir,
+  sendChatNoStream,
+  setMachineIdentity,
+  uploadAttachment,
+  type StreamFrame,
+} from "../transport";
 import {
   createChat,
   getThread,
@@ -96,10 +107,17 @@ interface ToolBlock {
 ///   /thread/<id>               — open thread
 ///   /device                    — device-setup dialog, optionally over a
 ///                                thread: /thread/<id>/device
-///   /settings[/<section>]      — settings overlay (top-level; the thread
-///                                underneath stays loaded in app state)
+///   /settings[/<section>[/<detail>]] — settings overlay (top-level; the
+///                                thread underneath stays loaded in app
+///                                state). <detail> addresses a sub-page
+///                                inside a section: an integration slug,
+///                                a user/team id or "new", a model route
+///                                or "add", a registry kind/slug.
 /// Back/forward, reloads and deep links all resolve through parseChatRoute.
-type ChatOverlay = { kind: "settings"; section: string | null } | { kind: "device" } | null;
+type ChatOverlay =
+  | { kind: "settings"; section: string | null; detail: string | null }
+  | { kind: "device" }
+  | null;
 interface ChatRoute {
   chatId: string | null;
   overlay: ChatOverlay;
@@ -117,8 +135,12 @@ const parseChatRoute = (pathname: string): ChatRoute => {
     parts.splice(0, 2);
   }
   if (parts[0] === "device") return { chatId, overlay: { kind: "device" } };
-  if (parts[0] === "settings")
-    return { chatId, overlay: { kind: "settings", section: parts[1] ?? null } };
+  if (parts[0] === "settings") {
+    // Everything after the section is the sub-page id; each segment was
+    // encoded separately, so a model id like "a/b" round-trips as one part.
+    const detail = parts.length > 2 ? parts.slice(2).map(decodeURIComponent).join("/") : null;
+    return { chatId, overlay: { kind: "settings", section: parts[1] ?? null, detail } };
+  }
   return { chatId, overlay: null };
 };
 
@@ -128,7 +150,11 @@ const chatRoutePath = (chatId: string | null, overlay: ChatOverlay): string => {
   // Settings is chat-independent — top-level URL even when opened over a
   // thread (the thread stays loaded; closing the overlay restores it).
   if (overlay?.kind === "settings")
-    return `/settings${overlay.section ? `/${overlay.section}` : ""}`;
+    return `/settings${overlay.section ? `/${encodeURIComponent(overlay.section)}` : ""}${
+      overlay.detail
+        ? "/" + overlay.detail.split("/").map(encodeURIComponent).join("/")
+        : ""
+    }`;
   return base || "/";
 };
 
@@ -299,7 +325,7 @@ function AttachmentFileChip({
     </>
   );
   const cls =
-    "flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-secondary px-2 py-1 text-xs";
+    "flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-secondary px-2 py-1";
   if (onRemove) {
     return <span className={cls}>{body}</span>;
   }
@@ -538,7 +564,7 @@ function ThreadSkeleton() {
 
 /// Markdown body class shared by text blocks and tool-card excerpts.
 const MD_CLASS =
-  "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:text-base [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc";
+  "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc";
 
 /// Status pill on tool frames and page cards.
 function StatusPill({ status }: { status: "running" | "done" | "error" }) {
@@ -578,7 +604,7 @@ function Frame({
     // A clickable text row on the page — no chip background, full width, the
     // The row blends into the conversation; the panel only exists below
     // the row once it is opened.
-    <div className="flex w-full flex-col text-xs">
+    <div className="flex w-full flex-col text-sm">
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 py-1 text-left outline-none transition-colors hover:text-foreground"
@@ -595,7 +621,7 @@ function Frame({
       {open && (
         // No card boundary: the content just continues below the row as
         // smaller, grayer text, indented under the label.
-        <div className="mb-2 pl-[22px] text-xs text-muted-foreground">
+        <div className="mb-2 pl-[22px] text-sm text-muted-foreground">
           {children}
         </div>
       )}
@@ -766,7 +792,7 @@ function CompactionCard({ c }: { c: CompactionBlock }) {
         <div className={`max-h-64 overflow-y-auto leading-relaxed text-muted-foreground ${MD_CLASS}`}>
           <Markdown remarkPlugins={[remarkGfm]}>{c.summary}</Markdown>
         </div>
-        {c.keepLast != null && <p className="text-xs text-muted-foreground">kept last {c.keepLast} messages</p>}
+        {c.keepLast != null && <p className="text-muted-foreground">kept last {c.keepLast} messages</p>}
       </div>
     </Frame>
   );
@@ -920,13 +946,13 @@ function ToolBody({ t }: { t: ToolBlock }) {
     return (
       <div className="space-y-2">
         {command && (
-          <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed">
+          <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed">
             <span className="select-none text-muted-foreground/60">$ </span>
             {command}
           </pre>
         )}
         {output && (
-          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-muted-foreground">
             {output}
           </pre>
         )}
@@ -956,7 +982,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
             </span>
           )}
         </div>
-        <div className="max-h-64 overflow-y-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-relaxed">
+        <div className="max-h-64 overflow-y-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-sm leading-relaxed">
           {lines.map((l, i) => (
             <div key={i} className="flex gap-2">
               <span className="w-8 shrink-0 select-none text-right text-muted-foreground/60">
@@ -1007,13 +1033,13 @@ function ToolBody({ t }: { t: ToolBlock }) {
   return (
     <div className="space-y-2">
       {prettyArgs && prettyArgs !== "{}" && (
-        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-muted-foreground">
           {prettyArgs}
         </pre>
       )}
       {t.content && (
         <pre
-          className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed ${
+          className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed ${
             t.status === "error" ? "text-destructive" : "text-muted-foreground"
           }`}
         >
@@ -1152,7 +1178,7 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
             <Button size="sm" variant="outline" onClick={() => act(false)} disabled={busy}>
               Deny
             </Button>
-            {busy && <span className="text-xs text-muted-foreground">sending…</span>}
+            {busy && <span className="text-muted-foreground">sending…</span>}
           </div>
         )}
       </div>
@@ -1330,6 +1356,14 @@ export default function WebChat({
     setBlocks(eventsToBlocks(res.events));
   };
 
+  // Per-chat frame watermarks (desktop fan-out bus): frames with seq ≤ the
+  // watermark are already reflected (the snapshot replay covers them).
+  const appSeqRef = useRef<Map<string, number>>(new Map());
+  const openChatIdRef = useRef<string | null>(chatId);
+  openChatIdRef.current = chatId;
+  // Reload tick: bumping re-runs the chatId load effect (fan-out reconnect).
+  const [reloadTick, setReloadTick] = useState(0);
+
   // Load (or clear) the thread whenever the URL-driven chatId changes — one
   // path for deep links, back/forward, sidebar picks and "new chat" alike.
   useEffect(() => {
@@ -1375,12 +1409,28 @@ export default function WebChat({
         const res: ThreadResult = await getThread(chatId, loadAc.signal);
         if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
         applyThreadRows(res);
-        // A generation may still be running server-side (e.g. it outlived a
-        // previous client, or the stream dropped earlier). Attach with
-        // automatic reconnection and keep streaming it into the view.
-        const ac = new AbortController();
-        attachAbort.current = ac;
-        void watchGeneration(chatId, seq, ac);
+        // The app process executes tools — push the folder for this chat.
+        if (isTauri) void pushChatDir(chatId, storedDir(chatId) ?? storedDir(null));
+        if (isTauri) {
+          // Single-process link: in-flight catch-up comes from the app
+          // process's fan-out mirror, not a second server connection.
+          try {
+            const snap = await chatSnapshot(chatId);
+            if (seq !== loadSeq.current) return;
+            appSeqRef.current.set(chatId, snap.seq);
+            setBusy(snap.running);
+            for (const f of snap.frames) applyRef.current(f, chatId);
+          } catch {
+            /* link not connected yet — live frames will arrive regardless */
+          }
+        } else {
+          // A generation may still be running server-side (e.g. it outlived
+          // a previous client, or the stream dropped earlier). Attach with
+          // automatic reconnection and keep streaming it into the view.
+          const ac = new AbortController();
+          attachAbort.current = ac;
+          void watchGeneration(chatId, seq, ac);
+        }
       } catch {
         // aborted (a newer switch superseded this one) or a real error —
         // either way the pane falls back to the empty-thread view;
@@ -1392,7 +1442,7 @@ export default function WebChat({
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatId]);
+  }, [chatId, reloadTick]);
 
   const openChat = (id: string) => {
     // Navigation only: the chatId effect performs the actual load, so back/
@@ -1419,9 +1469,6 @@ export default function WebChat({
 
   // ---- server-side tool loop support ----
 
-  const executingTools = useRef<Set<string>>(new Set());
-  const workDirRef = useRef<string | null>(null);
-
   // Workspace folder ("run in folder"): desktop only. A new chat starts
   // from the last used folder; an existing chat restores its own (the
   // chatId effect below re-reads it on every switch).
@@ -1434,14 +1481,95 @@ export default function WebChat({
     setProjectDir(dir);
     saveDir(chatId, dir);
     saveDir(null, dir); // next new chat starts here
-    if (dir) workDirRef.current = dir;
-    else workDirRef.current = null; // cleared → tools prompt again
+    // The app process executes tools — it needs the folder pushed.
+    if (isTauri && chatId) void pushChatDir(chatId, dir);
   };
 
-  /// Handles tool lifecycle events from either stream (send or attach):
-  /// renders the tool chip and, for client-executed tools in the desktop
-  /// runtime, runs the tool locally and posts the result back.
-  const handleToolEvent = (ev: { type: string; [k: string]: unknown }, cid: string, seq: number) => {
+  // ---- single-process app link (desktop): the fan-out bus ----
+
+  /// Applies one streamed event to the blocks. Shapes match the per-turn
+  /// web path; the desktop router calls this for fan-out frames.
+  const applyStreamEvent = (ev: StreamFrame, cid: string) => {
+    if (ev.type === "delta" && ev.content) {
+      setBlocks((b) => {
+        const last = b[b.length - 1];
+        if (last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
+        return [...b, { kind: "text", text: ev.content! }];
+      });
+    } else if (ev.type === "thinking_delta" && ev.content) {
+      setBlocks((b) => upsertThinking(b, ev.content!, false));
+    } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
+      handleToolEvent(ev, cid, 0);
+    } else if (ev.type === "approval_requested") {
+      setBlocks((b) =>
+        upsertApproval(b, {
+          callId: ev.call_id as string,
+          name: (ev.name as string) ?? "",
+          args: (ev.arguments as string) ?? "{}",
+          status: "pending",
+        }),
+      );
+    } else if (ev.type === "approval_resolved") {
+      setBlocks((b) =>
+        resolveApproval(
+          b,
+          ev.call_id as string,
+          !!ev.approved,
+          (ev.reason as string | undefined) ?? undefined,
+        ),
+      );
+    } else if (ev.type === "error") {
+      setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error" }]);
+    }
+  };
+  const applyRef = useRef(applyStreamEvent);
+  applyRef.current = applyStreamEvent;
+
+  // One subscription for the whole component lifetime; the handler reads the
+  // latest closures through refs.
+  useEffect(() => {
+    if (!isTauri) return;
+    void setMachineIdentity(machineId()).catch(() => {});
+    const unlisteners: Promise<UnlistenFn>[] = [
+      listen("app-frame", (e) => {
+        const p = e.payload as { chat_id: string; seq: number; event: { type: string; [k: string]: unknown } };
+        if (p.chat_id !== openChatIdRef.current) return; // renders only the open chat
+        const seen = appSeqRef.current.get(p.chat_id) ?? -1;
+        if (p.seq <= seen) return;
+        appSeqRef.current.set(p.chat_id, p.seq);
+        if (p.event.type === "done") {
+          setBusy(false);
+          // done: reload the durable thread (gauge + rebuilt blocks) and the
+          // sidebar (titles)
+          void (async () => {
+            try {
+              const res: ThreadResult = await getThread(p.chat_id);
+              if (openChatIdRef.current === p.chat_id) applyThreadRows(res);
+            } catch {
+              /* keep the streamed view */
+            }
+            void refreshChats();
+          })();
+          return;
+        }
+        if (p.event.type === "error") setBusy(false);
+        applyRef.current(p.event, p.chat_id);
+      }),
+      listen("app-stream-reconnected", () => {
+        appSeqRef.current.clear();
+        if (openChatIdRef.current) setReloadTick((t) => t + 1);
+      }),
+    ];
+    return () => {
+      unlisteners.forEach((p) => p.then((u) => u()).catch(() => {}));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /// Handles tool lifecycle events (render only): since the single-process
+  /// redesign, client tools are executed by the app process when the fan-out
+  /// bus delivers them — the webview only renders the chips.
+  const handleToolEvent = (ev: { type: string; [k: string]: unknown }, _cid: string, _seq: number) => {
     const callId = ev.call_id as string | undefined;
     if (!callId) return;
     if (ev.type === "tool_started") {
@@ -1452,33 +1580,6 @@ export default function WebChat({
         ...b,
         { kind: "tool", text: "", tool: { callId, name, args, executor, status: "running" } },
       ]);
-      if (executor !== "client" || !isTauri) return; // browser: the desktop app would execute this
-      if (seq !== loadSeq.current || executingTools.current.has(callId)) return;
-      executingTools.current.add(callId);
-      void (async () => {
-        try {
-          let dir = projectDirRef.current ?? workDirRef.current;
-          if (!dir) {
-            const picked = await openDialog({ directory: true, multiple: false });
-            if (typeof picked !== "string") throw new Error("no workspace folder selected");
-            dir = picked;
-            workDirRef.current = dir;
-          }
-          const res = await rpcCall("tool.run", { name, args: JSON.parse(args), workdir: dir });
-          const payload = res.result ?? res;
-          await postToolResult(
-            cid,
-            callId,
-            String(payload.output ?? ""),
-            !!payload.is_error,
-            payload.meta,
-          );
-        } catch (e) {
-          await postToolResult(cid, callId, `client tool failed: ${String(e)}`, true).catch(() => {});
-        } finally {
-          executingTools.current.delete(callId);
-        }
-      })();
     } else if (ev.type === "tool_completed") {
       const status: "done" | "error" = ev.is_error ? "error" : "done";
       const content = (ev.content as string) ?? "";
@@ -1505,7 +1606,16 @@ export default function WebChat({
     seq: number,
     ac: AbortController,
   ): Promise<{ terminal: "done" | "error" | "idle" | "none"; sawContent: boolean }> => {
-    setAttaching(true);
+    // `attaching` feeds the visible streaming state (caret, live thinking);
+    // set it only when the stream actually carries a turn — a plain attach
+    // to an idle thread must not render as if the model were generating.
+    let attachingShown = false;
+    const showAttaching = () => {
+      if (!attachingShown) {
+        attachingShown = true;
+        setAttaching(true);
+      }
+    };
     let sawContent = false;
     // holder object: the SSE callbacks mutate this after an await, which a
     // plain `let` cannot express under TS control-flow narrowing
@@ -1535,6 +1645,7 @@ export default function WebChat({
             (ev) => {
               if (seq !== loadSeq.current) return; // user moved to another thread
               if (ev.type === "delta" && ev.content) {
+                showAttaching();
                 sawContent = true;
                 const seed = firstDelta;
                 firstDelta = false;
@@ -1544,14 +1655,17 @@ export default function WebChat({
                   return [...b, { kind: "text", text: ev.content! }];
                 });
               } else if (ev.type === "thinking_delta" && ev.content) {
+                showAttaching();
                 sawContent = true;
                 const seed = firstThinking;
                 firstThinking = false;
                 setBlocks((b) => upsertThinking(b, ev.content!, seed));
               } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
+                showAttaching();
                 sawContent = true;
                 handleToolEvent(ev, cid, seq);
               } else if (ev.type === "approval_requested") {
+                showAttaching();
                 sawContent = true;
                 setBlocks((b) =>
                   upsertApproval(b, {
@@ -1562,6 +1676,7 @@ export default function WebChat({
                   }),
                 );
               } else if (ev.type === "approval_resolved") {
+                showAttaching();
                 sawContent = true;
                 setBlocks((b) =>
                   resolveApproval(
@@ -1690,6 +1805,24 @@ export default function WebChat({
         }
       }
       setPending([]);
+      if (isTauri) {
+        // Single-process link: the turn's frames arrive on the fan-out bus
+        // (the app-frame listener); this POST is fire-and-forget. Done/error
+        // frames clear `busy` and reload the durable thread.
+        void pushChatDir(cid, projectDirRef.current);
+        try {
+          await sendChatNoStream(cid, model, text, attachmentIds, projectDirRef.current);
+        } catch (e) {
+          if (loadSeq.current === mySeq) {
+            setBusy(false);
+            setBlocks((b) => [
+              ...b,
+              { kind: "error", text: e instanceof Error ? e.message : String(e) },
+            ]);
+          }
+        }
+        return;
+      }
       let gotDone = false;
       await streamChat(
         cid,
@@ -1805,17 +1938,20 @@ export default function WebChat({
       onNewChat={newChat}
       onOpenChat={openChat}
       onSignOut={onSignOut}
-      onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null } })}
+      onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
       onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
     />
   );
 
-  // desktop: draggable resize handle
+  // desktop: draggable resize handle. While dragging, the width transition
+  // is suspended — an animated width chases the cursor and reads as lag.
+  const [resizing, setResizing] = useState(false);
   const startDrag = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
       const startW = width;
+      setResizing(true);
       const move = (ev: MouseEvent) => {
         const w = clampSidebarWidth(startW + ev.clientX - startX);
         setWidth(w);
@@ -1823,6 +1959,7 @@ export default function WebChat({
       const up = () => {
         document.removeEventListener("mousemove", move);
         document.removeEventListener("mouseup", up);
+        setResizing(false);
         setWidth((w) => {
           saveSidebarWidth(w);
           return w;
@@ -1846,9 +1983,9 @@ export default function WebChat({
         </Sheet>
       ) : (
         <aside
-          className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground transition-[width] duration-150 ${
-            collapsed ? "" : "border-r border-border"
-          }`}
+          className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground ${
+            resizing ? "" : "transition-[width] duration-150"
+          } ${collapsed ? "" : "border-r border-border"}`}
           style={{ width: collapsed ? 0 : width }}
         >
           {/* Collapsed = fully gone: the header toggle reopens it, so no rail
@@ -1886,12 +2023,12 @@ export default function WebChat({
       >
         {dragOver && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
-            <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-base text-muted-foreground shadow-lg">
+            <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-muted-foreground shadow-lg">
               Drop files to attach
             </div>
           </div>
         )}
-        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] text-base">
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
           {isMobile ? (
             <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
               <Menu />
@@ -1910,7 +2047,7 @@ export default function WebChat({
           <span className="min-w-0 flex-1 truncate font-medium">{activeTitle}</span>
           {boundMachine && (
             <span
-              className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+              className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-muted-foreground"
               title={`Machine tools run on: ${boundMachine}`}
             >
               <Cpu className="size-3" />
@@ -1928,7 +2065,7 @@ export default function WebChat({
               <Bot className="size-7 text-muted-foreground" />
             </div>
             <h1 className="mt-6 text-center text-2xl font-semibold tracking-tight">What should we work on?</h1>
-            <p className="mt-2 text-center text-base text-muted-foreground">
+            <p className="mt-2 text-center text-muted-foreground">
               Chat with the org gateway
               {models !== null && models.length === 0 ? " — no models configured yet" : ""}.
             </p>
@@ -1943,19 +2080,19 @@ export default function WebChat({
                   }}
                 >
                   <s.icon className="size-4 text-muted-foreground" />
-                  <span className="text-base font-medium">{s.title}</span>
+                  <span className="font-medium">{s.title}</span>
                 </Card>
               ))}
             </div>
             {models !== null && models.length === 0 && (
-              <p className="mt-8 rounded-md border border-amber-700/60 bg-amber-900/30 px-3 py-1.5 text-xs text-amber-300">
+              <p className="mt-8 rounded-md border border-amber-700/60 bg-amber-900/30 px-3 py-1.5 text-amber-300">
                 no models configured — ask an admin to add a route
               </p>
             )}
           </div>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-32 py-8">
-              <p className="text-base text-muted-foreground">No messages in this thread yet.</p>
+              <p className="text-muted-foreground">No messages in this thread yet.</p>
             </div>
           )
         ) : (
@@ -1974,7 +2111,7 @@ export default function WebChat({
                 b.kind === "user" ? (
                   <div
                     key={i}
-                    className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-base"
+                    className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5"
                   >
                     {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
                     {b.attachments && b.attachments.length > 0 && (
@@ -2003,14 +2140,14 @@ export default function WebChat({
                 ) : b.kind === "error" ? (
                   <div
                     key={i}
-                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-base text-destructive"
+                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive"
                   >
                     {b.text}
                   </div>
                 ) : (
                   <div
                     key={i}
-                    className={`max-w-none space-y-2 text-base leading-relaxed ${MD_CLASS}`}
+                    className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS}`}
                   >
                     <Markdown remarkPlugins={[remarkGfm]}>
                       {/* streaming caret rides INSIDE the markdown source so
@@ -2023,7 +2160,7 @@ export default function WebChat({
               {/* caret only while reply text is actually streaming; tool
                   blocks have their own status, silence shows nothing */}
               {streaming && blocks.length === 0 && (
-                <div className="max-w-none text-base">
+                <div className="max-w-none">
                   <Caret />
                 </div>
               )}
@@ -2083,7 +2220,7 @@ export default function WebChat({
               // blurs to body, and the composer must keep focus/caret
               // during generation (send is guarded by `busy` anyway).
               disabled={models !== null && !model}
-              className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none "
+              className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none"
             />
             <div className="flex items-center justify-between gap-2 px-1 pt-1">
               <div className="flex items-center gap-1">
@@ -2099,7 +2236,7 @@ export default function WebChat({
                 </Button>
                 {isTauri && (projectDir ? (
                   <span
-                    className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-xs text-muted-foreground"
+                    className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-muted-foreground"
                     title={projectDir}
                   >
                     <FolderOpen className="size-3.5 shrink-0" />
@@ -2119,7 +2256,7 @@ export default function WebChat({
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="h-7 gap-1 rounded-full px-2 text-xs text-muted-foreground hover:text-foreground"
+                    className="h-7 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
                     onClick={async () => {
                       const picked = await openDialog({ directory: true, multiple: false });
                       if (typeof picked === "string") pickProjectDir(picked);
@@ -2133,7 +2270,7 @@ export default function WebChat({
             {models === null ? (
                 <Skeleton className="h-7 w-28 rounded-md" />
               ) : models.length === 0 ? (
-                <span className="text-xs text-muted-foreground">no models</span>
+                <span className="text-muted-foreground">no models</span>
               ) : (
                 <span />
               )}
@@ -2142,12 +2279,12 @@ export default function WebChat({
                 {chatId && ctx && <ContextGauge ctx={ctx} />}
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
-                    <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 text-xs shadow-none">
+                    <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 shadow-none">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       {models.map((m) => (
-                        <SelectItem key={m} value={m} className="text-xs">
+                        <SelectItem key={m} value={m}>
                           {m}
                         </SelectItem>
                       ))}
@@ -2182,7 +2319,19 @@ export default function WebChat({
           if (!o) pushRoute({ overlay: null });
         }}
         section={overlay?.kind === "settings" ? overlay.section : null}
-        onSectionChange={(id) => pushRoute({ overlay: { kind: "settings", section: id } })}
+        detail={overlay?.kind === "settings" ? overlay.detail : null}
+        onSectionChange={(id) =>
+          pushRoute({ overlay: { kind: "settings", section: id, detail: null } })
+        }
+        onDetailChange={(d) =>
+          pushRoute({
+            overlay: {
+              kind: "settings",
+              section: overlay?.kind === "settings" ? overlay.section : null,
+              detail: d,
+            },
+          })
+        }
         email={email}
         role={role}
         chatId={chatId}
@@ -2284,19 +2433,19 @@ function DeviceSetupDialog({
           <DialogTitle>Set up a device</DialogTitle>
         </DialogHeader>
         <div className="min-w-0 space-y-4 text-left">
-          <p className="text-base text-muted-foreground">
+          <p className="text-muted-foreground">
             The desktop app runs a Guild agent on your machine — it can work directly in your
             projects and with your files, which the browser chat can't. Chat alone stays right here.
           </p>
 
           <div>
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">1. Download app</p>
+            <p className="mb-1.5 font-medium text-muted-foreground">1. Download app</p>
             <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
               {(Object.keys(OS_KEY) as DesktopOs[]).map((k) => (
                 <button
                   key={k}
                   onClick={() => setOs(k)}
-                  className={`rounded-md px-2 py-1.5 text-xs outline-none transition-colors ${
+                  className={`rounded-md px-2 py-1.5 outline-none transition-colors ${
                     os === k
                       ? "bg-card text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -2309,7 +2458,7 @@ function DeviceSetupDialog({
             <div className="mt-2 min-w-0 space-y-2">
               {installers === null && [0, 1].map((i) => <Skeleton key={i} className="h-10 w-full rounded-md" />)}
               {installers !== null && installers.length === 0 && (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-muted-foreground">
                   No {OS_LABEL[os]} installer published yet — check back soon.
                 </p>
               )}
@@ -2319,10 +2468,10 @@ function DeviceSetupDialog({
                   className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-base" title={r.filename}>
+                    <p className="truncate" title={r.filename}>
                       {platformLabel(r.platform)}
                     </p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-muted-foreground">
                       v{r.version} · {formatSize(r.size_bytes)}
                     </p>
                   </div>
@@ -2335,12 +2484,12 @@ function DeviceSetupDialog({
           </div>
 
           <div className="mt-6">
-            <p className="mb-1.5 text-xs font-medium text-muted-foreground">2. Pair with your account</p>
+            <p className="mb-1.5 font-medium text-muted-foreground">2. Pair with your account</p>
             {pairCode ? (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
                   <code
-                    className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono text-xs"
+                    className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono"
                     title={pairCode}
                   >
                     {pairCode}
@@ -2357,7 +2506,7 @@ function DeviceSetupDialog({
                     <Copy /> {pairCopied ? "Copied" : "Copy"}
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-muted-foreground">
                   Paste into the desktop app's pairing screen. Single-use, expires in 30 minutes.
                 </p>
               </div>
@@ -2406,7 +2555,7 @@ function ChatListItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full overflow-hidden rounded-md px-2 py-1.5 text-left text-base outline-none transition-colors ${
+      className={`w-full overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -2451,14 +2600,14 @@ function SidebarContent({
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
-        <span className="text-base font-semibold">Guild</span>
+        <span className="font-semibold">Guild</span>
       </div>
       <div className="px-2">
-        <Button variant="ghost" className="w-full justify-start gap-2 text-base" onClick={onNewChat}>
+        <Button variant="ghost" className="w-full justify-start gap-2" onClick={onNewChat}>
           <Plus /> New chat
         </Button>
       </div>
-      <div className="px-3 pb-1 pt-4 text-xs font-medium text-muted-foreground">Chats</div>
+      <div className="px-3 pb-1 pt-4 font-medium text-muted-foreground">Chats</div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2">
         <div className="space-y-0.5 pb-2">
           {chats === null &&
@@ -2475,7 +2624,7 @@ function SidebarContent({
               />
             ))}
           {chats !== null && chats.length === 0 && (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">No conversations yet.</p>
+            <p className="px-2 py-1.5 text-muted-foreground">No conversations yet.</p>
           )}
         </div>
       </div>
@@ -2500,7 +2649,7 @@ function SidebarContent({
                 </span>
               )}
               <span
-                className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                className="min-w-0 flex-1 truncate text-muted-foreground"
                 title={email}
               >
                 {displayName ?? email}

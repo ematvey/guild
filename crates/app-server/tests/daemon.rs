@@ -19,6 +19,10 @@ fn temp_socket() -> PathBuf {
 /// Distinct from temp_socket(): the attach test runs in parallel with the
 /// daemon loop test in the same process, and paths must not collide (a
 /// single-instance daemon on the shared path would kill the sibling's child).
+/// Serializes the attach tests: they mutate GUILD_DAEMON_SOCKET, and plain
+/// `cargo test` runs tests as threads of one process.
+static ATTACH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn temp_socket_attach() -> PathBuf {
     std::env::temp_dir().join(format!("guild-daemon-attach-test-{}.sock", std::process::id()))
 }
@@ -27,57 +31,79 @@ fn req(id: u64, method: &str, params: Value) -> String {
     serde_json::to_string(&Request::new(id, method, params)).unwrap()
 }
 
-/// attach() must spawn the daemon binary when none is running, handshake
-/// with it, and leave it alive (survives client exit).
+/// attach() no longer spawns anything: with no app hosting the socket it
+/// fails with a clear "start the app" error (single-process spec).
 #[test]
-fn attach_spawns_and_survives_client_exit() {
+fn attach_fails_cleanly_without_the_app() {
+    let _env = ATTACH_LOCK.lock().unwrap();
+    let path = temp_socket_attach();
+    let _ = std::fs::remove_file(&path);
+    std::env::set_var("GUILD_DAEMON_SOCKET", &path);
+    let err = guild_app_server::daemon::attach(std::path::Path::new(
+        env!("CARGO_BIN_EXE_guild-app-server"),
+    ))
+    .err()
+    .expect("nothing hosts the socket");
+    assert!(err.to_string().contains("not running"), "{err}");
+    std::env::remove_var("GUILD_DAEMON_SOCKET");
+}
+
+/// attach() succeeds against the app-hosted socket, and the host outlives a
+/// client disconnect (the GUI process keeps running with the window closed).
+#[test]
+fn attach_uses_the_app_hosted_socket() {
+    let _env = ATTACH_LOCK.lock().unwrap();
     let path = temp_socket_attach();
     let _ = std::fs::remove_file(&path);
     std::env::set_var("GUILD_DAEMON_SOCKET", &path);
 
-    let pair = guild_app_server::daemon::attach(std::path::Path::new(env!("CARGO_BIN_EXE_guild-app-server")))
-        .expect("attach spawns and handshakes");
-    let Pair(mut rd, mut wr, _) = pair;
-
-    // use the connection, then drop it — the daemon must keep running
-    writeln!(wr, "{}", req(1, "daemon.hello", json!({}))).unwrap();
-    wr.flush().unwrap();
-    let mut line = Vec::new();
-    for b in rd.by_ref().bytes() {
-        let b = b.unwrap();
-        if b == b'\n' {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dpath = path.clone();
+    rt.spawn(async move { run_daemon_on(dpath, Session::default()).await });
+    for _ in 0..100 {
+        if try_connect_at(&path).is_ok() {
             break;
         }
-        line.push(b);
+        std::thread::sleep(Duration::from_millis(50));
     }
-    let hello: Value = serde_json::from_slice(&line).unwrap();
-    assert!(hello["result"]["version"].is_string());
-    drop(rd);
-    drop(wr);
-    std::thread::sleep(Duration::from_millis(200));
-    assert!(try_connect_at(&path).is_ok(), "daemon outlives its client");
 
-    // clean up the spawned daemon via shutdown
+    let mut c = {
+        let mut c = None;
+        for _ in 0..100 {
+            if try_connect_at(&path).is_ok() {
+                c = Some(Client::connect(&path));
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        c.expect("host reachable")
+    };
+    let hello = c.call("daemon.hello", json!({}));
+    assert!(hello["result"]["version"].is_string());
+    // client exits; the host keeps the endpoint
+    drop(c);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(try_connect_at(&path).is_ok(), "host outlives its client");
+
+    // clean up the host via shutdown. Unlike the old child-process daemon,
+    // the in-process host does not exit on shutdown — it only closes the
+    // listener and removes the socket, so no EOF is readable here.
     let pair = try_connect_at(&path).unwrap();
-    let Pair(mut rd, mut wr, _) = pair;
+    let Pair(_rd, mut wr, _) = pair;
     writeln!(wr, "{}", req(1, "daemon.shutdown", json!({}))).unwrap();
     wr.flush().unwrap();
-    let mut line = Vec::new();
-    for b in rd.by_ref().bytes() {
-        let b = b.unwrap();
-        if b == b'\n' {
-            break;
-        }
-        line.push(b);
-    }
-    let _ = rd.read_to_end(&mut Vec::new());
+    drop(wr);
     for _ in 0..50 {
         if !path.exists() {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert!(!path.exists(), "daemon removes its socket on shutdown");
+    assert!(!path.exists(), "host removes its socket on shutdown");
     std::env::remove_var("GUILD_DAEMON_SOCKET");
 }
 

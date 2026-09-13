@@ -166,19 +166,34 @@ impl AppState {
         }
     }
 
-    /// Heartbeat from an executor: refreshes last_seen. Returns false for
-    /// unknown machines (they re-register by reconnecting the event stream).
-    pub fn executor_touch(&self, machine_id: &str, user_id: Uuid) -> bool {
-        let executors = self.executors.lock().unwrap();
-        match executors.get(machine_id) {
-            Some(h) if h.user_id == user_id => {
-                h.last_seen.store(
-                    chrono::Utc::now().timestamp(),
-                    std::sync::atomic::Ordering::Relaxed,
+    /// Heartbeat from an executor: refreshes last_seen, registering an
+    /// unknown machine (upsert) — liveness must not depend on any single
+    /// stream connection surviving; a reconnecting app re-registers by
+    /// heartbeat alone. Returns true when the entry is live afterwards.
+    pub fn executor_touch(&self, machine_id: &str, user_id: Uuid, org_id: Uuid, name: &str) -> bool {
+        let now = chrono::Utc::now().timestamp();
+        let mut executors = self.executors.lock().unwrap();
+        match executors.get_mut(machine_id) {
+            Some(h) => {
+                let h = Arc::make_mut(h);
+                if !name.is_empty() {
+                    h.name = name.to_string();
+                }
+                h.last_seen.store(now, std::sync::atomic::Ordering::Relaxed);
+                true
+            }
+            None => {
+                executors.insert(
+                    machine_id.to_string(),
+                    Arc::new(ExecutorHandle {
+                        user_id,
+                        org_id,
+                        name: if name.is_empty() { "guild-machine".to_string() } else { name.to_string() },
+                        last_seen: Arc::new(std::sync::atomic::AtomicI64::new(now)),
+                    }),
                 );
                 true
             }
-            _ => false,
         }
     }
 

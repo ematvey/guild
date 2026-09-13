@@ -3,6 +3,7 @@
 //! (add/remove) and delete.
 
 import { useCallback, useEffect, useState } from "react";
+import type { SectionDetailProps } from "../section-nav";
 import { ArrowLeft, Pencil, Plus, Trash2, UsersRound, X } from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
@@ -25,11 +26,12 @@ const backBtn =
   "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
 const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 
-export default function TeamsSection() {
+export default function TeamsSection({
+  detail = null,
+  onDetailChange,
+}: SectionDetailProps) {
   const [teams, setTeams] = useState<TeamRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** "new" = add flow; a team id = open that team; null = list screen. */
-  const [detail, setDetail] = useState<"new" | string | null>(null);
 
   const reload = useCallback(() => {
     api<{ teams: TeamRow[] }>("GET", "/api/v1/admin/teams")
@@ -43,14 +45,20 @@ export default function TeamsSection() {
   useEffect(reload, [reload]);
 
   if (detail !== null) {
+    // Deep-linked team page: wait for the list before resolving the id —
+    // a not-yet-loaded row would render as the add-team form.
+    if (detail !== "new" && teams === null) {
+      return <Skeleton className="h-24 w-full rounded-lg" />;
+    }
     const team = detail === "new" ? null : teams?.find((t) => t.id === detail) ?? null;
     return (
       <TeamDetail
         team={team}
         onChanged={reload}
+        onCreated={(id) => onDetailChange(id)}
         onBack={() => {
           reload();
-          setDetail(null);
+          onDetailChange(null);
         }}
       />
     );
@@ -61,7 +69,7 @@ export default function TeamsSection() {
       {error && <p className="text-base text-destructive">{error}</p>}
       <div className="flex items-center justify-between">
         <h3 className={label}>Organization teams</h3>
-        <Button size="sm" onClick={() => setDetail("new")}>
+        <Button size="sm" onClick={() => onDetailChange("new")}>
           <Plus className="mr-1 size-3.5" /> Add team
         </Button>
       </div>
@@ -80,7 +88,7 @@ export default function TeamsSection() {
             <button
               key={t.id}
               className="flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40"
-              onClick={() => setDetail(t.id)}
+              onClick={() => onDetailChange(t.id)}
             >
               <UsersRound className="size-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
@@ -101,10 +109,13 @@ export default function TeamsSection() {
 function TeamDetail({
   team,
   onChanged,
+  onCreated,
   onBack,
 }: {
   team: TeamRow | null;
   onChanged: () => void;
+  /** Called with the new team id after creation, to land on its own URL. */
+  onCreated: (id: string) => void;
   onBack: () => void;
 }) {
   const creating = team === null;
@@ -134,9 +145,9 @@ function TeamDetail({
     setBusy(true);
     try {
       if (creating) {
-        await api("POST", "/api/v1/admin/teams", { name });
+        const created = await api<{ id: string }>("POST", "/api/v1/admin/teams", { name });
         onChanged();
-        onBack();
+        onCreated(created.id);
       } else {
         await api("PUT", `/api/v1/admin/teams/${team!.id}`, { name });
         onChanged();

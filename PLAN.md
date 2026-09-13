@@ -1,9 +1,36 @@
 # Guild — current state of work
 
-Updated 2026-09-13 (run-in-folder restored). Read this before
+Updated 2026-09-13 (URL-addressed settings sub-pages). Read this before
 touching the codebase; detailed milestone plans live in `docs/plans/`,
 deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
+
+## Distinct URLs for all pages; settings sub-pages (2026-09-13)
+
+- Every distinct page now has its own URL. Settings sections already had
+  `/settings/<section>`; the sub-pages inside them were component state
+  (refresh/back lost them, no deep links). They are now URL-driven:
+  `/settings/integrations/<slug>`, `/settings/users/<id|new>`,
+  `/settings/teams/<id|new>`, `/settings/models/<model|add>`,
+  `/settings/registry/<kind>/<slug>`. Each detail segment is
+  encodeURIComponent-ed per path segment, so model ids containing `/`
+  round-trip.
+- Plumbing: settings overlay route gained a `detail` part (parseChatRoute /
+  chatRoutePath / pushRoute in WebChat); SettingsWindow forwards
+  `detail` + `onDetailChange` through SectionPane/SectionBody/LazySection;
+  sections with sub-pages (Integrations, Users, Teams, Models, Registry)
+  take their open page from props (shared `SectionDetailProps` in
+  `settings/section-nav.ts`) instead of local state.
+- Create flows land on the created object's own URL
+  (POST /admin/users and /admin/teams return the id →
+  `onCreated(id)` → `/settings/users/<id>`).
+- Deep-link loading guard: detail pages wait for the list fetch before
+  resolving the id, so a fresh reload never renders a configured item as
+  the "not configured" draft form (hit on slack on first verification).
+- Verified live on :18080 via agent-browser: deep links render the right
+  page after full reload (integration, user, model add, registry item),
+  click-through pushes the URL, browser back returns to the section list.
+- Deployed to the compose stack (:18080).
 
 ## Run in folder, context-aware UI (2026-09-13)
 

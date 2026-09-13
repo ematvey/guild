@@ -116,6 +116,17 @@ async fn list_integrations(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
     let rows = store.integrations().list(admin.0.org_id).await?;
+    let mut row_values = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let category = configured_row_category(&store, admin.0.org_id, row).await?;
+        row_values.push(json!({
+            "org_id": row.org_id,
+            "name": row.name,
+            "config": row.config,
+            "enabled": row.enabled,
+            "category": category,
+        }));
+    }
     let mut available: Vec<serde_json::Value> = crate::integrations::integration_names()
         .iter()
         // A compiled-in kind with an existing row is configured — it leaves
@@ -143,7 +154,29 @@ async fn list_integrations(
             }
         }
     }
-    Ok(Json(json!({ "integrations": rows, "available": available })))
+    Ok(Json(json!({ "integrations": row_values, "available": available })))
+}
+
+/// Category of a configured integration row, as the UI lists it: a
+/// compiled-in kind reports its own category; a registry v2 bundle with an
+/// MCP manifest (or a row already carrying mcp.url) is an MCP plugin and
+/// shadows the compiled-in kind of the same slug; anything else is "other".
+async fn configured_row_category(
+    store: &crate::store::Store,
+    org_id: Uuid,
+    row: &crate::store::integrations::IntegrationRow,
+) -> Result<String, ApiError> {
+    let mcp_claimed = latest_integration_manifest(store, org_id, &row.name)
+        .await?
+        .map(|m| m.mcp.is_some())
+        .unwrap_or(false)
+        || row.config["mcp"]["url"].as_str().is_some();
+    if mcp_claimed {
+        return Ok("mcp".to_string());
+    }
+    Ok(crate::integrations::integration_by_name(&row.name)
+        .map(|p| p.category().to_string())
+        .unwrap_or_else(|| "other".to_string()))
 }
 
 /// Latest published manifest of one registry integration item, if any.

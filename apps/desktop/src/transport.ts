@@ -146,6 +146,11 @@ export function clientId(): string {
  * machine's liveness heartbeat running. Auto-reconnects on drop. Returns a
  * stop function. */
 export function startEventStream(): () => void {
+  // Single-process spec: on the desktop, presence (registration +
+  // heartbeats) and tool dispatch are owned by the app process's standing
+  // connection — the webview carries none of it. Web clients keep this
+  // stream for org-event delivery.
+  if (IS_TAURI) return () => {};
   let stopped = false;
   let controller: AbortController | null = null;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -472,7 +477,7 @@ export async function createChat(title: string): Promise<string | null> {
 /// Frame shape passed to stream consumers: loose — the server owns the
 /// protocol (see crates/protocol/bindings/StreamEvent.ts); consumers
 /// dispatch on `type` and read only the fields they know.
-type StreamFrame = {
+export type StreamFrame = {
   type: string;
   content?: string;
   message?: string;
@@ -589,6 +594,73 @@ export async function streamChat(
     throw new Error(v?.error?.message ?? res.statusText);
   }
   await readSse(res, onEvent);
+}
+
+/// Desktop turn send: fire-and-forget POST. The standing fan-out connection
+/// (owned by the app process) delivers every frame; the per-turn SSE response
+/// is dropped unread so no second live channel exists.
+export async function sendChatNoStream(
+  chatId: string,
+  model: string,
+  prompt: string,
+  attachmentIds: string[] = [],
+  projectDir?: string | null,
+): Promise<void> {
+  const token = getToken();
+  const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      "x-guild-client-id": clientId(),
+      ...(IS_TAURI ? { "x-guild-machine-id": machineId() } : {}),
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      model,
+      messages: [{ role: "user", content: prompt }],
+      client_tools: IS_TAURI,
+      attachment_ids: attachmentIds,
+      project_dir: projectDir || undefined,
+    }),
+  });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? res.statusText);
+  }
+  try {
+    await res.body?.cancel();
+  } catch {
+    /* already consumed */
+  }
+}
+
+/// In-flight mirror catch-up from the app process (single-process spec):
+/// everything the fan-out bus delivered for this chat so far. `seq` is the
+/// watermark — frames with seq ≤ it are already reflected in the frames.
+export interface ChatSnapshot {
+  running: boolean;
+  seq: number;
+  frames: StreamFrame[];
+}
+
+export async function chatSnapshot(chatId: string): Promise<ChatSnapshot> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke("chat_snapshot", { chatId });
+}
+
+/// Pushes the run-in-folder state to the app process (tool execution lives
+/// there now — including while the window is closed).
+export async function pushChatDir(chatId: string, dir: string | null): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_chat_dir", { chatId, dir });
+}
+
+/// Hands the app process the machine identity (stable per install; keys the
+/// chat bindings). Starts presence + tool dispatch.
+export async function setMachineIdentity(machineId: string): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_machine_identity", { machineId });
 }
 
 /// Attaches to a generation that is running server-side for this chat

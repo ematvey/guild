@@ -2,6 +2,7 @@
 //! list screen with separate add / detail (edit + delete) screens.
 
 import { useCallback, useEffect, useState } from "react";
+import type { SectionDetailProps } from "../section-nav";
 import { ArrowLeft, Key, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
@@ -40,11 +41,16 @@ const fmtUsd = (n: number) => `$${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}/Mto
 
 const MODALITIES = ["image", "audio", "video"] as const;
 
-export default function ModelsSection() {
+export default function ModelsSection({
+  detail = null,
+  onDetailChange,
+}: SectionDetailProps) {
   const [routes, setRoutes] = useState<RouteRow[] | null>(null);
   const [keys, setKeys] = useState<KeyRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<View>({ kind: "list" });
+  // URL-driven view: null = list, "add" = add flow, otherwise the model id.
+  const view: View =
+    detail === null ? { kind: "list" } : detail === "add" ? { kind: "add" } : { kind: "detail", model: detail };
 
   const reload = useCallback(() => {
     api<{ routes: RouteRow[] }>("GET", "/api/v1/admin/gateway/routes")
@@ -69,7 +75,7 @@ export default function ModelsSection() {
         onChanged={() => reload()}
         onBack={() => {
           reload();
-          setView({ kind: "list" });
+          onDetailChange(null);
         }}
       />
     );
@@ -79,9 +85,9 @@ export default function ModelsSection() {
       <RouteAdd
         onAdded={(model) => {
           reload();
-          setView({ kind: "detail", model });
+          onDetailChange(model);
         }}
-        onBack={() => setView({ kind: "list" })}
+        onBack={() => onDetailChange(null)}
       />
     );
   }
@@ -129,7 +135,7 @@ export default function ModelsSection() {
             size="sm"
             variant="outline"
             className="h-8 gap-1"
-            onClick={() => setView({ kind: "add" })}
+            onClick={() => onDetailChange("add")}
           >
             <Plus className="size-3.5" /> Add model
           </Button>
@@ -149,7 +155,7 @@ export default function ModelsSection() {
               <button
                 key={r.model}
                 className={listCard}
-                onClick={() => setView({ kind: "detail", model: r.model })}
+                onClick={() => onDetailChange(r.model)}
               >
                 <span
                   className={`size-2 shrink-0 rounded-full ${
