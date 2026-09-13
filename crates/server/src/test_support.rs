@@ -117,6 +117,52 @@ pub fn note_generation(state: &AppState, chat_id: uuid::Uuid) {
     crate::http::gateway::ensure_generation(state, chat_id);
 }
 
+/// Test seam: expose a generation's frame sender so tests can emit live
+/// frames exactly like the worker does.
+pub fn generation_tx(
+    state: &AppState,
+    chat_id: uuid::Uuid,
+) -> tokio::sync::broadcast::Sender<protocol::api::StreamEvent> {
+    crate::http::gateway::ensure_generation(state, chat_id).0
+}
+
+/// Mirrors the worker's delta emission: appends to the generation's text
+/// buffer (what replay reads) AND broadcasts the live frame.
+pub fn emit_live_delta(state: &AppState, chat_id: uuid::Uuid, content: &str) {
+    use protocol::api::StreamEvent;
+    let (tx, text, _) = crate::http::gateway::ensure_generation(state, chat_id);
+    let buf = text.clone();
+    let value = content.to_string();
+    tokio::spawn(async move {
+        *buf.write().await += &value;
+    });
+    let _ = tx.send(StreamEvent::Delta { content: content.to_string() });
+}
+
+/// Mirrors the worker's client-tool dispatch: registers the suspended call
+/// AND broadcasts the ToolStarted frame, so events-stream dispatch tests can
+/// drive the real flow without a Restate runtime.
+pub fn note_client_tool(
+    state: &AppState,
+    chat_id: uuid::Uuid,
+    call_id: &str,
+    name: &str,
+    args: &str,
+    machine_id: &str,
+) {
+    use protocol::api::{StreamEvent, ToolExecutor};
+    crate::http::gateway::note_pending_tool(state, chat_id, call_id, name, args, Some(machine_id));
+    let gens = state.generations.lock().unwrap();
+    if let Some(g) = gens.get(&chat_id) {
+        let _ = g.tx.send(StreamEvent::ToolStarted {
+            call_id: call_id.to_string(),
+            name: name.to_string(),
+            arguments: args.to_string(),
+            executor: ToolExecutor::Client,
+        });
+    }
+}
+
 /// Full stack for gateway tests: Postgres + ClickHouse + a wiremock provider
 /// registered as an "openai" route serving model `gpt-test`.
 pub struct FullState {

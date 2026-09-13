@@ -1,21 +1,26 @@
-//! Tauri side of the desktop shell: attaches to the local daemon
-//! (guild-app-server's per-user daemon) and bridges JSON-RPC line protocol
-//! over the daemon socket (spec §3.1, §3.2, §3.3, §6).
+//! Tauri side of the desktop shell — SINGLE PROCESS (spec
+//! docs/specs/2026-09-13-single-process-desktop.md): the GUI process hosts
+//! the engine (session, JSON-RPC dispatch, local tool execution) directly.
+//! There is no headless daemon and no cross-process pipe to one; the local
+//! socket remains only as the CLI-verb entry point, hosted by this process.
+//!
+//! Server link: exactly one standing connection (the events stream with
+//! machine params), owned by this process — presence (heartbeat upsert),
+//! client-tool dispatch, and the user fan-out bus all ride it. The webview
+//! is a pure UI: HTTP request/response plus per-turn replay, no tool
+//! execution, no presence duty.
 
-#[cfg(unix)]
-use guild_app_server::daemon::Pair;
+use guild_app_server::jsonrpc_loop::{run_connection, Shared};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-pub const PROTOCOL_VERSION: u32 = 1;
-
-/// Client-side IPC trace: one line per attach/rpc step into %TEMP%, so a
-/// wedge on a remote user's machine can be diagnosed from the log without
-/// interactive debugging (the GUI's own console is not visible to us).
+/// Client-side IPC trace: one line per rpc step into %TEMP%, so a wedge can
+/// be diagnosed from the log without interactive debugging (the GUI's own
+/// console is not visible to us).
 pub fn ipc_trace(event: &str, detail: &str) {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ts = SystemTime::now()
@@ -34,28 +39,21 @@ pub struct UpdateState {
     pending: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
 }
 
+/// Everything the webview rpc surface needs: the in-process engine
+/// connection (pipes to the same-process dispatch loop).
 #[derive(Default)]
 pub struct EngineState {
-    /// Shared cell: the Windows supervisor task replaces the engine when the
-    /// daemon wedges, so it must be an Arc the tasks can hold (std Mutex only
-    /// - no tokio dependency in the lock itself).
     cell: Arc<Mutex<Option<Arc<Engine>>>>,
     handle: Mutex<Option<AppHandle>>,
     next_id: AtomicU64,
+    /// The engine's Shared (session + dispatch state), created at setup.
+    shared: Mutex<Option<Shared>>,
 }
 
 pub struct Engine {
-    #[cfg(unix)]
-    stdin: Arc<Mutex<Box<dyn Write + Send>>>,
-    #[cfg(windows)]
-    /// Outbound lines for the writer task. Unbounded channel: submit never
-    /// blocks the runtime (sync stdin writes on tokio workers froze it once).
-    writer: tokio::sync::mpsc::UnboundedSender<String>,
-    #[cfg(windows)]
-    dead: Arc<std::sync::atomic::AtomicBool>,
-    #[cfg(windows)]
-    /// Daemon pid from daemon.hello - the supervisor kills it on wedge.
-    daemon_pid: Option<u32>,
+    /// Client→engine write half (std pipe writer; sync writes are fine —
+    /// the dispatch loop reads on its own thread).
+    writer: Arc<Mutex<std::io::PipeWriter>>,
     responses: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>>,
     /// Completed JSON-RPC envelopes for poll-based clients: every response
     /// lands here regardless of transport, so the webview never needs a
@@ -65,7 +63,7 @@ pub struct Engine {
     submitted: Arc<Mutex<HashMap<u64, std::time::Instant>>>,
 }
 
-/// One parsed line from the engine's stdout.
+/// One parsed line from the engine.
 pub enum EngineLine {
     /// A reply carrying a request id.
     Response { id: u64, value: Value },
@@ -87,470 +85,440 @@ pub fn parse_line(line: &str) -> Option<EngineLine> {
     }
 }
 
-/// Attaches to (or spawns) the per-user daemon and builds the Engine.
-/// Unix: sync socket pair + blocking reader thread (no serialization issue).
-/// Windows: tokio named-pipe client - the std duplicated synchronous handles
-/// serialize I/O on the file object, which deadlocked the first concurrent
-/// write against the blocking reader (root cause of the pairing hang).
-pub async fn attach_engine(app: &AppHandle) -> Result<Arc<Engine>, String> {
-    #[cfg(unix)]
+/// Builds the in-process engine: two unidirectional std pipes carry the
+/// JSON-RPC line protocol between the webview-facing commands and the same
+/// `run_connection` dispatch the CLI socket serves — one dispatch surface,
+/// one session, two transports. Returns the engine (write half + response
+/// plumbing) and the read half its demux reader must consume.
+fn build_engine(shared: &Shared) -> anyhow::Result<(Engine, std::io::PipeReader)> {
+    let (rd_in, wr_in) = std::io::pipe()?; // client → engine
+    let (rd_out, wr_out) = std::io::pipe()?; // engine → client
     {
-        attach_engine_unix(app).await
-    }
-    #[cfg(windows)]
-    {
-        // The supervisor owns the lifecycle; it has usually already attached.
-        let state: State<EngineState> = app.state();
-        for _ in 0..100 {
-            if state.cell.lock().unwrap().is_some() {
-                ipc_trace("attach", "engine ready (supervisor)");
-                return state.cell.lock().unwrap().clone().ok_or("engine gone".to_string());
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        Err("daemon did not become ready in 10s".into())
-    }
-}
-
-/// Ping-id space: far above frontend ids so poll sweeps never touch them.
-#[cfg(windows)]
-static PING_ID: AtomicU64 = AtomicU64::new(u64::MAX / 2);
-
-#[cfg(windows)]
-fn kill_daemon_pid(pid: u32) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    ipc_trace("supervisor", &format!("killing daemon pid {pid}"));
-    let _ = std::process::Command::new("taskkill")
-        .args(["/F", "/PID", &pid.to_string()])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-}
-
-/// Windows supervisor: ensures an engine exists, pings it, and force-
-/// respawns a silent (wedged) daemon. A daemon that accepts connections but
-/// stops responding must never hang the UI: two ping misses, a graceful
-/// daemon.shutdown, one more miss, then taskkill by pid and a fresh attach.
-#[cfg(windows)]
-async fn supervisor_task(
-    cell: Arc<Mutex<Option<Arc<Engine>>>>,
-    app: AppHandle,
-    bin: String,
-) {
-    let mut misses: u32 = 0;
-    loop {
-        let engine = { let g = cell.lock().unwrap(); g.clone() };
-        let Some(engine) = engine else {
-            match attach_engine_windows_inner(&cell, &app, &bin).await {
-                Ok(e) => {
-                    let mut g = cell.lock().unwrap();
-                    if g.is_none() {
-                        *g = Some(e);
-                    }
-                    misses = 0;
-                }
-                Err(e) => {
-                    ipc_trace("supervisor", &format!("attach failed: {e}"));
-                    let _ = app.emit(
-                        "rpc-event",
-                        serde_json::json!({
-                            "protocol": PROTOCOL_VERSION, "event": "rpc.error",
-                            "payload": {"message": format!("daemon attach failed: {e}")}
-                        }),
-                    );
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                }
-            }
-            continue;
-        };
-        // Liveness ping on the reserved id space.
-        let ping_id = PING_ID.fetch_add(1, Ordering::SeqCst);
-        let (tx, rx) = tokio::sync::oneshot::channel::<Value>();
-        engine.responses.lock().unwrap().insert(ping_id, tx);
-        let sent = engine
-            .writer
-            .send(envelope(ping_id, "daemon.hello", &serde_json::json!({})).to_string())
-            .is_ok();
-        let ok = sent
-            && tokio::time::timeout(std::time::Duration::from_secs(8), rx)
-                .await
-                .map(|r| r.is_ok())
-                .unwrap_or(false);
-        if ok {
-            misses = 0;
-            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
-            continue;
-        }
-        misses += 1;
-        ipc_trace("supervisor", &format!("ping miss #{misses}"));
-        if misses < 2 {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            continue;
-        }
-        // Graceful attempt first: a merely-busy daemon answers shutdown and
-        // the next ping succeeds, so a healthy-but-slow daemon is never killed.
-        ipc_trace("supervisor", "daemon unresponsive - sending daemon.shutdown");
-        let _ = engine
-            .writer
-            .send(envelope(PING_ID.fetch_add(1, Ordering::SeqCst), "daemon.shutdown", &serde_json::json!({})).to_string());
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        let ping_id = PING_ID.fetch_add(1, Ordering::SeqCst);
-        let (tx2, rx2) = tokio::sync::oneshot::channel::<Value>();
-        engine.responses.lock().unwrap().insert(ping_id, tx2);
-        let _ = engine
-            .writer
-            .send(envelope(ping_id, "daemon.hello", &serde_json::json!({})).to_string());
-        let recovered = tokio::time::timeout(std::time::Duration::from_secs(5), rx2)
-            .await
-            .map(|r| r.is_ok())
-            .unwrap_or(false);
-        if recovered {
-            ipc_trace("supervisor", "daemon recovered after shutdown probe");
-            misses = 0;
-            continue;
-        }
-        ipc_trace("supervisor", "daemon wedged - killing and respawning");
-        if let Some(pid) = engine.daemon_pid {
-            kill_daemon_pid(pid);
-        }
-        {
-            let mut g = cell.lock().unwrap();
-            let same = matches!(&*g, Some(e) if Arc::ptr_eq(e, &engine));
-            if same {
-                *g = None;
-            }
-        }
-        misses = 0;
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    }
-}
-
-/// Windows engine construction: tokio named-pipe client + async handshake
-/// (build identity + daemon pid) + reader/writer tasks.
-#[cfg(windows)]
-async fn attach_engine_windows_inner(
-    cell: &Arc<Mutex<Option<Arc<Engine>>>>,
-    app: &AppHandle,
-    bin: &str,
-) -> Result<Arc<Engine>, String> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-    let path = guild_app_server::daemon::client_pipe_path().map_err(|e| e.to_string())?;
-
-    let mut stream = None;
-    for _ in 0..100u32 {
-        match tokio::net::windows::named_pipe::ClientOptions::new().open(&path) {
-            Ok(s) => {
-                stream = Some(s);
-                break;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                ipc_trace("attach", "no daemon listening - spawning detached");
-                let b = bin.to_string();
-                let _ = tokio::task::spawn_blocking(move || {
-                    guild_app_server::daemon::spawn_detached(std::path::Path::new(&b))
-                })
-                .await;
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            }
-            Err(_) => {
-                // ERROR_PIPE_BUSY or transient - a listening instance may
-                // appear shortly.
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            }
-        }
-    }
-    let stream = stream.ok_or_else(|| "daemon pipe never became available (20s)".to_string())?;
-    ipc_trace("attach-ok", "");
-
-    let (rd, mut wr) = tokio::io::split(stream);
-    let mut reader = tokio::io::BufReader::new(rd);
-    let mut daemon_pid = None;
-    let mut handshook = false;
-    'outer: for _ in 0..4u32 {
-        let hello = serde_json::json!({
-            "jsonrpc": "2.0", "id": 0, "protocol": PROTOCOL_VERSION,
-            "method": "daemon.hello", "params": {},
-        });
-        wr.write_all(format!("{hello}\n").as_bytes())
-            .await
-            .map_err(|e| format!("hello write: {e}"))?;
-        wr.flush().await.map_err(|e| format!("hello flush: {e}"))?;
-        let mut line = String::new();
-        tokio::time::timeout(std::time::Duration::from_secs(5), reader.read_line(&mut line))
-            .await
-            .map_err(|_| "handshake: daemon silent for 5s".to_string())?
-            .map_err(|e| format!("handshake read: {e}"))?;
-        let v: Value = serde_json::from_str(line.trim()).map_err(|e| format!("handshake parse: {e}"))?;
-        let build = v["result"]["build"].as_str().unwrap_or("").to_string();
-        if build != guild_app_server::protocol::rpc::BUILD_ID {
-            ipc_trace("handshake", &format!("build mismatch (daemon {build}) - replacing daemon"));
-            let sd = serde_json::json!({
-                "jsonrpc": "2.0", "id": 1, "protocol": PROTOCOL_VERSION,
-                "method": "daemon.shutdown", "params": {},
-            });
-            let _ = wr.write_all(format!("{sd}\n").as_bytes()).await;
-            let _ = wr.flush().await;
-            if let Some(p) = v["result"]["pid"].as_u64() {
-                kill_daemon_pid(p as u32);
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-            let b = bin.to_string();
-            let _ = tokio::task::spawn_blocking(move || {
-                guild_app_server::daemon::spawn_detached(std::path::Path::new(&b))
-            })
-            .await;
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            // Reopen: split consumed the stream, so recurse once via the loop
-            // by reopening into fresh halves.
-            match tokio::net::windows::named_pipe::ClientOptions::new().open(&path) {
-                Ok(s) => {
-                    let (r2, w2) = tokio::io::split(s);
-                    reader = tokio::io::BufReader::new(r2);
-                    wr = w2;
-                    continue 'outer;
-                }
-                Err(_) => continue 'outer,
-            }
-        }
-        daemon_pid = v["result"]["pid"].as_u64().map(|p| p as u32);
-        handshook = true;
-        break;
-    }
-    if !handshook {
-        return Err("daemon handshake failed after retries".into());
-    }
-    ipc_trace("handshake-ok", &format!("daemon_pid={:?}", daemon_pid));
-
-    let (writer_tx, mut writer_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let engine = Arc::new(Engine {
-        writer: writer_tx,
-        dead: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        daemon_pid,
-        responses: Arc::new(Mutex::new(HashMap::new())),
-        results: Arc::new(Mutex::new(HashMap::new())),
-        submitted: Arc::new(Mutex::new(HashMap::new())),
-    });
-
-    // Writer task: bounded write; a stuck pipe (daemon not reading) marks the
-    // engine dead instead of blocking a runtime worker.
-    {
-        let dead = engine.dead.clone();
-        let mut wr = wr;
-        tokio::spawn(async move {
-            while let Some(line) = writer_rx.recv().await {
-                let t0 = std::time::Instant::now();
-                let op = async {
-                    wr.write_all(line.as_bytes()).await?;
-                    wr.write_all(b"\n").await?;
-                    wr.flush().await
-                };
-                match tokio::time::timeout(std::time::Duration::from_secs(5), op).await {
-                    Ok(Ok(())) => {
-                        ipc_trace("write-ok", &format!("{}B in {:?}", line.len(), t0.elapsed()))
-                    }
-                    Ok(Err(e)) => {
-                        ipc_trace("write-fail", &format!("err={e}"));
-                        dead.store(true, Ordering::SeqCst);
-                        break;
-                    }
-                    Err(_) => {
-                        ipc_trace("write-fail", "timeout (daemon not reading)");
-                        dead.store(true, Ordering::SeqCst);
-                        break;
-                    }
-                }
-            }
-            ipc_trace("writer-exit", "");
+        let shared = shared.clone();
+        // The dispatch loop runs for the process lifetime; it ends only when
+        // the pipe write end drops (app exit).
+        std::thread::spawn(move || {
+            let rt = tauri::async_runtime::handle();
+            let _ = rt.block_on(run_connection(&shared, rd_in, wr_out));
         });
     }
-
-    // Reader task: same demux as the unix thread, async.
-    {
-        let mut reader = reader;
-        let responses = engine.responses.clone();
-        let results = engine.results.clone();
-        let submitted = engine.submitted.clone();
-        let app_handle = app.clone();
-        let cell2 = cell.clone();
-        let eng2 = engine.clone();
-        tokio::spawn(async move {
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => {
-                        ipc_trace("reader-exit", "eof");
-                        break;
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        ipc_trace("reader-exit", &format!("err={e}"));
-                        break;
-                    }
-                }
-                match parse_line(&line) {
-                    Some(EngineLine::Response { id, value }) => {
-                        ipc_trace("resp", &format!("id={id} bytes={}", line.len()));
-                        results.lock().unwrap().insert(id, value.clone());
-                        if let Some(sender) = responses.lock().unwrap().remove(&id) {
-                            let _ = sender.send(value);
-                        }
-                    }
-                    Some(EngineLine::Event(ev)) => {
-                        let _ = app_handle.emit("rpc-event", ev);
-                    }
-                    None => {
-                        let _ = app_handle.emit(
-                            "rpc-event",
-                            serde_json::json!({
-                                "protocol": PROTOCOL_VERSION, "event": "rpc.error",
-                                "payload": {"message": format!("unparseable daemon line: {line}")}
-                            }),
-                        );
-                    }
-                }
-            }
-            // Daemon gone: fail pending rpcs, drop the engine if it is ours.
-            {
-                let mut sub = submitted.lock().unwrap();
-                let mut res = results.lock().unwrap();
-                for id in sub.keys() {
-                    res.insert(
-                        *id,
-                        serde_json::json!({"id": *id, "error": {"message": "engine dropped the request"}}),
-                    );
-                }
-                sub.clear();
-                responses.lock().unwrap().clear();
-            }
-            let same = { let g = cell2.lock().unwrap(); matches!(&*g, Some(e) if Arc::ptr_eq(e, &eng2)) };
-            if same {
-                *cell2.lock().unwrap() = None;
-            }
-            let _ = app_handle.emit(
-                "rpc-event",
-                serde_json::json!({
-                    "protocol": PROTOCOL_VERSION, "event": "rpc.error",
-                    "payload": {"message": "daemon connection lost"}
-                }),
-            );
-        });
-    }
-
-    Ok(engine)
+    Ok((
+        Engine {
+            writer: Arc::new(Mutex::new(wr_in)),
+            responses: Arc::new(Mutex::new(HashMap::new())),
+            results: Arc::new(Mutex::new(HashMap::new())),
+            submitted: Arc::new(Mutex::new(HashMap::new())),
+        },
+        rd_out,
+    ))
 }
 
-/// Unix path: sync socket pair + blocking reader thread (safe there: the
-/// read and write fds are independent, no kernel serialization).
-#[cfg(unix)]
-async fn attach_engine_unix(app: &AppHandle) -> Result<Arc<Engine>, String> {
-    // The daemon should be a copy of this binary (single-binary design);
-    // GUILD_DAEMON_BIN overrides for dev.
-    let bin = std::env::var("GUILD_DAEMON_BIN").unwrap_or_else(|_| {
-        std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "guild".to_string())
-    });
-    // daemon::attach is fully blocking — keep it off the async reactor.
-    let pair = tokio::task::spawn_blocking(move || {
-        guild_app_server::daemon::attach(std::path::Path::new(&bin))
-    })
-    .await
-    .map_err(|e| format!("daemon attach join: {e}"))?
-    .map_err(|e| format!("daemon attach failed: {e}"))?;
-    let Pair(read, write, raw_read) = pair;
-    ipc_trace("attach-ok", "");
-
-    let engine = Arc::new(Engine {
-        stdin: Arc::new(Mutex::new(write)),
-        responses: Arc::new(Mutex::new(HashMap::new())),
-        results: Arc::new(Mutex::new(HashMap::new())),
-        submitted: Arc::new(Mutex::new(HashMap::new())),
-    });
-
-    // Reader thread: demux lines between responses and events.
-    let responses = engine.responses.clone();
-    let results = engine.results.clone();
-    let submitted = engine.submitted.clone();
-    let app_handle = app.clone();
+/// Demuxing reader for the engine→client pipe: responses land in the shared
+/// response/result maps, server-push events are emitted to the webview as
+/// `rpc-event` (same shape the daemon pipe used to deliver).
+fn start_engine_reader(app: AppHandle, engine: Arc<Engine>, rd_out: std::io::PipeReader) {
     std::thread::spawn(move || {
-        ipc_trace("reader-start", "");
-        // LineReader: on Windows the read half must be peek-polled, never
-        // blocked, or it parks the file object's I/O lock and starves the
-        // concurrent writer (the original first-rpc deadlock).
-        let mut reader = guild_app_server::daemon::LineReader::new(read, raw_read);
+        let mut reader = std::io::BufReader::new(rd_out);
+        use std::io::BufRead;
         loop {
             let mut line = String::new();
             match reader.read_line(&mut line) {
-                Ok(false) => {
+                Ok(0) => {
                     ipc_trace("reader-exit", "eof");
                     break;
                 }
+                Ok(_) => {}
                 Err(e) => {
                     ipc_trace("reader-exit", &format!("err={e}"));
                     break;
                 }
-                Ok(true) => {}
             }
             match parse_line(&line) {
                 Some(EngineLine::Response { id, value }) => {
                     ipc_trace("resp", &format!("id={id} bytes={}", line.len()));
-                    results.lock().unwrap().insert(id, value.clone());
-                    if let Some(sender) = responses.lock().unwrap().remove(&id) {
+                    engine.results.lock().unwrap().insert(id, value.clone());
+                    if let Some(sender) = engine.responses.lock().unwrap().remove(&id) {
                         let _ = sender.send(value);
                     }
                 }
                 Some(EngineLine::Event(ev)) => {
-                    let _ = app_handle.emit("rpc-event", ev);
+                    let _ = app.emit("rpc-event", ev);
                 }
                 None => {
-                    let _ = app_handle.emit(
+                    let _ = app.emit(
                         "rpc-event",
                         serde_json::json!({
-                            "protocol": PROTOCOL_VERSION, "event": "rpc.error",
-                            "payload": {"message": format!("unparseable daemon line: {line}")}
+                            "protocol": 1u64, "event": "rpc.error",
+                            "payload": {"message": format!("unparseable engine line: {line}")},
                         }),
                     );
                 }
             }
         }
-        // daemon gone: fail every pending RPC (dropping the oneshot senders
-        // surfaces "engine dropped the request" to the callers instead of a
-        // forever-pending invoke; poll clients get error envelopes), then
-        // drop our handle so the next start_engine re-attaches (respawning
-        // if needed).
+        // Engine gone (app teardown): fail every pending RPC.
         {
-            let mut sub = submitted.lock().unwrap();
-            let mut res = results.lock().unwrap();
-            for id in sub.keys() {
+            let mut res = engine.results.lock().unwrap();
+            for id in engine.submitted.lock().unwrap().keys() {
                 res.insert(
                     *id,
                     serde_json::json!({"id": *id, "error": {"message": "engine dropped the request"}}),
                 );
             }
-            sub.clear();
-            let mut pending = responses.lock().unwrap();
-            pending.clear();
         }
-        let state: State<EngineState> = app_handle.state();
-        *state.cell.lock().unwrap() = None;
-        let _ = app_handle.emit(
+        let _ = app.emit(
             "rpc-event",
             serde_json::json!({
-                "protocol": PROTOCOL_VERSION, "event": "rpc.error",
-                "payload": {"message": "daemon connection lost"}
+                "protocol": 1u64, "event": "rpc.error",
+                "payload": {"message": "engine connection lost"},
             }),
         );
     });
-
-    Ok(engine)
 }
 
 fn envelope(id: u64, method: &str, params: &Value) -> Value {
     serde_json::json!({
-        "jsonrpc": "2.0", "id": id, "protocol": PROTOCOL_VERSION,
+        "jsonrpc": "2.0", "id": id, "protocol": 1u64,
         "method": method, "params": params,
     })
+}
+
+// ---- server link (the single standing connection) ----
+
+/// In-flight mirror for one chat, fed by the fan-out bus: enough state for a
+/// webview that opens (or reloads) mid-generation to catch up without a
+/// second server connection. `frames` are the wire events in arrival order;
+/// `seq` counts them.
+#[derive(Default)]
+struct Mirror {
+    seq: u64,
+    running: bool,
+    frames: Vec<Value>,
+}
+
+#[derive(Default)]
+pub struct GuildState {
+    /// The engine Shared: one session, one dispatch surface, shared with the
+    /// CLI socket accept loop.
+    shared: Mutex<Option<Shared>>,
+    /// Machine identity — the webview's localStorage id (it keys the chat
+    /// bindings), passed in at boot. Presence starts only once it is set.
+    machine_id: Mutex<Option<String>>,
+    /// chat_id → workspace folder for local tool execution (pushed by the
+    /// webview's run-in-folder state).
+    dirs: Mutex<HashMap<String, String>>,
+    /// chat_id → in-flight mirror.
+    mirrors: Mutex<HashMap<String, Mirror>>,
+    /// Bump to force the link task to re-read its config (login, sign-out,
+    /// machine identity set).
+    link_epoch: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl GuildState {
+    fn shared(&self) -> Option<Shared> {
+        self.shared.lock().unwrap().clone()
+    }
+
+    /// Snapshot of what the link needs right now: None until the webview
+    /// provided the machine identity and a session exists.
+    fn link_config(&self) -> Option<(String, String, String, String)> {
+        let machine_id = self.machine_id.lock().unwrap().clone()?;
+        let shared = self.shared()?;
+        let s = shared.session.lock().unwrap();
+        let cloud = s.cloud.as_ref()?;
+        Some((
+            cloud.base_url.clone(),
+            cloud.token.clone(),
+            machine_id,
+            machine_name(),
+        ))
+    }
+
+    fn mirror_update<F: FnOnce(&mut Mirror)>(&self, chat_id: &str, f: F) -> u64 {
+        let mut mirrors = self.mirrors.lock().unwrap();
+        let m = mirrors.entry(chat_id.to_string()).or_default();
+        f(m);
+        m.seq
+    }
+}
+
+fn machine_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "guild-machine".to_string())
+}
+
+/// Percent-encode a query component (machine ids/names are simple, but the
+/// name can carry spaces).
+fn qenc(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// The server link task: keeps exactly one standing connection (events
+/// stream with machine params) while a session + machine identity exist.
+/// Heartbeats (upsert) run independently of the stream so a stream flap
+/// never unregisters a running app. Tool frames for this machine are
+/// executed locally and their results POSTed back.
+async fn app_link_task(state: Arc<GuildState>, app: AppHandle) {
+    let mut last_cfg: Option<(String, String, String)> = None; // base, token, machine
+    let mut was_connected = false;
+    loop {
+        let Some((base, token, machine_id, machine_name)) = state.link_config() else {
+            if was_connected {
+                was_connected = false;
+                let _ = app.emit("app-presence", serde_json::json!({ "connected": false }));
+            }
+            last_cfg = None;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            continue;
+        };
+        let changed = last_cfg.as_ref() != Some(&(base.clone(), token.clone(), machine_id.clone()));
+        if changed {
+            // New session or identity: drop the mirrors (the server replays
+            // in-flight state on connect) and let the reconnect below run.
+            state.mirrors.lock().unwrap().clear();
+            last_cfg = Some((base.clone(), token.clone(), machine_id.clone()));
+        }
+        let epoch = state.link_epoch.load(Ordering::SeqCst);
+        let res = link_once(&state, &app, &base, &token, &machine_id, &machine_name).await;
+        if was_connected {
+            was_connected = false;
+            let _ = app.emit("app-presence", serde_json::json!({ "connected": false }));
+        }
+        if let Err(e) = res {
+            ipc_trace("link", &format!("stream ended: {e}"));
+        }
+        // Config changed while connected (login/sign-out/machine set): loop
+        // immediately; otherwise back off.
+        if state.link_epoch.load(Ordering::SeqCst) == epoch
+            && last_cfg.as_ref().map(|c| c.1.as_str()) == Some(token.as_str())
+        {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+    }
+}
+
+/// One stream connection + its heartbeat loop. Returns when the stream ends.
+async fn link_once(
+    state: &Arc<GuildState>,
+    app: &AppHandle,
+    base: &str,
+    token: &str,
+    machine_id: &str,
+    machine_name: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{}/api/v1/events/stream?machine_id={}&machine_name={}",
+        base.trim_end_matches('/'),
+        qenc(machine_id),
+        qenc(machine_name)
+    );
+    let res = client
+        .get(&url)
+        .bearer_auth(token)
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .map_err(|e| format!("stream connect: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("stream connect: HTTP {}", res.status()));
+    }
+
+    // Heartbeat (upsert): liveness is heartbeat-based — the stream dropping
+    // must not unregister a running app. Runs while this connection lives.
+    let hb_client = client.clone();
+    let hb_base = base.to_string();
+    let hb_token = token.to_string();
+    let hb_mid = machine_id.to_string();
+    let hb_name = machine_name.to_string();
+    let hb = tokio::spawn(async move {
+        loop {
+            let _ = hb_client
+                .post(format!("{}/api/v1/machines/heartbeat", hb_base.trim_end_matches('/')))
+                .bearer_auth(&hb_token)
+                .json(&serde_json::json!({ "machine_id": hb_mid, "machine_name": hb_name }))
+                .send()
+                .await;
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
+
+    let _ = app.emit("app-presence", serde_json::json!({ "connected": true }));
+    ipc_trace("link", "stream connected");
+
+    // Read the SSE body: split into events on blank lines.
+    use futures::StreamExt as _;
+    let mut stream = res.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut result = Ok(());
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                buf.extend_from_slice(&bytes);
+                while let Some(pos) = find_blank_line(&buf) {
+                    let event_text = String::from_utf8_lossy(&buf[..pos]).into_owned();
+                    buf.drain(..pos + 2);
+                    if let Some(data) = sse_data(&event_text) {
+                        if let Err(e) = handle_app_frame(state, app, &client, base, token, machine_id, &data).await {
+                            ipc_trace("link", &format!("frame error: {e}"));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                result = Err(format!("stream read: {e}"));
+                break;
+            }
+        }
+    }
+    hb.abort();
+    let _ = app.emit("app-stream-reconnected", serde_json::json!({}));
+    result
+}
+
+fn find_blank_line(buf: &[u8]) -> Option<usize> {
+    buf.windows(2).position(|w| w == b"\n\n")
+}
+
+/// Extracts the `data:` payload of one SSE event block.
+fn sse_data(event_text: &str) -> Option<String> {
+    let mut data = String::new();
+    for line in event_text.lines() {
+        if let Some(rest) = line.strip_prefix("data: ") {
+            data.push_str(rest);
+        } else if let Some(rest) = line.strip_prefix("data:") {
+            data.push_str(rest.trim_start());
+        }
+    }
+    if data.is_empty() {
+        None
+    } else {
+        Some(data)
+    }
+}
+
+/// Handles one fan-out frame: mirrors it for late webviews and — for client
+/// tools bound to this machine — executes it and posts the result.
+#[allow(clippy::too_many_arguments)]
+async fn handle_app_frame(
+    state: &Arc<GuildState>,
+    app: &AppHandle,
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    machine_id: &str,
+    data: &str,
+) -> Result<(), String> {
+    let v: Value = serde_json::from_str(data).map_err(|e| format!("frame parse: {e}"))?;
+    let chat_id = v["chat_id"].as_str().unwrap_or_default().to_string();
+    let ev = v["event"].clone();
+    let ev_type = ev["type"].as_str().unwrap_or_default().to_string();
+
+    // Mirror + forward to the webview (it renders what it has open and asks
+    // for the mirror when it needs catch-up).
+    let seq = state.mirror_update(&chat_id, |m| {
+        m.running = !matches!(ev_type.as_str(), "done" | "error");
+        if m.running {
+            m.frames.push(ev.clone());
+            if m.frames.len() > 4000 {
+                m.frames.drain(..1000);
+            }
+        } else {
+            // Turn over: the durable thread has everything; drop the mirror.
+            m.frames.clear();
+        }
+        m.seq += 1;
+    });
+    let _ = app.emit(
+        "app-frame",
+        serde_json::json!({ "chat_id": chat_id, "seq": seq, "event": ev }),
+    );
+
+    if ev_type == "tool_started" && ev["executor"].as_str() == Some("client") {
+        // Execute only for THIS machine (other devices render).
+        let bound = v["machine_id"].as_str().unwrap_or_default();
+        if bound == machine_id {
+            let call_id = ev["call_id"].as_str().unwrap_or_default().to_string();
+            let name = ev["name"].as_str().unwrap_or_default().to_string();
+            let args = ev["arguments"].as_str().unwrap_or("{}").to_string();
+            let st = state.clone();
+            let client = client.clone();
+            let base = base.to_string();
+            let token = token.to_string();
+            let chat = chat_id.clone();
+            tokio::spawn(async move {
+                if let Err(e) = execute_tool(&st, &client, &base, &token, &chat, &call_id, &name, &args).await {
+                    ipc_trace("tool", &format!("{name} {call_id} failed: {e}"));
+                }
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Runs one client tool in the chat's workspace folder and POSTs the result.
+async fn execute_tool(
+    state: &Arc<GuildState>,
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    chat_id: &str,
+    call_id: &str,
+    name: &str,
+    args_json: &str,
+) -> Result<(), String> {
+    let dir = state.dirs.lock().unwrap().get(chat_id).cloned();
+    let args: Value = serde_json::from_str(args_json).unwrap_or(serde_json::json!({}));
+    let outcome: Result<Value, String> = match dir {
+        None => Err("no workspace folder is set for this chat — pick one with 'Run in folder…' in the composer".to_string()),
+        Some(dir) => {
+            let registry = guild_core::tools::ToolRegistry::builtins();
+            match registry.get(name) {
+                Some(tool) => match tool.run(std::path::Path::new(&dir), args).await {
+                    Ok(out) => Ok(serde_json::json!({
+                        "content": out.output_for_model,
+                        "is_error": false,
+                        "meta": out.meta,
+                    })),
+                    Err(e) => Ok(serde_json::json!({ "content": e.to_string(), "is_error": true })),
+                },
+                None => Err(format!("unknown tool {name}")),
+            }
+        }
+    };
+    let payload = match outcome {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "content": e, "is_error": true }),
+    };
+    let url = format!(
+        "{}/api/v1/gateway/chat/{}/tools/{}/result",
+        base.trim_end_matches('/'),
+        chat_id,
+        call_id
+    );
+    let res = client
+        .post(&url)
+        .bearer_auth(token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("result post: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("result post: HTTP {}", res.status()));
+    }
+    ipc_trace("tool", &format!("{name} {call_id} ok"));
+    Ok(())
 }
 
 // Commands live in a submodule: `#[tauri::command]` in the crate-root
@@ -558,43 +526,100 @@ fn envelope(id: u64, method: &str, params: &Value) -> Value {
 pub mod commands {
     use super::*;
 
+    /// Idempotent: the engine exists from app setup; kept so the webview's
+    /// boot flow is unchanged.
     #[tauri::command]
     pub async fn start_engine(state: State<'_, EngineState>) -> Result<(), String> {
-        let t0 = std::time::Instant::now();
+        if state.cell.lock().unwrap().is_some() {
+            return Ok(());
+        }
+        let shared = state
+            .shared
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| "engine not initialized".to_string())?;
+        let (engine, rd_out) = build_engine(&shared).map_err(|e| e.to_string())?;
+        let engine = Arc::new(engine);
         let handle = state
             .handle
             .lock()
             .unwrap()
             .clone()
             .expect("app handle set at setup");
-        // Drop the guard before awaiting: tauri command futures must be Send.
-        if state.cell.lock().unwrap().is_some() {
-            ipc_trace("start-engine", "already-attached");
-            return Ok(());
-        }
-        ipc_trace("start-engine", "attaching");
-        let engine = match attach_engine(&handle).await {
-            Ok(e) => e,
-            Err(e) => {
-                ipc_trace("start-engine", &format!("failed in {:?}: {e}", t0.elapsed()));
-                return Err(e);
-            }
-        };
-        ipc_trace("start-engine", &format!("attached in {:?}", t0.elapsed()));
+        start_engine_reader(handle, engine.clone(), rd_out);
         let mut guard = state.cell.lock().unwrap();
         if guard.is_none() {
-            // another concurrent attach may have won; its handle is equally
-            // good (both are daemon connections)
             *guard = Some(engine);
         }
         Ok(())
     }
 
+    /// The webview hands over its machine identity (localStorage, stable per
+    /// install — it keys existing chat bindings). Starts/refreshes the
+    /// server link.
+    #[tauri::command]
+    pub async fn set_machine_identity(
+        state: State<'_, Arc<GuildState>>,
+        machine_id: String,
+    ) -> Result<(), String> {
+        let changed = {
+            let mut m = state.machine_id.lock().unwrap();
+            let changed = m.as_deref() != Some(machine_id.as_str());
+            *m = Some(machine_id);
+            changed
+        };
+        if changed {
+            state
+                .link_epoch
+                .fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    /// The webview pushes the run-in-folder state (per chat) so the app
+    /// process can execute tools — including while the window is closed.
+    #[tauri::command]
+    pub async fn set_chat_dir(
+        state: State<'_, Arc<GuildState>>,
+        chat_id: String,
+        dir: Option<String>,
+    ) -> Result<(), String> {
+        let mut dirs = state.dirs.lock().unwrap();
+        match dir {
+            Some(d) => {
+                dirs.insert(chat_id, d);
+            }
+            None => {
+                dirs.remove(&chat_id);
+            }
+        }
+        Ok(())
+    }
+
+    /// In-flight mirror catch-up for a webview opening (or reloading) a chat
+    /// mid-generation: everything the fan-out bus delivered so far, plus the
+    /// seq watermark — frames with seq ≤ this are already reflected.
+    #[tauri::command]
+    pub async fn chat_snapshot(
+        state: State<'_, Arc<GuildState>>,
+        chat_id: String,
+    ) -> Result<Value, String> {
+        let mirrors = state.mirrors.lock().unwrap();
+        let Some(m) = mirrors.get(&chat_id) else {
+            return Ok(serde_json::json!({ "running": false, "seq": 0, "frames": [] }));
+        };
+        Ok(serde_json::json!({
+            "running": m.running,
+            "seq": m.seq,
+            "frames": m.frames,
+        }))
+    }
+
     /// Submit an rpc without waiting for its response: returns the request id
     /// immediately. Results are collected by rpc_poll. This keeps every webview
     /// invoke sub-millisecond — Windows WebView2 can silently lose long-lived
-    /// WebResourceRequested responses, and a pair/login must not depend on
-    /// that path.
+    /// invoke responses, and a pair/login must not depend on that path.
     #[tauri::command]
     pub async fn rpc_submit(
         state: State<'_, EngineState>,
@@ -603,47 +628,30 @@ pub mod commands {
     ) -> Result<u64, String> {
         let engine = {
             let guard = state.cell.lock().unwrap();
-            guard
-                .clone()
-                .ok_or_else(|| "engine not started".to_string())?
+            guard.clone().ok_or_else(|| "engine not started".to_string())?
         };
         let id = state.next_id.fetch_add(1, Ordering::SeqCst);
         ipc_trace("rpc-start", &format!("id={id} method={method}"));
-        engine.submitted.lock().unwrap().insert(id, std::time::Instant::now());
-        #[cfg(unix)]
+        engine
+            .submitted
+            .lock()
+            .unwrap()
+            .insert(id, std::time::Instant::now());
+        let mut w = engine
+            .writer
+            .lock()
+            .unwrap();
+        if let Err(e) = w
+            .write_all(envelope(id, &method, &params).to_string().as_bytes())
+            .and_then(|_| w.write_all(b"\n"))
+            .and_then(|_| w.flush())
         {
-            let mut stdin = engine.stdin.lock().unwrap();
-            if let Err(e) = stdin
-                .write_all(envelope(id, &method, &params).to_string().as_bytes())
-                .and_then(|_| stdin.write_all(b"\n"))
-                .and_then(|_| stdin.flush())
-            {
-                ipc_trace("write-fail", &format!("id={id} err={e}"));
-                engine.submitted.lock().unwrap().remove(&id);
-                *state.cell.lock().unwrap() = None;
-                return Err(format!("engine write failed: {e}"));
-            }
+            ipc_trace("write-fail", &format!("id={id} err={e}"));
+            engine.submitted.lock().unwrap().remove(&id);
+            *state.cell.lock().unwrap() = None;
+            return Err(format!("engine write failed: {e}"));
         }
-        #[cfg(windows)]
-        {
-            if engine.dead.load(Ordering::SeqCst) {
-                engine.submitted.lock().unwrap().remove(&id);
-                let mut g = state.cell.lock().unwrap();
-                let same = matches!(&*g, Some(e) if Arc::ptr_eq(e, &engine));
-                if same {
-                    *g = None;
-                }
-                return Err("engine connection lost - reconnecting".to_string());
-            }
-            if let Err(e) = engine
-                .writer
-                .send(envelope(id, &method, &params).to_string())
-            {
-                ipc_trace("write-fail", &format!("id={id} err={e}"));
-                engine.submitted.lock().unwrap().remove(&id);
-                return Err(format!("engine write failed: {e}"));
-            }
-        }
+        drop(w);
         ipc_trace("write-ok", &format!("id={id}"));
         Ok(id)
     }
@@ -715,16 +723,13 @@ pub mod commands {
 
     #[tauri::command]
     pub async fn rpc_request(
-        app: AppHandle,
         state: State<'_, EngineState>,
         method: String,
         params: Value,
     ) -> Result<Value, String> {
         let engine = {
             let guard = state.cell.lock().unwrap();
-            guard
-                .clone()
-                .ok_or_else(|| "engine not started".to_string())?
+            guard.clone().ok_or_else(|| "engine not started".to_string())?
         };
         let id = state.next_id.fetch_add(1, Ordering::SeqCst);
         let t0 = std::time::Instant::now();
@@ -733,31 +738,16 @@ pub mod commands {
         // inside #[tauri::command] scopes; oneshot stays unambiguous.
         let (tx, rx) = tokio::sync::oneshot::channel::<Value>();
         engine.responses.lock().unwrap().insert(id, tx);
-        #[cfg(unix)]
         {
-            let mut stdin = engine.stdin.lock().unwrap();
-            if let Err(e) = stdin
+            let mut w = engine.writer.lock().unwrap();
+            if let Err(e) = w
                 .write_all(envelope(id, &method, &params).to_string().as_bytes())
-                .and_then(|_| stdin.write_all(b"\n"))
-                .and_then(|_| stdin.flush())
+                .and_then(|_| w.write_all(b"\n"))
+                .and_then(|_| w.flush())
             {
-                // write failed → daemon is gone or wedged; drop the handle so
-                // the next start_engine re-attaches (respawning if needed).
                 ipc_trace("write-fail", &format!("id={id} err={e}"));
                 *state.cell.lock().unwrap() = None;
                 return Err(format!("engine write failed: {e}"));
-            }
-        }
-        #[cfg(windows)]
-        {
-            if engine
-                .writer
-                .send(envelope(id, &method, &params).to_string())
-                .is_err()
-            {
-                ipc_trace("write-fail", &format!("id={id} err=channel closed"));
-                *state.cell.lock().unwrap() = None;
-                return Err("engine write failed: channel closed".into());
             }
         }
         ipc_trace("write-ok", &format!("id={id}"));
@@ -776,9 +766,6 @@ pub mod commands {
             }
             Err(_) => {
                 engine.responses.lock().unwrap().remove(&id);
-                // the connection is wedged: force a fresh attach next time
-                let state: State<EngineState> = app.state();
-                *state.cell.lock().unwrap() = None;
                 ipc_trace("rpc-timeout", &format!("id={id} after {:?}", t0.elapsed()));
                 Err("engine timed out".into())
             }
@@ -888,36 +875,143 @@ pub fn start_update_checker(app: AppHandle) {
     });
 }
 
+fn show_main_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
+        // single-instance must be the first plugin: a second launch focuses
+        // the running one instead of forking a second engine/session.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(EngineState::default())
         .manage(UpdateState::default())
+        .manage(Arc::new(GuildState::default()))
         .invoke_handler(tauri::generate_handler![
             commands::start_engine,
             commands::rpc_request,
             commands::rpc_submit,
             commands::rpc_poll,
+            commands::set_machine_identity,
+            commands::set_chat_dir,
+            commands::chat_snapshot,
             commands::install_update,
             commands::pending_update_version
         ])
         .setup(|app| {
-            let state: State<EngineState> = app.state();
-            *state.handle.lock().unwrap() = Some(app.handle().clone());
-            #[cfg(windows)]
+            let handle = app.handle().clone();
+
+            // One session, one dispatch surface. The CLI socket and the
+            // webview pipes both serve this Shared. Bounded: an unreachable
+            // server must not hang the window open — the token stays usable
+            // by the link either way.
+            let session = tauri::async_runtime::block_on(async {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    guild_app_server::jsonrpc_loop::restored_session(),
+                )
+                .await
+                {
+                    Ok(r) => r.unwrap_or_else(|_| Default::default()),
+                    Err(_) => {
+                        eprintln!("setup: session restore timed out; starting without a validated session");
+                        Default::default()
+                    }
+                }
+            });
+            let shared = guild_app_server::jsonrpc_loop::Shared::new(session);
             {
-                // The supervisor owns the daemon lifecycle: attach, liveness
-                // pings, and force-respawn of a wedged daemon. Spawned once.
-                let cell = state.cell.clone();
-                let app_handle = app.handle().clone();
-                let bin = std::env::current_exe()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|_| "guild".to_string());
-                tauri::async_runtime::spawn(supervisor_task(cell, app_handle, bin));
+                let state: State<EngineState> = app.state();
+                *state.shared.lock().unwrap() = Some(shared.clone());
             }
-            start_update_checker(app.handle().clone());
+            {
+                let guild: State<Arc<GuildState>> = app.state();
+                *guild.shared.lock().unwrap() = Some(shared.clone());
+            }
+
+            // CLI verbs: the socket is hosted by this process, backed by its
+            // own restored session (login/pair through the webview writes the
+            // same token store, so both surfaces stay authed). If an old
+            // background daemon still owns the endpoint, this returns Ok and
+            // the stale one serves CLI until it is shut down.
+            {
+                tauri::async_runtime::spawn(async move {
+                    match guild_app_server::jsonrpc_loop::restored_session().await {
+                        Ok(cli_session) => {
+                            let _ = guild_app_server::daemon::run_daemon_on(
+                                guild_app_server::daemon::socket_path().expect("socket path"),
+                                cli_session,
+                            )
+                            .await;
+                        }
+                        Err(e) => eprintln!("cli socket host: session restore failed: {e}"),
+                    }
+                });
+            }
+
+            // The webview-facing engine (in-process pipes).
+            {
+                let state: State<EngineState> = app.state();
+                let (engine, rd_out) = build_engine(&shared).map_err(|e| e.to_string())?;
+                let engine = Arc::new(engine);
+                start_engine_reader(handle.clone(), engine.clone(), rd_out);
+                *state.cell.lock().unwrap() = Some(engine);
+            }
+
+            // The single standing server connection: shares the managed
+            // state (machine identity, dirs, mirrors) with the commands.
+            {
+                let guild: State<Arc<GuildState>> = app.state();
+                let guild = guild.inner().clone();
+                tauri::async_runtime::spawn(app_link_task(guild, handle.clone()));
+            }
+
+            // Window close → collapse to tray (the process keeps executing
+            // tools and holding presence). Real exit only from the tray.
+            if let Some(win) = app.get_webview_window("main") {
+                let win2 = win.clone();
+                win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = win2.hide();
+                    }
+                });
+            }
+
+            // Tray: Open / Quit.
+            use tauri::menu::{Menu, MenuItem};
+            use tauri::tray::TrayIconBuilder;
+            let open = MenuItem::with_id(app, "open", "Open Guild", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Guild", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &quit])?;
+            let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))
+                .map_err(|e| e.to_string())?;
+            TrayIconBuilder::with_id("guild-tray")
+                .icon(icon)
+                .tooltip("Guild")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => show_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            start_update_checker(handle.clone());
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -948,5 +1042,20 @@ mod tests {
         let v = envelope(5, "login", &serde_json::json!({"a": 1}));
         assert_eq!(v["protocol"], 1);
         assert_eq!(v["id"], 5);
+    }
+
+    #[test]
+    fn sse_data_extracts_payload() {
+        let ev = "event: app\ndata: {\"chat_id\":\"x\"}\n\n";
+        assert_eq!(sse_data(ev).as_deref(), Some("{\"chat_id\":\"x\"}"));
+        assert_eq!(sse_data(": keepalive\n\n"), None);
+        // comment-only block without data
+        assert_eq!(sse_data(": ping\n\n"), None);
+    }
+
+    #[test]
+    fn qenc_leaves_simple_ids() {
+        assert_eq!(qenc("0dfdd66e-315a"), "0dfdd66e-315a");
+        assert_eq!(qenc("my machine"), "my%20machine");
     }
 }

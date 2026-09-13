@@ -181,26 +181,22 @@ pub fn attach(bin: &Path) -> anyhow::Result<Pair> {
 /// `attach` with an explicit build-expectation override (None = accept any
 /// daemon speaking the current protocol — used by tests).
 pub fn attach_with(bin: &Path, expected_build: Option<&str>) -> anyhow::Result<Pair> {
-    for attempt in 0..2u8 {
+    // No spawn fallback: the single-process app hosts the socket itself; a
+    // CLI verb without a running app fails instead of forking a headless
+    // engine (docs/specs/2026-09-13-single-process-desktop.md). `bin` is
+    // kept in the signature for callers that still pass it.
+    let _ = bin;
+    for _ in 0..10u8 {
         if let Ok(pair) = try_connect() {
             if let Ok(pair) = handshake_with(pair, expected_build) {
                 return Ok(pair);
             }
-            // stale version/build: daemon shutting down, respawn below
+            // stale version/build: the daemon was told to shut down; the app
+            // hosting a current socket comes back shortly.
         }
-        if attempt == 0 {
-            spawn_detached(bin)?;
-            for _ in 0..50 {
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                if let Ok(pair) = try_connect() {
-                    if let Ok(pair) = handshake_with(pair, expected_build) {
-                        return Ok(pair);
-                    }
-                }
-            }
-        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
     }
-    anyhow::bail!("daemon did not start")
+    anyhow::bail!("Guild app is not running — start it first")
 }
 
 /// Daemon main: binds `socket_path()`, restores the persisted session, and

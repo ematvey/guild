@@ -8,16 +8,20 @@ license = "Apache-2.0"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = ["devtools", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-single-instance = "2"
 guild-app-server = { path = "../../../crates/app-server" }
 sha2.workspace = true
 hex.workspace = true
 ed25519-dalek.workspace = true
 anyhow.workspace = true
 protocol = { path = "../../../crates/protocol" }
+guild-core = { path = "../../../crates/guild-core" }
+reqwest.workspace = true
+futures.workspace = true
 
 tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }

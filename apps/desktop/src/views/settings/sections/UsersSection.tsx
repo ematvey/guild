@@ -3,6 +3,7 @@
 //! reset and delete.
 
 import { useCallback, useEffect, useState } from "react";
+import type { SectionDetailProps } from "../section-nav";
 import { ArrowLeft, Pencil, UserPlus } from "lucide-react";
 import { Area, AreaChart } from "recharts";
 import { api } from "../admin-api";
@@ -57,15 +58,16 @@ const backBtn =
   "mb-4 flex items-center gap-1.5 text-base text-muted-foreground transition-colors hover:text-foreground";
 const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 
-export default function UsersSection() {
+export default function UsersSection({
+  detail = null,
+  onDetailChange,
+}: SectionDetailProps) {
   const [users, setUsers] = useState<UserRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // 30-day per-user spend (one series call, pivoted client-side by email).
   const [spend, setSpend] = useState<
     Record<string, { points: { bucket: string; cost: number }[]; total: number }>
   >({});
-  /** "new" = add flow; a user id = edit that user; null = list screen. */
-  const [detail, setDetail] = useState<"new" | string | null>(null);
 
   const reload = useCallback(() => {
     api<{ users: UserRow[] }>("GET", "/api/v1/admin/users")
@@ -99,14 +101,20 @@ export default function UsersSection() {
   useEffect(reload, [reload]);
 
   if (detail !== null) {
+    // Deep-linked user page: wait for the list before resolving the id —
+    // a not-yet-loaded row would render as the add-user form.
+    if (detail !== "new" && users === null) {
+      return <Skeleton className="h-24 w-full rounded-lg" />;
+    }
     const user = detail === "new" ? null : users?.find((u) => u.id === detail) ?? null;
     return (
       <UserDetail
         user={user}
         onChanged={reload}
+        onCreated={(id) => onDetailChange(id)}
         onBack={() => {
           reload();
-          setDetail(null);
+          onDetailChange(null);
         }}
       />
     );
@@ -117,7 +125,7 @@ export default function UsersSection() {
       {error && <p className="text-base text-destructive">{error}</p>}
       <div className="flex items-center justify-between">
         <h3 className={label}>Organization users</h3>
-        <Button size="sm" onClick={() => setDetail("new")}>
+        <Button size="sm" onClick={() => onDetailChange("new")}>
           <UserPlus className="mr-1 size-3.5" /> Add user
         </Button>
       </div>
@@ -136,7 +144,7 @@ export default function UsersSection() {
             <button
               key={u.id}
               className="flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40"
-              onClick={() => setDetail(u.id)}
+              onClick={() => onDetailChange(u.id)}
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-base">{u.email}</p>
@@ -170,10 +178,13 @@ export default function UsersSection() {
 function UserDetail({
   user,
   onChanged,
+  onCreated,
   onBack,
 }: {
   user: UserRow | null;
   onChanged: () => void;
+  /** Called with the new user id after creation, to land on its own URL. */
+  onCreated: (id: string) => void;
   onBack: () => void;
 }) {
   const creating = user === null;
@@ -245,9 +256,13 @@ function UserDetail({
                 setError(null);
                 try {
                   if (creating) {
-                    await api("POST", "/api/v1/admin/users", { email, password, role });
+                    const created = await api<{ id: string }>("POST", "/api/v1/admin/users", {
+                      email,
+                      password,
+                      role,
+                    });
                     onChanged();
-                    onBack();
+                    onCreated(created.id);
                   } else {
                     const body: Record<string, string> = { role };
                     if (password) body.password = password;

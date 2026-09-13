@@ -25,15 +25,26 @@ async fn events_stream_fans_out_and_list_shows_emitted() {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-        // read just the first frame; the stream is infinite
-        let first = res
-            .into_body()
-            .into_data_stream()
-            .next()
+        // read the first real frame; the stream is infinite and may emit
+        // keepalive comment chunks (":" …) first when delivery is delayed
+        // under full-suite load
+        let mut stream = res.into_body().into_data_stream();
+        let text = loop {
+            let chunk = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                stream.next(),
+            )
             .await
-            .expect("first sse frame")
+            .expect("first sse frame in 30s")
+            .expect("stream alive")
             .unwrap();
-        String::from_utf8(first.to_vec()).unwrap()
+            let text = String::from_utf8(chunk.to_vec()).unwrap();
+            if text.starts_with(":") {
+                continue; // keepalive comment
+            }
+            break text;
+        };
+        text
     });
 
     // give the subscription a moment to attach its LISTEN
@@ -47,8 +58,9 @@ async fn events_stream_fans_out_and_list_shows_emitted() {
         .await
         .unwrap();
 
-    // read the first SSE frame
-    let text = tokio::time::timeout(std::time::Duration::from_secs(10), sse)
+    // read the first SSE frame (30s: the full suite loads the shared
+    // postgres hard enough to push LISTEN delivery past 10s occasionally)
+    let text = tokio::time::timeout(std::time::Duration::from_secs(30), sse)
         .await
         .expect("stream should produce a frame")
         .unwrap();

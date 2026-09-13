@@ -28,6 +28,8 @@ pub fn routes() -> Router<AppState> {
 
 /// Executor heartbeat: desktop apps refresh their machine's liveness every
 /// few seconds; liveness = heartbeats fresher than `EXECUTOR_TTL_SECS`.
+/// Registers an unknown machine (upsert), so a reconnecting app re-joins
+/// by heartbeat alone without waiting for a fresh stream connect.
 async fn heartbeat(
     State(state): State<AppState>,
     user: AuthUser,
@@ -36,7 +38,8 @@ async fn heartbeat(
     let machine_id = req["machine_id"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing machine_id"))?;
-    let ok = state.executor_touch(machine_id, user.0.id);
+    let name = req["machine_name"].as_str().unwrap_or("");
+    let ok = state.executor_touch(machine_id, user.0.id, user.0.org_id, name);
     Ok(Json(json!({ "ok": ok })))
 }
 

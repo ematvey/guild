@@ -5,6 +5,7 @@
 //! and a per-role tool-policy editor.
 
 import { useCallback, useEffect, useState } from "react";
+import type { SectionDetailProps } from "../section-nav";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -24,6 +25,7 @@ interface IntegrationRow {
   name: string;
   config: Record<string, unknown>;
   enabled: boolean;
+  category?: string;
 }
 
 interface AvailableEntry {
@@ -90,11 +92,13 @@ const listCard =
   "flex w-full items-center gap-3 rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-accent/40";
 const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 
-export default function IntegrationsSection() {
+export default function IntegrationsSection({
+  detail = null,
+  onDetailChange,
+}: SectionDetailProps) {
   const [rows, setRows] = useState<IntegrationRow[] | null>(null);
   const [available, setAvailable] = useState<AvailableEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [detail, setDetail] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     api<{ integrations: IntegrationRow[]; available: AvailableEntry[] }>(
@@ -117,20 +121,31 @@ export default function IntegrationsSection() {
   }, [reload]);
 
   if (detail !== null) {
+    // Deep-linked detail: wait for the lists before resolving the slug —
+    // otherwise a not-yet-loaded row renders as "not configured".
+    if (rows === null || available === null) {
+      return (
+        <div className="space-y-2">
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-24 w-full rounded-lg" />
+        </div>
+      );
+    }
     const configured = rows?.find((r) => r.name === detail);
     return (
       <IntegrationDetail
         name={detail}
         category={
+          rows?.find((r) => r.name === detail)?.category ??
           available?.find((a) => a.name === detail)?.category ??
-          (configured ? "mcp" : undefined)
+          "other"
         }
         initialConfig={configured?.config ?? null}
         initialEnabled={configured?.enabled ?? false}
         onChanged={reload}
         onBack={() => {
           reload();
-          setDetail(null);
+          onDetailChange(null);
         }}
       />
     );
@@ -148,17 +163,11 @@ export default function IntegrationsSection() {
         </div>
       ) : (
         (["fetch", "search", "other", "mcp"] as const).map((cat) => {
-          // Configured registry plugins have no available entry; every such
-          // row is a v2 MCP plugin, so they list under the mcp category.
-          const configuredOnly =
-            cat === "mcp"
-              ? (rows ?? [])
-                  .filter((r) => !availableNames.has(r.name))
-                  .map((r) => ({ name: r.name, category: "mcp" as const }))
-              : [];
+          // Rows carry their category from the API; available entries hold
+          // the catalog category of kinds with no configured row yet.
           const inCat = [
+            ...(rows ?? []).filter((r) => (r.category ?? "other") === cat),
             ...available.filter((a) => (a.category ?? "other") === cat),
-            ...configuredOnly,
           ];
           if (inCat.length === 0) return null;
           return (
@@ -177,7 +186,7 @@ export default function IntegrationsSection() {
                     <button
                       key={a.name}
                       className={listCard}
-                      onClick={() => setDetail(a.name)}
+                      onClick={() => onDetailChange(a.name)}
                     >
                       <Webhook className="size-4 shrink-0 text-muted-foreground" />
                       <div className="min-w-0 flex-1">
