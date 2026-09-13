@@ -620,10 +620,15 @@ async fn agent_start_task(
         events: shared.events.clone(),
         pending,
     };
-    let updated = run
-        .spawn(ToolRegistry::builtins())
-        .await
-        .unwrap_or_default();
+    let updated = match run.spawn(ToolRegistry::builtins()).await {
+        Ok(v) => v,
+        // A panicked or cancelled run must not wipe the session history
+        // (the join default would assign an empty vec); keep what we had.
+        Err(e) => {
+            crate::dtrace::dtrace(&format!("agent run failed to join (chat {chat_id}): {e}"));
+            return;
+        }
+    };
 
     shared.session.lock().unwrap().messages = updated;
 }
