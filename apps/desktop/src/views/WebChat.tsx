@@ -122,7 +122,7 @@ interface ChatRoute {
   overlay: ChatOverlay;
 }
 
-const parseChatRoute = (pathname: string): ChatRoute => {
+export const parseChatRoute = (pathname: string): ChatRoute => {
   const parts = pathname
     .replace(/^\/+|\/+$/g, "")
     .split("/")
@@ -143,7 +143,7 @@ const parseChatRoute = (pathname: string): ChatRoute => {
   return { chatId, overlay: null };
 };
 
-const chatRoutePath = (chatId: string | null, overlay: ChatOverlay): string => {
+export const chatRoutePath = (chatId: string | null, overlay: ChatOverlay): string => {
   const base = chatId ? `/thread/${encodeURIComponent(chatId)}` : "";
   if (overlay?.kind === "device") return `${base}/device`;
   // Settings is chat-independent — top-level URL even when opened over a
@@ -193,7 +193,7 @@ interface ToolMeta {
   lang?: string;
 }
 
-interface Block {
+export interface Block {
   kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval" | "compaction";
   text: string;
   /// Stable React key. Derived blocks use the source event's seq (plus an
@@ -367,7 +367,7 @@ function AttachmentFileChip({
 /// Tool calls, reasoning and text are all resident thread parts — nothing
 /// disappears on refresh: every assistant block is replayed in stream order
 /// and tool results fill their matching frames.
-function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
+export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
   const sorted = [...rows].sort((a, b) => a.seq - b.seq);
   const blocks: Block[] = [];
   const byCallId = new Map<string, ToolBlock>();
@@ -478,7 +478,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
 /// ApprovalRequested inserts a pending card into the current blocks;
 /// re-attach replays may fire it again for a card we already render, so
 /// this is an upsert, not a blind append.
-function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
+export function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
   const i = blocks.findIndex((x) => x.kind === "approval" && x.approval?.callId === a.callId);
   if (i < 0) return [...blocks, { kind: "approval", text: "", approval: a, key: `approval-${a.callId}` }];
   return blocks.map((x, j) => (j === i ? { ...x, approval: { ...a } } : x));
@@ -486,7 +486,7 @@ function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
 
 /// ApprovalResolved flips the matching card (no-op when it is absent, e.g.
 /// the stream resolved before we rendered the request).
-function resolveApproval(
+export function resolveApproval(
   blocks: Block[],
   callId: string,
   approved: boolean,
@@ -754,7 +754,7 @@ function toolPreview(t: ToolBlock): string | undefined {
 /// Fallback for search results arriving WITHOUT persisted meta (older
 /// events): parses the numbered "N. Title / URL / snippet…" list the server
 /// composes into source cards.
-function parseSearchResults(content: string): { url: string; title?: string; snippet?: string }[] {
+export function parseSearchResults(content: string): { url: string; title?: string; snippet?: string }[] {
   const out: { url: string; title?: string; snippet?: string }[] = [];
   let cur: { url: string; title?: string; snippet?: string } | null = null;
   for (const l of content.split("\n")) {
@@ -2431,7 +2431,7 @@ function detectOs(): DesktopOs {
 
 const OS_KEY: Record<DesktopOs, string> = { mac: "darwin", windows: "windows", linux: "linux" };
 
-function compareVersions(a: string, b: string): number {
+export function compareVersions(a: string, b: string): number {
   const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
   const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
