@@ -263,7 +263,7 @@ async fn run_turn(
             Default::default()
         } else {
             [(
-                "run_command".to_string(),
+                "execute".to_string(),
                 guild_core::tools::Approval::Never,
             )]
             .into_iter()

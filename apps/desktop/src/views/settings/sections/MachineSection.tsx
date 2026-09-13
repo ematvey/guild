@@ -33,7 +33,7 @@ export function MachineSection({
     <div className="space-y-4">
       <PageHeader
         title="Machine"
-        description="Machine tools (read, bash, edit, write) execute on the machine bound to the chat, via the Guild desktop app running there."
+        description="Machine tools (read_file, execute, edit_file, write_file) execute on the machine bound to the chat, via the Guild desktop app running there."
       />
       {!chatId ? (
         <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">

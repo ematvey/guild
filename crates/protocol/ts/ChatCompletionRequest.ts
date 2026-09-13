@@ -13,8 +13,8 @@ tools?: Array<ToolSpec>,
  */
 system?: string,
 /**
- * True when the calling client can execute machine tools (read/bash/
- * edit/write) — i.e. the Tauri desktop app. Web clients cannot, and
+ * True when the calling client can execute machine tools (read_file/execute/
+ * edit_file/write_file) — i.e. the Tauri desktop app. Web clients cannot, and
  * declaring the tools there makes the model call them and the durable
  * turn suspend for the 5-minute client-tool timeout with no one to
  * answer it.

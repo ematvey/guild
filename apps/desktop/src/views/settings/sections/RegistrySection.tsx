@@ -15,6 +15,7 @@ import { Badge } from "@guild/ui/components/badge";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
+import { EmptyState } from "../components/empty-state";
 
 interface ItemRow {
   slug: string;
@@ -143,6 +144,13 @@ function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }
         searchPlaceholder="Search registry…"
         onRowClick={(r) => onOpen(r.kind, r.slug)}
         pageSize={15}
+        empty={
+          <EmptyState
+            icon={Package}
+            title="Nothing published yet"
+            hint="Entries appear here once published through the registry API."
+          />
+        }
       />
     </div>
   );

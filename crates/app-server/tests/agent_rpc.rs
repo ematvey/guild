@@ -81,7 +81,7 @@ async fn scripted_provider() -> wiremock::MockServer {
             let n = calls_moved.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 sse(concat!(
-                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"cmd1\",\"function\":{\"name\":\"run_command\",\"arguments\":\"{\\\"command\\\":\\\"echo hello-from-tool\\\"}\"}}]}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"cmd1\",\"function\":{\"name\":\"execute\",\"arguments\":\"{\\\"command\\\":\\\"echo hello-from-tool\\\"}\"}}]}}]}\n\n",
                     "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
                     "data: [DONE]\n\n",
                 ))
@@ -277,7 +277,7 @@ async fn policy_never_skips_approval_entirely() {
     for r in [
         login_line(&srv.base_url),
         json!({"jsonrpc": "2.0", "id": 4, "protocol": 1, "method": "agent.policy.set",
-               "params": {"tool": "run_command", "policy": "never"}}),
+               "params": {"tool": "execute", "policy": "never"}}),
         json!({"jsonrpc": "2.0", "id": 2, "protocol": 1, "method": "agent.start",
                "params": {"project_dir": project.to_str().unwrap(), "prompt": "run the command", "model": "gpt-test"}}),
     ] {
@@ -351,7 +351,7 @@ async fn fake_cloud() -> wiremock::MockServer {
             let n = calls_moved.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 sse(concat!(
-                    "data: {\"type\":\"tool_call_done\",\"call\":{\"id\":\"cmd1\",\"name\":\"run_command\",\"arguments\":{\"command\":\"echo hello-from-tool\"}}}\n\n",
+                    "data: {\"type\":\"tool_call_done\",\"call\":{\"id\":\"cmd1\",\"name\":\"execute\",\"arguments\":{\"command\":\"echo hello-from-tool\"}}}\n\n",
                 ))
             } else {
                 sse(concat!(
@@ -502,7 +502,7 @@ fn two_connections_share_state_and_events() {
 
         // 1. A sets a policy override
         send(&ca, &json!({"jsonrpc": "2.0", "id": 2, "protocol": 1, "method": "agent.policy.set",
-             "params": {"tool": "run_command", "policy": "allow"}}));
+             "params": {"tool": "execute", "policy": "allow"}}));
         let resp = wait_response(&a_rx, &mut seen_a, 2);
         assert!(resp.get("error").is_none(), "{resp}");
 
@@ -510,7 +510,7 @@ fn two_connections_share_state_and_events() {
         send(&cb, &json!({"jsonrpc": "2.0", "id": 3, "protocol": 1,
              "method": "agent.policy.get", "params": {}}));
         let resp = wait_response(&b_rx, &mut seen_b, 3);
-        assert_eq!(resp["result"]["overrides"]["run_command"], "allow", "{resp}");
+        assert_eq!(resp["result"]["overrides"]["execute"], "allow", "{resp}");
 
         // 3. A starts an agent run; BOTH readers see the same event lines
         //    (broadcast fan-out, not per-connection plumbing).
@@ -523,7 +523,7 @@ fn two_connections_share_state_and_events() {
 
         for (rx, seen) in [(&a_rx, &mut seen_a), (&b_rx, &mut seen_b)] {
             let tc = wait_event(rx, seen, "agent.tool_call");
-            assert_eq!(tc["payload"]["name"], "run_command", "{tc}");
+            assert_eq!(tc["payload"]["name"], "execute", "{tc}");
             let text = wait_event(rx, seen, "agent.text");
             assert_eq!(text["payload"]["content"], "all done", "{text}");
             wait_event(rx, seen, "agent.done");

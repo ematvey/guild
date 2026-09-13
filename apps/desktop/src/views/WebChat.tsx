@@ -205,8 +205,15 @@ interface Block {
   compaction?: CompactionBlock;
 }
 
-/// Tools the desktop executor runs locally (mirrors server `client_tool_names`).
-const CLIENT_TOOL_NAMES = ["read", "bash", "edit", "write"];
+/// Tools the desktop executor runs locally (mirrors protocol `client_tool_specs`).
+const CLIENT_TOOL_NAMES = [
+  "read_file",
+  "execute",
+  "edit_file",
+  "write_file",
+  "glob",
+  "grep",
+];
 
 function modalityOf(contentType: string): string {
   if (contentType.startsWith("image/")) return "image";
@@ -664,9 +671,9 @@ function toolKind(t: ToolBlock): string {
   const n = t.name.toLowerCase();
   if (n.includes("search")) return "search";
   if (n.includes("fetch")) return "fetch";
-  if (n === "bash" || n === "shell") return "terminal";
-  if (n === "read") return "read";
-  if (n === "edit" || n === "write") return "diff";
+  if (n === "execute" || n === "bash" || n === "shell") return "terminal";
+  if (n === "read_file" || n === "read") return "read";
+  if (n === "edit_file" || n === "write_file" || n === "edit" || n === "write") return "diff";
   return "other";
 }
 
@@ -675,6 +682,13 @@ function toolKind(t: ToolBlock): string {
 const TOOL_LABELS: Record<string, string> = {
   web_search: "Web search",
   web_fetch: "Browse",
+  execute: "Execute",
+  read_file: "Read",
+  edit_file: "Edit",
+  write_file: "Write",
+  glob: "Glob",
+  grep: "Grep",
+  // pre-rename wire names, kept so old thread history renders
   bash: "Execute",
   shell: "Execute",
   read: "Read",

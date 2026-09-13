@@ -122,7 +122,7 @@ export function ApprovalsSection() {
             value={overridesText}
             onChange={(e) => setOverridesText(e.target.value)}
             rows={3}
-            placeholder={'{"overrides": {"bash": "allow"}}'}
+            placeholder={'{"overrides": {"execute": "allow"}}'}
             className="font-mono text-xs"
           />
         </Field>
