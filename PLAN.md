@@ -5,6 +5,43 @@ touching the codebase; detailed milestone plans live in `docs/plans/`,
 deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
 
+## Single-process desktop (2026-09-13)
+
+Spec `docs/specs/2026-09-13-single-process-desktop.md`, plan
+`docs/plans/2026-09-13-single-process-desktop.md`. Trigger: the webview held
+presence (its SSE died 2ms after boot and never retried) while execution sat
+in the daemon → chats worked but every machine tool failed "bound machine
+offline".
+
+- **One process**: the GUI hosts the engine (session, JSON-RPC dispatch,
+  local tool execution). No headless daemon, no cross-process pipe, no
+  supervisor/build handshake. Window close → tray; real exit from the tray
+  menu; single-instance plugin. The CLI socket is still hosted — by the GUI
+  process (own restored session); `daemon::attach` no longer spawns anything
+  and fails cleanly when the app is closed.
+- **One standing connection**, owned by the app process (not the webview):
+  events/stream with machine params = registration (executor_acquire) +
+  **user fan-out bus** — every frame of the user's chats (deltas, thinking,
+  tools, approvals, done/error), wrapped {chat_id, machine_id, event}, to
+  every connected device; in-flight state replayed on connect/reconnect
+  (buffer snapshots + suspended tools). Heartbeats (5s) UPSERT the machine,
+  so a stream flap never unregisters a running app.
+- **In-person execution**: the app process executes client tools when the
+  bus delivers ToolStarted for a chat bound to its machine (chat→dir map
+  pushed by the webview's run-in-folder state via set_chat_dir), then POSTs
+  the result. No folder mapped → error result telling the user to use "Run
+  in folder…". Webviews render only; web clients unchanged.
+- Webview turn flow (desktop): send = fire-and-forget POST (sendChatNoStream,
+  SSE body dropped); frames arrive as `app-frame` Tauri events routed by
+  chat_id with per-chat seq watermarks; catch-up = `chat_snapshot` (the
+  app process's in-flight mirror). app-stream-reconnected → thread reload +
+  re-snapshot.
+- Verified locally (xvfb smoke): boot without panic, link registers
+  (heartbeat upsert), full tool loop end-to-end via API (dispatch → execute
+  → result POST → model continues; folder-less error message rendered),
+  CLI `chat` verb against the hosted socket, CLI fails cleanly with no app.
+- Desktop 0.3.16 pending release; devbox deploy pending.
+
 ## Distinct URLs for all pages; settings sub-pages (2026-09-13)
 
 - Every distinct page now has its own URL. Settings sections already had
