@@ -58,15 +58,16 @@ impl<'a> IntegrationStore<'a> {
         .await?)
     }
 
-    /// Replaces config and enabled flag of one integration by id.
+    /// Replaces config and enabled flag of one integration by id. Returns
+    /// whether a row matched — a false result means the integration is gone.
     pub async fn update(
         &self,
         org_id: Uuid,
         id: Uuid,
         config: &serde_json::Value,
         enabled: bool,
-    ) -> Result<(), ApiError> {
-        sqlx::query(
+    ) -> Result<bool, ApiError> {
+        let res = sqlx::query(
             "UPDATE integrations SET config = $3, enabled = $4, updated_at = now() \
              WHERE org_id = $1 AND id = $2",
         )
@@ -76,7 +77,7 @@ impl<'a> IntegrationStore<'a> {
         .bind(enabled)
         .execute(self.pool)
         .await?;
-        Ok(())
+        Ok(res.rows_affected() > 0)
     }
 
     /// Removes one integration's configuration by id (the connector can be
