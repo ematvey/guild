@@ -90,6 +90,12 @@ async fn download(
 ) -> Result<impl IntoResponse, ApiError> {
     let store = state.store().await?;
     let row = store.attachments().get(user.0.org_id, id).await?;
+    // The attachment rides a chat, so the chat's owner predicate applies:
+    // org scoping alone would let a member pull another member's uploads.
+    store
+        .chats()
+        .get_chat(user.0.org_id, row.chat_id, &user.0)
+        .await?;
     let key = crate::store::attachments::object_key(row.org_id, row.id, &row.filename);
     let bytes = state
         .objects()
