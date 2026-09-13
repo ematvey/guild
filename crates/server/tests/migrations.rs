@@ -13,7 +13,7 @@ async fn migrations_apply_once_and_detect_drift() {
         .fetch_all(db.store.pool())
         .await
         .unwrap();
-    assert_eq!(names.len(), 32, "every migration recorded exactly once");
+    assert_eq!(names.len(), 34, "every migration recorded exactly once");
     // checksums recorded for all
     let unhashed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schema_history WHERE hash IS NULL")
         .fetch_one(db.store.pool())
@@ -42,5 +42,5 @@ async fn concurrent_boots_do_not_double_apply() {
         .fetch_one(db.store.pool())
         .await
         .unwrap();
-    assert_eq!(n, 32, "no double-application under concurrent boots");
+    assert_eq!(n, 34, "no double-application under concurrent boots");
 }
