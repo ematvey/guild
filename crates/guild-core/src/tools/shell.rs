@@ -15,19 +15,7 @@ const MAX_TIMEOUT_MS: u64 = 300_000;
 #[async_trait]
 impl Tool for RunCommand {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "execute".into(),
-            description: "Run a shell command (sh -c) in the project directory. Non-zero exits are reported, not errors.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string"},
-                    "cwd": {"type": "string"},
-                    "timeout_ms": {"type": "integer"},
-                },
-                "required": ["command"],
-            }),
-        }
+        protocol::api::client_tool_spec("execute").expect("built-in execute spec")
     }
 
     fn default_policy(&self) -> Approval {
