@@ -17,10 +17,20 @@ deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
   pre-existed — build_system_prompt names the workspace); the local tool
   executor runs in that folder (mid-turn blind folder picker kept only as a
   fallback when no folder is set).
-- Deployed to the compose stack (:18080) — browser UI live. Desktop clients
-  need a client release to pick up the new UI (webview serves the bundled
-  dist); tauri.conf.json bumped to 0.3.15, release not yet published
-  (needs an admin token for scripts/release-clients.sh).
+- Deployed to the compose stack (:18080) — browser UI live. Desktop 0.3.15
+  published (all four platforms, sha256-verified; updater manifest is
+  Host-relative, so artifact URLs follow the endpoint the client fetches
+  from). Released via `scripts/release-clients.sh` with an admin session
+  minted directly in the guild postgres (revoked after the run; the old
+  debug token is dead). systemd-run jobs need the full PATH
+  (`~/.cargo/bin` for cargo-xwin, nvm node for npm) or the windows build
+  fails with `cargo-xwin command not found`.
+- Deployed to devbox (the Windows host): new exe copied over
+  `AppData/Local/Guild/guild-desktop.exe` (old one kept as
+  `.0314.bak`), running daemon killed first, GUI relaunched. NOTE: the
+  installed layout is the raw exe (not the NSIS app dir) — devbox updates
+  are manual exe copies; the auto-updater would have delivered the NSIS
+  installer instead.
 touching the codebase; detailed milestone plans live in `docs/plans/`,
 deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
