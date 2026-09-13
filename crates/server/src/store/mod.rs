@@ -48,7 +48,7 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 32] = [
+        const MIGRATIONS: [(&str, &str); 33] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -173,6 +173,10 @@ impl Store {
             (
                 "0032_session_token_hash",
                 include_str!("../../migrations/0032_session_token_hash.sql"),
+            ),
+            (
+                "0033_routine_webhook_token_hash",
+                include_str!("../../migrations/0033_routine_webhook_token_hash.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {
