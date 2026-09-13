@@ -166,9 +166,9 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
 
     // 2. shared state: A mutates, B observes
     let mut b = Client::connect(&path);
-    a.call("agent.policy.set", json!({"tool": "run_command", "policy": "allow"}));
+    a.call("agent.policy.set", json!({"tool": "execute", "policy": "allow"}));
     let got = b.call("agent.policy.get", json!({}));
-    assert_eq!(got["result"]["overrides"]["run_command"], "allow");
+    assert_eq!(got["result"]["overrides"]["execute"], "allow");
 
     // 3. client disconnect leaves the daemon (and B) working
     drop(a);

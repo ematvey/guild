@@ -169,7 +169,7 @@ export default function AgentView({ email, adminUrl }: { email: string; adminUrl
   const setPolicy = useCallback(async (policy: "ask" | "allow" | "never") => {
     setCommandPolicy(policy);
     try {
-      await rpcCall("agent.policy.set", { tool: "run_command", policy });
+      await rpcCall("agent.policy.set", { tool: "execute", policy });
     } catch {
       // engine will still ask by default
     }

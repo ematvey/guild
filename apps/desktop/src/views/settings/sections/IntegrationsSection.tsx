@@ -439,9 +439,15 @@ function IntegrationDetail({
 
       <div className="rounded-lg border border-border bg-card p-4">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Config</p>
-        <pre className="mt-2 overflow-x-auto font-mono text-xs leading-relaxed">
-          {JSON.stringify(initialConfig, null, 2)}
-        </pre>
+        {Object.keys(initialConfig).length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            No overrides — the connector's in-code defaults apply.
+          </p>
+        ) : (
+          <pre className="mt-2 overflow-x-auto font-mono text-xs leading-relaxed">
+            {JSON.stringify(initialConfig, null, 2)}
+          </pre>
+        )}
       </div>
 
       {isMcp && (

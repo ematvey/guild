@@ -30,8 +30,8 @@ mod tests {
     #[test]
     fn precedence() {
         let mut p = ApprovalPolicy::default();
-        p.overrides.insert("run_command".into(), Approval::Never);
-        assert_eq!(p.for_tool("run_command", Approval::Ask), Approval::Never);
+        p.overrides.insert("execute".into(), Approval::Never);
+        assert_eq!(p.for_tool("execute", Approval::Ask), Approval::Never);
         assert_eq!(p.for_tool("read_file", Approval::Allow), Approval::Allow);
         assert_eq!(p.for_tool("mystery", Approval::Ask), Approval::Ask);
     }

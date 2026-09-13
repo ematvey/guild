@@ -4,7 +4,7 @@ use guild_server::test_support::{clickhouse_usage_rows, full_state, standalone_l
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-/// Provider script: model call 1 → write_file; call 2 → run_command (must be
+/// Provider script: model call 1 → write_file; call 2 → execute (must be
 /// refused); call 3 → final text.
 async fn scripted_provider() -> wiremock::MockServer {
     let server = wiremock::MockServer::builder()
@@ -33,7 +33,7 @@ async fn scripted_provider() -> wiremock::MockServer {
                     "write_file",
                     "{\"path\":\"hello.txt\",\"content\":\"hi from workspace\"}",
                 )),
-                1 => sse(call_frame("r1", "run_command", "{\"command\":\"ls\"}")),
+                1 => sse(call_frame("r1", "execute", "{\"command\":\"ls\"}")),
                 _ => sse(String::from(concat!(
                     "data: {\"choices\":[{\"delta\":{\"content\":\"workspace updated\"}}]}\n\n",
                     "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4}}\n\n",
@@ -119,7 +119,7 @@ async fn workspace_session_turn_executes_tools_and_persists() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 
-    // run a turn: the scripted provider writes a file, tries run_command, finishes
+    // run a turn: the scripted provider writes a file, tries execute, finishes
     let res = app
         .clone()
         .oneshot(
@@ -143,7 +143,7 @@ async fn workspace_session_turn_executes_tools_and_persists() {
     assert!(text.contains("event: tool_call"), "{text}");
     assert!(text.contains("write_file"));
     assert!(text.contains("event: tool_result"));
-    // run_command is refused by default
+    // execute is refused by default
     assert!(text.contains("\"ok\":false"), "{text}");
     assert!(text.contains("event: done"), "{text}");
 
@@ -194,7 +194,7 @@ async fn workspace_session_turn_executes_tools_and_persists() {
         events[4]["event"]["content"],
         "tool failed: execution failed: denied by user: disabled by policy"
     );
-    assert_eq!(events[4]["event"]["name"], "run_command");
+    assert_eq!(events[4]["event"]["name"], "execute");
     assert_eq!(events[5]["event"]["blocks"][0]["text"], "workspace updated");
     // step numbering: 0-based model call index within the turn
     assert_eq!(events[1]["event"]["step"], 0);

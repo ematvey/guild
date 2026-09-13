@@ -225,8 +225,8 @@ pub struct ChatCompletionRequest {
     /// Optional system prompt (agent sessions set this).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
-    /// True when the calling client can execute machine tools (read/bash/
-    /// edit/write) — i.e. the Tauri desktop app. Web clients cannot, and
+    /// True when the calling client can execute machine tools (read_file/execute/
+    /// edit_file/write_file) — i.e. the Tauri desktop app. Web clients cannot, and
     /// declaring the tools there makes the model call them and the durable
     /// turn suspend for the 5-minute client-tool timeout with no one to
     /// answer it.
@@ -304,7 +304,7 @@ pub enum StreamEvent {
         call: ToolCall,
     },
     /// A tool call is being executed: `executor` says whether the attached
-    /// client must run it (machine tools: read/bash/edit/write) or it runs
+    /// client must run it (machine tools: read_file/execute/edit_file/write_file) or it runs
     /// server-side (integrations, e.g. web_search). Clients that cannot
     /// execute client tools just display it.
     ToolStarted {
@@ -514,7 +514,7 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
             &["command"],
         ),
         spec(
-            "edit",
+            "edit_file",
             "Replace one exact occurrence of `oldText` in a file with `newText`. Fails when oldText is not found or is ambiguous.",
             serde_json::json!({
                 "path": str_prop,
@@ -524,13 +524,29 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
             &["path", "oldText", "newText"],
         ),
         spec(
-            "write",
+            "write_file",
             "Create a file or overwrite it with `content`. Parent directories are created automatically.",
             serde_json::json!({
                 "path": str_prop,
                 "content": str_prop
             }),
             &["path", "content"],
+        ),
+        spec(
+            "glob",
+            "List files matching a glob pattern (gitignore-aware), relative to the workspace.",
+            serde_json::json!({
+                "pattern": str_prop
+            }),
+            &["pattern"],
+        ),
+        spec(
+            "grep",
+            "Search file contents with a regex (gitignore-aware). Returns path:line: line.",
+            serde_json::json!({
+                "pattern": str_prop
+            }),
+            &["pattern"],
         ),
     ]
 }

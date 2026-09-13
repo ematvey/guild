@@ -471,7 +471,7 @@ pub(crate) const CLIENT_TOOL_TIMEOUT: std::time::Duration = std::time::Duration:
 pub(crate) const APPROVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 fn client_tool_names() -> &'static [&'static str] {
-    &["read", "bash", "edit", "write"]
+    &["read_file", "execute", "edit_file", "write_file", "glob", "grep"]
 }
 
 fn state_key(call_id: &str) -> String {
@@ -488,7 +488,11 @@ fn approval_state_key(call_id: &str) -> String {
 fn server_default_policy() -> ApprovalPolicy {
     serde_json::from_value(json!({
         "default": "ask",
-        "overrides": { "read": "allow" }
+        "overrides": {
+            "read_file": "allow",
+            "glob": "allow",
+            "grep": "allow"
+        }
     }))
     .expect("server default policy is valid")
 }
@@ -531,7 +535,7 @@ fn build_system_prompt(
     let mut s = String::from(persona);
     if client_tools {
         s.push_str(
-            " You have tools (read, bash, edit, write) that execute on \
+            " You have tools (read_file, execute, edit_file, write_file, glob, grep) that execute on \
              the user's machine via the Guild desktop executor — you never run \
              anything yourself and there is no sandbox on your side. Inspect the \
              workspace with them BEFORE answering anything that could be about \
@@ -2677,35 +2681,37 @@ mod tests {
     #[test]
     fn server_default_read_flows_state_changers_ask() {
         let p = server_default_policy();
-        assert_eq!(p.for_tool("read", Approval::Ask), Approval::Allow);
-        assert_eq!(p.for_tool("bash", Approval::Ask), Approval::Ask);
-        assert_eq!(p.for_tool("edit", Approval::Ask), Approval::Ask);
-        assert_eq!(p.for_tool("write", Approval::Ask), Approval::Ask);
+        assert_eq!(p.for_tool("read_file", Approval::Ask), Approval::Allow);
+        assert_eq!(p.for_tool("glob", Approval::Ask), Approval::Allow);
+        assert_eq!(p.for_tool("grep", Approval::Ask), Approval::Allow);
+        assert_eq!(p.for_tool("execute", Approval::Ask), Approval::Ask);
+        assert_eq!(p.for_tool("edit_file", Approval::Ask), Approval::Ask);
+        assert_eq!(p.for_tool("write_file", Approval::Ask), Approval::Ask);
     }
 
     #[test]
     fn stored_policy_override_wins_over_default() {
         let p = resolve_policy(Some(json!({
             "default": "never",
-            "overrides": { "bash": "allow" }
+            "overrides": { "execute": "allow" }
         })));
-        assert_eq!(p.for_tool("bash", Approval::Ask), Approval::Allow);
-        assert_eq!(p.for_tool("read", Approval::Ask), Approval::Never);
-        assert_eq!(p.for_tool("write", Approval::Ask), Approval::Never);
+        assert_eq!(p.for_tool("execute", Approval::Ask), Approval::Allow);
+        assert_eq!(p.for_tool("read_file", Approval::Ask), Approval::Never);
+        assert_eq!(p.for_tool("write_file", Approval::Ask), Approval::Never);
     }
 
     #[test]
     fn null_policy_resolves_to_server_default() {
         let p = resolve_policy(None);
-        assert_eq!(p.for_tool("read", Approval::Ask), Approval::Allow);
-        assert_eq!(p.for_tool("bash", Approval::Ask), Approval::Ask);
+        assert_eq!(p.for_tool("read_file", Approval::Ask), Approval::Allow);
+        assert_eq!(p.for_tool("execute", Approval::Ask), Approval::Ask);
     }
 
     #[test]
     fn malformed_policy_falls_back_to_server_default() {
         let p = resolve_policy(Some(json!("not-a-policy")));
-        assert_eq!(p.for_tool("bash", Approval::Ask), Approval::Ask);
-        assert_eq!(p.for_tool("read", Approval::Ask), Approval::Allow);
+        assert_eq!(p.for_tool("execute", Approval::Ask), Approval::Ask);
+        assert_eq!(p.for_tool("read_file", Approval::Ask), Approval::Allow);
     }
 
     #[test]

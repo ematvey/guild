@@ -145,7 +145,7 @@ async fn policy_never_denies_without_asking() {
         vec![ProviderChunk::ToolCallDone {
             call: ToolCall {
                 id: "c2".into(),
-                name: "run_command".into(),
+                name: "execute".into(),
                 arguments: json!({"command": "rm -rf /"}),
             },
         }],
@@ -154,7 +154,7 @@ async fn policy_never_denies_without_asking() {
     let mut policy = ApprovalPolicy::default();
     policy
         .overrides
-        .insert("run_command".into(), guild_core::tools::Approval::Never);
+        .insert("execute".into(), guild_core::tools::Approval::Never);
 
     let hooks = Recorder::default();
     let mut history = vec![Message::user("do it")];
@@ -204,7 +204,7 @@ async fn approval_deny_reaches_model_as_tool_result() {
         vec![ProviderChunk::ToolCallDone {
             call: ToolCall {
                 id: "c3".into(),
-                name: "run_command".into(),
+                name: "execute".into(),
                 arguments: json!({"command": "x"}),
             },
         }],

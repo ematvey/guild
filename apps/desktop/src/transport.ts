@@ -580,8 +580,8 @@ export async function streamChat(
       chat_id: chatId,
       model,
       messages: [{ role: "user", content: prompt }],
-      // only the desktop runtime can execute machine tools (read/bash/edit/
-      // write); declaring them in the browser suspends the turn until the
+      // only the desktop runtime can execute machine tools (read_file/execute/
+      // edit_file/write_file); declaring them in the browser suspends the turn until the
       // 5-minute client-tool timeout
       client_tools: IS_TAURI,
       attachment_ids: attachmentIds,

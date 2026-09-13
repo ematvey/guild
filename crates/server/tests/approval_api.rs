@@ -79,7 +79,7 @@ async fn approval_settings_roundtrip_and_validation() {
     assert_eq!(body_json(res).await["approval"], Value::Null);
 
     // Save a valid policy for the user (bare JSON shape) and read it back.
-    let policy = json!({"default": "ask", "overrides": {"read": "allow"}});
+    let policy = json!({"default": "ask", "overrides": {"read_file": "allow"}});
     let res = app
         .clone()
         .oneshot(req(
@@ -122,7 +122,7 @@ async fn approval_settings_roundtrip_and_validation() {
     // Invalid policy JSON is rejected with 400 and not stored.
     for bad in [
         json!({"default": "bogus"}),
-        json!({"overrides": {"read": "maybe"}}),
+        json!({"overrides": {"read_file": "maybe"}}),
         json!({"default": 7}),
     ] {
         let res = app
@@ -236,7 +236,7 @@ async fn attach_replays_unresolved_approval_requests() {
             chat,
             &ThreadEvent::ApprovalRequest {
                 call_id: "a1".into(),
-                name: "bash".into(),
+                name: "execute".into(),
                 arguments: "\"ls\"".into(),
             },
         )
@@ -260,7 +260,7 @@ async fn attach_replays_unresolved_approval_requests() {
             chat,
             &ThreadEvent::ApprovalRequest {
                 call_id: "a2".into(),
-                name: "write".into(),
+                name: "write_file".into(),
                 arguments: "\"{}\"".into(),
             },
         )
@@ -272,7 +272,7 @@ async fn attach_replays_unresolved_approval_requests() {
             chat,
             &ThreadEvent::ApprovalRequest {
                 call_id: "a3".into(),
-                name: "edit".into(),
+                name: "edit_file".into(),
                 arguments: "\"{}\"".into(),
             },
         )
@@ -286,7 +286,7 @@ async fn attach_replays_unresolved_approval_requests() {
                 turn: 1,
                 step: 0,
                 call_id: "a3".into(),
-                name: "edit".into(),
+                name: "edit_file".into(),
                 content: "done".into(),
                 is_error: false,
                 meta: None,

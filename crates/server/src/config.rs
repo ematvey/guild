@@ -25,7 +25,7 @@ pub struct Config {
     pub role: String,
     /// Root for server-side workspace execution backends (M6).
     pub data_dir: String,
-    /// Allow run_command in server-side agent sessions (default: off).
+    /// Allow execute in server-side agent sessions (default: off).
     pub allow_shell_tools: bool,
     /// Static bearer token for /api/v1/internal/* (worker -> server).
     pub internal_token: Option<String>,

@@ -111,7 +111,7 @@ async fn grep_finds_matches() {
 }
 
 #[tokio::test]
-async fn run_command_captures_and_times_out() {
+async fn execute_captures_and_times_out() {
     let dir = scratch("shell");
     let out = RunCommand
         .run(&dir, json!({"command": "echo hi"}))
@@ -185,7 +185,7 @@ async fn default_policies_match_spec() {
     assert_eq!(dp("git"), Approval::Allow);
     assert_eq!(dp("write_file"), Approval::Ask);
     assert_eq!(dp("edit_file"), Approval::Ask);
-    assert_eq!(dp("run_command"), Approval::Ask);
+    assert_eq!(dp("execute"), Approval::Ask);
     // specs are complete and well-formed
     let specs: Vec<ToolSpec> = reg.specs();
     assert_eq!(specs.len(), reg.names().len());
