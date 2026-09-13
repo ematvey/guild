@@ -247,26 +247,22 @@ async fn callback(
         .as_str()
         .ok_or_else(|| ApiError::unauthorized("idp returned no email claim"))?
         .to_string();
+    let email_verified = userinfo["email_verified"].as_bool().unwrap_or(false);
     let display_name = userinfo["name"].as_str().map(str::to_string);
     let avatar_url = userinfo["picture"].as_str().map(str::to_string);
 
     // Provision on first login with the IdP profile, refresh it when the
     // claims change, then hand out a session.
     let identity = store.identity();
-    let user = match identity.find_by_email(org, &email).await? {
-        Some(u) if u.display_name != display_name || u.avatar_url != avatar_url => {
-            identity
-                .update_oidc_profile(u.id, display_name.as_deref(), avatar_url.as_deref())
-                .await?;
-            u
-        }
-        Some(u) => u,
-        None => {
-            identity
-                .create_oidc_user(org, &email, display_name.as_deref(), avatar_url.as_deref())
-                .await?
-        }
-    };
+    let user = resolve_oidc_user(
+        &identity,
+        org,
+        &email,
+        email_verified,
+        display_name.as_deref(),
+        avatar_url.as_deref(),
+    )
+    .await?;
     let (_sid, token) = identity.create_session(user.id).await?;
 
     // Back to the web app; the token rides in the URL fragment so it never
@@ -291,4 +287,127 @@ fn urlencode(s: &str) -> String {
         }
     }
     out
+}
+
+/// Resolves an OIDC login to a local user. The IdP-verified email is the
+/// only match key: unverified email claims are rejected, and a managed
+/// (password) account with the same address is never auto-matched — linking
+/// it to OIDC requires an explicit admin flow, otherwise anyone whose IdP
+/// asserts an arbitrary email could take over that account.
+async fn resolve_oidc_user(
+    identity: &crate::store::identity::IdentityStore<'_>,
+    org: Uuid,
+    email: &str,
+    email_verified: bool,
+    display_name: Option<&str>,
+    avatar_url: Option<&str>,
+) -> Result<crate::store::identity::UserRow, ApiError> {
+    if !email_verified {
+        return Err(ApiError::unauthorized("idp did not verify the email claim"));
+    }
+    match identity.find_by_email(org, email).await? {
+        Some(u) if u.identity_type == "oidc" => {
+            if u.display_name.as_deref() != display_name || u.avatar_url.as_deref() != avatar_url {
+                identity
+                    .update_oidc_profile(u.id, display_name, avatar_url)
+                    .await?;
+            }
+            Ok(u)
+        }
+        Some(_) => Err(ApiError::conflict(
+            "email_taken",
+            "this email belongs to a password account; oidc linking is a separate admin flow",
+        )),
+        None => {
+            identity
+                .create_oidc_user(org, email, display_name, avatar_url)
+                .await
+        }
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use super::resolve_oidc_user;
+    use crate::store::Store;
+
+    /// An unverified or verified email claim against an existing managed
+    /// (password) user must never resolve to that user — no match, no
+    /// session, no auto-provisioned account either.
+    #[tokio::test]
+    async fn unverified_or_managed_email_does_not_yield_a_session() {
+        let db = Store::connect_test().await.unwrap();
+        let store = &db.store;
+        let identity = store.identity();
+        let org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+            .bind(org)
+            .execute(db.store.pool())
+            .await
+            .unwrap();
+        let managed = identity
+            .create_user(org, "local@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+
+        // Unverified claim naming the local user's email: rejected.
+        let err = resolve_oidc_user(
+            &identity,
+            org,
+            "local@example.org",
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::UNAUTHORIZED);
+
+        // Verified claim naming the local user's email: still rejected —
+        // managed accounts are not auto-matched by email.
+        let err = resolve_oidc_user(
+            &identity,
+            org,
+            "local@example.org",
+            true,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::CONFLICT);
+
+        // No session may exist for the managed user.
+        let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE user_id = $1")
+            .bind(managed.id)
+            .fetch_one(db.store.pool())
+            .await
+            .unwrap();
+        assert_eq!(sessions, 0);
+
+        // A distinct verified email provisions an oidc user, and a repeat
+        // login resolves to the same account with the profile refreshed.
+        let provisioned = resolve_oidc_user(
+            &identity,
+            org,
+            "sso@example.org",
+            true,
+            Some("SSO User"),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(provisioned.identity_type, "oidc");
+        let again = resolve_oidc_user(
+            &identity,
+            org,
+            "sso@example.org",
+            true,
+            Some("SSO User"),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(again.id, provisioned.id);
+    }
 }
