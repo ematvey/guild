@@ -399,6 +399,10 @@ async fn install_returns_webhook_token_once() {
             .await
             .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            v["routine"]["webhook_token_hash"].is_null(),
+            "hash must not serialize"
+        );
         v
     }
 
