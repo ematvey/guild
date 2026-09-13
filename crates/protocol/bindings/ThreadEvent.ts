@@ -23,4 +23,10 @@ content: string, is_error: boolean,
  * provider-neutral render intent persisted with the event so UI
  * cards reproduce identically on replay. Opaque to the loop.
  */
-meta?: JsonValue | null, } | { "type": "compaction", summary: string, tokens_before?: number | null, keep_last?: number | null, model?: string | null, usage?: UsagePayload | null, } | { "type": "approval_request", call_id: string, name: string, arguments: string, } | { "type": "approval_decision", call_id: string, approved: boolean, reason?: string | null, };
+meta?: JsonValue | null, 
+/**
+ * Image parts (data URIs) attached to the model-facing tool result
+ * (e.g. read_file on an image), gated by the route's image modality
+ * at persist time. Empty on old events (serde default).
+ */
+images?: Array<string>, } | { "type": "compaction", summary: string, tokens_before?: number | null, keep_last?: number | null, model?: string | null, usage?: UsagePayload | null, } | { "type": "approval_request", call_id: string, name: string, arguments: string, } | { "type": "approval_decision", call_id: string, approved: boolean, reason?: string | null, };

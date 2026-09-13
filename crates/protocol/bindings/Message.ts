@@ -4,10 +4,11 @@ import type { ToolCall } from "./ToolCall";
 
 export type Message = { role: string, content: string, 
 /**
- * User-turn image parts (data URIs, e.g. `data:image/png;base64,…`).
- * Serialized as `image_url` content parts on OpenAI-shape routes and
- * base64 image blocks on Anthropic routes — only when the resolved
- * route supports the image modality.
+ * Image parts (data URIs, e.g. `data:image/png;base64,…`). Serialized
+ * as `image_url` content parts on OpenAI-shape routes and base64 image
+ * blocks on Anthropic routes — on user turns and tool results (read_file
+ * on an image) alike, only when the resolved route supports the image
+ * modality.
  */
 images: Array<string>, 
 /**
