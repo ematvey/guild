@@ -142,7 +142,7 @@ pub fn handshake_with(pair: Pair, expected_build: Option<&str>) -> anyhow::Resul
     // The daemon broadcasts events to every connection, so during a live
     // stream the first frames on this fresh pair are events, not our hello
     // response — skip every frame until the id-0 response arrives.
-    let mut hello: Option<serde_json::Value> = None;
+    let hello;
     loop {
         let mut line = String::new();
         let n = rd.read_line(&mut line)?;
