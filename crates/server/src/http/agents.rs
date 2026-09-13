@@ -96,7 +96,7 @@ async fn session_history(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let store = state.store().await?;
-    let session = store.agent_sessions().get(user.0.org_id, id).await?;
+    let session = store.agent_sessions().get(user.0.org_id, id, &user.0).await?;
     let rows = store
         .thread()
         .list_events(user.0.org_id, session.chat_id)
@@ -211,12 +211,17 @@ async fn run_turn(
         .to_string();
 
     let store = state.store().await?;
-    let session = store.agent_sessions().get(user.0.org_id, id).await?;
+    let session = store.agent_sessions().get(user.0.org_id, id, &user.0).await?;
     let master = state.config.master_key()?;
     let route = store
         .gateway()
         .resolve_route(user.0.org_id, &model, &master)
         .await?;
+
+    // Same spend gate as the chat gateway and the OpenAI endpoint: an agent
+    // turn is a model call, so the route's monthly quota applies before any
+    // tokens flow.
+    crate::http::gateway::enforce_quota(&state, user.0.org_id, &model, &route).await?;
 
     // history derived from the thread event log (spec §A.4)
     let prior_events: Vec<ThreadEvent> = store

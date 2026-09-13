@@ -66,7 +66,9 @@ fn verify_signature(state: &AppState, id: Uuid, exp: i64, sig: &str) -> Result<(
         Hmac::<sha2::Sha256>::new_from_slice(state.config.jwt_secret.as_bytes()).expect("hmac key");
     mac.update(format!("{id}:{exp}").as_bytes());
     let expected = hex::encode(mac.finalize().into_bytes());
-    if expected != sig {
+    // Constant-time: the signature gates authenticated downloads.
+    use subtle::ConstantTimeEq;
+    if !bool::from(expected.as_bytes().ct_eq(sig.as_bytes())) {
         return Err(ApiError::unauthorized("bad download signature"));
     }
     Ok(())
@@ -218,8 +220,6 @@ async fn signing_key(
 /// artifact for the newest desktop version are listed.
 async fn updater_manifest(
     State(state): State<AppState>,
-    uri: axum::http::Uri,
-    headers: axum::http::HeaderMap,
 ) -> Result<Response, ApiError> {
     let rows = state.store().await?.releases().list().await?;
     let mut latest: Option<String> = None;
@@ -238,18 +238,10 @@ async fn updater_manifest(
         return Ok(axum::http::StatusCode::NO_CONTENT.into_response());
     };
     let exp = chrono::Utc::now().timestamp() + 86_400;
-    // the plugin needs absolute URLs: rebuild them from the request's host
-    // (respecting X-Forwarded-Proto behind TLS-terminating proxies)
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("localhost");
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("http");
-    let base = format!("{scheme}://{host}");
-    let _ = uri;
+    // the plugin needs absolute URLs: build them from the configured API base
+    // URL — the request's Host header is attacker-controlled on the
+    // direct-HTTP deployment, so it must not shape download origins
+    let base = state.config.api_url.trim_end_matches('/').to_string();
     let mut platforms = serde_json::Map::new();
     for target in [
         "linux-x86_64",

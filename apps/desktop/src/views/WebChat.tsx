@@ -877,6 +877,21 @@ function TruncatedBadge() {
 /// Per-widget body of an expanded tool frame, driven by the persisted `meta`
 /// on the tool_result event (spec C.2 → C.3). Tools without meta fall back
 /// to pretty JSON of the arguments plus the raw content.
+/**
+ * Tool-result metadata is attacker-influenced; only http(s) URLs may become
+ * link targets. Anything else (javascript:, data:, malformed text) renders
+ * as plain text instead of an anchor.
+ */
+function safeUrl(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function ToolBody({ t }: { t: ToolBlock }) {
   const m = t.meta;
   const kind = toolKind(t);
@@ -886,19 +901,26 @@ function ToolBody({ t }: { t: ToolBlock }) {
       : parseSearchResults(t.content ?? "");
     return (
       <div className="space-y-2">
-        {sources.map((s, i) => (
-          <div key={i}>
-            <a
-              href={s.url}
-              target="_blank"
-              rel="noreferrer"
-              className="break-all font-medium underline decoration-border underline-offset-2 hover:decoration-foreground"
-            >
-              {s.title || s.url}
-            </a>
-            {s.snippet && <p className="mt-0.5 text-muted-foreground">{s.snippet}</p>}
-          </div>
-        ))}
+        {sources.map((s, i) => {
+          const href = safeUrl(s.url);
+          return (
+            <div key={i}>
+              {href ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="break-all font-medium underline decoration-border underline-offset-2 hover:decoration-foreground"
+                >
+                  {s.title || s.url}
+                </a>
+              ) : (
+                <span className="break-all font-medium">{s.title || s.url}</span>
+              )}
+              {s.snippet && <p className="mt-0.5 text-muted-foreground">{s.snippet}</p>}
+            </div>
+          );
+        })}
         {t.status === "running" && (
           <span className="animate-pulse text-muted-foreground">running…</span>
         )}
@@ -915,17 +937,24 @@ function ToolBody({ t }: { t: ToolBlock }) {
     return (
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          {url && (
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              className="min-w-0 flex-1 truncate underline decoration-border underline-offset-2 hover:decoration-foreground"
-              title={url}
-            >
-              {url}
-            </a>
-          )}
+          {(() => {
+            const href = safeUrl(url);
+            return href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="min-w-0 flex-1 truncate underline decoration-border underline-offset-2 hover:decoration-foreground"
+                title={url}
+              >
+                {url}
+              </a>
+            ) : url ? (
+              <span className="min-w-0 flex-1 truncate" title={url}>
+                {url}
+              </span>
+            ) : null;
+          })()}
           {/* pills only for failures: HTTP errors surface, 2xx stays quiet */}
           {m?.status_code != null && m.status_code >= 400 && (
             <span

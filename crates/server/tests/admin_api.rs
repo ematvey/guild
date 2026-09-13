@@ -82,7 +82,8 @@ async fn user_lifecycle_gated_by_admin_role() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let new_id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
 
-    // delete last admin refused
+    // deleting yourself is refused outright (an admin removing their own
+    // account would otherwise strand the org)
     let res = app
         .clone()
         .oneshot(
@@ -95,7 +96,7 @@ async fn user_lifecycle_gated_by_admin_role() {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 
     // delete the created user works; their session dies
     let res = app

@@ -269,9 +269,10 @@ async fn updater_manifest_serves_newest_signed_desktop_version() {
         assert!(entry["url"].as_str().unwrap().contains("sig="));
     }
     assert!(body["platforms"]["darwin-x86_64"].is_null());
-    // the manifest URL is an absolute signed download link that resolves
+    // the manifest URL is an absolute signed download link built from the
+    // configured API base URL (not the request's Host header), and resolves
     let url = body["platforms"]["linux-x86_64"]["url"].as_str().unwrap();
-    assert!(url.starts_with("http://guild.example/"));
+    assert!(url.starts_with("http://localhost:8080/"));
     let res = app
         .clone()
         .oneshot(Request::builder().uri(url).body(Body::empty()).unwrap())
