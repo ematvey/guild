@@ -13,6 +13,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+/// How long an approval request waits for a UI decision before auto-denying
+/// (mirrors the server-side approval gate).
+const APPROVAL_WAIT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -189,13 +193,18 @@ impl AgentHooks for SessionHooks {
             "agent.approval_request",
             serde_json::json!({ "request_id": request_id, "tool": call.name, "arguments": call.arguments }),
         );
-        match rx.await {
-            Ok(decision) => decision,
-            Err(_) => ApprovalDecision::Deny {
-                reason: "approval channel closed".into(),
-            },
-        }
+        match tokio::time::timeout(APPROVAL_WAIT, rx).await {
+        Ok(Ok(decision)) => decision,
+        // Sender dropped (session closed) or the wait timed out — deny so
+        // the turn proceeds instead of hanging forever on a silent client.
+        Ok(Err(_)) => ApprovalDecision::Deny {
+            reason: "approval channel closed".into(),
+        },
+        Err(_) => ApprovalDecision::Deny {
+            reason: "no approval decision within 5 minutes".into(),
+        },
     }
+}
 
     async fn on_done(&self, summary: &str) {
         self.send("agent.done", serde_json::json!({ "summary": summary }));
