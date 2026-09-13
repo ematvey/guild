@@ -92,42 +92,42 @@ impl OpenAiProvider {
         body
     }
 
-    /// Parses one SSE data frame into a text or thinking chunk (tool
-    /// assembly happens in the stream loop below). Empty deltas are skipped.
-    fn parse_frame(data: &str) -> Option<ProviderChunk> {
-        let v: serde_json::Value = serde_json::from_str(data).ok()?;
-        let mut chunk = ChatChunk::default();
-        if let Some(choice) = v["choices"].get(0) {
-            chunk.text_delta = choice["delta"]["content"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-        }
+    /// Parses one SSE data frame into chunks (tool assembly happens in the
+    /// stream loop below). Empty deltas yield nothing. A delta carrying BOTH
+    /// content and reasoning yields both — a reasoning-only frame is a
+    /// Thinking chunk (design §B.1); content is never dropped.
+    fn parse_frame(data: &str) -> Vec<ProviderChunk> {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else {
+            return Vec::new();
+        };
+        let mut tokens_in = None;
+        let mut tokens_out = None;
         if let Some(usage) = v.get("usage") {
-            chunk.tokens_in = usage["prompt_tokens"].as_u64().map(|n| n as u32);
-            chunk.tokens_out = usage["completion_tokens"].as_u64().map(|n| n as u32);
+            tokens_in = usage["prompt_tokens"].as_u64().map(|n| n as u32);
+            tokens_out = usage["completion_tokens"].as_u64().map(|n| n as u32);
         }
-        // DeepSeek-style chain-of-thought arrives in its own frames under
-        // `delta.reasoning_content`; a frame carrying reasoning is yielded as
-        // a Thinking chunk (design §B.1).
-        if let Some(choice) = v["choices"].get(0) {
-            if let Some(reasoning) = choice["delta"]["reasoning_content"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-            {
-                let think = ChatChunk {
-                    text_delta: reasoning.to_string(),
-                    tokens_in: chunk.tokens_in,
-                    tokens_out: chunk.tokens_out,
-                };
-                return Some(ProviderChunk::Thinking(think));
-            }
+        let choice = &v["choices"][0];
+        let mut out = Vec::new();
+        if let Some(reasoning) = choice["delta"]["reasoning_content"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+        {
+            out.push(ProviderChunk::Thinking(ChatChunk {
+                text_delta: reasoning.to_string(),
+                tokens_in,
+                tokens_out,
+            }));
         }
-        if chunk.text_delta.is_empty() && chunk.tokens_in.is_none() && chunk.tokens_out.is_none() {
-            None
-        } else {
-            Some(ProviderChunk::Text(chunk))
+        let text_delta = choice["delta"]["content"].as_str().unwrap_or("");
+        if !text_delta.is_empty() || (out.is_empty() && (tokens_in.is_some() || tokens_out.is_some()))
+        {
+            out.push(ProviderChunk::Text(ChatChunk {
+                text_delta: text_delta.to_string(),
+                tokens_in,
+                tokens_out,
+            }));
         }
+        out
     }
 }
 
@@ -136,6 +136,10 @@ impl Default for OpenAiProvider {
         Self::new()
     }
 }
+
+/// Upper bound on parallel tool-call streams accepted from one delta
+/// sequence; anything beyond is treated as a garbage index.
+const MAX_TOOL_CALL_PARTIALS: usize = 256;
 
 /// Accumulated partial tool calls from the stream.
 #[derive(Clone, Default)]
@@ -198,13 +202,18 @@ impl ModelProvider for OpenAiProvider {
                     yield Err(ProviderError::Upstream(msg));
                     break;
                 }
-                if let Some(chunk) = Self::parse_frame(&data) {
+                for chunk in Self::parse_frame(&data) {
                     yield Ok(chunk);
                 }
                 let choice = &v["choices"][0];
                 if let Some(tcs) = choice["delta"]["tool_calls"].as_array() {
                     for tc in tcs {
                         let idx = tc["index"].as_u64().unwrap_or(0) as u32;
+                        // Garbage indices from misbehaving providers must
+                        // not grow the partial list unboundedly.
+                        if idx as usize >= MAX_TOOL_CALL_PARTIALS {
+                            continue;
+                        }
                         while partials.len() <= idx as usize {
                             partials.push(PartialCall::default());
                         }
@@ -256,9 +265,9 @@ mod tests {
 
     #[test]
     fn parse_delta_frame() {
-        let c = OpenAiProvider::parse_frame(r#"{"choices":[{"delta":{"content":"Hel"}}]}"#)
-            .unwrap();
-        let ProviderChunk::Text(c) = c else {
+        let chunks = OpenAiProvider::parse_frame(r#"{"choices":[{"delta":{"content":"Hel"}}]}"#);
+        assert_eq!(chunks.len(), 1);
+        let ProviderChunk::Text(c) = &chunks[0] else {
             panic!("expected text chunk");
         };
         assert_eq!(c.text_delta, "Hel");
@@ -266,15 +275,30 @@ mod tests {
 
     #[test]
     fn parse_thinking_delta_frame() {
-        let c = OpenAiProvider::parse_frame(
+        let chunks = OpenAiProvider::parse_frame(
             r#"{"choices":[{"delta":{"reasoning_content":"let me think"}}]}"#,
-        )
-        .unwrap();
-        let ProviderChunk::Thinking(c) = c else {
+        );
+        assert_eq!(chunks.len(), 1);
+        let ProviderChunk::Thinking(c) = &chunks[0] else {
             panic!("expected thinking chunk");
         };
         assert_eq!(c.text_delta, "let me think");
         assert!(c.tokens_in.is_none() && c.tokens_out.is_none());
+    }
+
+    /// A delta carrying content AND reasoning must yield both — dropping the
+    /// text lost model output on providers that mix them.
+    #[test]
+    fn mixed_delta_yields_reasoning_then_text() {
+        let chunks = OpenAiProvider::parse_frame(
+            r#"{"choices":[{"delta":{"reasoning_content":"think","content":"answer"}}]}"#,
+        );
+        assert_eq!(chunks.len(), 2);
+        assert!(matches!(chunks[0], ProviderChunk::Thinking(_)));
+        let ProviderChunk::Text(c) = &chunks[1] else {
+            panic!("expected text chunk");
+        };
+        assert_eq!(c.text_delta, "answer");
     }
 
     #[test]
@@ -282,16 +306,16 @@ mod tests {
         assert!(OpenAiProvider::parse_frame(
             r#"{"choices":[{"delta":{"reasoning_content":""}}]}"#
         )
-        .is_none());
+        .is_empty());
     }
 
     #[test]
     fn parse_usage_frame() {
-        let c = OpenAiProvider::parse_frame(
+        let chunks = OpenAiProvider::parse_frame(
             r#"{"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}"#,
-        )
-        .unwrap();
-        let ProviderChunk::Text(c) = c else {
+        );
+        assert_eq!(chunks.len(), 1);
+        let ProviderChunk::Text(c) = &chunks[0] else {
             panic!("expected text chunk");
         };
         assert!(c.text_delta.is_empty());
@@ -301,7 +325,7 @@ mod tests {
 
     #[test]
     fn done_frame_is_none() {
-        assert!(OpenAiProvider::parse_frame("[DONE]").is_none());
+        assert!(OpenAiProvider::parse_frame("[DONE]").is_empty());
     }
 
     #[test]
