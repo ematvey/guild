@@ -46,6 +46,7 @@ import {
   DropdownMenuSeparator,
 } from "@guild/ui/components/dropdown-menu";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
+import { toast } from "sonner";
 import { UserBadge } from "../components/user-badge";
 import { Caret } from "@guild/ui/components/caret";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
@@ -1327,6 +1328,10 @@ export default function WebChat({
 
   useEffect(() => {
     listModels().then((m) => {
+      if (m === null) {
+        toast.error("Could not load models");
+        return;
+      }
       setModels(m);
       if (m.length > 0) setModel((cur) => cur || m[0]);
     });
@@ -1357,7 +1362,14 @@ export default function WebChat({
     bottom.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
   }, [blocks]);
 
-  const refreshChats = async () => setChats(await listChats());
+  const refreshChats = async () => {
+    const c = await listChats();
+    if (c === null) {
+      toast.error("Could not load chats");
+      return;
+    }
+    setChats(c);
+  };
 
   /// Reloads blocks from thread rows and tracks the high-water seq so a later
   /// compaction poll only waits for events newer than what is on screen.
@@ -2439,6 +2451,10 @@ function DeviceSetupDialog({
     setReleases(null);
     setPairCode(null);
     listReleases().then((r) => {
+      if (r === null) {
+        toast.error("Could not load releases");
+        return;
+      }
       const desktop = r.filter((x) => x.kind === "desktop");
       // show only the latest version's installers, one per platform
       const latest = desktop.reduce<string | null>(
