@@ -61,6 +61,7 @@ fn test_user(user_id: uuid::Uuid, org_id: uuid::Uuid) -> guild_server::store::id
         org_id,
         email: "t@t".into(),
         role: "member".into(),
+        identity_type: "managed".into(),
         display_name: None,
         avatar_url: None,
     }

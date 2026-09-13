@@ -184,7 +184,11 @@ where
             if line.trim().is_empty() {
                 continue;
             }
-            crate::dtrace::dtrace(&format!("conn: reader got {} bytes: {}", line.len(), line.chars().take(120).collect::<String>()));
+            crate::dtrace::dtrace(&format!(
+                "conn: reader got {} bytes: {}",
+                line.len(),
+                crate::dtrace::redacted_frame_summary(&line, 120)
+            ));
             if req_tx.send(line_to_incoming(&line)).is_err() {
                 break;
             }
@@ -198,7 +202,11 @@ where
         let mut w = writer;
         crate::dtrace::dtrace("conn: writer thread started");
         while let Some(v) = out_rx.blocking_recv() {
-            crate::dtrace::dtrace(&format!("conn: writer writing {} bytes: {}", v.to_string().len(), v.to_string().chars().take(120).collect::<String>()));
+            crate::dtrace::dtrace(&format!(
+                "conn: writer writing {} bytes: {}",
+                v.to_string().len(),
+                crate::dtrace::redacted_frame_summary(&v.to_string(), 120)
+            ));
             let t0 = std::time::Instant::now();
             let r = writeln!(w, "{v}");
             let f = w.flush();
@@ -320,6 +328,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             });
         }
         "tool.run" => {
+            let shared_run = shared.clone();
             let out_tx = out_tx.clone();
             tokio::spawn(async move {
                 let result = async {
@@ -330,6 +339,17 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
                     let tool = registry
                         .get(&name)
                         .with_context(|| format!("unknown tool {name}"))?;
+                    // Route through the session's approval policy: a direct
+                    // RPC run must not bypass what the agent loop honors.
+                    // Ask is refused here — this path has no approval card;
+                    // such tools go through a chat turn instead.
+                    let policy = shared_run.session.lock().unwrap().policy.clone();
+                    let approval = policy.for_tool(&name, tool.default_policy());
+                    if approval != Approval::Allow {
+                        anyhow::bail!(
+                            "tool {name} is not allowed by the approval policy ({approval:?})"
+                        );
+                    }
                     match tool.run(std::path::Path::new(&workdir), args).await {
                         Ok(out) => Ok(Response::ok(
                             req.id,

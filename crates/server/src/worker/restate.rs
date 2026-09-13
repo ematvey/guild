@@ -1062,7 +1062,9 @@ pub(crate) async fn compact_core(
                 enforce_quota(&state, org_id, &model, &route)
                     .await
                     .map_err(api_terminal)?;
-                Ok(Json((model, route)))
+                // Journal the non-secret projection only: Restate persists
+                // step outputs, and the decrypted key must not land there.
+                Ok(Json((model, route.meta())))
             }
         })
         .await?
@@ -1070,15 +1072,27 @@ pub(crate) async fn compact_core(
 
     // (d) Journaled: ONE non-streaming model call with the compaction
     // prompt — same provider machinery as generate (accumulate the
-    // stream), but nothing is broadcast and no buffers/lock exist.
-    let route2 = route.clone();
+    // stream), but nothing is broadcast and no buffers/lock exist. The
+    // key is resolved here, inside the step, never journaled.
+    let st2 = state.clone();
     let model2 = model.clone();
     let msgs = history.clone();
     let (summary, tokens_in, tokens_out) = ctx
         .run(move || {
-            let route = route2.clone();
+            let state = st2.clone();
             let model = model2.clone();
             async move {
+                let store = state.store().await.map_err(api_err)?;
+                let master = state.config.master_key()?;
+                let route = store
+                    .gateway()
+                    .resolve_route(org_id, &model, &master)
+                    .await
+                    .map_err(|e| {
+                        HandlerError::from(TerminalError::new(format!(
+                            "route re-resolve failed: {e:?}"
+                        )))
+                    })?;
                 let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
                     "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
                     "anthropic" => {
@@ -1208,7 +1222,10 @@ impl ChatRunner {
                     enforce_quota(&state, org, &model, &route)
                         .await
                         .map_err(|e| api_terminal_free_chat(&state, chat_id, e))?;
-                    Ok(Json(route))
+                    // Journal the non-secret projection only: Restate
+                    // persists step outputs, and the decrypted key must not
+                    // land there. Provider-call steps re-resolve the key.
+                    Ok(Json(route.meta()))
                 }
             })
             .await?
@@ -1431,7 +1448,7 @@ impl ChatRunner {
             let mut msgs = messages.clone();
             let completion: CompletionOut = loop {
                 let st = state.clone();
-                let route2 = route.clone();
+                let org2 = req.org_id;
                 let model2 = req.model.clone();
                 let specs = tool_specs.clone();
                 let system2 = system.clone();
@@ -1443,12 +1460,25 @@ impl ChatRunner {
                 let call = ctx
                     .run(move || {
                         let state = st.clone();
-                        let route = route2.clone();
+                        let org = org2;
                         let model = model2.clone();
                         let tx = tx_loop.clone();
                         let text_buf = buf_loop.clone();
                         let thinking_buf = think_loop.clone();
                         async move {
+                        // The key is resolved here, inside the journaled
+                        // step — never carried through step outputs.
+                        let store = state.store().await.map_err(api_err)?;
+                        let master = state.config.master_key()?;
+                        let route = store
+                            .gateway()
+                            .resolve_route(org, &model, &master)
+                            .await
+                            .map_err(|e| {
+                                HandlerError::from(TerminalError::new(format!(
+                                    "route re-resolve failed: {e:?}"
+                                )))
+                            })?;
                         let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
                             "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
                             "anthropic" => {

@@ -170,11 +170,38 @@ impl AppState {
     /// unknown machine (upsert) — liveness must not depend on any single
     /// stream connection surviving; a reconnecting app re-registers by
     /// heartbeat alone. Returns true when the entry is live afterwards.
+    /// A machine registered to another user is never touched — that would
+    /// let anyone keep (or take over) a machine they don't own; a stale
+    /// entry may be claimed by a new user, mirroring re-pairing.
     pub fn executor_touch(&self, machine_id: &str, user_id: Uuid, org_id: Uuid, name: &str) -> bool {
         let now = chrono::Utc::now().timestamp();
         let mut executors = self.executors.lock().unwrap();
         match executors.get_mut(machine_id) {
             Some(h) => {
+                let seen = h.last_seen.load(std::sync::atomic::Ordering::Relaxed);
+                let stale = !(seen > 0 && now - seen <= EXECUTOR_TTL_SECS);
+                if h.user_id != user_id || h.org_id != org_id {
+                    if !stale {
+                        return false;
+                    }
+                    // Expired entry owned by someone else: re-register it
+                    // under the touching user (the machine re-paired).
+                    executors.remove(machine_id);
+                    executors.insert(
+                        machine_id.to_string(),
+                        Arc::new(ExecutorHandle {
+                            user_id,
+                            org_id,
+                            name: if name.is_empty() {
+                                "guild-machine".to_string()
+                            } else {
+                                name.to_string()
+                            },
+                            last_seen: Arc::new(std::sync::atomic::AtomicI64::new(now)),
+                        }),
+                    );
+                    return true;
+                }
                 let h = Arc::make_mut(h);
                 if !name.is_empty() {
                     h.name = name.to_string();

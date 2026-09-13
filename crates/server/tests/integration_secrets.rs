@@ -58,3 +58,47 @@ async fn secrets_upsert_list_resolve_delete() {
     let rows = db.integration_secrets().list(org, "hubspot").await.unwrap();
     assert!(rows.is_empty());
 }
+
+/// Deleting an integration must not leave its secrets behind: re-adding the
+/// same slug later must start with no credentials.
+#[tokio::test]
+async fn integration_delete_removes_secrets() {
+    let db = Store::connect_test().await.unwrap();
+    let org = Uuid::now_v7();
+    let master: [u8; 32] = [0u8; 32];
+
+    let id = db
+        .integrations()
+        .upsert(org, "hubspot", &serde_json::json!({}), true)
+        .await
+        .unwrap();
+    db.integration_secrets()
+        .upsert(org, "hubspot", "api_key", "sk-live-123", &master)
+        .await
+        .unwrap();
+
+    db.integrations().delete(org, id).await.unwrap();
+    assert!(db.integrations().list(org).await.unwrap().is_empty());
+    assert!(
+        db.integration_secrets()
+            .list(org, "hubspot")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // Re-add with the same slug: no old credentials revived.
+    let id2 = db
+        .integrations()
+        .upsert(org, "hubspot", &serde_json::json!({}), true)
+        .await
+        .unwrap();
+    assert_ne!(id, id2);
+    assert!(
+        db.integration_secrets()
+            .list(org, "hubspot")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

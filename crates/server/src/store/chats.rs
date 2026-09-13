@@ -2,6 +2,7 @@
 //! log (spec §A): `store::thread` owns persistence, this store owns chat rows.
 
 use crate::http::error::ApiError;
+use crate::store::identity::UserRow;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -54,12 +55,25 @@ impl<'a> ChatStore<'a> {
         .map_err(Into::into)
     }
 
-    pub async fn get_chat(&self, org_id: Uuid, chat_id: Uuid) -> Result<ChatRow, ApiError> {
+    /// Fetches one chat the caller owns. Admins may access any chat in the
+    /// org; everyone else only their own — org scoping alone would let a
+    /// member read another member's thread, forge its events, rebind its
+    /// machine, or spend the org's tokens through it.
+    pub async fn get_chat(
+        &self,
+        org_id: Uuid,
+        chat_id: Uuid,
+        caller: &UserRow,
+    ) -> Result<ChatRow, ApiError> {
+        let is_admin = caller.role == "admin";
         sqlx::query_as(
-            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label FROM chats WHERE org_id = $1 AND id = $2",
+            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label FROM chats \
+             WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)",
         )
         .bind(org_id)
         .bind(chat_id)
+        .bind(caller.id)
+        .bind(is_admin)
         .fetch_optional(self.pool)
         .await?
         .ok_or_else(|| ApiError::not_found("no such chat"))
@@ -86,5 +100,54 @@ impl<'a> ChatStore<'a> {
         .await
         .map_err(Into::into)
     }
+}
 
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use crate::store::Store;
+
+    /// Member A must not read member B's chat; admins pass.
+    #[tokio::test]
+    async fn chat_access_is_owner_scoped_with_admin_bypass() {
+        let db = Store::connect_test().await.unwrap();
+        let store = &db.store;
+        let org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+            .bind(org)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let alice = store
+            .identity()
+            .create_user(org, "alice@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let bob = store
+            .identity()
+            .create_user(org, "bob@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let admin = store
+            .identity()
+            .create_user(org, "root@example.org", "hunter226", "admin")
+            .await
+            .unwrap();
+        let chat = store
+            .chats()
+            .create_chat(org, alice.id, Some("alice's"))
+            .await
+            .unwrap();
+
+        // Owner reads their own chat.
+        let owned = store.chats().get_chat(org, chat.id, &alice).await.unwrap();
+        assert_eq!(owned.id, chat.id);
+
+        // Another member of the same org does not — 404, not a leak.
+        let err = store.chats().get_chat(org, chat.id, &bob).await.unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::NOT_FOUND);
+
+        // Admins can access any chat in their org.
+        let via_admin = store.chats().get_chat(org, chat.id, &admin).await.unwrap();
+        assert_eq!(via_admin.id, chat.id);
+    }
 }

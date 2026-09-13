@@ -140,7 +140,7 @@ async fn thread(
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
     let events = store.thread().list_events(user.0.org_id, chat_id).await?;
     // Context-usage snapshot for the gauge (dsh-style filling gauge): tokens
     // in of the LATEST assistant turn vs. the model route's context window.
@@ -182,7 +182,7 @@ async fn append_thread_event(
     Json(event): Json<ThreadEvent>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id).await?;
+    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
     let event = match event {
         ThreadEvent::ToolResult { turn: 0, step, .. } => {
             let turn = store.thread().latest_turn(chat_id).await?.max(1);

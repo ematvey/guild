@@ -13,6 +13,7 @@ pub struct UserRow {
     pub org_id: Uuid,
     pub email: String,
     pub role: String,
+    pub identity_type: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
 }
@@ -32,6 +33,7 @@ struct AuthRow {
     org_id: Uuid,
     email: String,
     role: String,
+    identity_type: String,
     password_hash: String,
     display_name: Option<String>,
     avatar_url: Option<String>,
@@ -47,6 +49,11 @@ fn hash_password(password: &str) -> anyhow::Result<String> {
         .hash_password(password.as_bytes(), &salt)
         .map_err(|e| anyhow::anyhow!("argon2 hash failed: {e}"))?
         .to_string())
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
 }
 
 fn verify_password(password: &str, hash: &str) -> bool {
@@ -73,22 +80,28 @@ impl<'a> IdentityStore<'a> {
         email: &str,
         password: &str,
     ) -> anyhow::Result<Uuid> {
+        // The check-and-insert runs under an advisory lock inside one
+        // transaction: two concurrent bootstraps must not both pass the
+        // "no users yet" check.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('guild:bootstrap'))")
+            .execute(&mut *tx)
+            .await?;
         let user: Option<UserRow> =
-            sqlx::query_as("SELECT id, org_id, email, role, display_name, avatar_url FROM users WHERE email = $1")
+            sqlx::query_as("SELECT id, org_id, email, role, identity_type, display_name, avatar_url FROM users WHERE email = $1")
                 .bind(email)
-                .fetch_optional(self.pool)
+                .fetch_optional(&mut *tx)
                 .await?;
         if let Some(u) = user {
             return Ok(u.id);
         }
         let any: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(self.pool)
+            .fetch_one(&mut *tx)
             .await?;
         anyhow::ensure!(any == 0, "org already has users");
         let org_id = Uuid::now_v7();
         let user_id = Uuid::now_v7();
         let hash = hash_password(password)?;
-        let mut tx = self.pool.begin().await?;
         sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, $2)")
             .bind(org_id)
             .bind("org")
@@ -120,7 +133,7 @@ impl<'a> IdentityStore<'a> {
         let row: Result<UserRow, sqlx::Error> = sqlx::query_as(
             "INSERT INTO users (id, org_id, email, password_hash, role, identity_type) \
              VALUES ($1, $2, $3, $4, $5, 'managed') \
-             RETURNING id, org_id, email, role, display_name, avatar_url",
+             RETURNING id, org_id, email, role, identity_type, display_name, avatar_url",
         )
         .bind(id)
         .bind(org_id)
@@ -156,7 +169,7 @@ impl<'a> IdentityStore<'a> {
         org_id: Uuid,
         email: &str,
     ) -> Result<Option<UserRow>, ApiError> {
-        sqlx::query_as("SELECT id, org_id, email, role, display_name, avatar_url FROM users WHERE org_id = $1 AND email = $2")
+        sqlx::query_as("SELECT id, org_id, email, role, identity_type, display_name, avatar_url FROM users WHERE org_id = $1 AND email = $2")
             .bind(org_id)
             .bind(email)
             .fetch_optional(self.pool)
@@ -168,7 +181,7 @@ impl<'a> IdentityStore<'a> {
     /// Email lookup across orgs (bootstrap/single-org flows).
     pub async fn find_by_email_any(&self, email: &str) -> anyhow::Result<Option<UserRow>> {
         let user: Option<UserRow> =
-            sqlx::query_as("SELECT id, org_id, email, role, display_name, avatar_url FROM users WHERE email = $1")
+            sqlx::query_as("SELECT id, org_id, email, role, identity_type, display_name, avatar_url FROM users WHERE email = $1")
                 .bind(email)
                 .fetch_optional(self.pool)
                 .await?;
@@ -176,7 +189,7 @@ impl<'a> IdentityStore<'a> {
     }
 
     pub async fn get_user(&self, id: Uuid) -> Result<UserRow, ApiError> {
-        sqlx::query_as("SELECT id, org_id, email, role, display_name, avatar_url FROM users WHERE id = $1")
+        sqlx::query_as("SELECT id, org_id, email, role, identity_type, display_name, avatar_url FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(self.pool)
             .await?
@@ -229,7 +242,7 @@ impl<'a> IdentityStore<'a> {
         let hash = hash_password(&unusable).map_err(ApiError::from)?;
         let id = Uuid::now_v7();
         sqlx::query_as(
-            "INSERT INTO users (id, org_id, email, password_hash, role, identity_type, display_name, avatar_url)              VALUES ($1, $2, $3, $4, 'member', 'oidc', $5, $6)              RETURNING id, org_id, email, role, display_name, avatar_url",
+            "INSERT INTO users (id, org_id, email, password_hash, role, identity_type, display_name, avatar_url)              VALUES ($1, $2, $3, $4, 'member', 'oidc', $5, $6)              RETURNING id, org_id, email, role, identity_type, display_name, avatar_url",
         )
         .bind(id)
         .bind(org_id)
@@ -262,7 +275,7 @@ impl<'a> IdentityStore<'a> {
 
     pub async fn authenticate(&self, email: &str, password: &str) -> Result<UserRow, ApiError> {
         let row: Option<AuthRow> = sqlx::query_as(
-            "SELECT id, org_id, email, role, password_hash, display_name, avatar_url FROM users WHERE email = $1",
+            "SELECT id, org_id, email, role, identity_type, password_hash, display_name, avatar_url FROM users WHERE email = $1",
         )
         .bind(email)
         .fetch_optional(self.pool)
@@ -286,6 +299,7 @@ impl<'a> IdentityStore<'a> {
             org_id: auth.org_id,
             email: auth.email,
             role: auth.role,
+            identity_type: auth.identity_type,
             display_name: auth.display_name,
             avatar_url: auth.avatar_url,
         })
@@ -296,8 +310,10 @@ impl<'a> IdentityStore<'a> {
         let token = random_token();
         let id = Uuid::now_v7();
         let expires = Utc::now() + Duration::days(30);
-        sqlx::query("INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)")
-            .bind(&token)
+        // Only the sha256 hash is stored (api keys and pairing codes do the
+        // same): a database dump must not convert into session theft.
+        sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
+            .bind(sha256_hex(token.as_bytes()))
             .bind(user_id)
             .bind(expires)
             .execute(self.pool)
@@ -307,19 +323,19 @@ impl<'a> IdentityStore<'a> {
 
     pub async fn validate_session(&self, token: &str) -> Result<UserRow, ApiError> {
         sqlx::query_as(
-            "SELECT u.id, u.org_id, u.email, u.role, u.display_name, u.avatar_url FROM sessions s \
+            "SELECT u.id, u.org_id, u.email, u.role, u.identity_type, u.display_name, u.avatar_url FROM sessions s \
              JOIN users u ON u.id = s.user_id \
-             WHERE s.token = $1 AND s.revoked_at IS NULL AND s.expires_at > now()",
+             WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()",
         )
-        .bind(token)
+        .bind(sha256_hex(token.as_bytes()))
         .fetch_optional(self.pool)
         .await?
         .ok_or_else(|| ApiError::unauthorized("invalid or expired session"))
     }
 
     pub async fn revoke_session(&self, token: &str) -> anyhow::Result<()> {
-        sqlx::query("UPDATE sessions SET revoked_at = now() WHERE token = $1")
-            .bind(token)
+        sqlx::query("UPDATE sessions SET revoked_at = now() WHERE token_hash = $1")
+            .bind(sha256_hex(token.as_bytes()))
             .execute(self.pool)
             .await?;
         Ok(())
@@ -336,7 +352,9 @@ impl<'a> IdentityStore<'a> {
     }
 
     /// Updates a managed user (role change and/or password reset); omitted
-    /// fields stay unchanged. The user must belong to the org.
+    /// fields stay unchanged. The user must belong to the org. A password
+    /// reset revokes the user's sessions — the old credentials must not
+    /// keep working.
     pub async fn update_user(
         &self,
         org_id: Uuid,
@@ -348,7 +366,7 @@ impl<'a> IdentityStore<'a> {
             Some(p) => Some(hash_password(p).map_err(ApiError::from)?),
             None => None,
         };
-        sqlx::query_as(
+        let row = sqlx::query_as::<_, UserListRow>(
             "UPDATE users SET role = COALESCE($2::text, role), \
              password_hash = COALESCE($3::text, password_hash) \
              WHERE id = $1 AND org_id = $4 \
@@ -360,7 +378,14 @@ impl<'a> IdentityStore<'a> {
         .bind(org_id)
         .fetch_optional(self.pool)
         .await?
-        .ok_or_else(|| ApiError::not_found("no such user"))
+        .ok_or_else(|| ApiError::not_found("no such user"))?;
+        if password.is_some() {
+            sqlx::query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1")
+                .bind(user_id)
+                .execute(self.pool)
+                .await?;
+        }
+        Ok(row)
     }
 
     /// Deletes a user; refuses to remove the org's last admin.
@@ -443,7 +468,60 @@ mod tests {
         let (_sid, token) = store.identity().create_session(user.id).await.unwrap();
         let validated = store.identity().validate_session(&token).await.unwrap();
         assert_eq!(validated.id, user.id);
+
+        // Only the hash is stored — the plaintext token is nowhere in the row.
+        let stored: String =
+            sqlx::query_scalar("SELECT token_hash FROM sessions WHERE user_id = $1")
+                .bind(user.id)
+                .fetch_one(db.store.pool())
+                .await
+                .unwrap();
+        assert_ne!(stored, token);
+        assert_eq!(stored.len(), 64);
+
         store.identity().revoke_session(&token).await.unwrap();
         assert!(store.identity().validate_session(&token).await.is_err());
+    }
+
+    /// A password reset through the admin path revokes existing sessions.
+    #[tokio::test]
+    async fn password_reset_revokes_sessions() {
+        let db = Store::connect_test().await.unwrap();
+        let store = &db.store;
+        let org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+            .bind(org)
+            .execute(db.store.pool())
+            .await
+            .unwrap();
+        let admin = store
+            .identity()
+            .create_user(org, "admin@example.org", "hunter226", "admin")
+            .await
+            .unwrap();
+        let member = store
+            .identity()
+            .create_user(org, "member@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let (_sid, token) = store.identity().create_session(member.id).await.unwrap();
+        assert!(store.identity().validate_session(&token).await.is_ok());
+
+        store
+            .identity()
+            .update_user(org, member.id, None, Some("newpass99"))
+            .await
+            .unwrap();
+        assert!(store.identity().validate_session(&token).await.is_err());
+
+        // Role-only updates keep sessions alive.
+        let (_sid2, token2) = store.identity().create_session(member.id).await.unwrap();
+        store
+            .identity()
+            .update_user(org, member.id, Some("admin"), None)
+            .await
+            .unwrap();
+        assert!(store.identity().validate_session(&token2).await.is_ok());
+        let _ = admin;
     }
 }

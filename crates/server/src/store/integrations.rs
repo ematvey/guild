@@ -79,14 +79,32 @@ impl<'a> IntegrationStore<'a> {
         Ok(())
     }
 
-    /// Removes one integration's configuration by id (the connector can be
-    /// re-added later as a fresh row with a fresh id).
+    /// Removes one integration by id — the config row AND its stored
+    /// secrets, transactionally. Secrets live keyed by slug with no FK, so
+    /// deleting only the row would let a re-added integration with the same
+    /// slug silently revive the old credentials.
     pub async fn delete(&self, org_id: Uuid, id: Uuid) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin().await?;
+        let name: Option<String> =
+            sqlx::query_scalar("SELECT name FROM integrations WHERE org_id = $1 AND id = $2")
+                .bind(org_id)
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some(name) = name else {
+            return Ok(()); // nothing to delete
+        };
         sqlx::query("DELETE FROM integrations WHERE org_id = $1 AND id = $2")
             .bind(org_id)
             .bind(id)
-            .execute(self.pool)
+            .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM integration_secrets WHERE org_id = $1 AND integration = $2")
+            .bind(org_id)
+            .bind(&name)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 

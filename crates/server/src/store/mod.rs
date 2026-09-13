@@ -41,14 +41,21 @@ impl Store {
     }
 
     /// Applies embedded migrations in filename order, tracked in
-    /// `schema_history` (idempotent).
+    /// `schema_history` (idempotent). Concurrent migrators (api and worker
+    /// processes share the database) serialize on a transaction-scoped
+    /// advisory lock; a stored content hash rejects edited migration files.
     async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS schema_history (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
         )
         .execute(pool)
         .await?;
-        const MIGRATIONS: [(&str, &str); 31] = [
+        sqlx::query(
+            "ALTER TABLE schema_history ADD COLUMN IF NOT EXISTS content_hash TEXT",
+        )
+        .execute(pool)
+        .await?;
+        const MIGRATIONS: [(&str, &str); 33] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -170,15 +177,49 @@ impl Store {
                 "0031_client_tool_names",
                 include_str!("../../migrations/0031_client_tool_names.sql"),
             ),
+            (
+                "0032_session_token_hash",
+                include_str!("../../migrations/0032_session_token_hash.sql"),
+            ),
+            (
+                "0033_routine_webhook_token_hash",
+                include_str!("../../migrations/0033_routine_webhook_token_hash.sql"),
+            ),
         ];
         for (name, sql) in MIGRATIONS {
-            let applied: Option<i64> =
-                sqlx::query_scalar("SELECT 1::int8 FROM schema_history WHERE name = $1")
+            let hash = {
+                use sha2::{Digest, Sha256};
+                hex::encode(Sha256::digest(sql.as_bytes()))
+            };
+            let mut tx = pool.begin().await?;
+            // Serialize migrators and re-check inside the lock, so two
+            // processes never apply the same migration twice.
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtext('guild:migrations'))")
+                .execute(&mut *tx)
+                .await?;
+            let applied: Option<Option<String>> =
+                sqlx::query_scalar("SELECT content_hash FROM schema_history WHERE name = $1")
                     .bind(name)
-                    .fetch_optional(pool)
+                    .fetch_optional(&mut *tx)
                     .await?;
-            if applied.is_some() {
-                continue;
+            match applied {
+                // Applied and hashed: same content → done, changed content
+                // → refuse (an edited migration would corrupt the schema).
+                Some(Some(h)) => {
+                    if h != hash {
+                        anyhow::bail!(
+                            "migration {name} changed since it was applied (hash mismatch)"
+                        );
+                    }
+                    tx.rollback().await?;
+                    continue;
+                }
+                // Applied before hashes were recorded — leave as is.
+                Some(None) => {
+                    tx.rollback().await?;
+                    continue;
+                }
+                None => {}
             }
             // Split on ';'. Comment lines are stripped first — a ';' inside a
             // `--` comment would otherwise break the statement split.
@@ -195,8 +236,9 @@ impl Store {
                 }
                 sqlx::query(stmt).execute(&mut *tx).await?;
             }
-            sqlx::query("INSERT INTO schema_history (name) VALUES ($1)")
+            sqlx::query("INSERT INTO schema_history (name, content_hash) VALUES ($1, $2)")
                 .bind(name)
+                .bind(&hash)
                 .execute(&mut *tx)
                 .await?;
             tx.commit().await?;
@@ -300,10 +342,14 @@ mod test_db {
     async fn base_url() -> anyhow::Result<&'static String> {
         BASE_URL
             .get_or_try_init(|| async {
-                let url = std::env::var("GUILD_TEST_PG_URL").unwrap_or_else(|_| {
-                    "postgres://postgres:REDACTED_HOST_POSTGRES_PASSWORD@127.0.0.1:5432"
-                        .to_string()
-                });
+                // No default: a host credential must not live in source.
+                // Point GUILD_TEST_PG_URL at a role that can CREATE DATABASE.
+                let url = std::env::var("GUILD_TEST_PG_URL").map_err(|_| {
+                    anyhow::anyhow!(
+                        "GUILD_TEST_PG_URL is not set — tests need a Postgres server \
+                         the test user can create databases on"
+                    )
+                })?;
                 let admin = sqlx::PgPool::connect(&format!("{url}/postgres")).await?;
                 // Reap leftovers from crashed runs: databases no process is
                 // connected to. Concurrent test processes keep theirs (they
