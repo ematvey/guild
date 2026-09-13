@@ -2,8 +2,9 @@
 //! users plus an "Add user" entry; the detail screen holds role, password
 //! reset and delete.
 
-import { useCallback, useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import type { SectionDetailProps } from "../section-nav";
+import { quantizeIso, useCachedGet } from "../use-cached-api";
 import { ArrowLeft, Pencil, UserPlus } from "lucide-react";
 import { Area, AreaChart } from "recharts";
 import { api } from "../admin-api";
@@ -62,43 +63,32 @@ export default function UsersSection({
   detail = null,
   onDetailChange,
 }: SectionDetailProps) {
-  const [users, setUsers] = useState<UserRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const usersRes = useCachedGet<{ users: UserRow[] }>("/api/v1/admin/users");
+  const users = usersRes.data?.users ?? null;
+  const error = usersRes.error;
+  const reload = usersRes.reload;
   // 30-day per-user spend (one series call, pivoted client-side by email).
-  const [spend, setSpend] = useState<
-    Record<string, { points: { bucket: string; cost: number }[]; total: number }>
-  >({});
-
-  const reload = useCallback(() => {
-    api<{ users: UserRow[] }>("GET", "/api/v1/admin/users")
-      .then((r) => setUsers(r.users))
-      .catch((e) => {
-        setUsers([]);
-        setError(e instanceof Error ? e.message : String(e));
-      });
-    const from = new Date(Date.now() - 30 * 24 * 3_600_000).toISOString();
-    const to = new Date().toISOString();
-    api<{ rows: SeriesRow[] }>(
-      "GET",
-      `/api/v1/usage/series?group_by=user&bucket=day&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-    )
-      .then((r) => {
-        const map: Record<
-          string,
-          { points: { bucket: string; cost: number }[]; total: number }
-        > = {};
-        for (const row of r.rows) {
-          const e = map[row.group] ?? { points: [], total: 0 };
-          e.points.push({ bucket: row.bucket, cost: row.cost_usd });
-          e.total += row.cost_usd;
-          map[row.group] = e;
-        }
-        setSpend(map);
-      })
-      .catch(() => setSpend({}));
+  // Timestamps quantize to 10 minutes so the cache key repeats across
+  // navigations instead of changing every mount.
+  const seriesPath = useMemo(() => {
+    const from = quantizeIso(600_000, Date.now() - 30 * 24 * 3_600_000);
+    const to = quantizeIso(600_000);
+    return `/api/v1/usage/series?group_by=user&bucket=day&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
   }, []);
-
-  useEffect(reload, [reload]);
+  const seriesRes = useCachedGet<{ rows: SeriesRow[] }>(seriesPath);
+  const spend = useMemo(() => {
+    const map: Record<
+      string,
+      { points: { bucket: string; cost: number }[]; total: number }
+    > = {};
+    for (const row of seriesRes.data?.rows ?? []) {
+      const e = map[row.group] ?? { points: [], total: 0 };
+      e.points.push({ bucket: row.bucket, cost: row.cost_usd });
+      e.total += row.cost_usd;
+      map[row.group] = e;
+    }
+    return map;
+  }, [seriesRes.data]);
 
   if (detail !== null) {
     // Deep-linked user page: wait for the list before resolving the id —
