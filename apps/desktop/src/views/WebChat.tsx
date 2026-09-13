@@ -196,6 +196,9 @@ interface ToolMeta {
 interface Block {
   kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval" | "compaction";
   text: string;
+  /// Stable React key. Derived blocks use the source event's seq (plus an
+  /// in-event index); streaming-built blocks use a live counter.
+  key: string;
   /// kind === "user": context attachment chips (metadata only; images may
   /// carry a local preview URL for optimistic rendering).
   attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
@@ -204,6 +207,12 @@ interface Block {
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
+}
+
+let liveKeyCounter = 0;
+/// Key for blocks the stream builds (no source event seq to derive from).
+function liveKey(): string {
+  return `live-${++liveKeyCounter}`;
 }
 
 /// Tools the desktop executor runs locally (mirrors protocol `client_tool_specs`).
@@ -359,11 +368,14 @@ function AttachmentFileChip({
 /// disappears on refresh: every assistant block is replayed in stream order
 /// and tool results fill their matching frames.
 function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
-  const events = [...rows].sort((a, b) => a.seq - b.seq).map((r) => r.event);
+  const sorted = [...rows].sort((a, b) => a.seq - b.seq);
   const blocks: Block[] = [];
   const byCallId = new Map<string, ToolBlock>();
   const byApprovalId = new Map<string, ApprovalBlock>();
-  for (const ev of events) {
+  for (const row of sorted) {
+    const ev = row.event;
+    const seqKey = (n: number) => `${row.seq}:${n}`;
+    let inEvent = 0;
     switch (ev.type) {
       case "user_message": {
         // Event content is the model-facing turn: typed text plus inlined
@@ -374,6 +386,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
           kind: "user",
           text: at >= 0 ? ev.content.slice(0, at) : ev.content,
           attachments: ev.attachments,
+          key: seqKey(inEvent++),
         });
         break;
       }
@@ -382,9 +395,9 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
       case "assistant_message":
         for (const b of ev.blocks) {
           if (b.type === "reasoning") {
-            blocks.push({ kind: "reasoning", text: "", reasoningText: b.text });
+            blocks.push({ kind: "reasoning", text: "", reasoningText: b.text, key: seqKey(inEvent++) });
           } else if (b.type === "text") {
-            blocks.push({ kind: "text", text: b.text });
+            blocks.push({ kind: "text", text: b.text, key: seqKey(inEvent++) });
           } else {
             const tb: ToolBlock = {
               callId: b.id,
@@ -394,7 +407,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
               status: "done", // filled by the matching tool_result below
             };
             byCallId.set(b.id, tb);
-            blocks.push({ kind: "tool", text: "", tool: tb });
+            blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(inEvent++) });
           }
         }
         break;
@@ -419,6 +432,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
               content: ev.content,
               meta,
             },
+            key: seqKey(inEvent++),
           });
         }
         break;
@@ -431,7 +445,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
           status: "pending", // flipped by the matching decision below
         };
         byApprovalId.set(ev.call_id, a);
-        blocks.push({ kind: "approval", text: "", approval: a });
+        blocks.push({ kind: "approval", text: "", approval: a, key: seqKey(inEvent++) });
         break;
       }
       case "approval_decision": {
@@ -448,6 +462,7 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
         blocks.push({
           kind: "compaction",
           text: "",
+          key: seqKey(inEvent++),
           compaction: {
             summary: ev.summary,
             model: ev.model ?? undefined,
@@ -465,8 +480,8 @@ function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
 /// this is an upsert, not a blind append.
 function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
   const i = blocks.findIndex((x) => x.kind === "approval" && x.approval?.callId === a.callId);
-  if (i < 0) return [...blocks, { kind: "approval", text: "", approval: a }];
-  return blocks.map((x, j) => (j === i ? { kind: "approval", text: "", approval: { ...a } } : x));
+  if (i < 0) return [...blocks, { kind: "approval", text: "", approval: a, key: `approval-${a.callId}` }];
+  return blocks.map((x, j) => (j === i ? { ...x, approval: { ...a } } : x));
 }
 
 /// ApprovalResolved flips the matching card (no-op when it is absent, e.g.
@@ -481,11 +496,7 @@ function resolveApproval(
   if (i < 0) return blocks;
   return blocks.map((x, j) =>
     j === i && x.approval
-      ? {
-          kind: "approval",
-          text: "",
-          approval: { ...x.approval, status: approved ? "approved" : "denied", reason },
-        }
+      ? { ...x, approval: { ...x.approval, status: approved ? "approved" : "denied", reason } }
       : x,
   );
 }
@@ -497,9 +508,9 @@ function upsertThinking(blocks: Block[], content: string, replace: boolean): Blo
   const last = blocks[blocks.length - 1];
   if (last?.kind === "reasoning") {
     const text = replace ? content : last.reasoningText + content;
-    return [...blocks.slice(0, -1), { kind: "reasoning", text: "", reasoningText: text }];
+    return [...blocks.slice(0, -1), { ...last, reasoningText: text }];
   }
-  return [...blocks, { kind: "reasoning", text: "", reasoningText: content }];
+  return [...blocks, { kind: "reasoning", text: "", reasoningText: content, key: liveKey() }];
 }
 
 /// Client-side tools need the desktop runtime (local files, shell); in a plain
@@ -1532,8 +1543,8 @@ export default function WebChat({
     if (ev.type === "delta" && ev.content) {
       setBlocks((b) => {
         const last = b[b.length - 1];
-        if (last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
-        return [...b, { kind: "text", text: ev.content! }];
+        if (last?.kind === "text") return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
+        return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
       });
     } else if (ev.type === "thinking_delta" && ev.content) {
       setBlocks((b) => upsertThinking(b, ev.content!, false));
@@ -1558,7 +1569,7 @@ export default function WebChat({
         ),
       );
     } else if (ev.type === "error") {
-      setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error" }]);
+      setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error", key: liveKey() }]);
     }
   };
   const applyRef = useRef(applyStreamEvent);
@@ -1617,7 +1628,7 @@ export default function WebChat({
       const executor = ev.executor === "client" ? "client" : "server";
       setBlocks((b) => [
         ...b,
-        { kind: "tool", text: "", tool: { callId, name, args, executor, status: "running" } },
+        { kind: "tool", text: "", tool: { callId, name, args, executor, status: "running" }, key: `tool-${callId}` },
       ]);
     } else if (ev.type === "tool_completed") {
       const status: "done" | "error" = ev.is_error ? "error" : "done";
@@ -1626,7 +1637,7 @@ export default function WebChat({
         b.map((x) => {
           const t = x.tool;
           if (x.kind !== "tool" || !t || t.callId !== callId) return x;
-          return { kind: "tool", text: "", tool: { ...t, status, content } };
+          return { ...x, tool: { ...t, status, content } };
         }),
       );
     }
@@ -1690,8 +1701,8 @@ export default function WebChat({
                 firstDelta = false;
                 setBlocks((b) => {
                   const last = b[b.length - 1];
-                  if (!seed && last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
-                  return [...b, { kind: "text", text: ev.content! }];
+                  if (!seed && last?.kind === "text") return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
+                  return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
                 });
               } else if (ev.type === "thinking_delta" && ev.content) {
                 showAttaching();
@@ -1768,7 +1779,7 @@ export default function WebChat({
     }
     if (term.v === "error" && lastError !== null) {
       // (kept as-is: reached only when the loop broke on an error frame)
-      setBlocks((b) => [...b, { kind: "error", text: lastError! }]);
+      setBlocks((b) => [...b, { kind: "error", text: lastError!, key: liveKey() }]);
     }
     return { terminal: term.v as "done" | "error" | "idle" | "none", sawContent };
   };
@@ -1790,6 +1801,7 @@ export default function WebChat({
       {
         kind: "user",
         text,
+        key: liveKey(),
         attachments: pendingRef.current.map((a) => ({
           id: `pending-${a.id}`,
           filename: a.filename,
@@ -1815,7 +1827,7 @@ export default function WebChat({
     }
     if (!cid) {
       if (loadSeq.current === mySeq) {
-        setBlocks((b) => [...b, { kind: "error", text: "chat create failed" }]);
+        setBlocks((b) => [...b, { kind: "error", text: "chat create failed", key: liveKey() }]);
       }
       setBusy(false);
       return;
@@ -1837,6 +1849,7 @@ export default function WebChat({
               ...b,
               {
                 kind: "error",
+                key: liveKey(),
                 text: `attachment upload failed (${a.filename}): ${e instanceof Error ? e.message : String(e)}`,
               },
             ]);
@@ -1856,7 +1869,7 @@ export default function WebChat({
             setBusy(false);
             setBlocks((b) => [
               ...b,
-              { kind: "error", text: e instanceof Error ? e.message : String(e) },
+              { kind: "error", text: e instanceof Error ? e.message : String(e), key: liveKey() },
             ]);
           }
         }
@@ -1879,8 +1892,8 @@ export default function WebChat({
             // text block, or start a new one after a tool block
             setBlocks((b) => {
               const last = b[b.length - 1];
-              if (last?.kind === "text") return [...b.slice(0, -1), { kind: "text", text: last.text + ev.content! }];
-              return [...b, { kind: "text", text: ev.content! }];
+              if (last?.kind === "text") return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
+              return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
             });
           } else if (ev.type === "thinking_delta" && ev.content) {
             // live deltas: the send stream has no catch-up snapshot, every
@@ -1907,7 +1920,7 @@ export default function WebChat({
               ),
             );
           } else if (ev.type === "error") {
-            setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error" }]);
+            setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error", key: liveKey() }]);
           }
         },
         ac.signal,
@@ -1944,13 +1957,14 @@ export default function WebChat({
         } else if (r.terminal === "idle" && !r.sawContent) {
           setBlocks((b) => [
             ...b,
-            { kind: "error", text: "connection dropped before the reply started — try sending again" },
+            { kind: "error", text: "connection dropped before the reply started — try sending again", key: liveKey() },
           ]);
         } else if (r.terminal === "none") {
           setBlocks((b) => [
             ...b,
             {
               kind: "error",
+              key: liveKey(),
               text: "lost connection and could not reattach — the reply may still arrive; reopen this thread to catch up",
             },
           ]);
@@ -2154,7 +2168,7 @@ export default function WebChat({
               {blocks.map((b, i) =>
                 b.kind === "user" ? (
                   <div
-                    key={i}
+                    key={b.key}
                     className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5"
                   >
                     {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
@@ -2171,26 +2185,26 @@ export default function WebChat({
                   </div>
                 ) : b.kind === "reasoning" ? (
                   <ReasoningFrame
-                    key={i}
+                    key={b.key}
                     text={b.reasoningText ?? ""}
                     live={streaming && i === blocks.length - 1}
                   />
                 ) : b.kind === "tool" && b.tool ? (
-                  <ToolFrame key={i} t={b.tool} />
+                  <ToolFrame key={b.key} t={b.tool} />
                 ) : b.kind === "approval" && b.approval ? (
-                  <ApprovalCard key={i} a={b.approval} chatId={chatId} />
+                  <ApprovalCard key={b.key} a={b.approval} chatId={chatId} />
                 ) : b.kind === "compaction" && b.compaction ? (
-                  <CompactionCard key={i} c={b.compaction} />
+                  <CompactionCard key={b.key} c={b.compaction} />
                 ) : b.kind === "error" ? (
                   <div
-                    key={i}
+                    key={b.key}
                     className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive"
                   >
                     {b.text}
                   </div>
                 ) : (
                   <div
-                    key={i}
+                    key={b.key}
                     className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS}`}
                   >
                     <Markdown remarkPlugins={[remarkGfm]}>
