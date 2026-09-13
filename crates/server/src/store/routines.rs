@@ -17,7 +17,9 @@ pub struct RoutineRow {
     pub prompt: String,
     pub model: String,
     pub allowed_tools: serde_json::Value,
-    pub webhook_token: String,
+    /// sha256 of the webhook bearer token — the plaintext is shown once at
+    /// creation and never stored.
+    pub webhook_token_hash: String,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
 }
@@ -38,6 +40,12 @@ pub struct RoutineStore<'a> {
     pub(crate) pool: &'a sqlx::PgPool,
 }
 
+/// Webhook tokens are hashed at rest, like api keys and pairing codes.
+fn webhook_token_hash(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
 impl<'a> RoutineStore<'a> {
     #[allow(clippy::too_many_arguments)]
     pub async fn create(
@@ -56,7 +64,7 @@ impl<'a> RoutineStore<'a> {
     ) -> Result<RoutineRow, ApiError> {
         let id = Uuid::now_v7();
         match sqlx::query_as::<_, RoutineRow>(
-            "INSERT INTO routines (id, org_id, created_by, slug, name, trigger_kind, trigger_config, prompt, model, allowed_tools, webhook_token, enabled) \
+            "INSERT INTO routines (id, org_id, created_by, slug, name, trigger_kind, trigger_config, prompt, model, allowed_tools, webhook_token_hash, enabled) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              RETURNING *",
         )
@@ -70,7 +78,7 @@ impl<'a> RoutineStore<'a> {
         .bind(prompt)
         .bind(model)
         .bind(allowed_tools)
-        .bind(webhook_token)
+        .bind(webhook_token_hash(webhook_token))
         .bind(enabled)
         .fetch_one(self.pool)
         .await

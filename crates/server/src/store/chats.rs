@@ -104,7 +104,6 @@ impl<'a> ChatStore<'a> {
 
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
-    use super::*;
     use crate::store::Store;
 
     /// Member A must not read member B's chat; admins pass.

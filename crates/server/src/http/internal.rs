@@ -253,9 +253,12 @@ async fn hook(
         .ok_or_else(|| ApiError::unauthorized("missing hook token"))?;
     let store = state.store().await?;
     let routine = store.routines().get_by_slug(org_id, &slug).await?;
-    // Constant-time: the token gates a public webhook endpoint.
+    // Constant-time comparison of the presented token's hash against the
+    // stored one — the plaintext never exists server-side beyond this call.
+    use sha2::{Digest, Sha256};
     use subtle::ConstantTimeEq;
-    if !bool::from(routine.webhook_token.as_bytes().ct_eq(token.as_bytes())) {
+    let presented = hex::encode(Sha256::digest(token.as_bytes()));
+    if !bool::from(routine.webhook_token_hash.as_bytes().ct_eq(presented.as_bytes())) {
         return Err(ApiError::unauthorized("bad hook token"));
     }
     if !routine.enabled {
