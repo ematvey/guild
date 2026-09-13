@@ -23,3 +23,65 @@ pub fn dtrace(msg: &str) {
         let _ = f.write_all(line.as_bytes());
     }
 }
+
+/// Keys whose values must never reach the trace log — frames carry login
+/// credentials and session tokens.
+const SENSITIVE_KEYS: [&str; 6] = ["token", "password", "api_key", "secret", "authorization", "credential"];
+
+fn scrub(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                let key = k.to_lowercase();
+                if SENSITIVE_KEYS.iter().any(|s| key.contains(s)) {
+                    *val = serde_json::Value::String("[redacted]".into());
+                } else {
+                    scrub(val);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                scrub(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A truncated, redacted summary of a protocol frame for the trace log:
+/// sensitive values are replaced before anything is written to disk.
+pub fn redacted_frame_summary(frame: &str, max_chars: usize) -> String {
+    match serde_json::from_str::<serde_json::Value>(frame) {
+        Ok(mut v) => {
+            scrub(&mut v);
+            let s = v.to_string();
+            s.chars().take(max_chars).collect()
+        }
+        // Unparsable frames may still hold secrets — log shape only.
+        Err(_) => format!("[non-json frame of {} bytes]", frame.len()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacted_summary_scrubs_credentials() {
+        let frame = r#"{"jsonrpc":"2.0","id":1,"method":"login","params":{"email":"a@b.c","password":"hunter226"}}"#;
+        let out = redacted_frame_summary(frame, 500);
+        assert!(!out.contains("hunter226"), "{out}");
+        assert!(out.contains("[redacted]"), "{out}");
+        let frame = r#"{"result":{"token":"sess-abc123"}}"#;
+        let out = redacted_frame_summary(frame, 500);
+        assert!(!out.contains("sess-abc123"), "{out}");
+    }
+
+    #[test]
+    fn redacted_summary_handles_non_json() {
+        let out = redacted_frame_summary("AUTH user:pass@host", 120);
+        // Unparsable frames are summarized as shape only, no content.
+        assert!(!out.contains("user:pass"), "{out}");
+    }
+}

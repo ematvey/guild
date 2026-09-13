@@ -184,7 +184,11 @@ where
             if line.trim().is_empty() {
                 continue;
             }
-            crate::dtrace::dtrace(&format!("conn: reader got {} bytes: {}", line.len(), line.chars().take(120).collect::<String>()));
+            crate::dtrace::dtrace(&format!(
+                "conn: reader got {} bytes: {}",
+                line.len(),
+                crate::dtrace::redacted_frame_summary(&line, 120)
+            ));
             if req_tx.send(line_to_incoming(&line)).is_err() {
                 break;
             }
@@ -198,7 +202,11 @@ where
         let mut w = writer;
         crate::dtrace::dtrace("conn: writer thread started");
         while let Some(v) = out_rx.blocking_recv() {
-            crate::dtrace::dtrace(&format!("conn: writer writing {} bytes: {}", v.to_string().len(), v.to_string().chars().take(120).collect::<String>()));
+            crate::dtrace::dtrace(&format!(
+                "conn: writer writing {} bytes: {}",
+                v.to_string().len(),
+                crate::dtrace::redacted_frame_summary(&v.to_string(), 120)
+            ));
             let t0 = std::time::Instant::now();
             let r = writeln!(w, "{v}");
             let f = w.flush();
