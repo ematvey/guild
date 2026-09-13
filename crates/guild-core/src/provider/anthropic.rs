@@ -227,6 +227,16 @@ impl ModelProvider for AnthropicProvider {
                 let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) else {
                     continue;
                 };
+                if v["type"].as_str() == Some("error") {
+                    // Mid-stream error frame (overloaded, rate limit, ...):
+                    // surface it instead of silently ending the turn.
+                    let etype = v["error"]["type"].as_str().unwrap_or("error");
+                    let msg = v["error"]["message"]
+                        .as_str()
+                        .unwrap_or("upstream error");
+                    yield Err(ProviderError::Upstream(format!("{etype}: {msg}")));
+                    break;
+                }
                 if let Some(chunk) = Self::parse_frame(&data) {
                     yield Ok(chunk);
                 }
