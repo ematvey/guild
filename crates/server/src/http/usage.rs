@@ -27,10 +27,6 @@ struct UsageQuery {
     team_id: Option<Uuid>,
 }
 
-fn clickhouse_uuid(u: Uuid) -> String {
-    format!("toUUID('{u}')")
-}
-
 /// Grouping expression + label for the breakdown queries.
 fn group_expr(group_by: Option<&str>) -> Result<(&'static str, &'static str), ApiError> {
     Ok(match group_by {
@@ -112,32 +108,45 @@ async fn usage(
     Q(q): Q<UsageQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let group_by = group_expr(q.group_by.as_deref())?;
-    let mut conditions = vec![format!("org_id = {}", clickhouse_uuid(user.0.org_id))];
-    if user.0.role != "admin" {
-        conditions.push(format!("user_id = {}", clickhouse_uuid(user.0.id)));
-    }
-    if let Some(team) = q.team_id {
-        conditions.push(format!("team_id = {}", clickhouse_uuid(team)));
-    }
-    if let Some(from) = &q.from {
-        let dt = parse_date(from, "from")?;
-        conditions.push(format!("ts >= toDateTime({})", dt.timestamp()));
-    }
-    if let Some(to) = &q.to {
-        let dt = parse_date(to, "to")?;
-        conditions.push(format!("ts <= toDateTime({})", dt.timestamp()));
-    }
-
-    let sql = format!(
+    // Value positions are bound parameters — identifiers (group expression)
+    // stay a code whitelist. Order of binds must match the appended `?`s.
+    let mut sql = format!(
         "SELECT {group} AS \"group\", sum(tokens_in) AS tokens_in, sum(tokens_out) AS tokens_out, \
          sum(cost_usd) AS cost_usd, count() AS requests \
-         FROM usage_events WHERE {} GROUP BY \"group\" ORDER BY cost_usd DESC",
-        conditions.join(" AND "),
+         FROM usage_events WHERE org_id = toUUID(?)",
         group = group_by.0,
     );
+    let member_scoped = user.0.role != "admin";
+    if member_scoped {
+        sql.push_str(" AND user_id = toUUID(?)");
+    }
+    if q.team_id.is_some() {
+        sql.push_str(" AND team_id = toUUID(?)");
+    }
+    if let Some(from) = &q.from {
+        parse_date(from, "from")?;
+        sql.push_str(" AND ts >= toDateTime(?)");
+    }
+    if let Some(to) = &q.to {
+        parse_date(to, "to")?;
+        sql.push_str(" AND ts <= toDateTime(?)");
+    }
 
     let client = state.config.clickhouse_client();
-    let rows: Vec<UsageAggRow> = match client.query(&sql).fetch_all().await {
+    let mut query = client.query(&sql).bind(user.0.org_id.simple().to_string());
+    if member_scoped {
+        query = query.bind(user.0.id.simple().to_string());
+    }
+    if let Some(team) = q.team_id {
+        query = query.bind(team.simple().to_string());
+    }
+    if let Some(from) = &q.from {
+        query = query.bind(parse_date(from, "from")?.timestamp());
+    }
+    if let Some(to) = &q.to {
+        query = query.bind(parse_date(to, "to")?.timestamp());
+    }
+    let rows: Vec<UsageAggRow> = match query.fetch_all().await {
         Ok(rows) => rows,
         Err(e) if e.to_string().contains("UNKNOWN_TABLE") => {
             return Ok(Json(json!({ "rows": [] })));
@@ -191,33 +200,45 @@ async fn series(
         other => group_expr(other)?,
     };
 
-    let mut conditions = vec![format!("org_id = {}", clickhouse_uuid(user.0.org_id))];
-    if user.0.role != "admin" {
-        conditions.push(format!("user_id = {}", clickhouse_uuid(user.0.id)));
-    }
-    if let Some(chat) = q.chat_id {
-        conditions.push(format!("session_id = {}", clickhouse_uuid(chat)));
-    }
-    if let Some(from) = &q.from {
-        let dt = parse_date(from, "from")?;
-        conditions.push(format!("ts >= toDateTime({})", dt.timestamp()));
-    }
-    if let Some(to) = &q.to {
-        let dt = parse_date(to, "to")?;
-        conditions.push(format!("ts <= toDateTime({})", dt.timestamp()));
-    }
-
-    let sql = format!(
+    // Bound parameters, as in `usage` above.
+    let mut sql = format!(
         "SELECT {bucket} AS bucket, {group} AS \"group\", sum(tokens_in) AS tokens_in, \
          sum(tokens_out) AS tokens_out, sum(cost_usd) AS cost_usd, count() AS requests \
-         FROM usage_events WHERE {} GROUP BY bucket, \"group\" ORDER BY bucket, cost_usd DESC",
-        conditions.join(" AND "),
+         FROM usage_events WHERE org_id = toUUID(?)",
         bucket = bucket_expr,
         group = group_by.0,
     );
+    let member_scoped = user.0.role != "admin";
+    if member_scoped {
+        sql.push_str(" AND user_id = toUUID(?)");
+    }
+    if q.chat_id.is_some() {
+        sql.push_str(" AND session_id = toUUID(?)");
+    }
+    if let Some(from) = &q.from {
+        parse_date(from, "from")?;
+        sql.push_str(" AND ts >= toDateTime(?)");
+    }
+    if let Some(to) = &q.to {
+        parse_date(to, "to")?;
+        sql.push_str(" AND ts <= toDateTime(?)");
+    }
 
     let client = state.config.clickhouse_client();
-    let rows: Vec<SeriesRow> = match client.query(&sql).fetch_all().await {
+    let mut query = client.query(&sql).bind(user.0.org_id.simple().to_string());
+    if member_scoped {
+        query = query.bind(user.0.id.simple().to_string());
+    }
+    if let Some(chat) = q.chat_id {
+        query = query.bind(chat.simple().to_string());
+    }
+    if let Some(from) = &q.from {
+        query = query.bind(parse_date(from, "from")?.timestamp());
+    }
+    if let Some(to) = &q.to {
+        query = query.bind(parse_date(to, "to")?.timestamp());
+    }
+    let rows: Vec<SeriesRow> = match query.fetch_all().await {
         Ok(rows) => rows,
         Err(e) if e.to_string().contains("UNKNOWN_TABLE") => {
             return Ok(Json(json!({ "rows": [] })));
@@ -294,9 +315,10 @@ async fn summary(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let mut scope = format!("org_id = {}", clickhouse_uuid(user.0.org_id));
-    if user.0.role != "admin" {
-        scope.push_str(&format!(" AND user_id = {}", clickhouse_uuid(user.0.id)));
+    let member_scoped = user.0.role != "admin";
+    let mut scope = String::from("org_id = toUUID(?)");
+    if member_scoped {
+        scope.push_str(" AND user_id = toUUID(?)");
     }
     let now = Utc::now();
     let start_of_day = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
@@ -310,25 +332,34 @@ async fn summary(
 
     let client = state.config.clickhouse_client();
     let missing_table = |e: &str| e.contains("UNKNOWN_TABLE");
-    let today: f64 = match client
-        .query(&format!(
-            "SELECT coalesce(sum(cost_usd), 0) FROM usage_events WHERE {scope} AND ts >= toDateTime({})",
-            start_of_day.timestamp()
-        ))
-        .fetch_one()
-        .await
+    let bind_scope = |sql: String, ts_bound: i64| {
+        let mut q = client
+            .query(&sql)
+            .bind(user.0.org_id.simple().to_string());
+        if member_scoped {
+            q = q.bind(user.0.id.simple().to_string());
+        }
+        q.bind(ts_bound)
+    };
+    let today: f64 = match bind_scope(
+        "SELECT coalesce(sum(cost_usd), 0) FROM usage_events WHERE {scope} AND ts >= toDateTime(?)"
+            .replace("{scope}", &scope),
+        start_of_day.timestamp(),
+    )
+    .fetch_one()
+    .await
     {
         Ok(v) => v,
         Err(e) if missing_table(&e.to_string()) => 0.0,
         Err(e) => return Err(ApiError::internal(format!("usage query failed: {e}"))),
     };
-    let month: f64 = match client
-        .query(&format!(
-            "SELECT coalesce(sum(cost_usd), 0) FROM usage_events WHERE {scope} AND ts >= toDateTime({})",
-            start_of_month.timestamp()
-        ))
-        .fetch_one()
-        .await
+    let month: f64 = match bind_scope(
+        "SELECT coalesce(sum(cost_usd), 0) FROM usage_events WHERE {scope} AND ts >= toDateTime(?)"
+            .replace("{scope}", &scope),
+        start_of_month.timestamp(),
+    )
+    .fetch_one()
+    .await
     {
         Ok(v) => v,
         Err(e) if missing_table(&e.to_string()) => 0.0,
