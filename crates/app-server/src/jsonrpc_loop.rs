@@ -29,6 +29,9 @@ pub struct Session {
     pub messages: Vec<Message>,
     pub policy: ApprovalPolicy,
     pub pending: PendingApprovals,
+    /// An agent.run loop is in flight; a second agent.start would race on
+    /// session.messages.
+    pub agent_running: bool,
 }
 
 enum Incoming {
@@ -562,6 +565,10 @@ async fn agent_start_task(
         if s.model.is_empty() {
             s.model = "gpt-4o-mini".into();
         }
+        if s.agent_running {
+            anyhow::bail!("an agent run is already in progress for this session");
+        }
+        s.agent_running = true;
         let prompt = param(&req, "prompt")?.to_string();
         let mut history = s.messages.clone();
         history.push(Message::user(prompt));
@@ -592,6 +599,8 @@ async fn agent_start_task(
                 c
             }
             Err(e) => {
+                // the run flag was claimed in prep — release it on this exit
+                shared.session.lock().unwrap().agent_running = false;
                 let _ = out_tx.send(response_value(
                     req.id,
                     Err(anyhow::anyhow!("chat create failed: {e}")),
@@ -621,16 +630,22 @@ async fn agent_start_task(
         pending,
     };
     let updated = match run.spawn(ToolRegistry::builtins()).await {
-        Ok(v) => v,
+        Ok(v) => Some(v),
         // A panicked or cancelled run must not wipe the session history
         // (the join default would assign an empty vec); keep what we had.
         Err(e) => {
             crate::dtrace::dtrace(&format!("agent run failed to join (chat {chat_id}): {e}"));
-            return;
+            None
         }
     };
 
-    shared.session.lock().unwrap().messages = updated;
+    {
+        let mut s = shared.session.lock().unwrap();
+        s.agent_running = false;
+        if let Some(v) = updated {
+            s.messages = v;
+        }
+    }
 }
 
 /// Resolves a pending approval. Polls briefly so an approve that races the
