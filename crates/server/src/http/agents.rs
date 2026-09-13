@@ -218,6 +218,11 @@ async fn run_turn(
         .resolve_route(user.0.org_id, &model, &master)
         .await?;
 
+    // Same spend gate as the chat gateway and the OpenAI endpoint: an agent
+    // turn is a model call, so the route's monthly quota applies before any
+    // tokens flow.
+    crate::http::gateway::enforce_quota(&state, user.0.org_id, &model, &route).await?;
+
     // history derived from the thread event log (spec §A.4)
     let prior_events: Vec<ThreadEvent> = store
         .thread()

@@ -221,3 +221,84 @@ async fn workspace_session_turn_executes_tools_and_persists() {
         .unwrap();
     assert!(String::from_utf8(body.to_vec()).unwrap().contains("repo-a"));
 }
+
+/// An agent turn is a model call, so the route's monthly quota gates it like
+/// every other spend path — a 0-USD quota rejects the turn before any
+/// provider contact and before anything lands in the thread log.
+#[tokio::test]
+async fn agent_turn_enforces_route_quota() {
+    let fs = full_state().await;
+    fs.store()
+        .gateway()
+        .upsert_route(
+            fs.org_id,
+            "gpt-test",
+            "openai",
+            true,
+            1.0,
+            2.0,
+            Some(0.0),
+            false,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/agents/sessions")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"workspace_name": "quota-ws"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    let session_id = v["id"].as_str().unwrap().to_string();
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/agents/sessions/{session_id}/turns"))
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"message": "spend money", "model": "gpt-test"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // The rejected turn persisted nothing.
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/agents/sessions/{session_id}"))
+                .header("authorization", format!("Bearer {}", fs.token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["events"].as_array().unwrap().len(), 0);
+}
