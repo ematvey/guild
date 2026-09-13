@@ -304,10 +304,14 @@ mod test_db {
     async fn base_url() -> anyhow::Result<&'static String> {
         BASE_URL
             .get_or_try_init(|| async {
-                let url = std::env::var("GUILD_TEST_PG_URL").unwrap_or_else(|_| {
-                    "postgres://postgres:REDACTED_HOST_POSTGRES_PASSWORD@127.0.0.1:5432"
-                        .to_string()
-                });
+                // No default: a host credential must not live in source.
+                // Point GUILD_TEST_PG_URL at a role that can CREATE DATABASE.
+                let url = std::env::var("GUILD_TEST_PG_URL").map_err(|_| {
+                    anyhow::anyhow!(
+                        "GUILD_TEST_PG_URL is not set — tests need a Postgres server \
+                         the test user can create databases on"
+                    )
+                })?;
                 let admin = sqlx::PgPool::connect(&format!("{url}/postgres")).await?;
                 // Reap leftovers from crashed runs: databases no process is
                 // connected to. Concurrent test processes keep theirs (they
