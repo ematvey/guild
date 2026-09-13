@@ -335,9 +335,14 @@ async fn install(
             false, // disabled until the owner enables it
         )
         .await?;
-    Ok(Json(
-        json!({"routine": serde_json::to_value(&routine).expect("routine serializes")}),
-    ))
+    let mut value =
+        json!({"routine": serde_json::to_value(&routine).expect("routine serializes")});
+    // The plaintext webhook token is shown once, at install; only its hash
+    // is stored (same shape as the routines create endpoint).
+    if routine.trigger_kind == "webhook" {
+        value["routine"]["webhook_token"] = json!(webhook_token);
+    }
+    Ok(Json(value))
 }
 
 /// Install path for v2 MCP plugin bundles (spec §9): creates a disabled
