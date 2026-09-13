@@ -1,0 +1,32 @@
+# cargo-nextest configuration (cargo-nextest is installed on this box).
+#
+# ONE fast command — pure unit tests, no Postgres/Restate/wiremock suites:
+#
+#   cargo nextest run
+#
+# Everything (guild-server DB/HTTP integration suites included):
+#
+#   cargo nextest run --profile full
+#
+# Targeted runs use the filter DSL on top of either command, e.g.:
+#
+#   cargo nextest run -p guild-core -E 'test(edit_file)'
+#
+# Why a filter, not a feature flag: guild-app-server's dev-dependencies
+# enable guild-server/test-support, and cargo unifies features across the
+# workspace, so the required-features gate on guild-server's tests/*.rs does
+# not keep them out of a plain run. The default filter excludes guild-server
+# integration test targets (they need the host Postgres, wiremock and real
+# sockets); guild-server's own fast lib tests stay in.
+
+[profile.default]
+# The fast set: everything except guild-server's integration test targets.
+default-filter = 'not(package(guild-server) & kind(test))'
+# A test running longer than this is a stuck test (deadlock, missed wakeup),
+# not a slow test: mark it, then kill the whole binary after repeats so one
+# hung test cannot wedge the run.
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+[profile.full]
+default-filter = 'all()'
+slow-timeout = { period = "60s", terminate-after = 2 }
