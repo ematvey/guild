@@ -16,7 +16,7 @@ const MAX_TIMEOUT_MS: u64 = 300_000;
 impl Tool for RunCommand {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: "run_command".into(),
+            name: "execute".into(),
             description: "Run a shell command (sh -c) in the project directory. Non-zero exits are reported, not errors.".into(),
             parameters: serde_json::json!({
                 "type": "object",

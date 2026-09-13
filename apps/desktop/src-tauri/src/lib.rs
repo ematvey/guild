@@ -468,6 +468,20 @@ async fn handle_app_frame(
 }
 
 /// Runs one client tool in the chat's workspace folder and POSTs the result.
+
+/// Protocol client-tool names (server `client_tool_specs`) → built-in
+/// registry names. The registry's names differ; stored approval policies
+/// are keyed by the protocol names, so the bridge lives at execution.
+fn builtin_name(name: &str) -> &str {
+    match name {
+        "read" => "read_file",
+        "bash" | "shell" => "run_command",
+        "edit" => "edit_file",
+        "write" => "write_file",
+        other => other,
+    }
+}
+
 async fn execute_tool(
     state: &Arc<GuildState>,
     client: &reqwest::Client,
@@ -484,7 +498,7 @@ async fn execute_tool(
         None => Err("no workspace folder is set for this chat — pick one with 'Run in folder…' in the composer".to_string()),
         Some(dir) => {
             let registry = guild_core::tools::ToolRegistry::builtins();
-            match registry.get(name) {
+            match registry.get(builtin_name(name)) {
                 Some(tool) => match tool.run(std::path::Path::new(&dir), args).await {
                     Ok(out) => Ok(serde_json::json!({
                         "content": out.output_for_model,
