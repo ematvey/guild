@@ -196,6 +196,7 @@ pub fn integration_names() -> &'static [&'static str] {
     &[
         "searxng",
         "superproxy",
+        "firecrawl",
         "google_workspace",
         "hubspot",
         "langfuse",
@@ -213,6 +214,7 @@ pub fn integration_by_name(name: &str) -> Option<Arc<dyn Integration>> {
     match name {
         "searxng" => Some(Arc::new(searxng::Searxng)),
         "superproxy" => Some(Arc::new(superproxy::Superproxy)),
+        "firecrawl" => Some(Arc::new(firecrawl::Firecrawl)),
         "google_workspace" => Some(google_workspace::instance()),
         "hubspot" => Some(Arc::new(hubspot::Hubspot)),
         "langfuse" => Some(Arc::new(langfuse::Langfuse)),
@@ -882,6 +884,368 @@ pub mod superproxy {
                     req = req.bearer_auth(token);
                 }
                 probe(req, "superproxy").await
+            })
+        }
+    }
+}
+
+pub mod firecrawl {
+    use super::{field, in_code_manifest, Category, Integration, ToolOutcome};
+    use guild_core::registry::BundleManifest;
+    use futures::future::BoxFuture;
+    use protocol::api::ToolSpec;
+
+    /// Compose server reaches host ports through `host.docker.internal`
+    /// (deploy compose `extra_hosts: host-gateway`), so the self-hosted
+    /// Firecrawl API defaults to that address.
+    const DEFAULT_BASE_URL: &str = "http://host.docker.internal:3002";
+    const DEFAULT_MAX_CHARS: usize = 8000;
+    /// Per-result markdown excerpt cap for search results scraped with
+    /// `scrape: true` — the search content stays a results list, not full
+    /// pages.
+    const SCRAPE_EXCERPT_CHARS: usize = 2000;
+    const MAP_LINK_LIMIT: usize = 500;
+
+    /// Firecrawl integration (self-hosted v1 API). Config:
+    /// `{ "base_url"?: "http://…" }` — defaults to the docker-reachable
+    /// address above. Secret: optional `api_key`, sent as the Bearer token
+    /// (the self-hosted API does not enforce auth). Tools: `scrape` (page as
+    /// markdown), `search` (SearXNG-backed results, optional per-result
+    /// markdown), `map` (site link list). The async crawl API is not a tool
+    /// — a long-poll tool call is a bad fit.
+    pub struct Firecrawl;
+
+    fn base_url(config: &serde_json::Value) -> String {
+        config["base_url"]
+            .as_str()
+            .map(|s| s.trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
+    }
+
+    fn api_key(secrets: &[(String, String)]) -> Option<String> {
+        secrets
+            .iter()
+            .find(|(name, _)| name == "api_key")
+            .map(|(_, value)| value.clone())
+            .filter(|v| !v.is_empty())
+    }
+
+    /// POSTs one Firecrawl v1 JSON endpoint and returns the parsed body.
+    /// The Bearer key rides only when configured.
+    async fn post_json(
+        base: &str,
+        path: &str,
+        body: serde_json::Value,
+        key: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
+        let mut req = reqwest::Client::new()
+            .post(format!("{base}{path}"))
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(60));
+        if let Some(key) = key {
+            req = req.bearer_auth(key);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("firecrawl unreachable: {e}"))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| format!("firecrawl returned an unreadable body: {e}"))?;
+        if !status.is_success() {
+            return Err(format!("firecrawl returned {status}: {}", &text[..text.len().min(300)]));
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| format!("firecrawl returned bad json: {e}"))?;
+        if parsed["success"] == serde_json::Value::Bool(false) {
+            let err = parsed["error"].as_str().unwrap_or("unknown error");
+            return Err(format!("firecrawl error: {err}"));
+        }
+        Ok(parsed)
+    }
+
+    /// Truncates `text` to `max_chars` chars, appending a `[truncated]`
+    /// marker when cut.
+    fn truncate(text: &str, max_chars: usize) -> (String, bool) {
+        if text.chars().count() <= max_chars {
+            (text.to_string(), false)
+        } else {
+            let cut: String = text.chars().take(max_chars).collect();
+            (format!("{cut}\n\n[truncated]"), true)
+        }
+    }
+
+    impl Integration for Firecrawl {
+        fn name(&self) -> &'static str {
+            "firecrawl"
+        }
+
+        fn category(&self) -> Category {
+            Category::Fetch
+        }
+
+        fn manifest(&self) -> BundleManifest {
+            in_code_manifest(
+                "firecrawl",
+                "1.0.0",
+                "Scrape pages as markdown, search, and map site links through a \
+                 self-hosted Firecrawl API (crawl jobs are not exposed as tools)",
+                &["api_key"],
+                &[("scrape", "read"), ("search", "read"), ("map", "read")],
+                &[
+                    guild_core::registry::FieldSpec {
+                        default: Some(serde_json::json!(DEFAULT_BASE_URL)),
+                        help: Some("Self-hosted Firecrawl API URL".into()),
+                        ..field("base_url", "string")
+                    },
+                    guild_core::registry::FieldSpec {
+                        help: Some(
+                            "Sent as the Bearer token; the self-hosted API does not require it"
+                                .into(),
+                        ),
+                        ..field("api_key", "secret")
+                    },
+                ],
+            )
+        }
+
+        fn tools(&self, _config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
+            Ok(vec![
+                ToolSpec {
+                    name: "scrape".into(),
+                    description: "Fetch a web page through the Firecrawl API and return its \
+                                  content as markdown."
+                        .into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "url": { "type": "string",
+                                "description": "Absolute http(s) URL to scrape" },
+                            "max_chars": { "type": "number",
+                                "description": "Max characters of returned markdown (default 8000)" }
+                        },
+                        "required": ["url"]
+                    }),
+                },
+                ToolSpec {
+                    name: "search".into(),
+                    description: "Search the web through the Firecrawl API and return the top \
+                                  results (title, url, description)."
+                        .into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string" },
+                            "limit": { "type": "number", "description": "1-20, default 5" },
+                            "scrape": { "type": "boolean",
+                                "description": "Also scrape each result and return a short \
+                                    markdown excerpt (slower)" }
+                        },
+                        "required": ["query"]
+                    }),
+                },
+                ToolSpec {
+                    name: "map".into(),
+                    description: "List the links Firecrawl discovers on one site (sitemap \
+                                  style crawl)."
+                        .into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "url": { "type": "string",
+                                "description": "Absolute http(s) URL of the site root" }
+                        },
+                        "required": ["url"]
+                    }),
+                },
+            ])
+        }
+
+        fn execute<'a>(
+            &'a self,
+            config: &'a serde_json::Value,
+            tool: &'a str,
+            args: serde_json::Value,
+            secrets: &'a [(String, String)],
+            _acting_as: Option<&'a str>,
+        ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
+            Box::pin(async move {
+                let base = base_url(config);
+                let key = api_key(secrets);
+                match tool {
+                    "scrape" => {
+                        let url = args["url"]
+                            .as_str()
+                            .ok_or("scrape requires url")?
+                            .to_string();
+                        let max_chars =
+                            args["max_chars"].as_u64().unwrap_or(DEFAULT_MAX_CHARS as u64)
+                                as usize;
+                        let resp = post_json(
+                            &base,
+                            "/v1/scrape",
+                            serde_json::json!({ "url": url, "formats": ["markdown"] }),
+                            key.as_deref(),
+                        )
+                        .await?;
+                        let markdown = resp["data"]["markdown"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        let meta_url = resp["data"]["metadata"]["sourceURL"]
+                            .as_str()
+                            .or(resp["data"]["metadata"]["url"].as_str())
+                            .unwrap_or(&url);
+                        let status_code = resp["data"]["metadata"]["statusCode"]
+                            .as_u64()
+                            .unwrap_or(200) as u16;
+                        let (content, truncated) = truncate(&markdown, max_chars);
+                        let mut meta = serde_json::json!({
+                            "card": "web",
+                            "kind": "fetch",
+                            "url": meta_url,
+                            "status_code": status_code,
+                            "truncated": truncated,
+                        });
+                        if let Some(t) = resp["data"]["metadata"]["title"]
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                        {
+                            meta["title"] = serde_json::Value::String(t.to_string());
+                        }
+                        Ok(ToolOutcome { content, meta: Some(meta) })
+                    }
+                    "search" => {
+                        let query = args["query"]
+                            .as_str()
+                            .ok_or("search requires query")?
+                            .to_string();
+                        let limit = args["limit"].as_u64().unwrap_or(5).clamp(1, 20) as usize;
+                        let mut body = serde_json::json!({ "query": query, "limit": limit });
+                        if args["scrape"].as_bool().unwrap_or(false) {
+                            body["scrapeOptions"] =
+                                serde_json::json!({ "formats": ["markdown"] });
+                        }
+                        let resp = post_json(&base, "/v1/search", body, key.as_deref()).await?;
+                        // The self-hosted API returns a flat results array;
+                        // the cloud shape nests it under data.web.
+                        let results = resp["data"]["web"]
+                            .as_array()
+                            .or(resp["data"].as_array())
+                            .map(|a| a.as_slice())
+                            .unwrap_or_default();
+                        let truncated = results.len() > limit;
+                        let mut out = String::new();
+                        let mut sources = Vec::new();
+                        for (i, hit) in results.iter().take(limit).enumerate() {
+                            let title = hit["title"].as_str().unwrap_or("(untitled)");
+                            let url = hit["url"].as_str().unwrap_or("");
+                            let description = hit["description"].as_str().unwrap_or("");
+                            out.push_str(&format!(
+                                "{}. {}\n{}\n{}\n\n",
+                                i + 1,
+                                title,
+                                url,
+                                description
+                            ));
+                            if let Some(md) = hit["markdown"].as_str() {
+                                let (excerpt, _) = truncate(md, SCRAPE_EXCERPT_CHARS);
+                                out.push_str(&excerpt);
+                                out.push_str("\n\n");
+                            }
+                            let mut src = serde_json::Map::new();
+                            src.insert(
+                                "url".into(),
+                                serde_json::Value::String(url.to_string()),
+                            );
+                            if !title.is_empty() && title != "(untitled)" {
+                                src.insert(
+                                    "title".into(),
+                                    serde_json::Value::String(title.to_string()),
+                                );
+                            }
+                            if !description.is_empty() {
+                                src.insert(
+                                    "snippet".into(),
+                                    serde_json::Value::String(description.to_string()),
+                                );
+                            }
+                            sources.push(serde_json::Value::Object(src));
+                        }
+                        if out.is_empty() {
+                            out = "No results.".to_string();
+                        }
+                        let meta = serde_json::json!({
+                            "card": "web",
+                            "kind": "search",
+                            "sources": sources,
+                            "truncated": truncated,
+                        });
+                        Ok(ToolOutcome { content: out, meta: Some(meta) })
+                    }
+                    "map" => {
+                        let url = args["url"]
+                            .as_str()
+                            .ok_or("map requires url")?
+                            .to_string();
+                        let resp = post_json(&base, "/v1/map", serde_json::json!({ "url": url }),
+                            key.as_deref())
+                            .await?;
+                        let links = resp["links"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+                        let mut out = String::new();
+                        for link in links.iter().take(MAP_LINK_LIMIT) {
+                            let link = match link {
+                                serde_json::Value::String(s) => s.as_str(),
+                                v => v["url"].as_str().unwrap_or(""),
+                            };
+                            if !link.is_empty() {
+                                out.push_str(link);
+                                out.push('\n');
+                            }
+                        }
+                        if out.is_empty() {
+                            out = "No links found.".to_string();
+                        }
+                        Ok(ToolOutcome { content: out, meta: None })
+                    }
+                    other => Err(format!("firecrawl integration has no tool {other}")),
+                }
+            })
+        }
+
+        fn test_connection<'a>(
+            &'a self,
+            config: &'a serde_json::Value,
+            secrets: &'a [(String, String)],
+        ) -> BoxFuture<'a, Result<(), String>> {
+            Box::pin(async move {
+                let base = base_url(config);
+                let resp = reqwest::Client::new()
+                    .get(format!("{base}/"))
+                    .timeout(std::time::Duration::from_secs(15));
+                let resp = if let Some(key) = api_key(secrets) {
+                    resp.bearer_auth(key)
+                } else {
+                    resp
+                };
+                let resp = resp
+                    .send()
+                    .await
+                    .map_err(|e| format!("firecrawl unreachable: {e}"))?;
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if !status.is_success() {
+                    return Err(format!("firecrawl rejected the connection ({status})"));
+                }
+                if !body.contains("Firecrawl API") {
+                    return Err("firecrawl: unexpected response at / (not a Firecrawl API?)"
+                        .to_string());
+                }
+                Ok(())
             })
         }
     }
