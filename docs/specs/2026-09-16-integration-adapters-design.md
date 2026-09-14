@@ -109,16 +109,15 @@ Rules:
 - Tool specs inside the manifest means the registry review (already bound to
   manifest + bundle sha256 via `reviewed_version` / `reviewed_bundle_sha256`)
   automatically covers the full declared tool surface.
-- `tools.parameters` optional for MCP-bound bundles: an MCP adapter may
-  discover specs live and overlay classes from the manifest entries (an entry
-  with class but no parameters constrains class only).
-- **Behavior change** for MCP-bound bundles: a live-discovered tool absent
-  from the manifest is uncategorized and fails closed (policy floor `write`,
-  never callable as `read`). Today `tool_class()` defaults undeclared tools
-  to `read` — permissive by accident. Declared entries keep their class.
-  Admins of existing MCP plugins must re-approve bundles whose manifests
-  declare all tools they serve (the stale-approval mechanism already forces
-  a re-review round-trip on republish).
+- `tools` optional for MCP-bound bundles: for MCP, the live `tools/list` is
+  the discovery source; manifest entries are default classes only (an entry
+  with class but no parameters prefills the class default only).
+- **Policy model change**: today `tool_class()` defaults an MCP tool absent
+  from the manifest to `read` — permissive by accident. Under the per-tool
+  model (§6) a tool the admin has not configured is disabled by default;
+  manifest defaults only prefill the configure-time form. The admin's
+  per-tool configuration, not the manifest, is the source of truth for
+  exposure and approval.
 
 ## 3. Built-ins become embedded bundles
 
@@ -151,24 +150,73 @@ row → effective manifest (approved installed bundle > embedded bundle)
 binding kind instead. Nothing downstream changes: policy filter, auto
 disclosure tools, script API, audit, journaling all keep their shapes.
 
-## 5. Admin surface (the originating feature)
+## 5. Admin surface: tool curation
+
+The admin sees, per integration, **every tool it declares or serves**, and
+decides per tool whether it is exposed and how it is approved.
 
 - `GET /api/v1/admin/integrations/{id}/tools` — the full, **unfiltered**
-  declared tool list: namespaced name, description, class, input schema.
+  tool list with each tool's stored per-tool config (§6):
   - Adapter-bound: reads the effective bundle manifest (works for disabled
     rows too — it's data).
-  - MCP-bound: live `tools/list` via the pooled connection, classes overlaid
-    from the manifest; disabled/not-configured rows report "not resolved"
-    instead of connecting.
+  - MCP-bound: live `tools/list` via the pooled connection, merged with the
+    stored per-tool config; disabled/not-configured rows report "not
+    resolved" instead of connecting.
   - Broken plugin (MCP unreachable): the response carries the resolution
     error — never a silent empty list.
-- The `available` catalog entries carry the same declared list for free
+- `PUT /api/v1/admin/integrations/{id}/tools/{tool}` — sets one tool's
+  per-tool config (`enabled`, `approval`). Idempotent, audited.
+- The `available` catalog entries carry their declared tool lists for free
   (bundle data).
-- UI: Tools table on the integration detail page — name, class badge,
-  description (DataTable kit); tool policy editing stays as is, now visibly
-  aligned with the declared classes.
+- UI: Tools table on the integration detail page (DataTable kit) — name,
+  class badge, description, enabled toggle, approval selector. MCP configure
+  -time lists every live tool; drift lands as new disabled rows. Class
+  badges stay visible so the admin sees the declared floor.
 
-## 6. Secrets, identity, audit — unchanged
+## 6. Policy model: per-tool admin curation
+
+The admin's per-tool configuration is the single source of truth for
+exposure and approval, for both kinds. Bundles declare defaults; nothing is
+ever exposed that an admin (or a reviewed manifest, for zero-config
+adapter-bound integrations) did not approve.
+
+Stored per tool (JSON on the integration row's config):
+
+```jsonc
+{ "tools": {
+    "post_message": { "enabled": true, "approval": "always_ask" },
+    "conversations_history": { "enabled": false }
+} }
+```
+
+- `enabled: bool` — off means the tool is not declared to the model and not
+  callable via the script API at all. Not denied at call time — invisible.
+- `approval: "default" | "always_ask"` — `default` follows the user's own
+  approval policy (class-based, as today); `always_ask` forces a durable
+  approval prompt on every call, even for a user whose policy would allow
+  it. The Phase-2 approval gate slots the override in ahead of the user
+  policy.
+
+Defaults — one rule per kind, no background writes:
+
+- **Adapter-bound** (declared in a reviewed manifest): absent from stored
+  config = enabled + follow user policy. Zero-config behavior is identical
+  to today. The manifest class stays the visibility floor: admin-class
+  tools remain admin-gated, and per-tool settings can only tighten, never
+  loosen above the class.
+- **MCP-bound** (live discovery): absent from stored config = disabled
+  (hidden). One rule covers configure time and drift — at initial connect
+  every live tool is listed and the admin flips on what they want; a remote
+  update later just adds rows in the disabled state.
+- Saved selections survive bundle republishes: tools dropped from the new
+  version vanish, new tools arrive disabled, existing selections carry over.
+
+Enforcement points (all existing code paths, one filter change each):
+turn-start resolution (`allowed_infos`/`tool_allowed` consults the per-tool
+config), the script API tool list, and the approval gate (`always_ask`
+override).
+
+## 7. Secrets, identity, audit — unchanged
 
 Secret store (per-connector slug keys), identity envelope headers, acting-as
 (admin-only override), policy classes, `integration.tool_called` audit events:
@@ -185,10 +233,19 @@ all keep their current contracts. The adapter boundary receives exactly what
    table; `McpToolAdapter` formalized; `resolve_plugins` collapses to the one
    loop; manifest gains `executor` binding + `tools[]` entries (`validate_v2`
    extension); registry review/install paths updated to the extended schema.
-3. **Admin feature**: tools endpoint + detail-page Tools table + catalog
-   tool lists; deploy + browser verification.
-4. **Cleanup**: `integration_names()` removal, catalog from bundles,
+3. **Per-tool policy**: per-tool config storage on integration rows;
+   `tool_allowed` + script API + approval gate consult it; MCP drift lands
+   disabled; `PUT` endpoint.
+4. **Admin feature**: tools endpoint + detail-page Tools table with
+   enabled/approval controls + catalog tool lists; deploy + browser
+   verification.
+5. **Cleanup**: `integration_names()` removal, catalog from bundles,
    `PluginExecutor` simplification.
+
+MCP-bound rows configured before phase 3 resolve fail-closed (their tools
+come up disabled) until an admin curates them — the same one-time
+re-confirmation the migration-0038 fail-closed transition already set as
+the pattern.
 
 Phases 1–2 are mechanical splits of existing code: no db migrations, no wire
 changes beyond the manifest schema (registry bundles are already
@@ -205,15 +262,37 @@ mechanism).
 - Shadowing: installed bundle overrides embedded same-slug; removing the
   installed bundle falls back to embedded.
 - Resolver: adapter-bound and MCP-bound rows produce identical `PluginTurn`
-  shapes; MCP class overlay; uncategorized MCP tool fails closed.
+  shapes; MCP class overlay.
+- Per-tool policy: disabled tool absent from model tool list + script API;
+  `always_ask` forces an approval prompt for an allow-all user; drift tool
+  lands disabled; selections survive a republish (dropped tool vanishes, new
+  tool arrives disabled).
 - Admin endpoint: unfiltered list for adapter-bound (incl. admin-class tools);
   disabled MCP row → "not resolved"; unreachable MCP → resolution error.
+
+## Future direction (out of scope, recorded)
+
+The end-state concept for tool consumption is a **persistent REPL** (likely
+Python, inspired by Prime Intellect's `prime-agent`: one model tool — a
+persistent kernel — with tools, subagents, and context manipulated as code,
+not as per-call schemas). In that world the connected integrations compose a
+**namespace hierarchy** the agent scripts against: integration → tool group
+→ tool, like Python packages → subpackages → functions (e.g.
+`slack.channels.list(...)`, `slack.chat.post_message(...)`). Everything this
+spec builds toward that world: tools as data (introspectable, enumerable at
+runtime), one uniform adapter contract (any tool source can be projected
+into the namespace), per-tool admin curation (what enters the namespace).
+The REPL and namespace projection are separate future work; the namespacing
+wire format (`int_<slug>_<tool>`) stays until then.
 
 ## Security notes
 
 - Review still binds manifest + bundle hash; tool declarations are now inside
   the reviewed manifest — previously the class map was reviewed but specs were
   compiled-in and unreviewable for MCP plugins.
+- Nothing is ever exposed unapproved: adapter-bound tools are covered by the
+  reviewed manifest (zero-config default) or explicit admin enablement; MCP
+  tools require explicit admin enablement, and drift lands disabled.
 - Adapter bindings are version-pinned and fail closed; a republished bundle
   cannot silently change which server code runs its tools.
 - Embedded bundles are release artifacts: changing them requires a server
