@@ -676,10 +676,11 @@ the session restored in the webview. Paired against the public URL directly
    sessions (`cloud.rs` / AgentView path) send no machine binding, no
    heartbeat, no client_id — engine-originated agent sessions fall back to
    the 5-min timeout for client tools and don't register as executors.
-3. **Thread-list status feature** (design agreed earlier, not built):
+3. **Thread-list status feature** (design written
+   `docs/plans/2026-09-14-thread-list-status-design.md`, not built):
    per-chat `generating / done+unread / done+read` — `chats.generating`
-   column + read-marker table, ChatRunner flips status via internal API,
-   sidebar spinner/dot, future mark-as-unread.
+   column + read-marker table, ChatRunner flips status via journaled steps,
+   sidebar spinner/dot, live propagation on a dedicated NOTIFY channel.
 4. **Full desktop sign-out**: currently drops only the webview token; the
    engine session persists (needs an engine logout rpc).
 5. **Embedded Restate runtime for tests**: gateway chat routes through the
