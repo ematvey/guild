@@ -331,7 +331,7 @@ impl Integration for Gitlab {
         Box::pin(async move {
             let token = token(secrets)?;
             probe(
-                request(base_url(config).as_str(), token.as_str(), "/api/v4/user"),
+                request(base_url(config).as_str(), token.as_str(), "/user"),
                 "gitlab",
             )
             .await

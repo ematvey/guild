@@ -120,7 +120,14 @@ export default function SsoSection() {
       initialIssuer={editing ? (cfg.issuer ?? "") : ""}
       initialClientId={editing ? (cfg.client_id ?? "") : ""}
       keepSecret={editing}
-      onCancel={editing ? () => reload() : undefined}
+      onCancel={
+        editing
+          ? () => {
+              reload();
+              setMode("view");
+            }
+          : undefined
+      }
       onSaved={() => {
         reload();
         setMode("view");

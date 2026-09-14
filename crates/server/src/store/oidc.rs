@@ -18,16 +18,26 @@ pub struct OidcStore<'a> {
 }
 
 impl<'a> OidcStore<'a> {
+    /// Upserts the org's OIDC config. `client_secret = None` keeps the
+    /// stored encrypted secret (the edit form's "leave blank to keep").
     pub async fn upsert(
         &self,
         org_id: Uuid,
         issuer: &str,
         client_id: &str,
-        client_secret: &str,
+        client_secret: Option<&str>,
         master_key: &[u8; 32],
     ) -> Result<(), ApiError> {
-        let encrypted =
-            crypto::encrypt_secret(master_key, client_secret).map_err(ApiError::from)?;
+        let encrypted = match client_secret {
+            Some(secret) => crypto::encrypt_secret(master_key, secret).map_err(ApiError::from)?,
+            None => self
+                .get(org_id)
+                .await?
+                .map(|r| r.encrypted_client_secret)
+                .ok_or_else(|| {
+                    ApiError::bad_request("missing client_secret (no stored secret to keep)")
+                })?,
+        };
         sqlx::query(
             "INSERT INTO oidc_configs (id, org_id, issuer, client_id, encrypted_client_secret) \
              VALUES ($1, $2, $3, $4, $5) \

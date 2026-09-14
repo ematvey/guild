@@ -491,3 +491,27 @@ async fn github_api_passthrough_sends_agent_headers() {
         .unwrap();
     assert!(out.content.contains("owner/repo"));
 }
+
+/// The connection test must respect the base_url convention (the default
+/// already carries /api/v4) — a self-hosted base with the suffix, like
+/// `https://gitlab.example.dev/api/v4`, must probe `{base}/user`, not
+/// double the prefix.
+#[tokio::test]
+async fn gitlab_test_connection_tolerates_api_v4_base_suffix() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/user"))
+        .and(header("PRIVATE-TOKEN", FAKE_GITLAB_TOKEN))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "username": "acme" })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("gitlab").unwrap();
+    let config = json!({ "base_url": format!("{}/api/v4", server.uri()) });
+    plugin
+        .test_connection(&config, &[("token".into(), FAKE_GITLAB_TOKEN.into())])
+        .await
+        .unwrap();
+    server.verify().await;
+}
