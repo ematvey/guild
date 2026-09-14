@@ -119,6 +119,8 @@ async fn list_integrations(
     let mut row_values = Vec::with_capacity(rows.len());
     for row in &rows {
         let category = configured_row_category(&store, admin.0.org_id, row).await?;
+        let secret_names = declared_secret_names(&store, admin.0.org_id, &row.name).await?;
+        let settings = effective_settings(&store, admin.0.org_id, &row.name).await?;
         row_values.push(json!({
             "id": row.id,
             "org_id": row.org_id,
@@ -126,6 +128,8 @@ async fn list_integrations(
             "config": row.config,
             "enabled": row.enabled,
             "category": category,
+            "secret_names": secret_names,
+            "settings": settings,
         }));
     }
     let mut available: Vec<serde_json::Value> = crate::integrations::integration_names()
@@ -135,10 +139,22 @@ async fn list_integrations(
         // shadows it, see upsert_integration).
         .filter(|n| !rows.iter().any(|r| r.name == **n))
         .map(|n| {
-            let category = crate::integrations::integration_by_name(n)
+            let plugin = crate::integrations::integration_by_name(n);
+            let category = plugin
+                .as_ref()
                 .map(|p| p.category().to_string())
                 .unwrap_or_else(|| "other".to_string());
-            json!({ "name": n, "category": category })
+            let manifest = plugin.map(|p| p.manifest());
+            let secret_names = manifest
+                .as_ref()
+                .and_then(|m| m.auth.as_ref())
+                .map(|a| a.secret_names.clone())
+                .unwrap_or_default();
+            let settings = manifest
+                .and_then(|m| m.settings)
+                .map(|s| serde_json::to_value(s).unwrap_or_default())
+                .unwrap_or(serde_json::Value::Null);
+            json!({ "name": n, "category": category, "secret_names": secret_names, "settings": settings })
         })
         .collect();
     for item in store
@@ -151,7 +167,12 @@ async fn list_integrations(
         }
         if let Some(manifest) = latest_integration_manifest(&store, admin.0.org_id, &item.slug).await? {
             if manifest.mcp.is_some() {
-                available.push(json!({ "name": item.slug, "category": "mcp" }));
+                available.push(json!({
+                    "name": item.slug,
+                    "category": "mcp",
+                    "secret_names": manifest.auth.as_ref().map(|a| a.secret_names.clone()).unwrap_or_default(),
+                    "settings": manifest.settings.clone().map(|s| serde_json::to_value(s).unwrap_or_default()).unwrap_or(serde_json::Value::Null),
+                }));
             }
         }
     }
@@ -178,6 +199,49 @@ async fn configured_row_category(
     Ok(crate::integrations::integration_by_name(&row.name)
         .map(|p| p.category().to_string())
         .unwrap_or_else(|| "other".to_string()))
+}
+
+/// Secret names an integration's credentials must use: a registry v2
+/// bundle's manifest when one is published for the slug, the compiled-in
+/// connector's manifest otherwise. Mirrors the precedence in
+/// `save_integration` / `set_integration_secret`.
+async fn declared_secret_names(
+    store: &crate::store::Store,
+    org_id: Uuid,
+    name: &str,
+) -> Result<Vec<String>, ApiError> {
+    if let Some(manifest) = latest_integration_manifest(store, org_id, name).await? {
+        if let Some(auth) = manifest.auth {
+            return Ok(auth.secret_names);
+        }
+    }
+    Ok(crate::integrations::integration_by_name(name)
+        .and_then(|p| p.manifest().auth)
+        .map(|a| a.secret_names)
+        .unwrap_or_default())
+}
+
+/// Typed settings schema for one integration's config fields (the admin UI
+/// renders its form from this): a registry v2 bundle's manifest when
+/// published for the slug, the compiled-in connector's manifest otherwise.
+async fn effective_settings(
+    store: &crate::store::Store,
+    org_id: Uuid,
+    name: &str,
+) -> Result<serde_json::Value, ApiError> {
+    if let Some(manifest) = latest_integration_manifest(store, org_id, name).await? {
+        if let Some(settings) = manifest.settings {
+            return serde_json::to_value(settings)
+                .map_err(|e| ApiError::internal(format!("settings schema serialize failed: {e}")));
+        }
+    }
+    let settings = crate::integrations::integration_by_name(name)
+        .and_then(|p| p.manifest().settings);
+    Ok(match settings {
+        Some(s) => serde_json::to_value(s)
+            .map_err(|e| ApiError::internal(format!("settings schema serialize failed: {e}")))?,
+        None => serde_json::Value::Null,
+    })
 }
 
 /// Latest published manifest of one registry integration item, if any.
@@ -361,10 +425,10 @@ async fn save_integration(
                 .and_then(|m| m.auth)
                 .map(|a| a.secret_names)
                 .unwrap_or_default();
-            let stored = store.integration_secrets().list(org_id, name).await?;
+            let stored = store.integration_secrets().names(org_id, name).await?;
             let missing: Vec<String> = declared
                 .into_iter()
-                .filter(|d| !stored.iter().any(|s| &s.name == d))
+                .filter(|d| !stored.iter().any(|s| *s == *d))
                 .collect();
             if !missing.is_empty() {
                 return Err(ApiError::conflict(
@@ -401,10 +465,10 @@ async fn save_integration(
             .auth
             .map(|a| a.secret_names)
             .unwrap_or_default();
-        let stored = store.integration_secrets().list(org_id, name).await?;
+        let stored = store.integration_secrets().names(org_id, name).await?;
         let missing: Vec<String> = declared
             .into_iter()
-            .filter(|d| !stored.iter().any(|s| &s.name == d))
+            .filter(|d| !stored.iter().any(|s| *s == *d))
             .collect();
         if !missing.is_empty() {
             return Err(ApiError::conflict(
@@ -449,7 +513,8 @@ async fn set_integration_secret(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Lists one integration's secret names + timestamps — never values.
+/// Lists one integration's secret names, timestamps and masked previews —
+/// never values.
 async fn list_integration_secrets(
     State(state): State<AppState>,
     admin: AdminUser,
@@ -461,9 +526,10 @@ async fn list_integration_secrets(
         .get(admin.0.org_id, id)
         .await?
         .ok_or_else(|| ApiError::not_found("unknown integration"))?;
+    let master = state.config.master_key().map_err(ApiError::from)?;
     let secrets = store
         .integration_secrets()
-        .list(admin.0.org_id, &row.name)
+        .list(admin.0.org_id, &row.name, &master)
         .await?;
     Ok(Json(json!({ "secrets": secrets })))
 }

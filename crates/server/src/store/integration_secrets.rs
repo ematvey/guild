@@ -11,6 +11,21 @@ use uuid::Uuid;
 pub struct SecretRow {
     pub name: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Write-time preview (e.g. "••••a1b2"); values themselves are never
+    /// listed. Empty for rows written before the column existed — the first
+    /// listing after this change backfills it.
+    pub masked: String,
+}
+
+/// Preview shown to admins: last 4 characters after bullets, or bullets
+/// only when the value is too short to show any part of it.
+fn mask_secret(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() < 8 {
+        return "••••".to_string();
+    }
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("••••{tail}")
 }
 
 /// Resolve failure: an internal store error, or the declared names that have
@@ -55,7 +70,7 @@ pub struct IntegrationSecretStore<'a> {
 }
 
 impl<'a> IntegrationSecretStore<'a> {
-    /// Idempotent upsert: replaces the encrypted value.
+    /// Idempotent upsert: replaces the encrypted value and the preview.
     pub async fn upsert(
         &self,
         org_id: Uuid,
@@ -67,15 +82,16 @@ impl<'a> IntegrationSecretStore<'a> {
         let encrypted =
             crypto::encrypt_secret(master_key, plaintext).map_err(ApiError::from)?;
         sqlx::query(
-            "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) \
-             VALUES ($1, $2, $3, $4) \
+            "INSERT INTO integration_secrets (org_id, integration, name, secret_enc, masked) \
+             VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (org_id, integration, name) \
-             DO UPDATE SET secret_enc = $4, updated_at = now()",
+             DO UPDATE SET secret_enc = $4, masked = $5, updated_at = now()",
         )
         .bind(org_id)
         .bind(integration)
         .bind(name)
         .bind(encrypted)
+        .bind(mask_secret(plaintext))
         .execute(self.pool)
         .await?;
         Ok(())
@@ -99,20 +115,63 @@ impl<'a> IntegrationSecretStore<'a> {
         Ok(())
     }
 
-    /// Names + timestamps only — values never appear in listings.
-    pub async fn list(
-        &self,
-        org_id: Uuid,
-        integration: &str,
-    ) -> Result<Vec<SecretRow>, ApiError> {
-        Ok(sqlx::query_as(
-            "SELECT name, updated_at FROM integration_secrets \
+    /// Stored secret names only (no decryption, no preview) — the enable
+    /// gate checks these against the manifest's declared names.
+    pub async fn names(&self, org_id: Uuid, integration: &str) -> Result<Vec<String>, ApiError> {
+        Ok(sqlx::query_scalar(
+            "SELECT name FROM integration_secrets \
              WHERE org_id = $1 AND integration = $2 ORDER BY name",
         )
         .bind(org_id)
         .bind(integration)
         .fetch_all(self.pool)
         .await?)
+    }
+
+    /// Names, timestamps and masked previews — values never appear in
+    /// listings. Rows written before the masked column existed get their
+    /// preview backfilled here: the value is decrypted server-side (the
+    /// same trust boundary as `resolve`) and re-masked, never returned.
+    pub async fn list(
+        &self,
+        org_id: Uuid,
+        integration: &str,
+        master_key: &[u8; 32],
+    ) -> Result<Vec<SecretRow>, ApiError> {
+        let mut rows: Vec<SecretRow> = sqlx::query_as(
+            "SELECT name, updated_at, masked FROM integration_secrets \
+             WHERE org_id = $1 AND integration = $2 ORDER BY name",
+        )
+        .bind(org_id)
+        .bind(integration)
+        .fetch_all(self.pool)
+        .await?;
+        for row in &mut rows {
+            if row.masked.is_empty() {
+                let plaintext = self
+                    .resolve(org_id, integration, &[row.name.clone()], master_key)
+                    .await
+                    .map_err(|e| match e {
+                        ResolveError::Api(api) => api,
+                        ResolveError::MissingSecrets(_) => {
+                            ApiError::internal("secret vanished between list and resolve")
+                        }
+                    })?;
+                let masked = mask_secret(&plaintext[0].1);
+                sqlx::query(
+                    "UPDATE integration_secrets SET masked = $3 \
+                     WHERE org_id = $1 AND integration = $2 AND name = $4",
+                )
+                .bind(org_id)
+                .bind(integration)
+                .bind(&masked)
+                .bind(&row.name)
+                .execute(self.pool)
+                .await?;
+                row.masked = masked;
+            }
+        }
+        Ok(rows)
     }
 
     /// Decrypts the requested names. Errors with MissingSecrets when any

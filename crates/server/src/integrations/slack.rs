@@ -7,7 +7,7 @@
 //! manifest; secret values ride into `execute` per call and never reach
 //! logs or results.
 
-use crate::integrations::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use crate::integrations::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use guild_core::registry::BundleManifest;
 use futures::future::BoxFuture;
 use protocol::api::ToolSpec;
@@ -117,6 +117,11 @@ impl Integration for Slack {
                 ("post_message", "write"),
                 ("api", "write"),
             ],
+            &[guild_core::registry::FieldSpec {
+                default: Some(serde_json::json!("https://slack.com/api")),
+                help: Some("Override only for a Slack API proxy".into()),
+                ..field("base_url", "string")
+            }],
         )
     }
 

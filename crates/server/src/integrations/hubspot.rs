@@ -2,7 +2,7 @@
 //! updates through the CRM v3 API. Auth is a private-app access token sent
 //! as `Authorization: Bearer`.
 
-use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use guild_core::registry::BundleManifest;
 use futures::future::BoxFuture;
 use protocol::api::ToolSpec;
@@ -80,6 +80,11 @@ impl Integration for Hubspot {
                 ("update_deal", "write"),
                 ("api", "write"),
             ],
+            &[guild_core::registry::FieldSpec {
+                default: Some(serde_json::json!("https://api.hubapi.com")),
+                help: Some("Override only for a HubSpot API proxy".into()),
+                ..field("base_url", "string")
+            }],
         )
     }
 

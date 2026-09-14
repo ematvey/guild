@@ -19,10 +19,15 @@ async fn secrets_upsert_list_resolve_delete() {
         .await
         .unwrap();
 
-    // list exposes names + timestamps only, never values
-    let rows = db.integration_secrets().list(org, "hubspot").await.unwrap();
+    // list exposes names, timestamps and masked previews, never values
+    let rows = db
+        .integration_secrets()
+        .list(org, "hubspot", &master)
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "api_key");
+    assert_eq!(rows[0].masked, "••••-123");
 
     // resolve returns decrypted pairs
     let resolved = db
@@ -60,7 +65,11 @@ async fn secrets_upsert_list_resolve_delete() {
         .delete(org, "hubspot", "api_key")
         .await
         .unwrap();
-    let rows = db.integration_secrets().list(org, "hubspot").await.unwrap();
+    let rows = db
+        .integration_secrets()
+        .list(org, "hubspot", &master)
+        .await
+        .unwrap();
     assert!(rows.is_empty());
 }
 
@@ -91,7 +100,7 @@ async fn integration_delete_removes_secrets() {
     assert!(db.integrations().list(org).await.unwrap().is_empty());
     assert!(
         db.integration_secrets()
-            .list(org, "hubspot")
+            .list(org, "hubspot", &master)
             .await
             .unwrap()
             .is_empty()
@@ -106,9 +115,39 @@ async fn integration_delete_removes_secrets() {
     assert_ne!(id, id2);
     assert!(
         db.integration_secrets()
-            .list(org, "hubspot")
+            .list(org, "hubspot", &master)
             .await
             .unwrap()
             .is_empty()
     );
+}
+
+/// Rows written before the masked column existed carry masked = ''; the
+/// first listing backfills the preview from the stored value.
+#[tokio::test]
+async fn list_backfills_missing_masked_preview() {
+    let db = Store::connect_test().await.unwrap();
+    let org = Uuid::now_v7();
+    sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+        .bind(org)
+        .execute(db.store.pool())
+        .await
+        .unwrap();
+    let master: [u8; 32] = [0u8; 32];
+
+    db.integration_secrets()
+        .upsert(org, "hubspot", "api_key", "sk-live-abcd1234", &master)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE integration_secrets SET masked = ''")
+        .execute(db.store.pool())
+        .await
+        .unwrap();
+
+    let rows = db
+        .integration_secrets()
+        .list(org, "hubspot", &master)
+        .await
+        .unwrap();
+    assert_eq!(rows[0].masked, "••••1234");
 }

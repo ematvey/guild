@@ -8,7 +8,7 @@
 //! RS256 JWT is exchanged for an access token whose `sub` carries the
 //! acting identity; tokens cache in-process until near expiry.
 
-use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
 use base64::Engine;
 use futures::future::BoxFuture;
@@ -540,6 +540,18 @@ impl Integration for GoogleWorkspace {
                 ("drive_search", "read"),
                 ("directory_users", "read"),
                 ("api", "write"),
+            ],
+            &[
+                guild_core::registry::FieldSpec {
+                    default: Some(serde_json::json!("https://www.googleapis.com")),
+                    help: Some("Override only for a Google API proxy".into()),
+                    ..field("api_base", "string")
+                },
+                guild_core::registry::FieldSpec {
+                    default: Some(serde_json::json!("https://oauth2.googleapis.com/token")),
+                    help: Some("Override only for a Google API proxy".into()),
+                    ..field("token_url", "string")
+                },
             ],
         );
         if let Some(auth) = manifest.auth.as_mut() {
