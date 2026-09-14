@@ -3,7 +3,7 @@
 //! Secret: `token` — sent as `Authorization: Bearer`; `User-Agent` is
 //! mandatory on every GitHub API request.
 
-use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use base64::Engine;
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
@@ -113,6 +113,11 @@ impl Integration for Github {
                 ("create_issue", "write"),
                 ("api", "write"),
             ],
+            &[guild_core::registry::FieldSpec {
+                default: Some(serde_json::json!("https://api.github.com")),
+                help: Some("Override for GitHub Enterprise Server".into()),
+                ..field("api_url", "string")
+            }],
         )
     }
 

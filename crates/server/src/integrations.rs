@@ -118,14 +118,15 @@ pub fn integration_by_name(name: &str) -> Option<Arc<dyn Integration>> {
 
 /// Builds an in-code manifest in the registry's v2 shape and validates it
 /// against the same rules a published bundle must pass (legal tool classes,
-/// namespaced-name length) — built-ins reuse the registry validation, they
-/// do not fork it.
+/// namespaced-name length, settings field kinds) — built-ins reuse the
+/// registry validation, they do not fork it.
 pub fn in_code_manifest(
     name: &str,
     version: &str,
     description: &str,
     secret_names: &[&str],
     classes: &[(&str, &str)],
+    fields: &[guild_core::registry::FieldSpec],
 ) -> BundleManifest {
     let manifest = BundleManifest {
         kind: "integration".to_string(),
@@ -135,6 +136,9 @@ pub fn in_code_manifest(
         auth: Some(guild_core::registry::AuthManifest {
             secret_names: secret_names.iter().map(|s| s.to_string()).collect(),
             ..Default::default()
+        }),
+        settings: Some(guild_core::registry::SettingsManifest {
+            fields: fields.to_vec(),
         }),
         tools: Some(guild_core::registry::ToolsManifest {
             classes: classes
@@ -147,6 +151,21 @@ pub fn in_code_manifest(
     guild_core::registry::validate_v2(&manifest)
         .expect("in-code manifest violates the registry manifest rules");
     manifest
+}
+
+/// One settings field for an in-code manifest: name + kind with an optional
+/// default. Label/help are added at call sites via struct update when the
+/// field needs them.
+pub fn field(name: &str, kind: &str) -> guild_core::registry::FieldSpec {
+    guild_core::registry::FieldSpec {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        label: None,
+        required: false,
+        default: None,
+        help: None,
+        placeholder: None,
+    }
 }
 
 /// How a plugin executes: a compiled-in Rust plugin or a remote MCP server
@@ -321,7 +340,7 @@ pub async fn mcp_call_tool(
 /// end. Its tools never touch the network.
 #[cfg(feature = "test-support")]
 pub mod testplug {
-    use super::{in_code_manifest, Category, Integration, ToolOutcome};
+    use super::{field, in_code_manifest, Category, Integration, ToolOutcome};
     use futures::future::BoxFuture;
     use guild_core::registry::BundleManifest;
     use protocol::api::ToolSpec;
@@ -344,6 +363,7 @@ pub mod testplug {
                 "Test tools for the unified plugin interface",
                 &["api_key"],
                 &[("secret_echo", "read"), ("admin_op", "admin")],
+                &[],
             )
         }
 
@@ -397,7 +417,7 @@ pub mod atlassian;
 pub mod google_workspace;
 
 pub mod searxng {
-    use super::{in_code_manifest, Category, Integration, ToolOutcome};
+    use super::{field, in_code_manifest, Category, Integration, ToolOutcome};
     use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
     use protocol::api::ToolSpec;
@@ -429,6 +449,11 @@ pub mod searxng {
                 "Web search through a SearxNG instance",
                 &[],
                 &[("web_search", "read")],
+                &[guild_core::registry::FieldSpec {
+                    required: true,
+                    placeholder: Some("http://searxng:8080".into()),
+                    ..field("base_url", "string")
+                }],
             )
         }
 
@@ -525,7 +550,7 @@ pub mod searxng {
 }
 
 pub mod superproxy {
-    use super::{in_code_manifest, Category, Integration, ToolOutcome};
+    use super::{field, in_code_manifest, Category, Integration, ToolOutcome};
     use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
     use protocol::api::ToolSpec;
@@ -584,6 +609,19 @@ pub mod superproxy {
                 "Fetch web pages as markdown through the superproxy gateway",
                 &[],
                 &[("web_fetch", "read")],
+                &[
+                    guild_core::registry::FieldSpec {
+                        required: true,
+                        placeholder: Some("http://superproxy:15505".into()),
+                        ..field("base_url", "string")
+                    },
+                    guild_core::registry::FieldSpec {
+                        help: Some(
+                            "Legacy fallback; prefer storing the token secret instead".into(),
+                        ),
+                        ..field("token", "string")
+                    },
+                ],
             )
         }
 
@@ -1148,11 +1186,11 @@ pub async fn call_plugin(
             // token included); values never reach logs or events.
             let names = store
                 .integration_secrets()
-                .list(org, &turn.slug)
+                .names(org, &turn.slug)
                 .await
                 .map_err(|e| format!("secrets unavailable: {e:?}"))?
                 .into_iter()
-                .map(|s| s.name)
+                .map(|s| s)
                 .collect::<Vec<_>>();
             let secrets = store
                 .integration_secrets()

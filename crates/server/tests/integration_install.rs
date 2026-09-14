@@ -63,6 +63,7 @@ fn v2_bundle(slug: &str, version: &str, auth_kind: &str) -> Vec<u8> {
             secret_names: vec!["api_key".into()],
             identity_key: "email".into(),
         }),
+        settings: None,
         tools: Some(guild_core::registry::ToolsManifest {
             classes: [("search_contacts".to_string(), "read".to_string())]
                 .into_iter()

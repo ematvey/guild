@@ -23,6 +23,8 @@ pub struct BundleManifest {
     #[serde(default)]
     pub auth: Option<AuthManifest>,
     #[serde(default)]
+    pub settings: Option<SettingsManifest>,
+    #[serde(default)]
     pub tools: Option<ToolsManifest>,
     #[serde(default)]
     pub triggers: Vec<TriggerSpec>,
@@ -35,6 +37,37 @@ pub struct BundleManifest {
 pub struct McpManifest {
     pub url: String,
 }
+
+/// One admin-facing configuration field. The integration settings UI is
+/// rendered from these — the manifest is the schema, the admin UI is
+/// generated, nothing is hardcoded per connector.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FieldSpec {
+    pub name: String,
+    /// string | text | number | boolean
+    pub kind: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub default: Option<serde_json::Value>,
+    #[serde(default)]
+    pub help: Option<String>,
+    #[serde(default)]
+    pub placeholder: Option<String>,
+}
+
+/// Typed settings schema for an integration: non-secret config fields.
+/// Credentials are declared separately in `auth.secret_names` and managed
+/// through the write-only secret store.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SettingsManifest {
+    #[serde(default)]
+    pub fields: Vec<FieldSpec>,
+}
+
+pub const FIELD_KINDS: [&str; 4] = ["string", "text", "number", "boolean"];
 
 /// Auth shape: one org-wide secret, an impersonated org credential, or a
 /// per-member OAuth token cached by Guild.
@@ -131,6 +164,24 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
             auth.identity_key == "email" || auth.identity_key.is_empty(),
             "auth.identity_key supports only email in v1"
         );
+    }
+    if let Some(settings) = &m.settings {
+        let mut seen = std::collections::BTreeSet::new();
+        for f in &settings.fields {
+            anyhow::ensure!(!f.name.is_empty(), "settings field name is empty");
+            anyhow::ensure!(
+                f.name.len() <= 64
+                    && f.name
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "settings field name {f:?} must be [a-z0-9_] and <= 64 chars"
+            );
+            anyhow::ensure!(
+                FIELD_KINDS.contains(&f.kind.as_str()),
+                "settings field {f:?} kind must be one of {FIELD_KINDS:?}"
+            );
+            anyhow::ensure!(seen.insert(f.name.clone()), "duplicate settings field {f:?}");
+        }
     }
     if let Some(tools) = &m.tools {
         for (name, class) in &tools.classes {
@@ -439,6 +490,33 @@ mod tests {
     }
 
     #[test]
+    fn settings_fields_validate() {
+        let mut m = v2_manifest();
+        m.settings = Some(SettingsManifest {
+            fields: vec![FieldSpec {
+                name: "base_url".into(),
+                kind: "string".into(),
+                label: None,
+                required: true,
+                default: None,
+                help: None,
+                placeholder: None,
+            }],
+        });
+        validate_v2(&m).unwrap();
+
+        // Unknown kind rejected.
+        m.settings.as_mut().unwrap().fields[0].kind = "blob".into();
+        assert!(validate_v2(&m).is_err());
+
+        // Duplicate names rejected.
+        m.settings.as_mut().unwrap().fields[0].kind = "string".into();
+        let dup = m.settings.as_ref().unwrap().fields[0].clone();
+        m.settings.as_mut().unwrap().fields.push(dup);
+        assert!(validate_v2(&m).is_err());
+    }
+
+    #[test]
     fn v2_validation_rejects_bad_fields() {
         let mut m = v2_manifest();
         m.mcp.as_mut().unwrap().url = "ftp://x".into();
@@ -461,7 +539,7 @@ mod tests {
     fn v1_manifest_still_validates() {
         let m = BundleManifest { kind: "integration".into(), slug: "digest".into(),
             version: "0.1.0".into(), description: String::new(),
-            dependencies: vec![], mcp: None, auth: None, tools: None,
+            dependencies: vec![], mcp: None, auth: None, settings: None, tools: None,
             triggers: vec![], skills: vec![] };
         validate_v2(&m).unwrap();
         assert!(m.mcp.is_none());

@@ -171,6 +171,7 @@ impl Integration for Atlassian {
                 ("confluence_create_page", "write"),
                 ("api", "write"),
             ],
+            &[],
         )
     }
 

@@ -1,9 +1,10 @@
 //! IntegrationsSection — available and configured integrations in one data
-//! table (status column distinguishes configured / not configured); the
-//! detail page (addressed by the row's id, /settings/integrations/<id>)
-//! holds the enable toggle, JSON config editor, save and remove. MCP plugin
-//! rows additionally show the mcp url, secret names with timestamps, a
-//! write-only secret form, and a per-role tool-policy editor.
+//! table with first-class add (header button + catalog rows) and delete
+//! (per-row and detail actions). The detail page (addressed by the row's
+//! id, /settings/integrations/<id>) renders its settings form dynamically
+//! from the integration's manifest field schema — no hardcoded per-connector
+//! UI — plus a secrets editor (masked previews, write-only values) and,
+//! for MCP plugins, the mcp url and a per-role tool-policy editor.
 
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -23,6 +24,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@guild/ui/components/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@guild/ui/components/dialog";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
@@ -33,6 +41,18 @@ import { Field } from "../components/field";
 import { EmptyState } from "../components/empty-state";
 import { FactCard, FactGrid } from "../components/fact-card";
 
+/** One manifest-declared settings field — the detail form is generated
+ * from these; the manifest is the schema. */
+interface FieldSpec {
+  name: string;
+  kind: string; // string | text | number | boolean
+  label?: string | null;
+  required?: boolean;
+  default?: unknown;
+  help?: string | null;
+  placeholder?: string | null;
+}
+
 interface IntegrationRow {
   id: string;
   org_id: string;
@@ -40,16 +60,21 @@ interface IntegrationRow {
   config: Record<string, unknown>;
   enabled: boolean;
   category?: string;
+  secret_names?: string[];
+  settings?: { fields?: FieldSpec[] } | null;
 }
 
 interface AvailableEntry {
   name: string;
   category?: string;
+  secret_names?: string[];
+  settings?: { fields?: FieldSpec[] } | null;
 }
 
 interface SecretEntry {
   name: string;
   updated_at: string;
+  masked?: string;
 }
 
 const TOOL_CLASSES = ["read", "write", "admin"] as const;
@@ -64,7 +89,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   mcp: "MCP plugin",
 };
 
-const categoryLabel = (c?: string) => CATEGORY_LABELS[c ?? "other"] ?? CATEGORY_LABELS.other;
+const categoryLabel = (c?: string) =>
+  CATEGORY_LABELS[c ?? "other"] ?? CATEGORY_LABELS.other;
 
 const ROLES: ToolRole[] = ["member", "admin"];
 
@@ -94,7 +120,11 @@ function cleanPolicy(policy: ToolPolicy): ToolPolicy {
   return out;
 }
 
-const toggleClass = (policy: ToolPolicy, role: ToolRole, cls: ToolClass): ToolPolicy => {
+const toggleClass = (
+  policy: ToolPolicy,
+  role: ToolRole,
+  cls: ToolClass,
+): ToolPolicy => {
   const cur = policy[role] ?? [];
   const next = cur.includes(cls) ? cur.filter((c) => c !== cls) : [...cur, cls];
   return { ...policy, [role]: next };
@@ -132,15 +162,35 @@ export default function IntegrationsSection({
   // A unified table row: configured integrations plus not-yet-configured
   // catalog entries (status "not configured"; clicking one creates the row).
   const tableRows = useMemo<
-    { key: string; name: string; category?: string; row?: IntegrationRow }[]
+    {
+      key: string;
+      name: string;
+      category?: string;
+      secretNames: string[];
+      fields: FieldSpec[];
+      row?: IntegrationRow;
+    }[]
   >(() => {
     if (rows === null || available === null) return [];
     const configuredNames = new Set(rows.map((r) => r.name));
     return [
-      ...rows.map((r) => ({ key: r.id, name: r.name, category: r.category, row: r })),
+      ...rows.map((r) => ({
+        key: r.id,
+        name: r.name,
+        category: r.category,
+        secretNames: r.secret_names ?? [],
+        fields: r.settings?.fields ?? [],
+        row: r,
+      })),
       ...available
         .filter((a) => !configuredNames.has(a.name))
-        .map((a) => ({ key: `available-${a.name}`, name: a.name, category: a.category })),
+        .map((a) => ({
+          key: `available-${a.name}`,
+          name: a.name,
+          category: a.category,
+          secretNames: a.secret_names ?? [],
+          fields: a.settings?.fields ?? [],
+        })),
     ];
   }, [rows, available]);
 
@@ -153,15 +203,31 @@ export default function IntegrationsSection({
       return;
     }
     try {
-      const created = await api<{ id: string }>("POST", "/api/v1/admin/integrations", {
-        name: entry.name,
-      });
-      toast.success("Integration created", { description: entry.name });
+      const created = await api<{ id: string }>(
+        "POST",
+        "/api/v1/admin/integrations",
+        {
+          name: entry.name,
+        },
+      );
+      toast.success("Integration added", { description: entry.name });
       reload();
       onDetailChange(created.id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error("Could not create integration", { description: msg });
+      toast.error("Could not add integration", { description: msg });
+    }
+  };
+
+  const removeRow = async (row: IntegrationRow) => {
+    try {
+      await api("DELETE", `/api/v1/admin/integrations/${row.id}`);
+      toast.success("Integration removed", { description: row.name });
+      setPendingRemove(null);
+      reload();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error("Could not remove integration", { description: msg });
     }
   };
 
@@ -180,7 +246,11 @@ export default function IntegrationsSection({
       {
         accessorKey: "category",
         header: "Type",
-        cell: ({ row }) => <Badge variant="secondary">{categoryLabel(row.original.category)}</Badge>,
+        cell: ({ row }) => (
+          <Badge variant="secondary">
+            {categoryLabel(row.original.category)}
+          </Badge>
+        ),
       },
       {
         id: "status",
@@ -189,22 +259,50 @@ export default function IntegrationsSection({
           row.original.row ? (
             <StatusBadge enabled={row.original.row.enabled} />
           ) : (
-            <span className="text-xs text-muted-foreground">not configured</span>
+            <span className="text-xs text-muted-foreground">
+              not configured
+            </span>
           ),
       },
       {
         id: "actions",
         header: "",
-        cell: ({ row }) =>
-          row.original.row ? null : (
-            <div className="flex justify-end">
-              <Plus className="size-4 text-muted-foreground/60" />
-            </div>
-          ),
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            {row.original.row ? (
+              <button
+                className="text-muted-foreground transition-colors hover:text-destructive"
+                title={`Remove ${row.original.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPendingRemove(row.original.row!);
+                }}
+              >
+                <Trash2 className="size-4" />
+              </button>
+            ) : (
+              <button
+                className="text-muted-foreground transition-colors hover:text-foreground"
+                title={`Add ${row.original.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void openIntegration(row.original);
+                }}
+              >
+                <Plus className="size-4" />
+              </button>
+            )}
+          </div>
+        ),
       },
     ],
     [],
   );
+
+  const [pendingRemove, setPendingRemove] = useState<IntegrationRow | null>(
+    null,
+  );
+  const [addOpen, setAddOpen] = useState(false);
 
   if (detail !== null) {
     // Deep-linked detail: wait for the list before resolving the id —
@@ -223,9 +321,14 @@ export default function IntegrationsSection({
         <div>
           <PageHeader
             title="Integrations"
-            back={{ label: "Integrations", onClick: () => onDetailChange(null) }}
+            back={{
+              label: "Integrations",
+              onClick: () => onDetailChange(null),
+            }}
           />
-          <p className="text-sm text-muted-foreground">This integration no longer exists.</p>
+          <p className="text-sm text-muted-foreground">
+            This integration no longer exists.
+          </p>
         </div>
       );
     }
@@ -234,6 +337,8 @@ export default function IntegrationsSection({
         id={configured.id}
         name={configured.name}
         category={configured.category ?? "other"}
+        secretNames={configured.secret_names ?? []}
+        fields={configured.settings?.fields ?? []}
         initialConfig={configured.config}
         initialEnabled={configured.enabled}
         onChanged={reload}
@@ -249,7 +354,12 @@ export default function IntegrationsSection({
     <div>
       <PageHeader
         title="Integrations"
-        description="Connectors and MCP plugins that contribute tools to chats. Click a not-configured connector to set it up."
+        description="Connectors and MCP plugins that contribute tools to chats."
+        actions={
+          <Button onClick={() => setAddOpen(true)}>
+            <Plus className="size-4" /> Add integration
+          </Button>
+        }
       />
       {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
       <DataTable
@@ -266,6 +376,84 @@ export default function IntegrationsSection({
           />
         }
       />
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add integration</DialogTitle>
+            <DialogDescription>
+              Pick a connector or plugin to add to this workspace. It starts
+              disabled until its settings and secrets are in.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-80 overflow-y-auto">
+            {available === null ? (
+              <Skeleton className="h-10 w-full" />
+            ) : available.length === 0 ? (
+              <p className="py-3 text-sm text-muted-foreground">
+                Everything available is already added.
+              </p>
+            ) : (
+              <ul className="divide-y divide-border/60">
+                {available.map((a) => (
+                  <li key={a.name}>
+                    <button
+                      className="flex w-full items-center gap-3 py-2.5 text-left transition-colors hover:bg-accent"
+                      onClick={() => {
+                        setAddOpen(false);
+                        void openIntegration({
+                          key: `available-${a.name}`,
+                          name: a.name,
+                          category: a.category,
+                          secretNames: a.secret_names ?? [],
+                          fields: a.settings?.fields ?? [],
+                        });
+                      }}
+                    >
+                      <Webhook className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="font-medium">{a.name}</span>
+                      <Badge variant="secondary" className="ml-auto">
+                        {categoryLabel(a.category)}
+                      </Badge>
+                      {(a.secret_names?.length ?? 0) > 0 && (
+                        <span className="text-xs text-muted-foreground">
+                          {a.secret_names!.length} secret
+                          {a.secret_names!.length === 1 ? "" : "s"}
+                        </span>
+                      )}
+                      <Plus className="size-4 text-muted-foreground/60" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={pendingRemove !== null}
+        onOpenChange={(open) => !open && setPendingRemove(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {pendingRemove?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The configuration and stored secrets are deleted; tools disappear
+              from chats. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => pendingRemove && void removeRow(pendingRemove)}
+            >
+              Remove configuration
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -274,6 +462,8 @@ function IntegrationDetail({
   id,
   name,
   category,
+  secretNames,
+  fields,
   initialConfig,
   initialEnabled,
   onChanged,
@@ -282,6 +472,8 @@ function IntegrationDetail({
   id: string;
   name: string;
   category?: string;
+  secretNames: string[];
+  fields: FieldSpec[];
   initialConfig: Record<string, unknown>;
   initialEnabled: boolean;
   onChanged: () => void;
@@ -289,26 +481,48 @@ function IntegrationDetail({
 }) {
   const isMcp =
     typeof initialConfig?.mcp === "object" && initialConfig.mcp !== null;
+  // Schema-driven connectors edit through a form generated from the
+  // manifest fields; everything else (MCP plugins, schema-less rows) edits
+  // as raw JSON.
+  const useForm = !isMcp && fields.length > 0;
   // The saved integration is facts first; editing is an explicit mode.
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [enabled, setEnabled] = useState(initialEnabled);
   const [text, setText] = useState(JSON.stringify(initialConfig, null, 2));
+  // Form draft: one entry per manifest field.
+  const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // MCP plugin facts: stored secret names + timestamps, never values.
+  // Stored secrets: masked previews + timestamps, values never.
   const [secretName, setSecretName] = useState("");
   const [secretValue, setSecretValue] = useState("");
   const [confirmSecret, setConfirmSecret] = useState<string | null>(null);
   // Tool policy draft: checkbox state per role; saved into config.tool_policy.
-  const [policy, setPolicy] = useState<ToolPolicy>(
-    readPolicy(initialConfig),
-  );
+  const [policy, setPolicy] = useState<ToolPolicy>(readPolicy(initialConfig));
 
   const secretsPath = `/api/v1/admin/integrations/${id}/secrets`;
   const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(secretsPath);
   const secrets = secretsRes.data?.secrets ?? null;
   const reloadSecrets = secretsRes.reload;
+
+  const enterEdit = () => {
+    setText(JSON.stringify(initialConfig, null, 2));
+    setDraft(
+      Object.fromEntries(
+        fields.map((f) => [
+          f.name,
+          initialConfig[f.name] ??
+            f.default ??
+            (f.kind === "boolean" ? false : ""),
+        ]),
+      ),
+    );
+    setEnabled(initialEnabled);
+    setPolicy(readPolicy(initialConfig));
+    setError(null);
+    setMode("edit");
+  };
 
   const fail = (e: unknown, title: string) => {
     const msg = e instanceof Error ? e.message : String(e);
@@ -321,10 +535,40 @@ function IntegrationDetail({
     setBusy(true);
     setError(null);
     try {
-      const cfg = JSON.parse(text) as Record<string, unknown>;
+      let cfg: Record<string, unknown>;
+      if (useForm) {
+        // Start from the stored config so keys the schema does not know
+        // (legacy fields, tool_policy) survive; schema fields are set from
+        // the form.
+        cfg = { ...initialConfig };
+        for (const f of fields) {
+          const value = draft[f.name];
+          if (f.kind === "boolean") {
+            cfg[f.name] = value === true;
+          } else if (f.kind === "number") {
+            const n = Number(value);
+            if (value === "" || value === null || Number.isNaN(n)) {
+              if (f.required) throw new Error(`${fieldLabel(f)} is required`);
+              delete cfg[f.name];
+            } else {
+              cfg[f.name] = n;
+            }
+          } else {
+            const s = String(value ?? "");
+            if (s === "") {
+              if (f.required) throw new Error(`${fieldLabel(f)} is required`);
+              delete cfg[f.name];
+            } else {
+              cfg[f.name] = s;
+            }
+          }
+        }
+      } else {
+        cfg = JSON.parse(text) as Record<string, unknown>;
+      }
       const clean = cleanPolicy(policy);
       if (Object.keys(clean).length > 0) cfg.tool_policy = clean;
-      else delete cfg.tool_policy;
+      else if (isMcp) delete cfg.tool_policy;
       await api("PUT", `/api/v1/admin/integrations/${id}`, {
         config: cfg,
         enabled,
@@ -403,12 +647,12 @@ function IntegrationDetail({
         description={
           initialEnabled
             ? "Enabled — tools join the chat loop."
-            : "Configured but disabled; the config is kept, no tools are contributed."
+            : "Disabled; the configuration is kept, no tools are contributed."
         }
         back={{ label: "Integrations", onClick: onBack }}
         actions={
           <>
-            <Button onClick={() => setMode("edit")}>Edit</Button>
+            <Button onClick={enterEdit}>Edit</Button>
             <Button
               variant="outline"
               className="text-destructive"
@@ -431,47 +675,146 @@ function IntegrationDetail({
         {isMcp && (
           <FactCard label="Connection" className="sm:col-span-2">
             <p className="break-all font-mono text-xs">
-              {String((initialConfig.mcp as Record<string, unknown>).url ?? "(no url)")}
+              {String(
+                (initialConfig.mcp as Record<string, unknown>).url ??
+                  "(no url)",
+              )}
             </p>
           </FactCard>
         )}
       </FactGrid>
 
-      <div className="rounded-lg border border-border bg-card p-4">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Config</p>
-        {Object.keys(initialConfig).length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">
-            No overrides — the connector's in-code defaults apply.
+      {/* Settings: manifest-declared fields with their current values. */}
+      {fields.length > 0 && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Settings
           </p>
-        ) : (
-          <pre className="mt-2 overflow-x-auto font-mono text-xs leading-relaxed">
-            {JSON.stringify(initialConfig, null, 2)}
-          </pre>
-        )}
-      </div>
+          <dl className="mt-3 space-y-3">
+            {fields.map((f) => {
+              const value = initialConfig[f.name];
+              const shown =
+                value !== undefined
+                  ? String(value)
+                  : f.default !== undefined && f.default !== null
+                    ? `${String(f.default)} (default)`
+                    : "not set";
+              return (
+                <div key={f.name} className="flex items-baseline gap-4">
+                  <dt className="w-48 shrink-0 text-sm">
+                    {fieldLabel(f)}
+                    {f.required && (
+                      <span className="ml-1 text-destructive">*</span>
+                    )}
+                  </dt>
+                  <dd className="min-w-0">
+                    <p
+                      className={`truncate font-mono text-xs ${
+                        value === undefined ? "text-muted-foreground" : ""
+                      }`}
+                    >
+                      {shown}
+                    </p>
+                    {f.help && (
+                      <p className="text-xs text-muted-foreground">{f.help}</p>
+                    )}
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+        </div>
+      )}
 
       {isMcp && (
         <div className="rounded-lg border border-border bg-card p-4">
-          <div className="flex items-center gap-1.5">
-            <KeyRound className="size-3.5 text-muted-foreground" />
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Secrets
-            </p>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Passed to the MCP server as headers on connect; values are never shown or returned by
-            the API.
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Config
           </p>
-          {secrets === null ? (
-            <Skeleton className="mt-3 h-8 w-56" />
-          ) : secrets.length === 0 ? (
-            <p className="mt-3 text-sm text-muted-foreground">No secrets stored.</p>
+          {Object.keys(initialConfig).length === 0 ? (
+            <p className="mt-2 text-sm text-muted-foreground">Empty config.</p>
           ) : (
-            <ul className="mt-3 divide-y divide-border/60">
-              {secrets.map((s) => (
-                <li key={s.name} className="flex items-center gap-3 py-2 text-sm">
+            <pre className="mt-2 overflow-x-auto font-mono text-xs leading-relaxed">
+              {JSON.stringify(initialConfig, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="flex items-center gap-1.5">
+          <KeyRound className="size-3.5 text-muted-foreground" />
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Secrets
+          </p>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {isMcp
+            ? "Passed to the MCP server as headers on connect."
+            : "Credentials the connector's tools use on every call."}{" "}
+          Values are never shown — only a masked preview. An enabled integration
+          must have every required secret stored.
+        </p>
+        {secrets === null ? (
+          <Skeleton className="mt-3 h-8 w-56" />
+        ) : secrets.length === 0 && secretNames.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            This integration needs no secrets.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-border/60">
+            {secretNames.map((required) => {
+              const stored = secrets?.find((s) => s.name === required);
+              return (
+                <li
+                  key={required}
+                  className="flex items-center gap-3 py-2 text-sm"
+                >
+                  <span className="font-mono text-xs">{required}</span>
+                  {stored ? (
+                    <>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {stored.masked || "••••"}
+                      </span>
+                      <span className="hidden text-xs text-muted-foreground sm:inline">
+                        updated {new Date(stored.updated_at).toLocaleString()}
+                      </span>
+                    </>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500/40 text-amber-600 dark:text-amber-400"
+                    >
+                      missing
+                    </Badge>
+                  )}
+                  {stored && (
+                    <button
+                      className="ml-auto text-muted-foreground transition-colors hover:text-destructive"
+                      title="Delete secret"
+                      onClick={() => setConfirmSecret(required)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+            {secrets
+              ?.filter((s) => !secretNames.includes(s.name))
+              .map((s) => (
+                <li
+                  key={s.name}
+                  className="flex items-center gap-3 py-2 text-sm"
+                >
                   <span className="font-mono text-xs">{s.name}</span>
                   <span className="text-xs text-muted-foreground">
+                    additional
+                  </span>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {s.masked || "••••"}
+                  </span>
+                  <span className="hidden text-xs text-muted-foreground sm:inline">
                     updated {new Date(s.updated_at).toLocaleString()}
                   </span>
                   <button
@@ -483,39 +826,40 @@ function IntegrationDetail({
                   </button>
                 </li>
               ))}
-            </ul>
-          )}
-          <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border/60 pt-3">
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">Name</p>
-              <Input
-                className="h-8 w-40 font-mono text-xs"
-                value={secretName}
-                onChange={(e) => setSecretName(e.target.value)}
-                placeholder="e.g. api_key"
-              />
-            </div>
-            <div>
-              <p className="mb-1 text-xs text-muted-foreground">Value (write-only)</p>
-              <Input
-                className="h-8 w-56 font-mono text-xs"
-                type="password"
-                value={secretValue}
-                onChange={(e) => setSecretValue(e.target.value)}
-                placeholder="add or replace"
-              />
-            </div>
-            <Button
-              size="sm"
-              className="h-8"
-              disabled={busy || !secretName.trim() || !secretValue}
-              onClick={saveSecret}
-            >
-              {busy ? "Saving…" : "Save secret"}
-            </Button>
+          </ul>
+        )}
+        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border/60 pt-3">
+          <div>
+            <p className="mb-1 text-xs text-muted-foreground">Name</p>
+            <Input
+              className="h-8 w-40 font-mono text-xs"
+              value={secretName}
+              onChange={(e) => setSecretName(e.target.value)}
+              placeholder={secretNames[0] ?? "e.g. api_key"}
+            />
           </div>
+          <div>
+            <p className="mb-1 text-xs text-muted-foreground">
+              Value (write-only)
+            </p>
+            <Input
+              className="h-8 w-56 font-mono text-xs"
+              type="password"
+              value={secretValue}
+              onChange={(e) => setSecretValue(e.target.value)}
+              placeholder="add or replace"
+            />
+          </div>
+          <Button
+            size="sm"
+            className="h-8"
+            disabled={busy || !secretName.trim() || !secretValue}
+            onClick={saveSecret}
+          >
+            {busy ? "Saving…" : "Save secret"}
+          </Button>
         </div>
-      )}
+      </div>
 
       {isMcp && (
         <div className="rounded-lg border border-border bg-card p-4">
@@ -565,17 +909,70 @@ function IntegrationDetail({
             </span>
           </label>
 
-          <Field
-            label="Config (JSON)"
-            hint="Merged with the tool policy below on save."
-          >
-            <Textarea
-              className="min-h-40 font-mono text-xs"
-              spellCheck={false}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-            />
-          </Field>
+          {useForm ? (
+            fields.map((f) => (
+              <Field
+                key={f.name}
+                label={`${fieldLabel(f)}${f.required ? " *" : ""}`}
+                hint={f.help ?? undefined}
+              >
+                {f.kind === "boolean" ? (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-foreground"
+                      checked={draft[f.name] === true}
+                      onChange={(e) =>
+                        setDraft((d) => ({
+                          ...d,
+                          [f.name]: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span className="text-muted-foreground">Enabled</span>
+                  </label>
+                ) : f.kind === "text" ? (
+                  <Textarea
+                    className="min-h-24"
+                    spellCheck={false}
+                    placeholder={f.placeholder ?? undefined}
+                    value={String(draft[f.name] ?? "")}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, [f.name]: e.target.value }))
+                    }
+                  />
+                ) : (
+                  <Input
+                    type={f.kind === "number" ? "number" : "text"}
+                    className="max-w-md"
+                    spellCheck={false}
+                    placeholder={
+                      f.placeholder ??
+                      (f.default !== undefined && f.default !== null
+                        ? String(f.default)
+                        : undefined)
+                    }
+                    value={String(draft[f.name] ?? "")}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, [f.name]: e.target.value }))
+                    }
+                  />
+                )}
+              </Field>
+            ))
+          ) : (
+            <Field
+              label="Config (JSON)"
+              hint="Merged with the tool policy below on save."
+            >
+              <Textarea
+                className="min-h-40 font-mono text-xs"
+                spellCheck={false}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+            </Field>
+          )}
 
           {isMcp && (
             <Field
@@ -584,18 +981,28 @@ function IntegrationDetail({
             >
               <div className="grid grid-cols-2 gap-3">
                 {ROLES.map((role) => (
-                  <div key={role} className="rounded-lg border border-border px-3 py-2.5">
+                  <div
+                    key={role}
+                    className="rounded-lg border border-border px-3 py-2.5"
+                  >
                     <p className="text-sm font-medium capitalize">{role}</p>
                     <div className="mt-1.5 space-y-1.5">
                       {TOOL_CLASSES.map((cls) => (
-                        <label key={cls} className="flex items-center gap-2 text-sm">
+                        <label
+                          key={cls}
+                          className="flex items-center gap-2 text-sm"
+                        >
                           <input
                             type="checkbox"
                             className="size-4 accent-foreground"
                             checked={policy[role]?.includes(cls) ?? false}
-                            onChange={() => setPolicy((p) => toggleClass(p, role, cls))}
+                            onChange={() =>
+                              setPolicy((p) => toggleClass(p, role, cls))
+                            }
                           />
-                          <span className="capitalize text-muted-foreground">{cls}</span>
+                          <span className="capitalize text-muted-foreground">
+                            {cls}
+                          </span>
                         </label>
                       ))}
                     </div>
@@ -610,16 +1017,7 @@ function IntegrationDetail({
             <Button disabled={busy} onClick={save}>
               {busy ? "Saving…" : "Save"}
             </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setText(JSON.stringify(initialConfig, null, 2));
-                setEnabled(initialEnabled);
-                setPolicy(readPolicy(initialConfig));
-                setError(null);
-                setMode("view");
-              }}
-            >
+            <Button variant="ghost" onClick={() => setMode("view")}>
               Cancel
             </Button>
           </div>
@@ -631,8 +1029,8 @@ function IntegrationDetail({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The configuration and stored secrets are deleted; tools disappear from chats.
-              This cannot be undone.
+              The configuration and stored secrets are deleted; tools disappear
+              from chats. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -656,8 +1054,8 @@ function IntegrationDetail({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete secret?</AlertDialogTitle>
             <AlertDialogDescription>
-              “{confirmSecret}” is removed; calls that need it start failing. This cannot be
-              undone.
+              “{confirmSecret}” is removed; calls that need it start failing.
+              This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -674,4 +1072,8 @@ function IntegrationDetail({
       </AlertDialog>
     </div>
   );
+}
+
+function fieldLabel(f: FieldSpec): string {
+  return f.label ?? f.name.replace(/_/g, " ");
 }

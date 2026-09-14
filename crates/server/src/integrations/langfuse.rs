@@ -2,7 +2,7 @@
 //! public API (`/api/public/...`), authenticated with basic auth over the
 //! public/secret key pair.
 
-use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use guild_core::registry::BundleManifest;
 use futures::future::BoxFuture;
 use protocol::api::ToolSpec;
@@ -75,6 +75,13 @@ impl Integration for Langfuse {
                 ("get_prompt", "read"),
                 ("api", "write"),
             ],
+            &[guild_core::registry::FieldSpec {
+                default: Some(serde_json::json!("https://cloud.langfuse.com")),
+                help: Some(
+                    "Self-hosted URL override; otherwise the host secret is used".into(),
+                ),
+                ..field("base_url", "string")
+            }],
         )
     }
 

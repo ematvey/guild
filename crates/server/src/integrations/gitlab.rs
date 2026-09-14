@@ -2,7 +2,7 @@
 //! `https://gitlab.com/api/v4` (self-hosted instances). Secret: `token` —
 //! sent as the `PRIVATE-TOKEN` header.
 
-use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
@@ -102,6 +102,11 @@ impl Integration for Gitlab {
                 ("create_issue", "write"),
                 ("api", "write"),
             ],
+            &[guild_core::registry::FieldSpec {
+                default: Some(serde_json::json!("https://gitlab.com")),
+                help: Some("Override for self-hosted GitLab".into()),
+                ..field("base_url", "string")
+            }],
         )
     }
 
