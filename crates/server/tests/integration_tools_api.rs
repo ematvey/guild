@@ -116,6 +116,11 @@ async fn spawn_fixture() -> String {
 
 // ---------- harness ----------
 
+/// Store-level seeds use a fixed stand-in bundle hash: the hash-binding
+/// paths only compare the stored value against the approval's, never
+/// against object bytes (these tests resolve manifests, not bundles).
+const SEED_BUNDLE_SHA: &str = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
+
 fn manifest_value(url: &str) -> Value {
     json!({
         "kind": "integration",
@@ -177,14 +182,23 @@ async fn setup() -> Setup {
             "HubSpot CRM tools",
             manifest_value(&url),
             "unused-key",
+            SEED_BUNDLE_SHA,
             admin_id,
         )
         .await
         .unwrap();
-    // Resolution resolves approved items only — the review gate.
+    // Resolution resolves approved items only — the review gate binds to
+    // the reviewed version and bundle hash.
     store
         .registry()
-        .set_review(org, "integration", "hubspot", "approved")
+        .set_review(
+            org,
+            "integration",
+            "hubspot",
+            "approved",
+            Some("1.0.0"),
+            Some(SEED_BUNDLE_SHA),
+        )
         .await
         .unwrap();
     store
@@ -440,6 +454,7 @@ async fn republished_manifest_requires_rereview_before_resolution() {
             "HubSpot CRM tools",
             manifest.clone(),
             "unused-key",
+            SEED_BUNDLE_SHA,
             publisher.id,
         )
         .await
@@ -477,7 +492,14 @@ async fn republished_manifest_requires_rereview_before_resolution() {
     // source of the class floor).
     store
         .registry()
-        .set_review(s.org, "integration", "hubspot", "approved")
+        .set_review(
+            s.org,
+            "integration",
+            "hubspot",
+            "approved",
+            Some(&version),
+            Some(SEED_BUNDLE_SHA),
+        )
         .await
         .unwrap();
     let res = s
@@ -508,6 +530,7 @@ async fn republished_manifest_requires_rereview_before_resolution() {
             "HubSpot CRM tools",
             manifest,
             "unused-key",
+            SEED_BUNDLE_SHA,
             publisher.id,
         )
         .await
@@ -516,10 +539,116 @@ async fn republished_manifest_requires_rereview_before_resolution() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     store
         .registry()
-        .set_review(s.org, "integration", "hubspot", "approved")
+        .set_review(
+            s.org,
+            "integration",
+            "hubspot",
+            "approved",
+            Some("2.0.0"),
+            Some(SEED_BUNDLE_SHA),
+        )
         .await
         .unwrap();
     let (status, body) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["content"], "echo: hi");
+}
+
+/// A pre-binding approval (`reviewed_version` NULL, the state rows carried
+/// before the reviewed-version/bundle-hash columns existed) counts as no
+/// approval: an unchanged same-version republish must reset to draft
+/// instead of re-binding it. Once the approval is bound, the identical
+/// republish keeps the status.
+#[tokio::test]
+async fn unbound_approval_republish_resets_to_draft() {
+    let s = setup().await;
+    let store = s.ts.store();
+
+    // Strip the approval's bindings — the pre-migration upgrade state.
+    sqlx::query(
+        "UPDATE registry_items SET reviewed_version = NULL, reviewed_bundle_sha256 = NULL \
+         WHERE org_id = $1 AND kind = 'integration' AND slug = 'hubspot'",
+    )
+    .bind(s.org)
+    .execute(store.pool())
+    .await
+    .unwrap();
+
+    let stored = store
+        .registry()
+        .get_version(s.org, "integration", "hubspot", "1.0.0")
+        .await
+        .unwrap();
+    let publisher = store
+        .identity()
+        .create_user(s.org, "pub@a.b", "hunter226", "member")
+        .await
+        .unwrap();
+    store
+        .registry()
+        .upsert_version(
+            s.org,
+            "integration",
+            "hubspot",
+            "1.0.0",
+            "HubSpot CRM tools",
+            stored.manifest.clone(),
+            "unused-key",
+            SEED_BUNDLE_SHA,
+            publisher.id,
+        )
+        .await
+        .unwrap();
+    let item = store
+        .registry()
+        .list_items(s.org, "integration")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|i| i.slug == "hubspot")
+        .unwrap();
+    assert_eq!(item.review_status, "draft", "unbound approval must not survive a republish");
+    let (status, _) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Positive control: with a bound approval the identical republish keeps
+    // the status.
+    store
+        .registry()
+        .set_review(
+            s.org,
+            "integration",
+            "hubspot",
+            "approved",
+            Some("1.0.0"),
+            Some(SEED_BUNDLE_SHA),
+        )
+        .await
+        .unwrap();
+    store
+        .registry()
+        .upsert_version(
+            s.org,
+            "integration",
+            "hubspot",
+            "1.0.0",
+            "HubSpot CRM tools",
+            stored.manifest,
+            "unused-key",
+            SEED_BUNDLE_SHA,
+            publisher.id,
+        )
+        .await
+        .unwrap();
+    let item = store
+        .registry()
+        .list_items(s.org, "integration")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|i| i.slug == "hubspot")
+        .unwrap();
+    assert_eq!(item.review_status, "approved");
+    let (status, body) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 }

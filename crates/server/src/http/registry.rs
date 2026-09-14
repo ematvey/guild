@@ -50,8 +50,16 @@ fn valid_kind(kind: &str) -> Result<(), ApiError> {
     }
 }
 
-fn object_key(org_id: Uuid, kind: &str, slug: &str, version: &str) -> String {
-    format!("registry/{org_id}/{kind}/{slug}/{version}.tar.gz")
+fn object_key(org_id: Uuid, kind: &str, slug: &str, version: &str, sha256: &str) -> String {
+    // Content-addressed: a republish with different bundle bytes lands at a
+    // new key, so superseded and supersede-attempt bundles are never
+    // overwritten in place.
+    format!("registry/{org_id}/{kind}/{slug}/{version}/{sha256}.tar.gz")
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
 }
 
 async fn publish(
@@ -116,15 +124,14 @@ async fn publish(
         ));
     }
 
-    let key = object_key(user.0.org_id, &kind, slug, version);
-    let objects = state.objects().await?;
-    objects
-        .put(&key, body.to_vec())
-        .await
-        .map_err(ApiError::from)?;
+    let sha256 = sha256_hex(&body);
+    let key = object_key(user.0.org_id, &kind, slug, version, &sha256);
 
     let store = state.store().await?;
     let manifest_json = serde_json::to_value(&parsed).expect("manifest serializes");
+    // Metadata first: only an accepted upsert (new version, unchanged
+    // republish) commits a row — a superseded publish is refused before any
+    // bundle bytes land, so the old release's object stays intact.
     store
         .registry()
         .upsert_version(
@@ -135,9 +142,20 @@ async fn publish(
             &parsed.description,
             manifest_json,
             &key,
+            &sha256,
             user.0.id,
         )
         .await?;
+    // The content-addressed key was accepted by upsert_version; the bytes
+    // are immutable and idempotent to re-write, so a failed put only leaves
+    // the object missing until the publish is retried — nothing serves
+    // attacker content through it (the binding requires the stored hash,
+    // which equals the key's).
+    let objects = state.objects().await?;
+    objects
+        .put(&key, body.to_vec())
+        .await
+        .map_err(ApiError::from)?;
     // org event: registry item published (spec §4.6); best-effort
     let _ = store
         .events()
@@ -186,13 +204,20 @@ async fn download(
         .registry()
         .get_version(user.0.org_id, &kind, &slug, &version)
         .await?;
-    // members can only download approved items
+    // members can only download the exact approved bundle: the requested
+    // version must be the approval's version and its stored hash must equal
+    // the approved one — a byte-swapped republish is undownloadable.
     if user.0.role != "admin" {
-        let status = store
+        let Some((approved_version, approved_sha)) = store
             .registry()
-            .review_status(user.0.org_id, &kind, &slug)
-            .await?;
-        if status != "approved" {
+            .approved_bundle(user.0.org_id, &kind, &slug)
+            .await?
+        else {
+            return Err(ApiError::forbidden());
+        };
+        if approved_version != version
+            || stored.bundle_sha256.as_deref() != Some(approved_sha.as_str())
+        {
             return Err(ApiError::forbidden());
         }
     }
@@ -220,10 +245,27 @@ async fn review(
     if !matches!(status, "draft" | "approved") {
         return Err(ApiError::bad_request("status must be draft or approved"));
     }
+    // The approval must name the content the admin inspected: the reviewed
+    // version and its bundle hash. A drift between click and commit (a
+    // republish in flight) is refused, never applied.
+    let reviewed_version = body["reviewed_version"].as_str();
+    let reviewed_bundle_sha256 = body["reviewed_bundle_sha256"].as_str();
+    if status == "approved" && (reviewed_version.is_none() || reviewed_bundle_sha256.is_none()) {
+        return Err(ApiError::bad_request(
+            "approval requires reviewed_version and reviewed_bundle_sha256",
+        ));
+    }
     let store = state.store().await?;
     store
         .registry()
-        .set_review(admin.0.org_id, &kind, &slug, status)
+        .set_review(
+            admin.0.org_id,
+            &kind,
+            &slug,
+            status,
+            reviewed_version,
+            reviewed_bundle_sha256,
+        )
         .await?;
     Ok(Json(json!({})))
 }
@@ -244,38 +286,43 @@ async fn install(
         ));
     }
     let store = state.store().await?;
+    // No explicit version: only an approval that still covers the latest
+    // version and its exact bundle bytes yields a default — the item-level
+    // status alone is not a content guarantee.
     let version = match q.get("version") {
         Some(v) => v.clone(),
         None => {
-            let status = store
+            let Some((approved_version, _)) = store
                 .registry()
-                .review_status(user.0.org_id, &kind, &slug)
-                .await?;
-            if status != "approved" {
-                return Err(ApiError::forbidden());
-            }
-            store
-                .registry()
-                .item_versions(user.0.org_id, &kind, &slug)
+                .approved_bundle(user.0.org_id, &kind, &slug)
                 .await?
-                .into_iter()
-                .next()
-                .map(|v| v.version)
-                .ok_or_else(|| ApiError::not_found("no versions"))?
+            else {
+                return Err(ApiError::forbidden());
+            };
+            approved_version
         }
     };
-    // only approved items are installable
-    let status = store
-        .registry()
-        .review_status(user.0.org_id, &kind, &slug)
-        .await?;
-    if status != "approved" && user.0.role != "admin" {
-        return Err(ApiError::forbidden());
-    }
     let stored = store
         .registry()
         .get_version(user.0.org_id, &kind, &slug, &version)
         .await?;
+    // Members can only install the exact approved bundle: the requested
+    // version must be the approval's version and its stored hash must equal
+    // the approved one (admins keep the review-surface bypass).
+    if user.0.role != "admin" {
+        let Some((approved_version, approved_sha)) = store
+            .registry()
+            .approved_bundle(user.0.org_id, &kind, &slug)
+            .await?
+        else {
+            return Err(ApiError::forbidden());
+        };
+        if approved_version != version
+            || stored.bundle_sha256.as_deref() != Some(approved_sha.as_str())
+        {
+            return Err(ApiError::forbidden());
+        }
+    }
     let bytes = state
         .objects()
         .await?
