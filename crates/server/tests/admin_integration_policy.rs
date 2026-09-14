@@ -5,6 +5,11 @@ use guild_server::test_support::full_state;
 use serde_json::json;
 use tower::ServiceExt;
 
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
+}
+
 fn v2_bundle(slug: &str, version: &str) -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!(
         "guild-policy-bundle-{slug}-{version}-{}",
@@ -44,6 +49,8 @@ async fn publish_and_install(
     version: &str,
     install: bool,
 ) -> StatusCode {
+    let bundle = v2_bundle(slug, version);
+    let bundle_sha = sha256_hex(&bundle);
     let res = app
         .clone()
         .oneshot(
@@ -52,7 +59,7 @@ async fn publish_and_install(
                 .uri(format!("/api/v1/registry/integration?slug={slug}&version={version}"))
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/gzip")
-                .body(Body::from(v2_bundle(slug, version)))
+                .body(Body::from(bundle))
                 .unwrap(),
         )
         .await
@@ -66,7 +73,14 @@ async fn publish_and_install(
                 .uri(format!("/api/v1/registry/integration/{slug}/review"))
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"status": "approved"}).to_string()))
+                .body(Body::from(
+                    json!({
+                        "status": "approved",
+                        "reviewed_version": version,
+                        "reviewed_bundle_sha256": bundle_sha,
+                    })
+                    .to_string(),
+                ))
                 .unwrap(),
         )
         .await

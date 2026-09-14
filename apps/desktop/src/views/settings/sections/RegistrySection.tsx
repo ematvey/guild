@@ -27,6 +27,7 @@ interface ItemRow {
 interface VersionRow {
   version: string;
   published_at: string | null;
+  bundle_sha256: string | null;
 }
 
 const KINDS = ["skill", "mcp", "integration"] as const;
@@ -180,12 +181,26 @@ function ItemDetail({
   };
 
   const review = async (status: "approved" | "draft") => {
+    // The approval must bind to the content the admin inspected: the
+    // reviewed version and its bundle hash. Without them the server would
+    // refuse — fail fast client-side instead.
+    const body: Record<string, unknown> = { status };
+    if (status === "approved") {
+      const version = item?.latest_version;
+      const sha = versions?.find((v) => v.version === version)?.bundle_sha256;
+      if (!version || !sha) {
+        const msg = "version or bundle hash unavailable — reload and retry";
+        setError(msg);
+        toast.error("Review failed", { description: msg });
+        return;
+      }
+      body.reviewed_version = version;
+      body.reviewed_bundle_sha256 = sha;
+    }
     setBusy(true);
     setError(null);
     try {
-      await api("POST", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}/review`, {
-        status,
-      });
+      await api("POST", `/api/v1/registry/${kind}/${encodeURIComponent(slug)}/review`, body);
       toast.success(status === "approved" ? "Approved" : "Reverted to draft", {
         description: slug,
       });
