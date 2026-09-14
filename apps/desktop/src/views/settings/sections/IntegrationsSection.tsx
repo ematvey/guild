@@ -767,7 +767,7 @@ function IntegrationDetail({
               <Textarea
                 className="min-h-20 max-w-xl font-mono text-xs"
                 spellCheck={false}
-                placeholder={stored ? "••••••••" : sf.widget.placeholder}
+                placeholder={stored ? (stored.masked || "••••••••") : sf.widget.placeholder}
                 value={value}
                 onChange={(e) =>
                   setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))
@@ -779,7 +779,9 @@ function IntegrationDetail({
                 type={sf.widget.kind === "text" ? "text" : "password"}
                 spellCheck={false}
                 placeholder={
-                  stored ? "••••••••" : (sf.widget.placeholder ?? "required")
+                  stored
+                    ? (stored.masked || "••••••••")
+                    : (sf.widget.placeholder ?? "required")
                 }
                 value={value}
                 onChange={(e) =>
