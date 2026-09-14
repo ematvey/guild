@@ -1,9 +1,34 @@
 # Guild — current state of work
 
-Updated 2026-09-13 (admin UI rework). Read this before
+Updated 2026-09-14 (review loop). Read this before
 touching the codebase; detailed milestone plans live in `docs/plans/`,
 deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
+
+## Review loop rounds 4–8 (2026-09-14) — exited CLEAN
+
+- Two-lane review loop (security + features/correctness) ran to its exit
+  condition: round-8 reviews returned CLEAN on both lanes. Reports in
+  `docs/reviews/2026-09-14-*-round4..8.md`; every fix round was verified by
+  a separate verifier pass before reviewers re-entered.
+- Fixed along the way: registry approval now binds to the exact manifest AND
+  bundle sha256 (`reviewed_version`/`reviewed_bundle_sha256`, migrations
+  0037/0038, content-addressed bundle objects, approve requires
+  version+hash and 409s on stale) — republished/byte-swapped bundles cannot
+  govern access without re-review. Legacy (hashless) rows fail closed until
+  an admin re-approves after a republish. `guide_object_key` resolves only
+  approved skills and degrades to "no guide" on store errors. Events SSE is
+  capped (64 global / 3 per user). The stuck-generation sweep parses
+  `version:invocation` and kills only on confirmed stale. Turn-failure path
+  no longer duplicates a persisted assistant turn (`step_persisted` set at
+  stream start, buffers cleared after persist). Desktop: busy stays set
+  until the fan-out done/error frame; attachment chips swap to uploaded ids
+  before composer URLs are revoked; engine-approval timeouts release their
+  pending entries; IntegrationDetail resets across navigation.
+- Deployed to :18080 after each fix round (health ok). NOTE for admins:
+  registry integrations/skills approved before migration 0038 stop
+  resolving/downloading/installing for members until re-approved (fail-
+  closed transition, by design).
 
 ## Admin UI rework: data tables + polish kit (2026-09-13, branch `admin-ui-rework`)
 
