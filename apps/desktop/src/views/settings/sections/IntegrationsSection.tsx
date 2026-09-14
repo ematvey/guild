@@ -334,6 +334,7 @@ export default function IntegrationsSection({
     }
     return (
       <IntegrationDetail
+        key={configured.id}
         id={configured.id}
         name={configured.name}
         category={configured.category ?? "other"}
