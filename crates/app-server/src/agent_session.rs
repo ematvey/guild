@@ -196,13 +196,22 @@ impl AgentHooks for SessionHooks {
         match tokio::time::timeout(APPROVAL_WAIT, rx).await {
         Ok(Ok(decision)) => decision,
         // Sender dropped (session closed) or the wait timed out — deny so
-        // the turn proceeds instead of hanging forever on a silent client.
-        Ok(Err(_)) => ApprovalDecision::Deny {
-            reason: "approval channel closed".into(),
-        },
-        Err(_) => ApprovalDecision::Deny {
-            reason: "no approval decision within 5 minutes".into(),
-        },
+        // the turn proceeds instead of hanging forever on a silent client,
+        // and remove the dead entry: only `agent.approve` removes entries
+        // otherwise, so a timed-out request would linger in the map (and a
+        // late approve would resolve against the dropped receiver).
+        Ok(Err(_)) => {
+            self.pending.lock().unwrap().remove(&request_id);
+            ApprovalDecision::Deny {
+                reason: "approval channel closed".into(),
+            }
+        }
+        Err(_) => {
+            self.pending.lock().unwrap().remove(&request_id);
+            ApprovalDecision::Deny {
+                reason: "no approval decision within 5 minutes".into(),
+            }
+        }
     }
 }
 

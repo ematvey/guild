@@ -68,6 +68,10 @@ pub struct AppState {
     /// Cached MCP client connections for integration plugins (outside the
     /// Restate journal — reconnecting on replay is safe, spec §8).
     pub mcp_pool: Arc<McpPool>,
+    /// Event-stream budget (SSE /api/v1/events/stream): each stream pins a
+    /// dedicated Postgres connection, so total and per-user counts are
+    /// bounded.
+    pub event_streams: Arc<crate::http::events::StreamGate>,
 }
 
 impl AppState {
@@ -80,6 +84,10 @@ impl AppState {
             generations: Arc::new(std::sync::Mutex::new(HashMap::new())),
             executors: Arc::new(std::sync::Mutex::new(HashMap::new())),
             mcp_pool: Arc::new(McpPool::new()),
+            event_streams: Arc::new(crate::http::events::StreamGate::with_caps(
+                crate::http::events::EVENT_STREAM_MAX_GLOBAL,
+                crate::http::events::EVENT_STREAM_MAX_PER_USER,
+            )),
         }
     }
 
@@ -119,6 +127,10 @@ impl AppState {
             generations: Arc::new(std::sync::Mutex::new(HashMap::new())),
             executors: Arc::new(std::sync::Mutex::new(HashMap::new())),
             mcp_pool: Arc::new(McpPool::new()),
+            event_streams: Arc::new(crate::http::events::StreamGate::with_caps(
+                crate::http::events::EVENT_STREAM_MAX_GLOBAL,
+                crate::http::events::EVENT_STREAM_MAX_PER_USER,
+            )),
         }
     }
 
