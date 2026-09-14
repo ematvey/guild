@@ -29,31 +29,23 @@ fn serve_file(dist: &include_dir::Dir<'static>, path: &str) -> Option<Response> 
         .into_response())
 }
 
-/// Missing file: an honest 404 when the dist is actually built; the 503
-/// "not built" hint only when the dist is empty (see spec §4.7).
-fn not_built_or_404(dist: &include_dir::Dir<'static>, hint: &str) -> Response {
-    if dist.get_file("index.html").is_some() {
-        return (StatusCode::NOT_FOUND, "not found").into_response();
-    }
-    not_built(hint)
-}
-
 pub async fn fallback(uri: Uri) -> Response {
     let path = uri.path();
     if path.starts_with("/api/") || path == "/api" {
         return crate::http::error::not_found().await.into_response();
     }
-    // everything else -> the web app
-    if path == "/" || !path.contains('.') {
-        if let Some(resp) = serve_file(&CHAT_DIST, "index.html") {
+    // A real bundled file wins; every other non-API path is an SPA route and
+    // serves index.html — including paths with dots (model ids, provider
+    // slugs), which the old contains('.') shortcut sent to a 404.
+    if path != "/" {
+        if let Some(resp) = serve_file(&CHAT_DIST, path) {
             return resp;
         }
-        return not_built("chat app not built — run `npm --prefix apps/desktop run build`");
     }
-    match serve_file(&CHAT_DIST, path) {
-        Some(resp) => resp,
-        None => not_built_or_404(&CHAT_DIST, "chat app not built — run `npm --prefix apps/desktop run build`"),
+    if let Some(resp) = serve_file(&CHAT_DIST, "index.html") {
+        return resp;
     }
+    not_built("chat app not built — run `npm --prefix apps/desktop run build`")
 }
 
 fn not_built(hint: &str) -> Response {
