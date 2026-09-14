@@ -126,9 +126,13 @@ export function clientId(): string {
 
 /** Holds one app-lifetime connection to /api/v1/events/stream (which also
  * registers this machine as a tool executor) and, in Tauri, keeps the
- * machine's liveness heartbeat running. Auto-reconnects on drop. Returns a
- * stop function. */
-export function startEventStream(): () => void {
+ * machine's liveness heartbeat running. Web clients get the connection's
+ * chat-status frames (thread-list spinner/unread) through `onChatStatus`;
+ * the desktop app process forwards them itself. Auto-reconnects on drop.
+ * Returns a stop function. */
+export function startEventStream(
+  onChatStatus?: (frame: { chat_id: string; generating: boolean }) => void,
+): () => void {
   // Single-process spec: on the desktop, presence (registration +
   // heartbeats) and tool dispatch are owned by the app process's standing
   // connection — the webview carries none of it. Web clients keep this
@@ -146,11 +150,33 @@ export function startEventStream(): () => void {
           signal: controller.signal,
         });
         if (!res.ok || !res.body) throw new Error(`event stream: ${res.status}`);
-        // drain; events are not consumed yet
+        // Parse SSE blocks: chat_status frames drive the sidebar status;
+        // everything else is drained (org events have no consumer yet).
         const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
         for (;;) {
-          const { done } = await reader.read();
+          const { done, value } = await reader.read();
           if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let pos: number;
+          while ((pos = buf.indexOf("\n\n")) !== -1) {
+            const block = buf.slice(0, pos);
+            buf = buf.slice(pos + 2);
+            if (!block.startsWith("event: chat_status")) continue;
+            for (const line of block.split("\n")) {
+              const data = line.startsWith("data: ") ? line.slice(6) : null;
+              if (!data || !onChatStatus) continue;
+              try {
+                const p = JSON.parse(data);
+                if (p.chat_id && typeof p.generating === "boolean") {
+                  onChatStatus({ chat_id: p.chat_id, generating: p.generating });
+                }
+              } catch {
+                /* malformed frame — skip */
+              }
+            }
+          }
         }
       } catch {
         // fall through to reconnect
@@ -257,6 +283,24 @@ export interface ChatSummary {
   created_at: string;
   machine_id?: string;
   machine_label?: string;
+  /** A generation is in flight (sidebar spinner). */
+  generating?: boolean;
+  /** Unseen assistant turn (sidebar dot). */
+  unread?: boolean;
+}
+
+/** Marks the chat read for the caller: the thread-list dot clears. */
+export async function markChatRead(id: string): Promise<void> {
+  const t = getToken();
+  if (!t) return;
+  try {
+    await fetch(apiUrl(`/api/v1/chats/${encodeURIComponent(id)}/read`), {
+      method: "POST",
+      headers: { authorization: `Bearer ${t}` },
+    });
+  } catch {
+    /* cosmetic — ignore */
+  }
 }
 
 export interface MachineInfo {

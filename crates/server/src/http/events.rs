@@ -381,6 +381,12 @@ async fn stream(
         .listen(crate::store::events::NOTIFY_CHANNEL)
         .await
         .map_err(|e| ApiError::internal(format!("event subscribe failed: {e}")))?;
+    // Chat-status channel (thread-list spinner/unread) rides the same
+    // standalone connection — a second channel costs nothing on it.
+    listener
+        .listen(crate::store::events::CHAT_STATUS_CHANNEL)
+        .await
+        .map_err(|e| ApiError::internal(format!("event subscribe failed: {e}")))?;
     let mut dispatch = machine_id
         .map(|mid| DeviceSync::new(state.clone(), store.clone(), org, user.0.id, mid));
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
@@ -393,15 +399,34 @@ async fn stream(
         loop {
             tokio::select! {
                 notification = listener.recv() => {
-                    match notification {
-                        Ok(notification) => {
-                            let payload: Value = match serde_json::from_str(notification.payload()) {
-                                Ok(v) => v,
-                                Err(_) => continue,
-                            };
-                            if payload["org_id"].as_str() != Some(&org.to_string()) {
-                                continue;
-                            }
+                    let notification = match notification {
+                        Ok(n) => n,
+                        Err(e) => {
+                            yield Ok(SseEvent::default().event("error").data(
+                                json!({"message": e.to_string()}).to_string(),
+                            ));
+                            break;
+                        }
+                    };
+                    // Chat-status frames carry their payload inline (no row
+                    // lookup) and are owner-scoped: other members never
+                    // learn when someone's chat is busy.
+                    if notification.channel() == crate::store::events::CHAT_STATUS_CHANNEL {
+                        let payload: Value = match serde_json::from_str(notification.payload()) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        if payload["org_id"].as_str() != Some(&org.to_string())
+                            || payload["user_id"].as_str() != Some(&user.0.id.to_string())
+                        {
+                            continue;
+                        }
+                        let body = serde_json::to_string(&payload).unwrap_or_default();
+                        yield Ok(SseEvent::default().event("chat_status").data(body));
+                        continue;
+                    }
+                    match notification.payload().parse::<Value>() {
+                        Ok(payload) if payload["org_id"].as_str() == Some(&org.to_string()) => {
                             let Some(event_id) = payload["event_id"].as_str().and_then(|s| s.parse::<uuid::Uuid>().ok()) else {
                                 continue;
                             };
@@ -420,12 +445,7 @@ async fn stream(
                                 }
                             }
                         }
-                        Err(e) => {
-                            yield Ok(SseEvent::default().event("error").data(
-                                json!({"message": e.to_string()}).to_string(),
-                            ));
-                            break;
-                        }
+                        _ => continue,
                     }
                 }
                 _ = tick.tick() => {

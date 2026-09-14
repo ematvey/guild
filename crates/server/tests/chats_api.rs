@@ -291,3 +291,137 @@ async fn machine_binding_requires_a_registered_machine() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+/// Thread-list status over the API: the list carries generating/unread, a
+/// read POST clears the dot, and a foreign member cannot mark someone
+/// else's chat read.
+#[tokio::test]
+async fn chat_status_flags_and_read_endpoint() {
+    let ts = test_state_with_db().await;
+    let store = ts.store();
+    let user = store
+        .identity()
+        .ensure_bootstrap_admin("status@b.c", "hunter226")
+        .await
+        .unwrap();
+    let (_sid0, tok0) = store.identity().create_session(user).await.unwrap();
+    let user_row = store.identity().validate_session(&tok0).await.unwrap();
+    let org_id = user_row.org_id;
+    let member = store
+        .identity()
+        .create_user(org_id, "other@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let (_sid, token) = store.identity().create_session(user).await.unwrap();
+    let (_sid2, member_token) = store.identity().create_session(member.id).await.unwrap();
+    let app = guild_server::build_router(ts.state.clone());
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/chats")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let chat_id: uuid::Uuid = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    // fresh chat: idle, read
+    let get_list = |app: axum::Router, token: String| async move {
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/chats")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["chats"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+    let chats = get_list(app.clone(), token.clone()).await;
+    assert!(!chats[0]["generating"].as_bool().unwrap());
+    assert!(!chats[0]["unread"].as_bool().unwrap());
+
+    // generating flag + an unseen assistant turn (flag suppresses unread)
+    store
+        .chats()
+        .set_generating(org_id, chat_id, true)
+        .await
+        .unwrap();
+    store
+        .thread()
+        .append_event(
+            chat_id,
+            &ThreadEvent::AssistantMessage {
+                turn: 1,
+                step: 0,
+                blocks: vec![Block::Text { text: "reply".into() }],
+                usage: UsagePayload::default(),
+                model: "m".into(),
+                interrupted: None,
+            },
+        )
+        .await
+        .unwrap();
+    let chats = get_list(app.clone(), token.clone()).await;
+    assert!(chats[0]["generating"].as_bool().unwrap());
+    assert!(!chats[0]["unread"].as_bool().unwrap());
+
+    // turn done: unread dot
+    store
+        .chats()
+        .set_generating(org_id, chat_id, false)
+        .await
+        .unwrap();
+    let chats = get_list(app.clone(), token.clone()).await;
+    assert!(chats[0]["unread"].as_bool().unwrap());
+
+    // a foreign member cannot mark it read; the owner can
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/chats/{chat_id}/read"))
+                .header("authorization", format!("Bearer {member_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/chats/{chat_id}/read"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let chats = get_list(app, token).await;
+    assert!(!chats[0]["unread"].as_bool().unwrap());
+}

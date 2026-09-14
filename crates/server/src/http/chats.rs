@@ -19,6 +19,10 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/chats/{id}/machine",
             axum::routing::post(set_machine),
         )
+        .route(
+            "/api/v1/chats/{id}/read",
+            axum::routing::post(mark_chat_read),
+        )
         .route("/api/v1/machines", axum::routing::get(machines))
         .route(
             "/api/v1/machines/heartbeat",
@@ -51,6 +55,18 @@ async fn machines(State(state): State<AppState>, user: AuthUser) -> Result<Json<
         .map(|(id, name)| json!({ "machine_id": id, "name": name }))
         .collect();
     Ok(Json(json!({ "machines": list })))
+}
+
+/// Marks the chat read for the caller (thread-list dot): the read marker
+/// moves to the newest thread event. Org-scoped; 404 for foreign chats.
+async fn mark_chat_read(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let store = state.store().await?;
+    store.chats().mark_read(user.0.org_id, chat_id, &user.0).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 /// Binds (or with empty machine_id, unbinds) a chat to an executor machine.
@@ -107,6 +123,24 @@ impl From<crate::store::chats::ChatRow> for Chat {
             created_at: c.created_at,
             machine_id: c.machine_id,
             machine_label: c.machine_label,
+            generating: c.generating,
+            unread: false,
+        }
+    }
+}
+
+impl From<crate::store::chats::ChatListRow> for Chat {
+    fn from(c: crate::store::chats::ChatListRow) -> Self {
+        Self {
+            id: c.id,
+            org_id: c.org_id,
+            user_id: c.user_id,
+            title: c.title,
+            created_at: c.created_at,
+            machine_id: c.machine_id,
+            machine_label: c.machine_label,
+            generating: c.generating,
+            unread: c.unread,
         }
     }
 }

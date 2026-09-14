@@ -4,7 +4,6 @@ import remarkGfm from "remark-gfm";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import {
   ArrowUp,
-  Bot,
   ShieldAlert,
   ShieldCheck,
   Brain,
@@ -16,11 +15,10 @@ import {
   FileText,
   Minimize2,
   Globe,
-  Lightbulb,
   Menu,
-  MessageSquare,
   Film,
   Image as ImageIcon,
+  Loader2,
   Music,
   PanelLeftClose,
   PanelLeftOpen,
@@ -34,7 +32,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@guild/ui/components/button";
-import { Card } from "@guild/ui/components/card";
 import {
   Dialog,
   DialogContent,
@@ -74,6 +71,7 @@ import {
   getThread,
   listChats,
   listModels,
+  markChatRead,
   streamChat,
   attachGeneration,
   createPairingToken,
@@ -550,12 +548,6 @@ const saveDir = (chatId: string | null, dir: string | null) => {
 /// Sentinel for a send stream that ended without a terminal frame: not a
 /// user-facing error — the send path converts it into a reattach watch.
 class DropError extends Error {}
-
-const SUGGESTIONS = [
-  { icon: Lightbulb, title: "Explain a concept", prompt: "Explain how " },
-  { icon: FileText, title: "Draft a message", prompt: "Draft a message to " },
-  { icon: MessageSquare, title: "Summarize text", prompt: "Summarize the following:\n\n" },
-];
 
 /// Shown while a deep-linked thread's messages are in flight (the URL says
 /// /thread/<id> but the view has nothing to render yet). Without this, the
@@ -1264,6 +1256,13 @@ export default function WebChat({
   const [models, setModels] = useState<string[] | null>(null);
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
+  // Live sidebar status overlay (thread-list spinner/dot): frames from the
+  // server's chat-status channel win over the fetched list; refreshChats
+  // reconciles the rest. mark-read happens on thread load for the visible
+  // open chat; a hidden tab never swallows its own dot.
+  const [chatStatus, setChatStatus] = useState<Record<string, { generating: boolean; unread: boolean }>>({});
+  const chatsRef = useRef<ChatSummary[] | null>(null);
+  chatsRef.current = chats;
   // URL-driven navigation state (see parseChatRoute above): everything the
   // user can navigate to — the open thread, the settings overlay with its
   // active section, the device dialog — lives in the pathname, so back/forward,
@@ -1341,8 +1340,14 @@ export default function WebChat({
 
   // App-lifetime presence connection: the server uses it to detect that
   // this app instance is gone and resolve suspended client tools without
-  // waiting for the 5-minute timeout.
-  useEffect(() => startEventStream(), []);
+  // waiting for the 5-minute timeout. Web clients additionally consume the
+  // connection's chat-status frames (desktop forwards them itself —
+  // "chat-status" Tauri event, see the unlisteners below).
+  useEffect(
+    () =>
+      startEventStream((f) => handleChatStatusRef.current(f.chat_id, f.generating)),
+    [],
+  );
   loadStateRef.current = { busy, attaching, threadLoading };
 
   // Reload the page once the served bundle hash differs from the running
@@ -1424,6 +1429,28 @@ export default function WebChat({
     setChats(c);
   };
 
+  /// One chat-status frame from the server (events stream on web, forwarded
+  /// "chat-status" Tauri event on desktop): drives the sidebar spinner/dot
+  /// for any chat, open or not. Turn end → the dot appears unless the turn
+  /// finished on the visible open chat (mark-read already covered it).
+  const handleChatStatus = (cid: string, generating: boolean) => {
+    setChatStatus((prev) => {
+      const seen = generating || (cid === openChatIdRef.current && document.visibilityState === "visible");
+      const unread = generating ? (prev[cid]?.unread ?? false) : !seen;
+      return { ...prev, [cid]: { generating, unread } };
+    });
+    // A status frame for a chat this client has never listed (created in
+    // another tab/device): pull the list so the row exists.
+    if (chatsRef.current && !chatsRef.current.some((c) => c.id === cid)) {
+      void refreshChats();
+    }
+    if (!generating && cid === openChatIdRef.current && document.visibilityState === "visible") {
+      void markChatRead(cid);
+    }
+  };
+  const handleChatStatusRef = useRef(handleChatStatus);
+  handleChatStatusRef.current = handleChatStatus;
+
   /// Reloads blocks from thread rows and tracks the high-water seq so a later
   /// compaction poll only waits for events newer than what is on screen.
   /// Also carries the server-reported context usage to the gauge; a server
@@ -1431,6 +1458,17 @@ export default function WebChat({
   const applyThreadRows = (res: ThreadResult) => {
     setCtx(res.context ?? null);
     setBlocks(eventsToBlocks(res.events));
+    // The open chat is on screen: it is read up to the newest event now.
+    // Hidden tabs skip this — the dot must survive for the hidden window.
+    if (typeof document !== "undefined" && document.visibilityState === "visible") {
+      const cid = openChatIdRef.current;
+      if (cid) {
+        void markChatRead(cid);
+        setChatStatus((prev) =>
+          prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
+        );
+      }
+    }
   };
 
   // Per-chat frame watermarks (desktop fan-out bus): frames with seq ≤ the
@@ -1647,6 +1685,14 @@ export default function WebChat({
       listen("app-stream-reconnected", () => {
         appSeqRef.current.clear();
         if (openChatIdRef.current) setReloadTick((t) => t + 1);
+      }),
+      // Sidebar status for every chat, not just the open one (the app
+      // process forwards the events stream's chat_status frames here).
+      listen("chat-status", (e) => {
+        const p = e.payload as { chat_id?: string; generating?: boolean };
+        if (p.chat_id && typeof p.generating === "boolean") {
+          handleChatStatusRef.current(p.chat_id, p.generating);
+        }
       }),
     ];
     return () => {
@@ -1872,6 +1918,9 @@ export default function WebChat({
       setBusy(false);
       return;
     }
+    // Optimistic sidebar spinner: the server's generating flag lands via
+    // the chat-status channel within a second; this makes it instant.
+    setChatStatus((prev) => ({ ...prev, [cid]: { ...(prev[cid] ?? { unread: false }), generating: true } }));
     const ac = new AbortController();
     sendAbort.current = ac;
     // The Tauri send is fire-and-forget: after the POST resolves, the
@@ -2076,7 +2125,11 @@ export default function WebChat({
 
   const sidebar = (
     <SidebarContent
-      chats={chats}
+      chats={
+        chats === null
+          ? null
+          : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) }))
+      }
       chatId={chatId}
       email={email}
       displayName={displayName}
@@ -2212,31 +2265,8 @@ export default function WebChat({
             <ThreadSkeleton />
           ) : !chatId ? (
           <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-32 py-8">
-            <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
-              <Bot className="size-7 text-muted-foreground" />
-            </div>
-            <h1 className="mt-6 text-center text-2xl font-semibold tracking-tight">What should we work on?</h1>
-            <p className="mt-2 text-center text-muted-foreground">
-              Chat with the org gateway
-              {models !== null && models.length === 0 ? " — no models configured yet" : ""}.
-            </p>
-            <div className="mt-8 grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
-              {SUGGESTIONS.map((s) => (
-                <Card
-                  key={s.title}
-                  className="cursor-pointer gap-2 px-4 py-4 transition-colors hover:bg-accent"
-                  onClick={() => {
-                    setPrompt(s.prompt);
-                    ta.current?.focus();
-                  }}
-                >
-                  <s.icon className="size-4 text-muted-foreground" />
-                  <span className="font-medium">{s.title}</span>
-                </Card>
-              ))}
-            </div>
             {models !== null && models.length === 0 && (
-              <p className="mt-8 rounded-md border border-amber-700/60 bg-amber-900/30 px-3 py-1.5 text-amber-300">
+              <p className="rounded-md border border-amber-700/60 bg-amber-900/30 px-3 py-1.5 text-amber-300">
                 no models configured — ask an admin to add a route
               </p>
             )}
@@ -2699,10 +2729,12 @@ function DeviceSetupDialog({
 function ChatListItem({
   title,
   active,
+  status,
   onClick,
 }: {
   title: string;
   active: boolean;
+  status: { generating: boolean; unread: boolean };
   onClick: () => void;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -2728,7 +2760,7 @@ function ChatListItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
+      className={`flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -2737,11 +2769,16 @@ function ChatListItem({
     >
       <span
         ref={ref}
-        className="block whitespace-nowrap"
+        className="block min-w-0 flex-1 whitespace-nowrap"
         style={fade}
       >
         {title}
       </span>
+      {status.generating ? (
+        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+      ) : status.unread ? (
+        <span className="size-2 shrink-0 rounded-full bg-accent" title="unseen replies" />
+      ) : null}
     </button>
   );
 }
@@ -2806,6 +2843,7 @@ function SidebarContent({
                 key={c.id}
                 title={c.title || "Untitled"}
                 active={c.id === chatId}
+                status={{ generating: !!c.generating, unread: !!c.unread }}
                 onClick={() => onOpenChat(c.id)}
               />
             ))}
