@@ -116,55 +116,6 @@ export default function ModelsSection({
   // or a provider page ("provider/new" | "provider/<slug>").
   const view = parseView(detail);
 
-  if (view.kind === "route") {
-    return (
-      <RouteDetail
-        model={view.model}
-        providers={providers}
-        onChanged={() => reload()}
-        onBack={() => {
-          reload();
-          onDetailChange(null);
-        }}
-      />
-    );
-  }
-  if (view.kind === "route-add") {
-    return (
-      <RouteAdd
-        providers={providers}
-        onAdded={(model) => {
-          reload();
-          onDetailChange(model);
-        }}
-        onBack={() => onDetailChange(null)}
-      />
-    );
-  }
-  if (view.kind === "provider") {
-    return (
-      <ProviderDetail
-        slug={view.slug}
-        onChanged={() => reload()}
-        onBack={() => {
-          reload();
-          onDetailChange(null);
-        }}
-      />
-    );
-  }
-  if (view.kind === "provider-add") {
-    return (
-      <ProviderAdd
-        onCreated={(slug) => {
-          reload();
-          onDetailChange(`provider/${slug}`);
-        }}
-        onBack={() => onDetailChange(null)}
-      />
-    );
-  }
-
   const providerName = (slug: string) =>
     providers?.find((p) => p.provider === slug)?.name ?? slug;
 
@@ -257,6 +208,55 @@ export default function ModelsSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [providers],
   );
+
+  if (view.kind === "route") {
+    return (
+      <RouteDetail
+        model={view.model}
+        providers={providers}
+        onChanged={() => reload()}
+        onBack={() => {
+          reload();
+          onDetailChange(null);
+        }}
+      />
+    );
+  }
+  if (view.kind === "route-add") {
+    return (
+      <RouteAdd
+        providers={providers}
+        onAdded={(model) => {
+          reload();
+          onDetailChange(model);
+        }}
+        onBack={() => onDetailChange(null)}
+      />
+    );
+  }
+  if (view.kind === "provider") {
+    return (
+      <ProviderDetail
+        slug={view.slug}
+        onChanged={() => reload()}
+        onBack={() => {
+          reload();
+          onDetailChange(null);
+        }}
+      />
+    );
+  }
+  if (view.kind === "provider-add") {
+    return (
+      <ProviderAdd
+        onCreated={(slug) => {
+          reload();
+          onDetailChange(`provider/${slug}`);
+        }}
+        onBack={() => onDetailChange(null)}
+      />
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -532,6 +532,14 @@ function ProviderDetail({
   };
 
   if (mode === "edit") {
+    if (draft === null) {
+      return (
+        <div>
+          <PageHeader title={slug} back={{ label: "Models", onClick: onBack }} />
+          <Skeleton className="h-40 w-full rounded-lg" />
+        </div>
+      );
+    }
     return (
       <div>
         <PageHeader
