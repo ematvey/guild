@@ -42,7 +42,7 @@ async fn hubspot_search_contacts_sends_bearer_and_renders_hits() {
         .await;
 
     let plugin = integration_by_name("hubspot").unwrap();
-    assert_eq!(plugin.category(), Category::Other);
+    assert_eq!(plugin.categories(), &[Category::Other]);
     let out = plugin
         .execute(
             &json!({ "base_url": server.uri() }),
@@ -242,7 +242,7 @@ async fn langfuse_list_traces_sends_basic_auth_and_config_base_url_wins() {
         .await;
 
     let plugin = integration_by_name("langfuse").unwrap();
-    assert_eq!(plugin.category(), Category::Other);
+    assert_eq!(plugin.categories(), &[Category::Other]);
     // The host secret points nowhere real; the config base_url override
     // routes the call to the mock.
     let config = json!({ "base_url": server.uri() });

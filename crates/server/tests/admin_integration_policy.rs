@@ -305,7 +305,7 @@ async fn available_lists_unconfigured_v2_plugins() {
         .iter()
         .find(|e| e["name"] == "freshdesk")
         .expect("freshdesk in available");
-    assert_eq!(entry["category"], "mcp");
+    assert_eq!(entry["categories"], json!(["mcp"]));
 
     // installed (configured) plugins do not appear in available
     let status = publish_and_install(&app, &token, "hubspot", "1.0.0", true, "https://mcp.example.com/mcp").await;

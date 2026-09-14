@@ -26,6 +26,26 @@ pub enum Category {
     Other,
 }
 
+impl Category {
+    /// Stable display order: search providers list first, then fetch, then
+    /// other.
+    pub fn display_rank(self) -> u8 {
+        match self {
+            Category::Search => 0,
+            Category::Fetch => 1,
+            Category::Other => 2,
+        }
+    }
+}
+
+/// Serializes a category list in display order — the admin API/UI renders
+/// one badge per entry, so the ordering must be deterministic.
+pub fn category_strings(categories: &[Category]) -> Vec<String> {
+    let mut sorted: Vec<Category> = categories.to_vec();
+    sorted.sort_by_key(|c| c.display_rank());
+    sorted.into_iter().map(|c| c.to_string()).collect()
+}
+
 impl std::fmt::Display for Category {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -51,7 +71,10 @@ pub struct ToolOutcome {
 /// validates the config and declares the tool surface it contributes.
 pub trait Integration: Send + Sync {
     fn name(&self) -> &'static str;
-    fn category(&self) -> Category;
+    /// The tool-surface kinds the integration contributes — one entry per
+    /// capability, in the integration's own order (the admin API sorts for
+    /// display). Most integrations declare exactly one.
+    fn categories(&self) -> &'static [Category];
     /// The in-code manifest (kind `integration`, slug = name, semver,
     /// description, `auth.secret_names`, `tools.classes`) — the same manifest
     /// shape a registry bundle carries, so built-ins and MCP plugins share
@@ -476,8 +499,8 @@ pub mod testplug {
             "testplug"
         }
 
-        fn category(&self) -> Category {
-            Category::Other
+        fn categories(&self) -> &'static [Category] {
+            &[Category::Other]
         }
 
         fn manifest(&self) -> BundleManifest {
@@ -573,8 +596,8 @@ pub mod searxng {
             "searxng"
         }
 
-        fn category(&self) -> Category {
-            Category::Search
+        fn categories(&self) -> &'static [Category] {
+            &[Category::Search]
         }
 
         fn manifest(&self) -> BundleManifest {
@@ -747,8 +770,8 @@ pub mod superproxy {
             "superproxy"
         }
 
-        fn category(&self) -> Category {
-            Category::Fetch
+        fn categories(&self) -> &'static [Category] {
+            &[Category::Fetch]
         }
 
         fn manifest(&self) -> BundleManifest {
@@ -983,8 +1006,8 @@ pub mod firecrawl {
             "firecrawl"
         }
 
-        fn category(&self) -> Category {
-            Category::Fetch
+        fn categories(&self) -> &'static [Category] {
+            &[Category::Fetch, Category::Search]
         }
 
         fn manifest(&self) -> BundleManifest {

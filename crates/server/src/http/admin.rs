@@ -114,7 +114,7 @@ async fn list_integrations(
     let rows = store.integrations().list(admin.0.org_id).await?;
     let mut row_values = Vec::with_capacity(rows.len());
     for row in &rows {
-        let category = configured_row_category(&store, admin.0.org_id, row).await?;
+        let categories = configured_row_categories(&store, admin.0.org_id, row).await?;
         let secret_names = declared_secret_names(&store, row).await?;
         let settings = effective_settings(&store, row).await?;
         row_values.push(json!({
@@ -123,7 +123,7 @@ async fn list_integrations(
             "name": row.name,
             "config": row.config,
             "enabled": row.enabled,
-            "category": category,
+            "categories": categories,
             "secret_names": secret_names,
             "settings": settings,
         }));
@@ -136,10 +136,10 @@ async fn list_integrations(
         .filter(|n| !rows.iter().any(|r| r.name == **n))
         .map(|n| {
             let plugin = crate::integrations::integration_by_name(n);
-            let category = plugin
+            let categories = plugin
                 .as_ref()
-                .map(|p| p.category().to_string())
-                .unwrap_or_else(|| "other".to_string());
+                .map(|p| crate::integrations::category_strings(p.categories()))
+                .unwrap_or_else(|| vec!["other".to_string()]);
             let manifest = plugin.map(|p| p.manifest());
             let secret_names = manifest
                 .as_ref()
@@ -150,7 +150,7 @@ async fn list_integrations(
                 .and_then(|m| m.settings)
                 .map(|s| serde_json::to_value(s).unwrap_or_default())
                 .unwrap_or(serde_json::Value::Null);
-            json!({ "name": n, "category": category, "secret_names": secret_names, "settings": settings })
+            json!({ "name": n, "categories": categories, "secret_names": secret_names, "settings": settings })
         })
         .collect();
     for item in store
@@ -165,7 +165,7 @@ async fn list_integrations(
             if manifest.mcp.is_some() {
                 available.push(json!({
                     "name": item.slug,
-                    "category": "mcp",
+                    "categories": ["mcp"],
                     "secret_names": manifest.auth.as_ref().map(|a| a.secret_names.clone()).unwrap_or_default(),
                     "settings": manifest.settings.clone().map(|s| serde_json::to_value(s).unwrap_or_default()).unwrap_or(serde_json::Value::Null),
                 }));
@@ -175,26 +175,27 @@ async fn list_integrations(
     Ok(Json(json!({ "integrations": row_values, "available": available })))
 }
 
-/// Category of a configured integration row, as the UI lists it: a
-/// compiled-in kind reports its own category; a registry v2 bundle with an
-/// MCP manifest (or a row already carrying mcp.url) is an MCP plugin and
-/// shadows the compiled-in kind of the same slug; anything else is "other".
-async fn configured_row_category(
+/// Categories of a configured integration row, as the UI lists them: a
+/// compiled-in kind reports its own categories (display order); a registry
+/// v2 bundle with an MCP manifest (or a row already carrying mcp.url) is an
+/// MCP plugin and shadows the compiled-in kind of the same slug; anything
+/// else is "other".
+async fn configured_row_categories(
     store: &crate::store::Store,
     org_id: Uuid,
     row: &crate::store::integrations::IntegrationRow,
-) -> Result<String, ApiError> {
+) -> Result<Vec<String>, ApiError> {
     let mcp_claimed = latest_integration_manifest(store, org_id, &row.name)
         .await?
         .map(|m| m.mcp.is_some())
         .unwrap_or(false)
         || row.config["mcp"]["url"].as_str().is_some();
     if mcp_claimed {
-        return Ok("mcp".to_string());
+        return Ok(vec!["mcp".to_string()]);
     }
     Ok(crate::integrations::integration_by_name(&row.name)
-        .map(|p| p.category().to_string())
-        .unwrap_or_else(|| "other".to_string()))
+        .map(|p| crate::integrations::category_strings(p.categories()))
+        .unwrap_or_else(|| vec!["other".to_string()]))
 }
 
 /// Secret names an integration's credentials must use, with the same

@@ -46,7 +46,7 @@ async fn conversations_list_maps_channels_and_sends_bearer() {
 
     let plugin = integration_by_name("slack").unwrap();
     assert_eq!(plugin.name(), "slack");
-    assert_eq!(plugin.category(), Category::Other);
+    assert_eq!(plugin.categories(), &[Category::Other]);
 
     let out = plugin
         .execute(&server_config(&server), "conversations_list", json!({}), &secrets_with(None), None)

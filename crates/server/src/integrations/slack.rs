@@ -141,8 +141,8 @@ impl Integration for Slack {
         "slack"
     }
 
-    fn category(&self) -> Category {
-        Category::Other
+    fn categories(&self) -> &'static [Category] {
+        &[Category::Other]
     }
 
     fn manifest(&self) -> BundleManifest {

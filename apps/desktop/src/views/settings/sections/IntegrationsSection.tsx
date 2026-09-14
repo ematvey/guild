@@ -58,14 +58,14 @@ interface IntegrationRow {
   name: string;
   config: Record<string, unknown>;
   enabled: boolean;
-  category?: string;
+  categories?: string[];
   secret_names?: string[];
   settings?: { fields?: FieldSpec[] } | null;
 }
 
 interface AvailableEntry {
   name: string;
-  category?: string;
+  categories?: string[];
   secret_names?: string[];
   settings?: { fields?: FieldSpec[] } | null;
 }
@@ -90,6 +90,21 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const categoryLabel = (c?: string) =>
   CATEGORY_LABELS[c ?? "other"] ?? CATEGORY_LABELS.other;
+
+/** One badge per declared category — a multi-capability integration (e.g.
+ * firecrawl) shows all of them. */
+function CategoryBadges({ categories }: { categories?: string[] }) {
+  const list = categories?.length ? categories : ["other"];
+  return (
+    <div className="flex flex-wrap gap-1">
+      {list.map((c) => (
+        <Badge key={c} variant="secondary">
+          {categoryLabel(c)}
+        </Badge>
+      ))}
+    </div>
+  );
+}
 
 const ROLES: ToolRole[] = ["member", "admin"];
 
@@ -164,7 +179,7 @@ export default function IntegrationsSection({
     {
       key: string;
       name: string;
-      category?: string;
+      categories?: string[];
       secretNames: string[];
       fields: FieldSpec[];
       row?: IntegrationRow;
@@ -176,7 +191,7 @@ export default function IntegrationsSection({
       ...rows.map((r) => ({
         key: r.id,
         name: r.name,
-        category: r.category,
+        categories: r.categories,
         secretNames: r.secret_names ?? [],
         fields: r.settings?.fields ?? [],
         row: r,
@@ -186,7 +201,7 @@ export default function IntegrationsSection({
         .map((a) => ({
           key: `available-${a.name}`,
           name: a.name,
-          category: a.category,
+          categories: a.categories,
           secretNames: a.secret_names ?? [],
           fields: a.settings?.fields ?? [],
         })),
@@ -231,13 +246,9 @@ export default function IntegrationsSection({
         ),
       },
       {
-        accessorKey: "category",
+        accessorKey: "categories",
         header: "Type",
-        cell: ({ row }) => (
-          <Badge variant="secondary">
-            {categoryLabel(row.original.category)}
-          </Badge>
-        ),
+        cell: ({ row }) => <CategoryBadges categories={row.original.categories} />,
       },
       {
         id: "status",
@@ -300,7 +311,7 @@ export default function IntegrationsSection({
         key={configured.id}
         id={configured.id}
         name={configured.name}
-        category={configured.category ?? "other"}
+        categories={configured.categories}
         secretNames={configured.secret_names ?? []}
         fields={configured.settings?.fields ?? []}
         initialConfig={configured.config}
@@ -329,7 +340,12 @@ export default function IntegrationsSection({
       <DataTable
         columns={columns}
         data={rows !== null && available !== null ? tableRows : null}
-        search={(r) => `${r.name} ${categoryLabel(r.category)}`}
+        search={
+          (r) =>
+            `${r.name} ${(r.categories ?? ["other"])
+              .map(categoryLabel)
+              .join(" ")}`
+        }
         searchPlaceholder="Search integrations…"
         onRowClick={openIntegration}
         empty={
@@ -368,7 +384,7 @@ export default function IntegrationsSection({
                         void openIntegration({
                           key: `available-${a.name}`,
                           name: a.name,
-                          category: a.category,
+                          categories: a.categories,
                           secretNames: a.secret_names ?? [],
                           fields: a.settings?.fields ?? [],
                         });
@@ -376,9 +392,9 @@ export default function IntegrationsSection({
                     >
                       <Webhook className="size-4 shrink-0 text-muted-foreground" />
                       <span className="font-medium">{a.name}</span>
-                      <Badge variant="secondary" className="ml-auto">
-                        {categoryLabel(a.category)}
-                      </Badge>
+                      <span className="ml-auto">
+                        <CategoryBadges categories={a.categories} />
+                      </span>
                       {(a.secret_names?.length ?? 0) > 0 && (
                         <span className="text-xs text-muted-foreground">
                           {a.secret_names!.length} secret
@@ -475,7 +491,7 @@ function initialState(
 function IntegrationDetail({
   id,
   name,
-  category,
+  categories,
   secretNames,
   fields,
   initialConfig,
@@ -485,7 +501,7 @@ function IntegrationDetail({
 }: {
   id: string;
   name: string;
-  category?: string;
+  categories?: string[];
   secretNames: string[];
   fields: FieldSpec[];
   initialConfig: Record<string, unknown>;
@@ -690,7 +706,7 @@ function IntegrationDetail({
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Type
           </span>
-          <Badge variant="secondary">{categoryLabel(category)}</Badge>
+          <CategoryBadges categories={categories} />
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input

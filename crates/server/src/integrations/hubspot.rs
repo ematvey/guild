@@ -63,8 +63,8 @@ impl Integration for Hubspot {
         "hubspot"
     }
 
-    fn category(&self) -> Category {
-        Category::Other
+    fn categories(&self) -> &'static [Category] {
+        &[Category::Other]
     }
 
     fn manifest(&self) -> BundleManifest {
