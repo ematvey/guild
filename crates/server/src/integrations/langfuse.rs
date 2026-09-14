@@ -82,8 +82,14 @@ impl Integration for Langfuse {
                     help: Some("Override for self-hosted Langfuse".into()),
                     ..field("base_url", "string")
                 },
-                field("public_key", "secret"),
-                field("secret_key", "secret"),
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    ..field("public_key", "secret")
+                },
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    ..field("secret_key", "secret")
+                },
             ],
         )
     }

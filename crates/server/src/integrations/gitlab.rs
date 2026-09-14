@@ -108,7 +108,10 @@ impl Integration for Gitlab {
                     help: Some("Override for self-hosted GitLab".into()),
                     ..field("base_url", "string")
                 },
-                field("token", "secret"),
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    ..field("token", "secret")
+                },
             ],
         )
     }

@@ -485,7 +485,10 @@ pub mod testplug {
                 "Test tools for the unified plugin interface",
                 &[],
                 &[("secret_echo", "read"), ("admin_op", "admin")],
-                &[field("api_key", "secret")],
+                &[guild_core::registry::FieldSpec {
+                required: true,
+                ..field("api_key", "secret")
+            }],
             )
         }
 

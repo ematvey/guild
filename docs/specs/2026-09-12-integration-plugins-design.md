@@ -146,10 +146,9 @@ CREATE TABLE integration_secrets (
 
 The detail page is one form generated from `settings.fields`:
 
-- Every declared field shows its current value. Secret fields render
-  masked and grayed-out; an explicit unlock action is required before
-  the input accepts a new value. A field the admin did not touch is
-  not rewritten.
+- Every declared field shows its current value. Secret fields render as
+  masked inputs (dots in place of the value); left blank they keep the
+  stored credential — an untouched field is not rewritten.
 - Required fields must be filled; the save is rejected client- and
   server-side otherwise. Optional empty fields fall back to the
   manifest default or are absent from the config.

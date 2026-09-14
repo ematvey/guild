@@ -86,7 +86,10 @@ impl Integration for Hubspot {
                     help: Some("Override only for a HubSpot API proxy".into()),
                     ..field("base_url", "string")
                 },
-                field("token", "secret"),
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    ..field("token", "secret")
+                },
             ],
         )
     }

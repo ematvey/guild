@@ -553,20 +553,15 @@ async fn save_integration(
         .as_bool()
         .unwrap_or_else(|| existing.map(|r| r.enabled).unwrap_or(false));
     // Required settings must be filled (a missing optional falls back to
-    // the manifest default or stays absent).
+    // the manifest default or stays absent). Credential fields are skipped
+    // here — they are enforced by the missing-secrets gate below, which
+    // reports the proper conflict code.
     for f in &schema_fields {
-        if !f.required {
+        if !f.required || f.kind == "secret" {
             continue;
         }
         let present = match f.kind.as_str() {
             "boolean" => config[f.name.as_str()].is_boolean(),
-            "secret" => submitted.iter().any(|(n, _)| n == &f.name)
-                || store
-                    .integration_secrets()
-                    .names(org_id, name)
-                    .await?
-                    .iter()
-                    .any(|n| n == &f.name),
             _ => config[f.name.as_str()]
                 .as_str()
                 .map(|s| !s.is_empty())

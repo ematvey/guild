@@ -568,7 +568,10 @@ impl Integration for GoogleWorkspace {
                     placeholder: Some("admin@yourorg.com".into()),
                     ..field("admin_email", "string")
                 },
-                field("service_account_json", "secret"),
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    ..field("service_account_json", "secret")
+                },
             ],
         );
         if let Some(auth) = manifest.auth.as_mut() {

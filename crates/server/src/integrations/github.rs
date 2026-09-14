@@ -119,7 +119,10 @@ impl Integration for Github {
                     help: Some("Override for GitHub Enterprise Server".into()),
                     ..field("api_url", "string")
                 },
-                field("token", "secret"),
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    ..field("token", "secret")
+                },
             ],
         )
     }
