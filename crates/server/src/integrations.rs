@@ -1062,26 +1062,25 @@ pub async fn resolve_plugins(state: &AppState, org: Uuid) -> anyhow::Result<Vec<
     Ok(out)
 }
 
-/// Latest manifest of one registry integration item (any review status — an
-/// installed row keeps resolving even if a republish reset the status).
+/// The manifest whose content an admin's approval covers: resolved only
+/// while the item is approved AND the approval's recorded version is still
+/// the latest — a republish resets the review status, so unreviewed tool
+/// classes and secret declarations never govern member access.
 async fn registry_manifest(
     store: &std::sync::Arc<crate::store::Store>,
     org: Uuid,
     slug: &str,
 ) -> anyhow::Result<BundleManifest> {
-    let items = store
+    let version = store
         .registry()
-        .list_items(org, "integration")
+        .approved_version(org, "integration", slug)
         .await
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-    let item = items
-        .iter()
-        .find(|i| i.slug == slug)
-        .ok_or_else(|| anyhow::anyhow!("no registry item {slug}"))?;
-    let version = item
-        .latest_version
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("registry item {slug} has no version"))?;
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "registry item {slug} has no approval covering its latest version"
+            )
+        })?;
     let stored = store
         .registry()
         .get_version(org, "integration", slug, &version)

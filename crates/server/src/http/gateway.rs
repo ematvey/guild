@@ -518,10 +518,19 @@ async fn chat(
         }
     };
     // Remember the invocation for stuck-generation cleanup across deploys
-    // (see the worker's startup sweep).
+    // (see the worker's startup sweep): the record stamps the workflow
+    // schema version, so the sweep can tell a replayable invocation from
+    // one a deploy stranded.
     let _ = store
         .kv()
-        .put(&format!("chatgen_inv:{}", req.chat_id), &invocation_id)
+        .put(
+            &format!("chatgen_inv:{}", req.chat_id),
+            &format!(
+                "{}:{}",
+                crate::worker::restate::workflow_schema_version(),
+                invocation_id
+            ),
+        )
         .await;
 
     let out = forward_sse(tx.subscribe());

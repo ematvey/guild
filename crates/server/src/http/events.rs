@@ -30,6 +30,143 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/events/stream", axum::routing::get(stream))
 }
 
+/// Server-wide cap on concurrent event streams — each pins one dedicated
+/// Postgres LISTEN connection for its lifetime, and the host's
+/// max_connections also serves every store checkout.
+pub const EVENT_STREAM_MAX_GLOBAL: usize = 64;
+
+/// Per-user cap on concurrent event streams (one desktop app + a few web
+/// tabs; a scripted client must not pin hundreds of connections).
+pub const EVENT_STREAM_MAX_PER_USER: usize = 3;
+
+/// Concurrent event-stream budget: every stream pins one dedicated Postgres
+/// LISTEN connection for its whole lifetime, so the total and the per-user
+/// count are bounded — a scripted client must not exhaust the server's
+/// Postgres connections (every store checkout would then starve).
+pub struct StreamGate {
+    global: Arc<tokio::sync::Semaphore>,
+    per_user: std::sync::Mutex<HashMap<Uuid, usize>>,
+    max_per_user: usize,
+}
+
+/// Which budget refused the stream: the user's own (429) or the server's
+/// (503).
+#[derive(Debug)]
+pub enum StreamGateError {
+    PerUser,
+    Global,
+}
+
+/// Held for the stream's lifetime; dropping it frees both budgets.
+pub struct StreamPermit {
+    gate: Arc<StreamGate>,
+    user: Uuid,
+    _global: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl Drop for StreamPermit {
+    fn drop(&mut self) {
+        let mut per_user = self.gate.per_user.lock().unwrap();
+        if let Some(n) = per_user.get_mut(&self.user) {
+            *n -= 1;
+            if *n == 0 {
+                per_user.remove(&self.user);
+            }
+        }
+    }
+}
+
+impl StreamGate {
+    /// Server-wide cap and per-user cap.
+    pub fn with_caps(max_global: usize, max_per_user: usize) -> Self {
+        Self {
+            global: Arc::new(tokio::sync::Semaphore::new(max_global)),
+            per_user: std::sync::Mutex::new(HashMap::new()),
+            max_per_user,
+        }
+    }
+
+    /// Acquires a stream slot: the per-user count first, then the global
+    /// semaphore (try — a full gate rejects instead of queueing). The
+    /// caller must move the permit into the stream body so it lives as
+    /// long as the connection.
+    pub fn try_acquire(self: &Arc<Self>, user: Uuid) -> Result<StreamPermit, StreamGateError> {
+        {
+            let mut per_user = self.per_user.lock().unwrap();
+            let count = per_user.entry(user).or_insert(0);
+            if *count >= self.max_per_user {
+                return Err(StreamGateError::PerUser);
+            }
+            *count += 1;
+        }
+        match self.global.clone().try_acquire_owned() {
+            Ok(permit) => Ok(StreamPermit {
+                gate: self.clone(),
+                user,
+                _global: permit,
+            }),
+            Err(_) => {
+                let mut per_user = self.per_user.lock().unwrap();
+                if let Some(n) = per_user.get_mut(&user) {
+                    *n -= 1;
+                    if *n == 0 {
+                        per_user.remove(&user);
+                    }
+                }
+                Err(StreamGateError::Global)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn per_user_cap_rejects_the_fourth_stream_and_frees_on_drop() {
+        let gate = Arc::new(StreamGate::with_caps(10, 3));
+        let u = Uuid::now_v7();
+        let p1 = gate.try_acquire(u);
+        let p2 = gate.try_acquire(u);
+        let p3 = gate.try_acquire(u);
+        assert!(p1.is_ok() && p2.is_ok() && p3.is_ok());
+        assert!(matches!(gate.try_acquire(u), Err(StreamGateError::PerUser)));
+        // Another user is unaffected by the first user's budget.
+        assert!(gate.try_acquire(Uuid::now_v7()).is_ok());
+        drop(p2);
+        assert!(gate.try_acquire(u).is_ok());
+    }
+
+    #[test]
+    fn global_cap_rejects_across_users_and_frees_on_drop() {
+        let gate = Arc::new(StreamGate::with_caps(2, 5));
+        let p1 = gate.try_acquire(Uuid::now_v7()).unwrap();
+        let p2 = gate.try_acquire(Uuid::now_v7()).unwrap();
+        assert!(matches!(gate.try_acquire(Uuid::now_v7()), Err(StreamGateError::Global)));
+        drop(p1);
+        drop(p2);
+        assert!(gate.try_acquire(Uuid::now_v7()).is_ok());
+    }
+
+    #[test]
+    fn a_refused_global_slot_frees_the_per_user_count() {
+        let gate = Arc::new(StreamGate::with_caps(2, 2));
+        let h1 = gate.try_acquire(Uuid::now_v7()).unwrap();
+        let h2 = gate.try_acquire(Uuid::now_v7()).unwrap();
+        let u = Uuid::now_v7();
+        assert!(matches!(gate.try_acquire(u), Err(StreamGateError::Global)));
+        // The failed acquisition must not consume the user's own budget:
+        // once the global budget frees up, the user gets its full share.
+        drop(h1);
+        drop(h2);
+        let p1 = gate.try_acquire(u).unwrap();
+        let p2 = gate.try_acquire(u).unwrap();
+        drop(p1);
+        drop(p2);
+    }
+}
+
 async fn list(State(state): State<AppState>, user: AuthUser) -> Result<Json<Value>, ApiError> {
     let store = state.store().await?;
     let events = store.events().list(user.0.org_id, 200).await?;
@@ -213,6 +350,25 @@ async fn stream(
         let name = q.get("machine_name").cloned().unwrap_or_default();
         state.executor_acquire(&mid, &user.0, &name)
     });
+    // Budget check before the dedicated Postgres connection is opened: the
+    // user's own streams first (429), then the server-wide cap (503).
+    let permit = match state.event_streams.try_acquire(user.0.id) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(match e {
+                StreamGateError::PerUser => ApiError::new(
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    "stream_limit",
+                    "too many event streams for this user — close one",
+                ),
+                StreamGateError::Global => ApiError::new(
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "stream_capacity",
+                    "the server is at its event-stream capacity — retry later",
+                ),
+            })
+        }
+    };
     let store = state.store().await?;
     // Standalone connection, NOT from the request pool: every live stream
     // pins one connection for its whole lifetime, and pool-based listeners
@@ -230,8 +386,10 @@ async fn stream(
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let out = async_stream::stream! {
-        // Hold the executor guard for as long as this body lives.
+        // Hold the executor guard and the stream budget for as long as this
+        // body lives.
         let _executor = executor;
+        let _permit = permit;
         loop {
             tokio::select! {
                 notification = listener.recv() => {

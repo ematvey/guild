@@ -1414,10 +1414,16 @@ impl ChatRunner {
         // Returns Ok(true) when the turn ended with a final answer, Ok(false)
         // when the step limit was exhausted without one.
         let steps_used = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        // Whether this step's assistant event was already persisted: the
+        // interrupted-append in the failure path below must not re-append a
+        // turn the log already holds (the buffers keep the completed call's
+        // text until the next model call resets them).
+        let step_persisted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let turn_out: HandlerResult<bool> = async {
         let state = state.clone();
         for step in 0..CHAT_MAX_STEPS {
             steps_used.store(step as u32, std::sync::atomic::Ordering::SeqCst);
+            step_persisted.store(false, std::sync::atomic::Ordering::SeqCst);
 
             // Auto-compact, proactive path: before each model call,
             // when the last known request size crossed the route's window
@@ -1683,6 +1689,11 @@ impl ChatRunner {
                 })
                 .await?
                 .into_inner();
+            // Persisted: the log holds this turn now. A failure later in
+            // the step (tool execution, tool-result persistence,
+            // compaction) must not append the same text again as
+            // "interrupted" — the failure path checks the flag.
+            step_persisted.store(true, std::sync::atomic::Ordering::SeqCst);
 
             if is_final {
                 // Journaled: record usage, then finish.
@@ -1828,20 +1839,27 @@ impl ChatRunner {
                     message: "the turn failed; see server logs".into(),
                 });
                 // Best effort (spec §B.4): append what was delivered so far
-                // as an interrupted assistant event. Fire-and-forget — a
-                // failure here must not mask the original error.
+                // as an interrupted assistant event — only while this step's
+                // assistant event is not persisted yet (otherwise the log
+                // already holds the full turn) and something was delivered.
+                // Fire-and-forget — a failure here must not mask the
+                // original error.
                 let partial_text = text_buf.read().await.clone();
                 let partial_reasoning = thinking_buf.read().await.clone();
-                if let Ok(store) = state.store().await {
-                    let event = ThreadEvent::AssistantMessage {
-                        turn: turn_no,
-                        step: steps_used.load(std::sync::atomic::Ordering::SeqCst),
-                        blocks: assistant_blocks(&partial_reasoning, &partial_text, &[]),
-                        usage: UsagePayload::default(),
-                        model: req.model.clone(),
-                        interrupted: Some(true),
-                    };
-                    let _ = store.thread().append_event(req.chat_id, &event).await;
+                if !step_persisted.load(std::sync::atomic::Ordering::SeqCst)
+                    && (!partial_text.is_empty() || !partial_reasoning.is_empty())
+                {
+                    if let Ok(store) = state.store().await {
+                        let event = ThreadEvent::AssistantMessage {
+                            turn: turn_no,
+                            step: steps_used.load(std::sync::atomic::Ordering::SeqCst),
+                            blocks: assistant_blocks(&partial_reasoning, &partial_text, &[]),
+                            usage: UsagePayload::default(),
+                            model: req.model.clone(),
+                            interrupted: Some(true),
+                        };
+                        let _ = store.thread().append_event(req.chat_id, &event).await;
+                    }
                 }
                 state.generations.lock().unwrap().remove(&req.chat_id);
                 if let Ok(store) = state.store().await {
@@ -2613,40 +2631,91 @@ pub async fn register_with_restate(admin_url: &str, advertised_url: &str) -> any
 /// Fingerprint of the workflow code. Turns dispatched by an older fingerprint
 /// cannot replay safely after a deploy (journal mismatch) — the startup sweep
 /// purges them so their chats do not stay jammed.
-fn workflow_schema_version() -> String {
+pub(crate) fn workflow_schema_version() -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     include_str!("restate.rs").hash(&mut h);
     format!("{:x}", h.finish())
 }
 
+/// How the sweep treats one recorded chat-generation invocation.
+enum StaleChatgenEntry {
+    /// Current workflow version — replays fine; only the record goes.
+    DropCurrent,
+    /// No killable invocation in the record — drop it.
+    DropUnusable,
+    /// Invocation dispatched by a different (or unstamped) workflow
+    /// version — kill it.
+    Kill(String),
+}
+
+/// Classifies one `chatgen_inv:*` kv value. The writer stamps
+/// `"{workflow_version}:{invocation_id}"`; a bare value predates version
+/// stamping and cannot prove it replays, so it is treated as stale.
+fn classify_chatgen_entry(current_version: &str, value: &str) -> StaleChatgenEntry {
+    match value.split_once(':') {
+        Some((ver, inv)) => {
+            if ver == current_version {
+                StaleChatgenEntry::DropCurrent
+            } else if inv.is_empty() {
+                StaleChatgenEntry::DropUnusable
+            } else {
+                StaleChatgenEntry::Kill(inv.to_string())
+            }
+        }
+        None => {
+            if value.is_empty() {
+                StaleChatgenEntry::DropUnusable
+            } else {
+                StaleChatgenEntry::Kill(value.to_string())
+            }
+        }
+    }
+}
+
 /// Purges in-flight chat generations dispatched by a different workflow
 /// version. They cannot replay after the deploy and would jam their chat
 /// (virtual objects serialize per key) until the inactivity timeout.
-async fn purge_stale_chat_generations(state: &AppState) {
+pub(crate) async fn purge_stale_chat_generations(state: &AppState) {
     let Ok(store) = state.store().await else { return };
     let current = workflow_schema_version();
     let Ok(entries) = store.kv().list_prefix("chatgen_inv:").await else { return };
     for (key, value) in entries {
-        let _ = store.kv().delete(&key).await;
-        let (ver, inv) = match value.split_once(':') {
-            Some(pair) => pair,
-            None => continue,
-        };
-        if ver == current || inv.is_empty() {
-            continue; // same code — replays fine after a crash restart
-        }
-        let url = format!(
-            "{}/invocations/{}?mode=kill",
-            state.config.restate_admin_url.trim_end_matches('/'),
-            inv
-        );
-        // Graceful cancel cannot reach an invocation stuck in journal-mismatch
-        // backoff (RT0016); a hard kill is the only reliable way to free the
-        // chat key.
-        match reqwest::Client::new().delete(&url).send().await {
-            Ok(resp) => tracing::info!("killed stale chat generation {inv} (deploy changed): {}", resp.status()),
-            Err(e) => tracing::warn!("kill of stale chat generation {inv} failed: {e}"),
+        match classify_chatgen_entry(&current, &value) {
+            StaleChatgenEntry::DropCurrent | StaleChatgenEntry::DropUnusable => {
+                let _ = store.kv().delete(&key).await;
+            }
+            StaleChatgenEntry::Kill(inv) => {
+                let url = format!(
+                    "{}/invocations/{}?mode=kill",
+                    state.config.restate_admin_url.trim_end_matches('/'),
+                    inv
+                );
+                // Graceful cancel cannot reach an invocation stuck in
+                // journal-mismatch backoff (RT0016); a hard kill is the
+                // only reliable way to free the chat key. The record
+                // survives a failed kill so the next sweep retries.
+                match reqwest::Client::new().delete(&url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        tracing::info!(
+                            "killed stale chat generation {inv} (deploy changed): {}",
+                            resp.status()
+                        );
+                        let _ = store.kv().delete(&key).await;
+                    }
+                    Ok(resp) => {
+                        tracing::warn!(
+                            "kill of stale chat generation {inv} got {} — record kept for retry",
+                            resp.status()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "kill of stale chat generation {inv} failed: {e} — record kept for retry"
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -2712,6 +2781,40 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_chatgen_entry_matches_the_writer_format() {
+        let current = "abc123";
+        // Current version: the record goes, nothing is killed.
+        assert!(matches!(
+            classify_chatgen_entry(current, "abc123:inv-1"),
+            StaleChatgenEntry::DropCurrent
+        ));
+        // A different version is killed by its invocation id.
+        assert!(matches!(
+            classify_chatgen_entry(current, "oldver:inv-2"),
+            StaleChatgenEntry::Kill(v) if v == "inv-2"
+        ));
+        // Bare values predate version stamping — treated as stale.
+        assert!(matches!(
+            classify_chatgen_entry(current, "inv-3"),
+            StaleChatgenEntry::Kill(v) if v == "inv-3"
+        ));
+        // Unusable records (empty invocation) are dropped, not killed. The
+        // current-version variant classifies as current — both drop.
+        assert!(matches!(
+            classify_chatgen_entry(current, "other:"),
+            StaleChatgenEntry::DropUnusable
+        ));
+        assert!(matches!(
+            classify_chatgen_entry(current, "abc123:"),
+            StaleChatgenEntry::DropCurrent
+        ));
+        assert!(matches!(
+            classify_chatgen_entry(current, ""),
+            StaleChatgenEntry::DropUnusable
+        ));
+    }
 
     #[test]
     fn system_prompt_default_persona_is_helpful_assistant() {

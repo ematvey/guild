@@ -1835,12 +1835,13 @@ export default function WebChat({
     // Send button during the same commit would otherwise move focus to
     // body and override a synchronous focus().
     requestAnimationFrame(() => ta.current?.focus());
+    const sentKey = liveKey();
     setBlocks((b) => [
       ...b,
       {
         kind: "user",
         text,
-        key: liveKey(),
+        key: sentKey,
         attachments: pendingRef.current.map((a) => ({
           id: `pending-${a.id}`,
           filename: a.filename,
@@ -1873,6 +1874,10 @@ export default function WebChat({
     }
     const ac = new AbortController();
     sendAbort.current = ac;
+    // The Tauri send is fire-and-forget: after the POST resolves, the
+    // fan-out done/error frames own `busy` — the finally below must leave
+    // it set (only a POST failure returns through it with busy cleared).
+    let keepBusyThroughFinally = false;
     try {
       // Upload attachments first; their ids ride along with the send and
       // the server inlines text / passes media parts per route modality.
@@ -1882,8 +1887,39 @@ export default function WebChat({
         try {
           const meta = await uploadAttachment(cid, a.file);
           attachmentIds.push(meta.id);
+          // The optimistic chip's composer URL dies with the send: swap the
+          // block row to the uploaded id so its thumbnail is re-fetched from
+          // storage (the hook owns that blob URL's lifecycle).
+          setBlocks((b) =>
+            b.map((bl) =>
+              bl.key === sentKey && bl.kind === "user"
+                ? {
+                    ...bl,
+                    attachments: bl.attachments?.map((att) =>
+                      att.id === `pending-${a.id}`
+                        ? { ...att, id: meta.id, previewUrl: undefined }
+                        : att,
+                    ),
+                  }
+                : bl,
+            ),
+          );
         } catch (e) {
           if (loadSeq.current === mySeq) {
+            // Upload failed: the chip loses the composer-owned preview (it
+            // is revoked below) and falls back to its file icon.
+            setBlocks((b) =>
+              b.map((bl) =>
+                bl.key === sentKey && bl.kind === "user"
+                  ? {
+                      ...bl,
+                      attachments: bl.attachments?.map((att) =>
+                        att.id === `pending-${a.id}` ? { ...att, previewUrl: undefined } : att,
+                      ),
+                    }
+                  : bl,
+              ),
+            );
             setBlocks((b) => [
               ...b,
               {
@@ -1895,7 +1931,9 @@ export default function WebChat({
           }
         }
       }
-      // Sent attachments leave the composer: revoke their preview URLs.
+      // Sent attachments leave the composer: revoke their preview URLs —
+      // uploaded ones now render from the uploaded id, failed ones fell
+      // back to the icon.
       for (const a of pendingRef.current) {
         if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
       }
@@ -1909,13 +1947,18 @@ export default function WebChat({
           await sendChatNoStream(cid, model, text, attachmentIds, projectDirRef.current);
         } catch (e) {
           if (loadSeq.current === mySeq) {
-            setBusy(false);
             setBlocks((b) => [
               ...b,
               { kind: "error", text: e instanceof Error ? e.message : String(e), key: liveKey() },
             ]);
           }
+          // The POST failed: no turn was started, so the finally below
+          // clears busy.
+          return;
         }
+        // The turn streams on the fan-out bus now; busy stays set through
+        // the finally below until the turn's done/error frame clears it.
+        keepBusyThroughFinally = true;
         return;
       }
       let gotDone = false;
@@ -2017,7 +2060,9 @@ export default function WebChat({
       }
       return;
     } finally {
-      setBusy(false);
+      // The Tauri send hands `busy` over to the fan-out done/error frames
+      // (the comment on the POST branch); every other exit clears it.
+      if (!keepBusyThroughFinally) setBusy(false);
       if (sendAbort.current === ac) sendAbort.current = null;
     }
   };
