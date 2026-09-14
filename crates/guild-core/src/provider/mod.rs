@@ -8,6 +8,18 @@ pub use anthropic::AnthropicProvider;
 pub use openai::OpenAiProvider;
 
 use async_trait::async_trait;
+use std::sync::Arc;
+
+/// Provider implementation for a wire protocol name ("openai" | "anthropic").
+/// Callers key this off the route's protocol, never off the provider's name —
+/// a provider name is an org's label for an endpoint, not a wire shape.
+pub fn for_protocol(protocol: &str) -> Option<Arc<dyn ModelProvider>> {
+    match protocol {
+        "openai" => Some(Arc::new(OpenAiProvider::new())),
+        "anthropic" => Some(Arc::new(AnthropicProvider::new())),
+        _ => None,
+    }
+}
 use futures::stream::BoxStream;
 use protocol::api::{Message, ToolCall, ToolSpec};
 
@@ -81,4 +93,16 @@ pub trait ModelProvider: Send + Sync {
         &self,
         req: ProviderRequest<'_>,
     ) -> Result<BoxStream<'static, Result<ProviderChunk, ProviderError>>, ProviderError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn for_protocol_resolves_known_and_rejects_unknown() {
+        assert!(for_protocol("openai").is_some());
+        assert!(for_protocol("anthropic").is_some());
+        assert!(for_protocol("deepseek").is_none());
+    }
 }

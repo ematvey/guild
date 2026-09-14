@@ -243,11 +243,9 @@ async fn run_turn(
 
     history.push(Message::user(message.clone()));
 
-    let provider: Arc<dyn guild_core::provider::ModelProvider> = match route.provider.as_str() {
-        "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
-        "anthropic" => Arc::new(guild_core::provider::AnthropicProvider::new()),
-        other => return Err(ApiError::internal(format!("unknown provider {other}"))),
-    };
+    let provider: Arc<dyn guild_core::provider::ModelProvider> =
+        guild_core::provider::for_protocol(&route.protocol)
+            .ok_or_else(|| ApiError::internal(format!("unknown protocol {}", route.protocol)))?;
 
     // tools scoped to the workspace; shell tools opt-in only
     let mut registry = ToolRegistry::new();

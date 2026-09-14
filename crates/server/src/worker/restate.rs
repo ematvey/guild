@@ -1095,16 +1095,10 @@ pub(crate) async fn compact_core(
                             "route re-resolve failed: {e:?}"
                         )))
                     })?;
-                let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
-                    "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
-                    "anthropic" => {
-                        Arc::new(guild_core::provider::AnthropicProvider::new())
-                    }
-                    other => {
-                        return Err(TerminalError::new(format!("unknown provider {other}"))
-                            .into())
-                    }
-                };
+                let provider: Arc<dyn ModelProvider> =
+                    guild_core::provider::for_protocol(&route.protocol).ok_or_else(|| {
+                        TerminalError::new(format!("unknown protocol {}", route.protocol))
+                    })?;
                 let preq = ProviderRequest {
                     model: &model,
                     system: Some(COMPACTION_PROMPT),
@@ -1493,16 +1487,10 @@ impl ChatRunner {
                                     "route re-resolve failed: {e:?}"
                                 )))
                             })?;
-                        let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
-                            "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
-                            "anthropic" => {
-                                Arc::new(guild_core::provider::AnthropicProvider::new())
-                            }
-                            other => {
-                                return Err(TerminalError::new(format!("unknown provider {other}"))
-                                    .into())
-                            }
-                        };
+                        let provider: Arc<dyn ModelProvider> =
+                            guild_core::provider::for_protocol(&route.protocol).ok_or_else(|| {
+                                TerminalError::new(format!("unknown protocol {}", route.protocol))
+                            })?;
                         let preq = ProviderRequest {
                             model: &model,
                             system: Some(system2.as_str()),

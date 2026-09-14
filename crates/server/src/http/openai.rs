@@ -205,17 +205,14 @@ async fn chat_completions(
         })?;
 
     let (system, messages) = to_internal_messages(&req.messages);
-    let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
-        "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
-        "anthropic" => Arc::new(guild_core::provider::AnthropicProvider::new()),
-        other => {
-            return Err(openai_error(
+    let provider: Arc<dyn ModelProvider> = guild_core::provider::for_protocol(&route.protocol)
+        .ok_or_else(|| {
+            openai_error(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "server_error",
-                format!("unknown provider {other}"),
-            ))
-        }
-    };
+                format!("unknown protocol {}", route.protocol),
+            )
+        })?;
     let preq = ProviderRequest {
         model: &req.model,
         system: system.as_deref(),
