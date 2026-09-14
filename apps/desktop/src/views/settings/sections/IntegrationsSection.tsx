@@ -1,6 +1,6 @@
 //! IntegrationsSection — available and configured integrations in one data
-//! table with first-class add (header button + catalog rows) and delete
-//! (per-row and detail actions). The detail page (addressed by the row's
+//! table with first-class add (header button + catalog rows). Removal is a
+//! detail-page action only — the list stays read-only. The detail page (addressed by the row's
 //! id, /settings/integrations/<id>) renders its settings form dynamically
 //! from the integration's manifest field schema — no hardcoded per-connector
 //! UI — plus a secrets editor (masked previews, write-only values) and,
@@ -219,18 +219,6 @@ export default function IntegrationsSection({
     }
   };
 
-  const removeRow = async (row: IntegrationRow) => {
-    try {
-      await api("DELETE", `/api/v1/admin/integrations/${row.id}`);
-      toast.success("Integration removed", { description: row.name });
-      setPendingRemove(null);
-      reload();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast.error("Could not remove integration", { description: msg });
-    }
-  };
-
   const columns = useMemo<ColumnDef<(typeof tableRows)[number], any>[]>(
     () => [
       {
@@ -267,41 +255,17 @@ export default function IntegrationsSection({
       {
         id: "actions",
         header: "",
-        cell: ({ row }) => (
-          <div className="flex justify-end">
-            {row.original.row ? (
-              <button
-                className="text-muted-foreground transition-colors hover:text-destructive"
-                title={`Remove ${row.original.name}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setPendingRemove(row.original.row!);
-                }}
-              >
-                <Trash2 className="size-4" />
-              </button>
-            ) : (
-              <button
-                className="text-muted-foreground transition-colors hover:text-foreground"
-                title={`Add ${row.original.name}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void openIntegration(row.original);
-                }}
-              >
-                <Plus className="size-4" />
-              </button>
-            )}
-          </div>
-        ),
+        cell: ({ row }) =>
+          row.original.row ? null : (
+            <div className="flex justify-end">
+              <Plus className="size-4 text-muted-foreground/60" />
+            </div>
+          ),
       },
     ],
     [],
   );
 
-  const [pendingRemove, setPendingRemove] = useState<IntegrationRow | null>(
-    null,
-  );
   const [addOpen, setAddOpen] = useState(false);
 
   if (detail !== null) {
@@ -431,30 +395,6 @@ export default function IntegrationsSection({
           </div>
         </DialogContent>
       </Dialog>
-
-      <AlertDialog
-        open={pendingRemove !== null}
-        onOpenChange={(open) => !open && setPendingRemove(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {pendingRemove?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              The configuration and stored secrets are deleted; tools disappear
-              from chats. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => pendingRemove && void removeRow(pendingRemove)}
-            >
-              Remove configuration
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
