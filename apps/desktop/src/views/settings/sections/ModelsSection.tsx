@@ -486,7 +486,7 @@ function ProviderDetail({
       </div>
     );
   }
-  if (p === null || draft === null) {
+  if (p === null) {
     return (
       <div>
         <PageHeader title={slug} back={{ label: "Models", onClick: onBack }} />
@@ -496,6 +496,7 @@ function ProviderDetail({
   }
 
   const save = async () => {
+    if (draft === null) return;
     setBusy(true);
     setError(null);
     try {
