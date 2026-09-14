@@ -1416,14 +1416,16 @@ impl ChatRunner {
         let steps_used = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         // Whether this step's assistant event was already persisted: the
         // interrupted-append in the failure path below must not re-append a
-        // turn the log already holds (the buffers keep the completed call's
-        // text until the next model call resets them).
+        // turn the log already holds. The flag is reset only just before the
+        // model-call streaming starts (next to the buffer resets) — every
+        // step-top failure (auto-compact, event reload) still sees the
+        // previous step's persist as done, while the streaming window
+        // itself (partial delivery, persist failure) stays covered.
         let step_persisted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let turn_out: HandlerResult<bool> = async {
         let state = state.clone();
         for step in 0..CHAT_MAX_STEPS {
             steps_used.store(step as u32, std::sync::atomic::Ordering::SeqCst);
-            step_persisted.store(false, std::sync::atomic::Ordering::SeqCst);
 
             // Auto-compact, proactive path: before each model call,
             // when the last known request size crossed the route's window
@@ -1466,6 +1468,7 @@ impl ChatRunner {
                 let tx_loop = tx.clone();
                 let buf_loop = text_buf.clone();
                 let think_loop = thinking_buf.clone();
+                let flag_loop = step_persisted.clone();
                 let attempt_msgs = msgs.clone();
                 let call = ctx
                     .run(move || {
@@ -1475,6 +1478,7 @@ impl ChatRunner {
                         let tx = tx_loop.clone();
                         let text_buf = buf_loop.clone();
                         let thinking_buf = think_loop.clone();
+                        let step_persisted = flag_loop.clone();
                         async move {
                         // The key is resolved here, inside the journaled
                         // step — never carried through step outputs.
@@ -1519,8 +1523,18 @@ impl ChatRunner {
                             state.generations.lock().unwrap().remove(&chat_id);
                             HandlerError::from(TerminalError::new(format!("provider error: {e}")))
                         })?;
+                        // The model call is about to stream: only now is
+                        // the previous step's persist treated as "not this
+                        // step's" — from here on a failure delivers a
+                        // genuinely partial turn that the failure path
+                        // appends as interrupted. Buffers reset first (the
+                        // attach catch-up snapshot must not re-serve the
+                        // previous step's text), then the flag: the
+                        // flag-clear window covers exactly this step's
+                        // streaming.
                         *text_buf.write().await = String::new(); // reset per model call
                         *thinking_buf.write().await = String::new();
+                        step_persisted.store(false, std::sync::atomic::Ordering::SeqCst);
                         let mut text = String::new();
                         let mut tokens_in = 0u32;
                         let mut tokens_out = 0u32;
@@ -1690,9 +1704,10 @@ impl ChatRunner {
                 .await?
                 .into_inner();
             // Persisted: the log holds this turn now. A failure later in
-            // the step (tool execution, tool-result persistence,
-            // compaction) must not append the same text again as
-            // "interrupted" — the failure path checks the flag.
+            // the step (tool execution, tool-result persistence, next
+            // step's auto-compact) must not append the same text again as
+            // "interrupted" — the flag stays set until the next model call
+            // starts streaming, so every step-top failure path sees it.
             step_persisted.store(true, std::sync::atomic::Ordering::SeqCst);
 
             if is_final {

@@ -1071,14 +1071,14 @@ async fn registry_manifest(
     org: Uuid,
     slug: &str,
 ) -> anyhow::Result<BundleManifest> {
-    let version = store
+    let (version, bundle_sha256) = store
         .registry()
-        .approved_version(org, "integration", slug)
+        .approved_bundle(org, "integration", slug)
         .await
         .map_err(|e| anyhow::anyhow!("{e:?}"))?
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "registry item {slug} has no approval covering its latest version"
+                "registry item {slug} has no approval covering its latest version and bundle"
             )
         })?;
     let stored = store
@@ -1086,11 +1086,18 @@ async fn registry_manifest(
         .get_version(org, "integration", slug, &version)
         .await
         .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    if stored.bundle_sha256.as_deref() != Some(bundle_sha256.as_str()) {
+        anyhow::bail!(
+            "registry item {slug}: stored bundle no longer matches the approved hash"
+        );
+    }
     serde_json::from_value::<BundleManifest>(stored.manifest)
         .map_err(|e| anyhow::anyhow!("manifest of {slug} unreadable: {e}"))
 }
 
-/// Object-storage key of the first cookbook skill's latest version bundle.
+/// Object-storage key of the first cookbook skill's bundle — resolved only
+/// through the approval gate (approved version + bundle hash), so draft,
+/// superseded, or byte-swapped skill content never reaches model context.
 async fn guide_object_key(
     store: &std::sync::Arc<crate::store::Store>,
     org: Uuid,
@@ -1099,14 +1106,12 @@ async fn guide_object_key(
     let Some(slug) = manifest.skills.first() else {
         return Ok(None);
     };
-    let items = match store.registry().list_items(org, "skill").await {
-        Ok(items) => items,
-        Err(_) => return Ok(None),
-    };
-    let Some(item) = items.iter().find(|i| &i.slug == slug) else {
-        return Ok(None);
-    };
-    let Some(version) = item.latest_version.clone() else {
+    let Some((version, bundle_sha256)) = store
+        .registry()
+        .approved_bundle(org, "skill", slug)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?
+    else {
         return Ok(None);
     };
     let stored = store
@@ -1114,6 +1119,9 @@ async fn guide_object_key(
         .get_version(org, "skill", slug, &version)
         .await
         .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    if stored.bundle_sha256.as_deref() != Some(bundle_sha256.as_str()) {
+        return Ok(None);
+    }
     Ok(Some(stored.object_key))
 }
 

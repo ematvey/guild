@@ -51,9 +51,21 @@ async fn publish_then_install_roundtrip() {
     let app_state = srv.state.clone();
     let _ = app_state; // the admin path is covered by the server tests; approve directly:
     let store = srv.store();
+    let stored = store
+        .registry()
+        .get_version(user.org_id, "skill", "deploy-check", "1.0.0")
+        .await
+        .unwrap();
     store
         .registry()
-        .set_review(user.org_id, "skill", "deploy-check", "approved")
+        .set_review(
+            user.org_id,
+            "skill",
+            "deploy-check",
+            "approved",
+            Some("1.0.0"),
+            stored.bundle_sha256.as_deref(),
+        )
         .await
         .unwrap();
 

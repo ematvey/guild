@@ -13,6 +13,16 @@ use guild_server::test_support::{full_state, test_state_with_db};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+/// Store-level seeds use a fixed stand-in bundle hash: the hash-binding
+/// paths only compare the stored value against the approval's, never
+/// against object bytes (guide tests compute the real hash themselves).
+const SEED_BUNDLE_SHA: &str = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
+}
+
 // ---------- fixture MCP server (rmcp streamable HTTP, in-process) ----------
 
 /// Exposes `echo(text)` (class read) and `admin_only_op()` (class admin),
@@ -162,14 +172,23 @@ async fn install_plugin(
             "HubSpot CRM tools",
             manifest_value(url),
             "unused-key",
+            SEED_BUNDLE_SHA,
             user_id,
         )
         .await
         .unwrap();
-    // Resolution resolves approved items only — the review gate.
+    // Resolution resolves approved items only — the review gate binds to
+    // the reviewed version and bundle hash.
     store
         .registry()
-        .set_review(org, "integration", "hubspot", "approved")
+        .set_review(
+            org,
+            "integration",
+            "hubspot",
+            "approved",
+            Some("1.0.0"),
+            Some(SEED_BUNDLE_SHA),
+        )
         .await
         .unwrap();
     store
@@ -341,7 +360,8 @@ async fn guide_tool_returns_skill_md_from_object_storage() {
     let (org, _) = install_plugin(&store, &url, Some((ts.org_id, ts.user_id))).await;
 
     // Publish a hubspot-cookbook skill bundle (SKILL.md) to the registry
-    // and object storage.
+    // and object storage, then approve it — the guide pointer resolves
+    // through the approval gate only.
     let dir = std::env::temp_dir().join(format!("guild-guide-{}", Uuid::now_v7().simple()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -357,12 +377,13 @@ async fn guide_tool_returns_skill_md_from_object_storage() {
         ..Default::default()
     };
     let bundle = pack(&dir, &manifest).unwrap();
+    let bundle_sha = sha256_hex(&bundle);
     let object_key = format!("registry/{}", Uuid::now_v7().simple());
     ts.state
         .objects()
         .await
         .unwrap()
-        .put(&object_key, bundle)
+        .put(&object_key, bundle.clone())
         .await
         .unwrap();
     store
@@ -375,15 +396,76 @@ async fn guide_tool_returns_skill_md_from_object_storage() {
             "how to use hubspot",
             serde_json::to_value(&manifest).unwrap(),
             &object_key,
+            &bundle_sha,
             ts.user_id,
         )
         .await
         .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 
+    // While the skill item is still a draft, the guide gate yields nothing.
+    let turn = resolve_plugins(&ts.state, org).await.unwrap();
+    assert!(
+        turn[0].guide_object_key.is_none(),
+        "unapproved skill content must not reach the guide tool"
+    );
+
+    // Approving binds the version + bundle hash; the guide resolves.
+    store
+        .registry()
+        .set_review(
+            ts.org_id,
+            "skill",
+            "hubspot-cookbook",
+            "approved",
+            Some("1.0.0"),
+            Some(&bundle_sha),
+        )
+        .await
+        .unwrap();
     let turn = resolve_plugins(&ts.state, org).await.unwrap();
     let key = turn[0].guide_object_key.as_ref().expect("guide pointer");
     let body = fetch_guide(&ts.state, key).await.unwrap();
     assert!(body.contains("USE THE SEARCH FIRST"), "{body}");
     assert!(body.contains("name: hubspot-cookbook"));
+
+    // A same-manifest republish with different bundle bytes resets the
+    // skill item to draft: the guide gate closes again.
+    let dir = std::env::temp_dir().join(format!("guild-guide-{}", Uuid::now_v7().simple()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: hubspot-cookbook\ndescription: how to use hubspot\n---\nSWAPPED BYTE CONTENT",
+    )
+    .unwrap();
+    let swapped = pack(&dir, &manifest).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    let swapped_key = format!("registry/{}", Uuid::now_v7().simple());
+    ts.state
+        .objects()
+        .await
+        .unwrap()
+        .put(&swapped_key, swapped.clone())
+        .await
+        .unwrap();
+    store
+        .registry()
+        .upsert_version(
+            ts.org_id,
+            "skill",
+            "hubspot-cookbook",
+            "1.0.0",
+            "how to use hubspot",
+            serde_json::to_value(&manifest).unwrap(),
+            &swapped_key,
+            &sha256_hex(&swapped),
+            ts.user_id,
+        )
+        .await
+        .unwrap();
+    let turn = resolve_plugins(&ts.state, org).await.unwrap();
+    assert!(
+        turn[0].guide_object_key.is_none(),
+        "byte-swapped republish must close the guide gate"
+    );
 }
