@@ -2,7 +2,7 @@
 //! updates through the CRM v3 API. Auth is a private-app access token sent
 //! as `Authorization: Bearer`.
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
 use guild_core::registry::BundleManifest;
 use futures::future::BoxFuture;
 use protocol::api::ToolSpec;
@@ -72,7 +72,7 @@ impl Integration for Hubspot {
             "hubspot",
             "1.0.0",
             "HubSpot CRM: search contacts, companies, and deals; update deals",
-            &["token"],
+            &[],
             &[
                 ("search_contacts", "read"),
                 ("search_companies", "read"),
@@ -80,11 +80,14 @@ impl Integration for Hubspot {
                 ("update_deal", "write"),
                 ("api", "write"),
             ],
-            &[guild_core::registry::FieldSpec {
-                default: Some(serde_json::json!("https://api.hubapi.com")),
-                help: Some("Override only for a HubSpot API proxy".into()),
-                ..field("base_url", "string")
-            }],
+            &[
+                guild_core::registry::FieldSpec {
+                    default: Some(serde_json::json!("https://api.hubapi.com")),
+                    help: Some("Override only for a HubSpot API proxy".into()),
+                    ..field("base_url", "string")
+                },
+                field("token", "secret"),
+            ],
         )
     }
 
@@ -156,6 +159,26 @@ impl Integration for Hubspot {
                 return Err(format!("hubspot integration has no tool {tool}"));
             };
             search(object, &base_url(_config), &token, &args).await
+        })
+    }
+
+    /// A one-result contacts search: cheapest authenticated HubSpot call.
+    fn test_connection<'a>(
+        &'a self,
+        config: &'a serde_json::Value,
+        secrets: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let token = secret(secrets, "token")
+                .ok_or("hubspot secret 'token' is not stored")?;
+            probe(
+                reqwest::Client::new()
+                    .get(format!("{}/crm/v3/objects/contacts", base_url(config)))
+                    .bearer_auth(token)
+                    .query(&[("limit", "1")]),
+                "hubspot",
+            )
+            .await
         })
     }
 }

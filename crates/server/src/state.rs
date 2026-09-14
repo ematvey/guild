@@ -91,13 +91,21 @@ impl AppState {
         }
     }
 
-    /// Lazily connects to Postgres on first use; shared thereafter.
+    /// Lazily connects to Postgres on first use; shared thereafter. The
+    /// legacy-secret migration runs once with the store.
     pub async fn store(&self) -> Result<Arc<Store>, ApiError> {
         self.db
             .get_or_try_init(|| async {
                 let s = Store::connect(&self.config.database_url)
                     .await
                     .map_err(ApiError::from)?;
+                if let Ok(master) = self.config.master_key() {
+                    if let Err(e) =
+                        crate::integrations::migrate_legacy_credential_secrets(&s, &master).await
+                    {
+                        tracing::warn!("legacy credential-secret migration failed: {e:?}");
+                    }
+                }
                 Ok(Arc::new(s))
             })
             .await

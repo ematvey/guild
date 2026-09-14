@@ -2,7 +2,7 @@
 //! `https://gitlab.com/api/v4` (self-hosted instances). Secret: `token` —
 //! sent as the `PRIVATE-TOKEN` header.
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
@@ -94,7 +94,7 @@ impl Integration for Gitlab {
             "gitlab",
             "1.0.0",
             "GitLab projects, issues, and merge requests",
-            &["token"],
+            &[],
             &[
                 ("list_projects", "read"),
                 ("list_issues", "read"),
@@ -102,11 +102,14 @@ impl Integration for Gitlab {
                 ("create_issue", "write"),
                 ("api", "write"),
             ],
-            &[guild_core::registry::FieldSpec {
-                default: Some(serde_json::json!("https://gitlab.com")),
-                help: Some("Override for self-hosted GitLab".into()),
-                ..field("base_url", "string")
-            }],
+            &[
+                guild_core::registry::FieldSpec {
+                    default: Some(serde_json::json!("https://gitlab.com")),
+                    help: Some("Override for self-hosted GitLab".into()),
+                    ..field("base_url", "string")
+                },
+                field("token", "secret"),
+            ],
         )
     }
 
@@ -313,6 +316,22 @@ impl Integration for Gitlab {
                 }
                 other => Err(format!("gitlab integration has no tool {other}")),
             }
+        })
+    }
+
+    /// The authenticated user: cheapest credential check GitLab offers.
+    fn test_connection<'a>(
+        &'a self,
+        config: &'a serde_json::Value,
+        secrets: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let token = token(secrets)?;
+            probe(
+                request(base_url(config).as_str(), token.as_str(), "/api/v4/user"),
+                "gitlab",
+            )
+            .await
         })
     }
 }

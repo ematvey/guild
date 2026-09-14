@@ -7,9 +7,12 @@
 //! manifest; secret values ride into `execute` per call and never reach
 //! logs or results.
 
-use crate::integrations::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
-use guild_core::registry::BundleManifest;
+use crate::integrations::{
+    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
+    ToolOutcome,
+};
 use futures::future::BoxFuture;
+use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
 
 const SLACK_API: &str = "https://slack.com/api";
@@ -46,6 +49,44 @@ fn cursor(args: &serde_json::Value) -> Option<String> {
 /// Limit argument, clamped to Slack's max page size of 200.
 fn limit(args: &serde_json::Value) -> u32 {
     args["limit"].as_u64().unwrap_or(200).clamp(1, 200) as u32
+}
+
+/// Whether a Slack API error string is the not-a-member case, where a
+/// public-channel join can still make the call succeed.
+fn needs_join(err: &str) -> bool {
+    err.contains("slack api error: not_in_channel")
+}
+
+/// Sends one Web API POST with a JSON body and maps Slack's envelope: non-2xx
+/// is an HTTP error, `"ok": false` carries Slack's own error string.
+async fn api_post(
+    base: &str,
+    bot_token: &str,
+    endpoint: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/{endpoint}"))
+        .bearer_auth(bot_token)
+        .json(body)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("slack unreachable: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("slack returned {}", resp.status()));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("slack returned bad json: {e}"))?;
+    if body["ok"] != true {
+        return Err(format!(
+            "slack api error: {}",
+            body["error"].as_str().unwrap_or("unknown")
+        ));
+    }
+    Ok(body)
 }
 
 /// Sends one Web API GET and maps Slack's envelope: non-2xx is an HTTP
@@ -109,7 +150,7 @@ impl Integration for Slack {
             "slack",
             "1.0.0",
             "Slack: list channels and users, read channel history, post messages",
-            &["bot_token"],
+            &[],
             &[
                 ("conversations_list", "read"),
                 ("conversations_history", "read"),
@@ -117,11 +158,14 @@ impl Integration for Slack {
                 ("post_message", "write"),
                 ("api", "write"),
             ],
-            &[guild_core::registry::FieldSpec {
-                default: Some(serde_json::json!("https://slack.com/api")),
-                help: Some("Override only for a Slack API proxy".into()),
-                ..field("base_url", "string")
-            }],
+            &[
+                guild_core::registry::FieldSpec {
+                    default: Some(serde_json::json!("https://slack.com/api")),
+                    help: Some("Override only for a Slack API proxy".into()),
+                    ..field("base_url", "string")
+                },
+                field("bot_token", "secret"),
+            ],
         )
     }
 
@@ -194,10 +238,7 @@ impl Integration for Slack {
                     let token = secret(secrets, "bot_token")?;
                     let mut query = vec![
                         ("limit", limit(&args).to_string()),
-                        (
-                            "types",
-                            "public_channel,private_channel".to_string(),
-                        ),
+                        ("types", "public_channel,private_channel".to_string()),
                     ];
                     if let Some(c) = cursor(&args) {
                         query.push(("cursor", c));
@@ -212,6 +253,7 @@ impl Integration for Slack {
                                         "id": c["id"],
                                         "name": c["name"],
                                         "is_private": c["is_private"],
+                                        "is_member": c["is_member"],
                                         "topic": c["topic"]["value"],
                                     })
                                 })
@@ -233,13 +275,41 @@ impl Integration for Slack {
                         .ok_or("conversations_history requires channel")?
                         .to_string();
                     let mut query = vec![
-                        ("channel", channel),
+                        ("channel", channel.clone()),
                         ("limit", limit(&args).to_string()),
                     ];
                     if let Some(c) = cursor(&args) {
                         query.push(("cursor", c));
                     }
-                    let body = api_get(&base, token, "conversations.history", &query).await?;
+                    // The bot can enumerate public channels it has not joined
+                    // (conversations.list shows them workspace-wide), but
+                    // conversations.history requires membership. On
+                    // not_in_channel, self-join the public channel and retry
+                    // once — the join is visible in the workspace (the bot
+                    // appears in the member list).
+                    let body = match api_get(&base, token, "conversations.history", &query).await {
+                        Ok(body) => body,
+                        Err(e) if needs_join(&e) => {
+                            let joined = api_post(
+                                &base,
+                                token,
+                                "conversations.join",
+                                &serde_json::json!({ "channel": channel }),
+                            )
+                            .await;
+                            match joined {
+                                Ok(_) => api_get(&base, token, "conversations.history", &query)
+                                    .await
+                                    .map_err(|retry_err| {
+                                        format!("{e} (joined, retry failed: {retry_err})")
+                                    })?,
+                                Err(join_err) => {
+                                    return Err(format!("{e} (join attempt failed: {join_err})"))
+                                }
+                            }
+                        }
+                        Err(e) => return Err(e),
+                    };
                     let messages: Vec<serde_json::Value> = body["messages"]
                         .as_array()
                         .map(|a| {
@@ -299,27 +369,13 @@ impl Integration for Slack {
                         .as_str()
                         .ok_or("post_message requires channel")?;
                     let text = args["text"].as_str().ok_or("post_message requires text")?;
-                    let resp = reqwest::Client::new()
-                        .post(format!("{base}/chat.postMessage"))
-                        .bearer_auth(token)
-                        .json(&serde_json::json!({ "channel": channel, "text": text }))
-                        .timeout(std::time::Duration::from_secs(30))
-                        .send()
-                        .await
-                        .map_err(|e| format!("slack unreachable: {e}"))?;
-                    if !resp.status().is_success() {
-                        return Err(format!("slack returned {}", resp.status()));
-                    }
-                    let body: serde_json::Value = resp
-                        .json()
-                        .await
-                        .map_err(|e| format!("slack returned bad json: {e}"))?;
-                    if body["ok"] != true {
-                        return Err(format!(
-                            "slack api error: {}",
-                            body["error"].as_str().unwrap_or("unknown")
-                        ));
-                    }
+                    let body = api_post(
+                        &base,
+                        token,
+                        "chat.postMessage",
+                        &serde_json::json!({ "channel": channel, "text": text }),
+                    )
+                    .await?;
                     Ok(ToolOutcome {
                         content: json_text(&serde_json::json!({
                             "channel": body["channel"],
@@ -331,5 +387,40 @@ impl Integration for Slack {
                 other => Err(format!("slack integration has no tool {other}")),
             }
         })
+    }
+
+    /// Slack's own credential echo: auth.test validates the bot token
+    /// without touching workspace data.
+    fn test_connection<'a>(
+        &'a self,
+        config: &'a serde_json::Value,
+        secrets: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let base = base_url(config)?;
+            let token = secret(secrets, "bot_token")?;
+            probe(
+                reqwest::Client::new()
+                    .post(format!("{base}/auth.test"))
+                    .bearer_auth(token),
+                "slack",
+            )
+            .await
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_join;
+
+    #[test]
+    fn join_needed_only_for_not_in_channel() {
+        assert!(needs_join("slack api error: not_in_channel"));
+        assert!(!needs_join(
+            "web tool failed: slack api error: channel_not_found"
+        ));
+        assert!(!needs_join("slack returned 429 Too Many Requests"));
+        assert!(!needs_join("slack unreachable: timeout"));
     }
 }

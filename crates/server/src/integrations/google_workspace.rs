@@ -190,15 +190,23 @@ async fn access_token(
 }
 
 /// Access token for the call's acting identity: `acting_as` (the caller's
-/// mapped email or an admin override) when present, else the `admin_email`
-/// secret — the domain-wide delegation default subject.
+/// mapped email or an admin override) when present, else the default
+/// subject: the `admin_email` setting; the legacy secret-named row of
+/// pre-schema deployments is the fallback.
+fn admin_email(config: &serde_json::Value, secrets: &[(String, String)]) -> Result<String, String> {
+    if let Some(email) = config["admin_email"].as_str() {
+        return Ok(email.to_string());
+    }
+    secret(secrets, "admin_email")
+}
+
 async fn access_token_for(
     connector: &GoogleWorkspace,
     config: &serde_json::Value,
     secrets: &[(String, String)],
     acting_as: Option<&str>,
 ) -> Result<String, String> {
-    let admin_email = secret(secrets, "admin_email")?;
+    let admin_email = admin_email(config, secrets)?;
     let sub = acting_identity(acting_as, &admin_email);
     access_token(connector, config, secrets, &sub).await
 }
@@ -462,7 +470,7 @@ async fn directory_users(
 ) -> Result<ToolOutcome, String> {
     // Default domain: the admin_email's own domain (domain-wide delegation
     // is scoped to the service account's workspace).
-    let admin = secret(secrets, "admin_email").unwrap_or_default();
+    let admin = admin_email(config, secrets).unwrap_or_default();
     let default_domain = admin.rsplit('@').next().unwrap_or_default();
     let domain = args["domain"]
         .as_str()
@@ -532,7 +540,7 @@ impl Integration for GoogleWorkspace {
             "google_workspace",
             "1.0.0",
             "Read-only Google Workspace tools: Gmail, Calendar, Drive, Admin Directory",
-            &["service_account_json", "admin_email"],
+            &[],
             &[
                 ("gmail_search", "read"),
                 ("gmail_get_message", "read"),
@@ -552,6 +560,15 @@ impl Integration for GoogleWorkspace {
                     help: Some("Override only for a Google API proxy".into()),
                     ..field("token_url", "string")
                 },
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    help: Some(
+                        "workspace admin the service account acts as by default".into(),
+                    ),
+                    placeholder: Some("admin@yourorg.com".into()),
+                    ..field("admin_email", "string")
+                },
+                field("service_account_json", "secret"),
             ],
         );
         if let Some(auth) = manifest.auth.as_mut() {
@@ -675,6 +692,21 @@ impl Integration for GoogleWorkspace {
                 }
                 other => Err(format!("google_workspace integration has no tool {other}")),
             }
+        })
+    }
+
+    /// The token exchange IS the test: it signs the service-account JWT and
+    /// impersonates the admin — every credential in the chain is exercised.
+    fn test_connection<'a>(
+        &'a self,
+        config: &'a serde_json::Value,
+        secrets: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let admin_email = admin_email(config, secrets)?;
+            access_token(self, config, secrets, &admin_email)
+                .await
+                .map(|_| ())
         })
     }
 }

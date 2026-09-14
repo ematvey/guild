@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use guild_core::registry::BundleManifest;
@@ -10,7 +12,7 @@ fn sha256_hex(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
-fn v2_bundle(slug: &str, version: &str) -> Vec<u8> {
+fn v2_bundle(slug: &str, version: &str, mcp_url: &str) -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!(
         "guild-policy-bundle-{slug}-{version}-{}",
         std::process::id()
@@ -23,7 +25,7 @@ fn v2_bundle(slug: &str, version: &str) -> Vec<u8> {
         version: version.into(),
         description: "HubSpot CRM tools".into(),
         mcp: Some(guild_core::registry::McpManifest {
-            url: "https://mcp.example.com/mcp".into(),
+            url: mcp_url.into(),
         }),
         auth: Some(guild_core::registry::AuthManifest {
             kind: "org_secret".into(),
@@ -48,8 +50,9 @@ async fn publish_and_install(
     slug: &str,
     version: &str,
     install: bool,
+    mcp_url: &str,
 ) -> StatusCode {
-    let bundle = v2_bundle(slug, version);
+    let bundle = v2_bundle(slug, version, mcp_url);
     let bundle_sha = sha256_hex(&bundle);
     let res = app
         .clone()
@@ -192,7 +195,8 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
     let app = guild_server::build_router(fs.state.clone());
     let token = fs.token.clone();
 
-    let status = publish_and_install(&app, &token, "hubspot", "1.0.0", true).await;
+    let mcp_url = common::spawn_fixture().await;
+    let status = publish_and_install(&app, &token, "hubspot", "1.0.0", true, &mcp_url).await;
     assert_eq!(status, StatusCode::OK);
     let id = hubspot_row(&get_json(&app, "/api/v1/admin/integrations", &token).await)["id"]
         .as_str()
@@ -242,17 +246,18 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
         body["error"]["message"]
     );
 
-    // store the secret, then enabling succeeds
-    let (status, _) = put_json(
+    // saving with the credential value rides the unified PUT; the save
+    // runs a tools/list handshake against the fixture MCP server first.
+    let (status, body) = put_json(
         &app,
-        &format!("/api/v1/admin/integrations/{id}/secrets"),
+        &format!("/api/v1/admin/integrations/{id}"),
         &token,
-        json!({"name": "api_key", "value": "sk-live-123"}),
+        json!({"enabled": true, "secrets": {"api_key": "sk-live-123"}}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{body}");
 
-    // listing exposes names + updated_at only, never values
+    // listing exposes names + masked previews, never values
     let v = get_json(&app, &format!("/api/v1/admin/integrations/{id}/secrets"), &token).await;
     let items = v["secrets"].as_array().expect("secrets list");
     assert_eq!(items.len(), 1);
@@ -261,6 +266,18 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
     assert!(items[0].get("value").is_none());
     assert!(!v.to_string().contains("sk-live-123"));
 
+    let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
+    assert_eq!(hubspot_row(&v)["enabled"], true);
+
+    // a save that does not re-enter the credential keeps it (CRUD update)
+    let (status, _) = put_json(
+        &app,
+        &format!("/api/v1/admin/integrations/{id}"),
+        &token,
+        json!({"enabled": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     let (status, _) = put_json(
         &app,
         &format!("/api/v1/admin/integrations/{id}"),
@@ -271,23 +288,6 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
     assert_eq!(status, StatusCode::OK);
     let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
     assert_eq!(hubspot_row(&v)["enabled"], true);
-
-    // deleting the declared secret auto-disables the row
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/admin/integrations/{id}/secrets/api_key"))
-                .header("authorization", format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
-    assert_eq!(hubspot_row(&v)["enabled"], false);
 }
 
 #[tokio::test]
@@ -297,7 +297,7 @@ async fn available_lists_unconfigured_v2_plugins() {
     let token = fs.token.clone();
 
     // approved v2 item, not installed → shows up in available as mcp
-    let status = publish_and_install(&app, &token, "freshdesk", "1.0.0", false).await;
+    let status = publish_and_install(&app, &token, "freshdesk", "1.0.0", false, "https://mcp.example.com/mcp").await;
     assert_eq!(status, StatusCode::OK);
     let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
     let available = v["available"].as_array().expect("available list");
@@ -308,7 +308,7 @@ async fn available_lists_unconfigured_v2_plugins() {
     assert_eq!(entry["category"], "mcp");
 
     // installed (configured) plugins do not appear in available
-    let status = publish_and_install(&app, &token, "hubspot", "1.0.0", true).await;
+    let status = publish_and_install(&app, &token, "hubspot", "1.0.0", true, "https://mcp.example.com/mcp").await;
     assert_eq!(status, StatusCode::OK);
     let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
     let available = v["available"].as_array().expect("available list");
@@ -324,7 +324,7 @@ async fn create_configures_an_available_connector() {
     let app = guild_server::build_router(fs.state.clone());
     let token = fs.token.clone();
 
-    let status = publish_and_install(&app, &token, "freshdesk", "1.0.0", false).await;
+    let status = publish_and_install(&app, &token, "freshdesk", "1.0.0", false, "https://mcp.example.com/mcp").await;
     assert_eq!(status, StatusCode::OK);
 
     // Creating the configuration returns the row with its id; the id is

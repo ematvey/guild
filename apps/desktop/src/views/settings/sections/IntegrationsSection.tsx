@@ -10,7 +10,7 @@ import { useMemo, useState, useEffect } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
-import { KeyRound, Plug, Plus, Trash2, Webhook } from "lucide-react";
+import { Plug, Plus, Trash2, Webhook } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../admin-api";
 import { Button } from "@guild/ui/components/button";
@@ -510,20 +510,56 @@ function IntegrationDetail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmSecret, setConfirmSecret] = useState<string | null>(null);
+  // New credential values keyed by field name; empty/absent = unchanged.
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
+  // Secret fields are grayed-out until the admin explicitly unlocks them.
+  const [unlocked, setUnlocked] = useState<Record<string, boolean>>({});
 
   const secretsPath = `/api/v1/admin/integrations/${id}/secrets`;
   const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(secretsPath);
   const secrets = secretsRes.data?.secrets ?? null;
-  const reloadSecrets = secretsRes.reload;
 
   const dirty =
     enabled !== initial.enabled ||
     JSON.stringify(draft) !== JSON.stringify(initial.draft) ||
     (isMcp && mcpUrl !== initial.mcpUrl) ||
     (isMcp && advancedText !== initial.advancedText) ||
-    (isMcp && JSON.stringify(policy) !== JSON.stringify(initial.policy));
+    (isMcp && JSON.stringify(policy) !== JSON.stringify(initial.policy)) ||
+    Object.values(secretDraft).some((v) => v !== "");
+
+  // Credential fields render inline in the same form, masked and
+  // grayed-out until explicitly unlocked. Legacy manifests declare them
+  // only in auth.secret_names — map those into the same widget shape.
+  const settingFields = fields.filter((f) => f.kind !== "secret");
+  const secretFields: {
+    name: string;
+    label: string;
+    widget: {
+      kind: "password" | "text" | "email" | "textarea";
+      placeholder?: string;
+    };
+    required: boolean;
+    help?: string | null;
+  }[] = [
+    ...fields
+      .filter((f) => f.kind === "secret")
+      .map((f) => ({
+        name: f.name,
+        label: f.label ?? secretWidget(f.name).label,
+        widget: secretWidget(f.name),
+        required: f.required ?? false,
+        help: f.help,
+      })),
+    ...secretNames
+      .filter((n) => !fields.some((f) => f.name === n))
+      .map((n) => ({
+        name: n,
+        label: secretWidget(n).label,
+        widget: secretWidget(n),
+        required: true,
+        help: null,
+      })),
+  ];
 
   const fail = (e: unknown, title: string) => {
     const msg = e instanceof Error ? e.message : String(e);
@@ -584,11 +620,17 @@ function IntegrationDetail({
     setError(null);
     try {
       const cfg = buildConfig();
+      const secretsPayload = Object.fromEntries(
+        Object.entries(secretDraft).filter(([, v]) => v !== ""),
+      );
       await api("PUT", `/api/v1/admin/integrations/${id}`, {
         config: cfg,
         enabled,
+        secrets: secretsPayload,
       });
       toast.success("Integration saved", { description: name });
+      setSecretDraft({});
+      setUnlocked({});
       onChanged();
     } catch (e) {
       fail(
@@ -597,47 +639,6 @@ function IntegrationDetail({
           : e,
         "Save failed",
       );
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveSecret = async (secretName: string) => {
-    const value = secretDraft[secretName];
-    if (busy || !value) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api("PUT", `/api/v1/admin/integrations/${id}/secrets`, {
-        name: secretName,
-        value,
-      });
-      toast.success("Secret saved", { description: secretName });
-      setSecretDraft((d) => ({ ...d, [secretName]: "" }));
-      reloadSecrets();
-      onChanged();
-    } catch (e) {
-      fail(e, "Could not save secret");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const deleteSecret = async (secret: string) => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api(
-        "DELETE",
-        `/api/v1/admin/integrations/${id}/secrets/${encodeURIComponent(secret)}`,
-      );
-      toast.success("Secret deleted", { description: secret });
-      setConfirmSecret(null);
-      onChanged();
-      reloadSecrets();
-    } catch (e) {
-      fail(e, "Could not delete secret");
     } finally {
       setBusy(false);
     }
@@ -654,15 +655,6 @@ function IntegrationDetail({
       setBusy(false);
     }
   };
-
-  const storedFor = (secretName: string) =>
-    secrets?.find((s) => s.name === secretName) ?? null;
-  // Additional stored secrets the manifest does not declare (legacy or
-  // custom names an admin added before the schema existed).
-  const additional = (secrets ?? []).filter(
-    (s) => !secretNames.includes(s.name),
-  );
-  const showSecrets = secretNames.length > 0 || additional.length > 0;
 
   return (
     <div className="space-y-5">
@@ -715,7 +707,7 @@ function IntegrationDetail({
       </div>
 
       {/* Settings: the manifest-declared fields, edited in place. */}
-      {fields.map((f) => (
+      {settingFields.map((f) => (
         <Field
           key={f.name}
           label={`${fieldLabel(f)}${f.required ? " *" : ""}`}
@@ -762,6 +754,99 @@ function IntegrationDetail({
           )}
         </Field>
       ))}
+
+      {secretFields.map((sf) => {
+        const stored = secrets?.find((x) => x.name === sf.name) ?? null;
+        const isUnlocked = unlocked[sf.name] ?? false;
+        const value = secretDraft[sf.name] ?? "";
+        const hint = isUnlocked
+          ? "Enter a new value — an empty field keeps the stored one."
+          : stored
+            ? `Stored ${stored.masked || "••••"} · updated ${new Date(stored.updated_at).toLocaleString()}`
+            : "Not stored yet";
+        return (
+          <Field
+            key={sf.name}
+            label={`${sf.label}${sf.required ? " *" : ""}`}
+            hint={hint}
+          >
+            <div className="flex items-center gap-2">
+              {isUnlocked ? (
+                <>
+                  {sf.widget.kind === "textarea" ? (
+                    <Textarea
+                      className="min-h-20 max-w-xl font-mono text-xs"
+                      spellCheck={false}
+                      placeholder={sf.widget.placeholder}
+                      value={value}
+                      onChange={(e) =>
+                        setSecretDraft((d) => ({
+                          ...d,
+                          [sf.name]: e.target.value,
+                        }))
+                      }
+                    />
+                  ) : (
+                    <Input
+                      className="max-w-sm font-mono text-xs"
+                      type={sf.widget.kind === "text" ? "text" : "password"}
+                      spellCheck={false}
+                      placeholder={sf.widget.placeholder ?? "new value"}
+                      value={value}
+                      onChange={(e) =>
+                        setSecretDraft((d) => ({
+                          ...d,
+                          [sf.name]: e.target.value,
+                        }))
+                      }
+                    />
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 text-muted-foreground"
+                    onClick={() => {
+                      setUnlocked((u) => ({ ...u, [sf.name]: false }));
+                      setSecretDraft((d) => ({ ...d, [sf.name]: "" }));
+                    }}
+                  >
+                    Keep current
+                  </Button>
+                </>
+              ) : stored ? (
+                <>
+                  <Input
+                    disabled
+                    className="max-w-sm font-mono text-xs text-muted-foreground"
+                    value={stored.masked || "••••"}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    onClick={() =>
+                      setUnlocked((u) => ({ ...u, [sf.name]: true }))
+                    }
+                  >
+                    Edit
+                  </Button>
+                </>
+              ) : (
+                <Input
+                  className="max-w-sm font-mono text-xs"
+                  type={sf.widget.kind === "text" ? "text" : "password"}
+                  spellCheck={false}
+                  placeholder={sf.widget.placeholder ?? "required"}
+                  value={value}
+                  onChange={(e) =>
+                    setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))
+                  }
+                />
+              )}
+            </div>
+          </Field>
+        );
+      })}
 
       {isMcp && (
         <>
@@ -824,120 +909,6 @@ function IntegrationDetail({
         </>
       )}
 
-      {/* Secrets: one purposeful widget per declared credential; the pane
-          only exists when the integration actually uses secrets. */}
-      {showSecrets && (
-        <div className="rounded-lg border border-border bg-card p-4">
-          <div className="flex items-center gap-1.5">
-            <KeyRound className="size-3.5 text-muted-foreground" />
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Credentials
-            </p>
-          </div>
-          {secrets === null ? (
-            <Skeleton className="mt-3 h-8 w-56" />
-          ) : (
-            <div className="mt-3 space-y-4">
-              {secretNames.map((secretName) => {
-                const stored = storedFor(secretName);
-                const w = secretWidget(secretName);
-                const value = secretDraft[secretName] ?? "";
-                return (
-                  <Field
-                    key={secretName}
-                    label={w.label}
-                    hint={
-                      stored
-                        ? `Stored ${stored.masked || "••••"} · updated ${new Date(stored.updated_at).toLocaleString()} — enter a new value to replace it`
-                        : "Not stored yet"
-                    }
-                  >
-                    <div className="flex items-start gap-2">
-                      {w.kind === "textarea" ? (
-                        <Textarea
-                          className="min-h-20 font-mono text-xs"
-                          spellCheck={false}
-                          placeholder={w.placeholder}
-                          value={value}
-                          onChange={(e) =>
-                            setSecretDraft((d) => ({
-                              ...d,
-                              [secretName]: e.target.value,
-                            }))
-                          }
-                        />
-                      ) : (
-                        <Input
-                          className="max-w-sm font-mono text-xs"
-                          type={w.kind === "password" ? "password" : w.kind}
-                          spellCheck={false}
-                          placeholder={
-                            w.placeholder ??
-                            (stored
-                              ? "enter a new value to replace"
-                              : undefined)
-                          }
-                          value={value}
-                          onChange={(e) =>
-                            setSecretDraft((d) => ({
-                              ...d,
-                              [secretName]: e.target.value,
-                            }))
-                          }
-                        />
-                      )}
-                      <Button
-                        size="sm"
-                        className="h-8"
-                        disabled={busy || !value}
-                        onClick={() => saveSecret(secretName)}
-                      >
-                        Set
-                      </Button>
-                      {stored && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-8 text-muted-foreground hover:text-destructive"
-                          disabled={busy}
-                          title="Delete stored value"
-                          onClick={() => setConfirmSecret(secretName)}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  </Field>
-                );
-              })}
-              {additional.map((s) => (
-                <Field
-                  key={s.name}
-                  label={secretWidget(s.name).label}
-                  hint={`Stored ${s.masked || "••••"} · updated ${new Date(s.updated_at).toLocaleString()}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {s.name}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="ml-auto h-8 text-muted-foreground hover:text-destructive"
-                      disabled={busy}
-                      title="Delete stored value"
-                      onClick={() => setConfirmSecret(s.name)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </div>
-                </Field>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
@@ -957,31 +928,6 @@ function IntegrationDetail({
               onClick={remove}
             >
               {busy ? "Removing…" : "Remove configuration"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={confirmSecret !== null}
-        onOpenChange={(open) => !open && setConfirmSecret(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete secret?</AlertDialogTitle>
-            <AlertDialogDescription>
-              “{confirmSecret && secretWidget(confirmSecret).label}” is removed;
-              calls that need it start failing. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={busy}
-              onClick={() => confirmSecret && deleteSecret(confirmSecret)}
-            >
-              {busy ? "Deleting…" : "Delete secret"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

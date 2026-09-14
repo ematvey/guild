@@ -44,7 +44,7 @@ pub struct McpManifest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FieldSpec {
     pub name: String,
-    /// string | text | number | boolean
+    /// string | text | number | boolean | secret
     pub kind: String,
     #[serde(default)]
     pub label: Option<String>,
@@ -58,16 +58,28 @@ pub struct FieldSpec {
     pub placeholder: Option<String>,
 }
 
-/// Typed settings schema for an integration: non-secret config fields.
-/// Credentials are declared separately in `auth.secret_names` and managed
-/// through the write-only secret store.
+/// Typed settings schema for an integration: its configuration fields —
+/// plain settings and credential (`secret`) fields alike. Credentials are
+/// stored encrypted and rendered masked; a manifest declares them exactly
+/// once, there is no free-form secret add.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SettingsManifest {
     #[serde(default)]
     pub fields: Vec<FieldSpec>,
 }
 
-pub const FIELD_KINDS: [&str; 4] = ["string", "text", "number", "boolean"];
+pub const FIELD_KINDS: [&str; 5] = ["string", "text", "number", "boolean", "secret"];
+
+impl SettingsManifest {
+    /// The credential field names: fields of kind `secret`.
+    pub fn secret_names(&self) -> Vec<String> {
+        self.fields
+            .iter()
+            .filter(|f| f.kind == "secret")
+            .map(|f| f.name.clone())
+            .collect()
+    }
+}
 
 /// Auth shape: one org-wide secret, an impersonated org credential, or a
 /// per-member OAuth token cached by Guild.

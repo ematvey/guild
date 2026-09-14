@@ -1777,6 +1777,7 @@ impl ChatRunner {
                         format!("{step}.{idx}"),
                         req.org_id,
                         req.user_id,
+                        req.chat_id,
                         &plugin_turns,
                         &mcp_caller_role,
                         Some(mcp_caller_email.as_str()),
@@ -2037,99 +2038,22 @@ impl ChatRunner {
 }
 
 
-/// One machine-tool call: resolve the bound executor machine (fail fast when
-/// unbound/offline), notify attached clients, durably wait for the machine's
-/// result (bounded), report completion. Returns the tool result payload for
-/// the model-facing history and the tool_result event (content, is_error,
-/// meta).
+/// The approval gate (phase 2, design §C) — shared by client-side and
+/// server-side tool steps. Reads the chat owner's policy, applies it over
+/// `tool_default`, and on Ask runs the journaled request → durable awakeable
+/// wait → journaled decision flow (user decision or auto-deny timer).
+/// Returns Some(denial payload) when the call must not run, None when it may
+/// proceed. The denial payload is a normal tool_result (is_error) so callers
+/// persist it unchanged.
 #[allow(clippy::too_many_arguments)]
-async fn client_tool_step(
+async fn approval_gate(
     ctx: &ObjectContext<'_>,
     state: &AppState,
     tx: &broadcast::Sender<StreamEvent>,
-    org_id: Uuid,
     chat_id: Uuid,
     call: &ToolCall,
-    _seq: String,
-    machine_id: Option<String>,
-    machine_label: Option<String>,
-    origin_machine_id: Option<String>,
-) -> HandlerResult<ToolResultPayload> {
-    // Resolve the executor machine. Journaled ctx.run snapshots: the result
-    // replays deterministically even if the in-memory registry changes
-    // between execution and replay (e.g. worker restart).
-    let bound: Option<(String, String)> = ctx
-        .run({
-            let state = state.clone();
-            move || {
-                let state = state.clone();
-                async move {
-                    if let Some(mid) = machine_id {
-                        let label = machine_label.unwrap_or_else(|| {
-                            state.machine_label(&mid).unwrap_or_else(|| mid.clone())
-                        });
-                        Ok(Json(Some((mid, label))))
-                    } else if let Some(omid) = origin_machine_id {
-                        // Auto-bind chats sent from a desktop to that
-                        // desktop's machine (idempotent persist).
-                        if state.machine_connected(&omid) {
-                            let label = state
-                                .machine_label(&omid)
-                                .unwrap_or_else(|| omid.clone());
-                            if let Ok(store) = state.store().await {
-                                let _ = store
-                                    .chats()
-                                    .set_machine(org_id, chat_id, Some(&omid), Some(&label))
-                                    .await;
-                            }
-                            Ok(Json(Some((omid, label))))
-                        } else {
-                            Ok(Json(None))
-                        }
-                    } else {
-                        Ok(Json(None))
-                    }
-                }
-            }
-        })
-        .await?
-        .into_inner();
-    let Some((mid, mlabel)) = bound else {
-        return Ok(ToolResultPayload {
-            content:
-                "client tool not executed: this chat is not bound to a machine — bind it in the chat settings, or send the message from the Guild desktop app on the target machine"
-                    .to_string(),
-            is_error: false,
-            meta: None,
-            images: Vec::new(),
-        });
-    };
-    // Fail fast when the bound machine is offline (journaled snapshot).
-    let online: bool = ctx
-        .run({
-            let state = state.clone();
-            let mid = mid.clone();
-            move || {
-                let state = state.clone();
-                let mid = mid.clone();
-                async move { Ok(Json(state.machine_connected(&mid))) }
-            }
-        })
-        .await?
-        .into_inner();
-    if !online {
-        return Ok(ToolResultPayload {
-            content: format!(
-                "client tool not executed: the bound machine '{mlabel}' is offline — start the Guild desktop app on it, then ask again"
-            ),
-            is_error: false,
-            meta: None,
-            images: Vec::new(),
-        });
-    }
-
-    // ---- Approval gate (phase 2, design §C). Journaled snapshot of the
-    // chat's stored approval policy; NULL (or an unreadable column) falls
+    tool_default: Approval,
+) -> HandlerResult<Option<ToolResultPayload>> {
     // The chat owner's approval policy (user-scoped since migration 0026 —
     // one policy across all of the user's chats). Read directly via sqlx on
     // the store pool — one column, no store method needed.
@@ -2164,16 +2088,14 @@ async fn client_tool_step(
         })
         .await?
         .into_inner();
-    match resolve_policy(stored_policy).for_tool(&call.name, Approval::Ask) {
+    match resolve_policy(stored_policy).for_tool(&call.name, tool_default) {
         Approval::Never => {
-            // Denied without any approval events; the caller appends the
-            // tool_result event from this payload.
-            return Ok(ToolResultPayload {
+            return Ok(Some(ToolResultPayload {
                 content: "denied by policy".to_string(),
                 is_error: true,
                 meta: None,
                 images: Vec::new(),
-            });
+            }));
         }
         Approval::Allow => {}
         Approval::Ask => {
@@ -2293,7 +2215,7 @@ async fn client_tool_step(
             .await?;
 
             if !decision.approved {
-                return Ok(ToolResultPayload {
+                return Ok(Some(ToolResultPayload {
                     content: match decision.reason.as_deref() {
                         Some(r) if !r.is_empty() => format!("denied by user: {r}"),
                         _ => "denied by user".to_string(),
@@ -2301,10 +2223,109 @@ async fn client_tool_step(
                     is_error: true,
                     meta: None,
                     images: Vec::new(),
-                });
+                }));
             }
-            // Approved: fall through to the ToolStarted/suspend flow.
+            // Approved: fall through to the caller's execution flow.
         }
+    }
+    Ok(None)
+}
+
+/// One machine-tool call: resolve the bound executor machine (fail fast when
+/// unbound/offline), notify attached clients, durably wait for the machine's
+/// result (bounded), report completion. Returns the tool result payload for
+/// the model-facing history and the tool_result event (content, is_error,
+/// meta).
+#[allow(clippy::too_many_arguments)]
+async fn client_tool_step(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    tx: &broadcast::Sender<StreamEvent>,
+    org_id: Uuid,
+    chat_id: Uuid,
+    call: &ToolCall,
+    _seq: String,
+    machine_id: Option<String>,
+    machine_label: Option<String>,
+    origin_machine_id: Option<String>,
+) -> HandlerResult<ToolResultPayload> {
+    // Resolve the executor machine. Journaled ctx.run snapshots: the result
+    // replays deterministically even if the in-memory registry changes
+    // between execution and replay (e.g. worker restart).
+    let bound: Option<(String, String)> = ctx
+        .run({
+            let state = state.clone();
+            move || {
+                let state = state.clone();
+                async move {
+                    if let Some(mid) = machine_id {
+                        let label = machine_label.unwrap_or_else(|| {
+                            state.machine_label(&mid).unwrap_or_else(|| mid.clone())
+                        });
+                        Ok(Json(Some((mid, label))))
+                    } else if let Some(omid) = origin_machine_id {
+                        // Auto-bind chats sent from a desktop to that
+                        // desktop's machine (idempotent persist).
+                        if state.machine_connected(&omid) {
+                            let label = state
+                                .machine_label(&omid)
+                                .unwrap_or_else(|| omid.clone());
+                            if let Ok(store) = state.store().await {
+                                let _ = store
+                                    .chats()
+                                    .set_machine(org_id, chat_id, Some(&omid), Some(&label))
+                                    .await;
+                            }
+                            Ok(Json(Some((omid, label))))
+                        } else {
+                            Ok(Json(None))
+                        }
+                    } else {
+                        Ok(Json(None))
+                    }
+                }
+            }
+        })
+        .await?
+        .into_inner();
+    let Some((mid, mlabel)) = bound else {
+        return Ok(ToolResultPayload {
+            content:
+                "client tool not executed: this chat is not bound to a machine — bind it in the chat settings, or send the message from the Guild desktop app on the target machine"
+                    .to_string(),
+            is_error: false,
+            meta: None,
+            images: Vec::new(),
+        });
+    };
+    // Fail fast when the bound machine is offline (journaled snapshot).
+    let online: bool = ctx
+        .run({
+            let state = state.clone();
+            let mid = mid.clone();
+            move || {
+                let state = state.clone();
+                let mid = mid.clone();
+                async move { Ok(Json(state.machine_connected(&mid))) }
+            }
+        })
+        .await?
+        .into_inner();
+    if !online {
+        return Ok(ToolResultPayload {
+            content: format!(
+                "client tool not executed: the bound machine '{mlabel}' is offline — start the Guild desktop app on it, then ask again"
+            ),
+            is_error: false,
+            meta: None,
+            images: Vec::new(),
+        });
+    }
+
+    // ---- Approval gate (phase 2, design §C). Journaled request/decision
+    // flow; denial is a normal tool_result payload the caller persists.
+    if let Some(denial) = approval_gate(ctx, state, tx, chat_id, call, Approval::Ask).await? {
+        return Ok(denial);
     }
 
     // Journaled awakeable: stable id across replays.
@@ -2428,10 +2449,26 @@ async fn server_tool_step(
     _seq: String,
     org_id: Uuid,
     caller_id: Uuid,
+    chat_id: Uuid,
     plugin_turns: &[integrations::PluginTurn],
     caller_role: &str,
     acting_as: Option<&str>,
 ) -> HandlerResult<(String, bool, Option<Value>)> {
+    // Approval gate for state-changing (write-class) server tools — Slack
+    // posts, integration writes, and MCP writes all ask; reads flow without
+    // a gate. Journaled: replay re-derives the same decision.
+    let write_class = plugin_turns.iter().any(|turn| {
+        turn.tools
+            .iter()
+            .any(|t| t.spec.name == call.name && t.class == "write")
+    });
+    if write_class {
+        if let Some(denial) =
+            approval_gate(ctx, state, tx, chat_id, call, Approval::Ask).await?
+        {
+            return Ok((denial.content, denial.is_error, denial.meta));
+        }
+    }
     // Journaled: notify attached clients.
     let args_json = serde_json::to_string(&call.arguments)
         .unwrap_or_else(|_| "{}".to_string());
