@@ -1081,7 +1081,7 @@ pub async fn resolve_plugins(state: &AppState, org: Uuid) -> anyhow::Result<Vec<
                 class: tool_class(&manifest, &t.name).to_string(),
             })
             .collect();
-        let guide_object_key = guide_object_key(&store, org, &manifest).await?;
+        let guide_object_key = guide_object_key(&store, org, &manifest).await;
         out.push(PluginTurn {
             executor: PluginExecutor::Mcp,
             slug: row.name.clone(),
@@ -1140,27 +1140,31 @@ async fn guide_object_key(
     store: &std::sync::Arc<crate::store::Store>,
     org: Uuid,
     manifest: &BundleManifest,
-) -> anyhow::Result<Option<String>> {
+) -> Option<String> {
     let Some(slug) = manifest.skills.first() else {
-        return Ok(None);
+        return None;
     };
-    let Some((version, bundle_sha256)) = store
+    // A store error is not unapproved content — the guide degrades to None
+    // so a transient store failure never fails plugin resolution for the
+    // whole turn. Approval gates below stay fail-closed.
+    let Ok(Some((version, bundle_sha256))) = store
         .registry()
         .approved_bundle(org, "skill", slug)
         .await
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?
     else {
-        return Ok(None);
+        return None;
     };
-    let stored = store
+    let Ok(stored) = store
         .registry()
         .get_version(org, "skill", slug, &version)
         .await
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    else {
+        return None;
+    };
     if stored.bundle_sha256.as_deref() != Some(bundle_sha256.as_str()) {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(stored.object_key))
+    Some(stored.object_key)
 }
 
 /// Executes one call against a resolved plugin: re-resolves the secrets
