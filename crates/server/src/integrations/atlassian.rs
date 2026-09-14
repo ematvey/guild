@@ -183,7 +183,10 @@ impl Integration for Atlassian {
                     help: Some("the account the API token belongs to".into()),
                     ..field("email", "string")
                 },
-                field("token", "secret"),
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    ..field("token", "secret")
+                },
             ],
         )
     }
@@ -277,7 +280,7 @@ impl Integration for Atlassian {
         _acting_as: Option<&'a str>,
     ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
         Box::pin(async move {
-            let creds = creds(config, secrets)?;;
+            let creds = creds(config, secrets)?;
             let client = reqwest::Client::new();
             if tool == "api" {
                 return call_vendor_api(

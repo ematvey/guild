@@ -164,7 +164,10 @@ impl Integration for Slack {
                     help: Some("Override only for a Slack API proxy".into()),
                     ..field("base_url", "string")
                 },
-                field("bot_token", "secret"),
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    ..field("bot_token", "secret")
+                },
             ],
         )
     }

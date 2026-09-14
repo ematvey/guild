@@ -512,8 +512,6 @@ function IntegrationDetail({
   const [confirmDelete, setConfirmDelete] = useState(false);
   // New credential values keyed by field name; empty/absent = unchanged.
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
-  // Secret fields are grayed-out until the admin explicitly unlocks them.
-  const [unlocked, setUnlocked] = useState<Record<string, boolean>>({});
 
   const secretsPath = `/api/v1/admin/integrations/${id}/secrets`;
   const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(secretsPath);
@@ -630,7 +628,6 @@ function IntegrationDetail({
       });
       toast.success("Integration saved", { description: name });
       setSecretDraft({});
-      setUnlocked({});
       onChanged();
     } catch (e) {
       fail(
@@ -757,93 +754,39 @@ function IntegrationDetail({
 
       {secretFields.map((sf) => {
         const stored = secrets?.find((x) => x.name === sf.name) ?? null;
-        const isUnlocked = unlocked[sf.name] ?? false;
         const value = secretDraft[sf.name] ?? "";
-        const hint = isUnlocked
-          ? "Enter a new value — an empty field keeps the stored one."
-          : stored
-            ? `Stored ${stored.masked || "••••"} · updated ${new Date(stored.updated_at).toLocaleString()}`
-            : "Not stored yet";
         return (
           <Field
             key={sf.name}
             label={`${sf.label}${sf.required ? " *" : ""}`}
-            hint={hint}
+            hint={
+              stored ? "Leave blank to keep the current one." : "Not stored yet"
+            }
           >
-            <div className="flex items-center gap-2">
-              {isUnlocked ? (
-                <>
-                  {sf.widget.kind === "textarea" ? (
-                    <Textarea
-                      className="min-h-20 max-w-xl font-mono text-xs"
-                      spellCheck={false}
-                      placeholder={sf.widget.placeholder}
-                      value={value}
-                      onChange={(e) =>
-                        setSecretDraft((d) => ({
-                          ...d,
-                          [sf.name]: e.target.value,
-                        }))
-                      }
-                    />
-                  ) : (
-                    <Input
-                      className="max-w-sm font-mono text-xs"
-                      type={sf.widget.kind === "text" ? "text" : "password"}
-                      spellCheck={false}
-                      placeholder={sf.widget.placeholder ?? "new value"}
-                      value={value}
-                      onChange={(e) =>
-                        setSecretDraft((d) => ({
-                          ...d,
-                          [sf.name]: e.target.value,
-                        }))
-                      }
-                    />
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 text-muted-foreground"
-                    onClick={() => {
-                      setUnlocked((u) => ({ ...u, [sf.name]: false }));
-                      setSecretDraft((d) => ({ ...d, [sf.name]: "" }));
-                    }}
-                  >
-                    Keep current
-                  </Button>
-                </>
-              ) : stored ? (
-                <>
-                  <Input
-                    disabled
-                    className="max-w-sm font-mono text-xs text-muted-foreground"
-                    value={stored.masked || "••••"}
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8"
-                    onClick={() =>
-                      setUnlocked((u) => ({ ...u, [sf.name]: true }))
-                    }
-                  >
-                    Edit
-                  </Button>
-                </>
-              ) : (
-                <Input
-                  className="max-w-sm font-mono text-xs"
-                  type={sf.widget.kind === "text" ? "text" : "password"}
-                  spellCheck={false}
-                  placeholder={sf.widget.placeholder ?? "required"}
-                  value={value}
-                  onChange={(e) =>
-                    setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))
-                  }
-                />
-              )}
-            </div>
+            {sf.widget.kind === "textarea" ? (
+              <Textarea
+                className="min-h-20 max-w-xl font-mono text-xs"
+                spellCheck={false}
+                placeholder={stored ? "••••••••" : sf.widget.placeholder}
+                value={value}
+                onChange={(e) =>
+                  setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))
+                }
+              />
+            ) : (
+              <Input
+                className="max-w-md font-mono text-xs"
+                type={sf.widget.kind === "text" ? "text" : "password"}
+                spellCheck={false}
+                placeholder={
+                  stored ? "••••••••" : (sf.widget.placeholder ?? "required")
+                }
+                value={value}
+                onChange={(e) =>
+                  setSecretDraft((d) => ({ ...d, [sf.name]: e.target.value }))
+                }
+              />
+            )}
           </Field>
         );
       })}
