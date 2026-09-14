@@ -58,6 +58,22 @@ impl<'a> IntegrationStore<'a> {
         .await?)
     }
 
+    /// The row for one connector slug (the slug is unique per org).
+    pub async fn get_by_name(
+        &self,
+        org_id: Uuid,
+        name: &str,
+    ) -> Result<Option<IntegrationRow>, ApiError> {
+        Ok(sqlx::query_as(
+            "SELECT id, org_id, name, config, enabled FROM integrations \
+             WHERE org_id = $1 AND name = $2",
+        )
+        .bind(org_id)
+        .bind(name)
+        .fetch_optional(self.pool)
+        .await?)
+    }
+
     /// Replaces config and enabled flag of one integration by id. Returns
     /// whether a row matched — a false result means the integration is gone.
     pub async fn update(

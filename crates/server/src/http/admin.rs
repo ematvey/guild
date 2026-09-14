@@ -40,11 +40,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/admin/integrations/{id}/secrets",
-            axum::routing::put(set_integration_secret).get(list_integration_secrets),
-        )
-        .route(
-            "/api/v1/admin/integrations/{id}/secrets/{secret}",
-            axum::routing::delete(delete_integration_secret),
+            axum::routing::get(list_integration_secrets),
         )
         .route(
             "/api/v1/admin/integrations/{id}",
@@ -217,8 +213,15 @@ async fn declared_secret_names(
         .unwrap_or(false)
         || row.config["mcp"]["url"].as_str().is_some();
     if v2_claimed {
+        let manifest = manifest.unwrap_or_default();
+        if let Some(settings) = manifest.settings {
+            let derived = settings.secret_names();
+            if !derived.is_empty() {
+                return Ok(derived);
+            }
+        }
         return Ok(manifest
-            .and_then(|m| m.auth)
+            .auth
             .map(|a| a.secret_names)
             .unwrap_or_default());
     }
@@ -348,7 +351,7 @@ async fn create_integration(
     if !known {
         return Err(ApiError::not_found(format!("unknown integration {name}")));
     }
-    save_integration(&store, admin.0.org_id, &name, None, &body).await?;
+    save_integration(&state, &store, admin.0.org_id, &name, None, &body).await?;
     let row = integration_row(&store, admin.0.org_id, &name).await?;
     Ok(Json(json!({
         "id": row.id,
@@ -371,8 +374,9 @@ async fn delete_integration(
     Ok(Json(json!({})))
 }
 
-/// Updates one integration by id: config and enabled flag, validated on
-/// save. The connector slug comes from the row.
+/// Updates one integration by id: config, enabled flag and newly entered
+/// credential values, validated and connection-tested before anything is
+/// persisted. The connector slug comes from the row.
 async fn update_integration(
     State(state): State<AppState>,
     admin: AdminUser,
@@ -385,25 +389,38 @@ async fn update_integration(
         .get(admin.0.org_id, id)
         .await?
         .ok_or_else(|| ApiError::not_found("unknown integration"))?;
-    save_integration(&store, admin.0.org_id, &row.name, Some(&row), &body).await?;
+    save_integration(&state, &store, admin.0.org_id, &row.name, Some(&row), &body).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
 /// Shared save path for create and update: applies the registry-shadowing
-/// rules, validates config, runs the enable gate, and upserts by connector
-/// slug (the slug stays unique per org, so the row's id survives updates).
+/// rules, validates required fields, merges newly entered credential
+/// values in memory, runs the connector's connection test against the
+/// would-be state, and persists (config, secrets, enabled) only on
+/// success — a broken connection is never stored.
 async fn save_integration(
+    state: &crate::state::AppState,
     store: &crate::store::Store,
     org_id: Uuid,
     name: &str,
     existing: Option<&crate::store::integrations::IntegrationRow>,
     body: &serde_json::Value,
 ) -> Result<(), ApiError> {
-    let enabled = body["enabled"].as_bool().unwrap_or(false);
-    // An installed registry v2 bundle of this slug (or an existing row
-    // already resolved to MCP) is the admin's explicit choice — it shadows
-    // any compiled-in connector of the same name. Built-ins apply only when
-    // no v2 bundle claims the slug.
+    let master = state.config.master_key().map_err(ApiError::from)?;
+    // A create-stub (POST with just a name) registers the row disabled and
+    // empty: the completeness check and connection test below apply to
+    // every real save of settings or credentials.
+    let is_stub_create = existing.is_none()
+        && body.get("config").is_none()
+        && body.get("enabled").is_none()
+        && body.get("secrets").is_none();
+    if is_stub_create {
+        store
+            .integrations()
+            .upsert(org_id, name, &json!({}), false)
+            .await?;
+        return Ok(());
+    }
     let registry_manifest = latest_integration_manifest(store, org_id, name).await?;
     let v2_claimed = registry_manifest
         .as_ref()
@@ -412,6 +429,17 @@ async fn save_integration(
         || existing
             .map(|r| r.config["mcp"]["url"].as_str().is_some())
             .unwrap_or(false);
+    // Newly entered credential values: only non-empty strings are writes;
+    // an untouched field stays as stored (standard CRUD update).
+    let submitted: Vec<(String, String)> = body["secrets"]
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter(|(_, v)| v.as_str().map(|s| !s.is_empty()).unwrap_or(false))
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
     if v2_claimed {
         // v2 MCP plugin installed from the registry: config fields merge
         // shallowly over the stored row (an empty object on create) so
@@ -430,27 +458,72 @@ async fn save_integration(
         let enabled = body["enabled"]
             .as_bool()
             .unwrap_or_else(|| existing.map(|r| r.enabled).unwrap_or(false));
+        let declared = registry_manifest
+            .as_ref()
+            .and_then(|m| m.settings.as_ref())
+            .map(|s| s.secret_names())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                registry_manifest
+                    .as_ref()
+                    .and_then(|m| m.auth.as_ref())
+                    .map(|a| a.secret_names.clone())
+                    .unwrap_or_default()
+            });
         if enabled {
             if config["mcp"]["url"].as_str().is_none() {
                 return Err(ApiError::bad_request(
                     "mcp plugin needs an mcp.url before enabling",
                 ));
             }
-            let declared = registry_manifest
-                .and_then(|m| m.auth)
-                .map(|a| a.secret_names)
-                .unwrap_or_default();
-            let stored = store.integration_secrets().names(org_id, name).await?;
-            let missing: Vec<String> = declared
-                .into_iter()
-                .filter(|d| !stored.iter().any(|s| *s == *d))
-                .collect();
-            if !missing.is_empty() {
-                return Err(ApiError::conflict(
-                    "missing_secrets",
-                    format!("missing secrets: {}", missing.join(", ")),
-                ));
+        }
+        // Resolve stored secrets, overlay the submitted values in memory,
+        // and test the connection before anything is written. A save that
+        // neither enables nor writes credentials touches neither.
+        if !declared.is_empty() || !submitted.is_empty() {
+            let mut secrets = store
+                .integration_secrets()
+                .resolve(
+                    org_id,
+                    name,
+                    &store.integration_secrets().names(org_id, name).await?,
+                    &master,
+                )
+                .await
+                .map_err(|e| match e {
+                    crate::store::integration_secrets::ResolveError::Api(api) => api,
+                    crate::store::integration_secrets::ResolveError::MissingSecrets(names) => {
+                        ApiError::conflict(
+                            "missing_secrets",
+                            format!("missing secrets: {}", names.join(", ")),
+                        )
+                    }
+                })?;
+            for (k, v) in &submitted {
+                secrets.retain(|(n, _)| n != k);
+                secrets.push((k.clone(), v.clone()));
             }
+            if enabled {
+                let missing: Vec<String> = declared
+                    .iter()
+                    .filter(|d| !secrets.iter().any(|(n, _)| n == *d))
+                    .cloned()
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(ApiError::conflict(
+                        "missing_secrets",
+                        format!("missing secrets: {}", missing.join(", ")),
+                    ));
+                }
+                let url = config["mcp"]["url"].as_str().unwrap_or_default();
+                mcp_test_connection(state, org_id, url, &secrets).await?;
+            }
+        }
+        for (k, v) in &submitted {
+            store
+                .integration_secrets()
+                .upsert(org_id, name, k, v, &master)
+                .await?;
         }
         store
             .integrations()
@@ -471,19 +544,75 @@ async fn save_integration(
             "invalid integration config: {e}"
         )));
     }
-    // Enable gate (spec §9): a built-in row enables only when every secret
-    // its manifest declares is stored — same rule as MCP plugins. Secrets
-    // CRUD covers built-in slugs.
+    let manifest = plugin.manifest();
+    let schema_fields = manifest
+        .settings
+        .map(|s| s.fields)
+        .unwrap_or_default();
+    let enabled = body["enabled"]
+        .as_bool()
+        .unwrap_or_else(|| existing.map(|r| r.enabled).unwrap_or(false));
+    // Required settings must be filled (a missing optional falls back to
+    // the manifest default or stays absent).
+    for f in &schema_fields {
+        if !f.required {
+            continue;
+        }
+        let present = match f.kind.as_str() {
+            "boolean" => config[f.name.as_str()].is_boolean(),
+            "secret" => submitted.iter().any(|(n, _)| n == &f.name)
+                || store
+                    .integration_secrets()
+                    .names(org_id, name)
+                    .await?
+                    .iter()
+                    .any(|n| n == &f.name),
+            _ => config[f.name.as_str()]
+                .as_str()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false),
+        };
+        if !present {
+            let label = f.label.clone().unwrap_or_else(|| f.name.clone());
+            return Err(ApiError::bad_request(format!(
+                "field {label} is required"
+            )));
+        }
+    }
+    // Merge stored + submitted credentials in memory and test before
+    // anything is written.
+    let declared = schema_fields
+        .iter()
+        .filter(|f| f.kind == "secret")
+        .map(|f| f.name.clone())
+        .collect::<Vec<_>>();
+    let mut secrets = store
+        .integration_secrets()
+        .resolve(
+            org_id,
+            name,
+            &store.integration_secrets().names(org_id, name).await?,
+            &master,
+        )
+        .await
+        .map_err(|e| match e {
+            crate::store::integration_secrets::ResolveError::Api(api) => api,
+            crate::store::integration_secrets::ResolveError::MissingSecrets(names) => {
+                ApiError::conflict(
+                    "missing_secrets",
+                    format!("missing secrets: {}", names.join(", ")),
+                )
+            }
+        })?;
+    for (k, v) in &submitted {
+        secrets.retain(|(n, _)| n != k);
+        secrets.push((k.clone(), v.clone()));
+    }
     if enabled {
-        let declared = plugin
-            .manifest()
-            .auth
-            .map(|a| a.secret_names)
-            .unwrap_or_default();
-        let stored = store.integration_secrets().names(org_id, name).await?;
         let missing: Vec<String> = declared
-            .into_iter()
-            .filter(|d| !stored.iter().any(|s| *s == *d))
+            .iter()
+            .filter(|d| !secrets.iter().any(|(n, _)| n == *d))
+            .cloned()
             .collect();
         if !missing.is_empty() {
             return Err(ApiError::conflict(
@@ -492,40 +621,50 @@ async fn save_integration(
             ));
         }
     }
-    let _ = store
+    plugin.test_connection(&config, &secrets).await.map_err(ApiError::bad_request)?;
+    for (k, v) in &submitted {
+        store
+            .integration_secrets()
+            .upsert(org_id, name, k, v, &master)
+            .await?;
+    }
+    store
         .integrations()
         .upsert(org_id, name, &config, enabled)
         .await?;
     Ok(())
 }
 
-/// Upserts one integration secret (write-only; values never read back).
-/// Addressed by the integration's id; the secret store keeps rows keyed by
-/// the connector slug.
-async fn set_integration_secret(
-    State(state): State<AppState>,
-    admin: AdminUser,
-    Path(id): Path<Uuid>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let secret_name = body["name"]
-        .as_str()
-        .ok_or_else(|| ApiError::bad_request("missing name"))?;
-    let value = body["value"]
-        .as_str()
-        .ok_or_else(|| ApiError::bad_request("missing value"))?;
-    let store = state.store().await?;
-    let row = store
-        .integrations()
-        .get(admin.0.org_id, id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("unknown integration"))?;
-    let master = state.config.master_key().map_err(ApiError::from)?;
-    store
-        .integration_secrets()
-        .upsert(admin.0.org_id, &row.name, secret_name, value, &master)
-        .await?;
-    Ok(Json(json!({ "ok": true })))
+/// Connection test for an MCP plugin: a full pool connect plus tools/list
+/// handshake with the would-be secret headers.
+async fn mcp_test_connection(
+    state: &crate::state::AppState,
+    org_id: Uuid,
+    url: &str,
+    secrets: &[(String, String)],
+) -> Result<(), ApiError> {
+    let headers = crate::integrations::envelope_headers(
+        &Uuid::now_v7(),
+        &org_id,
+        None,
+        None,
+        secrets,
+    );
+    let key = crate::worker::mcp_pool::PoolKey {
+        slug: "save-test".to_string(),
+        url: url.to_string(),
+        acting_as: None,
+        secrets_fingerprint: crate::worker::mcp_pool::secrets_fingerprint(secrets),
+    };
+    let peer = state
+        .mcp_pool
+        .get_or_connect(&key, url, headers)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("MCP server unreachable: {e:#}")))?;
+    peer.list_tools(None)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("MCP tools/list failed: {e}")))?;
+    Ok(())
 }
 
 /// Lists one integration's secret names, timestamps and masked previews —

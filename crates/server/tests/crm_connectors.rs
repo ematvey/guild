@@ -369,14 +369,16 @@ fn crm_manifests_declare_expected_secrets_and_classes() {
     );
 
     let langfuse = integration_by_name("langfuse").unwrap().manifest();
+    // The host URL is a plain setting (default: the public cloud); only
+    // the key pair is credential material.
     assert_eq!(
         langfuse.auth.expect("auth").secret_names,
-        vec![
-            "host".to_string(),
-            "public_key".to_string(),
-            "secret_key".to_string()
-        ]
+        vec!["public_key".to_string(), "secret_key".to_string()]
     );
+    let fields = langfuse.settings.expect("settings").fields;
+    assert!(fields.iter().any(|f| f.name == "base_url"
+        && !f.required
+        && f.default == Some(serde_json::json!("https://cloud.langfuse.com"))));
     let classes = langfuse.tools.expect("tools").classes;
     assert!(classes.values().all(|c| c == "read" || c == "write"));
 }

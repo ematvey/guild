@@ -3,7 +3,7 @@
 //! Secret: `token` — sent as `Authorization: Bearer`; `User-Agent` is
 //! mandatory on every GitHub API request.
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
 use base64::Engine;
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
@@ -104,7 +104,7 @@ impl Integration for Github {
             "github",
             "1.0.0",
             "GitHub repositories, issues, pull requests, and files",
-            &["token"],
+            &[],
             &[
                 ("search_repositories", "read"),
                 ("list_issues", "read"),
@@ -113,11 +113,14 @@ impl Integration for Github {
                 ("create_issue", "write"),
                 ("api", "write"),
             ],
-            &[guild_core::registry::FieldSpec {
-                default: Some(serde_json::json!("https://api.github.com")),
-                help: Some("Override for GitHub Enterprise Server".into()),
-                ..field("api_url", "string")
-            }],
+            &[
+                guild_core::registry::FieldSpec {
+                    default: Some(serde_json::json!("https://api.github.com")),
+                    help: Some("Override for GitHub Enterprise Server".into()),
+                    ..field("api_url", "string")
+                },
+                field("token", "secret"),
+            ],
         )
     }
 
@@ -379,6 +382,22 @@ impl Integration for Github {
                 }
                 other => Err(format!("github integration has no tool {other}")),
             }
+        })
+    }
+
+    /// The authenticated user: cheapest credential check GitHub offers.
+    fn test_connection<'a>(
+        &'a self,
+        config: &'a serde_json::Value,
+        secrets: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let token = token(secrets)?;
+            probe(
+                request(api_url(config).as_str(), token.as_str(), "/user"),
+                "github",
+            )
+            .await
         })
     }
 }

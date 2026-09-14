@@ -60,6 +60,13 @@ A plugin is a registry bundle, kind `integration`, whose manifest
     "secret_names": ["api_key"],
     "identity_key": "email"
   },
+  "settings": {
+    "fields": [
+      { "name": "base_url", "kind": "string", "required": true,
+        "default": "https://api.example.com" },
+      { "name": "api_key", "kind": "secret", "required": true }
+    ]
+  },
   "tools": {
     "classes": { "search_contacts": "read", "update_deal": "write" }
   },
@@ -85,6 +92,21 @@ publishing and installing unchanged.
 - `auth.identity_key` — how Guild maps an org member to an external
   identity; `email` (the only supported value in v1: the guild
   member's email is the join key).
+- `settings.fields` — the admin-facing schema of the integration's
+  configuration. The admin UI renders its form entirely from this
+  list — no generic key/value editor, no per-connector hardcoded
+  forms. Each field: `name` (snake_case), `kind` — one of `string`,
+  `text`, `number`, `boolean`, `secret` — plus optional `label`,
+  `required`, `default`, `placeholder`, `help`.
+  - Fields of kind `secret` are credentials: stored encrypted in the
+    secrets store, rendered masked, never returned by any API. A
+    manifest declares its credential fields exactly once — there is
+    no free-form secret add; everything the admin can set lives in
+    `settings.fields`.
+  - Non-secret fields are plain settings stored in the row's `config`
+    JSON. What is a credential and what is a setting is the
+    connector's call: a site URL, an email, or a host are settings;
+    tokens, keys, and password-equivalents are `secret`.
 - `tools.classes` — per-tool class: `read` (default), `write`,
   `admin`. Unknown tool names from the server at runtime are treated
   as `read` unless a prefix rule matches (see §6).
@@ -109,16 +131,45 @@ CREATE TABLE integration_secrets (
 ```
 
 - Encrypted with the existing master key (`crypto.rs`,
-  `encrypt_secret`/`decrypt_secret`).
-- Admin API: `PUT /api/v1/admin/integrations/{name}/secrets`
-  `{name, value}` (upsert), `DELETE
-  /api/v1/admin/integrations/{name}/secrets/{secret}` (remove),
-  `GET /api/v1/admin/integrations/{name}/secrets` → names + updated_at
-  only, never values.
+  `encrypt_secret`/`decrypt_secret`). A write-time masked preview
+  (last 4 characters) is stored alongside for display; values never
+  appear in listings, chat logs, tool results, or API responses.
+- Admin API: `GET /api/v1/admin/integrations/{name}/secrets` →
+  names, updated_at, masked preview — never values. Secrets are
+  written only through the integration save (below); the per-secret
+  upsert/remove endpoints are gone.
 - The worker resolves a connection as: decrypt secrets for (org,
   integration) → pass to the MCP server as headers on connect and
-  call: `x-guild-secret-<name>: <value>`. Secrets never appear in
-  chat logs, tool results, or API responses.
+  call: `x-guild-secret-<name>: <value>`.
+
+### Saving an integration (standard CRUD, test first)
+
+The detail page is one form generated from `settings.fields`:
+
+- Every declared field shows its current value. Secret fields render
+  masked and grayed-out; an explicit unlock action is required before
+  the input accepts a new value. A field the admin did not touch is
+  not rewritten.
+- Required fields must be filled; the save is rejected client- and
+  server-side otherwise. Optional empty fields fall back to the
+  manifest default or are absent from the config.
+- Saving (`PUT /api/v1/admin/integrations/{id}` with `config`,
+  `enabled`, and an optional `secrets` map of newly entered values)
+  is verified before it persists: the server merges the submitted
+  values over the stored ones **in memory**, runs the connector's
+  `test_connection` against them, and only on success writes config,
+  secrets, and the enabled flag. A failed test returns the
+  connector's error and nothing is saved. Credentials cannot be
+  arbitrarily probed or stored without a working connection.
+- Enabling additionally requires every declared secret field to have
+  a stored value (unchanged gate, now driven by the manifest's
+  `secret`-kind fields; legacy `auth.secret_names` bundles keep the
+  old source).
+- Built-in connectors implement `test_connection` with one cheap
+  authenticated call against the vendor (auth.test for Slack,
+  `/user` for GitHub/GitLab, `myself` for Atlassian, token exchange
+  for Google, and so on); MCP plugins test by completing a
+  `tools/list` handshake.
 
 ## 5. Identity envelope and impersonation
 
@@ -226,16 +277,18 @@ Script API (`http/integration_tools.rs`) mirrors the same filtering:
   install creates a **disabled** row in `integrations` with config
   `{mcp, auth, tool_policy defaults}` (skipped if a row already
   exists), plus disabled routines from `triggers`/routine.json
-  (existing behavior). Secrets are set afterward by an admin via the
-  secrets API; enabling is blocked until every `secret_names` entry
-  has a stored secret.
+  (existing behavior). Enabling is blocked until every declared
+  secret field has a stored value.
 - **Admin API** (updated):
   - `GET /admin/integrations` — rows plus `available` now includes
     installed-but-unconfigured v2 plugins (from the registry) alongside
-    the compiled-in kinds.
-  - `PUT /admin/integrations/{name}` — as today; for v2 rows the body
-    may carry `tool_policy`; `enabled: true` requires the MCP url and
-    all declared secrets present.
+    the compiled-in kinds; rows carry `secret_names` and the
+    `settings` field schema the UI renders.
+  - `PUT /admin/integrations/{name}` — the single save path: body
+    `{enabled, config, secrets?}`; validates required fields, applies
+    submitted secret values, runs `test_connection` in memory first,
+    and persists only on success. `enabled: true` requires the MCP url
+    and all declared secrets present.
   - `DELETE /admin/integrations/{name}` — as today (also drops
     secrets).
 

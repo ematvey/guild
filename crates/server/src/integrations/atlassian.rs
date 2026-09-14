@@ -11,7 +11,7 @@
 //!   storage-format body, returned as plain text
 //! - `confluence_create_page` (write) — `POST /wiki/rest/api/content`
 
-use super::{api_tool_spec, call_vendor_api, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
@@ -35,25 +35,25 @@ fn secret<'a>(secrets: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty())
 }
 
-fn creds(secrets: &[(String, String)]) -> Result<Creds, String> {
-    let missing: Vec<&str> = ["site", "email", "token"]
-        .into_iter()
-        .filter(|n| secret(secrets, n).is_none())
-        .collect();
-    if !missing.is_empty() {
-        return Err(format!(
-            "atlassian requires the site, email, and token secrets; missing: {}",
-            missing.join(", ")
-        ));
-    }
+fn creds(config: &serde_json::Value, secrets: &[(String, String)]) -> Result<Creds, String> {
+    // Site and email are plain settings (config wins, the legacy
+    // secret-named rows of pre-schema deployments are the fallback); only
+    // the API token is a credential.
+    let from_config = |name: &str| config[name].as_str().map(|s| s.to_string());
+    let site = from_config("site")
+        .or_else(|| secret(secrets, "site").map(|s| s.to_string()))
+        .ok_or("atlassian requires the site setting")?;
+    let email = from_config("email")
+        .or_else(|| secret(secrets, "email").map(|s| s.to_string()))
+        .ok_or("atlassian requires the email setting")?;
+    let token = secret(secrets, "token")
+        .ok_or("atlassian secret 'token' is not stored")?
+        .to_string();
     Ok(Creds {
-        // The site secret may carry a trailing slash; the paths below do not.
-        site: secret(secrets, "site")
-            .unwrap()
-            .trim_end_matches('/')
-            .to_string(),
-        email: secret(secrets, "email").unwrap().to_string(),
-        token: secret(secrets, "token").unwrap().to_string(),
+        // The site may carry a trailing slash; the paths below do not.
+        site: site.trim_end_matches('/').to_string(),
+        email,
+        token,
     })
 }
 
@@ -162,7 +162,7 @@ impl Integration for Atlassian {
             "atlassian",
             "1.0.0",
             "Jira and Confluence Cloud: search and read issues and pages, create pages",
-            &["site", "email", "token"],
+            &["token"],
             &[
                 ("jira_search", "read"),
                 ("jira_get_issue", "read"),
@@ -171,7 +171,20 @@ impl Integration for Atlassian {
                 ("confluence_create_page", "write"),
                 ("api", "write"),
             ],
-            &[],
+            &[
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    placeholder: Some("https://yourorg.atlassian.net".into()),
+                    help: Some("your Jira/Confluence cloud site".into()),
+                    ..field("site", "string")
+                },
+                guild_core::registry::FieldSpec {
+                    required: true,
+                    help: Some("the account the API token belongs to".into()),
+                    ..field("email", "string")
+                },
+                field("token", "secret"),
+            ],
         )
     }
 
@@ -257,14 +270,14 @@ impl Integration for Atlassian {
 
     fn execute<'a>(
         &'a self,
-        _config: &'a serde_json::Value,
+        config: &'a serde_json::Value,
         tool: &'a str,
         args: serde_json::Value,
         secrets: &'a [(String, String)],
         _acting_as: Option<&'a str>,
     ) -> BoxFuture<'a, Result<ToolOutcome, String>> {
         Box::pin(async move {
-            let creds = creds(secrets)?;
+            let creds = creds(config, secrets)?;;
             let client = reqwest::Client::new();
             if tool == "api" {
                 return call_vendor_api(
@@ -454,6 +467,24 @@ impl Integration for Atlassian {
                 }
                 other => Err(format!("atlassian integration has no tool {other}")),
             }
+        })
+    }
+
+    /// `/rest/api/3/myself`: the cheapest authenticated Jira call.
+    fn test_connection<'a>(
+        &'a self,
+        config: &'a serde_json::Value,
+        secrets: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let creds = creds(config, secrets)?;
+            probe(
+                reqwest::Client::new()
+                    .get(format!("{}/rest/api/3/myself", creds.site))
+                    .basic_auth(&creds.email, Some(&creds.token)),
+                "atlassian",
+            )
+            .await
         })
     }
 }

@@ -191,10 +191,11 @@ fn registered_with_impersonated_auth_manifest_and_read_tools() {
     let auth = manifest.auth.as_ref().expect("auth manifest");
     assert_eq!(auth.kind, "org_secret_impersonated");
     assert_eq!(auth.identity_key, "email");
-    assert_eq!(
-        auth.secret_names,
-        vec!["service_account_json", "admin_email"]
-    );
+    // admin_email is a plain setting; the service-account JSON is the one
+    // credential.
+    assert_eq!(auth.secret_names, vec!["service_account_json".to_string()]);
+    let fields = &manifest.settings.as_ref().expect("settings").fields;
+    assert!(fields.iter().any(|f| f.name == "admin_email" && f.required));
     let tools = manifest.tools.expect("tools manifest");
     assert_eq!(tools.classes.len(), 6);
     for name in [

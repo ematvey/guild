@@ -260,22 +260,36 @@ async fn builtin_enable_gate_and_secret_lifecycle() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let id = body["id"].as_str().expect("created row id").to_string();
 
-    // Secrets CRUD via the id; enabling then succeeds.
+    // Saving with the credential value rides the unified PUT: the row is
+    // stored enabled, and the secret is persisted in the same call.
     let (status, _) = put_json(
         &app,
-        &format!("/api/v1/admin/integrations/{id}/secrets"),
+        &format!("/api/v1/admin/integrations/{id}"),
         &token,
-        json!({ "name": "api_key", "value": "sk-123" }),
+        json!({ "config": {}, "enabled": true, "secrets": { "api_key": "sk-123" } }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The listing exposes name + masked preview, never a value.
     let v = get_json(&app, &format!("/api/v1/admin/integrations/{id}/secrets"), &token).await;
     let items = v["secrets"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["name"], "api_key");
+    assert_eq!(items[0]["masked"], "\u{2022}\u{2022}\u{2022}\u{2022}");
     assert!(items[0].get("value").is_none());
     assert!(!v.to_string().contains("sk-123"));
 
+    // A save without re-entering the credential keeps it (CRUD update):
+    // disable, then re-enable — both succeed with no secrets payload.
+    let (status, _) = put_json(
+        &app,
+        &format!("/api/v1/admin/integrations/{id}"),
+        &token,
+        json!({ "config": {}, "enabled": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "disabling keeps stored secrets");
     let (status, _) = put_json(
         &app,
         &format!("/api/v1/admin/integrations/{id}"),
@@ -283,31 +297,7 @@ async fn builtin_enable_gate_and_secret_lifecycle() {
         json!({ "config": {}, "enabled": true }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "enabling with the secret stored");
-
-    // Deleting the declared secret auto-disables the row (spec §9).
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/admin/integrations/{id}/secrets/api_key"))
-                .header("authorization", format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
-    let row = v["integrations"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["name"] == "testplug")
-        .expect("testplug row listed");
-    assert_eq!(row["enabled"], false);
-    assert_eq!(row["id"], json!(id));
+    assert_eq!(status, StatusCode::OK, "re-enabling with the stored secret");
 }
 
 // ---------- script API: execution, class enforcement, audit ----------

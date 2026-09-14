@@ -2,7 +2,7 @@
 //! public API (`/api/public/...`), authenticated with basic auth over the
 //! public/secret key pair.
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
 use guild_core::registry::BundleManifest;
 use futures::future::BoxFuture;
 use protocol::api::ToolSpec;
@@ -20,15 +20,16 @@ fn secret<'a>(secrets: &'a [(String, String)], name: &str) -> Option<&'a str> {
 
 /// The API base URL: the config `base_url` wins, the `host` secret is the
 /// default. Trailing slashes are stripped either way.
-fn base_url(
-    config: &serde_json::Value,
-    secrets: &[(String, String)],
-) -> Result<String, String> {
+fn base_url(config: &serde_json::Value, secrets: &[(String, String)]) -> Result<String, String> {
+    // The config base_url wins; the legacy `host` secret of pre-schema
+    // deployments is the fallback; else the public cloud.
     if let Some(url) = config["base_url"].as_str() {
         return Ok(url.trim_end_matches('/').to_string());
     }
-    let host = secret(secrets, "host").ok_or("langfuse requires the host secret (or a config base_url)")?;
-    Ok(host.trim_end_matches('/').to_string())
+    if let Some(host) = secret(secrets, "host") {
+        return Ok(host.trim_end_matches('/').to_string());
+    }
+    Ok("https://cloud.langfuse.com".to_string())
 }
 
 /// Performs one GET against the public API with basic auth and maps
@@ -68,20 +69,22 @@ impl Integration for Langfuse {
             "langfuse",
             "1.0.0",
             "Langfuse LLM observability: list and inspect traces, list prompts",
-            &["host", "public_key", "secret_key"],
+            &[],
             &[
                 ("list_traces", "read"),
                 ("get_trace", "read"),
                 ("get_prompt", "read"),
                 ("api", "write"),
             ],
-            &[guild_core::registry::FieldSpec {
-                default: Some(serde_json::json!("https://cloud.langfuse.com")),
-                help: Some(
-                    "Self-hosted URL override; otherwise the host secret is used".into(),
-                ),
-                ..field("base_url", "string")
-            }],
+            &[
+                guild_core::registry::FieldSpec {
+                    default: Some(serde_json::json!("https://cloud.langfuse.com")),
+                    help: Some("Override for self-hosted Langfuse".into()),
+                    ..field("base_url", "string")
+                },
+                field("public_key", "secret"),
+                field("secret_key", "secret"),
+            ],
         )
     }
 
@@ -158,6 +161,28 @@ impl Integration for Langfuse {
                 }
                 other => Err(format!("langfuse integration has no tool {other}")),
             }
+        })
+    }
+
+    /// Lists projects: the cheapest authenticated Langfuse call.
+    fn test_connection<'a>(
+        &'a self,
+        config: &'a serde_json::Value,
+        secrets: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let base = base_url(config, secrets)?;
+            let public_key = secret(secrets, "public_key")
+                .ok_or("langfuse requires the public_key secret")?;
+            let secret_key = secret(secrets, "secret_key")
+                .ok_or("langfuse requires the secret_key secret")?;
+            probe(
+                reqwest::Client::new()
+                    .get(format!("{base}/api/public/projects"))
+                    .basic_auth(public_key, Some(secret_key)),
+                "langfuse",
+            )
+            .await
         })
     }
 }

@@ -73,6 +73,116 @@ pub trait Integration: Send + Sync {
         secrets: &'a [(String, String)],
         acting_as: Option<&'a str>,
     ) -> BoxFuture<'a, Result<ToolOutcome, String>>;
+    /// One cheap authenticated round-trip against the vendor with the
+    /// would-be connection (merged config + secrets). A save is persisted
+    /// only when this succeeds — a broken connection is never stored.
+    fn test_connection<'a>(
+        &'a self,
+        config: &'a serde_json::Value,
+        secrets: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>>;
+}
+
+/// Maps one authenticated probe to a test verdict: 2xx passes, anything
+/// else names the failure without leaking credential values.
+pub async fn probe(req: reqwest::RequestBuilder, what: &str) -> Result<(), String> {
+    let resp = req
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("{what} unreachable: {e}"))?;
+    let status = resp.status();
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(format!("{what} rejected the connection ({status})"))
+    }
+}
+
+/// One legacy credential promotion: the secret row's value becomes a plain
+/// config setting (when config does not already carry it) and the row is
+/// dropped.
+struct LegacyPromotion {
+    connector: &'static str,
+    secret_name: &'static str,
+    config_key: &'static str,
+}
+
+const LEGACY_PROMOTIONS: &[LegacyPromotion] = &[
+    LegacyPromotion { connector: "atlassian", secret_name: "site", config_key: "site" },
+    LegacyPromotion { connector: "atlassian", secret_name: "email", config_key: "email" },
+    LegacyPromotion { connector: "langfuse", secret_name: "host", config_key: "base_url" },
+    LegacyPromotion {
+        connector: "google_workspace",
+        secret_name: "admin_email",
+        config_key: "admin_email",
+    },
+];
+
+/// Settings that used to be stored as secrets (atlassian's site/email,
+/// langfuse's host, google_workspace's admin_email) become plain config
+/// values and their secret rows are dropped. Idempotent: runs at boot,
+/// tolerates re-runs, and never touches rows that are still real
+/// credentials (tokens, keys).
+pub async fn migrate_legacy_credential_secrets(
+    store: &crate::store::Store,
+    master_key: &[u8; 32],
+) -> anyhow::Result<()> {
+    let orgs: Vec<uuid::Uuid> =
+        sqlx::query_scalar("SELECT id FROM orgs").fetch_all(store.pool()).await?;
+    for org in orgs {
+        for p in LEGACY_PROMOTIONS {
+            let Some(row) = store
+                .integrations()
+                .get_by_name(org, p.connector)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?
+            else {
+                continue;
+            };
+            if row.config[p.config_key].as_str().is_some() {
+                continue; // config already carries the setting
+            }
+            let names = store
+                .integration_secrets()
+                .names(org, p.connector)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            if !names.iter().any(|n| n == p.secret_name) {
+                continue;
+            }
+            let resolved = store
+                .integration_secrets()
+                .resolve(org, p.connector, &[p.secret_name.to_string()], master_key)
+                .await;
+            let Ok(value) = resolved else {
+                tracing::warn!(
+                    "legacy migration: cannot decrypt {}/{}; leaving it in place",
+                    p.connector,
+                    p.secret_name
+                );
+                continue;
+            };
+            let mut config = row.config.clone();
+            config[p.config_key] = serde_json::Value::String(value[0].1.clone());
+            store
+                .integrations()
+                .upsert(org, p.connector, &config, row.enabled)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            store
+                .integration_secrets()
+                .delete(org, p.connector, p.secret_name)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            tracing::info!(
+                "migrated {}/{} secret into config",
+                p.connector,
+                p.secret_name
+            );
+        }
+    }
+    Ok(())
 }
 
 mod gitlab;
@@ -128,13 +238,25 @@ pub fn in_code_manifest(
     classes: &[(&str, &str)],
     fields: &[guild_core::registry::FieldSpec],
 ) -> BundleManifest {
+    // The schema is the source of truth: credential (secret-kind) fields
+    // derive the auth secret list the enable gate and secret store key on.
+    let derived: Vec<String> = fields
+        .iter()
+        .filter(|f| f.kind == "secret")
+        .map(|f| f.name.clone())
+        .collect();
+    let secret_names: Vec<String> = if derived.is_empty() {
+        secret_names.iter().map(|s| s.to_string()).collect()
+    } else {
+        derived
+    };
     let manifest = BundleManifest {
         kind: "integration".to_string(),
         slug: name.to_string(),
         version: version.to_string(),
         description: description.to_string(),
         auth: Some(guild_core::registry::AuthManifest {
-            secret_names: secret_names.iter().map(|s| s.to_string()).collect(),
+            secret_names,
             ..Default::default()
         }),
         settings: Some(guild_core::registry::SettingsManifest {
@@ -361,9 +483,9 @@ pub mod testplug {
                 "testplug",
                 "0.1.0",
                 "Test tools for the unified plugin interface",
-                &["api_key"],
-                &[("secret_echo", "read"), ("admin_op", "admin")],
                 &[],
+                &[("secret_echo", "read"), ("admin_op", "admin")],
+                &[field("api_key", "secret")],
             )
         }
 
@@ -408,6 +530,14 @@ pub mod testplug {
                 }
             })
         }
+
+        fn test_connection<'a>(
+            &'a self,
+            _config: &'a serde_json::Value,
+            _secrets: &'a [(String, String)],
+        ) -> BoxFuture<'a, Result<(), String>> {
+            Box::pin(async move { Ok(()) })
+        }
     }
 }
 
@@ -417,7 +547,7 @@ pub mod atlassian;
 pub mod google_workspace;
 
 pub mod searxng {
-    use super::{field, in_code_manifest, Category, Integration, ToolOutcome};
+    use super::{field, in_code_manifest, probe, Category, Integration, ToolOutcome};
     use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
     use protocol::api::ToolSpec;
@@ -456,7 +586,6 @@ pub mod searxng {
                 }],
             )
         }
-
         fn tools(&self, config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
             base_url(config)?; // validates
             Ok(vec![ToolSpec {
@@ -546,11 +675,28 @@ pub mod searxng {
                 })
             })
         }
+
+        fn test_connection<'a>(
+            &'a self,
+            config: &'a serde_json::Value,
+            _secrets: &'a [(String, String)],
+        ) -> BoxFuture<'a, Result<(), String>> {
+            Box::pin(async move {
+                let url = base_url(config).map_err(|e| e.to_string())?;
+                probe(
+                    reqwest::Client::new()
+                        .get(format!("{url}/search"))
+                        .query(&[("q", "guild"), ("format", "json")]),
+                    "searxng",
+                )
+                .await
+            })
+        }
     }
 }
 
 pub mod superproxy {
-    use super::{field, in_code_manifest, Category, Integration, ToolOutcome};
+    use super::{field, in_code_manifest, probe, Category, Integration, ToolOutcome};
     use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
     use protocol::api::ToolSpec;
@@ -711,6 +857,28 @@ pub mod superproxy {
                     content,
                     meta: Some(meta),
                 })
+            })
+        }
+
+        fn test_connection<'a>(
+            &'a self,
+            config: &'a serde_json::Value,
+            secrets: &'a [(String, String)],
+        ) -> BoxFuture<'a, Result<(), String>> {
+            Box::pin(async move {
+                let (base, config_token) = config_parts(config).map_err(|e| e.to_string())?;
+                let token = secrets
+                    .iter()
+                    .find(|(name, _)| name == "token")
+                    .map(|(_, value)| value.clone())
+                    .or(config_token);
+                let mut req = reqwest::Client::new()
+                    .get(format!("{base}/v1/fetch"))
+                    .query(&[("url", "https://example.com"), ("format", "markdown")]);
+                if let Some(token) = &token {
+                    req = req.bearer_auth(token);
+                }
+                probe(req, "superproxy").await
             })
         }
     }

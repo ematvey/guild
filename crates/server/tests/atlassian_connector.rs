@@ -10,12 +10,13 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 const EMAIL: &str = "bot@example.test";
 const TOKEN: &str = "fake-token-123";
 
-fn secrets(site: &str) -> Vec<(String, String)> {
-    vec![
-        ("site".to_string(), site.to_string()),
-        ("email".to_string(), EMAIL.to_string()),
-        ("token".to_string(), TOKEN.to_string()),
-    ]
+/// Site and email are plain settings; only the API token is a credential.
+fn config(site: &str) -> serde_json::Value {
+    json!({ "site": site, "email": EMAIL })
+}
+
+fn secrets() -> Vec<(String, String)> {
+    vec![("token".to_string(), TOKEN.to_string())]
 }
 
 /// Basic auth value for email:token — every connector request must carry it.
@@ -58,10 +59,10 @@ async fn jira_search_posts_jql_with_basic_auth() {
 
     let out = plugin
         .execute(
-            &json!({}),
+            &config(&server.uri()),
             "jira_search",
             json!({ "jql": "project = PROJ ORDER BY updated DESC" }),
-            &secrets(&server.uri()), None)
+            &secrets(), None)
         .await
         .unwrap();
     assert!(out.content.contains("PROJ-1 — Fix login [In Progress] (Alice)"));
@@ -98,10 +99,10 @@ async fn jira_get_issue_renders_block_with_browse_url() {
     let plugin = integration_by_name("atlassian").unwrap();
     let out = plugin
         .execute(
-            &json!({}),
+            &config(&server.uri()),
             "jira_get_issue",
             json!({ "issue_key": "PROJ-1" }),
-            &secrets(&server.uri()), None)
+            &secrets(), None)
         .await
         .unwrap();
     assert!(out.content.starts_with("PROJ-1 — Fix login"));
@@ -139,10 +140,10 @@ async fn confluence_search_queries_cql() {
     let plugin = integration_by_name("atlassian").unwrap();
     let out = plugin
         .execute(
-            &json!({}),
+            &config(&server.uri()),
             "confluence_search",
             json!({ "cql": "space = PROJ AND type = page", "limit": 2 }),
-            &secrets(&server.uri()), None)
+            &secrets(), None)
         .await
         .unwrap();
     assert!(out.content.contains("Onboarding (id 101): How to get started"));
@@ -177,10 +178,10 @@ async fn confluence_get_page_strips_storage_markup() {
     let plugin = integration_by_name("atlassian").unwrap();
     let out = plugin
         .execute(
-            &json!({}),
+            &config(&server.uri()),
             "confluence_get_page",
             json!({ "page_id": "101" }),
-            &secrets(&server.uri()), None)
+            &secrets(), None)
         .await
         .unwrap();
     assert_eq!(
@@ -222,10 +223,10 @@ async fn confluence_create_page_posts_storage_body() {
     let plugin = integration_by_name("atlassian").unwrap();
     let out = plugin
         .execute(
-            &json!({}),
+            &config(&server.uri()),
             "confluence_create_page",
             json!({ "space_key": "PROJ", "title": "Meeting notes", "content": "<p>hello</p>" }),
-            &secrets(&server.uri()), None)
+            &secrets(), None)
         .await
         .unwrap();
     assert!(out.content.contains("Created page 777 (Meeting notes)"));
@@ -259,10 +260,10 @@ async fn atlassian_errors_map_to_err() {
     // Auth failure: status plus the vendor message body.
     let err = plugin
         .execute(
-            &json!({}),
+            &config(&server.uri()),
             "jira_search",
             json!({ "jql": "project = PROJ" }),
-            &secrets(&server.uri()), None)
+            &secrets(), None)
         .await
         .unwrap_err();
     assert!(err.contains("401"), "unexpected error: {err}");
@@ -271,45 +272,45 @@ async fn atlassian_errors_map_to_err() {
     // Server failure on the Confluence side.
     let err = plugin
         .execute(
-            &json!({}),
+            &config(&server.uri()),
             "confluence_search",
             json!({ "cql": "space = PROJ" }),
-            &secrets(&server.uri()), None)
+            &secrets(), None)
         .await
         .unwrap_err();
     assert!(err.contains("500"), "unexpected error: {err}");
 
     // Unknown tool name.
     let err = plugin
-        .execute(&json!({}), "jira_create", json!({}), &secrets(&server.uri()), None)
+        .execute(&config(&server.uri()), "jira_create", json!({}), &secrets(), None)
         .await
         .unwrap_err();
     assert!(err.contains("no tool jira_create"));
 }
 
 #[tokio::test]
-async fn atlassian_requires_all_three_secrets() {
+async fn atlassian_requires_settings_and_token() {
     let plugin = integration_by_name("atlassian").unwrap();
+    // Missing settings fail with the specific field.
     let err = plugin
         .execute(
             &json!({}),
             "jira_search",
             json!({ "jql": "project = PROJ" }),
-            &[("email".to_string(), EMAIL.to_string())], None)
+            &secrets(), None)
         .await
         .unwrap_err();
-    assert!(err.contains("missing: site, token"), "unexpected: {err}");
+    assert!(err.contains("requires the site setting"), "unexpected: {err}");
 
-    // The manifest declares exactly the three secrets — the enable gate
-    // requires them before an org can switch the connector on.
+    // The manifest declares exactly one credential (the token); site and
+    // email are required settings.
     let m = plugin.manifest();
     assert_eq!(
         m.auth.expect("auth manifest").secret_names,
-        vec![
-            "site".to_string(),
-            "email".to_string(),
-            "token".to_string()
-        ]
+        vec!["token".to_string()]
     );
+    let fields = m.settings.expect("settings").fields;
+    assert!(fields.iter().any(|f| f.name == "site" && f.required));
+    assert!(fields.iter().any(|f| f.name == "email" && f.required));
     assert_eq!(m.tools.expect("tools").classes["confluence_create_page"], "write");
 }
