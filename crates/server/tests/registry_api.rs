@@ -7,6 +7,12 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 fn demo_bundle(slug: &str, version: &str) -> Vec<u8> {
+    demo_bundle_marker(slug, version, "content-a")
+}
+
+/// Same manifest, different payload bytes (the asset content varies) — the
+/// republish vector: identical manifest.json, swapped bundle content.
+fn demo_bundle_marker(slug: &str, version: &str, marker: &str) -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!(
         "guild-reg-api-{slug}-{version}-{}",
         std::process::id()
@@ -19,7 +25,7 @@ fn demo_bundle(slug: &str, version: &str) -> Vec<u8> {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join(slug).join("assets")).unwrap();
-    std::fs::write(dir.join(slug).join("assets/a.txt"), "content-a").unwrap();
+    std::fs::write(dir.join(slug).join("assets/a.txt"), marker).unwrap();
     let (bytes, _m) = guild_core::registry::pack_skill(&dir.join(slug), version).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     bytes
@@ -32,6 +38,25 @@ async fn publish(
     version: &str,
     token: &str,
 ) -> axum::response::Response {
+    publish_bytes(
+        app,
+        kind,
+        slug,
+        version,
+        token,
+        demo_bundle(slug, version),
+    )
+    .await
+}
+
+async fn publish_bytes(
+    app: &axum::Router,
+    kind: &str,
+    slug: &str,
+    version: &str,
+    token: &str,
+    bytes: Vec<u8>,
+) -> axum::response::Response {
     app.clone()
         .oneshot(
             Request::builder()
@@ -41,7 +66,72 @@ async fn publish(
                 ))
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/gzip")
-                .body(Body::from(demo_bundle(slug, version)))
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+/// The stored bundle hash of a version (as the review endpoint requires it).
+async fn stored_bundle_sha(
+    app: &axum::Router,
+    kind: &str,
+    slug: &str,
+    version: &str,
+    token: &str,
+) -> String {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/registry/{kind}/{slug}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    v["versions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["version"].as_str() == Some(version))
+        .expect("version row")["bundle_sha256"]
+        .as_str()
+        .expect("hash exposed")
+        .to_string()
+}
+
+/// Approves with the reviewed version + bundle hash (required fields).
+async fn approve(
+    app: &axum::Router,
+    kind: &str,
+    slug: &str,
+    version: &str,
+    sha: &str,
+    token: &str,
+) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/registry/{kind}/{slug}/review"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "status": "approved",
+                        "reviewed_version": version,
+                        "reviewed_bundle_sha256": sha,
+                    })
+                    .to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -193,20 +283,9 @@ async fn review_flow_gates_member_download() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
-    // admin approves
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/registry/skill/demo/review")
-                .header("authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(json!({"status": "approved"}).to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    // admin approves, bound to the reviewed version + bundle hash
+    let sha = stored_bundle_sha(&app, "skill", "demo", "1.0.0", &token).await;
+    let res = approve(&app, "skill", "demo", "1.0.0", &sha, &token).await;
     assert_eq!(res.status(), StatusCode::OK);
 
     // now the member downloads fine
@@ -368,19 +447,8 @@ async fn install_returns_webhook_token_once() {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK, "publish {slug}");
-        let res = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/v1/registry/integration/{slug}/review"))
-                    .header("authorization", format!("Bearer {token}"))
-                    .header("content-type", "application/json")
-                    .body(Body::from(json!({"status": "approved"}).to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let bundle_sha = stored_bundle_sha(app, "integration", slug, "1.0.0", token).await;
+        let res = approve(app, "integration", slug, "1.0.0", &bundle_sha, token).await;
         assert_eq!(res.status(), StatusCode::OK, "review {slug}");
         let res = app
             .clone()
@@ -417,4 +485,316 @@ async fn install_returns_webhook_token_once() {
         interval["routine"]["webhook_token"].is_null(),
         "interval routine has no webhook token"
     );
+}
+
+/// The approval covers the bundle bytes, not just manifest.json: a
+/// same-version republish with an identical manifest but swapped payload
+/// bytes resets the item to draft, and the swapped bundle is neither
+/// downloadable nor installable by a member. An identical re-upload keeps
+/// the approval, and admins keep the review-surface download.
+#[tokio::test]
+async fn republished_bundle_bytes_require_rereview() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+    let member = fs
+        .store()
+        .identity()
+        .create_user(fs.org_id, "m@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let (_sid, member_token) = fs
+        .store()
+        .identity()
+        .create_session(member.id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        publish(&app, "skill", "swap", "1.0.0", &token).await.status(),
+        StatusCode::OK
+    );
+    let sha = stored_bundle_sha(&app, "skill", "swap", "1.0.0", &token).await;
+    assert_eq!(
+        approve(&app, "skill", "swap", "1.0.0", &sha, &token)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    // identical bytes: the approval survives the republish (the same bundle
+    // object is re-uploaded — byte-for-byte, via the same content-addressed
+    // key)
+    let identical = demo_bundle("swap", "1.0.0");
+    assert_eq!(
+        publish_bytes(&app, "skill", "swap", "1.0.0", &token, identical)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/registry/skill")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["items"][0]["review_status"], "approved");
+
+    // swapped bytes under the identical manifest: status resets to draft
+    let swapped = demo_bundle_marker("swap", "1.0.0", "ATTACKER-PAYLOAD");
+    assert_eq!(
+        publish_bytes(&app, "skill", "swap", "1.0.0", &token, swapped)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/registry/skill")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["items"][0]["review_status"], "draft");
+
+    // the swapped bundle is not downloadable by a member...
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/registry/skill/swap/1.0.0/bundle")
+                .header("authorization", format!("Bearer {member_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // ...and a stale re-approval is refused: the stored hash no longer
+    // matches the one the admin approved
+    let res = approve(&app, "skill", "swap", "1.0.0", &sha, &token).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    // admins keep the review-surface download of the new bytes
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/registry/skill/swap/1.0.0/bundle")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+/// Same as above for the server-side install path: a same-manifest republish
+/// with a swapped routine.json is un-installable by a member until
+/// re-reviewed (the approval binds to the bundle hash).
+#[tokio::test]
+async fn republished_bundle_bytes_block_install() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+    let member = fs
+        .store()
+        .identity()
+        .create_user(fs.org_id, "m@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let (_sid, member_token) = fs
+        .store()
+        .identity()
+        .create_session(member.id)
+        .await
+        .unwrap();
+
+    let routine_bundle = |prompt: &str| {
+        let dir = std::env::temp_dir().join(format!(
+            "guild-reg-routine-swap-{}-{}",
+            prompt,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("routine.json"),
+            json!({
+                "name": "Swap routine",
+                "trigger_kind": "webhook",
+                "prompt": prompt,
+                "model": "gpt-test",
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let manifest = BundleManifest {
+            kind: "integration".into(),
+            slug: "swap-routine".into(),
+            version: "1.0.0".into(),
+            description: "demo integration".into(),
+            ..Default::default()
+        };
+        let bytes = guild_core::registry::pack(&dir, &manifest).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        bytes
+    };
+
+    let benign = routine_bundle("Do the thing.");
+    assert_eq!(
+        publish_bytes(&app, "integration", "swap-routine", "1.0.0", &token, benign)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let sha = stored_bundle_sha(&app, "integration", "swap-routine", "1.0.0", &token).await;
+    assert_eq!(
+        approve(&app, "integration", "swap-routine", "1.0.0", &sha, &token)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/registry/integration/swap-routine/install")
+                .header("authorization", format!("Bearer {member_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "benign install works");
+
+    // same manifest.json, swapped routine.json → draft; member install refused
+    let swapped = routine_bundle("ATTACKER-PROMPT");
+    assert_eq!(
+        publish_bytes(&app, "integration", "swap-routine", "1.0.0", &token, swapped)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/registry/integration/swap-routine/install")
+                .header("authorization", format!("Bearer {member_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+}
+
+/// The approve click binds to the content the admin saw: a stale reviewed
+/// version (or a hash that no longer matches the latest version's stored
+/// bundle) is refused with a conflict instead of stamping click-time state.
+#[tokio::test]
+async fn approve_with_stale_version_or_hash_is_refused() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+
+    assert_eq!(
+        publish(&app, "skill", "stale", "1.0.0", &token).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        publish(&app, "skill", "stale", "2.0.0", &token).await.status(),
+        StatusCode::OK
+    );
+    let sha2 = stored_bundle_sha(&app, "skill", "stale", "2.0.0", &token).await;
+
+    // stale version → 409
+    let res = approve(&app, "skill", "stale", "1.0.0", "deadbeef", &token).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    // current version but wrong hash → 409
+    let res = approve(&app, "skill", "stale", "2.0.0", "deadbeef", &token).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    // the matching pair approves
+    let res = approve(&app, "skill", "stale", "2.0.0", &sha2, &token).await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // approval without version/hash fields → 400
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/registry/skill/stale/review")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"status": "approved"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Object keys are content-addressed and the superseded guard runs before
+/// any object write: a refused republish of an old version must NOT destroy
+/// the old release's bundle bytes.
+#[tokio::test]
+async fn superseded_republish_preserves_old_bundle() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+
+    assert_eq!(
+        publish(&app, "skill", "imm", "1.0.0", &token).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        publish(&app, "skill", "imm", "2.0.0", &token).await.status(),
+        StatusCode::OK
+    );
+
+    // attacker re-publishes the superseded 1.0.0 with swapped bytes
+    let swapped = demo_bundle_marker("imm", "1.0.0", "ATTACKER-PAYLOAD");
+    let res = publish_bytes(&app, "skill", "imm", "1.0.0", &token, swapped).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    // the original reviewed 1.0.0 bundle is intact
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/registry/skill/imm/1.0.0/bundle")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let dest = std::env::temp_dir().join(format!("guild-reg-imm-{}", Uuid::now_v7()));
+    guild_core::registry::extract(&body, &dest).unwrap();
+    let content = std::fs::read_to_string(dest.join("assets/a.txt")).unwrap();
+    std::fs::remove_dir_all(&dest).unwrap();
+    assert_eq!(content, "content-a", "superseded bundle bytes must be preserved");
 }

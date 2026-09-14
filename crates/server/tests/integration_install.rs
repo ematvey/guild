@@ -5,6 +5,11 @@ use guild_server::test_support::full_state;
 use serde_json::json;
 use tower::ServiceExt;
 
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
+}
+
 fn integration_bundle(slug: &str, version: &str) -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!(
         "guild-integration-{slug}-{version}-{}",
@@ -120,6 +125,8 @@ async fn v2_install_creates_disabled_plugin_row_and_routines() {
     let token = fs.token.clone();
 
     // publish a valid v2 bundle
+    let bundle = v2_bundle("hubspot", "1.2.0", "org_secret");
+    let bundle_sha = sha256_hex(&bundle);
     let res = app
         .clone()
         .oneshot(
@@ -128,14 +135,14 @@ async fn v2_install_creates_disabled_plugin_row_and_routines() {
                 .uri("/api/v1/registry/integration?slug=hubspot&version=1.2.0")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/gzip")
-                .body(Body::from(v2_bundle("hubspot", "1.2.0", "org_secret")))
+                .body(Body::from(bundle))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
-    // approve + install
+    // approve + install (the approval binds to the reviewed version/hash)
     let res = app
         .clone()
         .oneshot(
@@ -144,7 +151,14 @@ async fn v2_install_creates_disabled_plugin_row_and_routines() {
                 .uri("/api/v1/registry/integration/hubspot/review")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"status": "approved"}).to_string()))
+                .body(Body::from(
+                    json!({
+                        "status": "approved",
+                        "reviewed_version": "1.2.0",
+                        "reviewed_bundle_sha256": bundle_sha,
+                    })
+                    .to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -238,6 +252,8 @@ async fn integration_install_creates_disabled_routine() {
     let token = fs.token.clone();
 
     // publish the integration bundle
+    let bundle = integration_bundle("release-notes", "1.0.0");
+    let bundle_sha = sha256_hex(&bundle);
     let res = app
         .clone()
         .oneshot(
@@ -246,7 +262,7 @@ async fn integration_install_creates_disabled_routine() {
                 .uri("/api/v1/registry/integration?slug=release-notes&version=1.0.0")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/gzip")
-                .body(Body::from(integration_bundle("release-notes", "1.0.0")))
+                .body(Body::from(bundle))
                 .unwrap(),
         )
         .await
@@ -268,7 +284,7 @@ async fn integration_install_creates_disabled_routine() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
-    // admin approves
+    // admin approves (bound to the reviewed version + bundle hash)
     let res = app
         .clone()
         .oneshot(
@@ -277,7 +293,14 @@ async fn integration_install_creates_disabled_routine() {
                 .uri("/api/v1/registry/integration/release-notes/review")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"status": "approved"}).to_string()))
+                .body(Body::from(
+                    json!({
+                        "status": "approved",
+                        "reviewed_version": "1.0.0",
+                        "reviewed_bundle_sha256": bundle_sha,
+                    })
+                    .to_string(),
+                ))
                 .unwrap(),
         )
         .await
