@@ -37,7 +37,7 @@ async fn github_search_repositories_happy_path_with_auth() {
         .await;
 
     let plugin = integration_by_name("github").unwrap();
-    assert_eq!(plugin.category(), Category::Other);
+    assert_eq!(plugin.categories(), &[Category::Other]);
     let config = json!({ "api_url": server.uri() });
     let out = plugin
         .execute(

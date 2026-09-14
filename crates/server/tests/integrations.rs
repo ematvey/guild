@@ -1,7 +1,9 @@
 //! Integration plugin tests: superproxy web_fetch against a mock gateway,
 //! searxng web_search meta shape (spec C.2/D).
 
-use guild_server::integrations::{integration_by_name, integration_names, Category};
+use guild_server::integrations::{
+    category_strings, integration_by_name, integration_names, Category,
+};
 use serde_json::json;
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -36,7 +38,7 @@ async fn superproxy_fetch_builds_content_and_meta() {
 
     let plugin = integration_by_name("superproxy").unwrap();
     assert_eq!(plugin.name(), "superproxy");
-    assert_eq!(plugin.category(), Category::Fetch);
+    assert_eq!(plugin.categories(), &[Category::Fetch]);
 
     let config = superproxy_config(&server, None);
     let out = plugin
@@ -156,7 +158,7 @@ async fn searxng_search_builds_meta_with_sources() {
         .await;
 
     let plugin = integration_by_name("searxng").unwrap();
-    assert_eq!(plugin.category(), Category::Search);
+    assert_eq!(plugin.categories(), &[Category::Search]);
 
     let config = json!({ "base_url": server.uri() });
     let out = plugin
@@ -205,7 +207,7 @@ async fn firecrawl_scrape_builds_content_and_fetch_meta() {
 
     let plugin = integration_by_name("firecrawl").unwrap();
     assert_eq!(plugin.name(), "firecrawl");
-    assert_eq!(plugin.category(), Category::Fetch);
+    assert_eq!(plugin.categories(), &[Category::Fetch, Category::Search]);
 
     let config = json!({ "base_url": server.uri() });
     let out = plugin
@@ -424,4 +426,29 @@ async fn superproxy_prefers_stored_secret_over_config_token() {
         .unwrap();
     assert_eq!(out.content, "body");
     server.verify().await;
+}
+
+/// An integration declares one category per capability: firecrawl is both
+/// fetch and search; single-capability integrations keep a one-element
+/// list. `category_strings` serializes in the stable display order (search,
+/// fetch, other) regardless of declaration order.
+#[test]
+fn categories_declare_capabilities_and_serialize_in_display_order() {
+    let firecrawl = integration_by_name("firecrawl").unwrap();
+    assert_eq!(firecrawl.categories(), &[Category::Fetch, Category::Search]);
+    let searxng = integration_by_name("searxng").unwrap();
+    assert_eq!(searxng.categories(), &[Category::Search]);
+    assert_eq!(
+        integration_by_name("superproxy").unwrap().categories(),
+        &[Category::Fetch]
+    );
+
+    assert_eq!(
+        category_strings(&[Category::Fetch, Category::Search]),
+        vec!["search".to_string(), "fetch".to_string()]
+    );
+    assert_eq!(
+        category_strings(&[Category::Other]),
+        vec!["other".to_string()]
+    );
 }

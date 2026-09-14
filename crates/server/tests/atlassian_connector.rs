@@ -55,7 +55,7 @@ async fn jira_search_posts_jql_with_basic_auth() {
 
     let plugin = integration_by_name("atlassian").unwrap();
     assert_eq!(plugin.name(), "atlassian");
-    assert_eq!(plugin.category(), Category::Other);
+    assert_eq!(plugin.categories(), &[Category::Other]);
 
     let out = plugin
         .execute(
