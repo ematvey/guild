@@ -6,7 +6,7 @@
 //! UI — plus a secrets editor (masked previews, write-only values) and,
 //! for MCP plugins, the mcp url and a per-role tool-policy editor.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
@@ -39,7 +39,6 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "../components/empty-state";
-import { FactCard, FactGrid } from "../components/fact-card";
 
 /** One manifest-declared settings field — the detail form is generated
  * from these; the manifest is the schema. */
@@ -399,6 +398,80 @@ export default function IntegrationsSection({
   );
 }
 
+// Per-credential widgets: every secret name renders as a purposeful,
+// labeled input — password/textarea/email by the credential's shape —
+// never a generic name+value pair.
+const SECRET_WIDGETS: Record<
+  string,
+  {
+    label: string;
+    kind: "password" | "text" | "email" | "textarea";
+    placeholder?: string;
+  }
+> = {
+  token: { label: "API token", kind: "password" },
+  api_key: { label: "API key", kind: "password" },
+  bot_token: { label: "Bot token", kind: "password", placeholder: "xoxb-…" },
+  secret_key: { label: "Secret key", kind: "password" },
+  public_key: { label: "Public key", kind: "text" },
+  email: { label: "Email", kind: "email" },
+  admin_email: { label: "Admin email", kind: "email" },
+  site: {
+    label: "Site URL",
+    kind: "text",
+    placeholder: "https://yourorg.atlassian.net",
+  },
+  host: {
+    label: "Host URL",
+    kind: "text",
+    placeholder: "https://langfuse.example.com",
+  },
+  service_account_json: {
+    label: "Service account JSON",
+    kind: "textarea",
+    placeholder: "{ … }",
+  },
+};
+
+const secretWidget = (name: string) =>
+  SECRET_WIDGETS[name] ?? {
+    label: name.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()),
+    kind: "password" as const,
+  };
+
+/** The initial editable state, derived from the stored row. The page is
+ * the form — one surface, no separate edit mode; dirty state drives
+ * Save. */
+function initialState(
+  fields: FieldSpec[],
+  initialConfig: Record<string, unknown>,
+  initialEnabled: boolean,
+  isMcp: boolean,
+) {
+  const advanced: Record<string, unknown> = {};
+  if (isMcp) {
+    for (const [k, v] of Object.entries(initialConfig)) {
+      if (k !== "mcp" && k !== "tool_policy") advanced[k] = v;
+    }
+  }
+  return {
+    enabled: initialEnabled,
+    draft: Object.fromEntries(
+      fields.map((f) => [
+        f.name,
+        initialConfig[f.name] ??
+          f.default ??
+          (f.kind === "boolean" ? false : ""),
+      ]),
+    ),
+    mcpUrl: isMcp
+      ? String((initialConfig.mcp as Record<string, unknown>).url ?? "")
+      : "",
+    advancedText: isMcp ? JSON.stringify(advanced, null, 2) : "",
+    policy: readPolicy(initialConfig),
+  };
+}
+
 function IntegrationDetail({
   id,
   name,
@@ -422,48 +495,35 @@ function IntegrationDetail({
 }) {
   const isMcp =
     typeof initialConfig?.mcp === "object" && initialConfig.mcp !== null;
-  // Schema-driven connectors edit through a form generated from the
-  // manifest fields; everything else (MCP plugins, schema-less rows) edits
-  // as raw JSON.
-  const useForm = !isMcp && fields.length > 0;
-  // The saved integration is facts first; editing is an explicit mode.
-  const [mode, setMode] = useState<"view" | "edit">("view");
-  const [enabled, setEnabled] = useState(initialEnabled);
-  const [text, setText] = useState(JSON.stringify(initialConfig, null, 2));
-  // Form draft: one entry per manifest field.
-  const [draft, setDraft] = useState<Record<string, unknown>>({});
+  const initial = useMemo(
+    () => initialState(fields, initialConfig, initialEnabled, isMcp),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [initialConfig, fields, initialEnabled],
+  );
+  const [state, setState] = useState(initial);
+  // A save triggers a list reload; the new row identity resets the form.
+  useEffect(() => setState(initial), [initial]);
+
+  const { enabled, draft, mcpUrl, advancedText, policy } = state;
+  const patch = (p: Partial<typeof state>) => setState((s) => ({ ...s, ...p }));
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // Stored secrets: masked previews + timestamps, values never.
-  const [secretName, setSecretName] = useState("");
-  const [secretValue, setSecretValue] = useState("");
   const [confirmSecret, setConfirmSecret] = useState<string | null>(null);
-  // Tool policy draft: checkbox state per role; saved into config.tool_policy.
-  const [policy, setPolicy] = useState<ToolPolicy>(readPolicy(initialConfig));
+  const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
 
   const secretsPath = `/api/v1/admin/integrations/${id}/secrets`;
   const secretsRes = useCachedGet<{ secrets: SecretEntry[] }>(secretsPath);
   const secrets = secretsRes.data?.secrets ?? null;
   const reloadSecrets = secretsRes.reload;
 
-  const enterEdit = () => {
-    setText(JSON.stringify(initialConfig, null, 2));
-    setDraft(
-      Object.fromEntries(
-        fields.map((f) => [
-          f.name,
-          initialConfig[f.name] ??
-            f.default ??
-            (f.kind === "boolean" ? false : ""),
-        ]),
-      ),
-    );
-    setEnabled(initialEnabled);
-    setPolicy(readPolicy(initialConfig));
-    setError(null);
-    setMode("edit");
-  };
+  const dirty =
+    enabled !== initial.enabled ||
+    JSON.stringify(draft) !== JSON.stringify(initial.draft) ||
+    (isMcp && mcpUrl !== initial.mcpUrl) ||
+    (isMcp && advancedText !== initial.advancedText) ||
+    (isMcp && JSON.stringify(policy) !== JSON.stringify(initial.policy));
 
   const fail = (e: unknown, title: string) => {
     const msg = e instanceof Error ? e.message : String(e);
@@ -471,56 +531,69 @@ function IntegrationDetail({
     toast.error(title, { description: msg });
   };
 
+  /** Builds the config to persist from the current form state. Keys the
+   * schema does not know (legacy fields, tool_policy) survive the merge. */
+  const buildConfig = (): Record<string, unknown> => {
+    let cfg: Record<string, unknown>;
+    if (isMcp) {
+      const advanced = JSON.parse(advancedText || "{}") as Record<
+        string,
+        unknown
+      >;
+      cfg = {
+        ...advanced,
+        mcp: {
+          ...(initialConfig.mcp as Record<string, unknown>),
+          url: mcpUrl.trim(),
+        },
+      };
+    } else {
+      cfg = { ...initialConfig };
+      for (const f of fields) {
+        const value = draft[f.name];
+        if (f.kind === "boolean") {
+          cfg[f.name] = value === true;
+        } else if (f.kind === "number") {
+          const n = Number(value);
+          if (value === "" || value === null || Number.isNaN(n)) {
+            if (f.required) throw new Error(`${fieldLabel(f)} is required`);
+            delete cfg[f.name];
+          } else {
+            cfg[f.name] = n;
+          }
+        } else {
+          const s = String(value ?? "");
+          if (s === "") {
+            if (f.required) throw new Error(`${fieldLabel(f)} is required`);
+            delete cfg[f.name];
+          } else {
+            cfg[f.name] = s;
+          }
+        }
+      }
+    }
+    const clean = cleanPolicy(policy);
+    if (Object.keys(clean).length > 0) cfg.tool_policy = clean;
+    else if (isMcp) delete cfg.tool_policy;
+    return cfg;
+  };
+
   const save = async () => {
-    if (busy) return;
+    if (busy || !dirty) return;
     setBusy(true);
     setError(null);
     try {
-      let cfg: Record<string, unknown>;
-      if (useForm) {
-        // Start from the stored config so keys the schema does not know
-        // (legacy fields, tool_policy) survive; schema fields are set from
-        // the form.
-        cfg = { ...initialConfig };
-        for (const f of fields) {
-          const value = draft[f.name];
-          if (f.kind === "boolean") {
-            cfg[f.name] = value === true;
-          } else if (f.kind === "number") {
-            const n = Number(value);
-            if (value === "" || value === null || Number.isNaN(n)) {
-              if (f.required) throw new Error(`${fieldLabel(f)} is required`);
-              delete cfg[f.name];
-            } else {
-              cfg[f.name] = n;
-            }
-          } else {
-            const s = String(value ?? "");
-            if (s === "") {
-              if (f.required) throw new Error(`${fieldLabel(f)} is required`);
-              delete cfg[f.name];
-            } else {
-              cfg[f.name] = s;
-            }
-          }
-        }
-      } else {
-        cfg = JSON.parse(text) as Record<string, unknown>;
-      }
-      const clean = cleanPolicy(policy);
-      if (Object.keys(clean).length > 0) cfg.tool_policy = clean;
-      else if (isMcp) delete cfg.tool_policy;
+      const cfg = buildConfig();
       await api("PUT", `/api/v1/admin/integrations/${id}`, {
         config: cfg,
         enabled,
       });
       toast.success("Integration saved", { description: name });
       onChanged();
-      setMode("view");
     } catch (e) {
       fail(
         e instanceof SyntaxError
-          ? new Error(`config is not valid JSON: ${e.message}`)
+          ? new Error(`advanced config is not valid JSON: ${e.message}`)
           : e,
         "Save failed",
       );
@@ -529,19 +602,20 @@ function IntegrationDetail({
     }
   };
 
-  const saveSecret = async () => {
-    if (busy || !secretName.trim() || !secretValue) return;
+  const saveSecret = async (secretName: string) => {
+    const value = secretDraft[secretName];
+    if (busy || !value) return;
     setBusy(true);
     setError(null);
     try {
       await api("PUT", `/api/v1/admin/integrations/${id}/secrets`, {
-        name: secretName.trim(),
-        value: secretValue,
+        name: secretName,
+        value,
       });
-      toast.success("Secret saved", { description: secretName.trim() });
-      setSecretName("");
-      setSecretValue("");
+      toast.success("Secret saved", { description: secretName });
+      setSecretDraft((d) => ({ ...d, [secretName]: "" }));
       reloadSecrets();
+      onChanged();
     } catch (e) {
       fail(e, "Could not save secret");
     } finally {
@@ -581,19 +655,35 @@ function IntegrationDetail({
     }
   };
 
+  const storedFor = (secretName: string) =>
+    secrets?.find((s) => s.name === secretName) ?? null;
+  // Additional stored secrets the manifest does not declare (legacy or
+  // custom names an admin added before the schema existed).
+  const additional = (secrets ?? []).filter(
+    (s) => !secretNames.includes(s.name),
+  );
+  const showSecrets = secretNames.length > 0 || additional.length > 0;
+
   return (
     <div className="space-y-5">
       <PageHeader
         title={name}
         description={
-          initialEnabled
+          enabled
             ? "Enabled — tools join the chat loop."
             : "Disabled; the configuration is kept, no tools are contributed."
         }
         back={{ label: "Integrations", onClick: onBack }}
         actions={
           <>
-            <Button onClick={enterEdit}>Edit</Button>
+            <Button disabled={!dirty || busy} onClick={save}>
+              {busy ? "Saving…" : "Save"}
+            </Button>
+            {dirty && (
+              <Button variant="ghost" onClick={() => setState(initial)}>
+                Reset
+              </Button>
+            )}
             <Button
               variant="outline"
               className="text-destructive"
@@ -605,365 +695,250 @@ function IntegrationDetail({
         }
       />
 
-      {/* view: saved facts + explicit actions */}
-      <FactGrid>
-        <FactCard label="Type">
+      {/* Type + enable toggle: one compact row, the page itself is the form. */}
+      <div className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Type
+          </span>
           <Badge variant="secondary">{categoryLabel(category)}</Badge>
-        </FactCard>
-        <FactCard label="Status">
-          <StatusBadge enabled={initialEnabled} />
-        </FactCard>
-        {isMcp && (
-          <FactCard label="Connection" className="sm:col-span-2">
-            <p className="break-all font-mono text-xs">
-              {String(
-                (initialConfig.mcp as Record<string, unknown>).url ??
-                  "(no url)",
-              )}
-            </p>
-          </FactCard>
-        )}
-      </FactGrid>
-
-      {/* Settings: manifest-declared fields with their current values. */}
-      {fields.length > 0 && (
-        <div className="rounded-lg border border-border bg-card p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Settings
-          </p>
-          <dl className="mt-3 space-y-3">
-            {fields.map((f) => {
-              const value = initialConfig[f.name];
-              const shown =
-                value !== undefined
-                  ? String(value)
-                  : f.default !== undefined && f.default !== null
-                    ? `${String(f.default)} (default)`
-                    : "not set";
-              return (
-                <div key={f.name} className="flex items-baseline gap-4">
-                  <dt className="w-48 shrink-0 text-sm">
-                    {fieldLabel(f)}
-                    {f.required && (
-                      <span className="ml-1 text-destructive">*</span>
-                    )}
-                  </dt>
-                  <dd className="min-w-0">
-                    <p
-                      className={`truncate font-mono text-xs ${
-                        value === undefined ? "text-muted-foreground" : ""
-                      }`}
-                    >
-                      {shown}
-                    </p>
-                    {f.help && (
-                      <p className="text-xs text-muted-foreground">{f.help}</p>
-                    )}
-                  </dd>
-                </div>
-              );
-            })}
-          </dl>
         </div>
-      )}
-
-      {isMcp && (
-        <div className="rounded-lg border border-border bg-card p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Config
-          </p>
-          {Object.keys(initialConfig).length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">Empty config.</p>
-          ) : (
-            <pre className="mt-2 overflow-x-auto font-mono text-xs leading-relaxed">
-              {JSON.stringify(initialConfig, null, 2)}
-            </pre>
-          )}
-        </div>
-      )}
-
-      <div className="rounded-lg border border-border bg-card p-4">
-        <div className="flex items-center gap-1.5">
-          <KeyRound className="size-3.5 text-muted-foreground" />
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Secrets
-          </p>
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {isMcp
-            ? "Passed to the MCP server as headers on connect."
-            : "Credentials the connector's tools use on every call."}{" "}
-          Values are never shown — only a masked preview. An enabled integration
-          must have every required secret stored.
-        </p>
-        {secrets === null ? (
-          <Skeleton className="mt-3 h-8 w-56" />
-        ) : secrets.length === 0 && secretNames.length === 0 ? (
-          <p className="mt-3 text-sm text-muted-foreground">
-            This integration needs no secrets.
-          </p>
-        ) : (
-          <ul className="mt-3 divide-y divide-border/60">
-            {secretNames.map((required) => {
-              const stored = secrets?.find((s) => s.name === required);
-              return (
-                <li
-                  key={required}
-                  className="flex items-center gap-3 py-2 text-sm"
-                >
-                  <span className="font-mono text-xs">{required}</span>
-                  {stored ? (
-                    <>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {stored.masked || "••••"}
-                      </span>
-                      <span className="hidden text-xs text-muted-foreground sm:inline">
-                        updated {new Date(stored.updated_at).toLocaleString()}
-                      </span>
-                    </>
-                  ) : (
-                    <Badge
-                      variant="outline"
-                      className="border-amber-500/40 text-amber-600 dark:text-amber-400"
-                    >
-                      missing
-                    </Badge>
-                  )}
-                  {stored && (
-                    <button
-                      className="ml-auto text-muted-foreground transition-colors hover:text-destructive"
-                      title="Delete secret"
-                      onClick={() => setConfirmSecret(required)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-            {secrets
-              ?.filter((s) => !secretNames.includes(s.name))
-              .map((s) => (
-                <li
-                  key={s.name}
-                  className="flex items-center gap-3 py-2 text-sm"
-                >
-                  <span className="font-mono text-xs">{s.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    additional
-                  </span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {s.masked || "••••"}
-                  </span>
-                  <span className="hidden text-xs text-muted-foreground sm:inline">
-                    updated {new Date(s.updated_at).toLocaleString()}
-                  </span>
-                  <button
-                    className="ml-auto text-muted-foreground transition-colors hover:text-destructive"
-                    title="Delete secret"
-                    onClick={() => setConfirmSecret(s.name)}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </li>
-              ))}
-          </ul>
-        )}
-        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border/60 pt-3">
-          <div>
-            <p className="mb-1 text-xs text-muted-foreground">Name</p>
-            <Input
-              className="h-8 w-40 font-mono text-xs"
-              value={secretName}
-              onChange={(e) => setSecretName(e.target.value)}
-              placeholder={secretNames[0] ?? "e.g. api_key"}
-            />
-          </div>
-          <div>
-            <p className="mb-1 text-xs text-muted-foreground">
-              Value (write-only)
-            </p>
-            <Input
-              className="h-8 w-56 font-mono text-xs"
-              type="password"
-              value={secretValue}
-              onChange={(e) => setSecretValue(e.target.value)}
-              placeholder="add or replace"
-            />
-          </div>
-          <Button
-            size="sm"
-            className="h-8"
-            disabled={busy || !secretName.trim() || !secretValue}
-            onClick={saveSecret}
-          >
-            {busy ? "Saving…" : "Save secret"}
-          </Button>
-        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="size-4 accent-foreground"
+            checked={enabled}
+            onChange={(e) => patch({ enabled: e.target.checked })}
+          />
+          <span className="text-muted-foreground">Enabled</span>
+        </label>
       </div>
 
-      {isMcp && (
-        <div className="rounded-lg border border-border bg-card p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Tool policy
-          </p>
-          {Object.keys(cleanPolicy(readPolicy(initialConfig))).length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              Default — manifest tool classes apply to every role.
-            </p>
+      {/* Settings: the manifest-declared fields, edited in place. */}
+      {fields.map((f) => (
+        <Field
+          key={f.name}
+          label={`${fieldLabel(f)}${f.required ? " *" : ""}`}
+          hint={f.help ?? undefined}
+        >
+          {f.kind === "boolean" ? (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 accent-foreground"
+                checked={draft[f.name] === true}
+                onChange={(e) =>
+                  patch({ draft: { ...draft, [f.name]: e.target.checked } })
+                }
+              />
+              <span className="text-muted-foreground">Enabled</span>
+            </label>
+          ) : f.kind === "text" ? (
+            <Textarea
+              className="min-h-24"
+              spellCheck={false}
+              placeholder={f.placeholder ?? undefined}
+              value={String(draft[f.name] ?? "")}
+              onChange={(e) =>
+                patch({ draft: { ...draft, [f.name]: e.target.value } })
+              }
+            />
           ) : (
-            <div className="mt-2 grid grid-cols-2 gap-3">
-              {ROLES.map((role) => {
-                const classes = readPolicy(initialConfig)[role];
-                if (!classes?.length) return null;
-                return (
-                  <div key={role}>
-                    <p className="text-sm font-medium capitalize">{role}</p>
-                    <p className="text-xs capitalize text-muted-foreground">
-                      {classes.join(", ")}
-                    </p>
+            <Input
+              type={f.kind === "number" ? "number" : "text"}
+              className="max-w-md"
+              spellCheck={false}
+              placeholder={
+                f.placeholder ??
+                (f.default !== undefined && f.default !== null
+                  ? String(f.default)
+                  : undefined)
+              }
+              value={String(draft[f.name] ?? "")}
+              onChange={(e) =>
+                patch({ draft: { ...draft, [f.name]: e.target.value } })
+              }
+            />
+          )}
+        </Field>
+      ))}
+
+      {isMcp && (
+        <>
+          <Field label="Server URL" hint="Streamable-HTTP MCP endpoint.">
+            <Input
+              type="text"
+              className="max-w-md font-mono text-xs"
+              spellCheck={false}
+              placeholder="https://mcp.example.com/mcp"
+              value={mcpUrl}
+              onChange={(e) => patch({ mcpUrl: e.target.value })}
+            />
+          </Field>
+          <Field
+            label="Tool policy"
+            hint="Classes each role may call; unchecked roles get the manifest defaults."
+          >
+            <div className="grid grid-cols-2 gap-3">
+              {ROLES.map((role) => (
+                <div
+                  key={role}
+                  className="rounded-lg border border-border px-3 py-2.5"
+                >
+                  <p className="text-sm font-medium capitalize">{role}</p>
+                  <div className="mt-1.5 space-y-1.5">
+                    {TOOL_CLASSES.map((cls) => (
+                      <label
+                        key={cls}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          className="size-4 accent-foreground"
+                          checked={policy[role]?.includes(cls) ?? false}
+                          onChange={() =>
+                            patch({ policy: toggleClass(policy, role, cls) })
+                          }
+                        />
+                        <span className="capitalize text-muted-foreground">
+                          {cls}
+                        </span>
+                      </label>
+                    ))}
                   </div>
+                </div>
+              ))}
+            </div>
+          </Field>
+          <Field
+            label="Advanced config (JSON)"
+            hint="Everything beyond the server URL and tool policy."
+          >
+            <Textarea
+              className="min-h-24 font-mono text-xs"
+              spellCheck={false}
+              value={advancedText}
+              onChange={(e) => patch({ advancedText: e.target.value })}
+            />
+          </Field>
+        </>
+      )}
+
+      {/* Secrets: one purposeful widget per declared credential; the pane
+          only exists when the integration actually uses secrets. */}
+      {showSecrets && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-1.5">
+            <KeyRound className="size-3.5 text-muted-foreground" />
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Credentials
+            </p>
+          </div>
+          {secrets === null ? (
+            <Skeleton className="mt-3 h-8 w-56" />
+          ) : (
+            <div className="mt-3 space-y-4">
+              {secretNames.map((secretName) => {
+                const stored = storedFor(secretName);
+                const w = secretWidget(secretName);
+                const value = secretDraft[secretName] ?? "";
+                return (
+                  <Field
+                    key={secretName}
+                    label={w.label}
+                    hint={
+                      stored
+                        ? `Stored ${stored.masked || "••••"} · updated ${new Date(stored.updated_at).toLocaleString()} — enter a new value to replace it`
+                        : "Not stored yet"
+                    }
+                  >
+                    <div className="flex items-start gap-2">
+                      {w.kind === "textarea" ? (
+                        <Textarea
+                          className="min-h-20 font-mono text-xs"
+                          spellCheck={false}
+                          placeholder={w.placeholder}
+                          value={value}
+                          onChange={(e) =>
+                            setSecretDraft((d) => ({
+                              ...d,
+                              [secretName]: e.target.value,
+                            }))
+                          }
+                        />
+                      ) : (
+                        <Input
+                          className="max-w-sm font-mono text-xs"
+                          type={w.kind === "password" ? "password" : w.kind}
+                          spellCheck={false}
+                          placeholder={
+                            w.placeholder ??
+                            (stored
+                              ? "enter a new value to replace"
+                              : undefined)
+                          }
+                          value={value}
+                          onChange={(e) =>
+                            setSecretDraft((d) => ({
+                              ...d,
+                              [secretName]: e.target.value,
+                            }))
+                          }
+                        />
+                      )}
+                      <Button
+                        size="sm"
+                        className="h-8"
+                        disabled={busy || !value}
+                        onClick={() => saveSecret(secretName)}
+                      >
+                        Set
+                      </Button>
+                      {stored && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 text-muted-foreground hover:text-destructive"
+                          disabled={busy}
+                          title="Delete stored value"
+                          onClick={() => setConfirmSecret(secretName)}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </Field>
                 );
               })}
+              {additional.map((s) => (
+                <Field
+                  key={s.name}
+                  label={secretWidget(s.name).label}
+                  hint={`Stored ${s.masked || "••••"} · updated ${new Date(s.updated_at).toLocaleString()}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {s.name}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="ml-auto h-8 text-muted-foreground hover:text-destructive"
+                      disabled={busy}
+                      title="Delete stored value"
+                      onClick={() => setConfirmSecret(s.name)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </Field>
+              ))}
             </div>
           )}
         </div>
       )}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
-
-      {mode === "edit" && (
-        <div className="space-y-5 rounded-lg border border-border bg-card p-5">
-          <PageHeader title="Edit integration" />
-          <label className="flex items-start gap-3 text-sm">
-            <input
-              type="checkbox"
-              className="mt-0.5 size-4 accent-foreground"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-            />
-            <span>
-              Enabled
-              <span className="block text-xs text-muted-foreground">
-                Disabled integrations keep their config but contribute no tools.
-              </span>
-            </span>
-          </label>
-
-          {useForm ? (
-            fields.map((f) => (
-              <Field
-                key={f.name}
-                label={`${fieldLabel(f)}${f.required ? " *" : ""}`}
-                hint={f.help ?? undefined}
-              >
-                {f.kind === "boolean" ? (
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      className="size-4 accent-foreground"
-                      checked={draft[f.name] === true}
-                      onChange={(e) =>
-                        setDraft((d) => ({
-                          ...d,
-                          [f.name]: e.target.checked,
-                        }))
-                      }
-                    />
-                    <span className="text-muted-foreground">Enabled</span>
-                  </label>
-                ) : f.kind === "text" ? (
-                  <Textarea
-                    className="min-h-24"
-                    spellCheck={false}
-                    placeholder={f.placeholder ?? undefined}
-                    value={String(draft[f.name] ?? "")}
-                    onChange={(e) =>
-                      setDraft((d) => ({ ...d, [f.name]: e.target.value }))
-                    }
-                  />
-                ) : (
-                  <Input
-                    type={f.kind === "number" ? "number" : "text"}
-                    className="max-w-md"
-                    spellCheck={false}
-                    placeholder={
-                      f.placeholder ??
-                      (f.default !== undefined && f.default !== null
-                        ? String(f.default)
-                        : undefined)
-                    }
-                    value={String(draft[f.name] ?? "")}
-                    onChange={(e) =>
-                      setDraft((d) => ({ ...d, [f.name]: e.target.value }))
-                    }
-                  />
-                )}
-              </Field>
-            ))
-          ) : (
-            <Field
-              label="Config (JSON)"
-              hint="Merged with the tool policy below on save."
-            >
-              <Textarea
-                className="min-h-40 font-mono text-xs"
-                spellCheck={false}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-              />
-            </Field>
-          )}
-
-          {isMcp && (
-            <Field
-              label="Tool policy"
-              hint="Classes each role may call; unchecked roles get the manifest defaults."
-            >
-              <div className="grid grid-cols-2 gap-3">
-                {ROLES.map((role) => (
-                  <div
-                    key={role}
-                    className="rounded-lg border border-border px-3 py-2.5"
-                  >
-                    <p className="text-sm font-medium capitalize">{role}</p>
-                    <div className="mt-1.5 space-y-1.5">
-                      {TOOL_CLASSES.map((cls) => (
-                        <label
-                          key={cls}
-                          className="flex items-center gap-2 text-sm"
-                        >
-                          <input
-                            type="checkbox"
-                            className="size-4 accent-foreground"
-                            checked={policy[role]?.includes(cls) ?? false}
-                            onChange={() =>
-                              setPolicy((p) => toggleClass(p, role, cls))
-                            }
-                          />
-                          <span className="capitalize text-muted-foreground">
-                            {cls}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Field>
-          )}
-
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          <div className="flex items-center gap-2">
-            <Button disabled={busy} onClick={save}>
-              {busy ? "Saving…" : "Save"}
-            </Button>
-            <Button variant="ghost" onClick={() => setMode("view")}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
@@ -995,8 +970,8 @@ function IntegrationDetail({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete secret?</AlertDialogTitle>
             <AlertDialogDescription>
-              “{confirmSecret}” is removed; calls that need it start failing.
-              This cannot be undone.
+              “{confirmSecret && secretWidget(confirmSecret).label}” is removed;
+              calls that need it start failing. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
