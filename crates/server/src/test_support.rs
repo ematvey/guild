@@ -522,3 +522,14 @@ pub async fn serve_full() -> ServedFull {
         base_url: format!("http://{addr}"),
     }
 }
+
+/// The workflow fingerprint the gateway stamps into `chatgen_inv:*` records
+/// (sweep tests seed records against it).
+pub fn workflow_schema_version() -> String {
+    crate::worker::restate::workflow_schema_version()
+}
+
+/// Test seam: runs the startup stuck-generation sweep on demand.
+pub async fn purge_stale_chat_generations(state: &AppState) {
+    crate::worker::restate::purge_stale_chat_generations(state).await;
+}

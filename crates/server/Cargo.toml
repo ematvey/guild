@@ -192,3 +192,7 @@ required-features = ["test-support"]
 [[test]]
 name = "prune"
 required-features = ["test-support"]
+
+[[test]]
+name = "stale_generation_sweep"
+required-features = ["test-support"]
