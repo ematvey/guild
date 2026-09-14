@@ -119,8 +119,8 @@ async fn list_integrations(
     let mut row_values = Vec::with_capacity(rows.len());
     for row in &rows {
         let category = configured_row_category(&store, admin.0.org_id, row).await?;
-        let secret_names = declared_secret_names(&store, admin.0.org_id, &row.name).await?;
-        let settings = effective_settings(&store, admin.0.org_id, &row.name).await?;
+        let secret_names = declared_secret_names(&store, row).await?;
+        let settings = effective_settings(&store, row).await?;
         row_values.push(json!({
             "id": row.id,
             "org_id": row.org_id,
@@ -201,41 +201,56 @@ async fn configured_row_category(
         .unwrap_or_else(|| "other".to_string()))
 }
 
-/// Secret names an integration's credentials must use: a registry v2
-/// bundle's manifest when one is published for the slug, the compiled-in
-/// connector's manifest otherwise. Mirrors the precedence in
-/// `save_integration` / `set_integration_secret`.
+/// Secret names an integration's credentials must use, with the same
+/// precedence as `save_integration`'s enable gate: a registry v2 bundle's
+/// manifest applies only when it claims the slug (an MCP manifest, or the
+/// row already resolved to mcp.url); a published bundle that claims nothing
+/// leaves the compiled-in connector's manifest in charge.
 async fn declared_secret_names(
     store: &crate::store::Store,
-    org_id: Uuid,
-    name: &str,
+    row: &crate::store::integrations::IntegrationRow,
 ) -> Result<Vec<String>, ApiError> {
-    if let Some(manifest) = latest_integration_manifest(store, org_id, name).await? {
-        if let Some(auth) = manifest.auth {
-            return Ok(auth.secret_names);
-        }
+    let manifest = latest_integration_manifest(store, row.org_id, &row.name).await?;
+    let v2_claimed = manifest
+        .as_ref()
+        .map(|m| m.mcp.is_some())
+        .unwrap_or(false)
+        || row.config["mcp"]["url"].as_str().is_some();
+    if v2_claimed {
+        return Ok(manifest
+            .and_then(|m| m.auth)
+            .map(|a| a.secret_names)
+            .unwrap_or_default());
     }
-    Ok(crate::integrations::integration_by_name(name)
+    Ok(crate::integrations::integration_by_name(&row.name)
         .and_then(|p| p.manifest().auth)
         .map(|a| a.secret_names)
         .unwrap_or_default())
 }
 
 /// Typed settings schema for one integration's config fields (the admin UI
-/// renders its form from this): a registry v2 bundle's manifest when
-/// published for the slug, the compiled-in connector's manifest otherwise.
+/// renders its form from this), with the same precedence as
+/// `save_integration`: a registry v2 bundle's manifest applies only when it
+/// claims the slug; otherwise the compiled-in connector's manifest.
 async fn effective_settings(
     store: &crate::store::Store,
-    org_id: Uuid,
-    name: &str,
+    row: &crate::store::integrations::IntegrationRow,
 ) -> Result<serde_json::Value, ApiError> {
-    if let Some(manifest) = latest_integration_manifest(store, org_id, name).await? {
-        if let Some(settings) = manifest.settings {
-            return serde_json::to_value(settings)
-                .map_err(|e| ApiError::internal(format!("settings schema serialize failed: {e}")));
-        }
+    let manifest = latest_integration_manifest(store, row.org_id, &row.name).await?;
+    let v2_claimed = manifest
+        .as_ref()
+        .map(|m| m.mcp.is_some())
+        .unwrap_or(false)
+        || row.config["mcp"]["url"].as_str().is_some();
+    if v2_claimed {
+        return match manifest.and_then(|m| m.settings) {
+            Some(s) => serde_json::to_value(s).map_err(|e| {
+                ApiError::internal(format!("settings schema serialize failed: {e}"))
+            }),
+            None => Ok(serde_json::Value::Null),
+        };
     }
-    let settings = crate::integrations::integration_by_name(name)
+    let settings = crate::integrations::integration_by_name(&row.name)
         .and_then(|p| p.manifest().settings);
     Ok(match settings {
         Some(s) => serde_json::to_value(s)
