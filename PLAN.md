@@ -1,9 +1,49 @@
 # Guild — current state of work
 
-Updated 2026-09-14 (review loop). Read this before
+Updated 2026-09-14 (named providers). Read this before
 touching the codebase; detailed milestone plans live in `docs/plans/`,
 deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
+
+## Providers are named, editable objects (2026-09-14)
+
+- A provider is now `{slug, name, protocol, base_url, key}`: the display
+  name is free-form ("openai" names a wire protocol, not a provider), the
+  protocol (`openai` | `anthropic`) selects the provider implementation,
+  and model routes keep referencing the stable slug. Migration 0040
+  backfills name/protocol from the legacy slug (which was doubling as both).
+- Admin API: `GET/POST /api/v1/admin/gateway/providers`,
+  `PUT/DELETE /api/v1/admin/gateway/providers/{slug}` — slug derived from
+  the name (lowercase, dash-joined), 409 on duplicates, blank key on update
+  keeps the stored key, unknown protocol 400. The old `/keys` endpoints are
+  gone. Route resolution falls back to slug-as-protocol when the provider
+  row is gone (pre-0040 shape); a deleted provider's routes fail
+  `key_missing` (the LEFT-JOIN NULL decode used to surface as a 500).
+- The wire-protocol match moved into `guild_core::provider::for_protocol`;
+  all six call sites use it. `RouteRow`/`RouteMeta` carry `protocol`
+  (serde default for old journals); usage still records the slug.
+- UI (Models section): providers are a data table with their own
+  URL-addressed sub-pages — `/settings/models/provider/new` and
+  `/settings/models/provider/<slug>` (detail = fact cards + Edit + two-step
+  delete; routes show the provider's name, add/edit pick from a provider
+  select). Live: renamed the seeded provider to "Local gateway".
+- `useCachedGet` gained a `settled` flag (fetch completed on this mount):
+  provider detail uses it to render "not found" only after a fresh fetch,
+  not on a stale pre-create cache (the create→navigate flow flashed
+  not-found without it).
+- SPA fallback fix (`http/web.rs`): dotted non-API paths (model ids,
+  provider slugs like `v1.5`) used to 404 because the fallback skipped
+  anything containing a dot; now a real bundled file wins and everything
+  else serves index.html. Live-verified:\  `/settings/models/GLM-5.3-Flash`
+  deep-links again.
+- Verified live on :18080 via agent-browser: providers list/detail/edit
+  (renamed openai → Local gateway), create (slug `scratch-test-co`,
+  anthropic protocol) → deep link → delete, deleted-slug not-found page,
+  route detail/edit provider select, and an end-to-end chat turn through
+  the renamed provider (streamed + usage recorded). Suite 212/214 (the 2
+  stragglers are the known load-flaky SSE fan-out tests; pass in isolation).
+  Note: test runs need `GUILD_TEST_PG_URL` exported (removed in the S8
+  security round); host-postgres admin creds are in `/srv/postgres`.
 
 ## Review loop rounds 4–8 (2026-09-14) — exited CLEAN
 
