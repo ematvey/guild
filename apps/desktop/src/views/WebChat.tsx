@@ -2086,6 +2086,7 @@ export default function WebChat({
       onSignOut={onSignOut}
       onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
       onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
+      onCollapse={isMobile ? undefined : () => setCollapsed(true)}
     />
   );
 
@@ -2180,15 +2181,19 @@ export default function WebChat({
               <Menu />
             </Button>
           ) : (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="-ml-1.5 size-8 text-muted-foreground"
-              onClick={() => setCollapsed((c) => !c)}
-              title={collapsed ? "Open sidebar" : "Close sidebar"}
-            >
-              {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-            </Button>
+            // Expanded: the collapse button lives in the sidebar's own header
+            // (right side); only the reopen button stays here.
+            collapsed && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="-ml-1.5 size-8 text-muted-foreground"
+                onClick={() => setCollapsed(false)}
+                title="Open sidebar"
+              >
+                <PanelLeftOpen />
+              </Button>
+            )
           )}
           <span className="min-w-0 flex-1 truncate font-medium">{activeTitle}</span>
           {boundMachine && (
@@ -2752,6 +2757,7 @@ function SidebarContent({
   onSignOut,
   onOpenSettings,
   onOpenDevice,
+  onCollapse,
 }: {
   chats: ChatSummary[] | null;
   chatId: string | null;
@@ -2763,11 +2769,24 @@ function SidebarContent({
   onSignOut: () => void;
   onOpenSettings: () => void;
   onOpenDevice: () => void;
+  /** Desktop only: collapse the sidebar from within its own header. */
+  onCollapse?: () => void;
 }) {
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
         <span className="font-semibold">Guild</span>
+        {onCollapse && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-muted-foreground"
+            onClick={onCollapse}
+            title="Close sidebar"
+          >
+            <PanelLeftClose />
+          </Button>
+        )}
       </div>
       <div className="px-2">
         <Button variant="ghost" className="w-full justify-start gap-2" onClick={onNewChat}>
