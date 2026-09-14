@@ -369,10 +369,30 @@ async fn link_once(
                 while let Some(pos) = find_blank_line(&buf) {
                     let event_text = String::from_utf8_lossy(&buf[..pos]).into_owned();
                     buf.drain(..pos + 2);
-                    if let Some(data) = sse_data(&event_text) {
-                        if let Err(e) = handle_app_frame(state, app, &client, base, token, machine_id, &data).await {
-                            ipc_trace("link", &format!("frame error: {e}"));
+                    let event_text = String::from_utf8_lossy(&buf[..pos]).into_owned();
+                    buf.drain(..pos + 2);
+                    // Route by SSE event name: "app" frames are the fan-out
+                    // bus (tool execution + webview mirror); "chat_status"
+                    // is sidebar-only state forwarded verbatim (no seq
+                    // watermark — it is idempotent, not conversation
+                    // content). Anything else (org events) has no in-app
+                    // consumer yet.
+                    match sse_event_name(&event_text).unwrap_or("app") {
+                        "app" => {
+                            if let Some(data) = sse_data(&event_text) {
+                                if let Err(e) = handle_app_frame(state, app, &client, base, token, machine_id, &data).await {
+                                    ipc_trace("link", &format!("frame error: {e}"));
+                                }
+                            }
                         }
+                        "chat_status" => {
+                            if let Some(data) = sse_data(&event_text) {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
+                                    let _ = app.emit("chat-status", v);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -389,6 +409,18 @@ async fn link_once(
 
 fn find_blank_line(buf: &[u8]) -> Option<usize> {
     buf.windows(2).position(|w| w == b"\n\n")
+}
+
+/// Extracts the SSE `event:` name of one event block ("app" when absent —
+/// the fan-out frames are the only eventless blocks the server sends).
+
+/// Extracts the SSE `event:` name of one event block ("app" when absent —
+/// the fan-out frames are the only eventless blocks the server sends).
+fn sse_event_name(event_text: &str) -> Option<&str> {
+    event_text
+        .lines()
+        .find_map(|l| l.strip_prefix("event: ").or_else(|| l.strip_prefix("event:")))
+        .map(|s| s.trim())
 }
 
 /// Extracts the `data:` payload of one SSE event block.

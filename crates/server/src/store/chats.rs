@@ -2,6 +2,7 @@
 //! log (spec §A): `store::thread` owns persistence, this store owns chat rows.
 
 use crate::http::error::ApiError;
+use crate::store::events::notify_chat_status;
 use crate::store::identity::UserRow;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -16,6 +17,25 @@ pub struct ChatRow {
     /// Bound executor machine (machine tools run only there).
     pub machine_id: Option<String>,
     pub machine_label: Option<String>,
+    /// A ChatRunner generation is in flight (server-side truth — identical
+    /// for every device).
+    pub generating: bool,
+}
+
+/// One row of the sidebar list: the chat plus the caller's derived unread
+/// state (an assistant turn newer than the user's read marker, while the
+/// chat is not generating).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ChatListRow {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub user_id: Uuid,
+    pub title: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub machine_id: Option<String>,
+    pub machine_label: Option<String>,
+    pub generating: bool,
+    pub unread: bool,
 }
 
 pub struct ChatStore<'a> {
@@ -32,7 +52,7 @@ impl<'a> ChatStore<'a> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, ChatRow>(
             "INSERT INTO chats (id, org_id, user_id, title) VALUES ($1, $2, $3, $4) \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating",
         )
         .bind(id)
         .bind(org_id)
@@ -43,10 +63,22 @@ impl<'a> ChatStore<'a> {
         .map_err(Into::into)
     }
 
-    pub async fn list_chats(&self, org_id: Uuid, user_id: Uuid) -> Result<Vec<ChatRow>, ApiError> {
+    pub async fn list_chats(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Vec<ChatListRow>, ApiError> {
         sqlx::query_as(
-            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label FROM chats \
-             WHERE org_id = $1 AND user_id = $2 ORDER BY created_at DESC",
+            "SELECT c.id, c.org_id, c.user_id, c.title, c.created_at, c.machine_id, c.machine_label, \
+                    c.generating, \
+                    c.generating = false AND EXISTS ( \
+                      SELECT 1 FROM thread_events e \
+                      WHERE e.chat_id = c.id AND e.type = 'assistant_message' \
+                        AND (r.last_read_event_id IS NULL OR e.id > r.last_read_event_id)) AS unread \
+             FROM chats c \
+             LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2 \
+             WHERE c.org_id = $1 AND c.user_id = $2 \
+             ORDER BY c.created_at DESC",
         )
         .bind(org_id)
         .bind(user_id)
@@ -67,7 +99,7 @@ impl<'a> ChatStore<'a> {
     ) -> Result<ChatRow, ApiError> {
         let is_admin = caller.role == "admin";
         sqlx::query_as(
-            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label FROM chats \
+            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label, generating FROM chats \
              WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)",
         )
         .bind(org_id)
@@ -90,7 +122,7 @@ impl<'a> ChatStore<'a> {
         sqlx::query_as(
             "UPDATE chats SET machine_id = $3, machine_label = $4 \
              WHERE org_id = $1 AND id = $2 \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating",
         )
         .bind(org_id)
         .bind(chat_id)
@@ -99,6 +131,87 @@ impl<'a> ChatStore<'a> {
         .fetch_one(self.pool)
         .await
         .map_err(Into::into)
+    }
+
+    /// Flips the chat's generating flag and notifies the status channel in
+    /// the same transaction, so no observer ever sees the flag and the
+    /// notification disagree. No-op (and silent) when the flag already
+    /// holds the target value — the ChatRunner's journaled steps re-run it
+    /// on every replay.
+    pub async fn set_generating(
+        &self,
+        org_id: Uuid,
+        chat_id: Uuid,
+        generating: bool,
+    ) -> Result<(), ApiError> {
+        let user_id: Option<Uuid> = sqlx::query_scalar(
+            "UPDATE chats SET generating = $3 \
+             WHERE org_id = $1 AND id = $2 AND generating IS DISTINCT FROM $3 \
+             RETURNING user_id",
+        )
+        .bind(org_id)
+        .bind(chat_id)
+        .bind(generating)
+        .fetch_optional(self.pool)
+        .await?;
+        if let Some(user_id) = user_id {
+            notify_chat_status(self.pool, org_id, user_id, chat_id, generating).await?;
+        }
+        Ok(())
+    }
+
+    /// Clears the flag without org scoping — the startup sweep (trusted
+    /// internal) resolves stranded workflows whose chat rows must not keep
+    /// a forever-spinner.
+    pub async fn clear_generating(&self, chat_id: Uuid) -> Result<(), ApiError> {
+        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "UPDATE chats SET generating = false \
+             WHERE id = $1 AND generating IS DISTINCT FROM false \
+             RETURNING org_id, user_id",
+        )
+        .bind(chat_id)
+        .fetch_optional(self.pool)
+        .await?;
+        if let Some((org_id, user_id)) = row {
+            notify_chat_status(self.pool, org_id, user_id, chat_id, false).await?;
+        }
+        Ok(())
+    }
+
+    /// Marks the chat read for the caller: the marker moves to the newest
+    /// thread event. Org-scoped like every chat read; a chat with no events
+    /// yet has nothing unread — the marker is simply not written.
+    pub async fn mark_read(
+        &self,
+        org_id: Uuid,
+        chat_id: Uuid,
+        caller: &UserRow,
+    ) -> Result<(), ApiError> {
+        // Same owner/admin gate as get_chat.
+        self.get_chat(org_id, chat_id, caller).await?;
+        // The marker is the newest thread event (uuid v7 sorts by time; the
+        // monotonic `seq` orders the rows — max(id) does not exist for uuid).
+        let last: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(chat_id)
+        .fetch_optional(self.pool)
+        .await?;
+        let Some(last_read_event_id) = last else {
+            return Ok(()); // no events yet — nothing unread, no marker
+        };
+        sqlx::query(
+            "INSERT INTO chat_reads (chat_id, user_id, last_read_event_id) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (chat_id, user_id) \
+             DO UPDATE SET last_read_event_id = EXCLUDED.last_read_event_id",
+        )
+        .bind(chat_id)
+        .bind(caller.id)
+        .bind(last_read_event_id)
+        .execute(self.pool)
+        .await?;
+        Ok(())
     }
 }
 
@@ -149,5 +262,98 @@ mod tests {
         // Admins can access any chat in their org.
         let via_admin = store.chats().get_chat(org, chat.id, &admin).await.unwrap();
         assert_eq!(via_admin.id, chat.id);
+    }
+
+    /// Thread-list status: generating flag flips notify + suppress unread;
+    /// unread derives from assistant turns newer than the read marker and
+    /// clears on mark_read; markers are per user (a foreign chat is 404).
+    #[tokio::test]
+    async fn chat_status_flags_roundtrip() {
+        let db = Store::connect_test().await.unwrap();
+        let store = &db.store;
+        let org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+            .bind(org)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let alice = store
+            .identity()
+            .create_user(org, "alice2@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let bob = store
+            .identity()
+            .create_user(org, "bob2@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let chat = store
+            .chats()
+            .create_chat(org, alice.id, Some("status"))
+            .await
+            .unwrap();
+
+        let list = || async { store.chats().list_chats(org, alice.id).await };
+        // fresh chat: idle and read
+        let row = &list().await.unwrap()[0];
+        assert!(!row.generating);
+        assert!(!row.unread);
+
+        // generating suppresses unread even with unseen assistant turns
+        store
+            .chats()
+            .set_generating(org, chat.id, true)
+            .await
+            .unwrap();
+        let user_ev = protocol::api::ThreadEvent::UserMessage {
+            content: "hi".into(),
+            attachments: vec![],
+        };
+        store.thread().append_event(chat.id, &user_ev).await.unwrap();
+        let asst = |turn: u32| protocol::api::ThreadEvent::AssistantMessage {
+            turn,
+            step: 0,
+            blocks: vec![protocol::api::Block::Text { text: "reply".into() }],
+            usage: Default::default(),
+            model: "m".into(),
+            interrupted: None,
+        };
+        store.thread().append_event(chat.id, &asst(1)).await.unwrap();
+        let row = &list().await.unwrap()[0];
+        assert!(row.generating);
+        assert!(!row.unread);
+
+        // turn done: the unseen assistant reply becomes unread
+        store
+            .chats()
+            .set_generating(org, chat.id, true)
+            .await
+            .unwrap(); // replay no-op: no second notification, flag unchanged
+        store
+            .chats()
+            .set_generating(org, chat.id, false)
+            .await
+            .unwrap();
+        let row = &list().await.unwrap()[0];
+        assert!(!row.generating);
+        assert!(row.unread);
+
+        // reading clears the dot; a newer assistant turn re-sets it
+        store.chats().mark_read(org, chat.id, &alice).await.unwrap();
+        let row = &list().await.unwrap()[0];
+        assert!(!row.unread);
+        store.thread().append_event(chat.id, &asst(2)).await.unwrap();
+        let row = &list().await.unwrap()[0];
+        assert!(row.unread);
+        store.chats().mark_read(org, chat.id, &alice).await.unwrap();
+        assert!(!list().await.unwrap()[0].unread);
+
+        // markers are per user; a foreign member cannot mark someone
+        // else's chat read (same owner gate as every chat read)
+        assert_eq!(
+            store.chats().mark_read(org, chat.id, &bob).await.unwrap_err().status,
+            axum::http::StatusCode::NOT_FOUND
+        );
+        assert!(list().await.unwrap()[0].unread == false);
     }
 }

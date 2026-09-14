@@ -106,6 +106,13 @@ pub struct Chat {
     pub machine_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub machine_label: Option<String>,
+    /// A generation is in flight (sidebar spinner). Defaults for old
+    /// journals/clients.
+    #[serde(default)]
+    pub generating: bool,
+    /// The reader has an unseen assistant turn (sidebar dot).
+    #[serde(default)]
+    pub unread: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

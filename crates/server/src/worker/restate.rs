@@ -930,6 +930,34 @@ fn assistant_blocks(reasoning: &str, text: &str, tool_calls: &[ToolCall]) -> Vec
     blocks
 }
 
+/// Journaled step: flip the chat's generating flag (thread-list spinner).
+/// Idempotent — replays re-run it harmlessly; the store no-ops + stays
+/// silent when the flag already holds the target value.
+macro_rules! set_generating_step {
+    ($ctx:expr, $state:expr, $req:expr, $value:expr) => {{
+        let st = $state.clone();
+        let org = $req.org_id;
+        let chat_id = $req.chat_id;
+        let value = $value;
+        $ctx.run(move || {
+            let state = st.clone();
+            async move {
+                state
+                    .store()
+                    .await
+                    .map_err(api_err)?
+                    .chats()
+                    .set_generating(org, chat_id, value)
+                    .await
+                    .map_err(api_err)?;
+                Ok(Json(()))
+            }
+        })
+        .await?
+        .into_inner();
+    }};
+}
+
 /// Journaled usage recording (called when a turn ends with usage numbers).
 macro_rules! record_usage {
     ($ctx:expr, $state:expr, $req:expr, $completion:expr, $route:expr) => {{
@@ -1405,6 +1433,12 @@ impl ChatRunner {
 
         let (tx, text_buf, thinking_buf) = ensure_generation(&state, req.chat_id);
 
+        // Journaled: the chat is generating from here until the turn exits
+        // (final answer, uniform failure, or step limit — each clears it).
+        // Set after route/quota resolution: their terminal failures happen
+        // before the flag exists, so nothing to clear on that path.
+        set_generating_step!(ctx, state, req, true);
+
         // Returns Ok(true) when the turn ended with a final answer, Ok(false)
         // when the step limit was exhausted without one.
         let steps_used = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -1714,6 +1748,9 @@ impl ChatRunner {
                 });
                 clear_chatgen_kv!(ctx, state, req.chat_id);
                 state.generations.lock().unwrap().remove(&req.chat_id);
+                // Journaled: turn done — the sidebar spinner clears and the
+                // (unread) dot takes over.
+                set_generating_step!(ctx, state, req, false);
                 return Ok(true);
             }
 
@@ -1869,6 +1906,9 @@ impl ChatRunner {
                 if let Ok(store) = state.store().await {
                     let _ = store.kv().delete(&format!("chatgen_inv:{}", req.chat_id)).await;
                 }
+                // Journaled: the turn failed — clear the spinner before the
+                // workflow ends (terminal error, no further steps run).
+                set_generating_step!(ctx, state, req, false);
                 return Err(e);
             }
         };
@@ -1918,6 +1958,8 @@ impl ChatRunner {
         });
         clear_chatgen_kv!(ctx, state, req.chat_id);
         state.generations.lock().unwrap().remove(&req.chat_id);
+        // Journaled: step limit exhausted — the turn is over.
+        set_generating_step!(ctx, state, req, false);
         Ok(())
     }
 
@@ -2721,9 +2763,27 @@ pub(crate) async fn purge_stale_chat_generations(state: &AppState) {
     let current = workflow_schema_version();
     let Ok(entries) = store.kv().list_prefix("chatgen_inv:").await else { return };
     for (key, value) in entries {
+        let chat_id = key
+            .strip_prefix("chatgen_inv:")
+            .and_then(|s| s.parse::<Uuid>().ok());
+        // A dead workflow can no longer clear its chat's generating flag —
+        // the sweep does it, so the sidebar never keeps a forever-spinner.
+        async fn clear_flag(store: &crate::store::Store, chat_id: Option<Uuid>) {
+            if let Some(chat_id) = chat_id {
+                if let Err(e) = store.chats().clear_generating(chat_id).await {
+                    tracing::warn!("sweep could not clear generating for {chat_id}: {e:?}");
+                }
+            }
+        }
         match classify_chatgen_entry(&current, &value) {
-            StaleChatgenEntry::DropCurrent | StaleChatgenEntry::DropUnusable => {
+            StaleChatgenEntry::DropCurrent => {
+                // Current workflow version — it replays and clears its own
+                // flag at the exit; only the record goes.
                 let _ = store.kv().delete(&key).await;
+            }
+            StaleChatgenEntry::DropUnusable => {
+                let _ = store.kv().delete(&key).await;
+                clear_flag(&store, chat_id).await;
             }
             StaleChatgenEntry::Kill(inv) => {
                 let url = format!(
@@ -2742,6 +2802,7 @@ pub(crate) async fn purge_stale_chat_generations(state: &AppState) {
                             resp.status()
                         );
                         let _ = store.kv().delete(&key).await;
+                        clear_flag(&store, chat_id).await;
                     }
                     Ok(resp) => {
                         tracing::warn!(

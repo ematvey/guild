@@ -75,3 +75,33 @@ impl<'a> EventStore<'a> {
         .map_err(Into::into)
     }
 }
+
+/// Ephemeral per-chat status frames (thread-list spinner/unread):
+/// NOTIFY-only — the org event log stays meaningful, per-turn status would
+/// flood it. The events stream forwards matching frames to the owning
+/// user's connections.
+pub const CHAT_STATUS_CHANNEL: &str = "guild_chat_status";
+
+/// Notifies one chat-status frame. Caller-visible fields only (org, owner,
+/// chat, flag) — other members' streams filter it out by user_id.
+pub async fn notify_chat_status(
+    pool: &sqlx::PgPool,
+    org_id: Uuid,
+    user_id: Uuid,
+    chat_id: Uuid,
+    generating: bool,
+) -> Result<(), ApiError> {
+    let payload = serde_json::json!({
+        "org_id": org_id,
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "generating": generating,
+    })
+    .to_string();
+    sqlx::query("SELECT pg_notify($1, $2)")
+        .bind(CHAT_STATUS_CHANNEL)
+        .bind(payload)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
