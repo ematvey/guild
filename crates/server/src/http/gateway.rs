@@ -136,12 +136,12 @@ pub fn routes() -> Router<AppState> {
             axum::routing::post(compact_chat),
         )
         .route(
-            "/api/v1/admin/gateway/keys",
-            axum::routing::get(list_keys).post(set_key),
+            "/api/v1/admin/gateway/providers",
+            axum::routing::get(list_providers).post(create_provider),
         )
         .route(
-            "/api/v1/admin/gateway/keys/{provider}",
-            axum::routing::delete(delete_key),
+            "/api/v1/admin/gateway/providers/{slug}",
+            axum::routing::put(update_provider).delete(delete_provider),
         )
         .route(
             "/api/v1/admin/gateway/routes/{model}",
@@ -180,27 +180,22 @@ async fn models(
     Ok(Json(serde_json::json!({ "models": list })))
 }
 
-async fn set_key(
-    State(state): State<AppState>,
-    admin: AdminUser,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let provider = body["provider"]
-        .as_str()
-        .ok_or_else(|| ApiError::bad_request("missing provider"))?;
-    let base_url = body["base_url"]
-        .as_str()
-        .ok_or_else(|| ApiError::bad_request("missing base_url"))?;
-    let key = body["key"]
-        .as_str()
-        .ok_or_else(|| ApiError::bad_request("missing key"))?;
-    let master = state.config.master_key().map_err(ApiError::from)?;
-    let store = state.store().await?;
-    store
-        .gateway()
-        .upsert_provider_key(admin.0.org_id, provider, base_url, key, &master)
-        .await?;
-    Ok(Json(serde_json::json!({})))
+/// Wire protocols Guild can speak. A provider picks one; its name is free-form.
+const PROTOCOLS: [&str; 2] = ["openai", "anthropic"];
+
+/// Derives the stable slug routes reference from a provider's display name.
+fn provider_slug(name: &str) -> String {
+    let slug: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let slug = slug.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+    if slug.is_empty() {
+        "provider".to_string()
+    } else {
+        slug
+    }
 }
 
 async fn list_routes(
@@ -212,25 +207,95 @@ async fn list_routes(
     Ok(Json(serde_json::json!({ "routes": rows })))
 }
 
-/// Provider keys for the admin settings (metadata only, never the secret).
-async fn list_keys(
+/// Provider rows for the admin settings (metadata only, never the secret).
+async fn list_providers(
     State(state): State<AppState>,
     admin: AdminUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    let keys = store.gateway().list_keys(admin.0.org_id).await?;
-    Ok(Json(json!({ "keys": keys })))
+    let providers = store.gateway().list_providers(admin.0.org_id).await?;
+    Ok(Json(json!({ "providers": providers })))
 }
 
-/// Removes a provider key; routes referencing the provider stop resolving
-/// until a new key is set.
-async fn delete_key(
+/// Creates a provider: {name, protocol, base_url, key}. The slug routes will
+/// reference is derived from the name; duplicates are 409.
+async fn create_provider(
     State(state): State<AppState>,
     admin: AdminUser,
-    Path(provider): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let name = body["name"].as_str().map(str::trim).filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad_request("missing name"))?;
+    let protocol = body["protocol"].as_str()
+        .ok_or_else(|| ApiError::bad_request("missing protocol"))?;
+    if !PROTOCOLS.contains(&protocol) {
+        return Err(ApiError::bad_request(format!(
+            "unknown protocol {protocol} — expected one of: {}",
+            PROTOCOLS.join(", ")
+        )));
+    }
+    let base_url = body["base_url"].as_str().map(str::trim).filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad_request("missing base_url"))?;
+    let key = body["key"].as_str().filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad_request("missing key"))?;
+    let slug = provider_slug(name);
+    let store = state.store().await?;
+    if store.gateway().get_provider(admin.0.org_id, &slug).await?.is_some() {
+        return Err(ApiError::conflict(
+            "already_exists",
+            format!("a provider with the name '{name}' already exists"),
+        ));
+    }
+    let master = state.config.master_key().map_err(ApiError::from)?;
+    store
+        .gateway()
+        .create_provider(admin.0.org_id, &slug, name, protocol, base_url, key, &master)
+        .await?;
+    Ok(Json(json!({ "provider": slug })))
+}
+
+/// Updates a provider: {name, protocol, base_url, key?} — a blank key keeps
+/// the current one.
+async fn update_provider(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(slug): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let name = body["name"].as_str().map(str::trim).filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad_request("missing name"))?;
+    let protocol = body["protocol"].as_str()
+        .ok_or_else(|| ApiError::bad_request("missing protocol"))?;
+    if !PROTOCOLS.contains(&protocol) {
+        return Err(ApiError::bad_request(format!(
+            "unknown protocol {protocol} — expected one of: {}",
+            PROTOCOLS.join(", ")
+        )));
+    }
+    let base_url = body["base_url"].as_str().map(str::trim).filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad_request("missing base_url"))?;
+    let key = body["key"].as_str().filter(|s| !s.is_empty());
+    let master = state.config.master_key().map_err(ApiError::from)?;
+    let store = state.store().await?;
+    let updated = store
+        .gateway()
+        .update_provider(admin.0.org_id, &slug, name, protocol, base_url, key, &master)
+        .await?;
+    if !updated {
+        return Err(ApiError::not_found(format!("no provider {slug}")));
+    }
+    Ok(Json(json!({})))
+}
+
+/// Removes a provider; routes referencing it stop resolving until a new
+/// provider with the same slug is created.
+async fn delete_provider(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(slug): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.gateway().delete_key(admin.0.org_id, &provider).await?;
+    store.gateway().delete_provider(admin.0.org_id, &slug).await?;
     Ok(Json(json!({})))
 }
 

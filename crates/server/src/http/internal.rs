@@ -379,11 +379,8 @@ async fn internal_completion(
         .resolve_route(req.org_id, &req.model, &master)
         .await?;
 
-    let provider: Arc<dyn ModelProvider> = match route.provider.as_str() {
-        "openai" => Arc::new(guild_core::provider::OpenAiProvider::new()),
-        "anthropic" => Arc::new(guild_core::provider::AnthropicProvider::new()),
-        other => return Err(ApiError::internal(format!("unknown provider {other}"))),
-    };
+    let provider: Arc<dyn ModelProvider> = guild_core::provider::for_protocol(&route.protocol)
+        .ok_or_else(|| ApiError::internal(format!("unknown protocol {}", route.protocol)))?;
     let preq = ProviderRequest {
         model: &req.model,
         system: req.system.as_deref(),

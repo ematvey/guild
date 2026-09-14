@@ -5,11 +5,12 @@ use crate::crypto;
 use crate::http::error::ApiError;
 use uuid::Uuid;
 
-/// (provider, base_url, encrypted key, price in, price out, enabled, quota,
-/// reasoning flag, context window, max output tokens)
+/// (provider, protocol, base_url, encrypted key, price in, price out,
+/// enabled, quota, reasoning flag, context window, max output tokens)
 type RouteQueryRow = (
     String,
-    String,
+    Option<String>,
+    Option<String>,
     Option<String>,
     f64,
     f64,
@@ -23,9 +24,14 @@ type RouteQueryRow = (
 
 /// Resolved route for a model call. Plain data so it can be journaled
 /// through Restate run steps.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RouteRow {
     pub provider: String,
+    /// Wire protocol the provider speaks ("openai" | "anthropic") — selects
+    /// the provider implementation. Defaults for journals written before
+    /// providers carried a protocol (0040).
+    #[serde(default = "default_protocol")]
+    pub protocol: String,
     pub base_url: String,
     /// Decrypted org key — never leaves the server.
     pub api_key: String,
@@ -54,6 +60,9 @@ pub struct RouteRow {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RouteMeta {
     pub provider: String,
+    /// Wire protocol (see RouteRow); defaults for pre-0040 journals.
+    #[serde(default = "default_protocol")]
+    pub protocol: String,
     pub base_url: String,
     pub price_in: f64,
     pub price_out: f64,
@@ -63,10 +72,15 @@ pub struct RouteMeta {
     pub context_window: Option<i64>,
 }
 
+fn default_protocol() -> String {
+    "openai".to_string()
+}
+
 impl RouteRow {
     pub fn meta(&self) -> RouteMeta {
         RouteMeta {
             provider: self.provider.clone(),
+            protocol: self.protocol.clone(),
             base_url: self.base_url.clone(),
             price_in: self.price_in,
             price_out: self.price_out,
@@ -94,10 +108,16 @@ pub struct AdminRouteRow {
     pub modalities: Vec<String>,
 }
 
-/// Admin-facing provider key row: metadata only, never the secret.
+/// Admin-facing provider row: metadata only, never the secret.
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
-pub struct ProviderKeyRow {
+pub struct ProviderRow {
+    /// Stable slug model routes reference.
     pub provider: String,
+    /// Display name — an org's label for the endpoint ("openai" is a
+    /// protocol, not a name).
+    pub name: String,
+    /// Wire protocol ("openai" | "anthropic").
+    pub protocol: String,
     pub base_url: String,
 }
 
@@ -106,6 +126,8 @@ pub struct GatewayStore<'a> {
 }
 
 impl<'a> GatewayStore<'a> {
+    /// Legacy shape: the slug doubles as display name and protocol. Kept for
+    /// test seeding; the admin surface uses `create_provider`/`update_provider`.
     pub async fn upsert_provider_key(
         &self,
         org_id: Uuid,
@@ -114,16 +136,37 @@ impl<'a> GatewayStore<'a> {
         plaintext_key: &str,
         master_key: &[u8; 32],
     ) -> anyhow::Result<()> {
+        self.create_provider(org_id, provider, provider, provider, base_url, plaintext_key, master_key)
+            .await
+    }
+
+    /// Creates a provider row; an existing row with the same (org, slug) is
+    /// fully replaced (legacy upsert semantics). Callers wanting a strict
+    /// create check existence first (the admin API 409s on duplicates).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_provider(
+        &self,
+        org_id: Uuid,
+        slug: &str,
+        name: &str,
+        protocol: &str,
+        base_url: &str,
+        plaintext_key: &str,
+        master_key: &[u8; 32],
+    ) -> anyhow::Result<()> {
         let encrypted = crypto::encrypt_secret(master_key, plaintext_key)?;
         sqlx::query(
-            "INSERT INTO provider_keys (id, org_id, provider, base_url, encrypted_key) \
-             VALUES ($1, $2, $3, $4, $5) \
+            "INSERT INTO provider_keys (id, org_id, provider, name, protocol, base_url, encrypted_key) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
              ON CONFLICT (org_id, provider) \
-             DO UPDATE SET base_url = EXCLUDED.base_url, encrypted_key = EXCLUDED.encrypted_key",
+             DO UPDATE SET name = EXCLUDED.name, protocol = EXCLUDED.protocol, \
+               base_url = EXCLUDED.base_url, encrypted_key = EXCLUDED.encrypted_key",
         )
         .bind(Uuid::now_v7())
         .bind(org_id)
-        .bind(provider)
+        .bind(slug)
+        .bind(name)
+        .bind(protocol)
         .bind(base_url)
         .bind(encrypted)
         .execute(self.pool)
@@ -131,7 +174,62 @@ impl<'a> GatewayStore<'a> {
         Ok(())
     }
 
+    /// Updates a provider's metadata; the key is replaced only when
+    /// `plaintext_key` is Some (blank field = keep current).
     #[allow(clippy::too_many_arguments)]
+    pub async fn update_provider(
+        &self,
+        org_id: Uuid,
+        slug: &str,
+        name: &str,
+        protocol: &str,
+        base_url: &str,
+        plaintext_key: Option<&str>,
+        master_key: &[u8; 32],
+    ) -> anyhow::Result<bool> {
+        let mut res = sqlx::query(
+            "UPDATE provider_keys SET name = $3, protocol = $4, base_url = $5 \
+             WHERE org_id = $1 AND provider = $2",
+        )
+        .bind(org_id)
+        .bind(slug)
+        .bind(name)
+        .bind(protocol)
+        .bind(base_url)
+        .execute(self.pool)
+        .await?;
+        if let Some(key) = plaintext_key {
+            let encrypted = crypto::encrypt_secret(master_key, key)?;
+            let key_res = sqlx::query(
+                "UPDATE provider_keys SET encrypted_key = $3 \
+                 WHERE org_id = $1 AND provider = $2",
+            )
+            .bind(org_id)
+            .bind(slug)
+            .bind(encrypted)
+            .execute(self.pool)
+            .await?;
+            res = key_res;
+        }
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn get_provider(
+        &self,
+        org_id: Uuid,
+        slug: &str,
+    ) -> anyhow::Result<Option<ProviderRow>> {
+        let row: Option<ProviderRow> = sqlx::query_as(
+            "SELECT provider, name, protocol, base_url FROM provider_keys \
+             WHERE org_id = $1 AND provider = $2",
+        )
+        .bind(org_id)
+        .bind(slug)
+        .fetch_optional(self.pool)
+        .await?;
+        Ok(row)
+    }
+
     pub async fn upsert_route(
         &self,
         org_id: Uuid,
@@ -175,10 +273,11 @@ impl<'a> GatewayStore<'a> {
         Ok(())
     }
 
-    /// Provider keys for the org's admin settings (no secrets).
-    pub async fn list_keys(&self, org_id: Uuid) -> anyhow::Result<Vec<ProviderKeyRow>> {
-        let rows: Vec<ProviderKeyRow> = sqlx::query_as(
-            "SELECT provider, base_url FROM provider_keys WHERE org_id = $1 ORDER BY provider",
+    /// Provider rows for the org's admin settings (no secrets).
+    pub async fn list_providers(&self, org_id: Uuid) -> anyhow::Result<Vec<ProviderRow>> {
+        let rows: Vec<ProviderRow> = sqlx::query_as(
+            "SELECT provider, name, protocol, base_url FROM provider_keys \
+             WHERE org_id = $1 ORDER BY name, provider",
         )
         .bind(org_id)
         .fetch_all(self.pool)
@@ -186,10 +285,12 @@ impl<'a> GatewayStore<'a> {
         Ok(rows)
     }
 
-    pub async fn delete_key(&self, org_id: Uuid, provider: &str) -> anyhow::Result<()> {
+    /// Removes a provider; routes referencing it stop resolving until a new
+    /// provider with the same slug is created.
+    pub async fn delete_provider(&self, org_id: Uuid, slug: &str) -> anyhow::Result<()> {
         sqlx::query("DELETE FROM provider_keys WHERE org_id = $1 AND provider = $2")
             .bind(org_id)
-            .bind(provider)
+            .bind(slug)
             .execute(self.pool)
             .await?;
         Ok(())
@@ -236,7 +337,7 @@ impl<'a> GatewayStore<'a> {
         master_key: &[u8; 32],
     ) -> Result<RouteRow, ApiError> {
         let row: Option<RouteQueryRow> = sqlx::query_as(
-            "SELECT r.provider, k.base_url, k.encrypted_key, \
+            "SELECT r.provider, k.protocol, k.base_url, k.encrypted_key, \
                     r.price_per_mtok_in_usd, r.price_per_mtok_out_usd, r.enabled, \
                     r.quota_monthly_usd, r.reasoning, r.context_window, \
                     r.max_output_tokens, r.modalities \
@@ -250,6 +351,7 @@ impl<'a> GatewayStore<'a> {
         .await?;
         let Some((
             provider,
+            protocol,
             base_url,
             encrypted,
             price_in,
@@ -276,10 +378,23 @@ impl<'a> GatewayStore<'a> {
                 format!("no provider key for {provider}"),
             ));
         };
+        // No provider row (deleted after the route was made): the route
+        // cannot resolve — same failure shape as a missing key.
+        let Some(base_url) = base_url else {
+            return Err(ApiError::conflict(
+                "key_missing",
+                format!("no provider row for {provider}"),
+            ));
+        };
         let api_key = crypto::decrypt_secret(master_key, &encrypted)
             .map_err(|e| ApiError::internal(format!("key decrypt failed: {e}")))?;
+        // A route whose provider row is gone still names a protocol — a JOIN
+        // miss falls back to treating the slug as the protocol (the pre-0040
+        // layout, where slugs were protocols).
+        let protocol = protocol.unwrap_or_else(|| provider.clone());
         Ok(RouteRow {
             provider,
+            protocol,
             base_url,
             api_key,
             price_in,
