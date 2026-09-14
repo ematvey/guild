@@ -329,9 +329,9 @@ export default function ModelsSection({
   );
 }
 
-function useProviders(): { providers: ProviderRow[] | null } {
+function useProviders(): { providers: ProviderRow[] | null; settled: boolean } {
   const res = useCachedGet<{ providers: ProviderRow[] }>("/api/v1/admin/gateway/providers");
-  return { providers: res.data?.providers ?? null };
+  return { providers: res.data?.providers ?? null, settled: res.settled };
 }
 
 /// Shared provider form fields for the add and edit screens.
@@ -455,7 +455,7 @@ function ProviderDetail({
   onChanged: () => void;
   onBack: () => void;
 }) {
-  const { providers } = useProviders();
+  const { providers, settled } = useProviders();
   const p = useMemo(
     () => providers?.find((x) => x.provider === slug) ?? null,
     [providers, slug],
@@ -474,7 +474,7 @@ function ProviderDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p, mode]);
 
-  if (providers !== null && p === null) {
+  if (settled && providers !== null && p === null) {
     return (
       <div>
         <PageHeader title="Provider not found" back={{ label: "Models", onClick: onBack }} />

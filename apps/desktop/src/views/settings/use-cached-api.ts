@@ -33,12 +33,17 @@ export function quantizeIso(ms: number, now = Date.now()): string {
 export function useCachedGet<T>(path: string | null): {
   data: T | null;
   error: string | null;
+  /** True once a fetch for this path completed on this mount (success or
+   * failure). A cached-but-stale value does not set it — detail pages use it
+   * to tell "not found" apart from "the fresh list is still loading". */
+  settled: boolean;
   reload: () => void;
 } {
   const [data, setData] = useState<T | null>(() =>
     path ? ((cache.get(path) as T | undefined) ?? null) : null,
   );
   const [error, setError] = useState<string | null>(null);
+  const [settled, setSettled] = useState(false);
   // Monotonic request counter: a slow response for a previous path must not
   // overwrite the new path's data (reused component instances).
   const seq = useRef(0);
@@ -46,17 +51,20 @@ export function useCachedGet<T>(path: string | null): {
   const reload = useCallback(() => {
     if (!path) return;
     const mine = ++seq.current;
+    setSettled(false);
     api<T>("GET", path)
       .then((r) => {
         if (seq.current !== mine) return;
         cache.set(path, r);
         setData(r);
         setError(null);
+        setSettled(true);
       })
       .catch((e) => {
         if (seq.current !== mine) return;
         // Cached content stays on screen through a failed refresh.
         setError(e instanceof Error ? e.message : String(e));
+        setSettled(true);
       });
   }, [path]);
 
@@ -67,11 +75,12 @@ export function useCachedGet<T>(path: string | null): {
     seq.current++;
     setData(path ? ((cache.get(path) as T | undefined) ?? null) : null);
     setError(null);
+    setSettled(false);
   }, [path]);
 
   useEffect(() => {
     reload();
   }, [reload]);
 
-  return { data, error, reload };
+  return { data, error, settled, reload };
 }
