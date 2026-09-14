@@ -131,6 +131,10 @@ async fn usage(
         parse_date(to, "to")?;
         sql.push_str(" AND ts <= toDateTime(?)");
     }
+    // Group by the raw expression (not the alias — `group` is a reserved
+    // word); ClickHouse >= 26.x rejects non-aggregate columns otherwise.
+    sql.push_str(" GROUP BY ");
+    sql.push_str(group_by.0);
 
     let client = state.config.clickhouse_client();
     let mut query = client.query(&sql).bind(user.0.org_id.simple().to_string());
@@ -222,6 +226,15 @@ async fn series(
     if let Some(to) = &q.to {
         parse_date(to, "to")?;
         sql.push_str(" AND ts <= toDateTime(?)");
+    }
+    // Group by the bucket and (when grouping) the raw group expression —
+    // not the aliases (`group` is a reserved word); ClickHouse >= 26.x
+    // rejects non-aggregate columns without an explicit GROUP BY.
+    sql.push_str(" GROUP BY ");
+    sql.push_str(bucket_expr);
+    if group_by.0 != "''" {
+        sql.push_str(", ");
+        sql.push_str(group_by.0);
     }
 
     let client = state.config.clickhouse_client();
