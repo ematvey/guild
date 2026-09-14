@@ -381,3 +381,104 @@ async fn integration_install_creates_disabled_routine() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+/// A published v2 integration bundle without `mcp` does not shadow a
+/// same-named compiled-in connector: the listing reports the built-in's
+/// secret names and settings schema, matching what the enable gate and
+/// config validation enforce.
+#[tokio::test]
+async fn no_mcp_bundle_over_builtin_slug_keeps_builtin_manifest() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+
+    // Publish an integration bundle for the built-in slug "slack" with no
+    // mcp manifest, a foreign secret name, and its own settings schema.
+    let dir = std::env::temp_dir().join(format!(
+        "guild-nomcp-slack-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let manifest = BundleManifest {
+        kind: "integration".into(),
+        slug: "slack".into(),
+        version: "9.9.9".into(),
+        description: "stray integration bundle over a built-in slug".into(),
+        dependencies: vec![],
+        mcp: None,
+        auth: Some(guild_core::registry::AuthManifest {
+            secret_names: vec!["stranger_secret".into()],
+            ..Default::default()
+        }),
+        settings: Some(guild_core::registry::SettingsManifest {
+            fields: vec![guild_core::registry::FieldSpec {
+                name: "region".into(),
+                kind: "string".into(),
+                label: None,
+                required: false,
+                default: Some(json!("eu")),
+                help: None,
+                placeholder: None,
+            }],
+        }),
+        ..Default::default()
+    };
+    let bytes = guild_core::registry::pack(&dir, &manifest).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/registry/integration?slug=slack&version=9.9.9")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/gzip")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Configure a slack row through the built-in path.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/admin/integrations")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"name": "slack"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let res = get(&app, "/api/v1/admin/integrations", &token).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let row = v["integrations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "slack")
+        .expect("slack row listed")
+        .clone();
+    // The built-in manifest's credentials and schema, not the stray
+    // bundle's: these are what the enable gate and tools() enforce.
+    assert_eq!(row["secret_names"], json!(["bot_token"]));
+    let fields = row["settings"]["fields"]
+        .as_array()
+        .expect("settings fields listed");
+    assert!(
+        fields.iter().any(|f| f["name"] == "base_url"),
+        "built-in settings schema listed, got {fields:?}"
+    );
+    assert!(!fields.iter().any(|f| f["name"] == "region"));
+}

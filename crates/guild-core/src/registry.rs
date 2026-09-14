@@ -181,6 +181,22 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
                 "settings field {f:?} kind must be one of {FIELD_KINDS:?}"
             );
             anyhow::ensure!(seen.insert(f.name.clone()), "duplicate settings field {f:?}");
+            // The generated form treats `default` per the field kind, so the
+            // JSON value must match: string for string/text, number for
+            // number, boolean for boolean. Missing and null stay allowed.
+            let default_ok = f.default.as_ref().map_or(true, |d| {
+                d.is_null()
+                    || match f.kind.as_str() {
+                        "number" => d.is_number(),
+                        "boolean" => d.is_boolean(),
+                        _ => d.is_string(),
+                    }
+            });
+            anyhow::ensure!(
+                default_ok,
+                "settings field {f:?} kind {} needs a default of the same JSON type",
+                f.kind
+            );
         }
     }
     if let Some(tools) = &m.tools {
@@ -391,6 +407,7 @@ fn extract_with_cap(bundle: &[u8], dest: &Path, cap: u64) -> anyhow::Result<Bund
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::fs;
     use std::io::Write as _;
 
@@ -514,6 +531,36 @@ mod tests {
         let dup = m.settings.as_ref().unwrap().fields[0].clone();
         m.settings.as_mut().unwrap().fields.push(dup);
         assert!(validate_v2(&m).is_err());
+
+        // A default must match the field's JSON type.
+        let mut m = v2_manifest();
+        m.settings = Some(SettingsManifest {
+            fields: vec![FieldSpec {
+                name: "base_url".into(),
+                kind: "string".into(),
+                label: None,
+                required: false,
+                default: Some(json!("https://x")),
+                help: None,
+                placeholder: None,
+            }],
+        });
+        validate_v2(&m).unwrap();
+        m.settings.as_mut().unwrap().fields[0].default = Some(json!(7));
+        assert!(validate_v2(&m).is_err());
+        m.settings.as_mut().unwrap().fields[0].kind = "number".into();
+        validate_v2(&m).unwrap();
+        m.settings.as_mut().unwrap().fields[0].default = Some(json!(true));
+        assert!(validate_v2(&m).is_err());
+        m.settings.as_mut().unwrap().fields[0].kind = "boolean".into();
+        validate_v2(&m).unwrap();
+        m.settings.as_mut().unwrap().fields[0].kind = "text".into();
+        m.settings.as_mut().unwrap().fields[0].default = Some(json!(true));
+        assert!(validate_v2(&m).is_err());
+        m.settings.as_mut().unwrap().fields[0].default = None;
+        validate_v2(&m).unwrap();
+        m.settings.as_mut().unwrap().fields[0].default = Some(json!(null));
+        validate_v2(&m).unwrap();
     }
 
     #[test]
