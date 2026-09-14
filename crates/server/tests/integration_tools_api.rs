@@ -181,6 +181,12 @@ async fn setup() -> Setup {
         )
         .await
         .unwrap();
+    // Resolution resolves approved items only — the review gate.
+    store
+        .registry()
+        .set_review(org, "integration", "hubspot", "approved")
+        .await
+        .unwrap();
     store
         .integration_secrets()
         .upsert(org, "hubspot", "api_key", "sk-123", &[0u8; 32])
@@ -385,4 +391,135 @@ async fn script_call_appends_audit_event() {
     assert_eq!(audit.payload["tool"], "echo");
     assert_eq!(audit.payload["via"], "script");
     assert_eq!(audit.payload["ok"], true);
+}
+
+// ---------- review gate: republish reclassification ----------
+
+/// Resolution resolves only manifests whose approval still covers the
+/// latest version. Republishing — same version with changed content, or a
+/// new version — resets the review status, so the plugin stops resolving
+/// until an admin re-approves; the re-approved manifest (not the old
+/// approval) then governs the class floor.
+#[tokio::test]
+async fn republished_manifest_requires_rereview_before_resolution() {
+    let s = setup().await;
+    let store = s.ts.store();
+
+    // A member republishes the same version with loosened classes: the
+    // review status resets to draft and the plugin stops resolving.
+    let publisher = store
+        .identity()
+        .create_user(s.org, "pub@a.b", "hunter226", "member")
+        .await
+        .unwrap();
+    let version = store
+        .registry()
+        .item_versions(s.org, "integration", "hubspot")
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+        .version;
+    let mut manifest = store
+        .registry()
+        .get_version(s.org, "integration", "hubspot", &version)
+        .await
+        .unwrap()
+        .manifest;
+    manifest["tools"]["classes"] = json!({
+        "echo": "read", "update_deal": "read", "admin_only_op": "read",
+    });
+    store
+        .registry()
+        .upsert_version(
+            s.org,
+            "integration",
+            "hubspot",
+            &version,
+            "HubSpot CRM tools",
+            manifest.clone(),
+            "unused-key",
+            publisher.id,
+        )
+        .await
+        .unwrap();
+    let item = store
+        .registry()
+        .list_items(s.org, "integration")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|i| i.slug == "hubspot")
+        .unwrap();
+    assert_eq!(item.review_status, "draft");
+
+    // Draft content governs nothing: the tools list is empty (404) and the
+    // member's admin-class tool call finds no resolved integration.
+    let res = s
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/integrations/hubspot/tools")
+                .header("authorization", format!("Bearer {}", s.member_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let (status, _) = call_tool(&s, Some(&s.member_token), "int_hubspot_admin_only_op", json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Re-approval binds to the republished manifest: it now governs, and
+    // its loosened classes apply (the review, not the old approval, is the
+    // source of the class floor).
+    store
+        .registry()
+        .set_review(s.org, "integration", "hubspot", "approved")
+        .await
+        .unwrap();
+    let res = s
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/integrations/hubspot/tools")
+                .header("authorization", format!("Bearer {}", s.member_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let (status, body) = call_tool(&s, Some(&s.member_token), "int_hubspot_admin_only_op", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // A new version resets again: no resolution until re-reviewed.
+    manifest["version"] = json!("2.0.0");
+    store
+        .registry()
+        .upsert_version(
+            s.org,
+            "integration",
+            "hubspot",
+            "2.0.0",
+            "HubSpot CRM tools",
+            manifest,
+            "unused-key",
+            publisher.id,
+        )
+        .await
+        .unwrap();
+    let (status, _) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    store
+        .registry()
+        .set_review(s.org, "integration", "hubspot", "approved")
+        .await
+        .unwrap();
+    let (status, body) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["content"], "echo: hi");
 }

@@ -29,12 +29,14 @@ pub struct StoredVersion {
 }
 
 impl<'a> RegistryStore<'a> {
-    /// Publishes (or republishes) a version. New versions of an approved
-    /// item reset to draft; republishing the current version keeps status.
-    /// The item row is read and locked inside the transaction (no TOCTOU),
-    /// and republishing an older version is refused: it would overwrite a
-    /// superseded release and regress latest_version (which resolve_plugins
-    /// serves).
+    /// Publishes (or republishes) a version. Any change to a version row's
+    /// manifest resets the item's review status to draft — the approval
+    /// attaches to the exact reviewed manifest, so altered content must be
+    /// re-reviewed before it governs resolution (republishing the current
+    /// version with an unchanged manifest keeps the status). Republishing an
+    /// older version is refused: it would overwrite a superseded release and
+    /// regress latest_version. The item row is read and locked inside the
+    /// transaction (no TOCTOU).
     #[allow(clippy::too_many_arguments)]
     pub async fn upsert_version(
         &self,
@@ -78,13 +80,26 @@ impl<'a> RegistryStore<'a> {
                         ));
                     }
                 }
-                let status = if latest.as_deref() == Some(version) {
+                // An unchanged re-upload of the current version keeps the
+                // review status; any manifest change (or a new version)
+                // resets to draft and drops the approval's version binding.
+                let previous: Option<serde_json::Value> = sqlx::query_scalar(
+                    "SELECT manifest FROM registry_versions WHERE item_id = $1 AND version = $2",
+                )
+                .bind(id)
+                .bind(version)
+                .fetch_optional(&mut *tx)
+                .await?;
+                let unchanged = previous.as_ref() == Some(&manifest);
+                let status = if unchanged && latest.as_deref() == Some(version) {
                     status
                 } else {
                     "draft".into()
                 };
                 sqlx::query(
-                    "UPDATE registry_items SET latest_version = $2, description = $3, review_status = $4 WHERE id = $1",
+                    "UPDATE registry_items SET latest_version = $2, description = $3, review_status = $4, \
+                     reviewed_version = CASE WHEN $4 = 'approved' THEN latest_version ELSE NULL END \
+                     WHERE id = $1",
                 )
                 .bind(id)
                 .bind(version)
@@ -190,6 +205,29 @@ impl<'a> RegistryStore<'a> {
         .ok_or_else(|| ApiError::not_found("no such registry version"))
     }
 
+    /// The version an approval covers: the latest version, but only while
+    /// review_status is approved and the approval's recorded version still
+    /// is the latest — a republish resets the status, so unreviewed content
+    /// never resolves.
+    pub async fn approved_version(
+        &self,
+        org_id: Uuid,
+        kind: &str,
+        slug: &str,
+    ) -> Result<Option<String>, ApiError> {
+        sqlx::query_scalar(
+            "SELECT latest_version FROM registry_items \
+             WHERE org_id = $1 AND kind = $2 AND slug = $3 \
+               AND review_status = 'approved' AND reviewed_version = latest_version",
+        )
+        .bind(org_id)
+        .bind(kind)
+        .bind(slug)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
     /// Review status of an item ("draft"/"approved"); 404 when absent.
     pub async fn review_status(
         &self,
@@ -208,6 +246,9 @@ impl<'a> RegistryStore<'a> {
         .ok_or_else(|| ApiError::not_found("no such registry item"))
     }
 
+    /// Sets the review status. An approval records the item's current
+    /// latest_version in the same statement, so the approval and the version
+    /// it covers cannot drift apart; a retraction clears the binding.
     pub async fn set_review(
         &self,
         org_id: Uuid,
@@ -216,7 +257,9 @@ impl<'a> RegistryStore<'a> {
         status: &str,
     ) -> Result<(), ApiError> {
         let updated = sqlx::query(
-            "UPDATE registry_items SET review_status = $4 WHERE org_id = $1 AND kind = $2 AND slug = $3",
+            "UPDATE registry_items SET review_status = $4, \
+             reviewed_version = CASE WHEN $4 = 'approved' THEN latest_version ELSE NULL END \
+             WHERE org_id = $1 AND kind = $2 AND slug = $3",
         )
         .bind(org_id)
         .bind(kind)

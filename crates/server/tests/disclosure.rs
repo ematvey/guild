@@ -166,6 +166,12 @@ async fn install_plugin(
         )
         .await
         .unwrap();
+    // Resolution resolves approved items only — the review gate.
+    store
+        .registry()
+        .set_review(org, "integration", "hubspot", "approved")
+        .await
+        .unwrap();
     store
         .integration_secrets()
         .upsert(org, "hubspot", "api_key", "sk-123", &[0u8; 32])
