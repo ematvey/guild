@@ -676,11 +676,26 @@ the session restored in the webview. Paired against the public URL directly
    sessions (`cloud.rs` / AgentView path) send no machine binding, no
    heartbeat, no client_id — engine-originated agent sessions fall back to
    the 5-min timeout for client tools and don't register as executors.
-3. **Thread-list status feature** (design written
-   `docs/plans/2026-09-14-thread-list-status-design.md`, not built):
-   per-chat `generating / done+unread / done+read` — `chats.generating`
-   column + read-marker table, ChatRunner flips status via journaled steps,
-   sidebar spinner/dot, live propagation on a dedicated NOTIFY channel.
+3. **Thread-list status feature** — BUILT 2026-09-14 (design
+   `docs/plans/2026-09-14-thread-list-status-design.md`, migrations
+   0041/0042): `chats.generating` is flipped by the ChatRunner in journaled
+   steps (entry after route/quota resolution, cleared at final answer /
+   uniform failure / step limit; the stale-generation sweep also clears it
+   for chats whose records are dead). Unread is derived at list time
+   (assistant turn newer than the (chat,user) `chat_reads` marker on a
+   non-generating chat; 0042 backfills markers so pre-existing threads
+   start read). Status propagates on a notify-only channel
+   (`guild_chat_status`) through the events stream as `chat_status` SSE
+   frames, owner-scoped; web clients consume their stream now, the desktop
+   app process routes SSE by event name and forwards chat_status as a
+   `chat-status` Tauri event outside the seq watermark. Sidebar rows show
+   a spinner while generating, a dot when unread; mark-read fires on
+   thread load and turn end for the visible open chat (hidden tabs keep
+   their dot). Verified live: background turn → spinner → dot → click →
+   read (UI + server agree). Watch-item: event-stream slots are
+   per-user-capped (3) and stale connections through docker-proxy linger —
+   repeated client reloads can 429 a tab's stream until the server
+   restarts or stale connections time out.
 4. **Full desktop sign-out**: currently drops only the webview token; the
    engine session persists (needs an engine logout rpc).
 5. **Embedded Restate runtime for tests**: gateway chat routes through the
