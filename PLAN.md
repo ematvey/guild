@@ -1,11 +1,28 @@
 # Guild — current state of work
 
-Updated 2026-09-15 (per-tool curation fix round 1: always_ask truly forces
+Updated 2026-09-15 (in-progress state survives thread switches; per-tool
+curation fix round 1: always_ask truly forces
 the card, row-locked curation writes, server-authoritative tools map,
 script API refuses always_ask, template-lock single-connection). Read this
 before touching the codebase; detailed milestone plans live in `docs/plans/`,
 deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
+
+## In-progress state survives thread switches — 2026-09-15
+
+Reopening a running thread showed an idle composer while the sidebar
+spinner kept spinning. The window's `busy` is per-view state; the
+switch-away re-sync read the app-process mirror, which still says idle when
+the switch lands before the turn's first fan-out frame — and live frames
+only cleared busy (done/error), never set it. Fixed three ways: a live
+fan-out frame for the open chat restores busy; `streaming` also derives
+from the open chat's server-side `generating` flag (the same truth the
+sidebar shows, via chat-status frames / optimistic send / fetched list);
+on web, switching away mid-send clears the global busy instead of pinning
+it forever (the reattach watcher + chat-status frames own the state from
+there). Known follow-up wart, untouched: the desktop switch-back replays
+the whole mirror onto the thread reload, so steps already persisted when
+the switch happened render their streamed text twice.
 
 ## Curation fix round 1 (reviewer + verifier findings) — 2026-09-15
 
