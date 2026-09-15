@@ -1533,18 +1533,6 @@ pub fn tool_curate(row_config: &serde_json::Value, mcp: bool, raw_tool: &str) ->
     }
 }
 
-/// Reads the full stored per-tool curation map (raw tool name → curation).
-pub fn tool_curations(row_config: &serde_json::Value) -> Vec<(String, ToolCurate)> {
-    row_config["tools"]
-        .as_object()
-        .map(|m| {
-            m.iter()
-                .map(|(name, _)| (name.clone(), tool_curate(row_config, false, name)))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Whether one journaled tool may be called by `role` (spec §6): per-tool
 /// curation first (a disabled tool is invisible — not declared to the model
 /// and not callable via the script API), then the class rule (manifest class
@@ -1683,7 +1671,11 @@ pub async fn resolve_plugins(state: &AppState, org: Uuid) -> anyhow::Result<Vec<
             continue;
         }
         // MCP plugin: tools come from the plugin server's list_tools, classes
-        // from the registry manifest.
+        // from the registry manifest. The connect happens before curation
+        // filtering deliberately: drift detection (new remote tools landing
+        // disabled) requires the live list, and turn-start has no cheaper
+        // cached source. An org that disables every tool of a row still pays
+        // the connection — accepted trade-off, revisit with a tool cache.
         let Some(url) = row.config["mcp"]["url"].as_str() else {
             continue; // unknown kind with no mcp url — ignore rather than fail the turn
         };

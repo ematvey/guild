@@ -477,11 +477,28 @@ mod test_db {
             let admin = sqlx::PgPool::connect(&format!("{base}/postgres")).await?;
             let template = Self::ensure_test_template(&admin).await?;
             let db_name = format!("test_{}", uuid::Uuid::now_v7().simple());
-            sqlx::query(&format!(
-                "CREATE DATABASE {db_name} TEMPLATE {template}"
-            ))
-            .execute(&admin)
-            .await?;
+            // A concurrent sweep of a superseded template can race the clone
+            // on a shared host (multi-worktree boxes run several migration
+            // sets); one retry after re-ensuring absorbs that.
+            let mut cloned = false;
+            for attempt in 0..2 {
+                match sqlx::query(&format!(
+                    "CREATE DATABASE {db_name} TEMPLATE {template}"
+                ))
+                .execute(&admin)
+                .await
+                {
+                    Ok(_) => {
+                        cloned = true;
+                        break;
+                    }
+                    Err(_) if attempt == 0 => {
+                        Self::ensure_test_template(&admin).await?;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            anyhow::ensure!(cloned, "template clone failed after retry");
             admin.close().await;
             let url = format!("{base}/{db_name}");
             let store = Self::connect(&url).await?;
@@ -495,8 +512,14 @@ mod test_db {
         /// The name of the up-to-date template database, building it on
         /// first use. The name carries the migration-set hash: a changed
         /// migration list yields a new name and the old template is
-        /// dropped best-effort (with FORCE, so leaked connections from a
-        /// crashed run cannot pin it forever).
+        /// dropped (with FORCE, so leaked connections from a crashed run
+        /// cannot pin it forever).
+        ///
+        /// The whole critical section — lock, sweep, build, unlock — runs
+        /// on ONE dedicated connection: session-level advisory locks bind
+        /// to their connection, and a pool would hand the unlock to a
+        /// different one. Orphaned `test_tpl_build_*` databases are swept
+        /// on every call, not only on the build path.
         async fn ensure_test_template(admin: &sqlx::PgPool) -> anyhow::Result<String> {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
@@ -507,51 +530,51 @@ mod test_db {
                 hasher.update([0]);
             }
             let digest = format!("{:x}", hasher.finalize());
-            let hash12 = &digest[..12];
-            let template = format!("test_tpl_{hash12}");
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
-            )
-            .bind(&template)
-            .fetch_one(admin)
-            .await?;
-            if exists {
-                return Ok(template);
-            }
-            // Serialize builders; re-check inside the lock.
+            let template = format!("test_tpl_{}", &digest[..12]);
+            let mut conn = admin.acquire().await?;
             sqlx::query("SELECT pg_advisory_lock($1)")
                 .bind(TEST_TEMPLATE_LOCK_ID)
-                .execute(admin)
+                .execute(&mut *conn)
                 .await?;
             let result = async {
+                // Sweep leftover build databases and superseded templates
+                // (best-effort). The safe-charset check below keeps any
+                // hostile peer database name out of the dynamic DDL.
+                let stale: Vec<String> = sqlx::query_scalar(
+                    "SELECT datname FROM pg_database \
+                     WHERE (datname LIKE 'test_tpl_%' AND datname != $1) \
+                        OR datname LIKE 'test_tpl_build_%'",
+                )
+                .bind(&template)
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap_or_default();
+                for name in stale {
+                    let safe = name.starts_with("test_tpl_")
+                        && name["test_tpl_".len()..]
+                            .chars()
+                            .all(|c| c.is_ascii_hexdigit() || c == '_');
+                    if !safe {
+                        continue;
+                    }
+                    let _ = sqlx::query(&format!(
+                        "DROP DATABASE \"{name}\" WITH (FORCE)"
+                    ))
+                    .execute(&mut *conn)
+                    .await;
+                }
                 let exists: bool = sqlx::query_scalar(
                     "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
                 )
                 .bind(&template)
-                .fetch_one(admin)
+                .fetch_one(&mut *conn)
                 .await?;
                 if exists {
                     return Ok(template.clone());
                 }
-                // Drop superseded templates (best-effort) while holding the
-                // lock, so stale-schema templates never accumulate.
-                let stale: Vec<String> = sqlx::query_scalar(
-                    "SELECT datname FROM pg_database WHERE datname LIKE 'test_tpl_%' AND datname != $1",
-                )
-                .bind(&template)
-                .fetch_all(admin)
-                .await
-                .unwrap_or_default();
-                for name in stale {
-                    let _ = sqlx::query(&format!(
-                        "DROP DATABASE \"{name}\" WITH (FORCE)"
-                    ))
-                    .execute(admin)
-                    .await;
-                }
                 let build = format!("test_tpl_build_{}", uuid::Uuid::now_v7().simple());
                 sqlx::query(&format!("CREATE DATABASE {build}"))
-                    .execute(admin)
+                    .execute(&mut *conn)
                     .await?;
                 // Connecting applies the full migration set.
                 let url = base_url().await?;
@@ -560,16 +583,18 @@ mod test_db {
                 sqlx::query(&format!(
                     "ALTER DATABASE \"{build}\" RENAME TO \"{template}\""
                 ))
-                .execute(admin)
+                .execute(&mut *conn)
                 .await?;
                 Ok(template.clone())
             }
             .await;
             sqlx::query("SELECT pg_advisory_unlock($1)")
                 .bind(TEST_TEMPLATE_LOCK_ID)
-                .execute(admin)
+                .execute(&mut *conn)
                 .await?;
             result
+            // The dedicated connection (and with it any leaked advisory
+            // lock) releases here — after the unlock ran on it.
         }
     }
 }

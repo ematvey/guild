@@ -970,7 +970,19 @@ function ToolCuration({
           Refresh
         </Button>
       </div>
-      {data === null ? (
+      {res.error ? (
+        <div className="px-4 py-3">
+          <p className="text-sm text-destructive">{res.error}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            onClick={() => res.reload()}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : data === null ? (
         <div className="space-y-2 p-4">
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-8 w-3/4" />

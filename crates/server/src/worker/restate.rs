@@ -2358,6 +2358,7 @@ async fn approval_gate(
     chat_id: Uuid,
     call: &ToolCall,
     tool_default: Approval,
+    force_ask: bool,
 ) -> HandlerResult<Option<ToolResultPayload>> {
     // The chat's approval mode (composer selector, migration 0043/0044 —
     // codex vocabulary) overrides the chat owner's user-level policy for
@@ -2397,20 +2398,27 @@ async fn approval_gate(
     // Chat mode wins when set; "never" is remapped to ask (chat-level deny
     // was dropped with the codex modes — the account policy remains the
     // place for a hard deny).
-    let decision: Approval = match chat_mode.as_deref() {
-        Some("approve_for_me") => {
-            // AI auto-approval policy (codex/claude-code style): a model
-            // judge decides whether this action is routine enough to run
-            // silently; anything it flags goes to the user as a card.
-            if approval_policy_verdict(ctx, state, org, model, call).await? {
-                Approval::Allow
-            } else {
-                Approval::Ask
+    // Per-tool admin curation (adapters spec §6): a tool set to always_ask
+    // forces the durable approval card on every call, ahead of the chat's
+    // approval mode and the user's policy — org governance wins.
+    let decision: Approval = if force_ask {
+        Approval::Ask
+    } else {
+        match chat_mode.as_deref() {
+            Some("approve_for_me") => {
+                // AI auto-approval policy (codex/claude-code style): a model
+                // judge decides whether this action is routine enough to run
+                // silently; anything it flags goes to the user as a card.
+                if approval_policy_verdict(ctx, state, org, model, call).await? {
+                    Approval::Allow
+                } else {
+                    Approval::Ask
+                }
             }
+            Some("full_access") | Some("allow") => Approval::Allow,
+            Some("ask") | Some("never") => Approval::Ask,
+            _ => resolve_policy(user_policy).for_tool(&call.name, tool_default),
         }
-        Some("full_access") | Some("allow") => Approval::Allow,
-        Some("ask") | Some("never") => Approval::Ask,
-        _ => resolve_policy(user_policy).for_tool(&call.name, tool_default),
     };
     match decision {
         Approval::Never => {
@@ -2647,8 +2655,18 @@ async fn client_tool_step(
 
     // ---- Approval gate (phase 2, design §C). Journaled request/decision
     // flow; denial is a normal tool_result payload the caller persists.
-    if let Some(denial) =
-        approval_gate(ctx, state, tx, org_id, model, chat_id, call, Approval::Ask).await?
+    if let Some(denial) = approval_gate(
+        ctx,
+        state,
+        tx,
+        org_id,
+        model,
+        chat_id,
+        call,
+        Approval::Ask,
+        false,
+    )
+    .await?
     {
         return Ok(denial);
     }
@@ -2773,37 +2791,39 @@ async fn server_tool_step(
     caller_role: &str,
     acting_as: Option<&str>,
 ) -> HandlerResult<(String, bool, Option<Value>)> {
-    // Resolve the tool once: the spec kind rides on the started frame, and
-    // the matching tolerates legacy-prefixed journal names.
-    let tool_kind = plugin_turns.iter().find_map(|turn| {
+    // Resolve the tool once: target (turn + info) drives everything below —
+    // the spec kind on the started frame, the approval gate, the policy
+    // check, and execution. Auto-tools (list_tools/guide) have no target and
+    // no gate. The matching tolerates legacy-prefixed journal names.
+    let target = plugin_turns.iter().enumerate().find_map(|(i, turn)| {
         turn.tools
             .iter()
             .find(|t| integrations::tool_matches(&turn.slug, &t.spec.name, &call.name))
-            .map(|info| info.spec.kind)
+            .map(|info| (i, info))
     });
-    // Approval gate for state-changing (write-class) server tools — Slack
-    // posts, integration writes, and MCP writes all ask; reads flow without
-    // a gate. Journaled: replay re-derives the same decision.
-    let write_class = plugin_turns.iter().any(|turn| {
-        turn.tools.iter().any(|t| {
-            integrations::tool_matches(&turn.slug, &t.spec.name, &call.name) && t.class == "write"
-        })
-    });
-    // Per-tool admin curation (adapters spec §6): a tool set to always_ask
-    // forces the durable approval prompt on every call, ahead of the user's
-    // policy and the chat's approval mode — org governance wins.
-    let always_ask = plugin_turns.iter().any(|turn| {
-        turn.tools.iter().any(|t| {
-            integrations::tool_matches(&turn.slug, &t.spec.name, &call.name)
-                && integrations::tool_curate(
+    let (tool_kind, write_class, always_ask) = match target {
+        Some((i, info)) => {
+            let turn = &plugin_turns[i];
+            let raw = integrations::unnamespaced_tool(&turn.slug, &info.spec.name)
+                .unwrap_or(&info.spec.name);
+            (
+                Some(info.spec.kind),
+                info.class == "write",
+                integrations::tool_curate(
                     &turn.row_config,
                     turn.executor == integrations::PluginExecutor::Mcp,
-                    integrations::unnamespaced_tool(&turn.slug, &t.spec.name)
-                        .unwrap_or(&t.spec.name),
+                    raw,
                 )
-                .always_ask
-        })
-    });
+                .always_ask,
+            )
+        }
+        None => (None, false, false),
+    };
+    // Approval gate for state-changing (write-class) server tools — Slack
+    // posts, integration writes, and MCP writes all ask; reads flow without
+    // a gate. always_ask (adapters spec §6) forces the card ahead of the
+    // chat's approval mode and the user's policy — org governance wins.
+    // Journaled: replay re-derives the same decision.
     if always_ask || write_class {
         if let Some(denial) = approval_gate(
             ctx,
@@ -2814,6 +2834,7 @@ async fn server_tool_step(
             chat_id,
             call,
             Approval::Ask,
+            always_ask,
         )
         .await?
         {
@@ -2889,6 +2910,9 @@ async fn server_tool_step(
                     }));
                 }
                 // Plugin tool (built-in or MCP): policy-check, then call.
+                // The target is re-derived from the journaled snapshot (the
+                // outer borrow cannot cross the run closure) — same matching
+                // as the gate above, so both decisions re-derive identically.
                 let target = mcp.iter().enumerate().find_map(|(i, turn)| {
                     turn.tools
                         .iter()
