@@ -2419,7 +2419,19 @@ async fn approval_gate(
             }
             Some("full_access") | Some("allow") => Approval::Allow,
             Some("ask") | Some("never") => Approval::Ask,
-            _ => resolve_policy(user_policy).for_tool(&call.name, tool_default),
+            // Unset chat mode: an explicitly stored account policy wins
+            // (Settings per-tool overrides stay meaningful); no stored
+            // policy defaults to the same AI judge as `approve_for_me`.
+            _ => match user_policy {
+                Some(_) => resolve_policy(user_policy).for_tool(&call.name, tool_default),
+                None => {
+                    if approval_policy_verdict(ctx, state, org, model, call).await? {
+                        Approval::Allow
+                    } else {
+                        Approval::Ask
+                    }
+                }
+            },
         }
     };
     match decision {

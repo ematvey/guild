@@ -89,6 +89,8 @@ import {
   pairingCode,
   setChatApproval,
   startEventStream,
+  getApproval,
+  type ApprovalPolicy,
   type ChatApprovalMode,
   type ChatSummary,
   type MessageAttachmentMeta,
@@ -744,7 +746,7 @@ const TOOL_LABELS: Record<string, string> = {
 /// mode sets the chat's tool-approval DEFAULT; per-tool exceptions from
 /// Settings apply only while the chat is on the account default. The
 /// popup lists exactly codex's three modes — an unset chat shows the
-/// account policy without offering it as a pickable mode.
+/// resolved account default without offering it as a pickable mode.
 const APPROVAL_MODES: Record<
   ChatApprovalMode,
   { label: string; hint: string; icon: LucideIcon; iconCls?: string }
@@ -767,12 +769,21 @@ const APPROVAL_MODES: Record<
   },
 };
 
-const APPROVAL_MODE_LABELS: Record<ChatApprovalMode | "default", string> = {
-  default: "Default",
+const APPROVAL_MODE_LABELS: Record<ChatApprovalMode, string> = {
   ask: "Ask for approval",
   approve_for_me: "Approve for me",
   full_access: "Full access",
 };
+
+/// Label for an unset chat (the account default applies). The server treats
+/// no stored account policy as the AI judge (approve_for_me); an explicit
+/// Settings default maps onto the matching mode label.
+export function accountDefaultLabel(p: ApprovalPolicy | null): string {
+  if (p?.default === "ask") return APPROVAL_MODE_LABELS.ask;
+  if (p?.default === "allow") return APPROVAL_MODE_LABELS.full_access;
+  if (p?.default === "never") return "Deny all";
+  return APPROVAL_MODE_LABELS.approve_for_me;
+}
 
 /**
  * Label for a bare wire tool name (exported for pure tests; approval cards
@@ -1422,6 +1433,22 @@ export default function WebChat({
   // persists the picked mode; the load effect below skips that chat once so
   // the pick survives instead of being refetched back to "default".
   const justCreatedApprovalRef = useRef<string | null>(null);
+  // The account-level approval default (Settings → Approvals), fetched once:
+  // the label an unset chat shows on the selector trigger. The server
+  // resolves the same value when the turn runs (unset policy = the AI
+  // judge), so the label and the behavior stay in step.
+  const [accountDefault, setAccountDefault] = useState<string>("Approve for me");
+  useEffect(() => {
+    let dead = false;
+    void getApproval()
+      .then((p) => {
+        if (!dead) setAccountDefault(accountDefaultLabel(p));
+      })
+      .catch(() => {});
+    return () => {
+      dead = true;
+    };
+  }, []);
   useEffect(() => {
     if (!chatId) {
       setApprovalMode("default");
@@ -2658,7 +2685,7 @@ export default function WebChat({
                       title="How tool actions are approved in this chat"
                     >
                       <ShieldCheck className="size-3.5" />
-                      {APPROVAL_MODE_LABELS[approvalMode]}
+                      {approvalMode === "default" ? accountDefault : APPROVAL_MODE_LABELS[approvalMode]}
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-72">
