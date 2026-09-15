@@ -1421,9 +1421,17 @@ export default function WebChat({
   // account-level policy from Settings applies. Loaded on chat open,
   // written optimistically on pick.
   const [approvalMode, setApprovalMode] = useState<ChatApprovalMode | "default">("default");
+  // The chat a pre-send pick belongs to: the first send creates the chat and
+  // persists the picked mode; the load effect below skips that chat once so
+  // the pick survives instead of being refetched back to "default".
+  const justCreatedApprovalRef = useRef<string | null>(null);
   useEffect(() => {
     if (!chatId) {
       setApprovalMode("default");
+      return;
+    }
+    if (justCreatedApprovalRef.current === chatId) {
+      justCreatedApprovalRef.current = null;
       return;
     }
     let dead = false;
@@ -1435,9 +1443,9 @@ export default function WebChat({
     };
   }, [chatId]);
   const pickApprovalMode = (m: ChatApprovalMode | "default") => {
-    if (!chatId) return;
     const prev = approvalMode;
     setApprovalMode(m); // optimistic
+    if (!chatId) return; // new thread: the pick applies when the send creates the chat
     void setChatApproval(chatId, m).catch(() => {
       setApprovalMode(prev);
       toast.error("Could not save approval mode");
@@ -2070,6 +2078,13 @@ export default function WebChat({
         // interrupted by a refetch (the chatId effect skips via skipLoadRef).
         if (projectDirRef.current) saveDir(cid, projectDirRef.current);
         skipLoadRef.current = cid;
+        if (approvalMode !== "default") {
+          // The pick was made before the chat existed — persist it now.
+          justCreatedApprovalRef.current = cid;
+          void setChatApproval(cid, approvalMode).catch(() =>
+            toast.error("Could not save approval mode"),
+          );
+        }
         pushRoute({ chatId: cid, overlay: null });
         void refreshChats();
         ta.current?.focus();
@@ -2637,42 +2652,40 @@ export default function WebChat({
                     Run in folder…
                   </Button>
                 ))}
-                {chatId && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
-                        title="How tool actions are approved in this chat"
-                      >
-                        <ShieldCheck className="size-3.5" />
-                        {APPROVAL_MODE_LABELS[approvalMode]}
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-72">
-                      <DropdownMenuLabel className="text-xs text-muted-foreground">
-                        How should tool actions be approved?
-                      </DropdownMenuLabel>
-                      {(Object.keys(APPROVAL_MODES) as (keyof typeof APPROVAL_MODES)[]).map((m) => {
-                        const entry = APPROVAL_MODES[m];
-                        const Icon = entry.icon;
-                        return (
-                          <DropdownMenuItem key={m} onClick={() => pickApprovalMode(m)}>
-                            <div className="flex w-full items-start gap-2.5">
-                              <Icon className={`mt-0.5 size-4 shrink-0 ${entry.iconCls ?? "text-muted-foreground"}`} />
-                              <div className="min-w-0 flex-1">
-                                <div className="text-sm font-medium">{entry.label}</div>
-                                <div className="text-xs text-muted-foreground">{entry.hint}</div>
-                              </div>
-                              {approvalMode === m && <Check className="mt-1 size-3.5 shrink-0" />}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
+                      title="How tool actions are approved in this chat"
+                    >
+                      <ShieldCheck className="size-3.5" />
+                      {APPROVAL_MODE_LABELS[approvalMode]}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-72">
+                    <DropdownMenuLabel className="text-xs text-muted-foreground">
+                      How should tool actions be approved?
+                    </DropdownMenuLabel>
+                    {(Object.keys(APPROVAL_MODES) as (keyof typeof APPROVAL_MODES)[]).map((m) => {
+                      const entry = APPROVAL_MODES[m];
+                      const Icon = entry.icon;
+                      return (
+                        <DropdownMenuItem key={m} onClick={() => pickApprovalMode(m)}>
+                          <div className="flex w-full items-start gap-2.5">
+                            <Icon className={`mt-0.5 size-4 shrink-0 ${entry.iconCls ?? "text-muted-foreground"}`} />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-medium">{entry.label}</div>
+                              <div className="text-xs text-muted-foreground">{entry.hint}</div>
                             </div>
-                          </DropdownMenuItem>
-                        );
-                      })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
+                            {approvalMode === m && <Check className="mt-1 size-3.5 shrink-0" />}
+                          </div>
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
             {models !== null && models.length === 0 && (
               <span className="text-muted-foreground">no models</span>
             )}
