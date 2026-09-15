@@ -753,7 +753,7 @@ const APPROVAL_MODES: Record<
 > = {
   ask: {
     label: "Ask for approval",
-    hint: "Ask before every shell command and file edit; read-only lookups (search, web pages) flow",
+    hint: "Ask before any potentially unsafe actions.",
     icon: Hand,
   },
   approve_for_me: {
