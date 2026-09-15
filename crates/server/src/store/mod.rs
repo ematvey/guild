@@ -550,10 +550,14 @@ mod test_db {
                 .await
                 .unwrap_or_default();
                 for name in stale {
-                    let safe = name.starts_with("test_tpl_")
-                        && name["test_tpl_".len()..]
-                            .chars()
-                            .all(|c| c.is_ascii_hexdigit() || c == '_');
+                    // Safe charset: test_tpl_<12 hex> (templates) and
+                    // test_tpl_build_<hex> (crashed builds). The literal
+                    // `build_` segment must be allowed or the sweep can
+                    // never drop its own targets.
+                    let rest = &name["test_tpl_".len()..];
+                    let rest = rest.strip_prefix("build_").unwrap_or(rest);
+                    let safe = !rest.is_empty()
+                        && rest.chars().all(|c| c.is_ascii_hexdigit() || c == '_');
                     if !safe {
                         continue;
                     }
@@ -588,10 +592,13 @@ mod test_db {
                 Ok(template.clone())
             }
             .await;
-            sqlx::query("SELECT pg_advisory_unlock($1)")
+            // Unlock is best-effort: a failed unlock must not mask the
+            // section's result, and the dedicated connection releases any
+            // residue when it returns to the pool / pool closes.
+            let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
                 .bind(TEST_TEMPLATE_LOCK_ID)
                 .execute(&mut *conn)
-                .await?;
+                .await;
             result
             // The dedicated connection (and with it any leaked advisory
             // lock) releases here — after the unlock ran on it.

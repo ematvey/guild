@@ -958,8 +958,8 @@ async fn set_integration_tool(
         // other's curation entry. Entries for not-currently-declared tools
         // are allowed — they are how a preset survives a bundle republish.
         let mut tx = store.pool().begin().await?;
-        let (config, row_enabled, name): (serde_json::Value, bool, String) = sqlx::query_as(
-            "SELECT config, enabled, name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
+        let (config, name): (serde_json::Value, String) = sqlx::query_as(
+            "SELECT config, name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
         )
         .bind(admin.0.org_id)
         .bind(id)
@@ -968,7 +968,15 @@ async fn set_integration_tool(
         .ok_or_else(|| ApiError::not_found("unknown integration"))?;
         let mcp = config["mcp"]["url"].as_str().is_some();
         let mut new_config = config.clone();
-        new_config["tools"][&tool] = json!({ "enabled": enabled, "approval": approval });
+        let tools = new_config
+            .as_object_mut()
+            .ok_or_else(|| ApiError::internal("integration config is not an object"))?
+            .entry("tools")
+            .or_insert_with(|| json!({}));
+        let tools_obj = tools
+            .as_object_mut()
+            .ok_or_else(|| ApiError::internal("stored tools curation is not an object"))?;
+        tools_obj.insert(tool.clone(), json!({ "enabled": enabled, "approval": approval }));
         sqlx::query(
             "UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3",
         )

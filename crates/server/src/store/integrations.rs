@@ -34,7 +34,9 @@ impl<'a> IntegrationStore<'a> {
             "INSERT INTO integrations (org_id, name, config, enabled) \
              VALUES ($1, $2, $3, $4) \
              ON CONFLICT (org_id, name) \
-             DO UPDATE SET config = $3, enabled = $4, updated_at = now() \
+             DO UPDATE SET config = jsonb_set($3, '{tools}', \
+                 COALESCE(integrations.config->'tools', '{}'::jsonb), true), \
+               enabled = $4, updated_at = now() \
              RETURNING id",
         )
         .bind(org_id)
@@ -76,6 +78,11 @@ impl<'a> IntegrationStore<'a> {
 
     /// Replaces config and enabled flag of one integration by id. Returns
     /// whether a row matched — a false result means the integration is gone.
+    ///
+    /// The per-tool curation map (`config.tools`, adapters spec §6) is
+    /// preserved from the CURRENT row, never taken from the passed config:
+    /// the PUT tools endpoint is its only writer, so a settings save that
+    /// raced a curation write cannot drop the newer entry.
     pub async fn update(
         &self,
         org_id: Uuid,
@@ -84,7 +91,9 @@ impl<'a> IntegrationStore<'a> {
         enabled: bool,
     ) -> Result<bool, ApiError> {
         let res = sqlx::query(
-            "UPDATE integrations SET config = $3, enabled = $4, updated_at = now() \
+            "UPDATE integrations SET config = jsonb_set($3, '{tools}', \
+               COALESCE(integrations.config->'tools', '{}'::jsonb), true), \
+               enabled = $4, updated_at = now() \
              WHERE org_id = $1 AND id = $2",
         )
         .bind(org_id)

@@ -17,7 +17,10 @@ round fixed it plus everything actionable:
   mode (full_access/approve_for_me included) and the user's policy.
 - **Curation writes are row-locked (I3)**: `set_integration_tool` does
   SELECT … FOR UPDATE → merge → UPDATE in one transaction; concurrent PUTs
-  and settings saves can no longer drop entries.
+  serialize. The stored tools map additionally has a storage-layer
+  guarantee: `integrations.upsert/update` preserve the CURRENT row's
+  `tools` key (SQL-side `jsonb_set`), so a settings save racing a curation
+  write cannot drop the newer entry either.
 - **The stored tools map has one writer (I4)**: settings saves strip a
   client-sent `tools` map (stale snapshot) and carry the stored selection —
   built-in and MCP paths both.

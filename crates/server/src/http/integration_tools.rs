@@ -5,8 +5,8 @@
 
 use crate::http::error::ApiError;
 use crate::integrations::{
-    call_plugin, resolve_acting_as, resolve_plugins, tool_allowed, tool_curate, tool_matches,
-    unnamespaced_tool, PluginExecutor,
+    call_plugin, resolve_acting_as, resolve_plugins, tool_allowed, tool_curate, unnamespaced_tool,
+    PluginExecutor,
 };
 use crate::state::AppState;
 use axum::extract::{FromRequestParts, Path, State};
