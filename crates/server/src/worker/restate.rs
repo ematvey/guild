@@ -2400,7 +2400,9 @@ async fn approval_gate(
     // place for a hard deny).
     // Per-tool admin curation (adapters spec §6): a tool set to always_ask
     // forces the durable approval card on every call, ahead of the chat's
-    // approval mode and the user's policy — org governance wins.
+    // approval mode and the user's policy — org governance wins. This
+    // includes a user-policy per-tool `never`: the org asks for a
+    // confirmation, prohibition stays with the class floor and `enabled`.
     let decision: Approval = if force_ask {
         Approval::Ask
     } else {

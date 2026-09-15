@@ -402,6 +402,17 @@ async fn script_api_rejects_always_ask_tools() {
     .await;
     assert_eq!(status, StatusCode::OK, "default read tool must be callable");
 
+    // The legacy int_<slug>_ prefix is tolerated by the same matching.
+    let (status, _) = req(
+        &app,
+        "POST",
+        "/api/v1/integrations/testplug/tools/int_testplug_secret_echo".into(),
+        &token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "legacy-prefixed name must match");
+
     // Curate it to always_ask: the non-interactive script API must refuse —
     // there is no durable card to resolve here, and silently running the
     // tool would bypass the approval entirely.
