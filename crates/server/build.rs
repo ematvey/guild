@@ -6,7 +6,6 @@
 //! emits plain JSON the runtime reconstructs into a `Policy` without
 //! starlark in the graph.
 
-use codex_execpolicy::Rule;
 use std::path::PathBuf;
 
 fn main() {
@@ -64,8 +63,7 @@ fn emit(policy: &codex_execpolicy::Policy) {
     let mut specs: Vec<RuleSpec> = Vec::new();
     for (_program, rules) in policy.rules().iter_all() {
         for rule in rules {
-            let Some(prefix) = rule.as_any().downcast_ref::<codex_execpolicy::PrefixRule>()
-            else {
+            let Some(prefix) = rule.as_any().downcast_ref::<codex_execpolicy::PrefixRule>() else {
                 continue; // host-executable metadata etc. — evaluation-only
             };
             specs.push(RuleSpec {

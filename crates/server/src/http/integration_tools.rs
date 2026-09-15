@@ -161,8 +161,8 @@ async fn execute_tool(
         .iter()
         .find(|info| {
             let call_raw = unnamespaced_tool(&turn.slug, &tool).unwrap_or(&tool);
-            let spec_raw = unnamespaced_tool(&turn.slug, &info.spec.name)
-                .unwrap_or(&info.spec.name);
+            let spec_raw =
+                unnamespaced_tool(&turn.slug, &info.spec.name).unwrap_or(&info.spec.name);
             call_raw == spec_raw
         })
         .ok_or_else(|| ApiError::not_found("no such tool"))?;
@@ -173,15 +173,8 @@ async fn execute_tool(
     // durable card to resolve here, so it is refused rather than silently
     // bypassing the approval (adapters spec §6: the stored per-tool config
     // is the single source of truth for exposure and approval).
-    let raw = unnamespaced_tool(&turn.slug, &info.spec.name)
-        .unwrap_or(&info.spec.name);
-    if tool_curate(
-        &turn.row_config,
-        turn.executor == PluginExecutor::Mcp,
-        raw,
-    )
-    .always_ask
-    {
+    let raw = unnamespaced_tool(&turn.slug, &info.spec.name).unwrap_or(&info.spec.name);
+    if tool_curate(&turn.row_config, turn.executor == PluginExecutor::Mcp, raw).always_ask {
         return Err(ApiError::forbidden());
     }
     // Identity (spec §5): acting as the caller's own mapped identity; an

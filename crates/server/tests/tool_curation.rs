@@ -31,7 +31,9 @@ async fn req(
     };
     let res = app.clone().oneshot(req).await.unwrap();
     let status = res.status();
-    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     (status, serde_json::from_slice(&bytes).unwrap_or(json!({})))
 }
 
@@ -283,7 +285,10 @@ async fn admin_tools_endpoints_roundtrip_and_survive_settings_save() {
     .await;
     let tools = body["tools"].as_array().unwrap();
     let echo = tools.iter().find(|t| t["name"] == "secret_echo").unwrap();
-    assert_eq!(echo["enabled"], false, "client-sent tools overwrote curation");
+    assert_eq!(
+        echo["enabled"], false,
+        "client-sent tools overwrote curation"
+    );
     let op = tools.iter().find(|t| t["name"] == "admin_op").unwrap();
     assert_eq!(op["approval"], "always_ask");
 

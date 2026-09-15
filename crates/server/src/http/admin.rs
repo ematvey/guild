@@ -858,7 +858,9 @@ async fn list_integration_tools(
                 )
             })
             .collect();
-        return Ok(Json(json!({ "resolved": true, "kind": "builtin", "tools": tools })));
+        return Ok(Json(
+            json!({ "resolved": true, "kind": "builtin", "tools": tools }),
+        ));
     }
     // MCP-bound: live discovery merged with the stored config. A disabled
     // row is not resolved (it serves nothing); a reachable one lists every
@@ -920,7 +922,9 @@ async fn list_integration_tools(
             )
         })
         .collect();
-    Ok(Json(json!({ "resolved": true, "kind": "mcp", "tools": tools })))
+    Ok(Json(
+        json!({ "resolved": true, "kind": "mcp", "tools": tools }),
+    ))
 }
 
 /// `PUT /api/v1/admin/integrations/{id}/tools/{tool}` — sets one tool's
@@ -976,7 +980,10 @@ async fn set_integration_tool(
         let tools_obj = tools
             .as_object_mut()
             .ok_or_else(|| ApiError::internal("stored tools curation is not an object"))?;
-        tools_obj.insert(tool.clone(), json!({ "enabled": enabled, "approval": approval }));
+        tools_obj.insert(
+            tool.clone(),
+            json!({ "enabled": enabled, "approval": approval }),
+        );
         sqlx::query(
             "UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3",
         )

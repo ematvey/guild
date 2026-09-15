@@ -10,7 +10,7 @@
 //! the decision is a pure function of (binary, command) — identical under
 //! Restate replay.
 
-use codex_execpolicy::{Decision, Policy, PatternToken, RuleMatch};
+use codex_execpolicy::{Decision, PatternToken, Policy, RuleMatch};
 use std::sync::LazyLock;
 
 const PARSED_RULES: &str = include_str!(concat!(env!("OUT_DIR"), "/exec_policy_rules.json"));
@@ -84,16 +84,15 @@ fn evaluate_command(command: &str) -> ExecPolicyDecision {
     }
     // Redirection writes files; a prefix rule that matches the leading
     // command must not wave the write through.
-    if segments
-        .iter()
-        .any(|s| s.iter().any(|t| matches!(t.as_str(), "<" | ">" | ">>" | "<<")))
-    {
+    if segments.iter().any(|s| {
+        s.iter()
+            .any(|t| matches!(t.as_str(), "<" | ">" | ">>" | "<<"))
+    }) {
         return ExecPolicyDecision::Prompt;
     }
-    let evaluation = POLICY.check_multiple(
-        segments.iter().map(|s| s.as_slice()),
-        &|_unmatched| Decision::Prompt,
-    );
+    let evaluation = POLICY.check_multiple(segments.iter().map(|s| s.as_slice()), &|_unmatched| {
+        Decision::Prompt
+    });
     match evaluation.decision {
         Decision::Allow => ExecPolicyDecision::Allow,
         Decision::Prompt => ExecPolicyDecision::Prompt,
@@ -102,11 +101,11 @@ fn evaluate_command(command: &str) -> ExecPolicyDecision {
                 .matched_rules
                 .iter()
                 .filter_map(|m| match m {
-                    RuleMatch::PrefixRuleMatch { justification, decision, .. }
-                        if *decision == Decision::Forbidden =>
-                    {
-                        justification.clone()
-                    }
+                    RuleMatch::PrefixRuleMatch {
+                        justification,
+                        decision,
+                        ..
+                    } if *decision == Decision::Forbidden => justification.clone(),
                     _ => None,
                 })
                 .next()
@@ -123,7 +122,10 @@ fn split_segments(tokens: &[String]) -> Vec<Vec<String>> {
     for token in tokens {
         match token.as_str() {
             "&&" | "||" | ";" | "|" => segments.push(Vec::new()),
-            _ => segments.last_mut().expect("segments never empty").push(token.clone()),
+            _ => segments
+                .last_mut()
+                .expect("segments never empty")
+                .push(token.clone()),
         }
     }
     segments.into_iter().filter(|s| !s.is_empty()).collect()
@@ -172,12 +174,18 @@ mod tests {
 
     #[test]
     fn redirection_never_auto_approves() {
-        assert!(matches!(exec("echo hi > /tmp/x"), ExecPolicyDecision::Prompt));
+        assert!(matches!(
+            exec("echo hi > /tmp/x"),
+            ExecPolicyDecision::Prompt
+        ));
     }
 
     #[test]
     fn unmatched_commands_fall_to_the_gate() {
-        assert!(matches!(exec("blinkenlights --now"), ExecPolicyDecision::Prompt));
+        assert!(matches!(
+            exec("blinkenlights --now"),
+            ExecPolicyDecision::Prompt
+        ));
     }
 
     #[test]
@@ -190,7 +198,10 @@ mod tests {
 
     #[test]
     fn untokenizable_commands_fall_to_the_gate() {
-        assert!(matches!(exec("echo \"unterminated"), ExecPolicyDecision::Prompt));
+        assert!(matches!(
+            exec("echo \"unterminated"),
+            ExecPolicyDecision::Prompt
+        ));
     }
 
     #[test]

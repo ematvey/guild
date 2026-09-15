@@ -206,180 +206,180 @@ impl Store {
 /// instance of this binary agrees on (ASCII "GUILDMGR" for recognizability
 /// in pg_locks).
 const MIGRATIONS: [(&str, &str); 44] = [
-        (
-            "0001_identity",
-            include_str!("../../migrations/0001_identity.sql"),
-        ),
-        (
-            "0002_gateway",
-            include_str!("../../migrations/0002_gateway.sql"),
-        ),
-        (
-            "0003_chats",
-            include_str!("../../migrations/0003_chats.sql"),
-        ),
-        (
-            "0004_chats_tool_columns",
-            include_str!("../../migrations/0004_chats_tool_columns.sql"),
-        ),
-        (
-            "0005_registry",
-            include_str!("../../migrations/0005_registry.sql"),
-        ),
-        (
-            "0006_teams",
-            include_str!("../../migrations/0006_teams.sql"),
-        ),
-        (
-            "0007_routines",
-            include_str!("../../migrations/0007_routines.sql"),
-        ),
-        (
-            "0008_api_keys",
-            include_str!("../../migrations/0008_api_keys.sql"),
-        ),
-        (
-            "0009_agent_sessions",
-            include_str!("../../migrations/0009_agent_sessions.sql"),
-        ),
-        ("0010_oidc", include_str!("../../migrations/0010_oidc.sql")),
-        (
-            "0011_route_quota",
-            include_str!("../../migrations/0011_route_quota.sql"),
-        ),
-        (
-            "0012_attachments",
-            include_str!("../../migrations/0012_attachments.sql"),
-        ),
-        (
-            "0013_events",
-            include_str!("../../migrations/0013_events.sql"),
-        ),
-        (
-            "0014_releases",
-            include_str!("../../migrations/0014_releases.sql"),
-        ),
-        (
-            "0015_release_signing",
-            include_str!("../../migrations/0015_release_signing.sql"),
-        ),
-        (
-            "0016_pairing",
-            include_str!("../../migrations/0016_pairing.sql"),
-        ),
-        (
-            "0017_updater",
-            include_str!("../../migrations/0017_updater.sql"),
-        ),
-        (
-            "0018_integrations",
-            include_str!("../../migrations/0018_integrations.sql"),
-        ),
-        (
-            "0019_machine_binding",
-            include_str!("../../migrations/0019_machine_binding.sql"),
-        ),
-        (
-            "0020_thread_events",
-            include_str!("../../migrations/0020_thread_events.sql"),
-        ),
-        (
-            "0021_reasoning_flag",
-            include_str!("../../migrations/0021_reasoning_flag.sql"),
-        ),
-        (
-            "0022_drop_messages",
-            include_str!("../../migrations/0022_drop_messages.sql"),
-        ),
-        (
-            "0023_chat_approval",
-            include_str!("../../migrations/0023_chat_approval.sql"),
-        ),
-        (
-            "0024_context_window",
-            include_str!("../../migrations/0024_context_window.sql"),
-        ),
-        (
-            "0025_route_modalities",
-            include_str!("../../migrations/0025_route_modalities.sql"),
-        ),
-        (
-            "0026_user_approval",
-            include_str!("../../migrations/0026_user_approval.sql"),
-        ),
-        (
-            "0027_user_profile",
-            include_str!("../../migrations/0027_user_profile.sql"),
-        ),
-        (
-            "0028_org_kv",
-            include_str!("../../migrations/0028_org_kv.sql"),
-        ),
-        (
-            "0029_integration_secrets",
-            include_str!("../../migrations/0029_integration_secrets.sql"),
-        ),
-        (
-            "0030_integration_ids",
-            include_str!("../../migrations/0030_integration_ids.sql"),
-        ),
-        (
-            "0031_client_tool_names",
-            include_str!("../../migrations/0031_client_tool_names.sql"),
-        ),
-        (
-            "0032_session_token_hash",
-            include_str!("../../migrations/0032_session_token_hash.sql"),
-        ),
-        (
-            "0033_routine_webhook_token_hash",
-            include_str!("../../migrations/0033_routine_webhook_token_hash.sql"),
-        ),
-        (
-            "0034_user_fk_actions",
-            include_str!("../../migrations/0034_user_fk_actions.sql"),
-        ),
-        (
-            "0035_max_output_tokens",
-            include_str!("../../migrations/0035_max_output_tokens.sql"),
-        ),
-        (
-            "0036_org_fks",
-            include_str!("../../migrations/0036_org_fks.sql"),
-        ),
-        (
-            "0037_registry_reviewed_version",
-            include_str!("../../migrations/0037_registry_reviewed_version.sql"),
-        ),
-        (
-            "0038_registry_bundle_sha256",
-            include_str!("../../migrations/0038_registry_bundle_sha256.sql"),
-        ),
-        (
-            "0039_integration_secret_masked",
-            include_str!("../../migrations/0039_integration_secret_masked.sql"),
-        ),
-        (
-            "0040_provider_name_protocol",
-            include_str!("../../migrations/0040_provider_name_protocol.sql"),
-        ),
-        (
-            "0041_chat_status",
-            include_str!("../../migrations/0041_chat_status.sql"),
-        ),
-        (
-            "0042_chat_read_backfill",
-            include_str!("../../migrations/0042_chat_read_backfill.sql"),
-        ),
-        (
-            "0043_chat_approval",
-            include_str!("../../migrations/0043_chat_approval.sql"),
-        ),
-        (
-            "0044_approval_mode_codex",
-            include_str!("../../migrations/0044_approval_mode_codex.sql"),
-        ),
-    ];
+    (
+        "0001_identity",
+        include_str!("../../migrations/0001_identity.sql"),
+    ),
+    (
+        "0002_gateway",
+        include_str!("../../migrations/0002_gateway.sql"),
+    ),
+    (
+        "0003_chats",
+        include_str!("../../migrations/0003_chats.sql"),
+    ),
+    (
+        "0004_chats_tool_columns",
+        include_str!("../../migrations/0004_chats_tool_columns.sql"),
+    ),
+    (
+        "0005_registry",
+        include_str!("../../migrations/0005_registry.sql"),
+    ),
+    (
+        "0006_teams",
+        include_str!("../../migrations/0006_teams.sql"),
+    ),
+    (
+        "0007_routines",
+        include_str!("../../migrations/0007_routines.sql"),
+    ),
+    (
+        "0008_api_keys",
+        include_str!("../../migrations/0008_api_keys.sql"),
+    ),
+    (
+        "0009_agent_sessions",
+        include_str!("../../migrations/0009_agent_sessions.sql"),
+    ),
+    ("0010_oidc", include_str!("../../migrations/0010_oidc.sql")),
+    (
+        "0011_route_quota",
+        include_str!("../../migrations/0011_route_quota.sql"),
+    ),
+    (
+        "0012_attachments",
+        include_str!("../../migrations/0012_attachments.sql"),
+    ),
+    (
+        "0013_events",
+        include_str!("../../migrations/0013_events.sql"),
+    ),
+    (
+        "0014_releases",
+        include_str!("../../migrations/0014_releases.sql"),
+    ),
+    (
+        "0015_release_signing",
+        include_str!("../../migrations/0015_release_signing.sql"),
+    ),
+    (
+        "0016_pairing",
+        include_str!("../../migrations/0016_pairing.sql"),
+    ),
+    (
+        "0017_updater",
+        include_str!("../../migrations/0017_updater.sql"),
+    ),
+    (
+        "0018_integrations",
+        include_str!("../../migrations/0018_integrations.sql"),
+    ),
+    (
+        "0019_machine_binding",
+        include_str!("../../migrations/0019_machine_binding.sql"),
+    ),
+    (
+        "0020_thread_events",
+        include_str!("../../migrations/0020_thread_events.sql"),
+    ),
+    (
+        "0021_reasoning_flag",
+        include_str!("../../migrations/0021_reasoning_flag.sql"),
+    ),
+    (
+        "0022_drop_messages",
+        include_str!("../../migrations/0022_drop_messages.sql"),
+    ),
+    (
+        "0023_chat_approval",
+        include_str!("../../migrations/0023_chat_approval.sql"),
+    ),
+    (
+        "0024_context_window",
+        include_str!("../../migrations/0024_context_window.sql"),
+    ),
+    (
+        "0025_route_modalities",
+        include_str!("../../migrations/0025_route_modalities.sql"),
+    ),
+    (
+        "0026_user_approval",
+        include_str!("../../migrations/0026_user_approval.sql"),
+    ),
+    (
+        "0027_user_profile",
+        include_str!("../../migrations/0027_user_profile.sql"),
+    ),
+    (
+        "0028_org_kv",
+        include_str!("../../migrations/0028_org_kv.sql"),
+    ),
+    (
+        "0029_integration_secrets",
+        include_str!("../../migrations/0029_integration_secrets.sql"),
+    ),
+    (
+        "0030_integration_ids",
+        include_str!("../../migrations/0030_integration_ids.sql"),
+    ),
+    (
+        "0031_client_tool_names",
+        include_str!("../../migrations/0031_client_tool_names.sql"),
+    ),
+    (
+        "0032_session_token_hash",
+        include_str!("../../migrations/0032_session_token_hash.sql"),
+    ),
+    (
+        "0033_routine_webhook_token_hash",
+        include_str!("../../migrations/0033_routine_webhook_token_hash.sql"),
+    ),
+    (
+        "0034_user_fk_actions",
+        include_str!("../../migrations/0034_user_fk_actions.sql"),
+    ),
+    (
+        "0035_max_output_tokens",
+        include_str!("../../migrations/0035_max_output_tokens.sql"),
+    ),
+    (
+        "0036_org_fks",
+        include_str!("../../migrations/0036_org_fks.sql"),
+    ),
+    (
+        "0037_registry_reviewed_version",
+        include_str!("../../migrations/0037_registry_reviewed_version.sql"),
+    ),
+    (
+        "0038_registry_bundle_sha256",
+        include_str!("../../migrations/0038_registry_bundle_sha256.sql"),
+    ),
+    (
+        "0039_integration_secret_masked",
+        include_str!("../../migrations/0039_integration_secret_masked.sql"),
+    ),
+    (
+        "0040_provider_name_protocol",
+        include_str!("../../migrations/0040_provider_name_protocol.sql"),
+    ),
+    (
+        "0041_chat_status",
+        include_str!("../../migrations/0041_chat_status.sql"),
+    ),
+    (
+        "0042_chat_read_backfill",
+        include_str!("../../migrations/0042_chat_read_backfill.sql"),
+    ),
+    (
+        "0043_chat_approval",
+        include_str!("../../migrations/0043_chat_approval.sql"),
+    ),
+    (
+        "0044_approval_mode_codex",
+        include_str!("../../migrations/0044_approval_mode_codex.sql"),
+    ),
+];
 
 const MIGRATION_LOCK_ID: i64 = 0x4755_494C_444D_4752;
 /// Serializes test-template database builds (connect_test fast path).
@@ -395,7 +395,7 @@ fn migration_hash(sql: &str) -> String {
 
 #[cfg(feature = "test-support")]
 mod test_db {
-    use super::{migration_hash, MIGRATIONS, Store, TEST_TEMPLATE_LOCK_ID};
+    use super::{migration_hash, Store, MIGRATIONS, TEST_TEMPLATE_LOCK_ID};
     use tokio::sync::OnceCell;
 
     /// Host Postgres shared by all tests on this box: the neutral host
@@ -482,11 +482,9 @@ mod test_db {
             // sets); one retry after re-ensuring absorbs that.
             let mut cloned = false;
             for attempt in 0..2 {
-                match sqlx::query(&format!(
-                    "CREATE DATABASE {db_name} TEMPLATE {template}"
-                ))
-                .execute(&admin)
-                .await
+                match sqlx::query(&format!("CREATE DATABASE {db_name} TEMPLATE {template}"))
+                    .execute(&admin)
+                    .await
                 {
                     Ok(_) => {
                         cloned = true;
@@ -556,16 +554,14 @@ mod test_db {
                     // never drop its own targets.
                     let rest = &name["test_tpl_".len()..];
                     let rest = rest.strip_prefix("build_").unwrap_or(rest);
-                    let safe = !rest.is_empty()
-                        && rest.chars().all(|c| c.is_ascii_hexdigit() || c == '_');
+                    let safe =
+                        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_hexdigit() || c == '_');
                     if !safe {
                         continue;
                     }
-                    let _ = sqlx::query(&format!(
-                        "DROP DATABASE \"{name}\" WITH (FORCE)"
-                    ))
-                    .execute(&mut *conn)
-                    .await;
+                    let _ = sqlx::query(&format!("DROP DATABASE \"{name}\" WITH (FORCE)"))
+                        .execute(&mut *conn)
+                        .await;
                 }
                 let exists: bool = sqlx::query_scalar(
                     "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",

@@ -267,17 +267,15 @@ async fn disclosure_filters_tools_by_role() {
         .into_iter()
         .find(|r| r.name == "hubspot")
         .unwrap();
-    sqlx::query(
-        "UPDATE integrations SET config = jsonb_set(config, '{tools}', $2) WHERE id = $1",
-    )
-    .bind(row.id)
-    .bind(json!({
-        "echo": { "enabled": true },
-        "admin_only_op": { "enabled": true },
-    }))
-    .execute(ts.store().pool())
-    .await
-    .unwrap();
+    sqlx::query("UPDATE integrations SET config = jsonb_set(config, '{tools}', $2) WHERE id = $1")
+        .bind(row.id)
+        .bind(json!({
+            "echo": { "enabled": true },
+            "admin_only_op": { "enabled": true },
+        }))
+        .execute(ts.store().pool())
+        .await
+        .unwrap();
     let turn = &resolve_plugins(&ts.state, org).await.unwrap()[0];
 
     // Default policy: member read-only — echo visible, admin tool hidden.

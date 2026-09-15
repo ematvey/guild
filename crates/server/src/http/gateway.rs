@@ -217,7 +217,10 @@ async fn list_providers(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
     let master = state.config.master_key().map_err(ApiError::from)?;
-    let providers = store.gateway().list_providers(admin.0.org_id, &master).await?;
+    let providers = store
+        .gateway()
+        .list_providers(admin.0.org_id, &master)
+        .await?;
     Ok(Json(json!({ "providers": providers })))
 }
 

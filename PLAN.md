@@ -19,6 +19,9 @@ and split at `&&`/`||`/`;`/`|`; every segment is evaluated independently and
 the strictest decision wins; any segment containing a shell redirection is
 never auto-approved.
 
+An `allow` decision skips the interactive gate entirely (the deny/prompt
+branches wrap it); the wrapped `if` keeps the awakeable dispatch outside.
+
 Rules live in `crates/server/assets/exec_policy_*.rules` (a small curated
 base + a layer extracted from a local codex install) and are parsed by the
 crate's Starlark parser at BUILD time (guild-server build.rs emits plain
