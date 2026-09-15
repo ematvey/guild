@@ -129,8 +129,9 @@ on devbox, both states verified via CDP.
 
 The composer's per-chat approval selector now mirrors codex exactly:
 "Ask for approval" (always ask), "Approve for me" (only ask for actions
-detected as potentially unsafe), "Full access" (unrestricted), plus the
-"Account default" row that clears the chat override. The old allow/never
+detected as potentially unsafe), "Full access" (unrestricted), The popup
+lists exactly codex’s three modes (the extra "Account default" row was
+removed 2026-09-15); an unset chat runs on the account policy.. The old allow/never
 values are remapped by migration 0044 (allow→full_access; never drops the
 key and falls back to the account policy — chat-level deny is gone).
 
