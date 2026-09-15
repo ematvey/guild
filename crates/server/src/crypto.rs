@@ -17,6 +17,13 @@ pub fn encrypt_secret(master_key: &[u8; 32], plaintext: &str) -> anyhow::Result<
     Ok(hex::encode(out))
 }
 
+/// Masked admin preview: one bullet per stored character, capped so very
+/// long secrets (service-account JSON, tokens) don't blow out the
+/// placeholder line. Reveals length only.
+pub fn mask_secret_len(len: usize) -> String {
+    "•".repeat(len.clamp(1, 48))
+}
+
 pub fn decrypt_secret(master_key: &[u8; 32], encoded: &str) -> anyhow::Result<String> {
     let bytes = hex::decode(encoded)?;
     if bytes.len() <= NONCE_LEN {
@@ -33,6 +40,13 @@ pub fn decrypt_secret(master_key: &[u8; 32], encoded: &str) -> anyhow::Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mask_len_is_real_length_capped() {
+        assert_eq!(mask_secret_len(11), "•".repeat(11));
+        assert_eq!(mask_secret_len(3), "•••");
+        assert_eq!(mask_secret_len(500).chars().count(), 48);
+    }
 
     #[test]
     fn roundtrip_and_wrong_key_fails() {

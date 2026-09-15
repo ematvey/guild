@@ -216,7 +216,8 @@ async fn list_providers(
     admin: AdminUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    let providers = store.gateway().list_providers(admin.0.org_id).await?;
+    let master = state.config.master_key().map_err(ApiError::from)?;
+    let providers = store.gateway().list_providers(admin.0.org_id, &master).await?;
     Ok(Json(json!({ "providers": providers })))
 }
 
@@ -252,9 +253,10 @@ async fn create_provider(
         .ok_or_else(|| ApiError::bad_request("missing key"))?;
     let slug = provider_slug(name);
     let store = state.store().await?;
+    let master = state.config.master_key().map_err(ApiError::from)?;
     if store
         .gateway()
-        .get_provider(admin.0.org_id, &slug)
+        .get_provider(admin.0.org_id, &slug, &master)
         .await?
         .is_some()
     {
@@ -263,7 +265,6 @@ async fn create_provider(
             format!("a provider with the name '{name}' already exists"),
         ));
     }
-    let master = state.config.master_key().map_err(ApiError::from)?;
     store
         .gateway()
         .create_provider(

@@ -11,21 +11,16 @@ use uuid::Uuid;
 pub struct SecretRow {
     pub name: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-    /// Write-time preview (e.g. "••••a1b2"); values themselves are never
-    /// listed. Empty for rows written before the column existed — the first
-    /// listing after this change backfills it.
+    /// Write-time preview (one bullet per stored character, capped);
+    /// values themselves are never listed. Empty for rows written before
+    /// the column existed — the first listing after this change backfills it.
     pub masked: String,
 }
 
-/// Preview shown to admins: last 4 characters after bullets, or bullets
-/// only when the value is too short to show any part of it.
+/// Preview shown to admins: one bullet per stored character (capped) —
+/// length only, never any part of the value.
 fn mask_secret(value: &str) -> String {
-    let chars: Vec<char> = value.chars().collect();
-    if chars.len() < 8 {
-        return "••••".to_string();
-    }
-    let tail: String = chars[chars.len() - 4..].iter().collect();
-    format!("••••{tail}")
+    crate::crypto::mask_secret_len(value.chars().count())
 }
 
 /// Resolve failure: an internal store error, or the declared names that have
@@ -128,9 +123,10 @@ impl<'a> IntegrationSecretStore<'a> {
     }
 
     /// Names, timestamps and masked previews — values never appear in
-    /// listings. Rows written before the masked column existed get their
-    /// preview backfilled here: the value is decrypted server-side (the
-    /// same trust boundary as `resolve`) and re-masked, never returned.
+    /// listings. Rows written before the current preview format (empty
+    /// masked, or the legacy last-4 shape) get their preview recomputed
+    /// here: the value is decrypted server-side (the same trust boundary
+    /// as `resolve`) and re-masked, never returned.
     pub async fn list(
         &self,
         org_id: Uuid,
@@ -146,7 +142,7 @@ impl<'a> IntegrationSecretStore<'a> {
         .fetch_all(self.pool)
         .await?;
         for row in &mut rows {
-            if row.masked.is_empty() {
+            if row.masked.is_empty() || row.masked.chars().any(|c| c != '•') {
                 let plaintext = self
                     .resolve(org_id, integration, &[row.name.clone()], master_key)
                     .await

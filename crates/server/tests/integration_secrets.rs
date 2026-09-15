@@ -27,7 +27,7 @@ async fn secrets_upsert_list_resolve_delete() {
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "api_key");
-    assert_eq!(rows[0].masked, "••••-123");
+    assert_eq!(rows[0].masked, "•".repeat(11)); // "sk-live-123" — one bullet per char
 
     // resolve returns decrypted pairs
     let resolved = db
@@ -155,5 +155,5 @@ async fn list_backfills_missing_masked_preview() {
         .list(org, "hubspot", &master)
         .await
         .unwrap();
-    assert_eq!(rows[0].masked, "••••1234");
+    assert_eq!(rows[0].masked, "•".repeat(16)); // "sk-live-abcd1234"
 }
