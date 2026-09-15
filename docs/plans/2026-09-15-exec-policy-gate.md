@@ -42,11 +42,11 @@ judge/card; no user questions).
 **Files:** already copied: `crates/codex-execpolicy/`,
 `crates/codex-utils-absolute-path/`; `Cargo.toml` (workspace members).
 
-- [ ] Step 1: workspace members + Cargo.tomls written (edition 2024 kept —
+- [x] Step 1: workspace members + Cargo.tomls written (edition 2024 kept —
       rustc 1.97 supports it per-crate).
-- [ ] Step 2: `cargo check -p codex-execpolicy -p codex-utils-absolute-path`
-- [ ] Step 3: `cargo test -p codex-execpolicy` (crate ships its own tests)
-- [ ] Step 4: commit `feat: vendor codex execpolicy crate`
+- [x] Step 2: `cargo check -p codex-execpolicy -p codex-utils-absolute-path`
+- [x] Step 3: `cargo test -p codex-execpolicy` (crate ships its own tests)
+- [x] Step 4: commit `feat: vendor codex execpolicy crate`
 
 ### Task 2: exec_policy_gate module (TDD)
 
@@ -62,7 +62,7 @@ judge/card; no user questions).
 - Produces: `pub enum ExecPolicyDecision { Allow, Deny(String), Prompt }`;
   `pub fn evaluate_execute(arguments: &serde_json::Value) -> ExecPolicyDecision`.
 
-- [ ] Step 1: write failing tests (module missing → RED):
+- [x] Step 1: write failing tests (module missing → RED):
   - `date` → Allow
   - `rm -rf /` → Deny containing justification
   - `git status && rm -rf /` → Deny (strictest segment wins)
@@ -71,10 +71,10 @@ judge/card; no user questions).
   - `journalctl --user -u docker` (local.rules match) → Allow
   - unbalanced quote → Prompt
   - `{"cwd": "x"}` (no command field) → Prompt
-- [ ] Step 2: watch RED (`cargo test -p guild-server exec_policy_gate`)
-- [ ] Step 3: implement module + rules files → GREEN
-- [ ] Step 4: watch GREEN; full `cargo test -p guild-server` unaffected
-- [ ] Step 5: commit
+- [x] Step 2: watch RED (`cargo test -p guild-server exec_policy_gate`)
+- [x] Step 3: implement module + rules files → GREEN
+- [x] Step 4: watch GREEN; full `cargo test -p guild-server` unaffected
+- [x] Step 5: commit
 
 ### Task 3: wire into client_tool_step
 
@@ -82,17 +82,17 @@ judge/card; no user questions).
 - Modify: `crates/server/src/worker/restate.rs` (client_tool_step, before
   the approval_gate call)
 
-- [ ] Step 1: wiring: only for `execute` calls; `Allow` → skip approval_gate
+- [x] Step 1: wiring: only for `execute` calls; `Allow` → skip approval_gate
   entirely; `Deny(reason)` → return the denied ToolResultPayload (same shape
   as the Approval::Never path); `Prompt` → existing flow untouched.
-- [ ] Step 2: `cargo check -p guild-server` + full test suite
-- [ ] Step 3: commit `feat(worker): exec policy gate ahead of approval gate`
+- [x] Step 2: `cargo check -p guild-server` + full test suite
+- [x] Step 3: commit `feat(worker): exec policy gate ahead of approval gate`
 
 ### Task 4: docs + deploy + live verify
 
-- [ ] PLAN.md entry (comment principle: what it IS/DOES, no history)
-- [ ] compose build+up detached; verify: health OK
-- [ ] Live verify: curl turn with `execute date` → judge log ABSENT, tool
+- [x] PLAN.md entry (comment principle: what it IS/DOES, no history)
+- [x] compose build+up detached; verify: health OK
+- [x] Live verify: curl turn with `execute date` → judge log ABSENT, tool
   runs; `execute` with a forbidden command → denied-by-policy tool result,
   no card, no judge.
 

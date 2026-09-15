@@ -1,0 +1,41 @@
+# Guild base exec policy: read-only commands run without the approval gate,
+# destructive commands are blocked with a justification the model can act on.
+# Everything unmatched goes to the chat's approval flow (judge / card).
+
+# --- read-only probes -----------------------------------------------------
+prefix_rule(pattern=["date"], decision="allow", justification="prints the current date/time")
+prefix_rule(pattern=["time"], decision="allow", justification="prints the current time")
+prefix_rule(pattern=["pwd"], decision="allow", justification="prints the working directory")
+prefix_rule(pattern=["whoami"], decision="allow", justification="prints the current user")
+prefix_rule(pattern=["hostname"], decision="allow", justification="prints the machine name")
+prefix_rule(pattern=["uname"], decision="allow", justification="prints system information")
+prefix_rule(pattern=["uptime"], decision="allow", justification="prints uptime and load")
+prefix_rule(pattern=["ls"], decision="allow", justification="lists directory contents")
+prefix_rule(pattern=["dir"], decision="allow", justification="lists directory contents (cmd)")
+prefix_rule(pattern=["cat"], decision="allow", justification="prints file contents")
+prefix_rule(pattern=["echo"], decision="allow", justification="prints text; writes need redirection, which is never auto-approved")
+prefix_rule(pattern=["df"], decision="allow", justification="reports disk usage")
+prefix_rule(pattern=["free"], decision="allow", justification="reports memory usage")
+
+# --- read-only git --------------------------------------------------------
+prefix_rule(pattern=["git", "status"], decision="allow", justification="read-only git inspection")
+prefix_rule(pattern=["git", "log"], decision="allow", justification="read-only git inspection")
+prefix_rule(pattern=["git", "diff"], decision="allow", justification="read-only git inspection")
+prefix_rule(pattern=["git", "show"], decision="allow", justification="read-only git inspection")
+prefix_rule(pattern=["git", "remote", "-v"], decision="allow", justification="read-only git inspection")
+
+# --- read-only container/system introspection -----------------------------
+prefix_rule(pattern=["docker", "ps"], decision="allow", justification="read-only docker listing")
+prefix_rule(pattern=["docker", "info"], decision="allow", justification="read-only docker report")
+prefix_rule(pattern=["ip", "addr", "show"], decision="allow", justification="read-only network report")
+prefix_rule(pattern=["iptables", "-S"], decision="allow", justification="read-only firewall ruleset dump")
+prefix_rule(pattern=["nft", "list", "ruleset"], decision="allow", justification="read-only firewall ruleset dump")
+prefix_rule(pattern=["systemctl", "status"], decision="allow", justification="read-only service status")
+prefix_rule(pattern=["systemctl", "--user", "show"], decision="allow", justification="read-only user service status")
+
+# --- hard blocks ----------------------------------------------------------
+prefix_rule(pattern=["shutdown"], decision="forbidden", justification="shuts the machine down; never run automatically — tell the user instead")
+prefix_rule(pattern=["reboot"], decision="forbidden", justification="reboots the machine; never run automatically — tell the user instead")
+prefix_rule(pattern=["format"], decision="forbidden", justification="formats a volume; destructive and irreversible")
+prefix_rule(pattern=["mkfs"], decision="forbidden", justification="creates a filesystem; destructive and irreversible")
+prefix_rule(pattern=["dd"], decision="forbidden", justification="raw disk copying; destructive and irreversible — use a targeted tool instead")

@@ -147,6 +147,29 @@ impl Policy {
         Ok(())
     }
 
+    /// Adds a prefix rule with its full pattern (alternatives included) and
+    /// justification. The build-time parser reconstructs rules through this
+    /// without linking the Starlark parser at runtime.
+    pub fn add_prefix_rule_pattern(
+        &mut self,
+        first: &str,
+        rest: Vec<PatternToken>,
+        decision: Decision,
+        justification: Option<String>,
+    ) -> Result<()> {
+        let rule: RuleRef = Arc::new(PrefixRule {
+            pattern: PrefixPattern {
+                first: Arc::from(first),
+                rest: rest.into(),
+            },
+            decision,
+            justification,
+        });
+        self.rules_by_program
+            .insert(first.to_string(), rule);
+        Ok(())
+    }
+
     pub fn add_network_rule(
         &mut self,
         host: &str,

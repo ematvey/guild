@@ -160,7 +160,8 @@ impl RoutineExecutor {
         let mut stream = resp.bytes_stream().eventsource();
         while let Some(ev) = stream.next().await {
             let ev = ev?;
-            let parsed: StreamEvent = serde_json::from_str(&ev.data)?;
+            let parsed: StreamEvent = serde_json::from_str(&ev.data)
+                ?;
             match parsed {
                 StreamEvent::Delta { content } => text.push_str(&content),
                 StreamEvent::ToolCallDone { call } => tool_calls.push(call),

@@ -17,6 +17,7 @@ use crate::http::gateway::{
 };
 use crate::integrations;
 use crate::state::AppState;
+use crate::worker::exec_policy_gate;
 use crate::worker::executor::{tool_registry, Completion, RoutineConfig, RoutineExecutor};
 use crate::worker::overflow::is_context_overflow;
 use crate::worker::run::MAX_STEPS;
@@ -2692,6 +2693,26 @@ async fn client_tool_step(
             meta: None,
             images: Vec::new(),
         });
+    }
+
+    // ---- Static exec policy (codex model): Starlark prefix rules decide
+    // before the interactive gate. An `allow` rule runs the command with no
+    // gate at all; a `forbidden` rule is a hard deny whose text is the rule's
+    // justification (the model recovers by trying a materially different
+    // command, never by escalating); `prompt` rules and unmatched commands
+    // fall through to the chat's approval flow below. Pure function of the
+    // compiled-in rules and the command string — replay-stable.
+    match exec_policy_gate::evaluate_execute(&call.arguments) {
+        exec_policy_gate::ExecPolicyDecision::Allow => {}
+        exec_policy_gate::ExecPolicyDecision::Deny(reason) => {
+            return Ok(ToolResultPayload {
+                content: format!("denied by exec policy: {reason}"),
+                is_error: true,
+                meta: None,
+                images: Vec::new(),
+            });
+        }
+        exec_policy_gate::ExecPolicyDecision::Prompt => {}
     }
 
     // ---- Approval gate (phase 2, design §C). Journaled request/decision
