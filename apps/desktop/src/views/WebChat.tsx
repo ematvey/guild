@@ -758,7 +758,7 @@ const APPROVAL_MODES: Record<
   },
   approve_for_me: {
     label: "Approve for me",
-    hint: "Only ask for actions detected as potentially unsafe",
+    hint: "Let a separate AI determine if an action is potentially unsafe",
     icon: ShieldCheck,
   },
   full_access: {
