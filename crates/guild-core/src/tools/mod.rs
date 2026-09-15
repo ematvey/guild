@@ -67,7 +67,20 @@ impl ToolRegistry {
 
     pub fn builtins() -> Self {
         let mut r = Self::new();
-        r.add(Arc::new(fs::ReadFile));
+        r.add(Arc::new(fs::ReadFile::default()));
+        r.add(Arc::new(fs::WriteFile));
+        r.add(Arc::new(fs::EditFile));
+        r.add(Arc::new(shell::RunCommand));
+        r
+    }
+
+    /// Built-ins whose read_file may also read the given roots — used for
+    /// skill dirs discovered outside the workspace (skills design §3).
+    pub fn builtins_with_read_roots(roots: Vec<std::path::PathBuf>) -> Self {
+        let mut r = Self::new();
+        r.add(Arc::new(fs::ReadFile {
+            extra_read_roots: roots,
+        }));
         r.add(Arc::new(fs::WriteFile));
         r.add(Arc::new(fs::EditFile));
         r.add(Arc::new(shell::RunCommand));
@@ -125,6 +138,17 @@ impl Default for ToolRegistry {
 /// Resolves `path` under `workdir` and rejects escapes. Absolute paths must
 /// already be inside the workdir.
 pub fn resolve_scoped(workdir: &Path, path_str: &str) -> Result<PathBuf, ToolFailure> {
+    resolve_scoped_in(workdir, &[], path_str)
+}
+
+/// Same, with additional allowed read roots (e.g. discovered skill dirs
+/// living outside the workspace, like `~/.agents/skills`). A path that
+/// canonicalizes under one of the roots is accepted.
+pub fn resolve_scoped_in(
+    workdir: &Path,
+    extra_roots: &[std::path::PathBuf],
+    path_str: &str,
+) -> Result<PathBuf, ToolFailure> {
     let raw = Path::new(path_str);
     let joined = if raw.is_absolute() {
         raw.to_path_buf()
@@ -171,12 +195,19 @@ pub fn resolve_scoped(workdir: &Path, path_str: &str) -> Result<PathBuf, ToolFai
             )))
         }
     };
-    if !resolved.starts_with(&base) {
-        return Err(ToolFailure::InvalidInput(format!(
-            "path escapes the project directory: {path_str}"
-        )));
+    if resolved.starts_with(&base) {
+        return Ok(resolved);
     }
-    Ok(resolved)
+    for root in extra_roots {
+        if let Ok(root_canon) = root.canonicalize() {
+            if resolved.starts_with(&root_canon) {
+                return Ok(resolved);
+            }
+        }
+    }
+    Err(ToolFailure::InvalidInput(format!(
+        "path escapes the project directory: {path_str}"
+    )))
 }
 
 pub fn diff_text(old: &str, new: &str, path: &Path) -> String {
@@ -216,6 +247,26 @@ mod tests {
         assert!(resolve_scoped(&dir, "../outside.txt").is_err());
         assert!(resolve_scoped(&dir, "/etc/passwd").is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_scoped_in_allows_skill_roots_only() {
+        let tag = format!("guild-scope2-{}", std::process::id());
+        let base = std::env::temp_dir().join(&tag);
+        // workdir (the project) and the "home" with skills are separate trees
+        let dir = base.join("project");
+        let skill_root = base.join("home/.agents/skills/deploy-check");
+        std::fs::create_dir_all(&skill_root).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(skill_root.join("SKILL.md"), "body").unwrap();
+        let roots = vec![skill_root.clone()];
+        // inside an extra root: allowed
+        let sk = format!("{}/SKILL.md", skill_root.display());
+        assert!(resolve_scoped_in(&dir, &roots, &sk).is_ok());
+        // elsewhere in the fake home: still rejected
+        let other = format!("{}/secrets.txt", base.join("home").display());
+        assert!(resolve_scoped_in(&dir, &roots, &other).is_err());
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

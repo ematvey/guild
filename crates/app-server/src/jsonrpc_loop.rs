@@ -582,7 +582,8 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
 /// Starts an agent run in the background: creates the chat if needed,
 /// responds immediately with `started`, streams progress as events.
 async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    // (cloud, existing chat, project dir, model, history, policy, pending approvals, skills index)
+    // (cloud, existing chat, project dir, model, history, policy, pending
+    // approvals, skills index, skill read roots)
     type AgentPrep = (
         CloudClient,
         Option<Uuid>,
@@ -592,6 +593,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         ApprovalPolicy,
         PendingApprovals,
         Option<String>,
+        Vec<PathBuf>,
     );
     let prep = || -> anyhow::Result<AgentPrep> {
         let mut s = shared.session.lock().unwrap();
@@ -631,6 +633,14 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
             .collect();
         let skills_index = crate::skills::prompt_index(&skills);
         let skills_index = if skills_index.is_empty() { None } else { Some(skills_index) };
+        // read_file may read skill dirs outside the workspace so the index
+        // paths are actually loadable
+        let skill_roots: Vec<PathBuf> = skills
+            .iter()
+            .filter_map(|e| e.path.parent().map(std::path::Path::to_path_buf))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
         let prompt = match crate::skills::mention_block(&crate::skills::mention_expansions(
             &prompt, &skills,
         )) {
@@ -648,10 +658,20 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
             s.policy.clone(),
             s.pending.clone(),
             skills_index,
+            skill_roots,
         ))
     };
-    let (cloud, chat_id_opt, project_dir, model, history, policy, pending, skills_index) =
-        match prep() {
+    let (
+        cloud,
+        chat_id_opt,
+        project_dir,
+        model,
+        history,
+        policy,
+        pending,
+        skills_index,
+        skill_roots,
+    ) = match prep() {
         Ok(p) => p,
         Err(e) => {
             let _ = out_tx.send(response_value(req.id, Err(e)));
@@ -699,7 +719,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         events: shared.events.clone(),
         pending,
     };
-    let updated = match run.spawn(ToolRegistry::builtins()).await {
+    let updated = match run.spawn(ToolRegistry::builtins_with_read_roots(skill_roots)).await {
         Ok(v) => Some(v),
         // A panicked or cancelled run must not wipe the session history
         // (the join default would assign an empty vec); keep what we had.

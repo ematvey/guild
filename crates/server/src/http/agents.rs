@@ -258,7 +258,7 @@ async fn run_turn(
 
     // tools scoped to the workspace; shell tools opt-in only
     let mut registry = ToolRegistry::new();
-    registry.add(Arc::new(guild_core::tools::fs::ReadFile));
+    registry.add(Arc::new(guild_core::tools::fs::ReadFile::default()));
     registry.add(Arc::new(guild_core::tools::fs::WriteFile));
     registry.add(Arc::new(guild_core::tools::fs::EditFile));
     if state.config.allow_shell_tools {
