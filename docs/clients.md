@@ -111,7 +111,9 @@ The field stays editable, so any URL can always be typed at login.
 ## 4. Release process
 
 One script does everything (idempotent — republishing replaces existing
-artifacts of the same version/platform):
+artifacts of the same version/platform). When running it detached
+(systemd-run), pass the interactive PATH explicitly — `cargo-xwin` lives in
+`~/.cargo/bin`, which the systemd user environment lacks:
 
 ```bash
 BASE=http://localhost:18080 TOKEN=<admin-session-token> VERSION=0.1.0 \
