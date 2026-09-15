@@ -753,7 +753,7 @@ const APPROVAL_MODES: Record<
 > = {
   ask: {
     label: "Ask for approval",
-    hint: "Always ask to edit external files and use the internet",
+    hint: "Ask before every shell command and file edit; read-only lookups (search, web pages) flow",
     icon: Hand,
   },
   approve_for_me: {
@@ -763,7 +763,7 @@ const APPROVAL_MODES: Record<
   },
   full_access: {
     label: "Full access",
-    hint: "Unrestricted access to the internet and any file on your computer",
+    hint: "Unrestricted — org-pinned tools and hard-blocked commands still refuse",
     icon: TriangleAlert,
     iconCls: "text-orange-500",
   },

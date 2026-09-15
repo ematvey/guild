@@ -101,3 +101,14 @@ judge/card; no user questions).
 - Spec coverage: allow/forbidden/prompt mapping ✓; segment+redirection ✓;
   replay determinism ✓; no new user-facing UI ✓.
 - No placeholders; interfaces pinned above.
+
+
+### Task 5: wording audit (post-ship)
+
+- [x] Verified per-mode behavior against the composer hints. One deviation:
+      ask-mode's hint claimed it gates internet use — read-class internet
+      tools (search/browse/fetch) flow ungated in every mode by design.
+      Fixed the hint, not the behavior (reads-flow is the standing design;
+      codex's strict modes also let static allow rules through).
+- [x] full_access hint now names its two intentional exceptions (org-pinned
+      tools, exec-policy forbidden).
