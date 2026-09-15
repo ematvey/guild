@@ -1620,6 +1620,11 @@ export default function WebChat({
     }
     if (!generating && cid === openChatIdRef.current && document.visibilityState === "visible") {
       void markChatRead(cid);
+      // The sidebar row renders the fetched list, not chatStatus — patch the
+      // row here or the dot lingers until the next list refresh.
+      setChats((prev) =>
+        prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
+      );
     }
   };
   const handleChatStatusRef = useRef(handleChatStatus);
@@ -1640,6 +1645,11 @@ export default function WebChat({
         void markChatRead(cid);
         setChatStatus((prev) =>
           prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
+        );
+        // Same sidebar-row patch as handleChatStatus: the marker moved on the
+        // server, the fetched list row must not keep showing the dot.
+        setChats((prev) =>
+          prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
         );
       }
     }
