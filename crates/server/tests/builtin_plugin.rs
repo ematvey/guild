@@ -271,7 +271,7 @@ async fn builtin_enable_gate_and_secret_lifecycle() {
     let items = v["secrets"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["name"], "api_key");
-    assert_eq!(items[0]["masked"], "\u{2022}\u{2022}\u{2022}\u{2022}");
+    assert_eq!(items[0]["masked"], "\u{2022}".repeat(6)); // "sk-123" — one bullet per char
     assert!(items[0].get("value").is_none());
     assert!(!v.to_string().contains("sk-123"));
 

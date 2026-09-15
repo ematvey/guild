@@ -28,6 +28,7 @@ interface OidcConfig {
   configured: boolean;
   issuer?: string;
   client_id?: string;
+  secret_masked?: string | null;
 }
 
 export default function SsoSection() {
@@ -120,6 +121,7 @@ export default function SsoSection() {
       initialIssuer={editing ? (cfg.issuer ?? "") : ""}
       initialClientId={editing ? (cfg.client_id ?? "") : ""}
       keepSecret={editing}
+      secretMasked={editing ? cfg.secret_masked : null}
       onCancel={
         editing
           ? () => {
@@ -143,6 +145,7 @@ function SsoForm({
   initialIssuer,
   initialClientId,
   keepSecret,
+  secretMasked,
   onCancel,
   onSaved,
 }: {
@@ -150,6 +153,7 @@ function SsoForm({
   initialIssuer: string;
   initialClientId: string;
   keepSecret: boolean;
+  secretMasked?: string | null;
   onCancel?: () => void;
   onSaved: () => void;
 }) {
@@ -206,7 +210,7 @@ function SsoForm({
         >
           <Input
             type="password"
-            placeholder={keepSecret ? "••••••••" : "client secret"}
+            placeholder={keepSecret ? (secretMasked ?? "••••••••") : "client secret"}
             value={clientSecret}
             onChange={(e) => setClientSecret(e.target.value)}
           />

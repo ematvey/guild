@@ -108,7 +108,8 @@ pub struct AdminRouteRow {
     pub modalities: Vec<String>,
 }
 
-/// Admin-facing provider row: metadata only, never the secret.
+/// Admin-facing provider row: metadata + a length-only bullet preview of
+/// the stored key, never the secret itself.
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
 pub struct ProviderRow {
     /// Stable slug model routes reference.
@@ -119,6 +120,35 @@ pub struct ProviderRow {
     /// Wire protocol ("openai" | "anthropic").
     pub protocol: String,
     pub base_url: String,
+    /// One bullet per stored key character (capped); `None` when the key
+    /// cannot be decrypted for preview (e.g. master key rotated).
+    pub key_masked: Option<String>,
+}
+
+/// Internal row shape carrying the encrypted key so the preview can be
+/// computed without exposing the plaintext.
+#[derive(Debug, sqlx::FromRow)]
+struct ProviderRowEnc {
+    provider: String,
+    name: String,
+    protocol: String,
+    base_url: String,
+    encrypted_key: String,
+}
+
+impl ProviderRowEnc {
+    fn into_row(self, master_key: &[u8; 32]) -> ProviderRow {
+        let key_masked = crate::crypto::decrypt_secret(master_key, &self.encrypted_key)
+            .ok()
+            .map(|k| crate::crypto::mask_secret_len(k.chars().count()));
+        ProviderRow {
+            provider: self.provider,
+            name: self.name,
+            protocol: self.protocol,
+            base_url: self.base_url,
+            key_masked,
+        }
+    }
 }
 
 pub struct GatewayStore<'a> {
@@ -226,16 +256,17 @@ impl<'a> GatewayStore<'a> {
         &self,
         org_id: Uuid,
         slug: &str,
+        master_key: &[u8; 32],
     ) -> anyhow::Result<Option<ProviderRow>> {
-        let row: Option<ProviderRow> = sqlx::query_as(
-            "SELECT provider, name, protocol, base_url FROM provider_keys \
+        let row: Option<ProviderRowEnc> = sqlx::query_as(
+            "SELECT provider, name, protocol, base_url, encrypted_key FROM provider_keys \
              WHERE org_id = $1 AND provider = $2",
         )
         .bind(org_id)
         .bind(slug)
         .fetch_optional(self.pool)
         .await?;
-        Ok(row)
+        Ok(row.map(|r| r.into_row(master_key)))
     }
 
     pub async fn upsert_route(
@@ -281,16 +312,21 @@ impl<'a> GatewayStore<'a> {
         Ok(())
     }
 
-    /// Provider rows for the org's admin settings (no secrets).
-    pub async fn list_providers(&self, org_id: Uuid) -> anyhow::Result<Vec<ProviderRow>> {
-        let rows: Vec<ProviderRow> = sqlx::query_as(
-            "SELECT provider, name, protocol, base_url FROM provider_keys \
+    /// Provider rows for the org's admin settings (metadata + key-length
+    /// preview, no secrets).
+    pub async fn list_providers(
+        &self,
+        org_id: Uuid,
+        master_key: &[u8; 32],
+    ) -> anyhow::Result<Vec<ProviderRow>> {
+        let rows: Vec<ProviderRowEnc> = sqlx::query_as(
+            "SELECT provider, name, protocol, base_url, encrypted_key FROM provider_keys \
              WHERE org_id = $1 ORDER BY name, provider",
         )
         .bind(org_id)
         .fetch_all(self.pool)
         .await?;
-        Ok(rows)
+        Ok(rows.into_iter().map(|r| r.into_row(master_key)).collect())
     }
 
     /// Removes a provider; routes referencing it stop resolving until a new

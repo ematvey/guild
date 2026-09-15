@@ -57,7 +57,19 @@ async fn get_config(
 ) -> Result<Json<Value>, ApiError> {
     let row = state.store().await?.oidc().get(admin.0.org_id).await?;
     Ok(Json(match row {
-        Some(r) => json!({"configured": true, "issuer": r.issuer, "client_id": r.client_id}),
+        Some(r) => {
+            // Length-only bullet preview so the edit form's secret field can
+            // show a mask of the real stored length (never any content).
+            let master = state.config.master_key()?;
+            let secret_masked = state
+                .store()
+                .await?
+                .oidc()
+                .decrypt_secret(&r, &master)
+                .ok()
+                .map(|s| crate::crypto::mask_secret_len(s.chars().count()));
+            json!({"configured": true, "issuer": r.issuer, "client_id": r.client_id, "secret_masked": secret_masked})
+        }
         None => json!({"configured": false}),
     }))
 }

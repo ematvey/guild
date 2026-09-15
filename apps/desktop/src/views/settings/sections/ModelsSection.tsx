@@ -55,6 +55,7 @@ interface ProviderRow {
   name: string;
   protocol: string;
   base_url: string;
+  key_masked?: string | null;
 }
 
 type View =
@@ -341,6 +342,7 @@ function ProviderFormFields({
   baseUrl,
   key,
   keyHint,
+  storedKeyMasked,
   onPatch,
 }: {
   name: string;
@@ -348,6 +350,7 @@ function ProviderFormFields({
   baseUrl: string;
   key: string;
   keyHint: string;
+  storedKeyMasked?: string | null;
   onPatch: (p: { name?: string; protocol?: string; baseUrl?: string; key?: string }) => void;
 }) {
   return (
@@ -371,7 +374,9 @@ function ProviderFormFields({
         <Input value={baseUrl} placeholder="https://api.openai.com" onChange={(e) => onPatch({ baseUrl: e.target.value })} />
       </Field>
       <Field label="API key" hint={keyHint}>
-        <Input type="password" value={key} placeholder="sk-…" onChange={(e) => onPatch({ key: e.target.value })} />
+        {/* Stored keys preview as one bullet per stored character — the
+            placeholder must read as a masked value, not an empty field. */}
+        <Input type="password" value={key} placeholder={storedKeyMasked ?? "sk-…"} onChange={(e) => onPatch({ key: e.target.value })} />
       </Field>
     </>
   );
@@ -555,6 +560,7 @@ function ProviderDetail({
             baseUrl={draft.baseUrl}
             key={draft.key}
             keyHint="Leave blank to keep the stored key."
+            storedKeyMasked={p.key_masked}
             onPatch={(patch) => setDraft({ ...draft, ...patch })}
           />
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -602,6 +608,9 @@ function ProviderDetail({
         </FactCard>
         <FactCard label="Base URL">
           <span className="break-all">{p.base_url}</span>
+        </FactCard>
+        <FactCard label="API key">
+          <span className="font-mono break-all">{p.key_masked ?? "not decryptable"}</span>
         </FactCard>
         <FactCard label="Slug — routes reference this id">
           <span className="font-mono text-sm">{p.provider}</span>
