@@ -100,6 +100,14 @@ ownership of the prompt, the client may only append a bounded segment.
 5. Disable: per-skill toggle in Guild settings (persisted as path → enabled
    map); disabled skills are skipped at discovery. Simple UI later; config
    only in v1.
+6. Install and uninstall operate on the same directories the loader reads
+   (§4): a registry install goes to repo `.agents/skills/<slug>` by default,
+   or `$HOME/.agents/skills/<slug>` for a user-scoped (global) install —
+   chosen per install, like npm local vs -g. Uninstall removes the skill
+   directory, but only when Guild provenance says Guild put it there (§5).
+7. Provenance: every skill dir carries a Guild provenance sidecar
+   (`agents/guild.yaml`) distinguishing guild-authored, locally-authored
+   unpublished, and registry-installed skills (§5).
 
 ## 4. Scope layout and precedence
 
@@ -107,18 +115,66 @@ Discovered per agent.start (first match on name wins; project beats user —
 keep Guild's current merge rule, a deliberate deviation from Codex's
 "show duplicates"):
 
-| Scope | Location | Notes |
-|---|---|---|
-| install | `{project}/.guild/skills/<slug>/` | registry install target (exists) |
-| repo | `.agents/skills` from cwd up to repo root | Codex + pi compatible |
-| user | `$HOME/.agents/skills` | shared with codex + pi on this machine |
+Reading and installing use the same directories:
 
-`config_dir/skills` (current user scope, `{config}/guild/skills`) stays as a
-deprecated fallback behind the new user scope. ADMIN/SYSTEM scopes are out
-of scope for v1. Skill bundles from plugins/marketplaces: out of scope (the
-registry is Guild's distribution channel).
+| Scope | Location | Loader | Installer |
+|---|---|---|---|
+| repo | `.agents/skills` from cwd up to repo root | read | install target (default) |
+| user | `$HOME/.agents/skills` | read | install target (`global = true`) |
+| legacy | `{project}/.guild/skills` and `{config}/guild/skills` | read (deprecated fallback) | never installed into |
 
-## 5. Index budget
+The legacy scopes keep previously installed skills working after the
+loader switches; new installs always land in `.agents/skills` so one
+directory serves Guild, codex, and pi. ADMIN/SYSTEM scopes are out of scope
+for v1. Skill bundles from plugins/marketplaces: out of scope (the registry
+is Guild's distribution channel).
+
+Windows note: `$HOME/.agents/skills` resolves to the user profile
+(`C:\Users\<name>\.agents\skills`) via the platform home-dir call; the repo
+walk is relative and OS-independent.
+
+## 5. Provenance (agents/guild.yaml)
+
+Guild metadata stays out of SKILL.md (same principle as the bundle
+manifest). Provenance lives in a sidecar at `<skill-dir>/agents/guild.yaml`
+— the same convention Codex uses for its optional `agents/openai.yaml`, and
+a file other harnesses ignore:
+
+```yaml
+source: registry        # registry | local
+slug: deploy-check
+version: 0.3.1
+org: <org id>           # registry-sourced only
+publisher: <user id>    # who published the installed version
+published_by_me: false  # true when this user published it
+review_status: approved
+installed_at: 2026-09-16T12:00:00Z
+bundle_hash: sha256:…
+```
+
+Rules:
+
+- **Registry install** unpacks the bundle and writes the sidecar. The
+  bundle manifest is the source; the sidecar is its on-disk projection.
+- **Local authoring** creates no sidecar. The dir is a plain SKILL.md
+  folder exactly like a codex/pi-authored skill — full interoperability.
+- **Publish** ("publish my skills to the org registry") packs the dir,
+  pushes the bundle, then writes/updates the sidecar with
+  `source: registry, published_by_me: true`. From then on the dir is
+  linked to its registry identity (slug/version shown in the UI, update
+  pulls the new version).
+- **Uninstall** deletes the skill dir only when a sidecar with
+  `source: registry` is present. A dir without a sidecar (or with
+  `source: local`) is refused — Guild never deletes skills it did not put
+  there, which is what makes sharing these dirs with codex and pi safe.
+- **Local edits** to an installed skill are detected by comparing the file
+  hash against `bundle_hash`; the UI shows "modified locally". Update
+  (re-install of a newer version) overwrites and refreshes the sidecar.
+- Loader precedence is unchanged (project/repo wins over user); provenance
+  plays no role in loading, only in install/uninstall/publish and UI
+  labeling.
+
+## 6. Index budget
 
 Same rule as Codex: cap the rendered index at 2% of the model's context
 window, 8,000 chars when the window is unknown (Guild: 8,000 chars flat in
@@ -127,7 +183,7 @@ over budget, truncate descriptions first (front-loaded trigger wording
 survives, per the Codex best practice), then drop entries from the end and
 append a warning line "N skills omitted".
 
-## 6. Implementation plan
+## 7. Implementation plan
 
 - **T1 — additive gateway channel**: add `skills_index: Option<String>` to
   `ChatCompletionRequest` (protocol crate). Server: in the completion
@@ -150,17 +206,28 @@ append a warning line "N skills omitted".
   keep `.guild/skills` install target; config-dir scope becomes fallback.
 - **T5 — disable list**: settings-backed `path → enabled=false` map applied
   in `agent.start` after discovery. No UI in v1.
-- **T6 — tests**: index reaches the model (scripted provider asserts system
+- **T6 — install target + uninstall**: `registry_client::install_skill`
+  unpacks into `.agents/skills/<slug>` (repo scope by default, user scope
+  when `global = true`), writes the `agents/guild.yaml` sidecar from the
+  bundle manifest; new `uninstall_skill(slug, global)` verifies the
+  sidecar before removing the dir. Legacy `.guild/skills` dirs stay
+  readable, never written.
+- **T7 — publish writes provenance**: the publish flow packs the dir and
+  writes/updates the sidecar (`source: registry`, `published_by_me: true`,
+  slug, version, hash). Local-edit detection: hash compare at chat start
+  or on demand in the skills UI.
+- **T8 — tests**: index reaches the model (scripted provider asserts system
   contains the index); budget truncation; `$name` injection; `.agents/skills`
   discovery + precedence; disabled skill excluded; server caps oversized
-  `skills_index`; denied skills never appear (install-side already blocks).
-
+  `skills_index`; denied skills never appear (install-side already blocks);
+  sidecar round-trip (install → provenance → uninstall); uninstall refuses
+  dirs without a registry sidecar; publish marks `published_by_me`.
 Sequencing: T1+T2 make skills visible (the actual bug); T3 is the ergonomic
 core of the Codex model; T4/T5 are small follow-ups. Watcher, skill-creator
 skill, `$` autocomplete in the composer, `agents/openai.yaml` metadata: all
 deferred.
 
-## 7. Non-goals (v1)
+## 8. Non-goals (v1)
 
 - Server-side skill discovery for server-executed tool flows (web clients
   without a desktop executor) — revisit when remote execution backends land.

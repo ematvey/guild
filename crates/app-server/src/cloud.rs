@@ -185,6 +185,7 @@ impl CloudClient {
             client_tools: false,
             attachment_ids: Vec::new(),
             project_dir: None,
+            skills_index: None,
         })
         .await
     }

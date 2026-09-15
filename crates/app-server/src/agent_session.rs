@@ -27,6 +27,9 @@ pub struct GatewayTurn {
     pub model: String,
     pub system: Option<String>,
     pub project_dir: Option<String>,
+    /// Client-discovered skills index; appended to the server-owned system
+    /// prompt (additive channel — the client never sends a system prompt).
+    pub skills_index: Option<String>,
 }
 
 #[async_trait]
@@ -52,6 +55,7 @@ impl ModelTurn for GatewayTurn {
                 },
                 system: self.system.clone(),
                 project_dir: self.project_dir.clone(),
+                skills_index: self.skills_index.clone(),
                 // the desktop app executes machine tools client-side
                 client_tools: true,
                 attachment_ids: Vec::new(),
@@ -228,6 +232,8 @@ pub struct AgentRun {
     pub project_dir: PathBuf,
     pub model: String,
     pub system: Option<String>,
+    /// Client-rendered skills index for the server-owned prompt.
+    pub skills_index: Option<String>,
     pub history: Vec<Message>,
     pub policy: ApprovalPolicy,
     pub events: tokio::sync::broadcast::Sender<Value>,
@@ -248,6 +254,7 @@ impl AgentRun {
                 model: self.model,
                 system: self.system,
                 project_dir: Some(self.project_dir.to_string_lossy().into_owned()),
+                skills_index: self.skills_index,
             };
             let hooks = SessionHooks {
                 events: self.events.clone(),
