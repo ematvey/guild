@@ -1365,6 +1365,14 @@ export default function WebChat({
   const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
   const chatId = route.chatId;
   const overlay = route.overlay;
+  // The open chat's server-side generating flag — the same truth the sidebar
+  // spinner shows (live chat-status frames, optimistic send, then the fetched
+  // list). The local stream state is per-view and is lost on a thread switch;
+  // this keeps the window's in-progress state alive across switches.
+  const openGenerating =
+    !!chatId &&
+    (chatStatus[chatId]?.generating ??
+      (chats?.find((c) => c.id === chatId)?.generating ?? false));
   const [threadLoading, setThreadLoading] = useState(() => route.chatId !== null); // /thread/<id> fetch in flight with nothing to show
   const [prompt, setPrompt] = useState("");
   // Composer attachments: strip of previews above the input — image
@@ -1785,6 +1793,13 @@ export default function WebChat({
         const seen = appSeqRef.current.get(p.chat_id) ?? -1;
         if (p.seq <= seen) return;
         appSeqRef.current.set(p.chat_id, p.seq);
+        // A live frame for the open chat means a turn is in flight — restore
+        // the in-progress state even when the load-time snapshot missed it
+        // (e.g. the thread was reopened before the turn's first frame reached
+        // the mirror; only done/error ever cleared busy before).
+        if (p.event.type !== "done" && p.event.type !== "error" && !loadStateRef.current.busy) {
+          setBusy(true);
+        }
         if (p.event.type === "done") {
           setBusy(false);
           // done: reload the durable thread (gauge + rebuilt blocks) and the
@@ -1993,7 +2008,7 @@ export default function WebChat({
 
   const send = async () => {
     const text = prompt.trim();
-    if ((!text && pendingRef.current.length === 0) || busy || !model) return;
+    if ((!text && pendingRef.current.length === 0) || busy || openGenerating || !model) return;
     const mySeq = loadSeq.current; // switching away mid-send cancels the client stream
     setBusy(true);
     setPrompt("");
@@ -2200,7 +2215,13 @@ export default function WebChat({
       }
       void refreshChats();
     } catch (e) {
-      if (loadSeq.current !== mySeq) return; // deliberate switch away, not an error
+      if (loadSeq.current !== mySeq) {
+        // deliberate switch away, not an error: the turn keeps running
+        // detached server-side — the chat-status generating truth owns both
+        // spinners from here, and reopening the thread reattaches
+        setBusy(false);
+        return;
+      }
       setBusy(false);
       if (sendAbort.current === ac) sendAbort.current = null;
       const wac = new AbortController();
@@ -2243,7 +2264,7 @@ export default function WebChat({
       ? "Loading…"
       : (chats?.find((c) => c.id === chatId)?.title ?? "New chat");
   const boundMachine = chats?.find((c) => c.id === chatId)?.machine_label ?? null;
-  const streaming = busy || attaching || reattaching;
+  const streaming = busy || attaching || reattaching || openGenerating;
 
   const sidebar = (
     <SidebarContent
@@ -2654,7 +2675,7 @@ export default function WebChat({
                   }
                   title="Send"
                 >
-                  {busy ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
+                  {streaming ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
                 </Button>
               </div>
             </div>
