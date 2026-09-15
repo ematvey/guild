@@ -43,6 +43,14 @@ pub fn routes() -> Router<AppState> {
             axum::routing::get(list_integration_secrets),
         )
         .route(
+            "/api/v1/admin/integrations/{id}/tools",
+            axum::routing::get(list_integration_tools),
+        )
+        .route(
+            "/api/v1/admin/integrations/{id}/tools/{tool}",
+            axum::routing::put(set_integration_tool),
+        )
+        .route(
             "/api/v1/admin/integrations/{id}",
             axum::routing::put(update_integration).delete(delete_integration),
         )
@@ -580,10 +588,19 @@ async fn save_integration(
     let Some(plugin) = crate::integrations::integration_by_name(&name) else {
         return Err(ApiError::not_found(format!("unknown integration {name}")));
     };
-    let config = body
+    let mut config = body
         .get("config")
         .cloned()
         .unwrap_or_else(|| existing.map(|r| r.config.clone()).unwrap_or(json!({})));
+    // Per-tool curation (adapters spec §6) is admin state, not a settings
+    // field — a settings save that omits it keeps the stored selection.
+    if let Some(obj) = config.as_object_mut() {
+        if !obj.contains_key("tools") {
+            if let Some(stored) = existing.and_then(|r| r.config.get("tools")) {
+                obj.insert("tools".to_string(), stored.clone());
+            }
+        }
+    }
     // Validate via the plugin's own config check before saving.
     if let Err(e) = plugin.tools(&config) {
         return Err(ApiError::bad_request(format!(
@@ -769,6 +786,198 @@ async fn delete_integration_secret(
         }
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+// ---------- per-tool admin curation (adapters spec §5/§6) ----------
+
+/// One declared/served tool with its stored per-tool curation, as the admin
+/// Tools table renders it.
+fn curated_tool_json(
+    raw_name: &str,
+    slug: &str,
+    class: &str,
+    description: &str,
+    mcp: bool,
+    row_config: &serde_json::Value,
+) -> serde_json::Value {
+    let curate = crate::integrations::tool_curate(row_config, mcp, raw_name);
+    json!({
+        "name": raw_name,
+        "tool": crate::integrations::namespaced_tool(slug, raw_name),
+        "class": class,
+        "description": description,
+        "enabled": curate.enabled,
+        "approval": if curate.always_ask { "always_ask" } else { "default" },
+    })
+}
+
+/// `GET /api/v1/admin/integrations/{id}/tools` — the full, unfiltered tool
+/// list of one integration row with each tool's stored per-tool config.
+/// Built-in (adapter-bound) rows read their compiled-in declarations; MCP
+/// rows connect live and merge the discovered tools with the stored config.
+/// A disabled row reports `resolved: false` without connecting; a broken
+/// plugin reports the resolution error — never a silent empty list.
+async fn list_integration_tools(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let row = store
+        .integrations()
+        .get(admin.0.org_id, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("unknown integration"))?;
+    let mcp = row.config["mcp"]["url"].as_str().is_some();
+    if !mcp {
+        let Some(plugin) = crate::integrations::integration_by_name(&row.name) else {
+            return Err(ApiError::not_found(format!(
+                "unknown integration kind {}",
+                row.name
+            )));
+        };
+        let manifest = plugin.manifest();
+        let specs = plugin
+            .tools(&row.config)
+            .map_err(|e| ApiError::bad_request(format!("invalid integration config: {e}")))?;
+        let tools: Vec<serde_json::Value> = specs
+            .iter()
+            .map(|spec| {
+                curated_tool_json(
+                    &spec.name,
+                    &row.name,
+                    guild_core::registry::tool_class(&manifest, &spec.name),
+                    &spec.description,
+                    false,
+                    &row.config,
+                )
+            })
+            .collect();
+        return Ok(Json(json!({ "resolved": true, "kind": "builtin", "tools": tools })));
+    }
+    // MCP-bound: live discovery merged with the stored config. A disabled
+    // row is not resolved (it serves nothing); a reachable one lists every
+    // tool it currently serves, each with the stored curation (absent =
+    // disabled, so remote drift lands visible-but-off).
+    if !row.enabled {
+        return Ok(Json(
+            json!({ "resolved": false, "kind": "mcp", "reason": "integration disabled", "tools": [] }),
+        ));
+    }
+    let url = row.config["mcp"]["url"].as_str().unwrap_or_default();
+    let manifest = crate::integrations::registry_manifest(&store, admin.0.org_id, &row.name)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("no registry manifest: {e}")))?;
+    let master = state.config.master_key().map_err(ApiError::from)?;
+    let secret_names = manifest
+        .auth
+        .as_ref()
+        .map(|a| a.secret_names.clone())
+        .unwrap_or_default();
+    let secrets = store
+        .integration_secrets()
+        .resolve(admin.0.org_id, &row.name, &secret_names, &master)
+        .await
+        .map_err(|e| ApiError::conflict("missing_secrets", format!("{e}")))?;
+    let headers = crate::integrations::envelope_headers(
+        &Uuid::now_v7(),
+        &admin.0.org_id,
+        None,
+        None,
+        &secrets,
+    );
+    let key = crate::worker::mcp_pool::PoolKey {
+        slug: row.name.clone(),
+        url: url.to_string(),
+        acting_as: None,
+        secrets_fingerprint: crate::worker::mcp_pool::secrets_fingerprint(&secrets),
+    };
+    let peer = state
+        .mcp_pool
+        .get_or_connect(&key, url, headers)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("MCP server unreachable: {e:#}")))?;
+    let listed = peer
+        .list_tools(None)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("MCP tools/list failed: {e}")))?;
+    let tools: Vec<serde_json::Value> = listed
+        .tools
+        .iter()
+        .map(|t| {
+            curated_tool_json(
+                &t.name,
+                &row.name,
+                guild_core::registry::tool_class(&manifest, &t.name),
+                t.description.as_ref().map(|d| d.as_ref()).unwrap_or(""),
+                true,
+                &row.config,
+            )
+        })
+        .collect();
+    Ok(Json(json!({ "resolved": true, "kind": "mcp", "tools": tools })))
+}
+
+/// `PUT /api/v1/admin/integrations/{id}/tools/{tool}` — sets one tool's
+/// per-tool curation (`enabled`, `approval`). Idempotent: the stored config
+/// is the source of truth, so selections survive bundle republishes and
+/// settings saves.
+async fn set_integration_tool(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path((id, tool)): Path<(Uuid, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if tool.is_empty() || !tool.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(ApiError::bad_request("invalid tool name"));
+    }
+    let enabled = body["enabled"]
+        .as_bool()
+        .ok_or_else(|| ApiError::bad_request("enabled must be a boolean"))?;
+    let approval = body["approval"].as_str().unwrap_or("default");
+    if approval != "default" && approval != crate::integrations::TOOL_APPROVAL_ALWAYS_ASK {
+        return Err(ApiError::bad_request(
+            "approval must be default or always_ask",
+        ));
+    }
+    let store = state.store().await?;
+    let row = store
+        .integrations()
+        .get(admin.0.org_id, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("unknown integration"))?;
+    let mcp = row.config["mcp"]["url"].as_str().is_some();
+    let mut config = row.config.clone();
+    let obj = config
+        .as_object_mut()
+        .ok_or_else(|| ApiError::internal("integration config is not an object"))?;
+    let tools = obj
+        .entry("tools")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| ApiError::internal("stored tools curation is not an object"))?;
+    tools.insert(
+        tool.clone(),
+        json!({ "enabled": enabled, "approval": approval }),
+    );
+    store
+        .integrations()
+        .update(admin.0.org_id, row.id, &config, row.enabled)
+        .await?;
+    tracing::info!(
+        org = %admin.0.org_id,
+        integration = %row.name,
+        tool = %tool,
+        enabled,
+        approval,
+        "per-tool curation updated"
+    );
+    let curate = crate::integrations::tool_curate(&config, mcp, &tool);
+    Ok(Json(json!({
+        "name": tool,
+        "enabled": curate.enabled,
+        "approval": if curate.always_ask { "always_ask" } else { "default" },
+    })))
 }
 
 async fn integration_row(

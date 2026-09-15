@@ -55,181 +55,7 @@ impl Store {
         sqlx::query("ALTER TABLE schema_history ADD COLUMN IF NOT EXISTS content_hash TEXT")
             .execute(pool)
             .await?;
-        const MIGRATIONS: [(&str, &str); 44] = [
-            (
-                "0001_identity",
-                include_str!("../../migrations/0001_identity.sql"),
-            ),
-            (
-                "0002_gateway",
-                include_str!("../../migrations/0002_gateway.sql"),
-            ),
-            (
-                "0003_chats",
-                include_str!("../../migrations/0003_chats.sql"),
-            ),
-            (
-                "0004_chats_tool_columns",
-                include_str!("../../migrations/0004_chats_tool_columns.sql"),
-            ),
-            (
-                "0005_registry",
-                include_str!("../../migrations/0005_registry.sql"),
-            ),
-            (
-                "0006_teams",
-                include_str!("../../migrations/0006_teams.sql"),
-            ),
-            (
-                "0007_routines",
-                include_str!("../../migrations/0007_routines.sql"),
-            ),
-            (
-                "0008_api_keys",
-                include_str!("../../migrations/0008_api_keys.sql"),
-            ),
-            (
-                "0009_agent_sessions",
-                include_str!("../../migrations/0009_agent_sessions.sql"),
-            ),
-            ("0010_oidc", include_str!("../../migrations/0010_oidc.sql")),
-            (
-                "0011_route_quota",
-                include_str!("../../migrations/0011_route_quota.sql"),
-            ),
-            (
-                "0012_attachments",
-                include_str!("../../migrations/0012_attachments.sql"),
-            ),
-            (
-                "0013_events",
-                include_str!("../../migrations/0013_events.sql"),
-            ),
-            (
-                "0014_releases",
-                include_str!("../../migrations/0014_releases.sql"),
-            ),
-            (
-                "0015_release_signing",
-                include_str!("../../migrations/0015_release_signing.sql"),
-            ),
-            (
-                "0016_pairing",
-                include_str!("../../migrations/0016_pairing.sql"),
-            ),
-            (
-                "0017_updater",
-                include_str!("../../migrations/0017_updater.sql"),
-            ),
-            (
-                "0018_integrations",
-                include_str!("../../migrations/0018_integrations.sql"),
-            ),
-            (
-                "0019_machine_binding",
-                include_str!("../../migrations/0019_machine_binding.sql"),
-            ),
-            (
-                "0020_thread_events",
-                include_str!("../../migrations/0020_thread_events.sql"),
-            ),
-            (
-                "0021_reasoning_flag",
-                include_str!("../../migrations/0021_reasoning_flag.sql"),
-            ),
-            (
-                "0022_drop_messages",
-                include_str!("../../migrations/0022_drop_messages.sql"),
-            ),
-            (
-                "0023_chat_approval",
-                include_str!("../../migrations/0023_chat_approval.sql"),
-            ),
-            (
-                "0024_context_window",
-                include_str!("../../migrations/0024_context_window.sql"),
-            ),
-            (
-                "0025_route_modalities",
-                include_str!("../../migrations/0025_route_modalities.sql"),
-            ),
-            (
-                "0026_user_approval",
-                include_str!("../../migrations/0026_user_approval.sql"),
-            ),
-            (
-                "0027_user_profile",
-                include_str!("../../migrations/0027_user_profile.sql"),
-            ),
-            (
-                "0028_org_kv",
-                include_str!("../../migrations/0028_org_kv.sql"),
-            ),
-            (
-                "0029_integration_secrets",
-                include_str!("../../migrations/0029_integration_secrets.sql"),
-            ),
-            (
-                "0030_integration_ids",
-                include_str!("../../migrations/0030_integration_ids.sql"),
-            ),
-            (
-                "0031_client_tool_names",
-                include_str!("../../migrations/0031_client_tool_names.sql"),
-            ),
-            (
-                "0032_session_token_hash",
-                include_str!("../../migrations/0032_session_token_hash.sql"),
-            ),
-            (
-                "0033_routine_webhook_token_hash",
-                include_str!("../../migrations/0033_routine_webhook_token_hash.sql"),
-            ),
-            (
-                "0034_user_fk_actions",
-                include_str!("../../migrations/0034_user_fk_actions.sql"),
-            ),
-            (
-                "0035_max_output_tokens",
-                include_str!("../../migrations/0035_max_output_tokens.sql"),
-            ),
-            (
-                "0036_org_fks",
-                include_str!("../../migrations/0036_org_fks.sql"),
-            ),
-            (
-                "0037_registry_reviewed_version",
-                include_str!("../../migrations/0037_registry_reviewed_version.sql"),
-            ),
-            (
-                "0038_registry_bundle_sha256",
-                include_str!("../../migrations/0038_registry_bundle_sha256.sql"),
-            ),
-            (
-                "0039_integration_secret_masked",
-                include_str!("../../migrations/0039_integration_secret_masked.sql"),
-            ),
-            (
-                "0040_provider_name_protocol",
-                include_str!("../../migrations/0040_provider_name_protocol.sql"),
-            ),
-            (
-                "0041_chat_status",
-                include_str!("../../migrations/0041_chat_status.sql"),
-            ),
-            (
-                "0042_chat_read_backfill",
-                include_str!("../../migrations/0042_chat_read_backfill.sql"),
-            ),
-            (
-                "0043_chat_approval",
-                include_str!("../../migrations/0043_chat_approval.sql"),
-            ),
-            (
-                "0044_approval_mode_codex",
-                include_str!("../../migrations/0044_approval_mode_codex.sql"),
-            ),
-        ];
+
         for (name, sql) in MIGRATIONS {
             let hash = migration_hash(sql);
             let mut tx = pool.begin().await?;
@@ -379,7 +205,185 @@ impl Store {
 /// Advisory-lock id for the migration runner: one fixed bigint every
 /// instance of this binary agrees on (ASCII "GUILDMGR" for recognizability
 /// in pg_locks).
+const MIGRATIONS: [(&str, &str); 44] = [
+        (
+            "0001_identity",
+            include_str!("../../migrations/0001_identity.sql"),
+        ),
+        (
+            "0002_gateway",
+            include_str!("../../migrations/0002_gateway.sql"),
+        ),
+        (
+            "0003_chats",
+            include_str!("../../migrations/0003_chats.sql"),
+        ),
+        (
+            "0004_chats_tool_columns",
+            include_str!("../../migrations/0004_chats_tool_columns.sql"),
+        ),
+        (
+            "0005_registry",
+            include_str!("../../migrations/0005_registry.sql"),
+        ),
+        (
+            "0006_teams",
+            include_str!("../../migrations/0006_teams.sql"),
+        ),
+        (
+            "0007_routines",
+            include_str!("../../migrations/0007_routines.sql"),
+        ),
+        (
+            "0008_api_keys",
+            include_str!("../../migrations/0008_api_keys.sql"),
+        ),
+        (
+            "0009_agent_sessions",
+            include_str!("../../migrations/0009_agent_sessions.sql"),
+        ),
+        ("0010_oidc", include_str!("../../migrations/0010_oidc.sql")),
+        (
+            "0011_route_quota",
+            include_str!("../../migrations/0011_route_quota.sql"),
+        ),
+        (
+            "0012_attachments",
+            include_str!("../../migrations/0012_attachments.sql"),
+        ),
+        (
+            "0013_events",
+            include_str!("../../migrations/0013_events.sql"),
+        ),
+        (
+            "0014_releases",
+            include_str!("../../migrations/0014_releases.sql"),
+        ),
+        (
+            "0015_release_signing",
+            include_str!("../../migrations/0015_release_signing.sql"),
+        ),
+        (
+            "0016_pairing",
+            include_str!("../../migrations/0016_pairing.sql"),
+        ),
+        (
+            "0017_updater",
+            include_str!("../../migrations/0017_updater.sql"),
+        ),
+        (
+            "0018_integrations",
+            include_str!("../../migrations/0018_integrations.sql"),
+        ),
+        (
+            "0019_machine_binding",
+            include_str!("../../migrations/0019_machine_binding.sql"),
+        ),
+        (
+            "0020_thread_events",
+            include_str!("../../migrations/0020_thread_events.sql"),
+        ),
+        (
+            "0021_reasoning_flag",
+            include_str!("../../migrations/0021_reasoning_flag.sql"),
+        ),
+        (
+            "0022_drop_messages",
+            include_str!("../../migrations/0022_drop_messages.sql"),
+        ),
+        (
+            "0023_chat_approval",
+            include_str!("../../migrations/0023_chat_approval.sql"),
+        ),
+        (
+            "0024_context_window",
+            include_str!("../../migrations/0024_context_window.sql"),
+        ),
+        (
+            "0025_route_modalities",
+            include_str!("../../migrations/0025_route_modalities.sql"),
+        ),
+        (
+            "0026_user_approval",
+            include_str!("../../migrations/0026_user_approval.sql"),
+        ),
+        (
+            "0027_user_profile",
+            include_str!("../../migrations/0027_user_profile.sql"),
+        ),
+        (
+            "0028_org_kv",
+            include_str!("../../migrations/0028_org_kv.sql"),
+        ),
+        (
+            "0029_integration_secrets",
+            include_str!("../../migrations/0029_integration_secrets.sql"),
+        ),
+        (
+            "0030_integration_ids",
+            include_str!("../../migrations/0030_integration_ids.sql"),
+        ),
+        (
+            "0031_client_tool_names",
+            include_str!("../../migrations/0031_client_tool_names.sql"),
+        ),
+        (
+            "0032_session_token_hash",
+            include_str!("../../migrations/0032_session_token_hash.sql"),
+        ),
+        (
+            "0033_routine_webhook_token_hash",
+            include_str!("../../migrations/0033_routine_webhook_token_hash.sql"),
+        ),
+        (
+            "0034_user_fk_actions",
+            include_str!("../../migrations/0034_user_fk_actions.sql"),
+        ),
+        (
+            "0035_max_output_tokens",
+            include_str!("../../migrations/0035_max_output_tokens.sql"),
+        ),
+        (
+            "0036_org_fks",
+            include_str!("../../migrations/0036_org_fks.sql"),
+        ),
+        (
+            "0037_registry_reviewed_version",
+            include_str!("../../migrations/0037_registry_reviewed_version.sql"),
+        ),
+        (
+            "0038_registry_bundle_sha256",
+            include_str!("../../migrations/0038_registry_bundle_sha256.sql"),
+        ),
+        (
+            "0039_integration_secret_masked",
+            include_str!("../../migrations/0039_integration_secret_masked.sql"),
+        ),
+        (
+            "0040_provider_name_protocol",
+            include_str!("../../migrations/0040_provider_name_protocol.sql"),
+        ),
+        (
+            "0041_chat_status",
+            include_str!("../../migrations/0041_chat_status.sql"),
+        ),
+        (
+            "0042_chat_read_backfill",
+            include_str!("../../migrations/0042_chat_read_backfill.sql"),
+        ),
+        (
+            "0043_chat_approval",
+            include_str!("../../migrations/0043_chat_approval.sql"),
+        ),
+        (
+            "0044_approval_mode_codex",
+            include_str!("../../migrations/0044_approval_mode_codex.sql"),
+        ),
+    ];
+
 const MIGRATION_LOCK_ID: i64 = 0x4755_494C_444D_4752;
+/// Serializes test-template database builds (connect_test fast path).
+const TEST_TEMPLATE_LOCK_ID: i64 = 0x4755_494C_4444_5450;
 
 /// sha256 hex of one migration file — the checksum stored in schema_history.
 fn migration_hash(sql: &str) -> String {
@@ -391,7 +395,7 @@ fn migration_hash(sql: &str) -> String {
 
 #[cfg(feature = "test-support")]
 mod test_db {
-    use super::Store;
+    use super::{migration_hash, MIGRATIONS, Store, TEST_TEMPLATE_LOCK_ID};
     use tokio::sync::OnceCell;
 
     /// Host Postgres shared by all tests on this box: the neutral host
@@ -420,7 +424,8 @@ mod test_db {
                 // hold live connections).
                 let stale: Vec<String> = sqlx::query_scalar(
                     "SELECT datname FROM pg_database d \
-                     WHERE datname LIKE 'test\\_%' AND NOT EXISTS (\
+                     WHERE datname LIKE 'test\\_%' AND datname NOT LIKE 'test_tpl_%' \
+                       AND NOT EXISTS (\
                        SELECT 1 FROM pg_stat_activity a \
                        WHERE a.datname = d.datname AND a.pid <> pg_backend_pid())",
                 )
@@ -457,13 +462,26 @@ mod test_db {
     impl Store {
         /// Returns a store backed by a fresh database on the shared host
         /// Postgres (no container; see `base_url`).
+        ///
+        /// Fast path (adapters-era speedup): instead of running all 44
+        /// migrations per test database, a fully-migrated template database
+        /// (`test_tpl_<schema-hash>`) is built once and every test clones
+        /// it via `CREATE DATABASE ... TEMPLATE`. The name embeds the
+        /// migration-set hash, so an edited migration list rebuilds the
+        /// template automatically; per-test `connect` still walks
+        /// `schema_history` and verifies every content hash, so drift is
+        /// still caught. Template build races serialize on an advisory
+        /// lock; clones need no lock (the source is never connected).
         pub async fn connect_test() -> anyhow::Result<TestDb> {
             let base = base_url().await?;
-            let db_name = format!("test_{}", uuid::Uuid::now_v7().simple());
             let admin = sqlx::PgPool::connect(&format!("{base}/postgres")).await?;
-            sqlx::query(&format!("CREATE DATABASE {db_name}"))
-                .execute(&admin)
-                .await?;
+            let template = Self::ensure_test_template(&admin).await?;
+            let db_name = format!("test_{}", uuid::Uuid::now_v7().simple());
+            sqlx::query(&format!(
+                "CREATE DATABASE {db_name} TEMPLATE {template}"
+            ))
+            .execute(&admin)
+            .await?;
             admin.close().await;
             let url = format!("{base}/{db_name}");
             let store = Self::connect(&url).await?;
@@ -472,6 +490,86 @@ mod test_db {
                 url,
                 db_name,
             })
+        }
+
+        /// The name of the up-to-date template database, building it on
+        /// first use. The name carries the migration-set hash: a changed
+        /// migration list yields a new name and the old template is
+        /// dropped best-effort (with FORCE, so leaked connections from a
+        /// crashed run cannot pin it forever).
+        async fn ensure_test_template(admin: &sqlx::PgPool) -> anyhow::Result<String> {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            for (name, sql) in MIGRATIONS {
+                hasher.update(name.as_bytes());
+                hasher.update([0]);
+                hasher.update(migration_hash(sql).as_bytes());
+                hasher.update([0]);
+            }
+            let digest = format!("{:x}", hasher.finalize());
+            let hash12 = &digest[..12];
+            let template = format!("test_tpl_{hash12}");
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
+            )
+            .bind(&template)
+            .fetch_one(admin)
+            .await?;
+            if exists {
+                return Ok(template);
+            }
+            // Serialize builders; re-check inside the lock.
+            sqlx::query("SELECT pg_advisory_lock($1)")
+                .bind(TEST_TEMPLATE_LOCK_ID)
+                .execute(admin)
+                .await?;
+            let result = async {
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
+                )
+                .bind(&template)
+                .fetch_one(admin)
+                .await?;
+                if exists {
+                    return Ok(template.clone());
+                }
+                // Drop superseded templates (best-effort) while holding the
+                // lock, so stale-schema templates never accumulate.
+                let stale: Vec<String> = sqlx::query_scalar(
+                    "SELECT datname FROM pg_database WHERE datname LIKE 'test_tpl_%' AND datname != $1",
+                )
+                .bind(&template)
+                .fetch_all(admin)
+                .await
+                .unwrap_or_default();
+                for name in stale {
+                    let _ = sqlx::query(&format!(
+                        "DROP DATABASE \"{name}\" WITH (FORCE)"
+                    ))
+                    .execute(admin)
+                    .await;
+                }
+                let build = format!("test_tpl_build_{}", uuid::Uuid::now_v7().simple());
+                sqlx::query(&format!("CREATE DATABASE {build}"))
+                    .execute(admin)
+                    .await?;
+                // Connecting applies the full migration set.
+                let url = base_url().await?;
+                let pool = sqlx::PgPool::connect(&format!("{url}/{build}")).await?;
+                pool.close().await;
+                sqlx::query(&format!(
+                    "ALTER DATABASE \"{build}\" RENAME TO \"{template}\""
+                ))
+                .execute(admin)
+                .await?;
+                Ok(template.clone())
+            }
+            .await;
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(TEST_TEMPLATE_LOCK_ID)
+                .execute(admin)
+                .await?;
+            result
         }
     }
 }

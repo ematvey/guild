@@ -167,7 +167,15 @@ async fn setup() -> Setup {
         .upsert(
             org,
             "hubspot",
-            &json!({ "mcp": { "url": url }, "auth": { "kind": "org_secret" }, "tool_policy": {} }),
+            &json!({ "mcp": { "url": url }, "auth": { "kind": "org_secret" }, "tool_policy": {},
+                     // Per-tool curation (adapters spec §6): MCP tools are
+                     // disabled until the admin curates them; the fixtures
+                     // curate all three up front.
+                     "tools": {
+                         "echo": { "enabled": true },
+                         "update_deal": { "enabled": true },
+                         "admin_only_op": { "enabled": true },
+                     } }),
             true,
         )
         .await

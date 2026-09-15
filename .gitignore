@@ -7,3 +7,8 @@ config.env
 crates/server/data-test/
 crates/server/data/
 .dagr/
+tsconfig.tsbuildinfo
+.firecrawl-report.md
+.firecrawl-task.md
+.multi-category-report.md
+.multi-category-task.md

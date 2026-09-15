@@ -254,6 +254,27 @@ async fn disclosure_filters_tools_by_role() {
     let ts = test_state_with_db().await;
     let url = spawn_fixture().await;
     let (org, _) = install_plugin(&ts.store(), &url, None).await;
+    // Per-tool curation (adapters spec §6): MCP-bound tools start disabled;
+    // the admin enables both, then role/class rules apply on top.
+    let row = ts
+        .store()
+        .integrations()
+        .list(org)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.name == "hubspot")
+        .unwrap();
+    let mut cfg = row.config.clone();
+    cfg["tools"] = json!({
+        "echo": { "enabled": true },
+        "admin_only_op": { "enabled": true },
+    });
+    ts.store()
+        .integrations()
+        .update(org, row.id, &cfg, true)
+        .await
+        .unwrap();
     let turn = &resolve_plugins(&ts.state, org).await.unwrap()[0];
 
     // Default policy: member read-only — echo visible, admin tool hidden.
@@ -283,8 +304,8 @@ async fn disclosure_filters_tools_by_role() {
 
     // The pure enforcement fn agrees (spec §6).
     let info = &turn.tools[1];
-    assert!(!tool_allowed(info, &turn.row_config, "member"));
-    assert!(tool_allowed(info, &turn.row_config, "admin"));
+    assert!(!tool_allowed(&turn, info, "member"));
+    assert!(tool_allowed(&turn, info, "admin"));
 }
 
 #[test]

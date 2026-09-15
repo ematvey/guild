@@ -3,8 +3,9 @@
 //! detail-page action only — the list stays read-only. The detail page (addressed by the row's
 //! id, /settings/integrations/<id>) renders its settings form dynamically
 //! from the integration's manifest field schema — no hardcoded per-connector
-//! UI — plus a secrets editor (masked previews, write-only values) and,
-//! for MCP plugins, the mcp url and a per-role tool-policy editor.
+//! UI — plus a secrets editor (masked previews, write-only values),
+//! per-tool curation (enable/disable + approval policy per declared tool),
+//! and, for MCP plugins, the mcp url and a per-role tool-policy editor.
 
 import { useMemo, useState, useEffect } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -872,6 +873,8 @@ function IntegrationDetail({
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
+      <ToolCuration id={id} isMcp={isMcp} />
+
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -899,4 +902,135 @@ function IntegrationDetail({
 
 function fieldLabel(f: FieldSpec): string {
   return f.label ?? f.name.replace(/_/g, " ");
+}
+
+// ---------- per-tool admin curation ----------
+
+interface CuratedTool {
+  name: string;
+  tool: string;
+  class: string;
+  description: string;
+  enabled: boolean;
+  approval: "default" | "always_ask";
+}
+
+interface ToolsResponse {
+  resolved: boolean;
+  kind?: string;
+  reason?: string;
+  tools: CuratedTool[];
+}
+
+/** The per-tool curation table: every tool the integration declares or
+ * serves, each with its enable toggle and approval policy (adapters spec
+ * §5/§6). Built-in rows read compiled-in declarations; MCP rows connect
+ * live — drift lands as disabled rows the admin flips on. */
+function ToolCuration({
+  id,
+  isMcp,
+}: {
+  id: string;
+  isMcp: boolean;
+}) {
+  const res = useCachedGet<ToolsResponse>(
+    `/api/v1/admin/integrations/${id}/tools`,
+  );
+  const data = res.data ?? null;
+  const [busyTool, setBusyTool] = useState<string | null>(null);
+
+  const update = async (tool: CuratedTool, patch: Partial<CuratedTool>) => {
+    setBusyTool(tool.name);
+    try {
+      await api("PUT", `/api/v1/admin/integrations/${id}/tools/${tool.name}`, {
+        enabled: patch.enabled ?? tool.enabled,
+        approval: patch.approval ?? tool.approval,
+      });
+      res.reload();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error("Could not update tool", { description: msg });
+    } finally {
+      setBusyTool(null);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div>
+          <p className="text-sm font-medium">Tools</p>
+          <p className="text-xs text-muted-foreground">
+            {isMcp
+              ? "Discovered live from the MCP server; unconfigured tools stay disabled."
+              : "Declared by the connector; all are enabled unless you turn one off."}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => res.reload()}>
+          Refresh
+        </Button>
+      </div>
+      {data === null ? (
+        <div className="space-y-2 p-4">
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-3/4" />
+        </div>
+      ) : !data.resolved ? (
+        <p className="px-4 py-3 text-sm text-muted-foreground">
+          {data.reason ??
+            "Tools are not resolved — enable the integration and save its settings first."}
+        </p>
+      ) : data.tools.length === 0 ? (
+        <p className="px-4 py-3 text-sm text-muted-foreground">
+          The server exposes no tools.
+        </p>
+      ) : (
+        <ul className="divide-y divide-border/60">
+          {data.tools.map((t) => (
+            <li
+              key={t.name}
+              className="flex items-center gap-3 px-4 py-2.5"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-mono text-xs">{t.name}</span>
+                  <Badge variant="secondary" className="capitalize">
+                    {t.class}
+                  </Badge>
+                </div>
+                {t.description && (
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {t.description}
+                  </p>
+                )}
+              </div>
+              <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-foreground"
+                  disabled={busyTool === t.name}
+                  checked={t.enabled}
+                  onChange={(e) => update(t, { enabled: e.target.checked })}
+                />
+                Enabled
+              </label>
+              <select
+                className="h-8 shrink-0 rounded-md border border-border bg-card px-2 text-xs"
+                disabled={busyTool === t.name}
+                value={t.approval}
+                onChange={(e) =>
+                  update(t, {
+                    approval: e.target.value as CuratedTool["approval"],
+                  })
+                }
+              >
+                <option value="default">Follow user policy</option>
+                <option value="always_ask">Always ask</option>
+              </select>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }

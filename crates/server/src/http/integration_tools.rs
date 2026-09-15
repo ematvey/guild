@@ -160,7 +160,7 @@ async fn execute_tool(
                 || unnamespaced_tool(&turn.slug, &tool) == Some(info.spec.name.as_str())
         })
         .ok_or_else(|| ApiError::not_found("no such tool"))?;
-    if !tool_allowed(info, &turn.row_config, &caller.role) {
+    if !tool_allowed(turn, info, &caller.role) {
         return Err(ApiError::forbidden());
     }
     // Identity (spec §5): acting as the caller's own mapped identity; an

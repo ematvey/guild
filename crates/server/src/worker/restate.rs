@@ -2789,7 +2789,22 @@ async fn server_tool_step(
             integrations::tool_matches(&turn.slug, &t.spec.name, &call.name) && t.class == "write"
         })
     });
-    if write_class {
+    // Per-tool admin curation (adapters spec §6): a tool set to always_ask
+    // forces the durable approval prompt on every call, ahead of the user's
+    // policy and the chat's approval mode — org governance wins.
+    let always_ask = plugin_turns.iter().any(|turn| {
+        turn.tools.iter().any(|t| {
+            integrations::tool_matches(&turn.slug, &t.spec.name, &call.name)
+                && integrations::tool_curate(
+                    &turn.row_config,
+                    turn.executor == integrations::PluginExecutor::Mcp,
+                    integrations::unnamespaced_tool(&turn.slug, &t.spec.name)
+                        .unwrap_or(&t.spec.name),
+                )
+                .always_ask
+        })
+    });
+    if always_ask || write_class {
         if let Some(denial) = approval_gate(
             ctx,
             state,
@@ -2881,7 +2896,7 @@ async fn server_tool_step(
                         .map(|info| (i, info))
                 });
                 if let Some((i, info)) = target {
-                    if !integrations::tool_allowed(info, &mcp[i].row_config, &role) {
+                    if !integrations::tool_allowed(&mcp[i], info, &role) {
                         return Ok(Json((
                             "not permitted by integration policy".to_string(),
                             true,
