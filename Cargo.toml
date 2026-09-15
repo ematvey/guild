@@ -15,6 +15,8 @@ members = [
     "crates/guild-core",
     "crates/app-server",
     "crates/server",
+    "crates/codex-execpolicy",
+    "crates/codex-utils-absolute-path",
 ]
 
 [workspace.package]
