@@ -1475,7 +1475,7 @@ impl PluginTurn {
     pub fn allowed_infos(&self, role: &str) -> Vec<&PluginToolInfo> {
         self.tools
             .iter()
-            .filter(|t| tool_allowed(t, &self.row_config, role))
+            .filter(|t| tool_allowed(self, t, role))
             .collect()
     }
 
@@ -1496,16 +1496,70 @@ impl PluginTurn {
     }
 }
 
-/// Whether one journaled tool may be called by `role` under the row's
-/// `tool_policy` (spec §6: manifest class is the floor; a stored policy
-/// tightens; admin-class tools are admin-only — owners count as admins).
-/// The same filter guards built-in and MCP plugin tools.
-pub fn tool_allowed(info: &PluginToolInfo, row_config: &serde_json::Value, role: &str) -> bool {
+// ---------- per-tool admin curation (adapters spec §6) ----------
+
+/// Per-tool approval value forcing a durable approval prompt on every call,
+/// regardless of the caller's policy or chat mode.
+pub const TOOL_APPROVAL_ALWAYS_ASK: &str = "always_ask";
+
+/// One tool's admin curation as stored on the integration row's config:
+/// `config.tools[<raw tool name>] = { "enabled": bool, "approval": str }`.
+/// The admin's per-tool configuration is the single source of truth for
+/// exposure and approval — for built-in and MCP plugins alike.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCurate {
+    pub enabled: bool,
+    pub always_ask: bool,
+}
+
+/// Reads one tool's stored curation. Absent from the stored config:
+/// - adapter-bound (built-in Rust connector): enabled, follow user policy —
+///   zero-config behavior is identical to the pre-curation model;
+/// - MCP-bound (live discovery): disabled — nothing is exposed that the
+///   admin did not approve, and remote drift lands in the disabled state.
+/// Unknown approval values read as the default (follow user policy).
+pub fn tool_curate(row_config: &serde_json::Value, mcp: bool, raw_tool: &str) -> ToolCurate {
+    let stored = &row_config["tools"][raw_tool];
+    match stored {
+        serde_json::Value::Object(_) => ToolCurate {
+            enabled: stored["enabled"].as_bool().unwrap_or(!mcp),
+            always_ask: stored["approval"].as_str() == Some(TOOL_APPROVAL_ALWAYS_ASK),
+        },
+        // Not configured: the one default rule per kind.
+        _ => ToolCurate {
+            enabled: !mcp,
+            always_ask: false,
+        },
+    }
+}
+
+/// Reads the full stored per-tool curation map (raw tool name → curation).
+pub fn tool_curations(row_config: &serde_json::Value) -> Vec<(String, ToolCurate)> {
+    row_config["tools"]
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .map(|(name, _)| (name.clone(), tool_curate(row_config, false, name)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether one journaled tool may be called by `role` (spec §6): per-tool
+/// curation first (a disabled tool is invisible — not declared to the model
+/// and not callable via the script API), then the class rule (manifest class
+/// is the floor; a stored `tool_policy` tightens; admin-class tools are
+/// admin-only — owners count as admins). Guards built-in and MCP tools alike.
+pub fn tool_allowed(turn: &PluginTurn, info: &PluginToolInfo, role: &str) -> bool {
+    let raw = unnamespaced_tool(&turn.slug, &info.spec.name).unwrap_or(&info.spec.name);
+    if !tool_curate(&turn.row_config, turn.executor == PluginExecutor::Mcp, raw).enabled {
+        return false;
+    }
     let class = info.class.as_str();
     if class == "admin" && role != "admin" && role != "owner" {
         return false;
     }
-    allowed_classes(&Some(row_config.clone()), role)
+    allowed_classes(&Some(turn.row_config.clone()), role)
         .iter()
         .any(|c| class_rank(c) >= class_rank(class))
 }
@@ -1717,7 +1771,7 @@ pub async fn resolve_plugins(state: &AppState, org: Uuid) -> anyhow::Result<Vec<
 /// while the item is approved AND the approval's recorded version is still
 /// the latest — a republish resets the review status, so unreviewed tool
 /// classes and secret declarations never govern member access.
-async fn registry_manifest(
+pub(crate) async fn registry_manifest(
     store: &std::sync::Arc<crate::store::Store>,
     org: Uuid,
     slug: &str,

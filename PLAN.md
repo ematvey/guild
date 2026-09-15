@@ -1,9 +1,51 @@
 # Guild — current state of work
 
-Updated 2026-09-14 (machine presence fixes, per-chat approval selector,
-Windows desktop 0.3.20 live-tested on devbox). Read this before touching the codebase; detailed
+Updated 2026-09-15 (per-tool admin curation implemented; test-template
+speedup; requirements catalog + PRD/SRS docs). Read this before touching the codebase; detailed
 milestone plans live in `docs/plans/`, deploy nuances in
 `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Per-tool admin curation (adapters spec §5/§6, phases 3–4) — 2026-09-15
+
+Integrations now carry per-tool curation in the row config:
+`config.tools[<raw tool>] = { enabled, approval: default | always_ask }`.
+Defaults (one rule per kind, no background writes): built-in connectors
+absent from the map = enabled + follow user policy (zero-config behavior
+unchanged); MCP-discovered tools absent = disabled (fail-closed — drift
+lands visible-but-off until an admin enables it). Enforcement: `tool_allowed`
+(now takes the turn: `tool_allowed(&PluginTurn, &PluginToolInfo, role)`) gates
+the model tool list, `list_tools`, the script API, and the call path;
+`always_ask` forces the durable approval card ahead of the user's policy and
+the chat's approval mode (org governance wins). Admin surface:
+`GET /api/v1/admin/integrations/{id}/tools` (unfiltered list; built-ins read
+compiled-in declarations; MCP connects live — disabled rows report
+`resolved: false` without connecting, unreachable plugins surface the error)
+and `PUT .../tools/{tool}` (idempotent). Settings saves preserve the stored
+`tools` map (server-side merge + UI round-trip). UI: Tools table on the
+integration detail page (enable toggle + approval selector per tool; MCP rows
+refresh live). Tests: `tests/tool_curation.rs` (6); the MCP fixtures in
+`disclosure.rs`/`integration_tools_api.rs` now curate their tools up front —
+this is the one-time re-confirmation the fail-closed transition requires of
+existing MCP rows in production.
+
+## Test speed: template-database clones — 2026-09-15
+
+`Store::connect_test` no longer runs all 44 migrations per test database.
+A fully-migrated template `test_tpl_<schema-hash>` is built once per
+migration-set change (advisory-locked build, superseded templates dropped
+WITH FORCE) and every test clones it via `CREATE DATABASE ... TEMPLATE`.
+Per-test `connect` still verifies every `schema_history` content hash, so
+drift is still caught. The stale-reaper skips `test_tpl_%`. Full guild-server
+suite (230 tests): ~17–32s wall at default parallelism, stable-green;
+previously ~35s+ with load-dependent flake failures.
+
+## Requirements docs — 2026-09-15
+
+`docs/requirements/` now holds the requirement catalog collected from all
+maintainer session instructions (`requirements.md`, 77 IDs + rejected list),
+high-level `PRD.md` (6 product documents) and `SRS.md` (47 FRs with a full
+traceability matrix). Object storage is recorded as host RustFS (:9950);
+the compose MinIO is the fallback only.
 
 ## Machine section copy tightened (0.3.25–0.3.26)
 
