@@ -18,9 +18,9 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 async fn read_file_happy_and_missing() {
     let dir = scratch("read");
     std::fs::write(dir.join("a.txt"), "hello world").unwrap();
-    let out = ReadFile.run(&dir, json!({"path": "a.txt"})).await.unwrap();
+    let out = ReadFile::default().run(&dir, json!({"path": "a.txt"})).await.unwrap();
     assert_eq!(out.output_for_model, "hello world");
-    assert!(ReadFile
+    assert!(ReadFile::default()
         .run(&dir, json!({"path": "nope.txt"}))
         .await
         .is_err());
@@ -173,7 +173,7 @@ async fn read_file_attaches_images_as_data_uris() {
         0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
     std::fs::write(dir.join("pic.png"), png).unwrap();
-    let out = ReadFile
+    let out = ReadFile::default()
         .run(&dir, json!({"path": "pic.png"}))
         .await
         .unwrap();
@@ -183,7 +183,7 @@ async fn read_file_attaches_images_as_data_uris() {
 
     // binary non-image → explanatory text, no image parts
     std::fs::write(dir.join("clip.mp4"), [0xFFu8, 0xFE, 0x00, 0x01]).unwrap();
-    let out = ReadFile
+    let out = ReadFile::default()
         .run(&dir, json!({"path": "clip.mp4"}))
         .await
         .unwrap();
@@ -201,7 +201,7 @@ async fn read_file_offset_limit_paging() {
     let dir = scratch("paging");
     let body: String = (1..=50).map(|i| format!("line {i}\n")).collect();
     std::fs::write(dir.join("a.txt"), &body).unwrap();
-    let out = ReadFile
+    let out = ReadFile::default()
         .run(&dir, json!({"path": "a.txt", "offset": 10, "limit": 5}))
         .await
         .unwrap();
@@ -214,13 +214,13 @@ async fn read_file_offset_limit_paging() {
     assert_eq!(meta["limit"], 5);
     assert_eq!(meta["total_lines"], 50);
     // offset past the end yields empty output
-    let out = ReadFile
+    let out = ReadFile::default()
         .run(&dir, json!({"path": "a.txt", "offset": 60}))
         .await
         .unwrap();
     assert_eq!(out.output_for_model, "");
     // defaults: no offset/limit reads everything
-    let out = ReadFile.run(&dir, json!({"path": "a.txt"})).await.unwrap();
+    let out = ReadFile::default().run(&dir, json!({"path": "a.txt"})).await.unwrap();
     assert!(out.output_for_model.starts_with("line 1\n"));
     assert!(out.output_for_model.ends_with("line 50"));
     std::fs::remove_dir_all(&dir).unwrap();

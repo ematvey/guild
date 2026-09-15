@@ -1,13 +1,27 @@
 //! File tools: read, write, edit — all scoped to the project dir.
 
-use super::{diff_text, resolve_scoped, truncate, Approval, Tool, ToolFailure, ToolOutcome};
+use super::{diff_text, resolve_scoped, resolve_scoped_in, truncate, Approval, Tool, ToolFailure, ToolOutcome};
 use async_trait::async_trait;
 use base64::Engine as _;
 use protocol::api::ToolSpec;
 use serde_json::Value;
 use std::path::Path;
 
-pub struct ReadFile;
+/// Read-only file access scoped to the project dir plus explicit extra
+/// roots (discovered skill dirs live outside the workspace, e.g.
+/// `~/.agents/skills` — the index advertises those paths, so the agent
+/// must be able to read them).
+pub struct ReadFile {
+    pub extra_read_roots: Vec<std::path::PathBuf>,
+}
+
+impl Default for ReadFile {
+    fn default() -> Self {
+        Self {
+            extra_read_roots: Vec::new(),
+        }
+    }
+}
 
 /// Image extensions the model-facing providers accept (OpenAI image_url and
 /// Anthropic base64 image blocks share this set).
@@ -36,8 +50,9 @@ impl Tool for ReadFile {
     }
 
     async fn run(&self, workdir: &Path, args: Value) -> Result<ToolOutcome, ToolFailure> {
-        let path = resolve_scoped(
+        let path = resolve_scoped_in(
             workdir,
+            &self.extra_read_roots,
             args["path"]
                 .as_str()
                 .ok_or_else(|| ToolFailure::InvalidInput("missing path".into()))?,
