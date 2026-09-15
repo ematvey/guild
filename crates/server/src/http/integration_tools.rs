@@ -5,7 +5,8 @@
 
 use crate::http::error::ApiError;
 use crate::integrations::{
-    call_plugin, resolve_acting_as, resolve_plugins, tool_allowed, unnamespaced_tool,
+    call_plugin, resolve_acting_as, resolve_plugins, tool_allowed, tool_curate, tool_matches,
+    unnamespaced_tool, PluginExecutor,
 };
 use crate::state::AppState;
 use axum::extract::{FromRequestParts, Path, State};
@@ -152,15 +153,35 @@ async fn execute_tool(
         .ok_or_else(|| ApiError::not_found("no such integration"))?;
     // The path carries the Guild-facing namespaced name; the raw connector
     // name is accepted too.
+    // The path carries the Guild-facing namespaced name; the raw connector
+    // name is accepted too — both sides are compared after namespace
+    // stripping (legacy int_ prefix tolerated) so either shape matches.
     let info = turn
         .tools
         .iter()
         .find(|info| {
-            info.spec.name == tool
-                || unnamespaced_tool(&turn.slug, &tool) == Some(info.spec.name.as_str())
+            let call_raw = unnamespaced_tool(&turn.slug, &tool).unwrap_or(&tool);
+            let spec_raw = unnamespaced_tool(&turn.slug, &info.spec.name)
+                .unwrap_or(&info.spec.name);
+            call_raw == spec_raw
         })
         .ok_or_else(|| ApiError::not_found("no such tool"))?;
     if !tool_allowed(turn, info, &caller.role) {
+        return Err(ApiError::forbidden());
+    }
+    // The script API is non-interactive: a tool curated to always_ask has no
+    // durable card to resolve here, so it is refused rather than silently
+    // bypassing the approval (adapters spec §6: the stored per-tool config
+    // is the single source of truth for exposure and approval).
+    let raw = unnamespaced_tool(&turn.slug, &info.spec.name)
+        .unwrap_or(&info.spec.name);
+    if tool_curate(
+        &turn.row_config,
+        turn.executor == PluginExecutor::Mcp,
+        raw,
+    )
+    .always_ask
+    {
         return Err(ApiError::forbidden());
     }
     // Identity (spec §5): acting as the caller's own mapped identity; an

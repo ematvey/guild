@@ -497,13 +497,17 @@ async fn save_integration(
     if v2_claimed {
         // v2 MCP plugin installed from the registry: config fields merge
         // shallowly over the stored row (an empty object on create) so
-        // partial updates keep mcp/auth.
+        // partial updates keep mcp/auth. The tools curation map never comes
+        // from a settings save — the PUT tools endpoint is its only writer.
         let mut config = existing
             .map(|r| r.config.clone())
             .unwrap_or_else(|| json!({}));
         if let Some(patch) = body.get("config").and_then(|c| c.as_object()) {
             if let Some(obj) = config.as_object_mut() {
                 for (k, v) in patch {
+                    if k == "tools" {
+                        continue;
+                    }
                     obj.insert(k.clone(), v.clone());
                 }
             }
@@ -592,13 +596,14 @@ async fn save_integration(
         .get("config")
         .cloned()
         .unwrap_or_else(|| existing.map(|r| r.config.clone()).unwrap_or(json!({})));
-    // Per-tool curation (adapters spec §6) is admin state, not a settings
-    // field — a settings save that omits it keeps the stored selection.
+    // Per-tool curation (adapters spec §6) is admin state with a single
+    // writer — the PUT tools endpoint. A settings save never changes it:
+    // the client-sent tools map (a stale snapshot by definition) is dropped
+    // and the stored selection rides through.
     if let Some(obj) = config.as_object_mut() {
-        if !obj.contains_key("tools") {
-            if let Some(stored) = existing.and_then(|r| r.config.get("tools")) {
-                obj.insert("tools".to_string(), stored.clone());
-            }
+        obj.remove("tools");
+        if let Some(stored) = existing.and_then(|r| r.config.get("tools")) {
+            obj.insert("tools".to_string(), stored.clone());
         }
     }
     // Validate via the plugin's own config check before saving.
@@ -928,7 +933,13 @@ async fn set_integration_tool(
     Path((id, tool)): Path<(Uuid, String)>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    if tool.is_empty() || !tool.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    // The name becomes a JSON object key and a URL path segment: URL-safe
+    // charset only, dashes and dots included (MCP tool names use them).
+    if tool.is_empty()
+        || !tool
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    {
         return Err(ApiError::bad_request("invalid tool name"));
     }
     let enabled = body["enabled"]
@@ -941,43 +952,65 @@ async fn set_integration_tool(
         ));
     }
     let store = state.store().await?;
-    let row = store
-        .integrations()
-        .get(admin.0.org_id, id)
+    let (mcp, response) = {
+        // Read-modify-write under a row lock in one transaction: two
+        // concurrent PUTs (or a racing settings save) must never drop each
+        // other's curation entry. Entries for not-currently-declared tools
+        // are allowed — they are how a preset survives a bundle republish.
+        let mut tx = store.pool().begin().await?;
+        let (config, row_enabled, name): (serde_json::Value, bool, String) = sqlx::query_as(
+            "SELECT config, enabled, name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
+        )
+        .bind(admin.0.org_id)
+        .bind(id)
+        .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| ApiError::not_found("unknown integration"))?;
-    let mcp = row.config["mcp"]["url"].as_str().is_some();
-    let mut config = row.config.clone();
-    let obj = config
-        .as_object_mut()
-        .ok_or_else(|| ApiError::internal("integration config is not an object"))?;
-    let tools = obj
-        .entry("tools")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or_else(|| ApiError::internal("stored tools curation is not an object"))?;
-    tools.insert(
-        tool.clone(),
-        json!({ "enabled": enabled, "approval": approval }),
-    );
-    store
-        .integrations()
-        .update(admin.0.org_id, row.id, &config, row.enabled)
+        let mcp = config["mcp"]["url"].as_str().is_some();
+        let mut new_config = config.clone();
+        new_config["tools"][&tool] = json!({ "enabled": enabled, "approval": approval });
+        sqlx::query(
+            "UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3",
+        )
+        .bind(admin.0.org_id)
+        .bind(&new_config)
+        .bind(id)
+        .execute(&mut *tx)
         .await?;
-    tracing::info!(
-        org = %admin.0.org_id,
-        integration = %row.name,
-        tool = %tool,
-        enabled,
-        approval,
-        "per-tool curation updated"
-    );
-    let curate = crate::integrations::tool_curate(&config, mcp, &tool);
-    Ok(Json(json!({
-        "name": tool,
-        "enabled": curate.enabled,
-        "approval": if curate.always_ask { "always_ask" } else { "default" },
-    })))
+        tx.commit().await?;
+        // Durable, org-queryable audit of the governance change.
+        store
+            .events()
+            .emit(
+                admin.0.org_id,
+                "integration.tool_curated",
+                json!({
+                    "integration": name,
+                    "tool": tool,
+                    "enabled": enabled,
+                    "approval": approval,
+                    "by": admin.0.id,
+                }),
+            )
+            .await?;
+        tracing::info!(
+            org = %admin.0.org_id,
+            integration = %name,
+            tool = %tool,
+            enabled,
+            approval,
+            "per-tool curation updated"
+        );
+        let curate = crate::integrations::tool_curate(&new_config, mcp, &tool);
+        let response = json!({
+            "name": tool,
+            "enabled": curate.enabled,
+            "approval": if curate.always_ask { "always_ask" } else { "default" },
+        });
+        (mcp, response)
+    };
+    let _ = mcp; // kind kept for symmetry with the GET path
+    Ok(Json(response))
 }
 
 async fn integration_row(

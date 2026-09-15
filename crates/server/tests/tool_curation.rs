@@ -252,12 +252,63 @@ async fn admin_tools_endpoints_roundtrip_and_survive_settings_save() {
     let (status, _) = req(
         &app,
         "PUT",
-        format!("/api/v1/admin/integrations/{id}/tools/bad-name"),
+        format!("/api/v1/admin/integrations/{id}/tools/bad*name"),
         &token,
         Some(json!({ "enabled": true })),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A settings save whose body *includes* a tools map must not overwrite
+    // the stored curation: the PUT tools endpoint is the only writer.
+    let (status, _) = req(
+        &app,
+        "PUT",
+        format!("/api/v1/admin/integrations/{id}"),
+        &token,
+        Some(json!({
+            "config": { "tools": { "secret_echo": { "enabled": true, "approval": "default" } } },
+            "enabled": false,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = req(
+        &app,
+        "GET",
+        format!("/api/v1/admin/integrations/{id}/tools"),
+        &token,
+        None,
+    )
+    .await;
+    let tools = body["tools"].as_array().unwrap();
+    let echo = tools.iter().find(|t| t["name"] == "secret_echo").unwrap();
+    assert_eq!(echo["enabled"], false, "client-sent tools overwrote curation");
+    let op = tools.iter().find(|t| t["name"] == "admin_op").unwrap();
+    assert_eq!(op["approval"], "always_ask");
+
+    // The curation change is durably audited (org event log).
+    let (status, body) = req(
+        &app,
+        "GET",
+        "/api/v1/events?limit=50".to_string(),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let kinds: Vec<&str> = body["events"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| e["kind"].as_str())
+                .collect::<Vec<&str>>()
+        })
+        .unwrap_or_default();
+    assert!(
+        kinds.contains(&"integration.tool_curated"),
+        "no durable audit event; got: {kinds:?}"
+    );
 }
 
 #[tokio::test]
@@ -273,4 +324,103 @@ async fn admin_tools_endpoints_are_admin_only() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // A member session is authenticated but not admin: 403 on both
+    // endpoints (governance writes are admin-only, not just hidden).
+    let member_id = fs
+        .state
+        .store()
+        .await
+        .unwrap()
+        .identity()
+        .create_user(fs.org_id, "member@a.b", "hunter226", "member")
+        .await
+        .unwrap()
+        .id;
+    let (_, member_token) = fs
+        .state
+        .store()
+        .await
+        .unwrap()
+        .identity()
+        .create_session(member_id)
+        .await
+        .unwrap();
+    // Create the row as admin so the member probes a real object.
+    let (status, body) = req(
+        &app,
+        "POST",
+        "/api/v1/admin/integrations".into(),
+        &fs.token,
+        Some(json!({ "name": SLUG, "enabled": false })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["id"].as_str().unwrap().to_string();
+    for method in ["GET", "PUT"] {
+        let body = if method == "PUT" {
+            Some(json!({ "enabled": false }))
+        } else {
+            None
+        };
+        // GET lists (…/tools); PUT curates (…/tools/{tool}).
+        let uri = if method == "PUT" {
+            format!("/api/v1/admin/integrations/{id}/tools/secret_echo")
+        } else {
+            format!("/api/v1/admin/integrations/{id}/tools")
+        };
+        let (status, _) = req(&app, method, uri, &member_token, body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} not 403");
+    }
+}
+
+#[tokio::test]
+async fn script_api_rejects_always_ask_tools() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+
+    let (status, body) = req(
+        &app,
+        "POST",
+        "/api/v1/admin/integrations".into(),
+        &token,
+        Some(json!({ "name": SLUG, "enabled": true, "secrets": { "api_key": "sk-123" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["id"].as_str().unwrap().to_string();
+
+    // The read tool is callable via the script API under default curation.
+    let (status, _) = req(
+        &app,
+        "POST",
+        "/api/v1/integrations/testplug/tools/secret_echo".into(),
+        &token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "default read tool must be callable");
+
+    // Curate it to always_ask: the non-interactive script API must refuse —
+    // there is no durable card to resolve here, and silently running the
+    // tool would bypass the approval entirely.
+    let (status, _) = req(
+        &app,
+        "PUT",
+        format!("/api/v1/admin/integrations/{id}/tools/secret_echo"),
+        &token,
+        Some(json!({ "enabled": true, "approval": "always_ask" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = req(
+        &app,
+        "POST",
+        "/api/v1/integrations/testplug/tools/secret_echo".into(),
+        &token,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }

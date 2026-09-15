@@ -1,9 +1,50 @@
 # Guild — current state of work
 
-Updated 2026-09-15 (per-tool admin curation implemented; test-template
-speedup; requirements catalog + PRD/SRS docs). Read this before touching the codebase; detailed
-milestone plans live in `docs/plans/`, deploy nuances in
-`docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+Updated 2026-09-15 (per-tool curation fix round 1: always_ask truly forces
+the card, row-locked curation writes, server-authoritative tools map,
+script API refuses always_ask, template-lock single-connection). Read this
+before touching the codebase; detailed milestone plans live in `docs/plans/`,
+deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
+`~/workspace/hanging-commands.md`.
+
+## Curation fix round 1 (reviewer + verifier findings) — 2026-09-15
+
+Both round-1 agents (review + verify) found the same headline bug and the
+round fixed it plus everything actionable:
+
+- **always_ask now wins (C1)**: `approval_gate` takes `force_ask`; a tool
+  curated `always_ask` gets the durable card ahead of the chat's approval
+  mode (full_access/approve_for_me included) and the user's policy.
+- **Curation writes are row-locked (I3)**: `set_integration_tool` does
+  SELECT … FOR UPDATE → merge → UPDATE in one transaction; concurrent PUTs
+  and settings saves can no longer drop entries.
+- **The stored tools map has one writer (I4)**: settings saves strip a
+  client-sent `tools` map (stale snapshot) and carry the stored selection —
+  built-in and MCP paths both.
+- **Script API refuses always_ask tools with 403 (I5)**: it is
+  non-interactive — no durable card exists there, so refusing is the
+  fail-closed reading of spec §6. Fixed en route: the raw-connector-name
+  path matching (it never actually matched — both sides now compare after
+  namespace stripping).
+- **Template lock is real (I1/I2/M5/M6)**: lock/sweep/build/unlock run on
+  one dedicated pooled connection; orphan build DBs swept every call; clone
+  retries once after re-ensuring; stale-name DDL guarded by a charset check.
+- **Durable audit (I7)**: curation changes emit `integration.tool_curated`
+  to the org event log (asserted in tests).
+- **UI (I6)**: the Tools table shows fetch errors + Retry instead of an
+  endless skeleton.
+- **Minors**: dead `tool_curations()` removed; PUT tool-name charset now
+  accepts `-` and `.` (MCP names); single resolved-target refactor in
+  `server_tool_step` (M2); MCP turn-start connect-before-filter trade-off
+  documented (M4).
+- Tests: tool_curation.rs now 7 (added: client-sent tools map cannot
+  overwrite curation, durable audit event, member 403 on GET+PUT, script API
+  always_ask → 403). Known gap: no workflow-level always_ask test — no
+  ChatRunner/Restate test harness exists (tests are endpoint-level); the
+  force_ask short-circuit is 3 lines and both round-2 agents re-review it.
+- Operational note: after this ships, pre-existing MCP integrations serve no
+  tools until an admin curates them in the Tools table (fail-closed default,
+  one-time re-confirmation).
 
 ## Per-tool admin curation (adapters spec §5/§6, phases 3–4) — 2026-09-15
 
