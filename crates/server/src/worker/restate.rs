@@ -12,28 +12,30 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::http::error::ApiError;
-use crate::http::gateway::{clear_pending_tool, enforce_quota, ensure_generation, note_pending_tool};
+use crate::http::gateway::{
+    clear_pending_tool, enforce_quota, ensure_generation, note_pending_tool,
+};
 use crate::integrations;
 use crate::state::AppState;
 use crate::worker::executor::{tool_registry, Completion, RoutineConfig, RoutineExecutor};
 use crate::worker::overflow::is_context_overflow;
 use crate::worker::run::MAX_STEPS;
 use futures::StreamExt;
-use tokio::sync::broadcast;
 use guild_core::agent::policy::ApprovalPolicy;
 use guild_core::provider::{ModelProvider, ProviderChunk, ProviderRequest};
 use guild_core::tools::Approval;
 use guild_core::usage::UsageEvent;
 use protocol::api::{
     Block, Message, MessageAttachment, MessageAudio, StreamEvent, ThreadEvent, ToolCall,
-    ToolExecutor, ToolSpec, UsagePayload,
+    ToolExecutor, ToolKind, ToolSpec, UsagePayload,
 };
 use restate_sdk::errors::HandlerError;
-use restate_sdk::service::IntoServiceDefinition;
 use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
+use restate_sdk::service::IntoServiceDefinition;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 /// Virtual object: key = routine id (string form).
@@ -460,7 +462,10 @@ struct ApprovalResolution {
 /// won, timed out, or nobody waiting) is a no-op. The handler performs the
 /// clear itself — virtual-object serialization makes read+clear atomic
 /// against other decision deliveries.
-fn approval_on_decision(pending: Option<String>, req: ApprovalReq) -> Option<(String, ApprovalResolution)> {
+fn approval_on_decision(
+    pending: Option<String>,
+    req: ApprovalReq,
+) -> Option<(String, ApprovalResolution)> {
     pending.map(|awakeable_id| {
         (
             awakeable_id,
@@ -471,7 +476,6 @@ fn approval_on_decision(pending: Option<String>, req: ApprovalReq) -> Option<(St
         )
     })
 }
-
 
 /// How many model/tool round-trips one turn may take.
 const CHAT_MAX_STEPS: usize = 25;
@@ -520,6 +524,15 @@ fn resolve_policy(stored: Option<Value>) -> ApprovalPolicy {
 /// (admin API owns the same constant — keep in sync or re-export).
 pub const ASSISTANT_PROMPT_KEY: &str = "assistant_system_prompt";
 
+/// Org KV key holding the admin-configured "Approve for me" policy prompt —
+/// the instruction the auto-approval judge runs under when a chat's approval
+/// mode is `approve_for_me` (admin API owns the same constant).
+pub const APPROVAL_POLICY_PROMPT_KEY: &str = "assistant_approval_policy_prompt";
+
+/// Built-in "Approve for me" policy prompt (codex-style: only escalate
+/// potentially unsafe actions). Admin-tunable in Assistant settings.
+pub const DEFAULT_APPROVAL_POLICY_PROMPT: &str = "You are the safety gate for an AI assistant that runs tools on the user's machine. You are given one proposed tool action as JSON. Decide whether it is safe to run automatically, without asking the user first.\n\nApprove routine, low-risk actions: reading files, ordinary read-only shell commands (ls, dir, cat, git status, git log, ping, date), writing or editing files inside the user's workspace, web searches, and fetching public URLs.\n\nAsk the user when the action is potentially unsafe: destructive or irreversible operations (deleting files or data, force-pushing, dropping or truncating databases, factory resets), anything touching files outside the workspace or system locations, installing or upgrading software, killing processes or services, sending credentials or secrets anywhere, spending money, sending messages or email on the user's behalf, or anything unusual for a coding assistant.\n\nReply with ONLY a JSON object, no other text: {\"approve\": true, \"reason\": \"one short sentence\"} where approve=true means run it silently and approve=false means the user must be asked first.";
+
 /// Server-owned system prompt (the client never sends one). Without it small
 /// models fall back to generic web-assistant behavior even with the full tool
 /// surface declared — they need the role, the workspace, and when to use
@@ -535,8 +548,10 @@ fn build_system_prompt(
 ) -> String {
     let persona = match org_prompt {
         Some(p) if !p.trim().is_empty() => p.trim(),
-        _ => "You are a helpful assistant. Answer concisely and help with the \
-              user's tasks, including software work when asked.",
+        _ => {
+            "You are a helpful assistant. Answer concisely and help with the \
+              user's tasks, including software work when asked."
+        }
     };
     let mut s = String::from(persona);
     if client_tools {
@@ -552,8 +567,9 @@ fn build_system_prompt(
     }
     if has_web_search {
         s.push_str(
-            " Use web_search only for general or current-events knowledge, \
-             never as a substitute for looking at the workspace.",
+            " Use web-search tools (kind web_search) only for general or \
+             current-events knowledge, never as a substitute for looking at \
+             the workspace.",
         );
     }
     if let Some(dir) = project_dir {
@@ -698,14 +714,55 @@ fn attachment_is_textual(content_type: &str, filename: &str) -> bool {
     ) {
         return true;
     }
-    let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     matches!(
         ext.as_str(),
-        "md" | "txt" | "json" | "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "toml" | "yaml"
-            | "yml" | "csv" | "tsv" | "log" | "sh" | "bash" | "sql" | "html" | "htm" | "css"
-            | "xml" | "ini" | "conf" | "env" | "c" | "h" | "cpp" | "hpp" | "go" | "java" | "rb"
-            | "php" | "swift" | "kt" | "proto" | "gradle" | "lock" | "gitignore" | "dockerfile"
-            | "makefile" | "patch" | "diff"
+        "md" | "txt"
+            | "json"
+            | "rs"
+            | "py"
+            | "js"
+            | "ts"
+            | "tsx"
+            | "jsx"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "csv"
+            | "tsv"
+            | "log"
+            | "sh"
+            | "bash"
+            | "sql"
+            | "html"
+            | "htm"
+            | "css"
+            | "xml"
+            | "ini"
+            | "conf"
+            | "env"
+            | "c"
+            | "h"
+            | "cpp"
+            | "hpp"
+            | "go"
+            | "java"
+            | "rb"
+            | "php"
+            | "swift"
+            | "kt"
+            | "proto"
+            | "gradle"
+            | "lock"
+            | "gitignore"
+            | "dockerfile"
+            | "makefile"
+            | "patch"
+            | "diff"
     )
 }
 
@@ -846,9 +903,16 @@ pub fn build_model_history(
     let mut buffer: Vec<Message> = Vec::new();
     for ev in events {
         match ev {
-            ThreadEvent::UserMessage { content, attachments } => {
+            ThreadEvent::UserMessage {
+                content,
+                attachments,
+            } => {
                 let (images, audio) = media_parts(media, attachments, modalities);
-                buffer.push(Message::user(content.clone()).with_images(images).with_audio(audio));
+                buffer.push(
+                    Message::user(content.clone())
+                        .with_images(images)
+                        .with_audio(audio),
+                );
             }
             ThreadEvent::SystemMessage { .. } => {}
             // Log-only lifecycle records: never part of model-facing history.
@@ -876,7 +940,11 @@ pub fn build_model_history(
                     match b {
                         Block::Text { text: t } => text.push_str(t),
                         Block::Reasoning { text: t } => reasoning.push_str(t),
-                        Block::ToolCall { id, name, arguments } => {
+                        Block::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => {
                             // arguments are the raw JSON string as produced by
                             // the model; parse for the wire, fall back to a
                             // JSON string on garbage rather than dropping.
@@ -895,12 +963,25 @@ pub fn build_model_history(
                     content: text,
                     images: Vec::new(),
                     audio: Vec::new(),
-                    tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                    tool_calls: if tool_calls.is_empty() {
+                        None
+                    } else {
+                        Some(tool_calls)
+                    },
                     tool_call_id: None,
-                    reasoning: if reasoning.is_empty() { None } else { Some(reasoning) },
+                    reasoning: if reasoning.is_empty() {
+                        None
+                    } else {
+                        Some(reasoning)
+                    },
                 });
             }
-            ThreadEvent::ToolResult { call_id, content, images, .. } => {
+            ThreadEvent::ToolResult {
+                call_id,
+                content,
+                images,
+                ..
+            } => {
                 buffer.push(Message::tool_result(call_id, content).with_images(images.clone()));
             }
         }
@@ -915,10 +996,14 @@ pub fn build_model_history(
 fn assistant_blocks(reasoning: &str, text: &str, tool_calls: &[ToolCall]) -> Vec<Block> {
     let mut blocks = Vec::new();
     if !reasoning.is_empty() {
-        blocks.push(Block::Reasoning { text: reasoning.to_string() });
+        blocks.push(Block::Reasoning {
+            text: reasoning.to_string(),
+        });
     }
     if !text.is_empty() {
-        blocks.push(Block::Text { text: text.to_string() });
+        blocks.push(Block::Text {
+            text: text.to_string(),
+        });
     }
     for c in tool_calls {
         blocks.push(Block::ToolCall {
@@ -1033,7 +1118,11 @@ macro_rules! journaled_load_events {
                 let state = st.clone();
                 async move {
                     let store = state.store().await.map_err(api_err)?;
-                    let rows = store.thread().list_events(org, chat_id).await.map_err(api_err)?;
+                    let rows = store
+                        .thread()
+                        .list_events(org, chat_id)
+                        .await
+                        .map_err(api_err)?;
                     Ok(Json(rows.into_iter().map(|r| r.event).collect::<Vec<_>>()))
                 }
             })
@@ -1077,9 +1166,7 @@ pub(crate) async fn compact_core(
                     None => {
                         let models = store.gateway().list_models(org_id).await?;
                         models.into_iter().next().ok_or_else(|| {
-                            HandlerError::from(TerminalError::new(
-                                "no enabled route for this org",
-                            ))
+                            HandlerError::from(TerminalError::new("no enabled route for this org"))
                         })?
                     }
                 };
@@ -1160,10 +1247,7 @@ pub(crate) async fn compact_core(
                         // summary — skipped, not accumulated.
                         Ok(_) => {}
                         Err(e) => {
-                            return Err(TerminalError::new(format!(
-                                "provider error: {e}"
-                            ))
-                            .into())
+                            return Err(TerminalError::new(format!("provider error: {e}")).into())
                         }
                     }
                 }
@@ -1284,8 +1368,12 @@ impl ChatRunner {
                 .map(|r| (r.id, r.filename, r.content_type, r.size_bytes))
                 .collect()
         };
-        let (att_chips, inline_text) =
-            build_turn_text(&req.attachment_ids, &media_map, &att_rows, &route.modalities);
+        let (att_chips, inline_text) = build_turn_text(
+            &req.attachment_ids,
+            &media_map,
+            &att_rows,
+            &route.modalities,
+        );
         let mut messages: Vec<Message> =
             build_model_history(&prior_events, &media_map, &route.modalities);
         // Auto-compact tracking: last known model-request size,
@@ -1318,15 +1406,12 @@ impl ChatRunner {
             .into_inner();
         let (mcp_caller_email, mcp_caller_role) = mcp_caller;
         let mut tool_specs: Vec<ToolSpec> = Vec::new();
-        // web_search carries a dedicated prompt instruction; it applies when
-        // the caller may actually call it.
+        // Web-search-class tools carry a dedicated prompt instruction; it
+        // applies when the caller may actually call one.
         let has_web_search = plugin_turns.iter().any(|turn| {
             turn.allowed_infos(&mcp_caller_role)
                 .iter()
-                .any(|info| {
-                    integrations::unnamespaced_tool(&turn.slug, &info.spec.name)
-                        == Some("web_search")
-                })
+                .any(|info| info.spec.kind == ToolKind::WebSearch)
         });
         // Disclosure filter (spec §7): the model never sees tools outside the
         // caller's policy — built-in and MCP tools alike; the auto-tools are
@@ -1340,6 +1425,7 @@ impl ChatRunner {
                     turn.slug
                 ),
                 parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                kind: Default::default(),
             });
             tool_specs.push(ToolSpec {
                 name: integrations::namespaced_tool(&turn.slug, "guide"),
@@ -1348,6 +1434,7 @@ impl ChatRunner {
                     turn.slug
                 ),
                 parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                kind: Default::default(),
             });
         }
 
@@ -1399,7 +1486,9 @@ impl ChatRunner {
         // the gateway never writes events itself — spec §B.4).
         let st = state.clone();
         let chat_id = req.chat_id;
-        let system_ev = ThreadEvent::SystemMessage { content: system.clone() };
+        let system_ev = ThreadEvent::SystemMessage {
+            content: system.clone(),
+        };
         let event_content = user_turn_content.clone();
         let ev_chips = att_chips.clone();
         let has_user_event = !event_content.is_empty() || !ev_chips.is_empty();
@@ -1407,11 +1496,21 @@ impl ChatRunner {
             let state = st.clone();
             async move {
                 let store = state.store().await.map_err(api_err)?;
-                store.thread().append_event(chat_id, &system_ev).await.map_err(api_err)?;
+                store
+                    .thread()
+                    .append_event(chat_id, &system_ev)
+                    .await
+                    .map_err(api_err)?;
                 if has_user_event {
                     store
                         .thread()
-                        .append_event(chat_id, &ThreadEvent::UserMessage { content: event_content, attachments: ev_chips })
+                        .append_event(
+                            chat_id,
+                            &ThreadEvent::UserMessage {
+                                content: event_content,
+                                attachments: ev_chips,
+                            },
+                        )
                         .await
                         .map_err(api_err)?;
                 }
@@ -1773,12 +1872,27 @@ impl ChatRunner {
             // Execute each requested tool call in order.
             for (idx, call) in completion.tool_calls.iter().enumerate() {
                 let is_client_tool = client_tool_names().contains(&call.name.as_str());
+                // Coarse category from the resolved spec — rides on the
+                // tool_result event for native UI labels.
+                let tool_kind = if is_client_tool {
+                    None
+                } else {
+                    plugin_turns.iter().find_map(|turn| {
+                        turn.tools
+                            .iter()
+                            .find(|t| {
+                                integrations::tool_matches(&turn.slug, &t.spec.name, &call.name)
+                            })
+                            .map(|info| info.spec.kind)
+                    })
+                };
                 let (content, is_error, meta, tool_images) = if is_client_tool {
                     let payload = client_tool_step(
                         &ctx,
                         &state,
                         &tx,
                         req.org_id,
+                        &req.model,
                         req.chat_id,
                         call,
                         format!("{step}.{idx}"),
@@ -1801,6 +1915,7 @@ impl ChatRunner {
                         call,
                         format!("{step}.{idx}"),
                         req.org_id,
+                        &req.model,
                         req.user_id,
                         req.chat_id,
                         &plugin_turns,
@@ -1842,6 +1957,7 @@ impl ChatRunner {
                             is_error,
                             meta: meta2.clone(),
                             images: persisted_images,
+                            kind: tool_kind,
                         };
                         store
                             .thread()
@@ -1904,7 +2020,10 @@ impl ChatRunner {
                 }
                 state.generations.lock().unwrap().remove(&req.chat_id);
                 if let Ok(store) = state.store().await {
-                    let _ = store.kv().delete(&format!("chatgen_inv:{}", req.chat_id)).await;
+                    let _ = store
+                        .kv()
+                        .delete(&format!("chatgen_inv:{}", req.chat_id))
+                        .await;
                 }
                 // Journaled: the turn failed — clear the spinner before the
                 // workflow ends (terminal error, no further steps run).
@@ -1974,7 +2093,10 @@ impl ChatRunner {
     ) -> HandlerResult<()> {
         let req = req.into_inner();
         let key = state_key(&req.call_id);
-        let pending: Option<String> = ctx.get(key.as_str()).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let pending: Option<String> = ctx
+            .get(key.as_str())
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         let Some(awakeable_id) = pending else {
             return Ok(()); // nobody is waiting (timed out or not a client tool)
         };
@@ -1991,13 +2113,12 @@ impl ChatRunner {
     }
 
     /// Delivers an approval decision to the waiting generate loop (phase 2
-    /// gate). Shared handlers have no write-state access in the SDK, so the
-    /// actual claim (atomic read+clear) happens in the write handler
-    /// `claim_approval`, invoked on this object itself: invocations on one
-    /// object key run serially, so the claim is the whole critical section —
-    /// a concurrent user or timer decision arriving afterwards sees no key
-    /// and no-ops. First answer wins deterministically; late answers and
-    /// replays no-op.
+    /// gate). First answer wins: Restate dedupes late completions for an
+    /// already-resolved awakeable, and the waiting turn clears the state key
+    /// when it resumes. The resolution must stay in this SHARED handler — a
+    /// virtual object handler awaiting an awakeable holds the instance lock,
+    /// so an exclusive wake handler would inbox behind the waiting turn
+    /// forever (the claim_approval deadlock, reverted).
     #[handler]
     async fn complete_approval(
         &self,
@@ -2006,14 +2127,27 @@ impl ChatRunner {
     ) -> HandlerResult<()> {
         let req = req.into_inner();
         let key = approval_state_key(&req.call_id);
-        let pending: Option<String> =
-            ctx.get(key.as_str()).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        if pending.is_none() {
+        let pending: Option<String> = ctx
+            .get(key.as_str())
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let Some(awakeable_id) = pending else {
             return Ok(()); // first answer already won, or nobody waiting
-        }
-        ctx.object_client::<ChatRunnerClient>(ctx.key())
-            .claim_approval(Json(req))
-            .send();
+        };
+        // Resolved directly from this shared handler, mirroring
+        // `complete_tool`: an exclusive wake handler must not be used here —
+        // a virtual object handler awaiting an awakeable keeps the instance
+        // locked, so an exclusive claim would inbox behind the waiting turn
+        // forever and the decision could never land. Late duplicate
+        // resolutions for an already-resolved awakeable are dropped by
+        // Restate; the waiting turn clears the key on resume.
+        ctx.resolve_awakeable(
+            &awakeable_id,
+            Json(ApprovalResolution {
+                approved: req.approved,
+                reason: req.reason,
+            }),
+        );
         Ok(())
     }
 
@@ -2028,11 +2162,19 @@ impl ChatRunner {
     ) -> HandlerResult<()> {
         let req = req.into_inner();
         let key = approval_state_key(&req.call_id);
-        let pending: Option<String> =
-            ctx.get(key.as_str()).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        tracing::warn!("approval-flow: claim_approval entered call={}", req.call_id);
+        let pending: Option<String> = ctx
+            .get(key.as_str())
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         let Some((awakeable_id, resolution)) = approval_on_decision(pending, req) else {
+            tracing::warn!("approval-flow: claim_approval no-op (pending absent)");
             return Ok(()); // first answer already won, or nobody waiting
         };
+        tracing::warn!(
+            "approval-flow: claim_approval resolving awakeable {}",
+            awakeable_id
+        );
         ctx.clear(&key);
         ctx.resolve_awakeable(&awakeable_id, Json(resolution));
         Ok(())
@@ -2067,7 +2209,6 @@ impl ChatRunner {
     }
 }
 
-
 /// The approval gate (phase 2, design §C) — shared by client-side and
 /// server-side tool steps. Reads the chat owner's policy, applies it over
 /// `tool_default`, and on Ask runs the journaled request → durable awakeable
@@ -2076,33 +2217,168 @@ impl ChatRunner {
 /// proceed. The denial payload is a normal tool_result (is_error) so callers
 /// persist it unchanged.
 #[allow(clippy::too_many_arguments)]
+/// How long the AI auto-approval judge may take before the gate falls back
+/// to asking the user (the safe direction).
+const APPROVAL_POLICY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// AI auto-approval verdict for a proposed tool call under the chat's
+/// "approve for me" mode. Journaled model call: the admin-tunable policy
+/// prompt (org KV, falling back to the built-in default) judges the action;
+/// true = run silently, false/timeout/parse failure = ask the user (the
+/// safe direction on any uncertainty).
+async fn approval_policy_verdict(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    org: Uuid,
+    model: &str,
+    call: &ToolCall,
+) -> HandlerResult<bool> {
+    let action = serde_json::json!({
+        "tool": call.name,
+        "arguments": call.arguments,
+    });
+    let action = serde_json::to_string(&action).unwrap_or_else(|_| "{}".to_string());
+    let st = state.clone();
+    let org2 = org;
+    let model2 = model.to_string();
+    let action2 = action.clone();
+    let run = ctx
+        .run(move || {
+            let state = st.clone();
+            let org = org2;
+            let model = model2.clone();
+            let action = action2.clone();
+            async move {
+                let store = state.store().await.map_err(api_err)?;
+                let prompt = store
+                    .org_kv()
+                    .get(org, APPROVAL_POLICY_PROMPT_KEY)
+                    .await
+                    .map_err(api_err)?
+                    .filter(|p| !p.trim().is_empty())
+                    .unwrap_or_else(|| DEFAULT_APPROVAL_POLICY_PROMPT.to_string());
+                let master = state.config.master_key()?;
+                let route = store
+                    .gateway()
+                    .resolve_route(org, &model, &master)
+                    .await
+                    .map_err(|e| {
+                        HandlerError::from(TerminalError::new(format!(
+                            "approval policy route resolve failed: {e:?}"
+                        )))
+                    })?;
+                let provider: Arc<dyn ModelProvider> =
+                    guild_core::provider::for_protocol(&route.protocol).ok_or_else(|| {
+                        TerminalError::new(format!("unknown protocol {}", route.protocol))
+                    })?;
+                let preq = ProviderRequest {
+                    model: &model,
+                    system: Some(prompt.as_str()),
+                    messages: &[Message {
+                        role: "user".to_string(),
+                        content: action,
+                        images: Vec::new(),
+                        audio: Vec::new(),
+                        tool_calls: None,
+                        tool_call_id: None,
+                        reasoning: None,
+                    }],
+                    api_key: &route.api_key,
+                    base_url: &route.base_url,
+                    tools: None,
+                    max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
+                };
+                let stream = provider
+                    .chat_stream(preq)
+                    .await
+                    .map_err(|e| TerminalError::new(format!("approval policy model error: {e}")))?;
+                let mut out = String::new();
+                let mut stream = stream;
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        Ok(ProviderChunk::Text(c)) => out.push_str(&c.text_delta),
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(TerminalError::new(format!(
+                                "approval policy model error: {e}"
+                            ))
+                            .into())
+                        }
+                    }
+                }
+                Ok(Json(out))
+            }
+        });
+    // The judge gets one short JSON verdict; a hung call must not stall the
+    // turn — the timeout falls back to asking (empty text → no verdict).
+    let raw: String = match tokio::time::timeout(APPROVAL_POLICY_TIMEOUT, run).await {
+        Ok(res) => match res {
+            Ok(v) => v.into_inner(),
+            Err(e) => {
+                tracing::warn!("approval policy judge failed, asking the user: {e:?}");
+                String::new()
+            }
+        },
+        Err(_) => {
+            tracing::warn!("approval policy judge timed out, asking the user");
+            String::new()
+        }
+    };
+    let s = raw.trim();
+    let verdict: Option<(bool, Option<String>)> = (|| {
+        let a = s.find('{')?;
+        let b = s.rfind('}')?;
+        if b < a {
+            return None;
+        }
+        let v: Value = serde_json::from_str(&s[a..=b]).ok()?;
+        let approve = v.get("approve")?.as_bool()?;
+        let reason = v.get("reason").and_then(|r| r.as_str()).map(String::from);
+        Some((approve, reason))
+    })();
+    let Some((approved, reason)) = verdict else {
+        tracing::warn!("approval policy judge returned no verdict, asking the user");
+        return Ok(false);
+    };
+    tracing::info!(
+        tool = %call.name,
+        approved,
+        reason = reason.as_deref().unwrap_or(""),
+        "approval policy judge decision"
+    );
+    Ok(approved)
+}
+
 async fn approval_gate(
     ctx: &ObjectContext<'_>,
     state: &AppState,
     tx: &broadcast::Sender<StreamEvent>,
+    org: Uuid,
+    model: &str,
     chat_id: Uuid,
     call: &ToolCall,
     tool_default: Approval,
 ) -> HandlerResult<Option<ToolResultPayload>> {
-    // The chat owner's approval policy (user-scoped since migration 0026 —
-    // one policy across all of the user's chats). Read directly via sqlx on
-    // the store pool — one column, no store method needed.
-    let stored_policy: Option<Value> = ctx
+    // The chat's approval mode (composer selector, migration 0043/0044 —
+    // codex vocabulary) overrides the chat owner's user-level policy for
+    // every tool in the chat.
+    let (chat_mode, user_policy): (Option<String>, Option<Value>) = ctx
         .run({
             let state = state.clone();
             move || {
                 let state = state.clone();
                 async move {
                     let store = state.store().await.map_err(api_err)?;
-                    match sqlx::query_scalar::<_, Option<Value>>(
-                        "SELECT u.approval FROM chats c JOIN users u ON u.id = c.user_id \
+                    match sqlx::query_as::<_, (Option<String>, Option<Value>)>(
+                        "SELECT c.approval->>'default' AS chat_mode, u.approval AS user_policy \
+                         FROM chats c JOIN users u ON u.id = c.user_id \
                          WHERE c.id = $1",
                     )
                     .bind(chat_id)
                     .fetch_optional(store.pool())
                     .await
                     {
-                        Ok(row) => Ok(Json(row.flatten())),
+                        Ok(row) => Ok(Json(row.unwrap_or((None, None)))),
                         Err(e) => {
                             // Approval column not migrated yet (or DB hiccup):
                             // the server default is the safe direction.
@@ -2110,7 +2386,7 @@ async fn approval_gate(
                                 chat = %chat_id,
                                 "approval policy read failed, using server default: {e}"
                             );
-                            Ok(Json(None))
+                            Ok(Json((None, None)))
                         }
                     }
                 }
@@ -2118,7 +2394,25 @@ async fn approval_gate(
         })
         .await?
         .into_inner();
-    match resolve_policy(stored_policy).for_tool(&call.name, tool_default) {
+    // Chat mode wins when set; "never" is remapped to ask (chat-level deny
+    // was dropped with the codex modes — the account policy remains the
+    // place for a hard deny).
+    let decision: Approval = match chat_mode.as_deref() {
+        Some("approve_for_me") => {
+            // AI auto-approval policy (codex/claude-code style): a model
+            // judge decides whether this action is routine enough to run
+            // silently; anything it flags goes to the user as a card.
+            if approval_policy_verdict(ctx, state, org, model, call).await? {
+                Approval::Allow
+            } else {
+                Approval::Ask
+            }
+        }
+        Some("full_access") | Some("allow") => Approval::Allow,
+        Some("ask") | Some("never") => Approval::Ask,
+        _ => resolve_policy(user_policy).for_tool(&call.name, tool_default),
+    };
+    match decision {
         Approval::Never => {
             return Ok(Some(ToolResultPayload {
                 content: "denied by policy".to_string(),
@@ -2272,6 +2566,7 @@ async fn client_tool_step(
     state: &AppState,
     tx: &broadcast::Sender<StreamEvent>,
     org_id: Uuid,
+    model: &str,
     chat_id: Uuid,
     call: &ToolCall,
     _seq: String,
@@ -2297,9 +2592,7 @@ async fn client_tool_step(
                         // Auto-bind chats sent from a desktop to that
                         // desktop's machine (idempotent persist).
                         if state.machine_connected(&omid) {
-                            let label = state
-                                .machine_label(&omid)
-                                .unwrap_or_else(|| omid.clone());
+                            let label = state.machine_label(&omid).unwrap_or_else(|| omid.clone());
                             if let Ok(store) = state.store().await {
                                 let _ = store
                                     .chats()
@@ -2354,7 +2647,9 @@ async fn client_tool_step(
 
     // ---- Approval gate (phase 2, design §C). Journaled request/decision
     // flow; denial is a normal tool_result payload the caller persists.
-    if let Some(denial) = approval_gate(ctx, state, tx, chat_id, call, Approval::Ask).await? {
+    if let Some(denial) =
+        approval_gate(ctx, state, tx, org_id, model, chat_id, call, Approval::Ask).await?
+    {
         return Ok(denial);
     }
 
@@ -2362,16 +2657,8 @@ async fn client_tool_step(
     let (awakeable_id, promise) = ctx.awakeable::<Json<ToolResultPayload>>();
     ctx.set(&state_key(&call.id), awakeable_id.clone());
     // Journaled: notify attached clients that this call must run client-side.
-    let args_json = serde_json::to_string(&call.arguments)
-        .unwrap_or_else(|_| "{}".to_string());
-    let done = note_pending_tool(
-        state,
-        chat_id,
-        &call.id,
-        &call.name,
-        &args_json,
-        Some(&mid),
-    );
+    let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
+    let done = note_pending_tool(state, chat_id, &call.id, &call.name, &args_json, Some(&mid));
     // Termination detection: if the bound machine disappears (executor
     // connection gone, app-lifetime — not per-thread streams), resolve the
     // tool with an error after a grace window instead of dead-airing for
@@ -2401,6 +2688,7 @@ async fn client_tool_step(
                 name,
                 arguments: args,
                 executor: ToolExecutor::Client,
+                kind: None,
             });
             Ok(Json(()))
         }
@@ -2478,30 +2766,47 @@ async fn server_tool_step(
     call: &ToolCall,
     _seq: String,
     org_id: Uuid,
+    model: &str,
     caller_id: Uuid,
     chat_id: Uuid,
     plugin_turns: &[integrations::PluginTurn],
     caller_role: &str,
     acting_as: Option<&str>,
 ) -> HandlerResult<(String, bool, Option<Value>)> {
+    // Resolve the tool once: the spec kind rides on the started frame, and
+    // the matching tolerates legacy-prefixed journal names.
+    let tool_kind = plugin_turns.iter().find_map(|turn| {
+        turn.tools
+            .iter()
+            .find(|t| integrations::tool_matches(&turn.slug, &t.spec.name, &call.name))
+            .map(|info| info.spec.kind)
+    });
     // Approval gate for state-changing (write-class) server tools — Slack
     // posts, integration writes, and MCP writes all ask; reads flow without
     // a gate. Journaled: replay re-derives the same decision.
     let write_class = plugin_turns.iter().any(|turn| {
-        turn.tools
-            .iter()
-            .any(|t| t.spec.name == call.name && t.class == "write")
+        turn.tools.iter().any(|t| {
+            integrations::tool_matches(&turn.slug, &t.spec.name, &call.name) && t.class == "write"
+        })
     });
     if write_class {
-        if let Some(denial) =
-            approval_gate(ctx, state, tx, chat_id, call, Approval::Ask).await?
+        if let Some(denial) = approval_gate(
+            ctx,
+            state,
+            tx,
+            org_id,
+            model,
+            chat_id,
+            call,
+            Approval::Ask,
+        )
+        .await?
         {
             return Ok((denial.content, denial.is_error, denial.meta));
         }
     }
     // Journaled: notify attached clients.
-    let args_json = serde_json::to_string(&call.arguments)
-        .unwrap_or_else(|_| "{}".to_string());
+    let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
     let tx2 = tx.clone();
     let call_id = call.id.clone();
     let name = call.name.clone();
@@ -2517,6 +2822,7 @@ async fn server_tool_step(
                 name,
                 arguments: args,
                 executor: ToolExecutor::Server,
+                kind: tool_kind,
             });
             Ok(Json(()))
         }
@@ -2571,7 +2877,7 @@ async fn server_tool_step(
                 let target = mcp.iter().enumerate().find_map(|(i, turn)| {
                     turn.tools
                         .iter()
-                        .find(|t| t.spec.name == call.name)
+                        .find(|t| integrations::tool_matches(&turn.slug, &t.spec.name, &call.name))
                         .map(|info| (i, info))
                 });
                 if let Some((i, info)) = target {
@@ -2612,18 +2918,13 @@ async fn server_tool_step(
     // built-in and MCP alike. Auto tools are disclosure-only, not audited.
     let audited = plugin_turns.iter().any(|turn| {
         integrations::unnamespaced_tool(&turn.slug, &call.name).is_some()
-            && turn
-                .tools
-                .iter()
-                .any(|t| t.spec.name == call.name)
+            && turn.tools.iter().any(|t| t.spec.name == call.name)
     });
     if audited {
         let st = state.clone();
         let slug = plugin_turns
             .iter()
-            .find(|turn| {
-                turn.tools.iter().any(|t| t.spec.name == call.name)
-            })
+            .find(|turn| turn.tools.iter().any(|t| t.spec.name == call.name))
             .map(|turn| turn.slug.clone())
             .unwrap_or_default();
         let raw = plugin_turns
@@ -2759,9 +3060,13 @@ fn classify_chatgen_entry(current_version: &str, value: &str) -> StaleChatgenEnt
 /// version. They cannot replay after the deploy and would jam their chat
 /// (virtual objects serialize per key) until the inactivity timeout.
 pub(crate) async fn purge_stale_chat_generations(state: &AppState) {
-    let Ok(store) = state.store().await else { return };
+    let Ok(store) = state.store().await else {
+        return;
+    };
     let current = workflow_schema_version();
-    let Ok(entries) = store.kv().list_prefix("chatgen_inv:").await else { return };
+    let Ok(entries) = store.kv().list_prefix("chatgen_inv:").await else {
+        return;
+    };
     for (key, value) in entries {
         let chat_id = key
             .strip_prefix("chatgen_inv:")
@@ -2821,7 +3126,6 @@ pub(crate) async fn purge_stale_chat_generations(state: &AppState) {
     }
 }
 
-
 /// Spawn the Restate endpoint server for the worker role.
 pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
     if state.config.internal_token.is_none() {
@@ -2846,7 +3150,9 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
                 let sessions = store.identity().prune_expired_sessions().await.unwrap_or(0);
                 let tokens = store.pairing().prune_dead_tokens().await.unwrap_or(0);
                 if sessions + tokens > 0 {
-                    tracing::info!("pruned {sessions} expired sessions, {tokens} dead pairing tokens");
+                    tracing::info!(
+                        "pruned {sessions} expired sessions, {tokens} dead pairing tokens"
+                    );
                 }
             }
             tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -2863,7 +3169,9 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
             .abort_timeout(Duration::from_secs(60));
         HttpServer::new(
             Endpoint::builder()
-                .bind(RoutineRunner { state: state.clone() })
+                .bind(RoutineRunner {
+                    state: state.clone(),
+                })
                 .bind(
                     ChatRunner { state }
                         .into_service_definition()
@@ -2964,7 +3272,10 @@ mod tests {
     #[test]
     fn latest_tokens_in_takes_the_last_assistant_usage() {
         let events = vec![
-            ThreadEvent::UserMessage { content: "hi".into(), attachments: Vec::new() },
+            ThreadEvent::UserMessage {
+                content: "hi".into(),
+                attachments: Vec::new(),
+            },
             ThreadEvent::AssistantMessage {
                 turn: 1,
                 step: 0,
@@ -3036,7 +3347,10 @@ mod tests {
     // --- compaction derivation (design §B) ---
 
     fn user_ev(content: &str) -> ThreadEvent {
-        ThreadEvent::UserMessage { content: content.into(), attachments: Vec::new() }
+        ThreadEvent::UserMessage {
+            content: content.into(),
+            attachments: Vec::new(),
+        }
     }
 
     fn text_assistant(turn: u32, step: u32, text: &str) -> ThreadEvent {
@@ -3182,7 +3496,10 @@ mod tests {
             },
             user_ev("q2"),
         ];
-        assert_eq!(build_model_history(&plain, &Default::default(), &[]), build_model_history(&annotated, &Default::default(), &[]));
+        assert_eq!(
+            build_model_history(&plain, &Default::default(), &[]),
+            build_model_history(&annotated, &Default::default(), &[])
+        );
     }
 
     #[test]
@@ -3198,7 +3515,9 @@ mod tests {
                 turn: 2,
                 step: 0,
                 blocks: vec![
-                    Block::Reasoning { text: "think".into() },
+                    Block::Reasoning {
+                        text: "think".into(),
+                    },
                     Block::ToolCall {
                         id: "c1".into(),
                         name: "read".into(),
@@ -3218,10 +3537,15 @@ mod tests {
                 is_error: false,
                 meta: None,
                 images: Vec::new(),
+                kind: None,
             },
         ];
         let msgs = build_model_history(&events, &Default::default(), &[]);
-        assert_eq!(msgs.len(), 6, "summary + tail(q1,a1) + q2 + assistant(tool) + tool");
+        assert_eq!(
+            msgs.len(),
+            6,
+            "summary + tail(q1,a1) + q2 + assistant(tool) + tool"
+        );
         assert_eq!(msgs[0].content, summarized("S"));
         assert_eq!(msgs[3].content, "q2");
         assert_eq!(msgs[4].reasoning.as_deref(), Some("think"));
@@ -3236,11 +3560,14 @@ mod tests {
     #[test]
     fn complete_approval_dedupe_first_answer_wins() {
         // Absent key (already decided / timed out / not waiting): no-op.
-        let req = ApprovalReq { call_id: "c".into(), approved: true, reason: None };
+        let req = ApprovalReq {
+            call_id: "c".into(),
+            approved: true,
+            reason: None,
+        };
         assert!(approval_on_decision(None, req.clone()).is_none());
         // Present key: the awakeable resolves with the decision.
-        let (id, decision) =
-            approval_on_decision(Some("awakeable-1".into()), req.clone()).unwrap();
+        let (id, decision) = approval_on_decision(Some("awakeable-1".into()), req.clone()).unwrap();
         assert_eq!(id, "awakeable-1");
         assert!(decision.approved);
         assert_eq!(decision.reason, None);
@@ -3271,9 +3598,15 @@ mod tests {
     #[test]
     fn latest_assistant_model_takes_the_last_assistant_event() {
         let events = vec![
-            ThreadEvent::UserMessage { content: "hi".into(), attachments: Vec::new() },
+            ThreadEvent::UserMessage {
+                content: "hi".into(),
+                attachments: Vec::new(),
+            },
             assistant(1, 0, "first", "model-a"),
-            ThreadEvent::UserMessage { content: "more".into(), attachments: Vec::new() },
+            ThreadEvent::UserMessage {
+                content: "more".into(),
+                attachments: Vec::new(),
+            },
             assistant(2, 0, "second", "model-b"),
             ThreadEvent::ToolResult {
                 turn: 2,
@@ -3284,6 +3617,7 @@ mod tests {
                 is_error: false,
                 meta: None,
                 images: Vec::new(),
+                kind: None,
             },
         ];
         assert_eq!(latest_assistant_model(&events).as_deref(), Some("model-b"));
@@ -3292,8 +3626,13 @@ mod tests {
     #[test]
     fn latest_assistant_model_none_without_assistant_events() {
         let events = vec![
-            ThreadEvent::SystemMessage { content: "s".into() },
-            ThreadEvent::UserMessage { content: "hi".into(), attachments: Vec::new() },
+            ThreadEvent::SystemMessage {
+                content: "s".into(),
+            },
+            ThreadEvent::UserMessage {
+                content: "hi".into(),
+                attachments: Vec::new(),
+            },
             ThreadEvent::Compaction {
                 summary: "earlier".into(),
                 tokens_before: None,
@@ -3307,21 +3646,30 @@ mod tests {
 
     #[test]
     fn message_bearing_count_ignores_log_only_events() {
-        let history = build_model_history(&[
-            ThreadEvent::SystemMessage { content: "s".into() },
-            ThreadEvent::ApprovalRequest {
-                call_id: "c".into(),
-                name: "bash".into(),
-                arguments: "{}".into(),
-            },
-            ThreadEvent::ApprovalDecision {
-                call_id: "c".into(),
-                approved: true,
-                reason: None,
-            },
-            ThreadEvent::UserMessage { content: "q".into(), attachments: Vec::new() },
-            assistant(1, 0, "a", "m"),
-        ], &Default::default(), &[]);
+        let history = build_model_history(
+            &[
+                ThreadEvent::SystemMessage {
+                    content: "s".into(),
+                },
+                ThreadEvent::ApprovalRequest {
+                    call_id: "c".into(),
+                    name: "bash".into(),
+                    arguments: "{}".into(),
+                },
+                ThreadEvent::ApprovalDecision {
+                    call_id: "c".into(),
+                    approved: true,
+                    reason: None,
+                },
+                ThreadEvent::UserMessage {
+                    content: "q".into(),
+                    attachments: Vec::new(),
+                },
+                assistant(1, 0, "a", "m"),
+            ],
+            &Default::default(),
+            &[],
+        );
         assert_eq!(message_bearing_count(&history), 2);
     }
 
@@ -3358,7 +3706,11 @@ mod tests {
         // workflow).
         let org = Uuid::now_v7();
         let chat = Uuid::now_v7();
-        let v = serde_json::to_value(CompactReq { org_id: org, chat_id: chat }).unwrap();
+        let v = serde_json::to_value(CompactReq {
+            org_id: org,
+            chat_id: chat,
+        })
+        .unwrap();
         assert_eq!(v["org_id"], serde_json::to_value(org).unwrap());
         assert_eq!(v["chat_id"], serde_json::to_value(chat).unwrap());
     }

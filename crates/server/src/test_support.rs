@@ -75,8 +75,7 @@ pub struct MockIngress {
 /// State backed by an isolated database, with `restate_url` pointed at a
 /// local mock ingress so one-way invokes (`complete_tool`,
 /// `complete_approval`, …) succeed and can be asserted on.
-type CapturedRequests =
-    std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>;
+type CapturedRequests = std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>;
 
 pub async fn test_state_with_mock_ingress() -> (TestState, MockIngress) {
     let db = Store::connect_test().await.expect("postgres testcontainer");
@@ -136,7 +135,9 @@ pub fn emit_live_delta(state: &AppState, chat_id: uuid::Uuid, content: &str) {
     tokio::spawn(async move {
         *buf.write().await += &value;
     });
-    let _ = tx.send(StreamEvent::Delta { content: content.to_string() });
+    let _ = tx.send(StreamEvent::Delta {
+        content: content.to_string(),
+    });
 }
 
 /// Mirrors the worker's client-tool dispatch: registers the suspended call
@@ -159,6 +160,7 @@ pub fn note_client_tool(
             name: name.to_string(),
             arguments: args.to_string(),
             executor: ToolExecutor::Client,
+            kind: None,
         });
     }
 }
@@ -277,18 +279,27 @@ async fn reap_stale_s3_buckets(infra: &SharedInfra) {
         };
         let keys: Vec<String> = pages
             .iter()
-            .flat_map(|p| p.contents().iter().filter_map(|o| o.key().map(str::to_string)))
+            .flat_map(|p| {
+                p.contents()
+                    .iter()
+                    .filter_map(|o| o.key().map(str::to_string))
+            })
             .collect();
         for batch in keys.chunks(1000) {
             let Ok(objs) = batch
                 .iter()
-                .map(|k| aws_sdk_s3::types::ObjectIdentifier::builder().key(k).build())
+                .map(|k| {
+                    aws_sdk_s3::types::ObjectIdentifier::builder()
+                        .key(k)
+                        .build()
+                })
                 .collect::<Result<Vec<_>, _>>()
             else {
                 break;
             };
-            let Ok(delete) =
-                aws_sdk_s3::types::Delete::builder().set_objects(Some(objs)).build()
+            let Ok(delete) = aws_sdk_s3::types::Delete::builder()
+                .set_objects(Some(objs))
+                .build()
             else {
                 break;
             };
@@ -428,7 +439,19 @@ pub async fn full_state() -> FullState {
         .unwrap();
     store
         .gateway()
-        .upsert_route(org_id, "gpt-test", "openai", true, 2.0, 4.0, None, false, None, None, &[])
+        .upsert_route(
+            org_id,
+            "gpt-test",
+            "openai",
+            true,
+            2.0,
+            4.0,
+            None,
+            false,
+            None,
+            None,
+            &[],
+        )
         .await
         .unwrap();
     let chat = store

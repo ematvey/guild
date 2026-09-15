@@ -65,7 +65,12 @@ fn pair_label_hack() -> Option<Pair> {
 }
 fn pair_unused(_: Option<Pair>) {}
 
-fn rpc_session(label: String, read: Box<dyn std::io::Read + Send>, raw: Option<isize>, mut write: Box<dyn std::io::Write + Send>) {
+fn rpc_session(
+    label: String,
+    read: Box<dyn std::io::Read + Send>,
+    raw: Option<isize>,
+    mut write: Box<dyn std::io::Write + Send>,
+) {
     let label2 = label.clone();
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
@@ -74,8 +79,14 @@ fn rpc_session(label: String, read: Box<dyn std::io::Read + Send>, raw: Option<i
         loop {
             let mut line = String::new();
             match r.read_line(&mut line) {
-                Ok(false) => { eprintln!("{label} reader: eof"); break }
-                Err(e) => { eprintln!("{label} reader: ERROR {e}"); break }
+                Ok(false) => {
+                    eprintln!("{label} reader: eof");
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("{label} reader: ERROR {e}");
+                    break;
+                }
                 Ok(true) => {
                     eprintln!("{} {} reader: {}", label, ts(), line.trim());
                     if tx.send(line).is_err() {

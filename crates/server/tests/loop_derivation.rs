@@ -25,13 +25,20 @@ fn derivation_builds_model_history_with_reasoning_replay() {
         ThreadEvent::SystemMessage {
             content: "server prompt".into(),
         },
-        ThreadEvent::UserMessage { content: "question".into(), attachments: Vec::new() },
+        ThreadEvent::UserMessage {
+            content: "question".into(),
+            attachments: Vec::new(),
+        },
         assistant(
             1,
             0,
             vec![
-                Block::Reasoning { text: "let me think".into() },
-                Block::Text { text: "partial".into() },
+                Block::Reasoning {
+                    text: "let me think".into(),
+                },
+                Block::Text {
+                    text: "partial".into(),
+                },
                 Block::ToolCall {
                     id: "c1".into(),
                     name: "read".into(),
@@ -48,15 +55,29 @@ fn derivation_builds_model_history_with_reasoning_replay() {
             is_error: false,
             meta: None,
             images: Vec::new(),
+            kind: None,
         },
-        assistant(1, 1, vec![Block::Text { text: "final answer".into() }]),
-        ThreadEvent::UserMessage { content: "again".into(), attachments: Vec::new() },
+        assistant(
+            1,
+            1,
+            vec![Block::Text {
+                text: "final answer".into(),
+            }],
+        ),
+        ThreadEvent::UserMessage {
+            content: "again".into(),
+            attachments: Vec::new(),
+        },
         assistant(
             2,
             0,
             vec![
-                Block::Reasoning { text: "second thought".into() },
-                Block::Text { text: "done".into() },
+                Block::Reasoning {
+                    text: "second thought".into(),
+                },
+                Block::Text {
+                    text: "done".into(),
+                },
             ],
         ),
     ];
@@ -102,12 +123,11 @@ fn turn_numbering_continues_from_events() {
     assert_eq!(next_turn(&[]), 1, "empty thread starts at turn 1");
 
     let events = vec![
-        ThreadEvent::UserMessage { content: "q".into(), attachments: Vec::new() },
-        assistant(
-            1,
-            0,
-            vec![Block::Text { text: "a".into() }],
-        ),
+        ThreadEvent::UserMessage {
+            content: "q".into(),
+            attachments: Vec::new(),
+        },
+        assistant(1, 0, vec![Block::Text { text: "a".into() }]),
         ThreadEvent::ToolResult {
             turn: 3,
             step: 2,
@@ -116,6 +136,7 @@ fn turn_numbering_continues_from_events() {
             content: "y".into(),
             is_error: false,
             meta: None,
+            kind: None,
             images: Vec::new(),
         },
         assistant(3, 2, vec![Block::Text { text: "a2".into() }]),
@@ -124,8 +145,13 @@ fn turn_numbering_continues_from_events() {
 
     // user/system events do not advance the turn counter
     let no_turns = vec![
-        ThreadEvent::SystemMessage { content: "s".into() },
-        ThreadEvent::UserMessage { content: "u".into(), attachments: Vec::new() },
+        ThreadEvent::SystemMessage {
+            content: "s".into(),
+        },
+        ThreadEvent::UserMessage {
+            content: "u".into(),
+            attachments: Vec::new(),
+        },
     ];
     assert_eq!(next_turn(&no_turns), 1);
 }

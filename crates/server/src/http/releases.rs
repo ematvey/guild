@@ -218,9 +218,7 @@ async fn signing_key(
 /// Public: static-JSON format from the updater plugin, pointing at
 /// short-lived signed download URLs. Only platforms with a signed updater
 /// artifact for the newest desktop version are listed.
-async fn updater_manifest(
-    State(state): State<AppState>,
-) -> Result<Response, ApiError> {
+async fn updater_manifest(State(state): State<AppState>) -> Result<Response, ApiError> {
     let rows = state.store().await?.releases().list().await?;
     let mut latest: Option<String> = None;
     for r in &rows {

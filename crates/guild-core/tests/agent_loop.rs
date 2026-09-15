@@ -224,10 +224,7 @@ async fn approval_deny_reaches_model_as_tool_result() {
     .await
     .unwrap();
     assert_eq!(result.final_text, "understood, skipping.");
-    assert_eq!(
-        history[2].content,
-        "execution failed: too dangerous"
-    );
+    assert_eq!(history[2].content, "execution failed: too dangerous");
 }
 
 #[tokio::test]

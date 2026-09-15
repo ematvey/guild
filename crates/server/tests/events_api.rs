@@ -30,14 +30,11 @@ async fn events_stream_fans_out_and_list_shows_emitted() {
         // under full-suite load
         let mut stream = res.into_body().into_data_stream();
         let text = loop {
-            let chunk = tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                stream.next(),
-            )
-            .await
-            .expect("first sse frame in 30s")
-            .expect("stream alive")
-            .unwrap();
+            let chunk = tokio::time::timeout(std::time::Duration::from_secs(30), stream.next())
+                .await
+                .expect("first sse frame in 30s")
+                .expect("stream alive")
+                .unwrap();
             let text = String::from_utf8(chunk.to_vec()).unwrap();
             if text.starts_with(":") {
                 continue; // keepalive comment

@@ -102,11 +102,7 @@ impl Tool for ReadFile {
                     meta: Some(meta),
                 });
             }
-            Err(e) => {
-                return Err(ToolFailure::Execution(format!(
-                    "read {display}: {e}"
-                )))
-            }
+            Err(e) => return Err(ToolFailure::Execution(format!("read {display}: {e}"))),
         };
         let total_lines = content.lines().count();
         let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;

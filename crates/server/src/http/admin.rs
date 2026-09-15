@@ -50,6 +50,10 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/admin/assistant-prompt",
             axum::routing::get(get_assistant_prompt).put(set_assistant_prompt),
         )
+        .route(
+            "/api/v1/admin/approval-policy-prompt",
+            axum::routing::get(get_approval_policy_prompt).put(set_approval_policy_prompt),
+        )
 }
 
 // Org KV key holding the admin-configured assistant persona prompt.
@@ -84,9 +88,7 @@ async fn set_assistant_prompt(
         return Err(ApiError::bad_request("missing \"prompt\" string"));
     };
     if prompt.chars().count() > ASSISTANT_PROMPT_MAX {
-        return Err(ApiError::bad_request(
-            "prompt exceeds 10,000 characters",
-        ));
+        return Err(ApiError::bad_request("prompt exceeds 10,000 characters"));
     }
     let store = state.store().await?;
     if prompt.is_empty() {
@@ -98,6 +100,55 @@ async fn set_assistant_prompt(
         store
             .org_kv()
             .put(admin.0.org_id, ASSISTANT_PROMPT_KEY, prompt)
+            .await?;
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+// Org KV key holding the admin-configured "Approve for me" policy prompt.
+use crate::worker::restate::{APPROVAL_POLICY_PROMPT_KEY, DEFAULT_APPROVAL_POLICY_PROMPT};
+
+/// Returns the org's "Approve for me" auto-approval policy prompt; `null` =
+/// using the built-in default (also returned under `default` so clients can
+/// display the effective text without duplicating it).
+async fn get_approval_policy_prompt(
+    State(state): State<AppState>,
+    admin: AdminUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    let prompt = store
+        .org_kv()
+        .get(admin.0.org_id, APPROVAL_POLICY_PROMPT_KEY)
+        .await?;
+    Ok(Json(json!({
+        "prompt": prompt,
+        "default": DEFAULT_APPROVAL_POLICY_PROMPT,
+    })))
+}
+
+/// Sets the org's "Approve for me" auto-approval policy prompt. An empty
+/// string resets to the built-in default.
+async fn set_approval_policy_prompt(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(prompt) = body.get("prompt").and_then(|p| p.as_str()) else {
+        return Err(ApiError::bad_request("missing \"prompt\" string"));
+    };
+    if prompt.chars().count() > ASSISTANT_PROMPT_MAX {
+        return Err(ApiError::bad_request("prompt exceeds 10,000 characters"));
+    }
+    let store = state.store().await?;
+    if prompt.is_empty() {
+        store
+            .org_kv()
+            .delete(admin.0.org_id, APPROVAL_POLICY_PROMPT_KEY)
+            .await?;
+    } else {
+        store
+            .org_kv()
+            .put(admin.0.org_id, APPROVAL_POLICY_PROMPT_KEY, prompt)
             .await?;
     }
     Ok(Json(json!({ "ok": true })))
@@ -161,7 +212,9 @@ async fn list_integrations(
         if item.review_status != "approved" || rows.iter().any(|r| r.name == item.slug) {
             continue;
         }
-        if let Some(manifest) = latest_integration_manifest(&store, admin.0.org_id, &item.slug).await? {
+        if let Some(manifest) =
+            latest_integration_manifest(&store, admin.0.org_id, &item.slug).await?
+        {
             if manifest.mcp.is_some() {
                 available.push(json!({
                     "name": item.slug,
@@ -172,7 +225,9 @@ async fn list_integrations(
             }
         }
     }
-    Ok(Json(json!({ "integrations": row_values, "available": available })))
+    Ok(Json(
+        json!({ "integrations": row_values, "available": available }),
+    ))
 }
 
 /// Categories of a configured integration row, as the UI lists them: a
@@ -208,10 +263,7 @@ async fn declared_secret_names(
     row: &crate::store::integrations::IntegrationRow,
 ) -> Result<Vec<String>, ApiError> {
     let manifest = latest_integration_manifest(store, row.org_id, &row.name).await?;
-    let v2_claimed = manifest
-        .as_ref()
-        .map(|m| m.mcp.is_some())
-        .unwrap_or(false)
+    let v2_claimed = manifest.as_ref().map(|m| m.mcp.is_some()).unwrap_or(false)
         || row.config["mcp"]["url"].as_str().is_some();
     if v2_claimed {
         let manifest = manifest.unwrap_or_default();
@@ -221,10 +273,7 @@ async fn declared_secret_names(
                 return Ok(derived);
             }
         }
-        return Ok(manifest
-            .auth
-            .map(|a| a.secret_names)
-            .unwrap_or_default());
+        return Ok(manifest.auth.map(|a| a.secret_names).unwrap_or_default());
     }
     Ok(crate::integrations::integration_by_name(&row.name)
         .and_then(|p| p.manifest().auth)
@@ -241,21 +290,17 @@ async fn effective_settings(
     row: &crate::store::integrations::IntegrationRow,
 ) -> Result<serde_json::Value, ApiError> {
     let manifest = latest_integration_manifest(store, row.org_id, &row.name).await?;
-    let v2_claimed = manifest
-        .as_ref()
-        .map(|m| m.mcp.is_some())
-        .unwrap_or(false)
+    let v2_claimed = manifest.as_ref().map(|m| m.mcp.is_some()).unwrap_or(false)
         || row.config["mcp"]["url"].as_str().is_some();
     if v2_claimed {
         return match manifest.and_then(|m| m.settings) {
-            Some(s) => serde_json::to_value(s).map_err(|e| {
-                ApiError::internal(format!("settings schema serialize failed: {e}"))
-            }),
+            Some(s) => serde_json::to_value(s)
+                .map_err(|e| ApiError::internal(format!("settings schema serialize failed: {e}"))),
             None => Ok(serde_json::Value::Null),
         };
     }
-    let settings = crate::integrations::integration_by_name(&row.name)
-        .and_then(|p| p.manifest().settings);
+    let settings =
+        crate::integrations::integration_by_name(&row.name).and_then(|p| p.manifest().settings);
     Ok(match settings {
         Some(s) => serde_json::to_value(s)
             .map_err(|e| ApiError::internal(format!("settings schema serialize failed: {e}")))?,
@@ -546,10 +591,7 @@ async fn save_integration(
         )));
     }
     let manifest = plugin.manifest();
-    let schema_fields = manifest
-        .settings
-        .map(|s| s.fields)
-        .unwrap_or_default();
+    let schema_fields = manifest.settings.map(|s| s.fields).unwrap_or_default();
     let enabled = body["enabled"]
         .as_bool()
         .unwrap_or_else(|| existing.map(|r| r.enabled).unwrap_or(false));
@@ -570,9 +612,7 @@ async fn save_integration(
         };
         if !present {
             let label = f.label.clone().unwrap_or_else(|| f.name.clone());
-            return Err(ApiError::bad_request(format!(
-                "field {label} is required"
-            )));
+            return Err(ApiError::bad_request(format!("field {label} is required")));
         }
     }
     // Merge stored + submitted credentials in memory and test before
@@ -617,7 +657,10 @@ async fn save_integration(
             ));
         }
     }
-    plugin.test_connection(&config, &secrets).await.map_err(ApiError::bad_request)?;
+    plugin
+        .test_connection(&config, &secrets)
+        .await
+        .map_err(ApiError::bad_request)?;
     for (k, v) in &submitted {
         store
             .integration_secrets()
@@ -639,13 +682,8 @@ async fn mcp_test_connection(
     url: &str,
     secrets: &[(String, String)],
 ) -> Result<(), ApiError> {
-    let headers = crate::integrations::envelope_headers(
-        &Uuid::now_v7(),
-        &org_id,
-        None,
-        None,
-        secrets,
-    );
+    let headers =
+        crate::integrations::envelope_headers(&Uuid::now_v7(), &org_id, None, None, secrets);
     let key = crate::worker::mcp_pool::PoolKey {
         slug: "save-test".to_string(),
         url: url.to_string(),

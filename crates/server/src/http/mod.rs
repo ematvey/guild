@@ -70,7 +70,9 @@ pub fn build_router(state: AppState) -> Router {
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin([
-                    "tauri://localhost".parse::<axum::http::HeaderValue>().unwrap(),
+                    "tauri://localhost"
+                        .parse::<axum::http::HeaderValue>()
+                        .unwrap(),
                     "http://tauri.localhost".parse().unwrap(),
                     "https://tauri.localhost".parse().unwrap(),
                     "http://localhost:1420".parse().unwrap(),

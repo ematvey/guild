@@ -255,7 +255,9 @@ async fn agent_turn_enforces_route_quota() {
                 .uri("/api/v1/agents/sessions")
                 .header("authorization", format!("Bearer {}", fs.token))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"workspace_name": "quota-ws"}).to_string()))
+                .body(Body::from(
+                    json!({"workspace_name": "quota-ws"}).to_string(),
+                ))
                 .unwrap(),
         )
         .await

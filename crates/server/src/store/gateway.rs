@@ -136,8 +136,16 @@ impl<'a> GatewayStore<'a> {
         plaintext_key: &str,
         master_key: &[u8; 32],
     ) -> anyhow::Result<()> {
-        self.create_provider(org_id, provider, provider, provider, base_url, plaintext_key, master_key)
-            .await
+        self.create_provider(
+            org_id,
+            provider,
+            provider,
+            provider,
+            base_url,
+            plaintext_key,
+            master_key,
+        )
+        .await
     }
 
     /// Creates a provider row; an existing row with the same (org, slug) is
@@ -410,11 +418,7 @@ impl<'a> GatewayStore<'a> {
     /// A model's configured context window for the org, or `None` when the
     /// model has no route or the column is unset. Used by the thread readout
     /// (context gauge) — no provider key needed, unlike `resolve_route`.
-    pub async fn context_window(
-        &self,
-        org_id: Uuid,
-        model: &str,
-    ) -> anyhow::Result<Option<i64>> {
+    pub async fn context_window(&self, org_id: Uuid, model: &str) -> anyhow::Result<Option<i64>> {
         let v: Option<Option<i64>> = sqlx::query_scalar(
             "SELECT context_window FROM model_routes WHERE org_id = $1 AND model = $2",
         )

@@ -79,8 +79,7 @@ impl<'a> IntegrationSecretStore<'a> {
         plaintext: &str,
         master_key: &[u8; 32],
     ) -> Result<(), ApiError> {
-        let encrypted =
-            crypto::encrypt_secret(master_key, plaintext).map_err(ApiError::from)?;
+        let encrypted = crypto::encrypt_secret(master_key, plaintext).map_err(ApiError::from)?;
         sqlx::query(
             "INSERT INTO integration_secrets (org_id, integration, name, secret_enc, masked) \
              VALUES ($1, $2, $3, $4, $5) \
@@ -213,18 +212,12 @@ impl<'a> IntegrationSecretStore<'a> {
     }
 
     /// Deletes every secret of one integration (admin integration delete).
-    pub async fn delete_all(
-        &self,
-        org_id: Uuid,
-        integration: &str,
-    ) -> Result<(), ApiError> {
-        sqlx::query(
-            "DELETE FROM integration_secrets WHERE org_id = $1 AND integration = $2",
-        )
-        .bind(org_id)
-        .bind(integration)
-        .execute(self.pool)
-        .await?;
+    pub async fn delete_all(&self, org_id: Uuid, integration: &str) -> Result<(), ApiError> {
+        sqlx::query("DELETE FROM integration_secrets WHERE org_id = $1 AND integration = $2")
+            .bind(org_id)
+            .bind(integration)
+            .execute(self.pool)
+            .await?;
         Ok(())
     }
 }

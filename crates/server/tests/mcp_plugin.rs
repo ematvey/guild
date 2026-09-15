@@ -27,7 +27,10 @@ async fn pool_connects_to_fixture_and_lists_tools() {
         acting_as: None,
         secrets_fingerprint: 0,
     };
-    let peer = pool.get_or_connect(&key, &url, HeaderMap::new()).await.unwrap();
+    let peer = pool
+        .get_or_connect(&key, &url, HeaderMap::new())
+        .await
+        .unwrap();
     let listed = peer.list_tools(None).await.unwrap();
     let names: Vec<&str> = listed.tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(names.contains(&"echo"));
@@ -44,11 +47,17 @@ async fn pool_reuses_connection_for_same_key() {
         acting_as: None,
         secrets_fingerprint: 0,
     };
-    let _first = pool.get_or_connect(&key, &url, HeaderMap::new()).await.unwrap();
+    let _first = pool
+        .get_or_connect(&key, &url, HeaderMap::new())
+        .await
+        .unwrap();
     // Same key must be served from the pool (a second connect would also
     // work, but the pooled entry is what makes envelope headers
     // per-connection).
-    let second = pool.get_or_connect(&key, &url, HeaderMap::new()).await.unwrap();
+    let second = pool
+        .get_or_connect(&key, &url, HeaderMap::new())
+        .await
+        .unwrap();
     let listed = second.list_tools(None).await.unwrap();
     assert_eq!(listed.tools.len(), 2);
     assert_eq!(pool.len(), 1);
@@ -64,9 +73,18 @@ async fn pool_reconnects_when_secrets_change() {
         acting_as: None,
         secrets_fingerprint: 0,
     };
-    let _ = pool.get_or_connect(&key, &url, HeaderMap::new()).await.unwrap();
-    let key2 = PoolKey { secrets_fingerprint: 7, ..key };
-    let _ = pool.get_or_connect(&key2, &url, HeaderMap::new()).await.unwrap();
+    let _ = pool
+        .get_or_connect(&key, &url, HeaderMap::new())
+        .await
+        .unwrap();
+    let key2 = PoolKey {
+        secrets_fingerprint: 7,
+        ..key
+    };
+    let _ = pool
+        .get_or_connect(&key2, &url, HeaderMap::new())
+        .await
+        .unwrap();
     assert_eq!(pool.len(), 2);
 }
 
@@ -96,7 +114,10 @@ async fn mcp_call_roundtrip_through_fixture() {
         acting_as: None,
         secrets_fingerprint: 0,
     };
-    let peer = pool.get_or_connect(&key, &url, HeaderMap::new()).await.unwrap();
+    let peer = pool
+        .get_or_connect(&key, &url, HeaderMap::new())
+        .await
+        .unwrap();
     let out = mcp_call_tool(&peer, "echo", json!({ "text": "hi" }))
         .await
         .unwrap();
@@ -123,7 +144,8 @@ fn manifest(classes: Value) -> guild_core::registry::BundleManifest {
 
 #[test]
 fn enforce_class_manifest_class_is_the_floor() {
-    let m = manifest(json!({ "search_contacts": "read", "update_deal": "write", "purge": "admin" }));
+    let m =
+        manifest(json!({ "search_contacts": "read", "update_deal": "write", "purge": "admin" }));
 
     // Default policy: member read-only, admin everything.
     assert!(enforce_class(&m, &None, "member", "search_contacts"));
@@ -203,7 +225,10 @@ fn envelope_headers_carry_ids_and_secrets() {
     assert_eq!(header(&map, "x-guild-org").unwrap(), org.to_string());
     assert_eq!(header(&map, "x-guild-caller").unwrap(), caller.to_string());
     assert_eq!(header(&map, "x-guild-acting-as").unwrap(), "a@b.c");
-    assert_eq!(header(&map, "x-guild-call-id").unwrap(), call_id.to_string());
+    assert_eq!(
+        header(&map, "x-guild-call-id").unwrap(),
+        call_id.to_string()
+    );
     assert_eq!(header(&map, "x-guild-secret-api_key").unwrap(), "sk-123");
 }
 
@@ -218,8 +243,8 @@ fn envelope_headers_omit_absent_fields() {
 // ---------- executor plumbing ----------
 
 #[test]
-fn namespaced_tool_builds_int_prefix() {
-    assert_eq!(namespaced_tool("hubspot", "echo"), "int_hubspot_echo");
+fn namespaced_tool_uses_slug_prefix() {
+    assert_eq!(namespaced_tool("hubspot", "echo"), "hubspot_echo");
 }
 
 // keep unused-import lints quiet for the HashMap helper above
@@ -231,7 +256,13 @@ async fn pool_connects_with_envelope_secret_headers() {
     let url = spawn_fixture().await;
     let pool = McpPool::new();
     let org = Uuid::now_v7();
-    let headers = envelope_headers(&Uuid::now_v7(), &org, None, None, &[("api_key".to_string(), "sk-live-123".to_string())]);
+    let headers = envelope_headers(
+        &Uuid::now_v7(),
+        &org,
+        None,
+        None,
+        &[("api_key".to_string(), "sk-live-123".to_string())],
+    );
     let key = PoolKey {
         slug: "savetest".into(),
         url: url.clone(),

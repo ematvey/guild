@@ -19,14 +19,16 @@ fn serve_file(dist: &include_dir::Dir<'static>, path: &str) -> Option<Response> 
     } else {
         "no-cache"
     };
-    Some((
-        [
-            (header::CONTENT_TYPE, mime.as_ref()),
-            (header::CACHE_CONTROL, cache),
-        ],
-        file.contents(),
+    Some(
+        (
+            [
+                (header::CONTENT_TYPE, mime.as_ref()),
+                (header::CACHE_CONTROL, cache),
+            ],
+            file.contents(),
+        )
+            .into_response(),
     )
-        .into_response())
 }
 
 pub async fn fallback(uri: Uri) -> Response {

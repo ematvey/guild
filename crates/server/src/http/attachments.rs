@@ -46,7 +46,10 @@ async fn upload(
         .unwrap_or_else(|| "application/octet-stream".into());
     let store = state.store().await?;
     // chat must belong to the caller's org
-    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
     let id = Uuid::now_v7();
     let key = crate::store::attachments::object_key(user.0.org_id, id, &filename);
     state
@@ -78,7 +81,10 @@ async fn list_for_chat(
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
     let rows = store.attachments().list(user.0.org_id, chat_id).await?;
     Ok(Json(json!({ "attachments": rows })))
 }

@@ -2,9 +2,12 @@
 //! updates through the CRM v3 API. Auth is a private-app access token sent
 //! as `Authorization: Bearer`.
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
-use guild_core::registry::BundleManifest;
+use super::{
+    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
+    ToolOutcome,
+};
 use futures::future::BoxFuture;
+use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
 
 /// HubSpot CRM connector. Config `{ "base_url": "…" }` overrides the API
@@ -97,9 +100,7 @@ impl Integration for Hubspot {
     fn tools(&self, _config: &serde_json::Value) -> anyhow::Result<Vec<ToolSpec>> {
         let search = |name: &'static str, noun: &str| ToolSpec {
             name: name.into(),
-            description: format!(
-                "Search HubSpot {noun} by free-text query (CRM v3 search)."
-            ),
+            description: format!("Search HubSpot {noun} by free-text query (CRM v3 search)."),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -109,6 +110,7 @@ impl Integration for Hubspot {
                 },
                 "required": ["query"]
             }),
+            kind: Default::default(),
         };
         Ok(vec![
             search("search_contacts", "contacts"),
@@ -127,6 +129,7 @@ impl Integration for Hubspot {
                     },
                     "required": ["id", "properties"]
                 }),
+                kind: Default::default(),
             },
             api_tool_spec("HubSpot"),
         ])
@@ -172,8 +175,7 @@ impl Integration for Hubspot {
         secrets: &'a [(String, String)],
     ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            let token = secret(secrets, "token")
-                .ok_or("hubspot secret 'token' is not stored")?;
+            let token = secret(secrets, "token").ok_or("hubspot secret 'token' is not stored")?;
             probe(
                 reqwest::Client::new()
                     .get(format!("{}/crm/v3/objects/contacts", base_url(config)))

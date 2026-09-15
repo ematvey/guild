@@ -143,7 +143,10 @@ mod tests {
         let gate = Arc::new(StreamGate::with_caps(2, 5));
         let p1 = gate.try_acquire(Uuid::now_v7()).unwrap();
         let p2 = gate.try_acquire(Uuid::now_v7()).unwrap();
-        assert!(matches!(gate.try_acquire(Uuid::now_v7()), Err(StreamGateError::Global)));
+        assert!(matches!(
+            gate.try_acquire(Uuid::now_v7()),
+            Err(StreamGateError::Global)
+        ));
         drop(p1);
         drop(p2);
         assert!(gate.try_acquire(Uuid::now_v7()).is_ok());
@@ -193,7 +196,13 @@ struct DeviceSync {
 }
 
 impl DeviceSync {
-    fn new(state: AppState, store: Arc<Store>, org: Uuid, user_id: Uuid, _machine_id: String) -> Self {
+    fn new(
+        state: AppState,
+        store: Arc<Store>,
+        org: Uuid,
+        user_id: Uuid,
+        _machine_id: String,
+    ) -> Self {
         Self {
             state,
             store,
@@ -222,7 +231,10 @@ impl DeviceSync {
     /// Fragment frames the fan-out skips: tool-argument streaming is a
     /// turn-stream nicety; the completed call arrives as ToolStarted.
     fn forwardable(ev: &StreamEvent) -> bool {
-        !matches!(ev, StreamEvent::ToolCallDelta { .. } | StreamEvent::ToolCallDone { .. })
+        !matches!(
+            ev,
+            StreamEvent::ToolCallDelta { .. } | StreamEvent::ToolCallDone { .. }
+        )
     }
 
     /// One poll: refresh chat bindings (every 4th tick), subscribe to newly
@@ -276,7 +288,9 @@ impl DeviceSync {
                 subs.insert(*chat_id, g.tx.subscribe());
             }
             for (chat_id, rx) in subs.iter_mut() {
-                let Some(bound) = self.chats.get(chat_id).cloned() else { continue };
+                let Some(bound) = self.chats.get(chat_id).cloned() else {
+                    continue;
+                };
                 loop {
                     match rx.try_recv() {
                         Ok(ev) => {
@@ -304,14 +318,20 @@ impl DeviceSync {
         for (chat_id, bound, text, think, pending) in replay {
             let text_snap = text.read().await.clone();
             if !text_snap.is_empty() {
-                out.push(Self::wrap(&chat_id, &bound, StreamEvent::Delta { content: text_snap }));
+                out.push(Self::wrap(
+                    &chat_id,
+                    &bound,
+                    StreamEvent::Delta { content: text_snap },
+                ));
             }
             let think_snap = think.read().await.clone();
             if !think_snap.is_empty() {
                 out.push(Self::wrap(
                     &chat_id,
                     &bound,
-                    StreamEvent::ThinkingDelta { content: think_snap },
+                    StreamEvent::ThinkingDelta {
+                        content: think_snap,
+                    },
                 ));
             }
             for (call_id, name, args) in pending {
@@ -323,6 +343,7 @@ impl DeviceSync {
                         name,
                         arguments: args,
                         executor: protocol::api::ToolExecutor::Client,
+                        kind: None,
                     },
                 }));
             }
@@ -388,7 +409,16 @@ async fn stream(
         .await
         .map_err(|e| ApiError::internal(format!("event subscribe failed: {e}")))?;
     let mut dispatch = machine_id
+        .clone()
         .map(|mid| DeviceSync::new(state.clone(), store.clone(), org, user.0.id, mid));
+    // Machine link eviction: a new connect for the same machine ends this
+    // stream (its permit may be leaking behind a proxy that kept the origin
+    // leg open after the client vanished). Versioned: the body ends when
+    // the watched generation leaves its own.
+    let evict = machine_id.map(|mid| {
+        let (rx, gen) = state.machine_link_signal(&mid);
+        (rx, gen)
+    });
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let out = async_stream::stream! {
@@ -398,6 +428,23 @@ async fn stream(
         let _permit = permit;
         loop {
             tokio::select! {
+                _ = async {
+                    match &evict {
+                        Some((rx, gen)) => {
+                            let mut rx = rx.clone();
+                            loop {
+                                rx.changed().await;
+                                if *rx.borrow() != *gen {
+                                    break;
+                                }
+                            }
+                        }
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    // A newer link connect for this machine took over.
+                    break;
+                }
                 notification = listener.recv() => {
                     let notification = match notification {
                         Ok(n) => n,

@@ -13,12 +13,13 @@ async fn migrations_apply_once_and_detect_drift() {
         .fetch_all(db.store.pool())
         .await
         .unwrap();
-    assert_eq!(names.len(), 42, "every migration recorded exactly once");
+    assert_eq!(names.len(), 44, "every migration recorded exactly once");
     // checksums recorded for all
-    let unhashed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schema_history WHERE content_hash IS NULL")
-        .fetch_one(db.store.pool())
-        .await
-        .unwrap();
+    let unhashed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM schema_history WHERE content_hash IS NULL")
+            .fetch_one(db.store.pool())
+            .await
+            .unwrap();
     assert_eq!(unhashed, 0);
 
     // Tampered checksum (edited migration file) must error on next boot.
@@ -26,7 +27,10 @@ async fn migrations_apply_once_and_detect_drift() {
         .execute(db.store.pool())
         .await
         .unwrap();
-    let err = Store::connect(&db.url).await.err().expect("drift must fail");
+    let err = Store::connect(&db.url)
+        .await
+        .err()
+        .expect("drift must fail");
     assert!(err.to_string().contains("drifted"), "{err}");
 }
 
@@ -42,5 +46,5 @@ async fn concurrent_boots_do_not_double_apply() {
         .fetch_one(db.store.pool())
         .await
         .unwrap();
-    assert_eq!(n, 42, "no double-application under concurrent boots");
+    assert_eq!(n, 44, "no double-application under concurrent boots");
 }

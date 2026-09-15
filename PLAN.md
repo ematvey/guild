@@ -1,9 +1,179 @@
 # Guild — current state of work
 
-Updated 2026-09-14 (named providers). Read this before
-touching the codebase; detailed milestone plans live in `docs/plans/`,
-deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
-`~/workspace/hanging-commands.md`.
+Updated 2026-09-14 (machine presence fixes, per-chat approval selector,
+Windows desktop 0.3.20 live-tested on devbox). Read this before touching the codebase; detailed
+milestone plans live in `docs/plans/`, deploy nuances in
+`docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Machine section copy tightened (0.3.25–0.3.26)
+
+Per maintainer: machine binding happens on entering the device sign-in token
+(pairing), not per chat — and the long "machine tools execute on the
+machine bound to the chat" header explanation is unnecessary. The Machine
+section now leads with just the title and the connected-machine inventory;
+the single remaining note explains that machines bind at device sign-in and
+appear here, with per-chat switching available from a chat. Empty state and
+note reworded to the device-token flow.
+
+## Machine settings show the inventory without a chat (0.3.24)
+
+The Machine section dead-ended with "Open a chat to bind it to a machine"
+whenever settings were opened without a chat selected — it hid the machine
+inventory entirely, which read as "machine binding does not work" even
+though binding itself was fine (new chats auto-bind the local executor,
+machines register by heartbeat, tools dispatch). The section now always
+renders the connected-machine list (the endpoint only returns fresh-heartbeat
+machines, so a pulsing green dot marks them connected), with bind/unbind
+controls when a chat is open and a per-chat explanation when not. The thread
+header's bound-machine chip is now a button that opens Settings at the
+Machine section for one-click rebinding. Desktop 0.3.24 published, installed
+on devbox, both states verified via CDP.
+
+## Approval modes adopt the codex vocabulary + "Approve for me" AI policy (0.3.23)
+
+The composer's per-chat approval selector now mirrors codex exactly:
+"Ask for approval" (always ask), "Approve for me" (only ask for actions
+detected as potentially unsafe), "Full access" (unrestricted), plus the
+"Account default" row that clears the chat override. The old allow/never
+values are remapped by migration 0044 (allow→full_access; never drops the
+key and falls back to the account policy — chat-level deny is gone).
+
+"Approve for me" runs a real AI auto-approval policy: before each tool, a
+model judge (the chat's own model, journaled call, 30s timeout) receives
+the action JSON under an admin-tunable policy prompt and answers
+{"approve", "reason"}; approve → the tool runs silently, anything else →
+the usual approval card. Timeout, parse failure, or provider error all
+fall back to asking (the safe direction). The policy prompt is a new org
+setting (org KV `assistant_approval_policy_prompt`, admin endpoints
+GET/PUT /api/v1/admin/approval-policy-prompt) shown in Settings →
+Assistant next to the system prompt — both fields render the CURRENT
+effective text filled in (the default as the value, never a placeholder),
+with save/reset per field.
+
+Verified live on devbox (0.3.23): picker renders the codex entries with
+icons; in "Approve for me" a benign `date /t` auto-ran with no card (judge:
+"read-only… harmless") while `del %TEMP%\…` was flagged (judge: "destructive,
+irreversible… outside the workspace") and surfaced a card; approving it
+completed the turn. Settings shows both prompts as filled text.
+
+## Shell tools no longer flash a console window (0.3.22)
+
+Every execute tool call on the Windows desktop popped a cmd window for the
+command's lifetime: the host is a GUI-subsystem process, so each cmd.exe
+child got a freshly allocated console. Fixed in guild-core's shell tool:
+CREATE_NO_WINDOW (0x08000000) on spawn, and stdin pinned to null — the
+latter also fixes interactive prompts (bare `date` waits on inherited
+stdin, hanging until the 30s timeout). Verified live on devbox: a ~6s ping
+approved and executed in the GUI while a window-title poll (12 samples)
+and a full-desktop screenshot both show no console window; exit code 0 and
+full stdout captured.
+
+## Approval decision deadlock fixed (2026-09-14)
+
+Ask-mode approvals hung forever: the turn's generate awaits the approval
+awakeable, and per Restate a virtual-object handler awaiting an awakeable
+keeps the instance locked — so this morning's `claim_approval` (cb9f84e), an
+EXCLUSIVE wake handler invoked on the same object, inboxed behind the
+waiting turn forever and the decision could never land. Observed live: the
+auto-deny timer's claim ran and found the key absent (the stuck
+invocation's state never applied — restatedev/restate#5196 class), and a
+fresh turn's claim vanished silently behind the lock. Upstream issue #5196
+describes the wider "suspended with open Run completion" jam; worker
+restarts and re-registration do not recover it; only killing the invocation
+(or wiping restate's container layer — it mounts no volume) frees the key.
+
+Fix: the resolution moved back into the shared `complete_approval` handler
+(mirroring `complete_tool`), and the exclusive `claim_approval` handler was
+deleted; first-answer-wins is enforced by Restate dropping late completions
+for an already-resolved awakeable, and the waiting turn clears the state key
+on resume. Verified end-to-end in the GUI on devbox: Ask mode → Approve →
+decision journaled → tool dispatched and executed on the WORKSTATION machine →
+answer rendered; no duplicate thinking block (the catch-up thinking buffer
+now replaces the turn's existing reasoning block instead of appending one
+below the approval card); execute approvals render a terminal-style
+`$ command` line instead of the raw JSON args. Desktop 0.3.21 published and
+installed on devbox.
+
+Operational notes from the same incident: deploys kill in-flight turns (the
+worker does not drain); the restate container has no volume so its state
+lives in the container layer (`restart` keeps a jam, `rm` clears it); the
+stuck-generation sweep only kills version-mismatched invocations — this jam
+had a matching restate.rs hash, so the sweep skipped it.
+
+## Composer approval-mode selector (2026-09-14)
+
+The codex-style "how should tools be approved" control now lives in the
+composer itself (pill next to the folder chip): per-chat mode with four
+entries — Account default / Ask for approval / Auto-approve / Deny tools.
+Backend: migration 0043 (`chats.approval` jsonb), owner-scoped
+GET/POST `/api/v1/chats/{id}/approval` (`{"default": "ask"|"allow"|"never"|"default"}`),
+and the approval gate reads `c.approval` first, falling back to the
+account-level policy (`u.approval`, Settings → Approvals keeps the
+user default + per-tool overrides — those apply only while the chat is on
+the account default). Verified behaviorally on devbox with the WORKSTATION
+machine: `allow` runs write_file with no card, `never` returns
+"denied by policy" without dispatching, ask keeps the card flow. Desktop
+0.3.20 built, published, installed on devbox; server deployed.
+
+## Machine presence + link robustness (2026-09-14)
+
+Root causes of the recurring "No machines connected" while a desktop app
+was installed (devbox/Windows): the link stream dies every few minutes
+behind Cloudflare (`error decoding response body`, reconnect gap ~19s), and
+three bugs turned each flap into an outage: (1) the server's
+`ExecutorGuard::drop` unregistered the machine the moment the stream
+dropped; (2) the desktop spawned its heartbeat loop inside the stream
+connection and aborted it with the stream — the documented design says
+heartbeats run independently; (3) Cloudflare keeps the origin leg of a dead
+client connection open, so per-user stream permits leaked until the cap
+(3/user) 429'd every reconnect — observed live (`stream connect: HTTP 429`
+in the app's rpc.log). After a server redeploy the zombie is worse: silent
+(no bytes, no error), so the app never reconnects and stops receiving tool
+frames while heartbeats keep it "present".
+
+Fixes (all verified live on devbox): server — `ExecutorGuard::drop` is a
+no-op (TTL is the offline signal, `EXECUTOR_TTL_SECS` 15→30) and a new
+connect for the same `machine_id` evicts the previous link stream via a
+versioned `watch` (`AppState::machine_link_signals`), reclaiming leaked
+permits; desktop — the heartbeat loop moved out of `link_once` into
+`app_link_task` (survives flaps) and the link read loop has a 90s stall
+watchdog (keepalives every ~30s; silence → reconnect). Desktop version
+0.3.19 built (NSIS via cargo-xwin), published to /api/v1/updates, installed
+on devbox; local tool calling driven through the GUI via WebView2 CDP
+(SSH-tunneled 9222): read_file executed on the Windows machine and the
+content returned in-thread. Note for GUI automation: the webview re-pushes
+the workspace dir from `localStorage["guild.dir:<chatId>"]` on every send —
+setting it via direct `set_chat_dir` invoke alone gets overwritten with
+None.
+
+## Tool kind + namespace cleanup (2026-09-14)
+
+- Every `ToolSpec` carries a top-level `kind: ToolKind` — `web_search`,
+  `web_browse`, or `generic` (serde/default `generic`). Set semantically on
+  the in-code web integrations: searxng `web_search` → `web_search`,
+  superproxy `web_fetch` → `web_browse`, firecrawl `search` → `web_search`,
+  `scrape` → `web_browse`, `map` → `generic`. Everything else defaults to
+  `generic`. The provider request builders pick only
+  name/description/parameters, so kind never leaks to the model wire.
+- The thread UI labels frames by kind first ("Web search" / "Browse"), so
+  firecrawl calls render natively instead of "firecrawl search". Kind rides
+  on `ThreadEvent::ToolResult` (serde default; old events lack it) and on
+  `StreamEvent::ToolStarted` for live frames; pre-kind events fall back to
+  the widget meta kind, then to the bare tool name.
+- The `int_` tool-name prefix is gone globally: wire names are now
+  `<slug>_<tool>` (e.g. `searxng_web_search`, `firecrawl_scrape`), auto
+  tools are `<slug>_list_tools` / `<slug>_guide`. `unnamespaced_tool` still
+  strips the legacy `int_<slug>_` shape and `parse_auto_tool` tolerates the
+  legacy prefix, so journals recorded before the rename replay and old
+  thread events keep rendering. Registry manifest tool-name length cap
+  adjusted (64 − slug − 1).
+- The system-prompt web-search instruction is kind-based now (fires when a
+  permitted tool has kind `web_search`, wording "web-search tools (kind
+  web_search)") instead of matching the literal tool name.
+- TS bindings regenerated (new `ToolKind.ts`; `ToolSpec`/`ThreadEvent`/
+  `StreamEvent` updated). Suite 308 passed across server/protocol/core/
+  app-server; desktop vitest 14 passed; deployed to :18080 (new bundle
+  hash, health ok).
 
 ## Providers are named, editable objects (2026-09-14)
 

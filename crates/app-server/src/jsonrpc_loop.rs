@@ -213,7 +213,12 @@ where
             let t0 = std::time::Instant::now();
             let r = writeln!(w, "{v}");
             let f = w.flush();
-            crate::dtrace::dtrace(&format!("conn: writer done in {:?} writeln={:?} flush={:?}", t0.elapsed(), r.is_ok(), f.is_ok()));
+            crate::dtrace::dtrace(&format!(
+                "conn: writer done in {:?} writeln={:?} flush={:?}",
+                t0.elapsed(),
+                r.is_ok(),
+                f.is_ok()
+            ));
         }
         crate::dtrace::dtrace("conn: writer thread exiting (out_tx dropped)");
         w
@@ -283,8 +288,13 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "machine.info" => {
             // Hostname label for the machine-executor registry; the id is
             // generated webview-side (stable per app install).
-            let name = std::env::var("COMPUTERNAME").ok()
-                .or_else(|| std::fs::read_to_string("/etc/hostname").ok().map(|s| s.trim().to_string()))
+            let name = std::env::var("COMPUTERNAME")
+                .ok()
+                .or_else(|| {
+                    std::fs::read_to_string("/etc/hostname")
+                        .ok()
+                        .map(|s| s.trim().to_string())
+                })
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "guild-machine".to_string());
             let _ = out_tx.send(response_value(
@@ -309,6 +319,23 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
                 )),
             };
             let _ = out_tx.send(response_value(req.id, result));
+        }
+        "session.clear" => {
+            // Full sign-out: drop the cloud session in memory and the
+            // persisted token (token.json), so the next restore shows the
+            // pair/sign-in screen instead of re-logging in silently.
+            let result = (|| -> anyhow::Result<()> {
+                {
+                    let mut s = shared.session.lock().unwrap();
+                    s.cloud = None;
+                    s.email = None;
+                }
+                crate::session_store::clear(&crate::session_store::default_path()?)
+            })();
+            let _ = out_tx.send(response_value(
+                req.id,
+                result.map(|_| Response::ok(req.id, json!({ "ok": true }))),
+            ));
         }
         "models.list" => {
             let session = shared.session.clone();
@@ -337,7 +364,11 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
                 let result = async {
                     let name = param(&req, "name")?.to_string();
                     let workdir = param(&req, "workdir")?.to_string();
-                    let args = req.params.get("args").cloned().unwrap_or(serde_json::json!({}));
+                    let args = req
+                        .params
+                        .get("args")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({}));
                     let registry = guild_core::tools::ToolRegistry::builtins();
                     let tool = registry
                         .get(&name)
@@ -490,11 +521,7 @@ async fn pair_task(
     let _ = out_tx.send(response_value(req.id, result));
 }
 
-async fn chat_send_task(
-    shared: Shared,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
+async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let result = async {
         let text = param(&req, "text")?.to_string();
         let (cloud, existing_chat, model) = {
@@ -551,11 +578,7 @@ async fn chat_send_task(
 
 /// Starts an agent run in the background: creates the chat if needed,
 /// responds immediately with `started`, streams progress as events.
-async fn agent_start_task(
-    shared: Shared,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
+async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     // (cloud, existing chat, project dir, model, history, policy, pending approvals)
     type AgentPrep = (
         CloudClient,

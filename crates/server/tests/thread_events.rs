@@ -61,6 +61,7 @@ async fn thread_store_append_list_roundtrip_and_org_scope() {
         is_error: false,
         meta: Some(json!({"card": "terminal", "exit_code": 0})),
         images: Vec::new(),
+        kind: None,
     };
 
     let row0 = store
@@ -84,9 +85,16 @@ async fn thread_store_append_list_roundtrip_and_org_scope() {
     assert_eq!(row1.event, assistant_event);
     assert_eq!(row2.event, tool_event);
     assert_eq!(row0.chat_id, chat.id);
-    assert!(row0.seq < row1.seq && row1.seq < row2.seq, "seq is monotone");
+    assert!(
+        row0.seq < row1.seq && row1.seq < row2.seq,
+        "seq is monotone"
+    );
 
-    let events = store.thread().list_events(user.org_id, chat.id).await.unwrap();
+    let events = store
+        .thread()
+        .list_events(user.org_id, chat.id)
+        .await
+        .unwrap();
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].event, user_event);
     assert_eq!(events[1].event, assistant_event);
@@ -108,14 +116,12 @@ async fn thread_store_append_list_roundtrip_and_org_scope() {
         )
         .await
         .unwrap();
-    assert!(
-        store
-            .thread()
-            .list_events(user.org_id, foreign_chat)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(store
+        .thread()
+        .list_events(user.org_id, foreign_chat)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 /// API: GET /api/v1/chats/{id}/thread returns the event rows
@@ -146,7 +152,9 @@ async fn thread_endpoint_returns_events_and_is_org_scoped() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let chat: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let chat_id = chat["id"].as_str().unwrap().to_string();
 
@@ -174,7 +182,9 @@ async fn thread_endpoint_returns_events_and_is_org_scoped() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let events = v["events"].as_array().unwrap();
     assert_eq!(events.len(), 1);
@@ -224,7 +234,17 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
     store
         .gateway()
         .upsert_route(
-            user.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000), None, &[],
+            user.org_id,
+            "ctx-model",
+            "openai",
+            true,
+            1.0,
+            2.0,
+            None,
+            false,
+            Some(64000),
+            None,
+            &[],
         )
         .await
         .unwrap();
@@ -248,7 +268,9 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
     // No turns yet: 0 tokens, model null, fallback window.
     let res = get_thread(chat.id).await;
     assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["context"]["tokens"], 0);
     assert_eq!(v["context"]["max"], 128000);
@@ -273,7 +295,9 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
             &ThreadEvent::AssistantMessage {
                 turn: 1,
                 step: 1,
-                blocks: vec![Block::Text { text: "answer".into() }],
+                blocks: vec![Block::Text {
+                    text: "answer".into(),
+                }],
                 usage: UsagePayload {
                     tokens_in: Some(5000),
                     tokens_out: Some(50),
@@ -286,7 +310,9 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
         .await
         .unwrap();
     let res = get_thread(chat.id).await;
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["context"]["tokens"], 5000);
     assert_eq!(v["context"]["max"], 64000);
@@ -301,7 +327,9 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
             &ThreadEvent::AssistantMessage {
                 turn: 1,
                 step: 2,
-                blocks: vec![Block::Text { text: "more".into() }],
+                blocks: vec![Block::Text {
+                    text: "more".into(),
+                }],
                 usage: UsagePayload {
                     tokens_in: None,
                     tokens_out: None,
@@ -314,7 +342,9 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
         .await
         .unwrap();
     let res = get_thread(chat.id).await;
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["context"]["tokens"], 0);
     assert_eq!(v["context"]["max"], 128000);

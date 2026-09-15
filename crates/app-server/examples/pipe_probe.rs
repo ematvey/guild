@@ -67,11 +67,7 @@ fn main() {
     println!("[probe] write-ok at {:?}", t0.elapsed());
 
     match rx.recv_timeout(Duration::from_secs(30)) {
-        Ok(l) => println!(
-            "[probe] RESPONSE at {:?}: {}",
-            t0.elapsed(),
-            l.trim()
-        ),
+        Ok(l) => println!("[probe] RESPONSE at {:?}: {}", t0.elapsed(), l.trim()),
         Err(_) => println!("[probe] TIMEOUT: no response in 30s <<< WEDGE"),
     }
 }

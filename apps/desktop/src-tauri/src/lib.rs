@@ -28,7 +28,11 @@ pub fn ipc_trace(event: &str, detail: &str) {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let path = std::env::temp_dir().join("guild-rpc.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = writeln!(f, "{ts} {event} {detail}");
     }
 }
@@ -244,7 +248,11 @@ impl GuildState {
 fn machine_name() -> String {
     std::env::var("COMPUTERNAME")
         .ok()
-        .or_else(|| std::fs::read_to_string("/etc/hostname").ok().map(|s| s.trim().to_string()))
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "guild-machine".to_string())
 }
@@ -266,12 +274,20 @@ fn qenc(s: &str) -> String {
 
 /// The server link task: keeps exactly one standing connection (events
 /// stream with machine params) while a session + machine identity exist.
-/// Heartbeats (upsert) run independently of the stream so a stream flap
-/// never unregisters a running app. Tool frames for this machine are
-/// executed locally and their results POSTed back.
+/// The heartbeat (upsert) task runs INDEPENDENTLY of the stream so a flap
+/// — the link stream dies and reconnects every few minutes behind
+/// Cloudflare — never takes the machine offline; the server's TTL is the
+/// only offline signal. Tool frames for this machine are executed locally
+/// and their results POSTed back.
 async fn app_link_task(state: Arc<GuildState>, app: AppHandle) {
     let mut last_cfg: Option<(String, String, String)> = None; // base, token, machine
     let mut was_connected = false;
+    // Heartbeat task: (base, token, machine_id, machine_name) of the
+    // current config; respawned when the config changes, aborted on exit.
+    let mut hb: Option<(
+        tokio::task::JoinHandle<()>,
+        (String, String, String, String),
+    )> = None;
     loop {
         let Some((base, token, machine_id, machine_name)) = state.link_config() else {
             if was_connected {
@@ -279,9 +295,36 @@ async fn app_link_task(state: Arc<GuildState>, app: AppHandle) {
                 let _ = app.emit("app-presence", serde_json::json!({ "connected": false }));
             }
             last_cfg = None;
+            if let Some((t, _)) = hb.take() {
+                t.abort();
+            }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             continue;
         };
+        // Keep the heartbeat task alive across stream flaps: respawn it only
+        // when the link config (server, session, machine) changes.
+        match &hb {
+            Some((_, cfg)) if cfg.0 == base && cfg.1 == token && cfg.2 == machine_id => {}
+            _ => {
+                if let Some((t, _)) = hb.take() {
+                    t.abort();
+                }
+                hb = Some((
+                    tokio::spawn(heartbeat_task(
+                        base.clone(),
+                        token.clone(),
+                        machine_id.clone(),
+                        machine_name.clone(),
+                    )),
+                    (
+                        base.clone(),
+                        token.clone(),
+                        machine_id.clone(),
+                        machine_name.clone(),
+                    ),
+                ));
+            }
+        }
         let changed = last_cfg.as_ref() != Some(&(base.clone(), token.clone(), machine_id.clone()));
         if changed {
             // New session or identity: drop the mirrors (the server replays
@@ -335,76 +378,92 @@ async fn link_once(
         return Err(format!("stream connect: HTTP {}", res.status()));
     }
 
-    // Heartbeat (upsert): liveness is heartbeat-based — the stream dropping
-    // must not unregister a running app. Runs while this connection lives.
-    let hb_client = client.clone();
-    let hb_base = base.to_string();
-    let hb_token = token.to_string();
-    let hb_mid = machine_id.to_string();
-    let hb_name = machine_name.to_string();
-    let hb = tokio::spawn(async move {
-        loop {
-            let _ = hb_client
-                .post(format!("{}/api/v1/machines/heartbeat", hb_base.trim_end_matches('/')))
-                .bearer_auth(&hb_token)
-                .json(&serde_json::json!({ "machine_id": hb_mid, "machine_name": hb_name }))
-                .send()
-                .await;
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        }
-    });
+    // Liveness rides the independent heartbeat task in `app_link_task` —
+    // never on this stream: the link flaps behind Cloudflare every few
+    // minutes, and a flap must not unregister a running app.
 
     let _ = app.emit("app-presence", serde_json::json!({ "connected": true }));
     ipc_trace("link", "stream connected");
 
-    // Read the SSE body: split into events on blank lines.
+    // Read the SSE body: split into events on blank lines. A STALL GUARD
+    // wraps the read: the server sends keepalives every ~30s, so 90s of
+    // silence means the connection is a zombie (a proxy swap kept it open
+    // server-side but stopped forwarding — observed behind Cloudflare on
+    // server redeploys). Break and let the link loop reconnect.
     use futures::StreamExt as _;
     let mut stream = res.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
     let mut result = Ok(());
-    while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(bytes) => {
-                buf.extend_from_slice(&bytes);
-                while let Some(pos) = find_blank_line(&buf) {
-                    let event_text = String::from_utf8_lossy(&buf[..pos]).into_owned();
-                    buf.drain(..pos + 2);
-                    let event_text = String::from_utf8_lossy(&buf[..pos]).into_owned();
-                    buf.drain(..pos + 2);
-                    // Route by SSE event name: "app" frames are the fan-out
-                    // bus (tool execution + webview mirror); "chat_status"
-                    // is sidebar-only state forwarded verbatim (no seq
-                    // watermark — it is idempotent, not conversation
-                    // content). Anything else (org events) has no in-app
-                    // consumer yet.
-                    match sse_event_name(&event_text).unwrap_or("app") {
-                        "app" => {
-                            if let Some(data) = sse_data(&event_text) {
-                                if let Err(e) = handle_app_frame(state, app, &client, base, token, machine_id, &data).await {
-                                    ipc_trace("link", &format!("frame error: {e}"));
-                                }
-                            }
-                        }
-                        "chat_status" => {
-                            if let Some(data) = sse_data(&event_text) {
-                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
-                                    let _ = app.emit("chat-status", v);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+    loop {
+        let next = tokio::time::timeout(std::time::Duration::from_secs(90), stream.next());
+        let chunk = match next.await {
+            Err(_) => {
+                result = Err("stream stalled: no bytes for 90s".to_string());
+                break;
             }
-            Err(e) => {
+            Ok(None) => break,
+            Ok(Some(Err(e))) => {
                 result = Err(format!("stream read: {e}"));
                 break;
             }
+            Ok(Some(Ok(bytes))) => bytes,
+        };
+        {
+            buf.extend_from_slice(&chunk);
+            while let Some(pos) = find_blank_line(&buf) {
+                let event_text = String::from_utf8_lossy(&buf[..pos]).into_owned();
+                buf.drain(..pos + 2);
+                // Route by SSE event name: "app" frames are the fan-out
+                // bus (tool execution + webview mirror); "chat_status"
+                // is sidebar-only state forwarded verbatim (no seq
+                // watermark — it is idempotent, not conversation
+                // content). Anything else (org events) has no in-app
+                // consumer yet.
+                match sse_event_name(&event_text).unwrap_or("app") {
+                    "app" => {
+                        if let Some(data) = sse_data(&event_text) {
+                            if let Err(e) = handle_app_frame(
+                                state, app, &client, base, token, machine_id, &data,
+                            )
+                            .await
+                            {
+                                ipc_trace("link", &format!("frame error: {e}"));
+                            }
+                        }
+                    }
+                    "chat_status" => {
+                        if let Some(data) = sse_data(&event_text) {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
+                                let _ = app.emit("chat-status", v);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
     }
-    hb.abort();
     let _ = app.emit("app-stream-reconnected", serde_json::json!({}));
     result
+}
+
+/// The independent liveness heartbeat: POSTs every 5s while this link
+/// config is current. Owned by `app_link_task` (respawned on config
+/// change, aborted on exit) — deliberately NOT tied to the stream, whose
+/// connection flaps behind proxies. The first beat fires immediately so a
+/// freshly started app registers without waiting for the interval.
+async fn heartbeat_task(base: String, token: String, machine_id: String, machine_name: String) {
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/v1/machines/heartbeat", base.trim_end_matches('/'));
+    loop {
+        let _ = client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "machine_id": machine_id, "machine_name": machine_name }))
+            .send()
+            .await;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
 }
 
 fn find_blank_line(buf: &[u8]) -> Option<usize> {
@@ -419,7 +478,10 @@ fn find_blank_line(buf: &[u8]) -> Option<usize> {
 fn sse_event_name(event_text: &str) -> Option<&str> {
     event_text
         .lines()
-        .find_map(|l| l.strip_prefix("event: ").or_else(|| l.strip_prefix("event:")))
+        .find_map(|l| {
+            l.strip_prefix("event: ")
+                .or_else(|| l.strip_prefix("event:"))
+        })
         .map(|s| s.trim())
 }
 
@@ -490,7 +552,9 @@ async fn handle_app_frame(
             let token = token.to_string();
             let chat = chat_id.clone();
             tokio::spawn(async move {
-                if let Err(e) = execute_tool(&st, &client, &base, &token, &chat, &call_id, &name, &args).await {
+                if let Err(e) =
+                    execute_tool(&st, &client, &base, &token, &chat, &call_id, &name, &args).await
+                {
                     ipc_trace("tool", &format!("{name} {call_id} failed: {e}"));
                 }
             });
@@ -603,9 +667,7 @@ pub mod commands {
             changed
         };
         if changed {
-            state
-                .link_epoch
-                .fetch_add(1, Ordering::SeqCst);
+            state.link_epoch.fetch_add(1, Ordering::SeqCst);
         }
         Ok(())
     }
@@ -661,7 +723,9 @@ pub mod commands {
     ) -> Result<u64, String> {
         let engine = {
             let guard = state.cell.lock().unwrap();
-            guard.clone().ok_or_else(|| "engine not started".to_string())?
+            guard
+                .clone()
+                .ok_or_else(|| "engine not started".to_string())?
         };
         let id = state.next_id.fetch_add(1, Ordering::SeqCst);
         ipc_trace("rpc-start", &format!("id={id} method={method}"));
@@ -670,10 +734,7 @@ pub mod commands {
             .lock()
             .unwrap()
             .insert(id, std::time::Instant::now());
-        let mut w = engine
-            .writer
-            .lock()
-            .unwrap();
+        let mut w = engine.writer.lock().unwrap();
         if let Err(e) = w
             .write_all(envelope(id, &method, &params).to_string().as_bytes())
             .and_then(|_| w.write_all(b"\n"))
@@ -698,7 +759,9 @@ pub mod commands {
             let guard = state.cell.lock().unwrap();
             guard.clone()
         };
-        let Some(engine) = engine else { return Ok(vec![]) };
+        let Some(engine) = engine else {
+            return Ok(vec![]);
+        };
         let now = std::time::Instant::now();
         {
             let mut sub = engine.submitted.lock().unwrap();
@@ -710,9 +773,9 @@ pub mod commands {
                 .collect();
             for id in stale {
                 sub.remove(&id);
-                results
-                    .entry(id)
-                    .or_insert_with(|| serde_json::json!({"id": id, "error": {"message": "engine timed out"}}));
+                results.entry(id).or_insert_with(
+                    || serde_json::json!({"id": id, "error": {"message": "engine timed out"}}),
+                );
                 ipc_trace("rpc-timeout", &format!("id={id}"));
             }
         }
@@ -762,7 +825,9 @@ pub mod commands {
     ) -> Result<Value, String> {
         let engine = {
             let guard = state.cell.lock().unwrap();
-            guard.clone().ok_or_else(|| "engine not started".to_string())?
+            guard
+                .clone()
+                .ok_or_else(|| "engine not started".to_string())?
         };
         let id = state.next_id.fetch_add(1, Ordering::SeqCst);
         let t0 = std::time::Instant::now();

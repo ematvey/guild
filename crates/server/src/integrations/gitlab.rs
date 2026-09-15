@@ -2,7 +2,10 @@
 //! `https://gitlab.com/api/v4` (self-hosted instances). Secret: `token` —
 //! sent as the `PRIVATE-TOKEN` header.
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
+use super::{
+    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
+    ToolOutcome,
+};
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
@@ -129,6 +132,7 @@ impl Integration for Gitlab {
                     },
                     "required": []
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "list_issues".into(),
@@ -144,6 +148,7 @@ impl Integration for Gitlab {
                     },
                     "required": ["project"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "list_mrs".into(),
@@ -158,6 +163,7 @@ impl Integration for Gitlab {
                     },
                     "required": ["project"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "create_issue".into(),
@@ -171,6 +177,7 @@ impl Integration for Gitlab {
                     },
                     "required": ["project", "title"]
                 }),
+                kind: Default::default(),
             },
             api_tool_spec("GitLab"),
         ])
@@ -196,12 +203,11 @@ impl Integration for Gitlab {
                     let search = args["search"].as_str().unwrap_or("");
                     let per_page = args["per_page"].as_u64().unwrap_or(20).clamp(1, 50);
                     let per_page = per_page.to_string();
-                    let mut req = request(&base, &tok, "/projects")
-                        .query(&[
-                            ("membership", "true"),
-                            ("order_by", "last_activity_at"),
-                            ("per_page", per_page.as_str()),
-                        ]);
+                    let mut req = request(&base, &tok, "/projects").query(&[
+                        ("membership", "true"),
+                        ("order_by", "last_activity_at"),
+                        ("per_page", per_page.as_str()),
+                    ]);
                     if !search.is_empty() {
                         req = req.query(&[("search", search)]);
                     }
@@ -230,7 +236,10 @@ impl Integration for Gitlab {
                     if content.is_empty() {
                         content = "No projects.".to_string();
                     }
-                    Ok(ToolOutcome { content, meta: None })
+                    Ok(ToolOutcome {
+                        content,
+                        meta: None,
+                    })
                 }
                 "list_issues" => {
                     let project = args["project"]
@@ -254,16 +263,20 @@ impl Integration for Gitlab {
                         let title = issue["title"].as_str().unwrap_or("");
                         let state = issue["state"].as_str().unwrap_or("?");
                         let author = issue["author"]["username"].as_str().unwrap_or("?");
-                        content
-                            .push_str(&format!("!{iid} [{state}] {title} (@{author})\n"));
+                        content.push_str(&format!("!{iid} [{state}] {title} (@{author})\n"));
                     }
                     if content.is_empty() {
                         content = "No issues.".to_string();
                     }
-                    Ok(ToolOutcome { content, meta: None })
+                    Ok(ToolOutcome {
+                        content,
+                        meta: None,
+                    })
                 }
                 "list_mrs" => {
-                    let project = args["project"].as_str().ok_or("list_mrs requires project")?;
+                    let project = args["project"]
+                        .as_str()
+                        .ok_or("list_mrs requires project")?;
                     let state = args["state"].as_str().unwrap_or("opened");
                     let per_page = args["per_page"].as_u64().unwrap_or(20).clamp(1, 50);
                     let per_page = per_page.to_string();
@@ -291,13 +304,18 @@ impl Integration for Gitlab {
                     if content.is_empty() {
                         content = "No merge requests.".to_string();
                     }
-                    Ok(ToolOutcome { content, meta: None })
+                    Ok(ToolOutcome {
+                        content,
+                        meta: None,
+                    })
                 }
                 "create_issue" => {
                     let project = args["project"]
                         .as_str()
                         .ok_or("create_issue requires project")?;
-                    let title = args["title"].as_str().ok_or("create_issue requires title")?;
+                    let title = args["title"]
+                        .as_str()
+                        .ok_or("create_issue requires title")?;
                     let mut payload = serde_json::json!({ "title": title });
                     if let Some(d) = args["description"].as_str() {
                         payload["description"] = serde_json::Value::String(d.to_string());

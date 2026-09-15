@@ -52,13 +52,19 @@ async fn edit_file_uniqueness_rules() {
     std::fs::write(dir.join("a.txt"), "alpha\nbeta\nalpha\n").unwrap();
     // not found
     let err = EditFile
-        .run(&dir, json!({"path": "a.txt", "oldText": "zzz", "newText": "q"}))
+        .run(
+            &dir,
+            json!({"path": "a.txt", "oldText": "zzz", "newText": "q"}),
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("not found"));
     // ambiguous
     let err = EditFile
-        .run(&dir, json!({"path": "a.txt", "oldText": "alpha", "newText": "q"}))
+        .run(
+            &dir,
+            json!({"path": "a.txt", "oldText": "alpha", "newText": "q"}),
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("2 times"));
@@ -77,8 +83,6 @@ async fn edit_file_uniqueness_rules() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
-
-
 
 #[tokio::test]
 async fn execute_captures_and_times_out() {
@@ -108,7 +112,6 @@ async fn execute_captures_and_times_out() {
     assert!(err.to_string().contains("escapes"));
     std::fs::remove_dir_all(&dir).unwrap();
 }
-
 
 #[tokio::test]
 async fn registry_validates_schema_before_running() {
@@ -144,7 +147,10 @@ async fn escape_rejection_consistent_across_fs_tools() {
     for (tool, args) in [
         ("read_file", json!({"path": "../../etc/passwd"})),
         ("write_file", json!({"path": "../../etc/x", "content": "x"})),
-        ("edit_file", json!({"path": "../x", "oldText": "a", "newText": "b"})),
+        (
+            "edit_file",
+            json!({"path": "../x", "oldText": "a", "newText": "b"}),
+        ),
     ] {
         let err = ToolRegistry::builtins()
             .run(tool, &dir, args)
@@ -160,11 +166,11 @@ async fn read_file_attaches_images_as_data_uris() {
     let dir = scratch("image");
     // 1x1 png
     let png: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
-        0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-        0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78,
-        0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
-        0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
     std::fs::write(dir.join("pic.png"), png).unwrap();
     let out = ReadFile
@@ -181,7 +187,11 @@ async fn read_file_attaches_images_as_data_uris() {
         .run(&dir, json!({"path": "clip.mp4"}))
         .await
         .unwrap();
-    assert!(out.output_for_model.contains("binary file"), "{}", out.output_for_model);
+    assert!(
+        out.output_for_model.contains("binary file"),
+        "{}",
+        out.output_for_model
+    );
     assert!(out.images.is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -195,7 +205,10 @@ async fn read_file_offset_limit_paging() {
         .run(&dir, json!({"path": "a.txt", "offset": 10, "limit": 5}))
         .await
         .unwrap();
-    assert_eq!(out.output_for_model, "line 10\nline 11\nline 12\nline 13\nline 14");
+    assert_eq!(
+        out.output_for_model,
+        "line 10\nline 11\nline 12\nline 13\nline 14"
+    );
     let meta = out.meta.unwrap();
     assert_eq!(meta["offset"], 10);
     assert_eq!(meta["limit"], 5);
@@ -221,9 +234,16 @@ fn registry_specs_match_client_tool_specs() {
     let declared = protocol::api::client_tool_specs();
     let reg = ToolRegistry::builtins();
     let actual = reg.specs();
-    assert_eq!(actual, declared, "registry specs drifted from protocol declaration");
+    assert_eq!(
+        actual, declared,
+        "registry specs drifted from protocol declaration"
+    );
     for s in &declared {
-        assert!(reg.get(&s.name).is_some(), "registry missing tool {}", s.name);
+        assert!(
+            reg.get(&s.name).is_some(),
+            "registry missing tool {}",
+            s.name
+        );
     }
 }
 

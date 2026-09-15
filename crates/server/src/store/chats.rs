@@ -133,6 +133,53 @@ impl<'a> ChatStore<'a> {
         .map_err(Into::into)
     }
 
+    /// Sets (or clears, with `None`) the chat's approval-mode override —
+    /// the composer's per-chat policy; `{"default": "ask"|"allow"|"never"}`
+    /// replaces the user-level default for this chat. Owner-scoped.
+    pub async fn set_approval(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+        chat_id: Uuid,
+        policy: Option<&serde_json::Value>,
+    ) -> Result<(), ApiError> {
+        let n = sqlx::query(
+            "UPDATE chats SET approval = $4 WHERE org_id = $1 AND id = $2 AND user_id = $3",
+        )
+        .bind(org_id)
+        .bind(chat_id)
+        .bind(user_id)
+        .bind(policy)
+        .execute(self.pool)
+        .await
+        .map_err(Into::<ApiError>::into)?
+        .rows_affected();
+        if n == 0 {
+            return Err(ApiError::not_found("no such chat"));
+        }
+        Ok(())
+    }
+
+    /// The chat's approval-mode override (owner-scoped; None = account
+    /// default applies).
+    pub async fn approval(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+        chat_id: Uuid,
+    ) -> Result<Option<serde_json::Value>, ApiError> {
+        sqlx::query_scalar::<_, Option<serde_json::Value>>(
+            "SELECT approval FROM chats WHERE org_id = $1 AND id = $3 AND user_id = $2",
+        )
+        .bind(org_id)
+        .bind(user_id)
+        .bind(chat_id)
+        .fetch_optional(self.pool)
+        .await
+        .map(|o| o.flatten())
+        .map_err(|e| ApiError::internal(format!("chat approval read failed: {e:?}")))
+    }
+
     /// Flips the chat's generating flag and notifies the status channel in
     /// the same transaction, so no observer ever sees the flag and the
     /// notification disagree. No-op (and silent) when the flag already
@@ -256,7 +303,11 @@ mod tests {
         assert_eq!(owned.id, chat.id);
 
         // Another member of the same org does not — 404, not a leak.
-        let err = store.chats().get_chat(org, chat.id, &bob).await.unwrap_err();
+        let err = store
+            .chats()
+            .get_chat(org, chat.id, &bob)
+            .await
+            .unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::NOT_FOUND);
 
         // Admins can access any chat in their org.
@@ -309,16 +360,26 @@ mod tests {
             content: "hi".into(),
             attachments: vec![],
         };
-        store.thread().append_event(chat.id, &user_ev).await.unwrap();
+        store
+            .thread()
+            .append_event(chat.id, &user_ev)
+            .await
+            .unwrap();
         let asst = |turn: u32| protocol::api::ThreadEvent::AssistantMessage {
             turn,
             step: 0,
-            blocks: vec![protocol::api::Block::Text { text: "reply".into() }],
+            blocks: vec![protocol::api::Block::Text {
+                text: "reply".into(),
+            }],
             usage: Default::default(),
             model: "m".into(),
             interrupted: None,
         };
-        store.thread().append_event(chat.id, &asst(1)).await.unwrap();
+        store
+            .thread()
+            .append_event(chat.id, &asst(1))
+            .await
+            .unwrap();
         let row = &list().await.unwrap()[0];
         assert!(row.generating);
         assert!(!row.unread);
@@ -342,7 +403,11 @@ mod tests {
         store.chats().mark_read(org, chat.id, &alice).await.unwrap();
         let row = &list().await.unwrap()[0];
         assert!(!row.unread);
-        store.thread().append_event(chat.id, &asst(2)).await.unwrap();
+        store
+            .thread()
+            .append_event(chat.id, &asst(2))
+            .await
+            .unwrap();
         let row = &list().await.unwrap()[0];
         assert!(row.unread);
         store.chats().mark_read(org, chat.id, &alice).await.unwrap();
@@ -351,7 +416,12 @@ mod tests {
         // markers are per user; a foreign member cannot mark someone
         // else's chat read (same owner gate as every chat read)
         assert_eq!(
-            store.chats().mark_read(org, chat.id, &bob).await.unwrap_err().status,
+            store
+                .chats()
+                .mark_read(org, chat.id, &bob)
+                .await
+                .unwrap_err()
+                .status,
             axum::http::StatusCode::NOT_FOUND
         );
         assert!(list().await.unwrap()[0].unread == false);

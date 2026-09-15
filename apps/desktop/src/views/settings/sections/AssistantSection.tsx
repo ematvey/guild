@@ -1,23 +1,76 @@
 //! Assistant section of the settings window: the org's admin-configured
-//! assistant system prompt. The admin's text replaces the persona sentence
-//! ("You are a helpful assistant.") that starts every chat's system prompt;
-//! the server always appends its own operational instructions (client-tool
-//! behavior, web-search guidance, workspace directory), so a whimsical
-//! persona cannot break tool binding. Per-org, admin-only (migration 0028).
+//! assistant system prompt and the "Approve for me" auto-approval policy
+//! prompt. The admin's system-prompt text replaces the persona sentence that
+//! starts every chat's system prompt; the server always appends its own
+//! operational instructions (client-tool behavior, web-search guidance,
+//! workspace directory), so a whimsical persona cannot break tool binding.
+//! The approval-policy prompt is the instruction the safety judge runs under
+//! when a chat's approval mode is "Approve for me". Both fields always show
+//! the current effective text filled in (the default as the value, not a
+//! placeholder); saving writes the box, resetting clears the override and
+//! restores the default text. Per-org, admin-only (migration 0028 / org KV).
 
 import { useEffect, useState } from "react";
 import { Button } from "@guild/ui/components/button";
 import { Textarea } from "@guild/ui/components/textarea";
 import { toast } from "sonner";
-import { getAssistantPrompt, setAssistantPrompt } from "../../../transport";
+import {
+  getApprovalPolicyPrompt,
+  getAssistantPrompt,
+  setApprovalPolicyPrompt,
+  setAssistantPrompt,
+} from "../../../transport";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 
-const DEFAULT_PROMPT =
+const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant. Answer concisely and help with the user's tasks, including software work when asked.";
 
+type Loaded = { custom: string | null; fallback: string };
+
 export function AssistantSection() {
+  return (
+    <div className="space-y-5">
+      <PageHeader
+        title="Assistant"
+        description={`Prompts every chat in this organization runs with. The server always adds its own tool and workspace instructions after the system prompt; the approval policy is the judge instruction behind the chat picker's "Approve for me" mode. Fields show the current effective text; edit and save to override, reset to restore the default.`}
+      />
+      <PromptField
+        label="System prompt"
+        load={async () => ({ custom: await getAssistantPrompt(), fallback: DEFAULT_SYSTEM_PROMPT })}
+        save={setAssistantPrompt}
+        fallbackNote="Currently using the default prompt."
+        rows={8}
+      />
+      <PromptField
+        label={"Approval policy prompt (\"Approve for me\" mode)"}
+        load={async () => {
+          const v = await getApprovalPolicyPrompt();
+          return { custom: v.prompt, fallback: v.default };
+        }}
+        save={setApprovalPolicyPrompt}
+        fallbackNote="Currently using the default approval policy."
+        rows={10}
+      />
+    </div>
+  );
+}
+
+function PromptField({
+  label,
+  load,
+  save,
+  fallbackNote,
+  rows,
+}: {
+  label: string;
+  load: () => Promise<Loaded>;
+  save: (value: string) => Promise<void>;
+  fallbackNote: string;
+  rows: number;
+}) {
   const [prompt, setPrompt] = useState("");
+  const [fallbackText, setFallbackText] = useState("");
   const [isCustom, setIsCustom] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -28,26 +81,31 @@ export function AssistantSection() {
     setError(null);
     setSaved(false);
     setLoading(true);
-    getAssistantPrompt()
-      .then((p) => {
-        setPrompt(p ?? "");
-        setIsCustom(p != null);
+    load()
+      .then((r) => {
+        // The field renders the CURRENT effective text filled in: the
+        // server's default fills the box when no custom value is stored.
+        setFallbackText(r.fallback);
+        setPrompt(r.custom ?? r.fallback);
+        setIsCustom(r.custom != null);
       })
       .catch(() => setError("failed to load the current prompt"))
       .finally(() => setLoading(false));
+    // load is stable per field instance
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const save = async (value: string) => {
+  const persist = async (value: string, markCustom: boolean) => {
     if (saving) return;
     setError(null);
     setSaved(false);
     setSaving(true);
     try {
-      await setAssistantPrompt(value);
+      await save(value);
       setPrompt(value);
-      setIsCustom(value.trim().length > 0);
+      setIsCustom(markCustom);
       setSaved(true);
-      toast.success("Assistant prompt saved");
+      toast.success(`${label} saved`);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {
       const msg = (e as Error).message;
@@ -58,42 +116,53 @@ export function AssistantSection() {
     }
   };
 
+  // Reset clears the stored override and shows the default text again — the
+  // box keeps displaying the effective prompt as filled text.
+  const reset = async () => {
+    if (saving) return;
+    setError(null);
+    setSaved(false);
+    setSaving(true);
+    try {
+      await save("");
+      setPrompt(fallbackText);
+      setIsCustom(false);
+      setSaved(true);
+      toast.success(`${label} reset`);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      toast.error("Reset failed", { description: msg });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="space-y-5">
-      <PageHeader
-        title="Assistant"
-        description="The system prompt every chat in this organization starts with. The server always adds its own tool and workspace instructions after it; leave empty to use the default."
+    <Field label={`${label} ${isCustom ? "(custom)" : "(default)"}`}>
+      <Textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        rows={rows}
+        disabled={loading || saving}
+        className="font-mono text-xs"
       />
-      <Field label={`System prompt ${isCustom ? "(custom)" : "(default)"}`}>
-        <Textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          rows={8}
-          disabled={loading || saving}
-          placeholder={DEFAULT_PROMPT}
-          className="font-mono text-xs"
-        />
-        {!isCustom && (
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            Currently using the default prompt.
-          </p>
-        )}
-      </Field>
-      <div className="flex items-center gap-2">
-        <Button size="sm" onClick={() => save(prompt)} disabled={saving || loading}>
-          {saving ? "Saving…" : "Save"}
-        </Button>
+      {!isCustom && <p className="mt-1.5 text-xs text-muted-foreground">{fallbackNote}</p>}
+      <div className="mt-2 flex items-center gap-2">
         <Button
           size="sm"
-          variant="outline"
-          onClick={() => save("")}
-          disabled={saving || loading || (!isCustom && prompt.length === 0)}
+          onClick={() => persist(prompt.trim().length > 0 ? prompt : "", true)}
+          disabled={saving || loading || prompt.trim().length === 0}
         >
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        <Button size="sm" variant="outline" onClick={reset} disabled={saving || loading || !isCustom}>
           Reset to default
         </Button>
         {saved && <span className="text-xs text-muted-foreground">saved</span>}
         {error && <span className="text-xs text-destructive">{error}</span>}
       </div>
-    </div>
+    </Field>
   );
 }

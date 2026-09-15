@@ -100,10 +100,7 @@ impl CloudClient {
 
     /// Validates the stored token and returns the user (GET /api/v1/auth/me).
     pub async fn me(&self) -> Result<UserInfo, CloudError> {
-        let url = format!(
-            "{}/api/v1/auth/me",
-            self.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/api/v1/auth/me", self.base_url.trim_end_matches('/'));
         let resp = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -117,10 +114,7 @@ impl CloudClient {
             return Err(CloudError::Unauthorized);
         }
         if !resp.status().is_success() {
-            return Err(CloudError::Request(format!(
-                "me failed: {}",
-                resp.status()
-            )));
+            return Err(CloudError::Request(format!("me failed: {}", resp.status())));
         }
         let me: UserInfo = resp
             .json()
@@ -189,7 +183,7 @@ impl CloudClient {
             // plain chat answers no client tools: declaring them would
             // suspend the turn until the server-side tool timeout
             client_tools: false,
-                attachment_ids: Vec::new(),
+            attachment_ids: Vec::new(),
             project_dir: None,
         })
         .await
@@ -231,9 +225,7 @@ impl CloudClient {
                             {
                                 None
                             } else {
-                                Some(Err(CloudError::Request(format!(
-                                    "bad stream frame: {e}"
-                                ))))
+                                Some(Err(CloudError::Request(format!("bad stream frame: {e}"))))
                             }
                         }
                     },
@@ -263,6 +255,7 @@ impl CloudClient {
             is_error,
             meta,
             images: Vec::new(),
+            kind: None,
         };
         let url = format!(
             "{}/api/v1/chats/{chat_id}/thread",

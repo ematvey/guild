@@ -24,7 +24,10 @@ fn temp_socket() -> PathBuf {
 static ATTACH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn temp_socket_attach() -> PathBuf {
-    std::env::temp_dir().join(format!("guild-daemon-attach-test-{}.sock", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "guild-daemon-attach-test-{}.sock",
+        std::process::id()
+    ))
 }
 
 fn req(id: u64, method: &str, params: Value) -> String {
@@ -39,9 +42,9 @@ fn attach_fails_cleanly_without_the_app() {
     let path = temp_socket_attach();
     let _ = std::fs::remove_file(&path);
     std::env::set_var("GUILD_DAEMON_SOCKET", &path);
-    let err = guild_app_server::daemon::attach(std::path::Path::new(
-        env!("CARGO_BIN_EXE_guild-app-server"),
-    ))
+    let err = guild_app_server::daemon::attach(std::path::Path::new(env!(
+        "CARGO_BIN_EXE_guild-app-server"
+    )))
     .err()
     .expect("nothing hosts the socket");
     assert!(err.to_string().contains("not running"), "{err}");
@@ -166,7 +169,10 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
 
     // 2. shared state: A mutates, B observes
     let mut b = Client::connect(&path);
-    a.call("agent.policy.set", json!({"tool": "execute", "policy": "allow"}));
+    a.call(
+        "agent.policy.set",
+        json!({"tool": "execute", "policy": "allow"}),
+    );
     let got = b.call("agent.policy.get", json!({}));
     assert_eq!(got["result"]["overrides"]["execute"], "allow");
 
@@ -188,7 +194,6 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
         .expect("daemon result");
     let _ = std::fs::remove_file(&path);
 }
-
 
 /// Regression: the daemon broadcasts events to all connections, so a fresh
 /// connection can receive an event before its hello response. The handshake
@@ -224,11 +229,7 @@ fn handshake_skips_leading_event_frames() {
         std::thread::sleep(Duration::from_millis(300));
     });
     let conn = std::os::unix::net::UnixStream::connect(&sock).unwrap();
-    let pair = Pair(
-        Box::new(conn.try_clone().unwrap()),
-        Box::new(conn),
-        None,
-    );
+    let pair = Pair(Box::new(conn.try_clone().unwrap()), Box::new(conn), None);
     let pair = guild_app_server::daemon::handshake(pair).expect("handshake survives the event");
     drop(pair);
     handle.join().unwrap();

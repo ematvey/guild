@@ -189,7 +189,9 @@ async fn provider_crud_roundtrip() {
     .await
     .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let slug: String = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["provider"]
         .as_str()
         .unwrap()
@@ -219,14 +221,18 @@ async fn provider_crud_roundtrip() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 
     // list carries name + protocol
-    let res = req(app(), "GET", "/api/v1/admin/gateway/providers", json!({})).await.unwrap();
+    let res = req(app(), "GET", "/api/v1/admin/gateway/providers", json!({}))
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let providers: Vec<serde_json::Value> =
-        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["providers"]
-            .as_array()
-            .unwrap()
-            .clone();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let providers: Vec<serde_json::Value> = serde_json::from_slice::<serde_json::Value>(&body)
+        .unwrap()["providers"]
+        .as_array()
+        .unwrap()
+        .clone();
     let row = providers
         .iter()
         .find(|p| p["provider"] == slug)
@@ -248,7 +254,19 @@ async fn provider_crud_roundtrip() {
     // a route on the provider resolves with the updated protocol + old key
     store
         .gateway()
-        .upsert_route(fs.org_id, "gw-model", &slug, true, 1.0, 1.0, None, false, None, None, &[])
+        .upsert_route(
+            fs.org_id,
+            "gw-model",
+            &slug,
+            true,
+            1.0,
+            1.0,
+            None,
+            false,
+            None,
+            None,
+            &[],
+        )
         .await
         .unwrap();
     let route = store
@@ -258,7 +276,10 @@ async fn provider_crud_roundtrip() {
         .unwrap();
     assert_eq!(route.provider, slug);
     assert_eq!(route.protocol, "anthropic");
-    assert_eq!(route.api_key, "sk-gw", "blank key field keeps the stored key");
+    assert_eq!(
+        route.api_key, "sk-gw",
+        "blank key field keeps the stored key"
+    );
     assert_eq!(route.base_url, "https://gw2.example");
 
     // delete → the route no longer resolves (key_missing)
@@ -291,7 +312,17 @@ async fn route_context_window_roundtrip() {
     store
         .gateway()
         .upsert_route(
-            fs.org_id, "ctx-model", "openai", true, 1.0, 2.0, None, false, Some(64000), None, &[],
+            fs.org_id,
+            "ctx-model",
+            "openai",
+            true,
+            1.0,
+            2.0,
+            None,
+            false,
+            Some(64000),
+            None,
+            &[],
         )
         .await
         .unwrap();

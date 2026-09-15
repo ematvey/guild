@@ -52,12 +52,10 @@ impl Store {
         )
         .execute(pool)
         .await?;
-        sqlx::query(
-            "ALTER TABLE schema_history ADD COLUMN IF NOT EXISTS content_hash TEXT",
-        )
-        .execute(pool)
-        .await?;
-        const MIGRATIONS: [(&str, &str); 42] = [
+        sqlx::query("ALTER TABLE schema_history ADD COLUMN IF NOT EXISTS content_hash TEXT")
+            .execute(pool)
+            .await?;
+        const MIGRATIONS: [(&str, &str); 44] = [
             (
                 "0001_identity",
                 include_str!("../../migrations/0001_identity.sql"),
@@ -222,6 +220,14 @@ impl Store {
             (
                 "0042_chat_read_backfill",
                 include_str!("../../migrations/0042_chat_read_backfill.sql"),
+            ),
+            (
+                "0043_chat_approval",
+                include_str!("../../migrations/0043_chat_approval.sql"),
+            ),
+            (
+                "0044_approval_mode_codex",
+                include_str!("../../migrations/0044_approval_mode_codex.sql"),
             ),
         ];
         for (name, sql) in MIGRATIONS {
@@ -461,7 +467,11 @@ mod test_db {
             admin.close().await;
             let url = format!("{base}/{db_name}");
             let store = Self::connect(&url).await?;
-            Ok(TestDb { store, url, db_name })
+            Ok(TestDb {
+                store,
+                url,
+                db_name,
+            })
         }
     }
 }

@@ -4,4 +4,13 @@ export type Chat = { id: string, org_id: string, user_id: string, title?: string
 /**
  * Bound executor machine: machine tools run only there.
  */
-machine_id?: string, machine_label?: string, };
+machine_id?: string, machine_label?: string, 
+/**
+ * A generation is in flight (sidebar spinner). Defaults for old
+ * journals/clients.
+ */
+generating: boolean, 
+/**
+ * The reader has an unseen assistant turn (sidebar dot).
+ */
+unread: boolean, };

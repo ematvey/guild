@@ -19,7 +19,9 @@ pub fn socket_path() -> anyhow::Result<PathBuf> {
     }
     let dir = match dirs::runtime_dir() {
         Some(d) => d.join("guild"),
-        None => dirs::data_dir().context("no runtime or data dir")?.join("guild"),
+        None => dirs::data_dir()
+            .context("no runtime or data dir")?
+            .join("guild"),
     };
     Ok(dir.join("daemon.sock"))
 }
@@ -215,7 +217,11 @@ pub fn attach_with(bin: &Path, expected_build: Option<&str>) -> anyhow::Result<P
 /// Daemon main: binds `socket_path()`, restores the persisted session, and
 /// accepts until `daemon.shutdown`.
 pub async fn run_daemon() -> anyhow::Result<()> {
-    run_daemon_on(socket_path()?, crate::jsonrpc_loop::restored_session().await?).await
+    run_daemon_on(
+        socket_path()?,
+        crate::jsonrpc_loop::restored_session().await?,
+    )
+    .await
 }
 
 /// Daemon accept loop over an explicit endpoint (test seam). If another

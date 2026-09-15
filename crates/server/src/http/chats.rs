@@ -14,20 +14,68 @@ use uuid::Uuid;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/chats", axum::routing::post(create).get(list))
-        .route("/api/v1/chats/{id}/thread", axum::routing::get(thread).post(append_thread_event))
+        .route(
+            "/api/v1/chats/{id}/thread",
+            axum::routing::get(thread).post(append_thread_event),
+        )
         .route(
             "/api/v1/chats/{id}/machine",
             axum::routing::post(set_machine),
+        )
+        .route(
+            "/api/v1/chats/{id}/approval",
+            axum::routing::get(get_chat_approval).post(set_chat_approval),
         )
         .route(
             "/api/v1/chats/{id}/read",
             axum::routing::post(mark_chat_read),
         )
         .route("/api/v1/machines", axum::routing::get(machines))
-        .route(
-            "/api/v1/machines/heartbeat",
-            axum::routing::post(heartbeat),
-        )
+        .route("/api/v1/machines/heartbeat", axum::routing::post(heartbeat))
+}
+
+/// The chat's approval-mode override (the composer's per-chat policy).
+/// Shape: `{"default": "ask"|"allow"|"never"}` or `{"default": null}` —
+/// null/absent clears the override so the account-level policy applies.
+async fn get_chat_approval(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    tracing::info!(chat = %chat_id, "get_chat_approval entered");
+    let store = state.store().await?;
+    tracing::info!("get_chat_approval store ready");
+    let approval = store
+        .chats()
+        .approval(user.0.org_id, user.0.id, chat_id)
+        .await?;
+    Ok(Json(
+        json!({ "default": approval.and_then(|v| v["default"].as_str().map(str::to_string)) }),
+    ))
+}
+
+async fn set_chat_approval(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let mode = req["default"].as_str();
+    let policy = match mode {
+        None | Some("default") => None,
+        Some(m @ ("ask" | "approve_for_me" | "full_access")) => Some(json!({ "default": m })),
+        Some(other) => {
+            return Err(ApiError::bad_request(format!(
+                "unknown approval mode {other} — expected ask, approve_for_me, full_access, or default"
+            )));
+        }
+    };
+    let store = state.store().await?;
+    store
+        .chats()
+        .set_approval(user.0.org_id, user.0.id, chat_id, policy.as_ref())
+        .await?;
+    Ok(Json(json!({ "default": mode.filter(|m| *m != "default") })))
 }
 
 /// Executor heartbeat: desktop apps refresh their machine's liveness every
@@ -65,7 +113,10 @@ async fn mark_chat_read(
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().mark_read(user.0.org_id, chat_id, &user.0).await?;
+    store
+        .chats()
+        .mark_read(user.0.org_id, chat_id, &user.0)
+        .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -192,7 +243,10 @@ async fn thread(
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
     let events = store.thread().list_events(user.0.org_id, chat_id).await?;
     // Context-usage snapshot for the gauge (dsh-style filling gauge): tokens
     // in of the LATEST assistant turn vs. the model route's context window.
@@ -202,7 +256,10 @@ async fn thread(
     let mut tokens: i64 = 0;
     let mut model: Option<String> = None;
     for ev in events.iter().rev() {
-        if let ThreadEvent::AssistantMessage { usage, model: m, .. } = &ev.event {
+        if let ThreadEvent::AssistantMessage {
+            usage, model: m, ..
+        } = &ev.event
+        {
             tokens = i64::from(usage.tokens_in.unwrap_or(0));
             model = Some(m.clone());
             break;
@@ -234,7 +291,10 @@ async fn append_thread_event(
     Json(event): Json<ThreadEvent>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
     let event = match event {
         ThreadEvent::ToolResult { turn: 0, step, .. } => {
             let turn = store.thread().latest_turn(chat_id).await?.max(1);

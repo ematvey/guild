@@ -200,14 +200,30 @@ impl Message {
     }
 }
 
+/// Coarse tool category the UI renders natively: `web_search` and
+/// `web_browse` get native labels and cards regardless of which integration
+/// provides the tool; `generic` renders the bare tool name.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum ToolKind {
+    WebSearch,
+    WebBrowse,
+    #[default]
+    Generic,
+}
+
 /// Declared callable tool (JSON Schema parameters).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+    #[serde(default)]
+    pub kind: ToolKind,
 }
 
 /// One tool invocation requested by the model.
@@ -299,6 +315,10 @@ pub enum StreamEvent {
         name: String,
         arguments: String,
         executor: ToolExecutor,
+        /// Coarse category of the tool, for native UI labels. Client tools
+        /// and pre-kind frames carry none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<ToolKind>,
     },
     /// A tool call finished with its result (both executors).
     ToolCompleted {
@@ -326,7 +346,9 @@ pub enum StreamEvent {
     /// the current `reasoning` block of the in-flight assistant turn. On the
     /// attach catch-up path the FIRST frame after attaching carries the full
     /// buffer so far, not a delta.
-    ThinkingDelta { content: String },
+    ThinkingDelta {
+        content: String,
+    },
 }
 
 /// Who runs a tool call.
@@ -357,14 +379,22 @@ pub struct UsagePayload {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "ts", ts(export))]
 pub enum Block {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     /// Chain-of-thought reasoning. Persisted on the thread and replayed to
     /// the model; never dropped from context.
-    Reasoning { text: String },
+    Reasoning {
+        text: String,
+    },
     /// A tool invocation requested by the model. `arguments` is the RAW JSON
     /// string exactly as the model produced it — never parse/reserialize on
     /// the persist path.
-    ToolCall { id: String, name: String, arguments: String },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: String,
+    },
 }
 
 /// A file attached to a user turn (chip metadata: the bytes live in object
@@ -431,6 +461,10 @@ pub enum ThreadEvent {
         /// at persist time. Empty on old events (serde default).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<String>,
+        /// Coarse category of the tool (the spec's `kind`), so the UI can
+        /// label the frame natively. Absent on old events (serde default).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<ToolKind>,
     },
     /// Compaction checkpoint (phase 3): the model-facing history before
     /// this event is replaced by `summary` (plus a verbatim tail of
@@ -482,6 +516,7 @@ pub fn client_tool_specs() -> Vec<ToolSpec> {
                 "properties": properties,
                 "required": required.iter().map(|r| serde_json::Value::from(*r)).collect::<Vec<serde_json::Value>>()
             }),
+            kind: Default::default(),
         }
     }
     let str_prop = serde_json::json!({ "type": "string" });
@@ -570,6 +605,7 @@ mod tests {
             name: "read_file".into(),
             description: "read a file".into(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
+            kind: Default::default(),
         };
         let m = Message {
             role: "assistant".into(),

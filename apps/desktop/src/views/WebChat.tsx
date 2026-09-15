@@ -9,10 +9,12 @@ import {
   Brain,
   ChevronDown,
   ChevronUp,
+  Check,
   Copy,
   FileDiff,
   Download,
   FileText,
+  Hand,
   Minimize2,
   Globe,
   Menu,
@@ -28,7 +30,9 @@ import {
   X as XIcon,
   SquareTerminal,
   Cpu,
+  TriangleAlert,
   Wrench,
+  type LucideIcon,
 } from "lucide-react";
 
 import { Button } from "@guild/ui/components/button";
@@ -39,8 +43,12 @@ import {
   DialogTitle,
 } from "@guild/ui/components/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { toast } from "sonner";
@@ -68,6 +76,7 @@ import {
 } from "../transport";
 import {
   createChat,
+  getChatApproval,
   getThread,
   listChats,
   listModels,
@@ -78,7 +87,9 @@ import {
   downloadRelease,
   listReleases,
   pairingCode,
+  setChatApproval,
   startEventStream,
+  type ChatApprovalMode,
   type ChatSummary,
   type MessageAttachmentMeta,
   type Release,
@@ -96,6 +107,9 @@ interface ToolBlock {
   status: "running" | "done" | "error";
   content?: string;
   meta?: ToolMeta;
+  /// Coarse category from the server (web_search | web_browse | generic):
+  /// drives the native label/icon regardless of the providing integration.
+  kind?: string;
 }
 
 /// URL-driven navigation: the pathname is the single source of truth for
@@ -421,11 +435,13 @@ export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
         break;
       case "tool_result": {
         const meta = (ev.meta ?? undefined) as ToolMeta | undefined;
+        const kind = (ev as { kind?: string | null }).kind ?? undefined;
         const tb = byCallId.get(ev.call_id);
         if (tb) {
           tb.content = ev.content;
           tb.status = ev.is_error ? "error" : "done";
           tb.meta = meta;
+          tb.kind = kind;
         } else {
           // Orphan result (call block missing): render it anyway rather than drop it.
           blocks.push({
@@ -439,6 +455,7 @@ export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
               status: ev.is_error ? "error" : "done",
               content: ev.content,
               meta,
+              kind,
             },
             key: seqKey(inEvent++),
           });
@@ -511,11 +528,24 @@ export function resolveApproval(
 
 /// Thinking deltas accumulate into the trailing reasoning block. The first
 /// frame after a (re)attach carries the full in-flight buffer (spec B.5), so
-/// it replaces instead of appending.
+/// it replaces instead of appending — and the replacement targets the
+/// turn's existing reasoning block even when a tool/approval card sits
+/// after it, otherwise a re-attach duplicates the whole thinking text as a
+/// second block below the approval card.
 function upsertThinking(blocks: Block[], content: string, replace: boolean): Block[] {
+  if (replace) {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i].kind === "reasoning") {
+        const copy = blocks.slice();
+        copy[i] = { ...blocks[i], reasoningText: content };
+        return copy;
+      }
+    }
+    return [...blocks, { kind: "reasoning", text: "", reasoningText: content, key: liveKey() }];
+  }
   const last = blocks[blocks.length - 1];
   if (last?.kind === "reasoning") {
-    const text = replace ? content : last.reasoningText + content;
+    const text = last.reasoningText + content;
     return [...blocks.slice(0, -1), { ...last, reasoningText: text }];
   }
   return [...blocks, { kind: "reasoning", text: "", reasoningText: content, key: liveKey() }];
@@ -678,6 +708,8 @@ function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
 
 /// Human-facing tool kind: drives the frame icon and widget selection.
 function toolKind(t: ToolBlock): string {
+  if (t.kind === "web_search") return "search";
+  if (t.kind === "web_browse") return "fetch";
   if (t.meta?.kind) return t.meta.kind;
   if (t.meta?.card) return t.meta.card;
   const n = t.name.toLowerCase();
@@ -706,19 +738,66 @@ const TOOL_LABELS: Record<string, string> = {
   write: "Write",
 };
 
-function toolLabel(t: ToolBlock): string {
+/// The composer's approval-mode selector (per chat, migration 0043). The
+/// mode sets the chat's tool-approval DEFAULT; per-tool exceptions from
+/// Settings apply only while the chat is on the account default.
+const APPROVAL_MODES: Record<
+  ChatApprovalMode | "default",
+  { label: string; hint: string; icon: LucideIcon; iconCls?: string }
+> = {
+  default: {
+    label: "Account default",
+    hint: "Uses the approval policy from Settings",
+    icon: ShieldCheck,
+  },
+  ask: {
+    label: "Ask for approval",
+    hint: "Always ask to edit external files and use the internet",
+    icon: Hand,
+  },
+  approve_for_me: {
+    label: "Approve for me",
+    hint: "Only ask for actions detected as potentially unsafe",
+    icon: ShieldCheck,
+  },
+  full_access: {
+    label: "Full access",
+    hint: "Unrestricted access to the internet and any file on your computer",
+    icon: TriangleAlert,
+    iconCls: "text-orange-500",
+  },
+};
+
+const APPROVAL_MODE_LABELS: Record<ChatApprovalMode | "default", string> = {
+  default: "Default",
+  ask: "Ask for approval",
+  approve_for_me: "Approve for me",
+  full_access: "Full access",
+};
+
+/** Exposed for pure tests. */
+export function toolLabel(t: ToolBlock): string {
   const n = t.name.toLowerCase();
   const direct = TOOL_LABELS[n];
   if (direct) return direct;
-  // Integration tools are namespaced on the wire (`int_searxng_web_search`):
-  // the connector prefix is internal, the label is the bare tool name.
-  if (n.startsWith("int_")) {
-    for (const [key, label] of Object.entries(TOOL_LABELS)) {
-      if (n.endsWith("_" + key)) return label;
-    }
-    return n.slice(4).replace(/_/g, " ");
+  // Top-level tool kind wins: web_search/web_browse render natively no
+  // matter which integration provides the tool.
+  if (t.kind === "web_search") return "Web search";
+  if (t.kind === "web_browse") return "Browse";
+  // Older events without a persisted kind: the widget meta kind maps the
+  // same way for web tools.
+  if (t.meta?.kind === "search") return "Web search";
+  if (t.meta?.kind === "fetch") return "Browse";
+  // Integration tools are namespaced on the wire (`searxng_web_search`;
+  // legacy journals used `int_searxng_web_search`): the connector prefix is
+  // internal, the label is the bare tool name.
+  const bare = n.startsWith("int_") ? n.slice(4) : n;
+  for (const [key, label] of Object.entries(TOOL_LABELS)) {
+    if (bare.endsWith("_" + key)) return label;
   }
-  return t.name;
+  const cut = bare.indexOf("_");
+  if (cut > 0) return bare.slice(cut + 1).replace(/_/g, " ");
+  return bare;
 }
 
 function argOf(t: ToolBlock, keys: string[]): string | undefined {
@@ -1180,6 +1259,18 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
   } catch {
     /* keep the raw arguments string */
   }
+  // Shell-like tools get a terminal-style command line instead of the raw
+  // JSON argument dump.
+  let commandLine: string | null = null;
+  if (a.name === "execute" || a.name === "bash" || a.name === "shell") {
+    try {
+      const parsed = JSON.parse(a.args);
+      const cmd = parsed?.command ?? parsed?.cmd ?? parsed?.script;
+      if (typeof cmd === "string" && cmd) commandLine = cmd;
+    } catch {
+      /* fall through to the JSON block */
+    }
+  }
   return (
     <Frame
       icon={
@@ -1208,10 +1299,17 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
       defaultOpen={!resolved}
     >
       <div className="space-y-2">
-        {prettyArgs && (
-          <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
-            {prettyArgs}
+        {commandLine !== null ? (
+          <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed">
+            <span className="select-none text-muted-foreground/60">$ </span>
+            {commandLine}
           </pre>
+        ) : (
+          prettyArgs && (
+            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-muted-foreground">
+              {prettyArgs}
+            </pre>
+          )
         )}
         {resolved ? (
           a.status === "denied" && a.reason ? (
@@ -1301,6 +1399,32 @@ export default function WebChat({
   };
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
+  // Per-chat approval mode (the composer's selector): "default" = the
+  // account-level policy from Settings applies. Loaded on chat open,
+  // written optimistically on pick.
+  const [approvalMode, setApprovalMode] = useState<ChatApprovalMode | "default">("default");
+  useEffect(() => {
+    if (!chatId) {
+      setApprovalMode("default");
+      return;
+    }
+    let dead = false;
+    void getChatApproval(chatId).then((m) => {
+      if (!dead) setApprovalMode(m ?? "default");
+    });
+    return () => {
+      dead = true;
+    };
+  }, [chatId]);
+  const pickApprovalMode = (m: ChatApprovalMode | "default") => {
+    if (!chatId) return;
+    const prev = approvalMode;
+    setApprovalMode(m); // optimistic
+    void setChatApproval(chatId, m).catch(() => {
+      setApprovalMode(prev);
+      toast.error("Could not save approval mode");
+    });
+  };
   // Per-chat rendered-block cache: reopening a thread shows its last
   // rendered content immediately while the fresh thread rows load in place,
   // so switching chats never flashes a skeleton over known content.
@@ -1711,9 +1835,10 @@ export default function WebChat({
       const name = (ev.name as string) ?? "";
       const args = (ev.arguments as string) ?? "{}";
       const executor = ev.executor === "client" ? "client" : "server";
+      const kind = (ev as { kind?: string | null }).kind ?? undefined;
       setBlocks((b) => [
         ...b,
-        { kind: "tool", text: "", tool: { callId, name, args, executor, status: "running" }, key: `tool-${callId}` },
+        { kind: "tool", text: "", tool: { callId, name, args, executor, status: "running", kind }, key: `tool-${callId}` },
       ]);
     } else if (ev.type === "tool_completed") {
       const status: "done" | "error" = ev.is_error ? "error" : "done";
@@ -2250,13 +2375,16 @@ export default function WebChat({
           )}
           <span className="min-w-0 flex-1 truncate font-medium">{activeTitle}</span>
           {boundMachine && (
-            <span
-              className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-muted-foreground"
-              title={`Machine tools run on: ${boundMachine}`}
+            <button
+              className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-muted-foreground outline-none hover:text-foreground"
+              title={`Machine tools run on: ${boundMachine} — click to change`}
+              onClick={() =>
+                pushRoute({ overlay: { kind: "settings", section: "machine", detail: null } })
+              }
             >
               <Cpu className="size-3" />
               {boundMachine}
-            </span>
+            </button>
           )}
         </header>
 
@@ -2464,6 +2592,42 @@ export default function WebChat({
                     Run in folder…
                   </Button>
                 ))}
+                {chatId && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
+                        title="How tool actions are approved in this chat"
+                      >
+                        <ShieldCheck className="size-3.5" />
+                        {APPROVAL_MODE_LABELS[approvalMode]}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-72">
+                      <DropdownMenuLabel className="text-xs text-muted-foreground">
+                        How should tool actions be approved?
+                      </DropdownMenuLabel>
+                      {(Object.keys(APPROVAL_MODES) as (keyof typeof APPROVAL_MODES)[]).map((m) => {
+                        const entry = APPROVAL_MODES[m];
+                        const Icon = entry.icon;
+                        return (
+                          <DropdownMenuItem key={m} onClick={() => pickApprovalMode(m)}>
+                            <div className="flex w-full items-start gap-2.5">
+                              <Icon className={`mt-0.5 size-4 shrink-0 ${entry.iconCls ?? "text-muted-foreground"}`} />
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-medium">{entry.label}</div>
+                                <div className="text-xs text-muted-foreground">{entry.hint}</div>
+                              </div>
+                              {approvalMode === m && <Check className="mt-1 size-3.5 shrink-0" />}
+                            </div>
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
             {models !== null && models.length === 0 && (
               <span className="text-muted-foreground">no models</span>
             )}
@@ -2777,7 +2941,7 @@ function ChatListItem({
       {status.generating ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
       ) : status.unread ? (
-        <span className="size-2 shrink-0 rounded-full bg-accent" title="unseen replies" />
+        <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
       ) : null}
     </button>
   );
@@ -2862,7 +3026,7 @@ function SidebarContent({
             {/* Desktop: the engine keeps its session and restore re-logs-in,
                 so this clears this window's token only (full engine sign-out
                 needs an engine logout RPC that does not exist yet). */}
-            {isTauri ? "Sign out (this window only)" : "Sign out"}
+            Sign out
           </DropdownMenuItem>
         </UserBadge>
       </div>

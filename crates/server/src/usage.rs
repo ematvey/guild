@@ -136,9 +136,9 @@ impl AppState {
         self.usage_cell()
             .get_or_try_init(|| async {
                 UsageSink::connect(&self.config)
-                .await
-                .map(Arc::new)
-                .map_err(|e| crate::http::error::ApiError::internal(e.to_string()))
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e| crate::http::error::ApiError::internal(e.to_string()))
             })
             .await
             .cloned()

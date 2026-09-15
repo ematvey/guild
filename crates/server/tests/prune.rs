@@ -6,12 +6,17 @@ use guild_server::store::{Store, TestDb};
 async fn expired_sessions_and_dead_pairing_tokens_are_pruned() {
     let db: TestDb = Store::connect_test().await.unwrap();
     let store = &db.store;
-        let admin_id = store
+    let admin_id = store
         .identity()
         .ensure_bootstrap_admin("a@b.c", "hunter226")
         .await
         .unwrap();
-    let admin = store.identity().find_by_email_any("a@b.c").await.unwrap().unwrap();
+    let admin = store
+        .identity()
+        .find_by_email_any("a@b.c")
+        .await
+        .unwrap()
+        .unwrap();
 
     // live + expired sessions
     let (_sid, token) = store.identity().create_session(admin_id).await.unwrap();
@@ -22,7 +27,11 @@ async fn expired_sessions_and_dead_pairing_tokens_are_pruned() {
         .unwrap();
 
     // live + dead pairing tokens
-    let _t1 = store.pairing().create(admin.org_id, admin_id, 30).await.unwrap();
+    let _t1 = store
+        .pairing()
+        .create(admin.org_id, admin_id, 30)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO pairing_tokens (id, org_id, user_id, secret_hash, expires_at, used_at) VALUES (gen_random_uuid(), (SELECT org_id FROM users WHERE id = $1), $1, 'dead-hash', now() - interval '1 hour', NULL)")
         .bind(admin_id)
         .execute(store.pool())

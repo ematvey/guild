@@ -96,7 +96,10 @@ async fn session_history(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let store = state.store().await?;
-    let session = store.agent_sessions().get(user.0.org_id, id, &user.0).await?;
+    let session = store
+        .agent_sessions()
+        .get(user.0.org_id, id, &user.0)
+        .await?;
     let rows = store
         .thread()
         .list_events(user.0.org_id, session.chat_id)
@@ -211,7 +214,10 @@ async fn run_turn(
         .to_string();
 
     let store = state.store().await?;
-    let session = store.agent_sessions().get(user.0.org_id, id, &user.0).await?;
+    let session = store
+        .agent_sessions()
+        .get(user.0.org_id, id, &user.0)
+        .await?;
     let master = state.config.master_key()?;
     let route = store
         .gateway()
@@ -237,7 +243,10 @@ async fn run_turn(
         .thread()
         .append_event(
             session.chat_id,
-            &ThreadEvent::UserMessage { content: message.clone(), attachments: Vec::new() },
+            &ThreadEvent::UserMessage {
+                content: message.clone(),
+                attachments: Vec::new(),
+            },
         )
         .await?;
 
@@ -262,12 +271,9 @@ async fn run_turn(
         overrides: if state.config.allow_shell_tools {
             Default::default()
         } else {
-            [(
-                "execute".to_string(),
-                guild_core::tools::Approval::Never,
-            )]
-            .into_iter()
-            .collect()
+            [("execute".to_string(), guild_core::tools::Approval::Never)]
+                .into_iter()
+                .collect()
         },
     };
 
@@ -335,7 +341,9 @@ async fn run_turn(
                                 }
                             }
                             if !m.content.is_empty() {
-                                blocks.push(Block::Text { text: m.content.clone() });
+                                blocks.push(Block::Text {
+                                    text: m.content.clone(),
+                                });
                             }
                             if let Some(calls) = &m.tool_calls {
                                 for c in calls {
@@ -365,7 +373,9 @@ async fn run_turn(
                             step += 1;
                         }
                         "tool" => {
-                            let Some(call_id) = &m.tool_call_id else { continue };
+                            let Some(call_id) = &m.tool_call_id else {
+                                continue;
+                            };
                             let _ = store_for_loop
                                 .thread()
                                 .append_event(
@@ -379,6 +389,7 @@ async fn run_turn(
                                         is_error: false,
                                         meta: None,
                                         images: Vec::new(),
+                                        kind: None,
                                     },
                                 )
                                 .await;

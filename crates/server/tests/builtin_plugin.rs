@@ -34,14 +34,17 @@ async fn builtin_resolves_with_namespaced_tools_and_manifest_classes() {
     let turns = resolve_plugins(&ts.state, org).await.unwrap();
     assert_eq!(turns.len(), 1);
     let turn = &turns[0];
-    assert_eq!(turn.executor, guild_server::integrations::PluginExecutor::Rust);
-    assert_eq!(turn.slug, SLUG);
-    assert_eq!(turn.description, "Test tools for the unified plugin interface");
-    let names: Vec<&str> = turn.tools.iter().map(|t| t.spec.name.as_str()).collect();
     assert_eq!(
-        names,
-        vec!["int_testplug_secret_echo", "int_testplug_admin_op"]
+        turn.executor,
+        guild_server::integrations::PluginExecutor::Rust
     );
+    assert_eq!(turn.slug, SLUG);
+    assert_eq!(
+        turn.description,
+        "Test tools for the unified plugin interface"
+    );
+    let names: Vec<&str> = turn.tools.iter().map(|t| t.spec.name.as_str()).collect();
+    assert_eq!(names, vec!["testplug_secret_echo", "testplug_admin_op"]);
     assert_eq!(turn.tools[0].class, "read");
     assert_eq!(turn.tools[1].class, "admin");
     // Built-ins have no registry cookbook — the guide tool degrades.
@@ -51,7 +54,7 @@ async fn builtin_resolves_with_namespaced_tools_and_manifest_classes() {
         index_line(turn),
         format!(
             "Integration {SLUG}: Test tools for the unified plugin interface — call \
-             int_testplug_list_tools to discover its tools."
+             testplug_list_tools to discover its tools."
         )
     );
 }
@@ -79,17 +82,14 @@ async fn builtin_disclosure_filters_tools_by_role() {
         .iter()
         .map(|s| s.name.clone())
         .collect();
-    assert_eq!(member, vec!["int_testplug_secret_echo"]);
+    assert_eq!(member, vec!["testplug_secret_echo"]);
     // Admin sees both.
     let admin: Vec<String> = turn
         .allowed_specs("admin")
         .iter()
         .map(|s| s.name.clone())
         .collect();
-    assert_eq!(
-        admin,
-        vec!["int_testplug_secret_echo", "int_testplug_admin_op"]
-    );
+    assert_eq!(admin, vec!["testplug_secret_echo", "testplug_admin_op"]);
 
     // A stored policy tightens: members lose even the read tool.
     let ts2 = test_state_with_db().await;
@@ -143,24 +143,19 @@ async fn builtin_auto_tools_are_recognized() {
         .unwrap();
     let turns = resolve_plugins(&ts.state, org).await.unwrap();
     assert_eq!(
-        parse_auto_tool(&turns, "int_testplug_list_tools"),
+        parse_auto_tool(&turns, "testplug_list_tools"),
         Some((0, AutoTool::ListTools))
     );
     assert_eq!(
-        parse_auto_tool(&turns, "int_testplug_guide"),
+        parse_auto_tool(&turns, "testplug_guide"),
         Some((0, AutoTool::Guide))
     );
-    assert_eq!(parse_auto_tool(&turns, "int_testplug_secret_echo"), None);
+    assert_eq!(parse_auto_tool(&turns, "testplug_secret_echo"), None);
 }
 
 // ---------- admin API: enable gate + secret lifecycle ----------
 
-async fn put_json(
-    app: &axum::Router,
-    uri: &str,
-    token: &str,
-    body: Value,
-) -> (StatusCode, Value) {
+async fn put_json(app: &axum::Router, uri: &str, token: &str, body: Value) -> (StatusCode, Value) {
     let res = app
         .clone()
         .oneshot(
@@ -200,12 +195,7 @@ async fn get_json(app: &axum::Router, uri: &str, token: &str) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
-async fn post_json(
-    app: &axum::Router,
-    uri: &str,
-    token: &str,
-    body: Value,
-) -> (StatusCode, Value) {
+async fn post_json(app: &axum::Router, uri: &str, token: &str, body: Value) -> (StatusCode, Value) {
     let res = app
         .clone()
         .oneshot(
@@ -272,7 +262,12 @@ async fn builtin_enable_gate_and_secret_lifecycle() {
     assert_eq!(status, StatusCode::OK, "{body}");
 
     // The listing exposes name + masked preview, never a value.
-    let v = get_json(&app, &format!("/api/v1/admin/integrations/{id}/secrets"), &token).await;
+    let v = get_json(
+        &app,
+        &format!("/api/v1/admin/integrations/{id}/secrets"),
+        &token,
+    )
+    .await;
     let items = v["secrets"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["name"], "api_key");
@@ -387,7 +382,7 @@ async fn call_tool(s: &Setup, auth: &str, tool: &str) -> (StatusCode, Value) {
 #[tokio::test]
 async fn builtin_script_call_resolves_secrets_into_execute_and_audits() {
     let s = setup().await;
-    let (status, body) = call_tool(&s, &s.member_token, "int_testplug_secret_echo").await;
+    let (status, body) = call_tool(&s, &s.member_token, "testplug_secret_echo").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["ok"], true);
     // The resolved store secret reached the plugin's execute().
@@ -409,12 +404,12 @@ async fn builtin_script_call_resolves_secrets_into_execute_and_audits() {
 async fn builtin_class_enforcement_member_vs_admin() {
     let s = setup().await;
     // Member: the read tool works, the admin-class tool is 403.
-    let (status, _) = call_tool(&s, &s.member_token, "int_testplug_secret_echo").await;
+    let (status, _) = call_tool(&s, &s.member_token, "testplug_secret_echo").await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = call_tool(&s, &s.member_token, "int_testplug_admin_op").await;
+    let (status, _) = call_tool(&s, &s.member_token, "testplug_admin_op").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     // Admin: both work.
-    let (status, body) = call_tool(&s, &s.admin_token, "int_testplug_admin_op").await;
+    let (status, body) = call_tool(&s, &s.admin_token, "testplug_admin_op").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["content"], "admin ok");
 }
@@ -436,7 +431,9 @@ async fn script_list_includes_built_ins() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body: Value = serde_json::from_slice(
-        &axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap(),
+        &axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap(),
     )
     .unwrap();
     let items = body["items"].as_array().unwrap();
@@ -444,7 +441,10 @@ async fn script_list_includes_built_ins() {
         .iter()
         .find(|i| i["slug"] == "testplug")
         .expect("built-in listed");
-    assert_eq!(entry["description"], "Test tools for the unified plugin interface");
+    assert_eq!(
+        entry["description"],
+        "Test tools for the unified plugin interface"
+    );
     // Member sees only the read tool.
     assert_eq!(entry["tool_count"], 1);
 }
@@ -458,5 +458,10 @@ async fn seed_org(ts: &guild_server::test_support::TestState) -> Uuid {
         .ensure_bootstrap_admin("admin@a.b", "hunter226")
         .await
         .unwrap();
-    ts.store().identity().get_user(user_id).await.unwrap().org_id
+    ts.store()
+        .identity()
+        .get_user(user_id)
+        .await
+        .unwrap()
+        .org_id
 }

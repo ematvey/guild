@@ -89,17 +89,18 @@ async fn tool_call_streams_persists_and_usage_records() {
     let call_block = assistant_event
         .iter()
         .find_map(|b| match b {
-            protocol::api::Block::ToolCall { id, name, arguments } => {
-                Some((id.clone(), name.clone(), arguments.clone()))
-            }
+            protocol::api::Block::ToolCall {
+                id,
+                name,
+                arguments,
+            } => Some((id.clone(), name.clone(), arguments.clone())),
             _ => None,
         })
         .expect("tool_call block persisted");
     assert_eq!(call_block.0, "c1");
     assert_eq!(call_block.1, "read_file");
     assert_eq!(
-        call_block.2,
-        "{\"path\": \"README.md\"}",
+        call_block.2, "{\"path\": \"README.md\"}",
         "raw arguments string as the model produced it"
     );
 
@@ -117,7 +118,7 @@ async fn tool_call_streams_persists_and_usage_records() {
                 .body(Body::from(
                     json!({"content": "# readme contents", "is_error": false,
                            "meta": {"card": "read", "path": "README.md"}})
-                        .to_string(),
+                    .to_string(),
                 ))
                 .unwrap(),
         )
@@ -227,7 +228,9 @@ async fn overflow_retry_completes_turn_with_compacted_history() {
         .await
         .unwrap();
     assert_eq!(res.status(), 200);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
     assert!(text.contains("delta"), "{text}");
     assert!(!text.contains("error"), "{text}");

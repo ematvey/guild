@@ -1,6 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use guild_server::test_support::{insert_org_with_chat, test_state_with_db};use protocol::api::{Block, ThreadEvent, UsagePayload};
+use guild_server::test_support::{insert_org_with_chat, test_state_with_db};
+use protocol::api::{Block, ThreadEvent, UsagePayload};
 use serde_json::json;
 use tower::ServiceExt;
 
@@ -42,7 +43,13 @@ async fn create_list_thread_and_org_isolation() {
     // append events via the thread store (the ChatRunner normally does this)
     store
         .thread()
-        .append_event(chat_uuid, &ThreadEvent::UserMessage { content: "hello".into(), attachments: Vec::new() })
+        .append_event(
+            chat_uuid,
+            &ThreadEvent::UserMessage {
+                content: "hello".into(),
+                attachments: Vec::new(),
+            },
+        )
         .await
         .unwrap();
     store
@@ -113,7 +120,9 @@ async fn create_list_thread_and_org_isolation() {
                 .uri(format!("/api/v1/chats/{chat_id}/messages"))
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"role": "user", "content": "x"}).to_string()))
+                .body(Body::from(
+                    json!({"role": "user", "content": "x"}).to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -222,9 +231,7 @@ async fn machine_binding_requires_a_registered_machine() {
                     .uri(&uri)
                     .header("authorization", format!("Bearer {token}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({"machine_id": "never-seen"}).to_string(),
-                    ))
+                    .body(Body::from(json!({"machine_id": "never-seen"}).to_string()))
                     .unwrap(),
             )
             .await
@@ -330,7 +337,9 @@ async fn chat_status_flags_and_read_endpoint() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let chat_id: uuid::Uuid = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["id"]
         .as_str()
         .unwrap()
@@ -351,7 +360,9 @@ async fn chat_status_flags_and_read_endpoint() {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&body).unwrap()["chats"]
             .as_array()
             .unwrap()
@@ -374,7 +385,9 @@ async fn chat_status_flags_and_read_endpoint() {
             &ThreadEvent::AssistantMessage {
                 turn: 1,
                 step: 0,
-                blocks: vec![Block::Text { text: "reply".into() }],
+                blocks: vec![Block::Text {
+                    text: "reply".into(),
+                }],
                 usage: UsagePayload::default(),
                 model: "m".into(),
                 interrupted: None,
@@ -424,4 +437,143 @@ async fn chat_status_flags_and_read_endpoint() {
     assert_eq!(res.status(), StatusCode::OK);
     let chats = get_list(app, token).await;
     assert!(!chats[0]["unread"].as_bool().unwrap());
+}
+
+#[tokio::test]
+async fn chat_approval_mode_roundtrip() {
+    let ts = test_state_with_db().await;
+    let store = ts.store();
+    let user = store
+        .identity()
+        .ensure_bootstrap_admin("approval-mode@b.c", "hunter226")
+        .await
+        .unwrap();
+    let (_sid, token) = store.identity().create_session(user).await.unwrap();
+    let app = guild_server::build_router(ts.state.clone());
+    let auth = format!("Bearer {token}");
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/chats")
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"title": "policy chat"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let chat_id: String = v["id"].as_str().unwrap().to_string();
+
+    // Default: no override.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/chats/{chat_id}/approval"))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    if status != StatusCode::OK {
+        panic!("GET approval failed: {} {body:?}", status);
+    }
+    assert!(v["default"].is_null());
+
+    // Set a mode; read it back.
+    for mode in ["approve_for_me", "ask", "full_access"] {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/chats/{chat_id}/approval"))
+                    .header("authorization", &auth)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"default": mode}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/v1/chats/{chat_id}/approval"))
+                    .header("authorization", &auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["default"], mode);
+    }
+
+    // Unknown mode rejected.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/chats/{chat_id}/approval"))
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"default": "yolo"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // Reset to the account default.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/chats/{chat_id}/approval"))
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"default": "default"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/chats/{chat_id}/approval"))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v["default"].is_null());
 }

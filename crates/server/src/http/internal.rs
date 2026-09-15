@@ -241,7 +241,13 @@ async fn forward_tick(state: &AppState, routine: &RoutineRow) -> Result<(), ApiE
     let interval = routine.trigger_config["interval_secs"]
         .as_u64()
         .unwrap_or(60);
-    restate_send_one_way(state, "RoutineRunner", &format!("{}/tick", routine.id), json!(interval)).await?;
+    restate_send_one_way(
+        state,
+        "RoutineRunner",
+        &format!("{}/tick", routine.id),
+        json!(interval),
+    )
+    .await?;
     Ok(())
 }
 
@@ -262,7 +268,12 @@ async fn hook(
     use sha2::{Digest, Sha256};
     use subtle::ConstantTimeEq;
     let presented = hex::encode(Sha256::digest(token.as_bytes()));
-    if !bool::from(routine.webhook_token_hash.as_bytes().ct_eq(presented.as_bytes())) {
+    if !bool::from(
+        routine
+            .webhook_token_hash
+            .as_bytes()
+            .ct_eq(presented.as_bytes()),
+    ) {
         return Err(ApiError::unauthorized("bad hook token"));
     }
     if !routine.enabled {
@@ -272,7 +283,13 @@ async fn hook(
         ));
     }
     let payload: Value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({}));
-    restate_send_one_way(&state, "RoutineRunner", &format!("{}/handle_webhook", routine.id), payload).await?;
+    restate_send_one_way(
+        &state,
+        "RoutineRunner",
+        &format!("{}/handle_webhook", routine.id),
+        payload,
+    )
+    .await?;
     Ok((StatusCode::ACCEPTED, Json(json!({"accepted": true}))))
 }
 

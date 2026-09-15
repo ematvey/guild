@@ -11,7 +11,10 @@
 //!   storage-format body, returned as plain text
 //! - `confluence_create_page` (write) — `POST /wiki/rest/api/content`
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
+use super::{
+    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
+    ToolOutcome,
+};
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
@@ -208,6 +211,7 @@ impl Integration for Atlassian {
                     },
                     "required": ["jql"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "jira_get_issue".into(),
@@ -221,6 +225,7 @@ impl Integration for Atlassian {
                     },
                     "required": ["issue_key"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "confluence_search".into(),
@@ -236,6 +241,7 @@ impl Integration for Atlassian {
                     },
                     "required": ["cql"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "confluence_get_page".into(),
@@ -249,6 +255,7 @@ impl Integration for Atlassian {
                     },
                     "required": ["page_id"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "confluence_create_page".into(),
@@ -266,6 +273,7 @@ impl Integration for Atlassian {
                     },
                     "required": ["space_key", "title", "content"]
                 }),
+                kind: Default::default(),
             },
             api_tool_spec("Atlassian"),
         ])
@@ -351,7 +359,9 @@ impl Integration for Atlassian {
                     })
                 }
                 "confluence_search" => {
-                    let cql = args["cql"].as_str().ok_or("confluence_search requires cql")?;
+                    let cql = args["cql"]
+                        .as_str()
+                        .ok_or("confluence_search requires cql")?;
                     let limit = args["limit"].as_u64().unwrap_or(10).clamp(1, 50);
                     let resp = send_json(
                         client

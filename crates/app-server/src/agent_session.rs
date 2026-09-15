@@ -81,13 +81,13 @@ impl ModelTurn for GatewayTurn {
                 Ok(StreamEvent::ToolCallDone { call }) => {
                     Some(Ok(ProviderChunk::ToolCallDone { call }))
                 }
-                Ok(StreamEvent::ThinkingDelta { content }) => {
-                    Some(Ok(ProviderChunk::Thinking(guild_core::provider::ChatChunk {
+                Ok(StreamEvent::ThinkingDelta { content }) => Some(Ok(ProviderChunk::Thinking(
+                    guild_core::provider::ChatChunk {
                         text_delta: content,
                         tokens_in: None,
                         tokens_out: None,
-                    })))
-                }
+                    },
+                ))),
                 // usage + history persistence happen server-side
                 Ok(StreamEvent::Done { .. }) => None,
                 // Tool lifecycle notifications are for interactive clients.
@@ -96,7 +96,8 @@ impl ModelTurn for GatewayTurn {
                 // attach-endpoint only; never on the completion stream
                 Ok(StreamEvent::Idle) => None,
                 // Approval lifecycle frames are for interactive clients.
-                Ok(StreamEvent::ApprovalRequested { .. }) | Ok(StreamEvent::ApprovalResolved { .. }) => None,
+                Ok(StreamEvent::ApprovalRequested { .. })
+                | Ok(StreamEvent::ApprovalResolved { .. }) => None,
                 Ok(StreamEvent::Error { code, message }) => {
                     Some(Err(ProviderError::Upstream(format!("[{code}] {message}"))))
                 }
@@ -194,26 +195,26 @@ impl AgentHooks for SessionHooks {
             serde_json::json!({ "request_id": request_id, "tool": call.name, "arguments": call.arguments }),
         );
         match tokio::time::timeout(APPROVAL_WAIT, rx).await {
-        Ok(Ok(decision)) => decision,
-        // Sender dropped (session closed) or the wait timed out — deny so
-        // the turn proceeds instead of hanging forever on a silent client,
-        // and remove the dead entry: only `agent.approve` removes entries
-        // otherwise, so a timed-out request would linger in the map (and a
-        // late approve would resolve against the dropped receiver).
-        Ok(Err(_)) => {
-            self.pending.lock().unwrap().remove(&request_id);
-            ApprovalDecision::Deny {
-                reason: "approval channel closed".into(),
+            Ok(Ok(decision)) => decision,
+            // Sender dropped (session closed) or the wait timed out — deny so
+            // the turn proceeds instead of hanging forever on a silent client,
+            // and remove the dead entry: only `agent.approve` removes entries
+            // otherwise, so a timed-out request would linger in the map (and a
+            // late approve would resolve against the dropped receiver).
+            Ok(Err(_)) => {
+                self.pending.lock().unwrap().remove(&request_id);
+                ApprovalDecision::Deny {
+                    reason: "approval channel closed".into(),
+                }
             }
-        }
-        Err(_) => {
-            self.pending.lock().unwrap().remove(&request_id);
-            ApprovalDecision::Deny {
-                reason: "no approval decision within 5 minutes".into(),
+            Err(_) => {
+                self.pending.lock().unwrap().remove(&request_id);
+                ApprovalDecision::Deny {
+                    reason: "no approval decision within 5 minutes".into(),
+                }
             }
         }
     }
-}
 
     async fn on_done(&self, summary: &str) {
         self.send("agent.done", serde_json::json!({ "summary": summary }));

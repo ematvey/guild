@@ -398,6 +398,9 @@ export type ThreadEvent =
       is_error: boolean;
       /** Tool-private widget payload; opaque to the loop. */
       meta?: unknown | null;
+      /** Coarse tool category (web_search | web_browse | generic); absent on
+       * pre-kind events. */
+      kind?: "web_search" | "web_browse" | "generic" | null;
     }
   | {
       type: "compaction";
@@ -486,6 +489,7 @@ export type StreamFrame = {
   arguments?: string;
   executor?: string;
   is_error?: boolean;
+  kind?: string;
   // approval frames
   approved?: boolean;
   reason?: string;
@@ -729,6 +733,57 @@ export async function postApproval(
     const v = await res.json().catch(() => ({}));
     throw new Error(v?.error?.message ?? `approval rejected (${res.status})`);
   }
+}
+
+/// Per-chat approval mode (migration 0043, the composer's selector): the
+/// chat's tool-approval default; null = the account-level policy applies.
+export type ChatApprovalMode = "ask" | "approve_for_me" | "full_access";
+
+export async function getApprovalPolicyPrompt(): Promise<{ prompt: string | null; default: string }> {
+  const token = getToken();
+  const res = await fetch(apiUrl("/api/v1/admin/approval-policy-prompt"), {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`approval policy prompt rejected (${res.status})`);
+  const v = await res.json().catch(() => ({}));
+  return { prompt: v.prompt ?? null, default: v.default ?? "" };
+}
+
+export async function setApprovalPolicyPrompt(prompt: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(apiUrl("/api/v1/admin/approval-policy-prompt"), {
+    method: "PUT",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? `approval policy prompt rejected (${res.status})`);
+  }
+}
+
+export async function getChatApproval(chatId: string): Promise<ChatApprovalMode | null> {
+  const token = getToken();
+  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/approval`), {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const v = await res.json().catch(() => ({}));
+  const d = v?.default;
+  return d === "ask" || d === "approve_for_me" || d === "full_access" ? d : null;
+}
+
+export async function setChatApproval(
+  chatId: string,
+  mode: ChatApprovalMode | "default",
+): Promise<void> {
+  const token = getToken();
+  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/approval`), {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ default: mode }),
+  });
+  if (!res.ok) throw new Error(`approval mode rejected (${res.status})`);
 }
 
 /// Reads the signed-in user's approval policy (migration 0026: user-scoped,

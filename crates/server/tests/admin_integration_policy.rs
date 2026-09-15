@@ -59,7 +59,9 @@ async fn publish_and_install(
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/api/v1/registry/integration?slug={slug}&version={version}"))
+                .uri(format!(
+                    "/api/v1/registry/integration?slug={slug}&version={version}"
+                ))
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/gzip")
                 .body(Body::from(bundle))
@@ -258,7 +260,12 @@ async fn policy_validation_enable_gate_and_secrets_lifecycle() {
     assert_eq!(status, StatusCode::OK, "{body}");
 
     // listing exposes names + masked previews, never values
-    let v = get_json(&app, &format!("/api/v1/admin/integrations/{id}/secrets"), &token).await;
+    let v = get_json(
+        &app,
+        &format!("/api/v1/admin/integrations/{id}/secrets"),
+        &token,
+    )
+    .await;
     let items = v["secrets"].as_array().expect("secrets list");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["name"], "api_key");
@@ -297,7 +304,15 @@ async fn available_lists_unconfigured_v2_plugins() {
     let token = fs.token.clone();
 
     // approved v2 item, not installed → shows up in available as mcp
-    let status = publish_and_install(&app, &token, "freshdesk", "1.0.0", false, "https://mcp.example.com/mcp").await;
+    let status = publish_and_install(
+        &app,
+        &token,
+        "freshdesk",
+        "1.0.0",
+        false,
+        "https://mcp.example.com/mcp",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
     let available = v["available"].as_array().expect("available list");
@@ -308,7 +323,15 @@ async fn available_lists_unconfigured_v2_plugins() {
     assert_eq!(entry["categories"], json!(["mcp"]));
 
     // installed (configured) plugins do not appear in available
-    let status = publish_and_install(&app, &token, "hubspot", "1.0.0", true, "https://mcp.example.com/mcp").await;
+    let status = publish_and_install(
+        &app,
+        &token,
+        "hubspot",
+        "1.0.0",
+        true,
+        "https://mcp.example.com/mcp",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let v = get_json(&app, "/api/v1/admin/integrations", &token).await;
     let available = v["available"].as_array().expect("available list");
@@ -324,7 +347,15 @@ async fn create_configures_an_available_connector() {
     let app = guild_server::build_router(fs.state.clone());
     let token = fs.token.clone();
 
-    let status = publish_and_install(&app, &token, "freshdesk", "1.0.0", false, "https://mcp.example.com/mcp").await;
+    let status = publish_and_install(
+        &app,
+        &token,
+        "freshdesk",
+        "1.0.0",
+        false,
+        "https://mcp.example.com/mcp",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // Creating the configuration returns the row with its id; the id is

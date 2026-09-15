@@ -53,7 +53,12 @@ impl<'a> TeamStore<'a> {
         .map_err(Into::into)
     }
 
-    pub async fn rename_team(&self, org_id: Uuid, team_id: Uuid, name: &str) -> Result<TeamRow, ApiError> {
+    pub async fn rename_team(
+        &self,
+        org_id: Uuid,
+        team_id: Uuid,
+        name: &str,
+    ) -> Result<TeamRow, ApiError> {
         if !self.team_in_org(org_id, team_id).await? {
             return Err(ApiError::not_found("no such team"));
         }

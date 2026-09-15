@@ -9,6 +9,7 @@ import {
   parseChatRoute,
   parseSearchResults,
   resolveApproval,
+  toolLabel,
   upsertApproval,
   type Block,
 } from "./WebChat";
@@ -95,6 +96,45 @@ describe("eventsToBlocks", () => {
     expect(tool.content).toBe("contents");
     // stable keys derived from the source event's seq
     expect(blocks.map((b) => b.key)).toEqual(["1:0", "2:0", "2:1"]);
+  });
+
+  it("labels integration tools natively via the tool kind", () => {
+    const blocks = eventsToBlocks([
+      row(1, {
+        type: "tool_result",
+        turn: 1,
+        step: 1,
+        call_id: "c1",
+        name: "firecrawl_search",
+        content: "results",
+        is_error: false,
+        kind: "web_search",
+      } as ThreadEvent),
+      row(2, {
+        type: "tool_result",
+        turn: 1,
+        step: 2,
+        call_id: "c2",
+        name: "firecrawl_scrape",
+        content: "page",
+        is_error: false,
+        kind: "web_browse",
+      } as ThreadEvent),
+      row(3, {
+        type: "tool_result",
+        turn: 1,
+        step: 3,
+        call_id: "c3",
+        name: "int_searxng_web_search",
+        content: "legacy name, meta kind only",
+        is_error: false,
+        meta: { card: "web", kind: "search", sources: [] },
+      } as ThreadEvent),
+    ]);
+    expect(toolLabel(blocks[0].tool!)).toBe("Web search");
+    expect(toolLabel(blocks[1].tool!)).toBe("Browse");
+    // legacy pre-kind events fall back to the widget meta kind
+    expect(toolLabel(blocks[2].tool!)).toBe("Web search");
   });
 
   it("renders an orphan tool_result instead of dropping it", () => {

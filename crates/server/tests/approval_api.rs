@@ -167,13 +167,11 @@ async fn approval_endpoints_are_org_scoped() {
     // The policy settings endpoints are user-scoped (/api/v1/me/approval) —
     // no chat/org scoping to test there anymore; only the decision endpoint
     // takes a foreign chat id.
-    for (method, uri, body) in [
-        (
-            "POST",
-            format!("/api/v1/gateway/chat/{foreign}/approvals/call-1"),
-            Some(json!({"approved": true})),
-        ),
-    ] {
+    for (method, uri, body) in [(
+        "POST",
+        format!("/api/v1/gateway/chat/{foreign}/approvals/call-1"),
+        Some(json!({"approved": true})),
+    )] {
         let res = app
             .clone()
             .oneshot(req(method, uri, &token, body))
@@ -291,6 +289,7 @@ async fn attach_replays_unresolved_approval_requests() {
                 is_error: false,
                 meta: None,
                 images: Vec::new(),
+                kind: None,
             },
         )
         .await

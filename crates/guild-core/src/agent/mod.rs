@@ -230,8 +230,7 @@ pub async fn run_agent(
                 Err(f) => (f.to_string(), Vec::new()),
             };
             history.push(
-                Message::tool_result(call.id.clone(), result_text)
-                    .with_images(result_images),
+                Message::tool_result(call.id.clone(), result_text).with_images(result_images),
             );
         }
     }

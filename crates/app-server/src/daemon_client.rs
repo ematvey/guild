@@ -74,9 +74,10 @@ impl DaemonClient {
             }
             if v["id"].as_u64() == Some(id) {
                 return match v.get("error") {
-                    Some(err) => Err(anyhow::anyhow!(
-                        err["message"].as_str().unwrap_or("rpc error").to_string()
-                    )),
+                    Some(err) => Err(anyhow::anyhow!(err["message"]
+                        .as_str()
+                        .unwrap_or("rpc error")
+                        .to_string())),
                     None => Ok(v["result"].clone()),
                 };
             }
@@ -106,9 +107,10 @@ impl DaemonClient {
             }
             if v["id"].as_u64() == Some(id) {
                 break match v.get("error") {
-                    Some(err) => Err(anyhow::anyhow!(
-                        err["message"].as_str().unwrap_or("rpc error").to_string()
-                    )),
+                    Some(err) => Err(anyhow::anyhow!(err["message"]
+                        .as_str()
+                        .unwrap_or("rpc error")
+                        .to_string())),
                     None => Ok(v["result"].clone()),
                 };
             }
@@ -143,9 +145,7 @@ mod tests {
     /// make the client read back its own requests.)
     /// Test client with a read timeout: a regression fails fast instead of
     /// hanging the whole suite.
-    fn client_with_timeout(
-        client_side: std::os::unix::net::UnixStream,
-    ) -> DaemonClient {
+    fn client_with_timeout(client_side: std::os::unix::net::UnixStream) -> DaemonClient {
         client_side
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();

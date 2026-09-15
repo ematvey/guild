@@ -183,8 +183,7 @@ async fn execute_tool(
     if !args.is_object() {
         return Err(ApiError::bad_request("body must be a JSON object"));
     }
-    let outcome = call_plugin(&state, turn, raw, args, caller.org, acting_as.as_deref())
-        .await;
+    let outcome = call_plugin(&state, turn, raw, args, caller.org, acting_as.as_deref()).await;
     // Journaled audit (spec §8): the identity record for the script call.
     let store = state.store().await?;
     let _ = store

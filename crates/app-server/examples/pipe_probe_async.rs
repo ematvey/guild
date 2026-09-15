@@ -12,11 +12,17 @@ use std::time::{Duration, Instant};
 
 struct Engine {
     stdin: Arc<StdMutex<Box<dyn Write + Send>>>,
-    responses: Arc<StdMutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<serde_json::Value>>>>,
+    responses: Arc<
+        StdMutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<serde_json::Value>>>,
+    >,
 }
 
 fn trace(msg: &str) {
-    println!("[+{:?}] {}", std::thread::current().name().unwrap_or("?"), msg);
+    println!(
+        "[+{:?}] {}",
+        std::thread::current().name().unwrap_or("?"),
+        msg
+    );
     let _ = std::io::stdout().flush();
 }
 
@@ -27,7 +33,11 @@ fn envelope(id: u64, method: &str) -> serde_json::Value {
     })
 }
 
-async fn rpc(engine: &Arc<Engine>, next_id: &AtomicU64, method: &str) -> Result<serde_json::Value, String> {
+async fn rpc(
+    engine: &Arc<Engine>,
+    next_id: &AtomicU64,
+    method: &str,
+) -> Result<serde_json::Value, String> {
     let id = next_id.fetch_add(1, Ordering::SeqCst);
     let t0 = Instant::now();
     trace(&format!("rpc-start id={id} method={method}"));
@@ -71,12 +81,10 @@ async fn main() {
     let t0 = Instant::now();
     trace("attaching (spawn if needed)...");
     let binpath = bin.clone();
-    let pair = tokio::task::spawn_blocking(move || {
-        daemon::attach(std::path::Path::new(&binpath))
-    })
-    .await
-    .map_err(|e| format!("join: {e}"))
-    .and_then(|r| r.map_err(|e| format!("attach: {e}")));
+    let pair = tokio::task::spawn_blocking(move || daemon::attach(std::path::Path::new(&binpath)))
+        .await
+        .map_err(|e| format!("join: {e}"))
+        .and_then(|r| r.map_err(|e| format!("attach: {e}")));
     let pair = match pair {
         Ok(p) => p,
         Err(e) => {
@@ -84,7 +92,10 @@ async fn main() {
             return;
         }
     };
-    trace(&format!("attach ok in {:?} (incl. handshake)", t0.elapsed()));
+    trace(&format!(
+        "attach ok in {:?} (incl. handshake)",
+        t0.elapsed()
+    ));
     let daemon::Pair(read, write, _) = pair;
 
     let engine = Arc::new(Engine {
@@ -125,7 +136,10 @@ async fn main() {
                         continue;
                     }
                 }
-                trace(&format!("event {}", line.trim().chars().take(80).collect::<String>()));
+                trace(&format!(
+                    "event {}",
+                    line.trim().chars().take(80).collect::<String>()
+                ));
             }
         });
     }

@@ -20,7 +20,10 @@ async fn github_search_repositories_happy_path_with_auth() {
         .and(path("/search/repositories"))
         .and(query_param("q", "rust web"))
         .and(query_param("per_page", "10"))
-        .and(header("authorization", format!("Bearer {FAKE_GITHUB_TOKEN}")))
+        .and(header(
+            "authorization",
+            format!("Bearer {FAKE_GITHUB_TOKEN}"),
+        ))
         .and(header("user-agent", "guild-integration-github"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "total_count": 1,
@@ -44,7 +47,9 @@ async fn github_search_repositories_happy_path_with_auth() {
             &config,
             "search_repositories",
             json!({ "query": "rust web" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
     assert!(out.content.contains("1. owner/repo (Rust, ★42)"));
@@ -58,7 +63,10 @@ async fn github_list_issues_filters_out_pull_requests() {
     Mock::given(method("GET"))
         .and(path("/repos/octo/repo/issues"))
         .and(query_param("state", "open"))
-        .and(header("authorization", format!("Bearer {FAKE_GITHUB_TOKEN}")))
+        .and(header(
+            "authorization",
+            format!("Bearer {FAKE_GITHUB_TOKEN}"),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             { "number": 7, "title": "bug", "state": "open",
               "user": { "login": "octo" } },
@@ -76,7 +84,9 @@ async fn github_list_issues_filters_out_pull_requests() {
             &config,
             "list_issues",
             json!({ "owner": "octo", "repo": "repo" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
     assert!(out.content.contains("#7 [open] bug (@octo)"));
@@ -90,7 +100,10 @@ async fn github_list_pulls_renders_branches() {
     Mock::given(method("GET"))
         .and(path("/repos/octo/repo/pulls"))
         .and(query_param("state", "open"))
-        .and(header("authorization", format!("Bearer {FAKE_GITHUB_TOKEN}")))
+        .and(header(
+            "authorization",
+            format!("Bearer {FAKE_GITHUB_TOKEN}"),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             { "number": 12, "title": "fix thing", "state": "open",
               "user": { "login": "octo" },
@@ -107,10 +120,14 @@ async fn github_list_pulls_renders_branches() {
             &config,
             "list_pulls",
             json!({ "owner": "octo", "repo": "repo" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
-    assert!(out.content.contains("#12 [open] fix thing (fix-branch→main, @octo)"));
+    assert!(out
+        .content
+        .contains("#12 [open] fix thing (fix-branch→main, @octo)"));
     server.verify().await;
 }
 
@@ -122,7 +139,10 @@ async fn github_get_file_decodes_base64_content() {
     Mock::given(method("GET"))
         .and(path("/repos/octo/repo/contents/src/main.rs"))
         .and(query_param("ref", "main"))
-        .and(header("authorization", format!("Bearer {FAKE_GITHUB_TOKEN}")))
+        .and(header(
+            "authorization",
+            format!("Bearer {FAKE_GITHUB_TOKEN}"),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "name": "main.rs",
             "path": "src/main.rs",
@@ -140,7 +160,9 @@ async fn github_get_file_decodes_base64_content() {
             &config,
             "get_file",
             json!({ "owner": "octo", "repo": "repo", "path": "src/main.rs", "ref": "main" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(out.content, "hello guild\n");
@@ -153,7 +175,10 @@ async fn github_create_issue_posts_payload_and_reports_url() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/repos/octo/repo/issues"))
-        .and(header("authorization", format!("Bearer {FAKE_GITHUB_TOKEN}")))
+        .and(header(
+            "authorization",
+            format!("Bearer {FAKE_GITHUB_TOKEN}"),
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "number": 99,
             "html_url": "https://github.com/octo/repo/issues/99"
@@ -169,11 +194,16 @@ async fn github_create_issue_posts_payload_and_reports_url() {
             &config,
             "create_issue",
             json!({ "owner": "octo", "repo": "repo", "title": "new bug", "body": "details" }),
-            &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
     assert!(out.content.contains("#99"));
-    assert_eq!(out.meta.unwrap()["url"], "https://github.com/octo/repo/issues/99");
+    assert_eq!(
+        out.meta.unwrap()["url"],
+        "https://github.com/octo/repo/issues/99"
+    );
     server.verify().await;
 }
 
@@ -195,7 +225,9 @@ async fn github_maps_errors_per_family() {
             &config,
             "search_repositories",
             json!({ "query": "x" }),
-            &secrets, None)
+            &secrets,
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("auth failed (403)"), "{err}");
@@ -204,8 +236,7 @@ async fn github_maps_errors_per_family() {
     Mock::given(method("POST"))
         .and(path("/repos/octo/repo/issues"))
         .respond_with(
-            ResponseTemplate::new(422)
-                .set_body_json(json!({ "message": "Validation Failed" })),
+            ResponseTemplate::new(422).set_body_json(json!({ "message": "Validation Failed" })),
         )
         .mount(&server)
         .await;
@@ -214,7 +245,9 @@ async fn github_maps_errors_per_family() {
             &config,
             "create_issue",
             json!({ "owner": "octo", "repo": "repo", "title": "" }),
-            &secrets, None)
+            &secrets,
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("rejected the request"), "{err}");
@@ -231,7 +264,9 @@ async fn github_maps_errors_per_family() {
             &config,
             "get_file",
             json!({ "owner": "octo", "repo": "repo", "path": "nope.txt" }),
-            &secrets, None)
+            &secrets,
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("not found"), "{err}");
@@ -247,14 +282,22 @@ async fn github_maps_errors_per_family() {
             &config,
             "list_pulls",
             json!({ "owner": "octo", "repo": "repo" }),
-            &secrets, None)
+            &secrets,
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("github returned 500"), "{err}");
 
     // Missing secret never reaches the network.
     let err = plugin
-        .execute(&config, "search_repositories", json!({ "query": "x" }), &[], None)
+        .execute(
+            &config,
+            "search_repositories",
+            json!({ "query": "x" }),
+            &[],
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("'token' is not stored"), "{err}");
@@ -285,7 +328,9 @@ async fn gitlab_list_projects_happy_path_with_private_token() {
             &config,
             "list_projects",
             json!({ "search": "api" }),
-            &[("token".into(), FAKE_GITLAB_TOKEN.into())], None)
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
     assert!(out.content.contains("1. backend (acme/backend)"));
@@ -316,7 +361,9 @@ async fn gitlab_list_issues_encodes_project_path() {
             &config,
             "list_issues",
             json!({ "project": "acme/backend" }),
-            &[("token".into(), FAKE_GITLAB_TOKEN.into())], None)
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
     assert!(out.content.contains("!5 [opened] crash on start (@dev)"));
@@ -346,10 +393,14 @@ async fn gitlab_list_mrs_renders_branches() {
             &config,
             "list_mrs",
             json!({ "project": "42" }),
-            &[("token".into(), FAKE_GITLAB_TOKEN.into())], None)
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
-    assert!(out.content.contains("!9 [opened] add endpoint (feat/api→main, @dev)"));
+    assert!(out
+        .content
+        .contains("!9 [opened] add endpoint (feat/api→main, @dev)"));
     server.verify().await;
 }
 
@@ -374,7 +425,9 @@ async fn gitlab_create_issue_posts_payload_and_reports_url() {
             &config,
             "create_issue",
             json!({ "project": "42", "title": "new bug", "description": "details" }),
-            &[("token".into(), FAKE_GITLAB_TOKEN.into())], None)
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
     assert!(out.content.contains("!11"));
@@ -418,7 +471,9 @@ async fn gitlab_maps_errors_per_family() {
             &config,
             "create_issue",
             json!({ "project": "42", "title": "" }),
-            &secrets, None)
+            &secrets,
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("rejected the request"), "{err}");
@@ -434,7 +489,9 @@ async fn gitlab_maps_errors_per_family() {
             &config,
             "list_mrs",
             json!({ "project": "999" }),
-            &secrets, None)
+            &secrets,
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("not found"), "{err}");
@@ -475,7 +532,10 @@ async fn github_api_passthrough_sends_agent_headers() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/repos/owner/repo"))
-        .and(header("authorization", format!("Bearer {FAKE_GITHUB_TOKEN}")))
+        .and(header(
+            "authorization",
+            format!("Bearer {FAKE_GITHUB_TOKEN}"),
+        ))
         .and(header("user-agent", "guild-integration-github"))
         .and(header("accept", "application/vnd.github+json"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"full_name": "owner/repo"})))
@@ -486,7 +546,13 @@ async fn github_api_passthrough_sends_agent_headers() {
     let plugin = integration_by_name("github").unwrap();
     let config = json!({ "api_url": server.uri() });
     let out = plugin
-        .execute(&config, "api", json!({"path": "/repos/owner/repo"}), &[("token".into(), FAKE_GITHUB_TOKEN.into())], None)
+        .execute(
+            &config,
+            "api",
+            json!({"path": "/repos/owner/repo"}),
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
+            None,
+        )
         .await
         .unwrap();
     assert!(out.content.contains("owner/repo"));

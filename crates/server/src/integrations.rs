@@ -5,7 +5,7 @@
 //! contributes tools only while enabled.
 
 use crate::state::AppState;
-use crate::worker::mcp_pool::{PoolKey, secrets_fingerprint};
+use crate::worker::mcp_pool::{secrets_fingerprint, PoolKey};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use futures::future::BoxFuture;
 use guild_core::registry::{tool_class, BundleManifest};
@@ -132,9 +132,21 @@ struct LegacyPromotion {
 }
 
 const LEGACY_PROMOTIONS: &[LegacyPromotion] = &[
-    LegacyPromotion { connector: "atlassian", secret_name: "site", config_key: "site" },
-    LegacyPromotion { connector: "atlassian", secret_name: "email", config_key: "email" },
-    LegacyPromotion { connector: "langfuse", secret_name: "host", config_key: "base_url" },
+    LegacyPromotion {
+        connector: "atlassian",
+        secret_name: "site",
+        config_key: "site",
+    },
+    LegacyPromotion {
+        connector: "atlassian",
+        secret_name: "email",
+        config_key: "email",
+    },
+    LegacyPromotion {
+        connector: "langfuse",
+        secret_name: "host",
+        config_key: "base_url",
+    },
     LegacyPromotion {
         connector: "google_workspace",
         secret_name: "admin_email",
@@ -151,8 +163,9 @@ pub async fn migrate_legacy_credential_secrets(
     store: &crate::store::Store,
     master_key: &[u8; 32],
 ) -> anyhow::Result<()> {
-    let orgs: Vec<uuid::Uuid> =
-        sqlx::query_scalar("SELECT id FROM orgs").fetch_all(store.pool()).await?;
+    let orgs: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM orgs")
+        .fetch_all(store.pool())
+        .await?;
     for org in orgs {
         for p in LEGACY_PROMOTIONS {
             let Some(row) = store
@@ -208,8 +221,8 @@ pub async fn migrate_legacy_credential_secrets(
     Ok(())
 }
 
-mod gitlab;
 mod github;
+mod gitlab;
 mod hubspot;
 mod langfuse;
 
@@ -325,14 +338,30 @@ pub enum PluginExecutor {
     Mcp,
 }
 
-/// Guild-provided tool name for an MCP plugin tool: `int_<slug>_<tool>`.
+/// Guild-provided tool name for an MCP plugin tool: `<slug>_<tool>`.
 pub fn namespaced_tool(slug: &str, tool: &str) -> String {
-    format!("int_{slug}_{tool}")
+    format!("{slug}_{tool}")
 }
 
-/// Strips the `int_<slug>_` namespace back off.
+/// Strips the `<slug>_` namespace back off. Tolerates the legacy
+/// `int_<slug>_` shape so journals and thread logs recorded before the
+/// prefix drop still replay and render.
 pub fn unnamespaced_tool<'a>(slug: &str, tool: &'a str) -> Option<&'a str> {
-    tool.strip_prefix(&format!("int_{slug}_"))
+    tool.strip_prefix(&format!("{slug}_"))
+        .or_else(|| tool.strip_prefix(&format!("int_{slug}_")))
+}
+
+/// Whether a plugin tool spec answers a wire tool name — either exactly, or
+/// via the slug namespace (both sides stripped, legacy shape tolerated).
+pub fn tool_matches(slug: &str, spec_name: &str, call_name: &str) -> bool {
+    spec_name == call_name
+        || match (
+            unnamespaced_tool(slug, spec_name),
+            unnamespaced_tool(slug, call_name),
+        ) {
+            (Some(s), Some(c)) => s == c,
+            _ => false,
+        }
 }
 
 /// Tool-class rank for the policy rule (spec §6): read < write < admin.
@@ -511,9 +540,9 @@ pub mod testplug {
                 &[],
                 &[("secret_echo", "read"), ("admin_op", "admin")],
                 &[guild_core::registry::FieldSpec {
-                required: true,
-                ..field("api_key", "secret")
-            }],
+                    required: true,
+                    ..field("api_key", "secret")
+                }],
             )
         }
 
@@ -523,11 +552,13 @@ pub mod testplug {
                     name: "secret_echo".into(),
                     description: "Reports whether the declared secret resolved.".into(),
                     parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                    kind: Default::default(),
                 },
                 ToolSpec {
                     name: "admin_op".into(),
                     description: "An operation reserved for admins.".into(),
                     parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                    kind: Default::default(),
                 },
             ])
         }
@@ -569,16 +600,16 @@ pub mod testplug {
     }
 }
 
-pub mod slack;
 pub mod atlassian;
+pub mod slack;
 
 pub mod google_workspace;
 
 pub mod searxng {
     use super::{field, in_code_manifest, probe, Category, Integration, ToolOutcome};
-    use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
-    use protocol::api::ToolSpec;
+    use guild_core::registry::BundleManifest;
+    use protocol::api::{ToolKind, ToolSpec};
 
     /// SearxNG meta-search integration. Config: `{ "base_url": "http://…" }`.
     /// Exposes one tool: `web_search`.
@@ -628,6 +659,7 @@ pub mod searxng {
                     },
                     "required": ["query"]
                 }),
+                kind: ToolKind::WebSearch,
             }])
         }
 
@@ -725,9 +757,9 @@ pub mod searxng {
 
 pub mod superproxy {
     use super::{field, in_code_manifest, probe, Category, Integration, ToolOutcome};
-    use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
-    use protocol::api::ToolSpec;
+    use guild_core::registry::BundleManifest;
+    use protocol::api::{ToolKind, ToolSpec};
 
     const DEFAULT_MAX_CHARS: usize = 8000;
 
@@ -815,6 +847,7 @@ pub mod superproxy {
                     },
                     "required": ["url"]
                 }),
+                kind: ToolKind::WebBrowse,
             }])
         }
 
@@ -834,8 +867,9 @@ pub mod superproxy {
                     .as_str()
                     .ok_or("web_fetch requires url")?
                     .to_string();
-                let max_chars = args["max_chars"].as_u64().unwrap_or(DEFAULT_MAX_CHARS as u64)
-                    as usize;
+                let max_chars = args["max_chars"]
+                    .as_u64()
+                    .unwrap_or(DEFAULT_MAX_CHARS as u64) as usize;
                 let (base, config_token) = config_parts(config).map_err(|e| e.to_string())?;
                 // The stored secret wins; the config token is the legacy fallback.
                 let token = secrets
@@ -914,9 +948,9 @@ pub mod superproxy {
 
 pub mod firecrawl {
     use super::{field, in_code_manifest, Category, Integration, ToolOutcome};
-    use guild_core::registry::BundleManifest;
     use futures::future::BoxFuture;
-    use protocol::api::ToolSpec;
+    use guild_core::registry::BundleManifest;
+    use protocol::api::{ToolKind, ToolSpec};
 
     /// Compose server reaches host ports through `host.docker.internal`
     /// (deploy compose `extra_hosts: host-gateway`), so the self-hosted
@@ -979,10 +1013,13 @@ pub mod firecrawl {
             .await
             .map_err(|e| format!("firecrawl returned an unreadable body: {e}"))?;
         if !status.is_success() {
-            return Err(format!("firecrawl returned {status}: {}", &text[..text.len().min(300)]));
+            return Err(format!(
+                "firecrawl returned {status}: {}",
+                &text[..text.len().min(300)]
+            ));
         }
-        let parsed: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| format!("firecrawl returned bad json: {e}"))?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("firecrawl returned bad json: {e}"))?;
         if parsed["success"] == serde_json::Value::Bool(false) {
             let err = parsed["error"].as_str().unwrap_or("unknown error");
             return Err(format!("firecrawl error: {err}"));
@@ -1052,6 +1089,7 @@ pub mod firecrawl {
                         },
                         "required": ["url"]
                     }),
+                    kind: ToolKind::WebBrowse,
                 },
                 ToolSpec {
                     name: "search".into(),
@@ -1069,6 +1107,7 @@ pub mod firecrawl {
                         },
                         "required": ["query"]
                     }),
+                    kind: ToolKind::WebSearch,
                 },
                 ToolSpec {
                     name: "map".into(),
@@ -1083,6 +1122,7 @@ pub mod firecrawl {
                         },
                         "required": ["url"]
                     }),
+                    kind: Default::default(),
                 },
             ])
         }
@@ -1104,9 +1144,10 @@ pub mod firecrawl {
                             .as_str()
                             .ok_or("scrape requires url")?
                             .to_string();
-                        let max_chars =
-                            args["max_chars"].as_u64().unwrap_or(DEFAULT_MAX_CHARS as u64)
-                                as usize;
+                        let max_chars = args["max_chars"]
+                            .as_u64()
+                            .unwrap_or(DEFAULT_MAX_CHARS as u64)
+                            as usize;
                         let resp = post_json(
                             &base,
                             "/v1/scrape",
@@ -1114,10 +1155,7 @@ pub mod firecrawl {
                             key.as_deref(),
                         )
                         .await?;
-                        let markdown = resp["data"]["markdown"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string();
+                        let markdown = resp["data"]["markdown"].as_str().unwrap_or("").to_string();
                         let meta_url = resp["data"]["metadata"]["sourceURL"]
                             .as_str()
                             .or(resp["data"]["metadata"]["url"].as_str())
@@ -1140,7 +1178,10 @@ pub mod firecrawl {
                         {
                             meta["title"] = serde_json::Value::String(t.to_string());
                         }
-                        Ok(ToolOutcome { content, meta: Some(meta) })
+                        Ok(ToolOutcome {
+                            content,
+                            meta: Some(meta),
+                        })
                     }
                     "search" => {
                         let query = args["query"]
@@ -1150,8 +1191,7 @@ pub mod firecrawl {
                         let limit = args["limit"].as_u64().unwrap_or(5).clamp(1, 20) as usize;
                         let mut body = serde_json::json!({ "query": query, "limit": limit });
                         if args["scrape"].as_bool().unwrap_or(false) {
-                            body["scrapeOptions"] =
-                                serde_json::json!({ "formats": ["markdown"] });
+                            body["scrapeOptions"] = serde_json::json!({ "formats": ["markdown"] });
                         }
                         let resp = post_json(&base, "/v1/search", body, key.as_deref()).await?;
                         // The self-hosted API returns a flat results array;
@@ -1181,10 +1221,7 @@ pub mod firecrawl {
                                 out.push_str("\n\n");
                             }
                             let mut src = serde_json::Map::new();
-                            src.insert(
-                                "url".into(),
-                                serde_json::Value::String(url.to_string()),
-                            );
+                            src.insert("url".into(), serde_json::Value::String(url.to_string()));
                             if !title.is_empty() && title != "(untitled)" {
                                 src.insert(
                                     "title".into(),
@@ -1208,17 +1245,24 @@ pub mod firecrawl {
                             "sources": sources,
                             "truncated": truncated,
                         });
-                        Ok(ToolOutcome { content: out, meta: Some(meta) })
+                        Ok(ToolOutcome {
+                            content: out,
+                            meta: Some(meta),
+                        })
                     }
                     "map" => {
-                        let url = args["url"]
-                            .as_str()
-                            .ok_or("map requires url")?
-                            .to_string();
-                        let resp = post_json(&base, "/v1/map", serde_json::json!({ "url": url }),
-                            key.as_deref())
-                            .await?;
-                        let links = resp["links"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+                        let url = args["url"].as_str().ok_or("map requires url")?.to_string();
+                        let resp = post_json(
+                            &base,
+                            "/v1/map",
+                            serde_json::json!({ "url": url }),
+                            key.as_deref(),
+                        )
+                        .await?;
+                        let links = resp["links"]
+                            .as_array()
+                            .map(|a| a.as_slice())
+                            .unwrap_or(&[]);
                         let mut out = String::new();
                         for link in links.iter().take(MAP_LINK_LIMIT) {
                             let link = match link {
@@ -1233,7 +1277,10 @@ pub mod firecrawl {
                         if out.is_empty() {
                             out = "No links found.".to_string();
                         }
-                        Ok(ToolOutcome { content: out, meta: None })
+                        Ok(ToolOutcome {
+                            content: out,
+                            meta: None,
+                        })
                     }
                     other => Err(format!("firecrawl integration has no tool {other}")),
                 }
@@ -1265,8 +1312,9 @@ pub mod firecrawl {
                     return Err(format!("firecrawl rejected the connection ({status})"));
                 }
                 if !body.contains("Firecrawl API") {
-                    return Err("firecrawl: unexpected response at / (not a Firecrawl API?)"
-                        .to_string());
+                    return Err(
+                        "firecrawl: unexpected response at / (not a Firecrawl API?)".to_string()
+                    );
                 }
                 Ok(())
             })
@@ -1311,6 +1359,7 @@ pub(super) fn api_tool_spec(vendor: &str) -> ToolSpec {
             },
             "required": ["path"]
         }),
+        kind: Default::default(),
     }
 }
 
@@ -1479,8 +1528,10 @@ pub enum AutoTool {
     Guide,
 }
 
-/// Recognizes an auto-tool call: `int_<slug>_list_tools` / `int_<slug>_guide`.
+/// Recognizes an auto-tool call: `<slug>_list_tools` / `<slug>_guide`
+/// (legacy `int_<slug>_…` journals tolerated).
 pub fn parse_auto_tool(turns: &[PluginTurn], name: &str) -> Option<(usize, AutoTool)> {
+    let name = name.strip_prefix("int_").unwrap_or(name);
     for (i, turn) in turns.iter().enumerate() {
         let [list, guide] = turn.auto_tool_names();
         if name == list {
@@ -1602,7 +1653,10 @@ pub async fn resolve_plugins(state: &AppState, org: Uuid) -> anyhow::Result<Vec<
         {
             Ok(s) => s,
             Err(e) => {
-                tracing::warn!("integration {}: secrets unresolved, skipping: {e}", row.name);
+                tracing::warn!(
+                    "integration {}: secrets unresolved, skipping: {e}",
+                    row.name
+                );
                 continue;
             }
         };
@@ -1635,6 +1689,7 @@ pub async fn resolve_plugins(state: &AppState, org: Uuid) -> anyhow::Result<Vec<
                     name: namespaced_tool(&row.name, &t.name),
                     description: t.description.map(|d| d.into_owned()).unwrap_or_default(),
                     parameters: serde_json::Value::Object((*t.input_schema).clone()),
+                    kind: Default::default(),
                 },
                 class: tool_class(&manifest, &t.name).to_string(),
             })
@@ -1683,9 +1738,7 @@ async fn registry_manifest(
         .await
         .map_err(|e| anyhow::anyhow!("{e:?}"))?;
     if stored.bundle_sha256.as_deref() != Some(bundle_sha256.as_str()) {
-        anyhow::bail!(
-            "registry item {slug}: stored bundle no longer matches the approved hash"
-        );
+        anyhow::bail!("registry item {slug}: stored bundle no longer matches the approved hash");
     }
     serde_json::from_value::<BundleManifest>(stored.manifest)
         .map_err(|e| anyhow::anyhow!("manifest of {slug} unreadable: {e}"))
@@ -1705,10 +1758,8 @@ async fn guide_object_key(
     // A store error is not unapproved content — the guide degrades to None
     // so a transient store failure never fails plugin resolution for the
     // whole turn. Approval gates below stay fail-closed.
-    let Ok(Some((version, bundle_sha256))) = store
-        .registry()
-        .approved_bundle(org, "skill", slug)
-        .await
+    let Ok(Some((version, bundle_sha256))) =
+        store.registry().approved_bundle(org, "skill", slug).await
     else {
         return None;
     };
@@ -1737,7 +1788,10 @@ pub async fn call_plugin(
     org: Uuid,
     acting_as: Option<&str>,
 ) -> Result<ToolOutcome, String> {
-    let store = state.store().await.map_err(|e| format!("store error: {e:?}"))?;
+    let store = state
+        .store()
+        .await
+        .map_err(|e| format!("store error: {e:?}"))?;
     let master_key = state.config.master_key().map_err(|e| e.to_string())?;
     match turn.executor {
         PluginExecutor::Rust => {
@@ -1773,13 +1827,7 @@ pub async fn call_plugin(
                 .as_str()
                 .ok_or("mcp url missing")?
                 .to_string();
-            let headers = envelope_headers(
-                &Uuid::now_v7(),
-                &org,
-                None,
-                acting_as,
-                &secrets,
-            );
+            let headers = envelope_headers(&Uuid::now_v7(), &org, None, acting_as, &secrets);
             let key = PoolKey {
                 slug: turn.slug.clone(),
                 url: url.clone(),

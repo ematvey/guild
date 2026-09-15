@@ -64,8 +64,14 @@ async fn login_create_chat_stream_roundtrip() {
         .await
         .unwrap();
     assert_eq!(events.len(), 3, "system + user + assistant events");
-    assert!(matches!(events[1].event, protocol::api::ThreadEvent::UserMessage { .. }));
-    assert!(matches!(events[2].event, protocol::api::ThreadEvent::AssistantMessage { .. }));
+    assert!(matches!(
+        events[1].event,
+        protocol::api::ThreadEvent::UserMessage { .. }
+    ));
+    assert!(matches!(
+        events[2].event,
+        protocol::api::ThreadEvent::AssistantMessage { .. }
+    ));
 }
 
 /// The stdio JSON-RPC loop handles login and chat.send end-to-end.
