@@ -776,25 +776,22 @@ const APPROVAL_MODE_LABELS: Record<ChatApprovalMode | "default", string> = {
 
 /**
  * Label for a bare wire tool name (exported for pure tests; approval cards
- * and tool frames must render the same tool identically).
+ * and tool frames must render the same tool identically). The connector
+ * slug stays in the label — the wire name is what the model was offered,
+ * and the prefix is part of the tool's identity, not noise to assume away.
  */
 export function toolDisplayName(name: string): string {
   const n = name.toLowerCase();
   const direct = TOOL_LABELS[n];
   if (direct) return direct;
-  // Integration tools are namespaced on the wire (`searxng_web_search`;
-  // legacy journals used `int_searxng_web_search`): the connector prefix is
-  // internal, the label is the bare tool name.
+  // Legacy journals recorded the `int_` marker (`int_searxng_web_search`):
+  // dead plumbing, strip it so old threads render like new ones. The slug
+  // itself is kept.
   const bare = n.startsWith("int_") ? n.slice(4) : n;
   for (const [key, label] of Object.entries(TOOL_LABELS)) {
     if (bare.endsWith("_" + key)) return label;
   }
-  const cut = bare.indexOf("_");
-  const rest = cut > 0 ? bare.slice(cut + 1) : bare;
-  // Generic escape-hatch names keep the connector slug: every built-in
-  // connector exposes an `api` tool, so a bare "api" names nothing.
-  if (rest === "api") return cut > 0 ? `${bare.slice(0, cut)} api` : "api";
-  return rest.replace(/_/g, " ");
+  return bare.replace(/_/g, " ");
 }
 
 /** Exposed for pure tests. */
