@@ -1,12 +1,25 @@
 # Guild — current state of work
 
-Updated 2026-09-15 (in-progress state survives thread switches; per-tool
-curation fix round 1: always_ask truly forces
-the card, row-locked curation writes, server-authoritative tools map,
-script API refuses always_ask, template-lock single-connection). Read this
-before touching the codebase; detailed milestone plans live in `docs/plans/`,
-deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
-`~/workspace/hanging-commands.md`.
+Updated 2026-09-15 (tool labels keep the connector slug: chat tool frames
+and approval cards render the full namespaced name). Read this before touching
+the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
+in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Tool labels keep the connector slug — 2026-09-15
+
+Every built-in connector exposes an escape-hatch tool named `api`; wire names
+are slug-namespaced (`atlassian_api`, `gitlab_api`, …). The chat used to
+strip the connector prefix from every label, so all connectors rendered as a
+bare ambiguous "api" while the approval card below showed the raw namespaced
+name — and the stripping rested on the assumption that connector tool names
+are self-describing without their slug. Fixed by dropping the assumption:
+`toolDisplayName(name)` is the single label source for tool frames and
+approval cards and keeps the full namespaced name (underscores become
+spaces: "atlassian jira search", "gitlab api"); only the dead legacy `int_`
+marker is stripped so old journals render like new ones. Top-level client
+tools still render by kind ("Web search", "Browse") regardless of provider.
+Pure tests added in WebChat.pure.test.ts; desktop 20/20 pass; compose stack
+rebuilt and serving on :18080.
 
 ## In-progress state survives thread switches — 2026-09-15
 

@@ -139,13 +139,12 @@ describe("eventsToBlocks", () => {
     expect(toolLabel(blocks[2].tool!)).toBe("Web search");
   });
 
-  it("keeps the connector slug on generic escape-hatch tool names", () => {
+  it("keeps the connector slug in tool labels", () => {
     expect(toolDisplayName("atlassian_api")).toBe("atlassian api");
     expect(toolDisplayName("gitlab_api")).toBe("gitlab api");
     expect(toolDisplayName("int_github_api")).toBe("github api");
-    // self-describing names stay prefix-stripped
-    expect(toolDisplayName("atlassian_jira_search")).toBe("jira search");
-    // no connector prefix: bare name stands alone
+    expect(toolDisplayName("atlassian_jira_search")).toBe("atlassian jira search");
+    // no namespace: bare name stands alone
     expect(toolDisplayName("api")).toBe("api");
   });
 
