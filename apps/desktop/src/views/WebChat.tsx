@@ -497,7 +497,12 @@ export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
         break;
     }
   }
-  return blocks;
+  // Resolved approvals are decisions, not conversation content: a card whose
+  // decision event arrived is dropped, so history renders only approvals
+  // still waiting for an answer.
+  return blocks.filter(
+    (b) => !(b.kind === "approval" && b.approval && b.approval.status !== "pending"),
+  );
 }
 
 /// ApprovalRequested inserts a pending card into the current blocks;
@@ -509,21 +514,16 @@ export function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
   return blocks.map((x, j) => (j === i ? { ...x, approval: { ...a } } : x));
 }
 
-/// ApprovalResolved flips the matching card (no-op when it is absent, e.g.
-/// the stream resolved before we rendered the request).
+/// ApprovalResolved removes the matching card — a decided approval is not
+/// conversation content (no-op when it is absent, e.g. the stream resolved
+/// before we rendered the request).
 export function resolveApproval(
   blocks: Block[],
   callId: string,
-  approved: boolean,
-  reason?: string,
+  _approved: boolean,
+  _reason?: string,
 ): Block[] {
-  const i = blocks.findIndex((x) => x.kind === "approval" && x.approval?.callId === callId);
-  if (i < 0) return blocks;
-  return blocks.map((x, j) =>
-    j === i && x.approval
-      ? { ...x, approval: { ...x.approval, status: approved ? "approved" : "denied", reason } }
-      : x,
-  );
+  return blocks.filter((x) => !(x.kind === "approval" && x.approval?.callId === callId));
 }
 
 /// Thinking deltas accumulate into the trailing reasoning block. The first
