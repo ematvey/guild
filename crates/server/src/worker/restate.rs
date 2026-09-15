@@ -2270,73 +2270,71 @@ async fn approval_policy_verdict(
     let org2 = org;
     let model2 = model.to_string();
     let action2 = action.clone();
-    let run = ctx
-        .run(move || {
-            let state = st.clone();
-            let org = org2;
-            let model = model2.clone();
-            let action = action2.clone();
-            async move {
-                let store = state.store().await.map_err(api_err)?;
-                let prompt = store
-                    .org_kv()
-                    .get(org, APPROVAL_POLICY_PROMPT_KEY)
-                    .await
-                    .map_err(api_err)?
-                    .filter(|p| !p.trim().is_empty())
-                    .unwrap_or_else(|| DEFAULT_APPROVAL_POLICY_PROMPT.to_string());
-                let master = state.config.master_key()?;
-                let route = store
-                    .gateway()
-                    .resolve_route(org, &model, &master)
-                    .await
-                    .map_err(|e| {
-                        HandlerError::from(TerminalError::new(format!(
-                            "approval policy route resolve failed: {e:?}"
-                        )))
-                    })?;
-                let provider: Arc<dyn ModelProvider> =
-                    guild_core::provider::for_protocol(&route.protocol).ok_or_else(|| {
-                        TerminalError::new(format!("unknown protocol {}", route.protocol))
-                    })?;
-                let preq = ProviderRequest {
-                    model: &model,
-                    system: Some(prompt.as_str()),
-                    messages: &[Message {
-                        role: "user".to_string(),
-                        content: action,
-                        images: Vec::new(),
-                        audio: Vec::new(),
-                        tool_calls: None,
-                        tool_call_id: None,
-                        reasoning: None,
-                    }],
-                    api_key: &route.api_key,
-                    base_url: &route.base_url,
-                    tools: None,
-                    max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
-                };
-                let stream = provider
-                    .chat_stream(preq)
-                    .await
-                    .map_err(|e| TerminalError::new(format!("approval policy model error: {e}")))?;
-                let mut out = String::new();
-                let mut stream = stream;
-                while let Some(chunk) = stream.next().await {
-                    match chunk {
-                        Ok(ProviderChunk::Text(c)) => out.push_str(&c.text_delta),
-                        Ok(_) => {}
-                        Err(e) => {
-                            return Err(TerminalError::new(format!(
-                                "approval policy model error: {e}"
-                            ))
-                            .into())
-                        }
+    let run = ctx.run(move || {
+        let state = st.clone();
+        let org = org2;
+        let model = model2.clone();
+        let action = action2.clone();
+        async move {
+            let store = state.store().await.map_err(api_err)?;
+            let prompt = store
+                .org_kv()
+                .get(org, APPROVAL_POLICY_PROMPT_KEY)
+                .await
+                .map_err(api_err)?
+                .filter(|p| !p.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_APPROVAL_POLICY_PROMPT.to_string());
+            let master = state.config.master_key()?;
+            let route = store
+                .gateway()
+                .resolve_route(org, &model, &master)
+                .await
+                .map_err(|e| {
+                    HandlerError::from(TerminalError::new(format!(
+                        "approval policy route resolve failed: {e:?}"
+                    )))
+                })?;
+            let provider: Arc<dyn ModelProvider> =
+                guild_core::provider::for_protocol(&route.protocol).ok_or_else(|| {
+                    TerminalError::new(format!("unknown protocol {}", route.protocol))
+                })?;
+            let preq = ProviderRequest {
+                model: &model,
+                system: Some(prompt.as_str()),
+                messages: &[Message {
+                    role: "user".to_string(),
+                    content: action,
+                    images: Vec::new(),
+                    audio: Vec::new(),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    reasoning: None,
+                }],
+                api_key: &route.api_key,
+                base_url: &route.base_url,
+                tools: None,
+                max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
+            };
+            let stream = provider
+                .chat_stream(preq)
+                .await
+                .map_err(|e| TerminalError::new(format!("approval policy model error: {e}")))?;
+            let mut out = String::new();
+            let mut stream = stream;
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(ProviderChunk::Text(c)) => out.push_str(&c.text_delta),
+                    Ok(_) => {}
+                    Err(e) => {
+                        return Err(
+                            TerminalError::new(format!("approval policy model error: {e}")).into(),
+                        )
                     }
                 }
-                Ok(Json(out))
             }
-        });
+            Ok(Json(out))
+        }
+    });
     // The judge gets one short JSON verdict; a hung call must not stall the
     // turn — the timeout falls back to asking (empty text → no verdict).
     let raw: String = match tokio::time::timeout(APPROVAL_POLICY_TIMEOUT, run).await {
@@ -2702,36 +2700,34 @@ async fn client_tool_step(
     // command, never by escalating); `prompt` rules and unmatched commands
     // fall through to the chat's approval flow below. Pure function of the
     // compiled-in rules and the command string — replay-stable.
-    match exec_policy_gate::evaluate_execute(&call.arguments) {
-        exec_policy_gate::ExecPolicyDecision::Allow => {}
-        exec_policy_gate::ExecPolicyDecision::Deny(reason) => {
-            return Ok(ToolResultPayload {
-                content: format!("denied by exec policy: {reason}"),
-                is_error: true,
-                meta: None,
-                images: Vec::new(),
-            });
+    let static_decision = exec_policy_gate::evaluate_execute(&call.arguments);
+    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) = &static_decision {
+        return Ok(ToolResultPayload {
+            content: format!("denied by exec policy: {reason}"),
+            is_error: true,
+            meta: None,
+            images: Vec::new(),
+        });
+    }
+    if !matches!(static_decision, exec_policy_gate::ExecPolicyDecision::Allow) {
+        // ---- Approval gate (phase 2, design §C). Journaled request/decision
+        // flow; denial is a normal tool_result payload the caller persists.
+        if let Some(denial) = approval_gate(
+            ctx,
+            state,
+            tx,
+            org_id,
+            model,
+            chat_id,
+            call,
+            Approval::Ask,
+            false,
+        )
+        .await?
+        {
+            return Ok(denial);
         }
-        exec_policy_gate::ExecPolicyDecision::Prompt => {}
-    }
-
-    // ---- Approval gate (phase 2, design §C). Journaled request/decision
-    // flow; denial is a normal tool_result payload the caller persists.
-    if let Some(denial) = approval_gate(
-        ctx,
-        state,
-        tx,
-        org_id,
-        model,
-        chat_id,
-        call,
-        Approval::Ask,
-        false,
-    )
-    .await?
-    {
-        return Ok(denial);
-    }
+    } // static allow skips the interactive gate entirely
 
     // Journaled awakeable: stable id across replays.
     let (awakeable_id, promise) = ctx.awakeable::<Json<ToolResultPayload>>();
@@ -3358,9 +3354,12 @@ mod tests {
         );
         let p = build_system_prompt(None, false, false, None, "", &idx);
         assert!(p.contains("# Available skills"));
-        assert!(p.len() < build_system_prompt(None, false, false, None, "", "").len()
-            + SKILLS_INDEX_CAP
-            + 300);
+        assert!(
+            p.len()
+                < build_system_prompt(None, false, false, None, "", "").len()
+                    + SKILLS_INDEX_CAP
+                    + 300
+        );
         // Server-side cap truncates an oversized client index.
         assert!(p.len() < 20_000);
     }
