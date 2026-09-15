@@ -5,6 +5,19 @@ and approval cards render the full namespaced name). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Unset approval mode resolves to Approve for me — 2026-09-16
+
+The composer trigger on an unset chat showed a literal "Default" — a mode
+the popup doesn't offer. Two fixes: the server now resolves an unset chat
+mode the same way as `approve_for_me` (AI judge) when no account policy is
+stored, and the trigger label shows the resolved account default (fetched
+once from Settings → Approvals: ask → "Ask for approval", allow → "Full
+access", never → "Deny all", unset → "Approve for me") instead of the
+phantom "Default". An explicitly stored account policy still wins over the
+judge, so Settings per-tool overrides stay meaningful; per-tool `always_ask`
+curation still forces the card. "Server default" hint in Settings updated
+to match.
+
 ## Tool labels keep the connector slug — 2026-09-15
 
 Every built-in connector exposes an escape-hatch tool named `api`; wire names

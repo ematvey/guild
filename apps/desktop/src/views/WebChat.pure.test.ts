@@ -13,9 +13,10 @@ import {
   toolLabel,
   toolDisplayName,
   upsertApproval,
+  accountDefaultLabel,
   type Block,
 } from "./WebChat";
-import type { ThreadEvent, ThreadEventRow } from "../transport";
+import type { ApprovalPolicy, ThreadEvent, ThreadEventRow } from "../transport";
 
 function row(seq: number, event: ThreadEvent): ThreadEventRow {
   return { id: `e${seq}`, seq, event, created_at: "t" };
@@ -173,6 +174,16 @@ describe("eventsToBlocks", () => {
     ]);
     expect(blocks.map((b) => b.kind)).toEqual(["user", "compaction", "user"]);
     expect(blocks[1].compaction!.summary).toBe("so far: hi");
+  });
+});
+
+describe("accountDefaultLabel (unset chat trigger label)", () => {
+  it("maps the account default onto the matching mode; unset = approve for me", () => {
+    expect(accountDefaultLabel(null)).toBe("Approve for me");
+    expect(accountDefaultLabel({} as ApprovalPolicy)).toBe("Approve for me");
+    expect(accountDefaultLabel({ default: "ask" } as ApprovalPolicy)).toBe("Ask for approval");
+    expect(accountDefaultLabel({ default: "allow" } as ApprovalPolicy)).toBe("Full access");
+    expect(accountDefaultLabel({ default: "never" } as ApprovalPolicy)).toBe("Deny all");
   });
 });
 

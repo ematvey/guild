@@ -81,7 +81,7 @@ export function ApprovalsSection() {
   };
 
   const modes: { id: typeof policyDefault; label: string; hint: string }[] = [
-    { id: "server", label: "Server default", hint: "ask, read-only tools allowed" },
+    { id: "server", label: "Server default", hint: "approve for me — AI approves routine actions, asks on flagged ones" },
     { id: "ask", label: "Ask", hint: "approval card per state-changing tool call" },
     { id: "allow", label: "Allow all", hint: "tools run without approval cards" },
     { id: "never", label: "Deny all", hint: "every tool call is refused" },
