@@ -763,7 +763,7 @@ const APPROVAL_MODES: Record<
   },
   full_access: {
     label: "Full access",
-    hint: "Unrestricted — org-pinned tools and hard-blocked commands still refuse",
+    hint: "Unrestricted, except for organization policy overrides.",
     icon: TriangleAlert,
     iconCls: "text-orange-500",
   },
@@ -2691,7 +2691,11 @@ export default function WebChat({
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
+                      className={`h-7 gap-1 rounded-full px-2 ${
+                        approvalMode === "full_access"
+                          ? "text-orange-500 hover:text-orange-400"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
                       title="How tool actions are approved in this chat"
                     >
                       <ShieldCheck className="size-3.5" />
