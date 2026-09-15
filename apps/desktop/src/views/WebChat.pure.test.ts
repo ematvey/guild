@@ -183,14 +183,29 @@ describe("approval upsert/resolve", () => {
     expect(blocks[0].key).toBe("approval-c1");
   });
 
-  it("resolve flips the matching card and keeps the key", () => {
-    let blocks: Block[] = [upsertApproval([], card("c1"))[0]];
+  it("resolve removes the matching card entirely", () => {
+    let blocks: Block[] = [upsertApproval([], card("c1"))[0], upsertApproval([], card("c2"))[0]];
     blocks = resolveApproval(blocks, "c1", false, "no");
-    expect(blocks[0].approval!.status).toBe("denied");
-    expect(blocks[0].approval!.reason).toBe("no");
-    expect(blocks[0].key).toBe("approval-c1");
+    // a decided approval is not conversation content — the card is gone;
+    // the denial story lives on in the tool-result frame
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].approval!.callId).toBe("c2");
     // unknown call: no-op
     expect(resolveApproval(blocks, "other", true)).toEqual(blocks);
+  });
+
+  it("history derivation drops resolved approvals, keeps pending", () => {
+    const blocks = eventsToBlocks([
+      row(0, { type: "user_message", content: "go" }),
+      row(1, { type: "approval_request", call_id: "c1", name: "execute", arguments: "{}" }),
+      row(2, { type: "approval_decision", call_id: "c1", approved: true, reason: null }),
+      row(3, { type: "approval_request", call_id: "c2", name: "execute", arguments: "{}" }),
+      row(4, { type: "assistant_message", turn: 1, step: 0, blocks: [], usage, model: "m", interrupted: null }),
+    ]);
+    const approvals = blocks.filter((b) => b.kind === "approval");
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].approval!.callId).toBe("c2");
+    expect(approvals[0].approval!.status).toBe("pending");
   });
 });
 
