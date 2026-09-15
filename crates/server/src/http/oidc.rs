@@ -16,12 +16,11 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route(
             "/api/v1/admin/oidc",
-            axum::routing::put(set_config).get(get_config).delete(remove_config),
+            axum::routing::put(set_config)
+                .get(get_config)
+                .delete(remove_config),
         )
-        .route(
-            "/api/v1/auth/oidc/status",
-            axum::routing::get(status),
-        )
+        .route("/api/v1/auth/oidc/status", axum::routing::get(status))
         .route("/api/v1/auth/oidc/login", axum::routing::get(login))
         .route("/api/v1/auth/oidc/callback", axum::routing::get(callback))
 }
@@ -342,30 +341,16 @@ mod tests {
             .unwrap();
 
         // Unverified claim naming the local user's email: rejected.
-        let err = resolve_oidc_user(
-            &identity,
-            org,
-            "local@example.org",
-            false,
-            None,
-            None,
-        )
-        .await
-        .unwrap_err();
+        let err = resolve_oidc_user(&identity, org, "local@example.org", false, None, None)
+            .await
+            .unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::UNAUTHORIZED);
 
         // Verified claim naming the local user's email: still rejected —
         // managed accounts are not auto-matched by email.
-        let err = resolve_oidc_user(
-            &identity,
-            org,
-            "local@example.org",
-            true,
-            None,
-            None,
-        )
-        .await
-        .unwrap_err();
+        let err = resolve_oidc_user(&identity, org, "local@example.org", true, None, None)
+            .await
+            .unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::CONFLICT);
 
         // No session may exist for the managed user.

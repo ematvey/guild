@@ -130,7 +130,8 @@ async fn routine_run_completes_with_tool_use_and_records_run() {
         .filter(|r| r.method == "GET" && r.url.path() == "/data")
         .count();
     assert_eq!(
-        data_hits, 1,
+        data_hits,
+        1,
         "external requests: {:?}",
         seen.iter()
             .map(|r| (r.method.as_str(), r.url.path()))

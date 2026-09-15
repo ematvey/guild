@@ -2,9 +2,12 @@
 //! public API (`/api/public/...`), authenticated with basic auth over the
 //! public/secret key pair.
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
-use guild_core::registry::BundleManifest;
+use super::{
+    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
+    ToolOutcome,
+};
 use futures::future::BoxFuture;
+use guild_core::registry::BundleManifest;
 use protocol::api::ToolSpec;
 
 /// Langfuse connector. Config `{ "base_url": "…" }` overrides the stored
@@ -106,6 +109,7 @@ impl Integration for Langfuse {
                             "description": "1-50 traces, default 10" }
                     }
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "get_trace".into(),
@@ -117,6 +121,7 @@ impl Integration for Langfuse {
                     },
                     "required": ["trace_id"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "get_prompt".into(),
@@ -130,6 +135,7 @@ impl Integration for Langfuse {
                     },
                     "required": ["name"]
                 }),
+                kind: Default::default(),
             },
             api_tool_spec("Langfuse"),
         ])
@@ -178,10 +184,10 @@ impl Integration for Langfuse {
     ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
             let base = base_url(config, secrets)?;
-            let public_key = secret(secrets, "public_key")
-                .ok_or("langfuse requires the public_key secret")?;
-            let secret_key = secret(secrets, "secret_key")
-                .ok_or("langfuse requires the secret_key secret")?;
+            let public_key =
+                secret(secrets, "public_key").ok_or("langfuse requires the public_key secret")?;
+            let secret_key =
+                secret(secrets, "secret_key").ok_or("langfuse requires the secret_key secret")?;
             probe(
                 reqwest::Client::new()
                     .get(format!("{base}/api/public/projects"))
@@ -201,7 +207,13 @@ async fn list_traces(
     args: &serde_json::Value,
 ) -> Result<ToolOutcome, String> {
     let limit = args["limit"].as_u64().unwrap_or(10).clamp(1, 50) as usize;
-    let body = get(base, &format!("/api/public/traces?limit={limit}"), public_key, secret_key).await?;
+    let body = get(
+        base,
+        &format!("/api/public/traces?limit={limit}"),
+        public_key,
+        secret_key,
+    )
+    .await?;
     let traces = body["data"].as_array().cloned().unwrap_or_default();
 
     let mut content = String::new();
@@ -277,7 +289,10 @@ async fn get_prompt(
     let prompt_name = body["name"].as_str().unwrap_or(&name);
     let version = body["version"].as_u64().unwrap_or(0);
     let kind = body["type"].as_str().unwrap_or("text");
-    let content = format!("{prompt_name} v{version} ({kind})\n\n{}", serde_json::to_string_pretty(&body["prompt"]).unwrap_or_default());
+    let content = format!(
+        "{prompt_name} v{version} ({kind})\n\n{}",
+        serde_json::to_string_pretty(&body["prompt"]).unwrap_or_default()
+    );
     let meta = serde_json::json!({
         "card": "langfuse",
         "kind": "prompt",

@@ -38,15 +38,7 @@ async fn publish(
     version: &str,
     token: &str,
 ) -> axum::response::Response {
-    publish_bytes(
-        app,
-        kind,
-        slug,
-        version,
-        token,
-        demo_bundle(slug, version),
-    )
-    .await
+    publish_bytes(app, kind, slug, version, token, demo_bundle(slug, version)).await
 }
 
 async fn publish_bytes(
@@ -377,7 +369,9 @@ async fn republishing_older_version_is_refused() {
         )
         .await
         .unwrap();
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["items"][0]["latest_version"], "2.0.0");
 
@@ -396,10 +390,8 @@ async fn install_returns_webhook_token_once() {
     let token = fs.token.clone();
 
     let routine_bundle = |slug: &str, trigger_kind: &str| {
-        let dir = std::env::temp_dir().join(format!(
-            "guild-reg-routine-{slug}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("guild-reg-routine-{slug}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -474,13 +466,25 @@ async fn install_returns_webhook_token_once() {
         v
     }
 
-    let webhook = install(&app, &token, "hook-demo", routine_bundle("hook-demo", "webhook")).await;
+    let webhook = install(
+        &app,
+        &token,
+        "hook-demo",
+        routine_bundle("hook-demo", "webhook"),
+    )
+    .await;
     let plain = webhook["routine"]["webhook_token"]
         .as_str()
         .expect("webhook install returns the plaintext token once");
     assert!(!plain.is_empty());
 
-    let interval = install(&app, &token, "tick-demo", routine_bundle("tick-demo", "interval")).await;
+    let interval = install(
+        &app,
+        &token,
+        "tick-demo",
+        routine_bundle("tick-demo", "interval"),
+    )
+    .await;
     assert!(
         interval["routine"]["webhook_token"].is_null(),
         "interval routine has no webhook token"
@@ -511,7 +515,9 @@ async fn republished_bundle_bytes_require_rereview() {
         .unwrap();
 
     assert_eq!(
-        publish(&app, "skill", "swap", "1.0.0", &token).await.status(),
+        publish(&app, "skill", "swap", "1.0.0", &token)
+            .await
+            .status(),
         StatusCode::OK
     );
     let sha = stored_bundle_sha(&app, "skill", "swap", "1.0.0", &token).await;
@@ -543,7 +549,9 @@ async fn republished_bundle_bytes_require_rereview() {
         )
         .await
         .unwrap();
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["items"][0]["review_status"], "approved");
 
@@ -566,7 +574,9 @@ async fn republished_bundle_bytes_require_rereview() {
         )
         .await
         .unwrap();
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["items"][0]["review_status"], "draft");
 
@@ -687,9 +697,16 @@ async fn republished_bundle_bytes_block_install() {
     // same manifest.json, swapped routine.json → draft; member install refused
     let swapped = routine_bundle("ATTACKER-PROMPT");
     assert_eq!(
-        publish_bytes(&app, "integration", "swap-routine", "1.0.0", &token, swapped)
-            .await
-            .status(),
+        publish_bytes(
+            &app,
+            "integration",
+            "swap-routine",
+            "1.0.0",
+            &token,
+            swapped
+        )
+        .await
+        .status(),
         StatusCode::OK
     );
     let res = app
@@ -717,11 +734,15 @@ async fn approve_with_stale_version_or_hash_is_refused() {
     let token = fs.token.clone();
 
     assert_eq!(
-        publish(&app, "skill", "stale", "1.0.0", &token).await.status(),
+        publish(&app, "skill", "stale", "1.0.0", &token)
+            .await
+            .status(),
         StatusCode::OK
     );
     assert_eq!(
-        publish(&app, "skill", "stale", "2.0.0", &token).await.status(),
+        publish(&app, "skill", "stale", "2.0.0", &token)
+            .await
+            .status(),
         StatusCode::OK
     );
     let sha2 = stored_bundle_sha(&app, "skill", "stale", "2.0.0", &token).await;
@@ -765,11 +786,15 @@ async fn superseded_republish_preserves_old_bundle() {
     let token = fs.token.clone();
 
     assert_eq!(
-        publish(&app, "skill", "imm", "1.0.0", &token).await.status(),
+        publish(&app, "skill", "imm", "1.0.0", &token)
+            .await
+            .status(),
         StatusCode::OK
     );
     assert_eq!(
-        publish(&app, "skill", "imm", "2.0.0", &token).await.status(),
+        publish(&app, "skill", "imm", "2.0.0", &token)
+            .await
+            .status(),
         StatusCode::OK
     );
 
@@ -791,10 +816,15 @@ async fn superseded_republish_preserves_old_bundle() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let dest = std::env::temp_dir().join(format!("guild-reg-imm-{}", Uuid::now_v7()));
     guild_core::registry::extract(&body, &dest).unwrap();
     let content = std::fs::read_to_string(dest.join("assets/a.txt")).unwrap();
     std::fs::remove_dir_all(&dest).unwrap();
-    assert_eq!(content, "content-a", "superseded bundle bytes must be preserved");
+    assert_eq!(
+        content, "content-a",
+        "superseded bundle bytes must be preserved"
+    );
 }

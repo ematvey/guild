@@ -3,7 +3,10 @@
 //! Secret: `token` — sent as `Authorization: Bearer`; `User-Agent` is
 //! mandatory on every GitHub API request.
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration, ToolOutcome};
+use super::{
+    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
+    ToolOutcome,
+};
 use base64::Engine;
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
@@ -140,11 +143,11 @@ impl Integration for Github {
                     },
                     "required": ["query"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "list_issues".into(),
-                description: "List issues of one repository (pull requests are excluded)."
-                    .into(),
+                description: "List issues of one repository (pull requests are excluded).".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -156,6 +159,7 @@ impl Integration for Github {
                     },
                     "required": ["owner", "repo"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "list_pulls".into(),
@@ -171,6 +175,7 @@ impl Integration for Github {
                     },
                     "required": ["owner", "repo"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "get_file".into(),
@@ -185,6 +190,7 @@ impl Integration for Github {
                     },
                     "required": ["owner", "repo", "path"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "create_issue".into(),
@@ -200,6 +206,7 @@ impl Integration for Github {
                     },
                     "required": ["owner", "repo", "title"]
                 }),
+                kind: Default::default(),
             },
             api_tool_spec("GitHub"),
         ])
@@ -222,7 +229,10 @@ impl Integration for Github {
                     &ApiAuth::Bearer(tok),
                     &args,
                     12_000,
-                    &[("User-Agent", USER_AGENT), ("Accept", "application/vnd.github+json")],
+                    &[
+                        ("User-Agent", USER_AGENT),
+                        ("Accept", "application/vnd.github+json"),
+                    ],
                 )
                 .await;
             }
@@ -238,7 +248,10 @@ impl Integration for Github {
                             .query(&[("q", query), ("per_page", per_page.as_str())]),
                     )
                     .await?;
-                    let hits = body["items"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+                    let hits = body["items"]
+                        .as_array()
+                        .map(|a| a.as_slice())
+                        .unwrap_or(&[]);
                     let mut content = String::new();
                     for (i, hit) in hits.iter().enumerate() {
                         content.push_str(&repo_line(i, hit));
@@ -277,13 +290,15 @@ impl Integration for Github {
                         let title = issue["title"].as_str().unwrap_or("");
                         let state = issue["state"].as_str().unwrap_or("?");
                         let author = issue["user"]["login"].as_str().unwrap_or("?");
-                        content
-                            .push_str(&format!("#{number} [{state}] {title} (@{author})\n"));
+                        content.push_str(&format!("#{number} [{state}] {title} (@{author})\n"));
                     }
                     if content.is_empty() {
                         content = "No issues.".to_string();
                     }
-                    Ok(ToolOutcome { content, meta: None })
+                    Ok(ToolOutcome {
+                        content,
+                        meta: None,
+                    })
                 }
                 "list_pulls" => {
                     let owner = args["owner"].as_str().ok_or("list_pulls requires owner")?;
@@ -311,15 +326,22 @@ impl Integration for Github {
                     if content.is_empty() {
                         content = "No pull requests.".to_string();
                     }
-                    Ok(ToolOutcome { content, meta: None })
+                    Ok(ToolOutcome {
+                        content,
+                        meta: None,
+                    })
                 }
                 "get_file" => {
                     let owner = args["owner"].as_str().ok_or("get_file requires owner")?;
                     let repo = args["repo"].as_str().ok_or("get_file requires repo")?;
                     let path = args["path"].as_str().ok_or("get_file requires path")?;
                     let entry = send(
-                        request(&api, &tok, &format!("/repos/{owner}/{repo}/contents/{path}"))
-                            .query(&[("ref", args["ref"].as_str().unwrap_or(""))]),
+                        request(
+                            &api,
+                            &tok,
+                            &format!("/repos/{owner}/{repo}/contents/{path}"),
+                        )
+                        .query(&[("ref", args["ref"].as_str().unwrap_or(""))]),
                     )
                     .await?;
                     // GitHub nulls `content` for files above the contents-API
@@ -346,9 +368,13 @@ impl Integration for Github {
                     })
                 }
                 "create_issue" => {
-                    let owner = args["owner"].as_str().ok_or("create_issue requires owner")?;
+                    let owner = args["owner"]
+                        .as_str()
+                        .ok_or("create_issue requires owner")?;
                     let repo = args["repo"].as_str().ok_or("create_issue requires repo")?;
-                    let title = args["title"].as_str().ok_or("create_issue requires title")?;
+                    let title = args["title"]
+                        .as_str()
+                        .ok_or("create_issue requires title")?;
                     let mut payload = serde_json::json!({ "title": title });
                     if let Some(b) = args["body"].as_str() {
                         payload["body"] = serde_json::Value::String(b.to_string());

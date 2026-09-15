@@ -184,7 +184,14 @@ async fn routine_crud_hook_auth_and_internal_completion() {
                 .contains(&format!("RoutineRunner/{routine_id}/handle_webhook/send"))
         })
         .count();
-    assert_eq!(webhook_hits, 1, "requests: {:?}", seen.iter().map(|r| (r.method.as_str(), r.url.path())).collect::<Vec<_>>());
+    assert_eq!(
+        webhook_hits,
+        1,
+        "requests: {:?}",
+        seen.iter()
+            .map(|r| (r.method.as_str(), r.url.path()))
+            .collect::<Vec<_>>()
+    );
 
     // internal completion drives the scripted provider; usage recorded
     let internal_req = json!({

@@ -9,7 +9,6 @@ use std::sync::Arc;
 /// bound on 127.0.0.1:<random port>. Returns the base URL.
 pub async fn spawn_fixture() -> String {
     use axum::Router;
-    use rmcp::ErrorData as McpError;
     use rmcp::handler::server::ServerHandler;
     use rmcp::model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
@@ -17,7 +16,10 @@ pub async fn spawn_fixture() -> String {
     };
     use rmcp::service::{RequestContext, RoleServer};
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-    use rmcp::transport::streamable_http_server::tower::{StreamableHttpService, StreamableHttpServerConfig};
+    use rmcp::transport::streamable_http_server::tower::{
+        StreamableHttpServerConfig, StreamableHttpService,
+    };
+    use rmcp::ErrorData as McpError;
 
     struct Fixture;
 
@@ -71,15 +73,17 @@ pub async fn spawn_fixture() -> String {
                 .unwrap_or("")
                 .to_string();
             match request.name.as_ref() {
-                "echo" => Ok(CallToolResponse::Complete(CallToolResult::success(
-                    vec![ContentBlock::text(format!("echo: {text}"))],
-                ))),
-                "admin_only_op" => Ok(CallToolResponse::Complete(CallToolResult::error(
-                    vec![ContentBlock::text("denied")],
-                ))),
+                "echo" => Ok(CallToolResponse::Complete(CallToolResult::success(vec![
+                    ContentBlock::text(format!("echo: {text}")),
+                ]))),
+                "admin_only_op" => Ok(CallToolResponse::Complete(CallToolResult::error(vec![
+                    ContentBlock::text("denied"),
+                ]))),
                 other => {
                     let _ = other;
-                    Err(McpError::method_not_found::<rmcp::model::CallToolRequestMethod>())
+                    Err(McpError::method_not_found::<
+                        rmcp::model::CallToolRequestMethod,
+                    >())
                 }
             }
         }
@@ -96,4 +100,3 @@ pub async fn spawn_fixture() -> String {
     tokio::spawn(async move { axum::serve(listener, app).await });
     format!("http://{addr}/mcp")
 }
-

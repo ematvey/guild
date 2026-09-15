@@ -297,9 +297,18 @@ function DesktopApp() {
     }
   };
 
-  const signOut = () => {
-    // Drop the webview token; the engine keeps its session, so the next
-    // restore re-logs-in automatically (full engine sign-out is phase 2).
+  const signOut = async () => {
+    // Full sign-out: end the engine's session (and its persisted token),
+    // then drop the webview token. The next restore shows the pair/sign-in
+    // screen instead of re-logging in silently. If the engine is
+    // unreachable we still sign the webview out — the stale token.json
+    // cannot survive a 401 on the next restore.
+    try {
+      await bounded(invoke("start_engine"), 30_000, "attach timed out");
+      await rpcCall("session.clear", {}, 20_000);
+    } catch {
+      /* engine unreachable — local sign-out only */
+    }
     clearToken();
     clearApiCache();
     clearMachinesCache();

@@ -364,7 +364,9 @@ async fn fake_cloud() -> wiremock::MockServer {
         .await;
     // Tool-result sink (fire and forget for the fake).
     wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path_regex(r"^/api/v1/chats/.+/messages$"))
+        .and(wiremock::matchers::path_regex(
+            r"^/api/v1/chats/.+/messages$",
+        ))
         .respond_with(move |_req: &wiremock::Request| wiremock::ResponseTemplate::new(200))
         .mount(&server)
         .await;
@@ -403,20 +405,22 @@ where
     }
 }
 
-fn wait_response(
-    rx: &std::sync::mpsc::Receiver<Value>,
-    seen: &mut Vec<Value>,
-    id: u64,
-) -> Value {
-    wait_matching(rx, seen, |v| v.get("id") == Some(&json!(id)), &format!("response {id}"))
+fn wait_response(rx: &std::sync::mpsc::Receiver<Value>, seen: &mut Vec<Value>, id: u64) -> Value {
+    wait_matching(
+        rx,
+        seen,
+        |v| v.get("id") == Some(&json!(id)),
+        &format!("response {id}"),
+    )
 }
 
-fn wait_event(
-    rx: &std::sync::mpsc::Receiver<Value>,
-    seen: &mut Vec<Value>,
-    event: &str,
-) -> Value {
-    wait_matching(rx, seen, |v| v.get("event").and_then(|e| e.as_str()) == Some(event), event)
+fn wait_event(rx: &std::sync::mpsc::Receiver<Value>, seen: &mut Vec<Value>, event: &str) -> Value {
+    wait_matching(
+        rx,
+        seen,
+        |v| v.get("event").and_then(|e| e.as_str()) == Some(event),
+        event,
+    )
 }
 
 /// Two connections over one Shared see each other's mutations and both

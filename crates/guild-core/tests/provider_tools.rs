@@ -113,6 +113,7 @@ async fn anthropic_tool_call_blocks_assemble() {
             name: "read_file".into(),
             description: "d".into(),
             parameters: serde_json::json!({"type": "object"}),
+            kind: Default::default(),
         }]),
         max_tokens: 0,
     };

@@ -119,7 +119,8 @@ impl OpenAiProvider {
             }));
         }
         let text_delta = choice["delta"]["content"].as_str().unwrap_or("");
-        if !text_delta.is_empty() || (out.is_empty() && (tokens_in.is_some() || tokens_out.is_some()))
+        if !text_delta.is_empty()
+            || (out.is_empty() && (tokens_in.is_some() || tokens_out.is_some()))
         {
             out.push(ProviderChunk::Text(ChatChunk {
                 text_delta: text_delta.to_string(),
@@ -303,10 +304,10 @@ mod tests {
 
     #[test]
     fn empty_reasoning_delta_is_skipped() {
-        assert!(OpenAiProvider::parse_frame(
-            r#"{"choices":[{"delta":{"reasoning_content":""}}]}"#
-        )
-        .is_empty());
+        assert!(
+            OpenAiProvider::parse_frame(r#"{"choices":[{"delta":{"reasoning_content":""}}]}"#)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -351,6 +352,7 @@ mod tests {
             name: "read_file".into(),
             description: "read".into(),
             parameters: serde_json::json!({"type": "object"}),
+            kind: Default::default(),
         }];
         let req = ProviderRequest {
             model: "m",

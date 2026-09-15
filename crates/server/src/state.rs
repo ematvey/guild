@@ -19,11 +19,11 @@ use uuid::Uuid;
 /// disconnect detection.
 ///
 /// Liveness is heartbeat-based: TCP-level disconnect detection is unreliable
-/// through docker-proxy (a dead client is not noticed until a server write
-/// fails, which may never happen on an idle SSE stream). The desktop
-/// heartbeats every few seconds; `last_seen` older than `EXECUTOR_TTL_SECS`
-/// means offline. Dropping the stream body also marks the machine offline
-/// immediately (best-effort fast path when the disconnect IS noticed).
+/// through docker-proxy and proxies that kill idle SSE (the desktop's link
+/// stream flaps every few minutes behind Cloudflare). The desktop runs its
+/// heartbeat loop independently of the stream — a flap never unregisters a
+/// running app; `last_seen` older than `EXECUTOR_TTL_SECS` means offline
+/// (the fast path when the app actually exits).
 pub struct ExecutorHandle {
     pub user_id: Uuid,
     pub org_id: Uuid,
@@ -33,22 +33,18 @@ pub struct ExecutorHandle {
 }
 
 /// A machine is live while its heartbeats are fresher than this.
-pub const EXECUTOR_TTL_SECS: i64 = 15;
+pub const EXECUTOR_TTL_SECS: i64 = 30;
 
 /// Guard held for the lifetime of one machine-executor stream connection.
-/// Dropping it marks the machine offline immediately.
-pub struct ExecutorGuard {
-    state: AppState,
-    machine_id: String,
-    last_seen: Arc<std::sync::atomic::AtomicI64>,
-}
+/// Heartbeats own liveness — a stream flap must not unregister a running
+/// app, so dropping the guard is a no-op; staleness is the offline signal.
+pub struct ExecutorGuard;
 
 impl Drop for ExecutorGuard {
     fn drop(&mut self) {
-        self.last_seen
-            .store(0, std::sync::atomic::Ordering::Relaxed);
-        let mut executors = self.state.executors.lock().unwrap();
-        executors.remove(&self.machine_id);
+        // Deliberately no unregister here: the link stream flaps behind
+        // proxies, and the desktop heartbeats independently — dropping the
+        // stream must not take the machine offline. TTL handles real exits.
     }
 }
 
@@ -61,8 +57,7 @@ pub struct AppState {
     /// Server-side generations in flight, keyed by chat. Detached from any
     /// client connection: a disconnect does not stop them; clients re-attach
     /// via the gateway stream endpoint.
-    pub generations:
-        Arc<std::sync::Mutex<HashMap<Uuid, crate::http::gateway::ActiveGeneration>>>,
+    pub generations: Arc<std::sync::Mutex<HashMap<Uuid, crate::http::gateway::ActiveGeneration>>>,
     /// Connected machine executors (see `ExecutorGuard`), keyed by machine_id.
     pub executors: Arc<std::sync::Mutex<HashMap<String, Arc<ExecutorHandle>>>>,
     /// Cached MCP client connections for integration plugins (outside the
@@ -72,6 +67,13 @@ pub struct AppState {
     /// dedicated Postgres connection, so total and per-user counts are
     /// bounded.
     pub event_streams: Arc<crate::http::events::StreamGate>,
+    /// Eviction signals for machine link streams, keyed by machine_id: a
+    /// new link connect for a machine ends the previous one. Proxy hops
+    /// (Cloudflare) keep the origin leg of a dead client connection open,
+    /// which leaks stream permits; the machine's next connect reclaims
+    /// them by evicting the half-open stale stream.
+    pub machine_link_signals:
+        Arc<std::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<u64>>>>,
 }
 
 impl AppState {
@@ -88,6 +90,7 @@ impl AppState {
                 crate::http::events::EVENT_STREAM_MAX_GLOBAL,
                 crate::http::events::EVENT_STREAM_MAX_PER_USER,
             )),
+            machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -139,6 +142,7 @@ impl AppState {
                 crate::http::events::EVENT_STREAM_MAX_GLOBAL,
                 crate::http::events::EVENT_STREAM_MAX_PER_USER,
             )),
+            machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -150,10 +154,10 @@ impl AppState {
         name: &str,
     ) -> ExecutorGuard {
         let now = chrono::Utc::now().timestamp();
-        let last_seen = {
+        {
             let mut executors = self.executors.lock().unwrap();
             let entry = executors.entry(machine_id.to_string());
-            let h = match entry {
+            match entry {
                 std::collections::hash_map::Entry::Occupied(mut e) => {
                     let h = Arc::make_mut(e.get_mut());
                     if h.user_id != user.id {
@@ -164,7 +168,6 @@ impl AppState {
                         h.name = name.to_string();
                     }
                     h.last_seen.store(now, std::sync::atomic::Ordering::Relaxed);
-                    e.get().clone()
                 }
                 std::collections::hash_map::Entry::Vacant(e) => {
                     let h = Arc::new(ExecutorHandle {
@@ -173,17 +176,36 @@ impl AppState {
                         name: name.to_string(),
                         last_seen: Arc::new(std::sync::atomic::AtomicI64::new(now)),
                     });
-                    e.insert(h.clone());
-                    h
+                    e.insert(h);
                 }
             };
-            h.last_seen.clone()
-        };
-        ExecutorGuard {
-            state: self.clone(),
-            machine_id: machine_id.to_string(),
-            last_seen,
         }
+        ExecutorGuard
+    }
+
+    /// Eviction signal for a machine's link stream: a new connect for
+    /// `machine_id` ends the previous (possibly half-open, permit-leaking)
+    /// stream. Returns the fresh signal the new stream's body must select
+    /// on; the OLD stream's signal is notified and retired.
+    pub fn machine_link_signal(
+        &self,
+        machine_id: &str,
+    ) -> (tokio::sync::watch::Receiver<u64>, u64) {
+        let mut signals = self.machine_link_signals.lock().unwrap();
+        let gen = match signals.get(machine_id) {
+            Some(tx) => *tx.borrow() + 1,
+            None => 1,
+        };
+        if let Some(old) = signals.get(machine_id) {
+            // Wakes the previous stream's body: its watched value leaves its
+            // own generation. watch::send stores the value, so the eviction
+            // cannot be missed between the old stream's poll iterations
+            // (unlike Notify::notify_waiters).
+            let _ = old.send(gen);
+        }
+        let (tx, rx) = tokio::sync::watch::channel(gen);
+        signals.insert(machine_id.to_string(), tx);
+        (rx, gen)
     }
 
     /// Heartbeat from an executor: refreshes last_seen, registering an
@@ -193,7 +215,13 @@ impl AppState {
     /// A machine registered to another user is never touched — that would
     /// let anyone keep (or take over) a machine they don't own; a stale
     /// entry may be claimed by a new user, mirroring re-pairing.
-    pub fn executor_touch(&self, machine_id: &str, user_id: Uuid, org_id: Uuid, name: &str) -> bool {
+    pub fn executor_touch(
+        &self,
+        machine_id: &str,
+        user_id: Uuid,
+        org_id: Uuid,
+        name: &str,
+    ) -> bool {
         let now = chrono::Utc::now().timestamp();
         let mut executors = self.executors.lock().unwrap();
         match executors.get_mut(machine_id) {
@@ -235,7 +263,11 @@ impl AppState {
                     Arc::new(ExecutorHandle {
                         user_id,
                         org_id,
-                        name: if name.is_empty() { "guild-machine".to_string() } else { name.to_string() },
+                        name: if name.is_empty() {
+                            "guild-machine".to_string()
+                        } else {
+                            name.to_string()
+                        },
                         last_seen: Arc::new(std::sync::atomic::AtomicI64::new(now)),
                     }),
                 );

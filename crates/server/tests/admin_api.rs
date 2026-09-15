@@ -248,9 +248,7 @@ async fn assistant_prompt_roundtrip_gated_by_admin_role() {
                 .uri("/api/v1/admin/assistant-prompt")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"prompt": "You are GLaDOS."}).to_string(),
-                ))
+                .body(Body::from(json!({"prompt": "You are GLaDOS."}).to_string()))
                 .unwrap(),
         )
         .await
@@ -284,7 +282,9 @@ async fn assistant_prompt_roundtrip_gated_by_admin_role() {
                 .uri("/api/v1/admin/assistant-prompt")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"prompt": "x".repeat(10_001)}).to_string()))
+                .body(Body::from(
+                    json!({"prompt": "x".repeat(10_001)}).to_string(),
+                ))
                 .unwrap(),
         )
         .await

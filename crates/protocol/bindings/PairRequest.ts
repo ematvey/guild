@@ -2,7 +2,7 @@
 
 /**
  * Desktop-app enrollment: the webapp shows a one-time pairing code
- * (`g1.<b64url(server_url)>.<secret>`) that the client redeems here for a
+ * (`g1|<server_url>|<hex secret>`) that the client redeems here for a
  * normal session. Format: CreatePairingTokenResponse is returned once.
  */
 export type PairRequest = { code: string, };

@@ -19,14 +19,25 @@ pub fn dtrace(msg: &str) {
     let n = SEQ.fetch_add(1, Ordering::SeqCst);
     let line = format!("{ts} #{n} T[{:?}] {msg}\n", std::thread::current().id());
     let path = std::env::temp_dir().join("guild-daemon-trace.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = f.write_all(line.as_bytes());
     }
 }
 
 /// Keys whose values must never reach the trace log — frames carry login
 /// credentials and session tokens.
-const SENSITIVE_KEYS: [&str; 6] = ["token", "password", "api_key", "secret", "authorization", "credential"];
+const SENSITIVE_KEYS: [&str; 6] = [
+    "token",
+    "password",
+    "api_key",
+    "secret",
+    "authorization",
+    "credential",
+];
 
 fn scrub(v: &mut serde_json::Value) {
     match v {

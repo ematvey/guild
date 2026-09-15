@@ -12,23 +12,24 @@ type Captured = Arc<Mutex<Vec<String>>>;
 /// invocation ids starting with `killfail`, 200 otherwise.
 async fn spawn_mock_admin() -> (String, Captured) {
     let captured: Captured = Default::default();
-    let app = axum::Router::new()
-        .fallback(
-            |method: axum::http::Method,
-             uri: axum::http::Uri,
-             State(captured): State<Captured>| async move {
-                if method == axum::http::Method::DELETE {
-                    captured.lock().unwrap().push(uri.to_string());
-                }
-                let stale = uri.path().contains("killfail");
-                if stale {
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
-                } else {
-                    axum::http::StatusCode::OK
-                }
-            },
-        )
-        .with_state(captured.clone());
+    let app =
+        axum::Router::new()
+            .fallback(
+                |method: axum::http::Method,
+                 uri: axum::http::Uri,
+                 State(captured): State<Captured>| async move {
+                    if method == axum::http::Method::DELETE {
+                        captured.lock().unwrap().push(uri.to_string());
+                    }
+                    let stale = uri.path().contains("killfail");
+                    if stale {
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                    } else {
+                        axum::http::StatusCode::OK
+                    }
+                },
+            )
+            .with_state(captured.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

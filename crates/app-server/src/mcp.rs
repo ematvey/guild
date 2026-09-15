@@ -104,6 +104,7 @@ impl McpHandle {
                 name: wire,
                 description: t.description.map(|d| d.into_owned()).unwrap_or_default(),
                 parameters: Value::Object((*t.input_schema).clone()),
+                kind: Default::default(),
             });
         }
         Ok(Self {
@@ -121,7 +122,11 @@ impl McpHandle {
                 let service = self.service.peer().clone();
                 let spec = spec.clone();
                 let raw_name = self.raw_names.get(&spec.name).cloned();
-                Arc::new(McpTool { spec, service, raw_name }) as Arc<dyn Tool>
+                Arc::new(McpTool {
+                    spec,
+                    service,
+                    raw_name,
+                }) as Arc<dyn Tool>
             })
             .collect()
     }

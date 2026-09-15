@@ -35,12 +35,20 @@ async fn secrets_upsert_list_resolve_delete() {
         .resolve(org, "hubspot", &["api_key".to_string()], &master)
         .await
         .unwrap();
-    assert_eq!(resolved, vec![("api_key".to_string(), "sk-live-123".to_string())]);
+    assert_eq!(
+        resolved,
+        vec![("api_key".to_string(), "sk-live-123".to_string())]
+    );
 
     // resolve with an unstored declared name errors with the missing names
     let err = db
         .integration_secrets()
-        .resolve(org, "hubspot", &["api_key".to_string(), "missing".to_string()], &master)
+        .resolve(
+            org,
+            "hubspot",
+            &["api_key".to_string(), "missing".to_string()],
+            &master,
+        )
         .await
         .unwrap_err();
     match err {
@@ -98,13 +106,12 @@ async fn integration_delete_removes_secrets() {
 
     db.integrations().delete(org, id).await.unwrap();
     assert!(db.integrations().list(org).await.unwrap().is_empty());
-    assert!(
-        db.integration_secrets()
-            .list(org, "hubspot", &master)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(db
+        .integration_secrets()
+        .list(org, "hubspot", &master)
+        .await
+        .unwrap()
+        .is_empty());
 
     // Re-add with the same slug: no old credentials revived.
     let id2 = db
@@ -113,13 +120,12 @@ async fn integration_delete_removes_secrets() {
         .await
         .unwrap();
     assert_ne!(id, id2);
-    assert!(
-        db.integration_secrets()
-            .list(org, "hubspot", &master)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(db
+        .integration_secrets()
+        .list(org, "hubspot", &master)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 /// Rows written before the masked column existed carry masked = ''; the

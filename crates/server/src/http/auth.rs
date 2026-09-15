@@ -70,7 +70,10 @@ async fn set_approval(
             .map_err(|e| ApiError::bad_request(format!("invalid approval policy: {e}")))?;
         Some(body)
     };
-    store.identity().set_approval(user.0.id, value.clone()).await?;
+    store
+        .identity()
+        .set_approval(user.0.id, value.clone())
+        .await?;
     Ok(Json(json!({ "approval": value })))
 }
 

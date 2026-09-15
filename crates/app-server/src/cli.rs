@@ -43,8 +43,11 @@ pub fn cmd_chat(args: &[String]) -> anyhow::Result<()> {
     let text = args.last().context("missing prompt text")?.clone();
     let model = flag(args, "--model").unwrap_or_else(|_| "gpt-4o-mini".into());
     let mut client = DaemonClient::attach(&this_bin()?)?;
-    let (res, events) =
-        client.call_until_event("chat.send", json!({"text": text, "model": model}), "chat.done")?;
+    let (res, events) = client.call_until_event(
+        "chat.send",
+        json!({"text": text, "model": model}),
+        "chat.done",
+    )?;
     for ev in &events {
         if ev["event"] == "chat.delta" {
             if let Some(c) = ev["payload"]["content"].as_str() {

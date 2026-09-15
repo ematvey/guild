@@ -15,9 +15,9 @@ use futures::Stream;
 use futures::StreamExt;
 use guild_core::provider::ProviderError;
 use protocol::api::{ChatCompletionRequest, StreamEvent, ThreadEvent};
-use std::convert::Infallible;
 use serde_json::json;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
@@ -114,7 +114,6 @@ pub(crate) fn spawn_machine_watcher(
     });
 }
 
-
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/gateway/models", axum::routing::get(models))
@@ -190,7 +189,11 @@ fn provider_slug(name: &str) -> String {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    let slug = slug.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+    let slug = slug
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
     if slug.is_empty() {
         "provider".to_string()
     } else {
@@ -224,9 +227,13 @@ async fn create_provider(
     admin: AdminUser,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let name = body["name"].as_str().map(str::trim).filter(|s| !s.is_empty())
+    let name = body["name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| ApiError::bad_request("missing name"))?;
-    let protocol = body["protocol"].as_str()
+    let protocol = body["protocol"]
+        .as_str()
         .ok_or_else(|| ApiError::bad_request("missing protocol"))?;
     if !PROTOCOLS.contains(&protocol) {
         return Err(ApiError::bad_request(format!(
@@ -234,13 +241,23 @@ async fn create_provider(
             PROTOCOLS.join(", ")
         )));
     }
-    let base_url = body["base_url"].as_str().map(str::trim).filter(|s| !s.is_empty())
+    let base_url = body["base_url"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| ApiError::bad_request("missing base_url"))?;
-    let key = body["key"].as_str().filter(|s| !s.is_empty())
+    let key = body["key"]
+        .as_str()
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| ApiError::bad_request("missing key"))?;
     let slug = provider_slug(name);
     let store = state.store().await?;
-    if store.gateway().get_provider(admin.0.org_id, &slug).await?.is_some() {
+    if store
+        .gateway()
+        .get_provider(admin.0.org_id, &slug)
+        .await?
+        .is_some()
+    {
         return Err(ApiError::conflict(
             "already_exists",
             format!("a provider with the name '{name}' already exists"),
@@ -249,7 +266,15 @@ async fn create_provider(
     let master = state.config.master_key().map_err(ApiError::from)?;
     store
         .gateway()
-        .create_provider(admin.0.org_id, &slug, name, protocol, base_url, key, &master)
+        .create_provider(
+            admin.0.org_id,
+            &slug,
+            name,
+            protocol,
+            base_url,
+            key,
+            &master,
+        )
         .await?;
     Ok(Json(json!({ "provider": slug })))
 }
@@ -262,9 +287,13 @@ async fn update_provider(
     Path(slug): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let name = body["name"].as_str().map(str::trim).filter(|s| !s.is_empty())
+    let name = body["name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| ApiError::bad_request("missing name"))?;
-    let protocol = body["protocol"].as_str()
+    let protocol = body["protocol"]
+        .as_str()
         .ok_or_else(|| ApiError::bad_request("missing protocol"))?;
     if !PROTOCOLS.contains(&protocol) {
         return Err(ApiError::bad_request(format!(
@@ -272,14 +301,25 @@ async fn update_provider(
             PROTOCOLS.join(", ")
         )));
     }
-    let base_url = body["base_url"].as_str().map(str::trim).filter(|s| !s.is_empty())
+    let base_url = body["base_url"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| ApiError::bad_request("missing base_url"))?;
     let key = body["key"].as_str().filter(|s| !s.is_empty());
     let master = state.config.master_key().map_err(ApiError::from)?;
     let store = state.store().await?;
     let updated = store
         .gateway()
-        .update_provider(admin.0.org_id, &slug, name, protocol, base_url, key, &master)
+        .update_provider(
+            admin.0.org_id,
+            &slug,
+            name,
+            protocol,
+            base_url,
+            key,
+            &master,
+        )
         .await?;
     if !updated {
         return Err(ApiError::not_found(format!("no provider {slug}")));
@@ -295,7 +335,10 @@ async fn delete_provider(
     Path(slug): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.gateway().delete_provider(admin.0.org_id, &slug).await?;
+    store
+        .gateway()
+        .delete_provider(admin.0.org_id, &slug)
+        .await?;
     Ok(Json(json!({})))
 }
 
@@ -530,15 +573,17 @@ async fn chat(
     // Org scoping: chat must belong to the caller's org. Route resolution,
     // quota, history, completion, persistence and usage all happen inside the
     // durable Restate workflow (ChatRunner::generate) — see worker/restate.rs.
-    let chat = store.chats().get_chat(user.0.org_id, req.chat_id, &user.0).await?;
+    let chat = store
+        .chats()
+        .get_chat(user.0.org_id, req.chat_id, &user.0)
+        .await?;
 
     // One generation per chat at a time — reserved atomically (check+insert
     // under one lock), so a rejected send leaves nothing behind and two
     // concurrent sends cannot both invoke. The user turn itself is persisted
     // by the ChatRunner workflow (journaled), never here — attach/replay
     // stays consistent with the event log (spec §B.4).
-    let (tx, _text_buf, _thinking_buf) =
-        try_begin_generation(&state, req.chat_id)?;
+    let (tx, _text_buf, _thinking_buf) = try_begin_generation(&state, req.chat_id)?;
 
     // Fire-and-forget invocation via the Restate ingress; the workflow runs
     // detached, so this HTTP request ending (or the client disconnecting)
@@ -636,7 +681,10 @@ async fn tool_result(
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
     let content = req["content"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing content"))?;
@@ -663,11 +711,17 @@ async fn approval_decision(
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
     let approved = req["approved"]
         .as_bool()
         .ok_or_else(|| ApiError::bad_request("missing approved"))?;
-    let reason = req.get("reason").and_then(|v| v.as_str()).map(str::to_string);
+    let reason = req
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     crate::http::internal::restate_send_one_way(
         &state,
         "ChatRunner",
@@ -694,7 +748,10 @@ async fn compact_chat(
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
     crate::http::internal::restate_send_one_way(
         &state,
         "ChatRunner",
@@ -715,7 +772,10 @@ async fn attach_stream(
     Path(chat_id): Path<Uuid>,
 ) -> Result<axum::response::Response, ApiError> {
     let store = state.store().await?;
-    store.chats().get_chat(user.0.org_id, chat_id, &user.0).await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
     let gen = state
         .generations
         .lock()
@@ -760,9 +820,11 @@ async fn attach_stream(
     let approvals: Vec<(String, String, String)> = events
         .iter()
         .filter_map(|ev| match &ev.event {
-            ThreadEvent::ApprovalRequest { call_id, name, arguments }
-                if !decided.contains(call_id.as_str()) =>
-            {
+            ThreadEvent::ApprovalRequest {
+                call_id,
+                name,
+                arguments,
+            } if !decided.contains(call_id.as_str()) => {
                 Some((call_id.clone(), name.clone(), arguments.clone()))
             }
             _ => None,
@@ -798,6 +860,7 @@ async fn attach_stream(
                 name,
                 arguments,
                 executor: protocol::api::ToolExecutor::Client,
+                kind: None,
             });
         }
         for (call_id, name, arguments) in approvals {
@@ -813,7 +876,9 @@ async fn attach_stream(
             yield item;
         }
     };
-    Ok(Sse::new(out).keep_alive(KeepAlive::default()).into_response())
+    Ok(Sse::new(out)
+        .keep_alive(KeepAlive::default())
+        .into_response())
 }
 
 #[cfg(test)]
@@ -833,5 +898,5 @@ mod tests {
         assert_eq!(err.status, axum::http::StatusCode::CONFLICT);
         state.generations.lock().unwrap().remove(&chat);
         assert!(try_begin_generation(&state, chat).is_ok());
-   }
+    }
 }

@@ -133,6 +133,7 @@ fn spec(name: &str, description: &str, properties: serde_json::Value) -> ToolSpe
         name: name.into(),
         description: description.into(),
         parameters: serde_json::json!({ "type": "object", "properties": properties }),
+        kind: Default::default(),
     }
 }
 

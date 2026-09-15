@@ -329,13 +329,12 @@ async fn install(
         .get(&stored.object_key)
         .await
         .map_err(|e| ApiError::internal(format!("bundle read failed: {e}")))?;
-    let manifest: guild_core::registry::BundleManifest =
-        serde_json::from_slice(
-            &guild_core::registry::read_bundle_file(&bytes, "manifest.json")
-                .map_err(ApiError::from)?
-                .ok_or_else(|| ApiError::bad_request("bundle has no manifest.json"))?,
-        )
-        .map_err(|e| ApiError::bad_request(format!("bad manifest.json: {e}")))?;
+    let manifest: guild_core::registry::BundleManifest = serde_json::from_slice(
+        &guild_core::registry::read_bundle_file(&bytes, "manifest.json")
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::bad_request("bundle has no manifest.json"))?,
+    )
+    .map_err(|e| ApiError::bad_request(format!("bad manifest.json: {e}")))?;
     if manifest.mcp.is_some() {
         return install_mcp_plugin(state, &user, &slug, manifest).await;
     }
@@ -382,8 +381,7 @@ async fn install(
             false, // disabled until the owner enables it
         )
         .await?;
-    let mut value =
-        json!({"routine": serde_json::to_value(&routine).expect("routine serializes")});
+    let mut value = json!({"routine": serde_json::to_value(&routine).expect("routine serializes")});
     // The plaintext webhook token is shown once, at install; only its hash
     // is stored (same shape as the routines create endpoint).
     if routine.trigger_kind == "webhook" {
@@ -471,10 +469,8 @@ async fn install_mcp_plugin(
             .await?;
         routines.push(serde_json::to_value(&routine).expect("routine serializes"));
     }
-    Ok(Json(
-        json!({
-            "integration": serde_json::to_value(&row).expect("row serializes"),
-            "routines": routines,
-        }),
-    ))
+    Ok(Json(json!({
+        "integration": serde_json::to_value(&row).expect("row serializes"),
+        "routines": routines,
+    })))
 }

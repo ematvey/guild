@@ -192,7 +192,10 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
                 FIELD_KINDS.contains(&f.kind.as_str()),
                 "settings field {f:?} kind must be one of {FIELD_KINDS:?}"
             );
-            anyhow::ensure!(seen.insert(f.name.clone()), "duplicate settings field {f:?}");
+            anyhow::ensure!(
+                seen.insert(f.name.clone()),
+                "duplicate settings field {f:?}"
+            );
             // The generated form treats `default` per the field kind, so the
             // JSON value must match: string for string/text, number for
             // number, boolean for boolean. Missing and null stay allowed.
@@ -218,7 +221,7 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
                 "tool class for {name} must be read, write, or admin"
             );
             anyhow::ensure!(
-                name.len() <= 64 - "int_".len() - m.slug.len() - 2,
+                name.len() <= 64 - m.slug.len() - 1,
                 "tool name {name} too long for namespacing under {}",
                 m.slug
             );
@@ -240,11 +243,13 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
 pub fn tool_class(m: &BundleManifest, tool: &str) -> &'static str {
     m.tools
         .as_ref()
-        .and_then(|t| t.classes.get(tool).map(|c| match c.as_str() {
-            "write" => "write",
-            "admin" => "admin",
-            _ => "read",
-        }))
+        .and_then(|t| {
+            t.classes.get(tool).map(|c| match c.as_str() {
+                "write" => "write",
+                "admin" => "admin",
+                _ => "read",
+            })
+        })
         .unwrap_or("read")
 }
 
@@ -505,7 +510,8 @@ mod tests {
             "triggers": [{ "kind": "webhook", "prompt": "digest",
                            "model": "gpt-4o-mini" }],
             "skills": ["hubspot-cookbook"]
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     #[test]
@@ -584,22 +590,40 @@ mod tests {
         m.auth.as_mut().unwrap().kind = "magic".into();
         assert!(validate_v2(&m).is_err());
         let mut m = v2_manifest();
-        m.tools.as_mut().unwrap().classes.insert("t".into(), "sudo".into());
+        m.tools
+            .as_mut()
+            .unwrap()
+            .classes
+            .insert("t".into(), "sudo".into());
         assert!(validate_v2(&m).is_err());
         let mut m = v2_manifest();
         m.mcp.as_mut().unwrap().url = "https://x/".into();
-        let mut long = BundleManifest { slug: m.slug.clone(), ..v2_manifest() };
+        let mut long = BundleManifest {
+            slug: m.slug.clone(),
+            ..v2_manifest()
+        };
         long.tools.as_mut().unwrap().classes.insert(
-            "a_very_long_tool_name_exceeding_sixty_four_characters_limit_x".into(), "read".into());
+            "a_very_long_tool_name_exceeding_sixty_four_characters_limit_x".into(),
+            "read".into(),
+        );
         assert!(validate_v2(&long).is_err());
     }
 
     #[test]
     fn v1_manifest_still_validates() {
-        let m = BundleManifest { kind: "integration".into(), slug: "digest".into(),
-            version: "0.1.0".into(), description: String::new(),
-            dependencies: vec![], mcp: None, auth: None, settings: None, tools: None,
-            triggers: vec![], skills: vec![] };
+        let m = BundleManifest {
+            kind: "integration".into(),
+            slug: "digest".into(),
+            version: "0.1.0".into(),
+            description: String::new(),
+            dependencies: vec![],
+            mcp: None,
+            auth: None,
+            settings: None,
+            tools: None,
+            triggers: vec![],
+            skills: vec![],
+        };
         validate_v2(&m).unwrap();
         assert!(m.mcp.is_none());
     }
@@ -645,7 +669,10 @@ mod tests {
                 slug: bad.into(),
                 ..v2_manifest()
             };
-            assert!(validate_manifest(&m).is_err(), "slug {bad:?} must be rejected");
+            assert!(
+                validate_manifest(&m).is_err(),
+                "slug {bad:?} must be rejected"
+            );
         }
         let good = BundleManifest {
             kind: "skill".into(),

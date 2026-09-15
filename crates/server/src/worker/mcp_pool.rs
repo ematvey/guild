@@ -97,7 +97,13 @@ impl McpPool {
     fn insert(&self, key: PoolKey, service: RunningService<RoleClient, InitializeRequestParams>) {
         let mut entries = self.entries.lock().unwrap();
         Self::evict_stale(&mut entries);
-        entries.insert(key, PoolEntry { service, last_used: Instant::now() });
+        entries.insert(
+            key,
+            PoolEntry {
+                service,
+                last_used: Instant::now(),
+            },
+        );
     }
 
     fn evict_stale(entries: &mut HashMap<PoolKey, PoolEntry>) {

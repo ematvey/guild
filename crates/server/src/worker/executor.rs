@@ -299,6 +299,7 @@ impl Tool for HttpCallTool {
                 },
                 "required": ["url", "method"],
             }),
+            kind: Default::default(),
         }
     }
 
@@ -349,6 +350,7 @@ impl Tool for StoragePutTool {
                 "properties": {"key": {"type": "string"}, "content": {"type": "string"}},
                 "required": ["key", "content"],
             }),
+            kind: Default::default(),
         }
     }
 

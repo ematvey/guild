@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use guild_server::integrations::{
-    call_plugin, fetch_guide, index_line, parse_auto_tool, resolve_plugins, tool_allowed,
-    AutoTool, PluginExecutor, PluginTurn,
+    call_plugin, fetch_guide, index_line, parse_auto_tool, resolve_plugins, tool_allowed, AutoTool,
+    PluginExecutor, PluginTurn,
 };
 use guild_server::store::Store;
 use guild_server::test_support::{full_state, test_state_with_db};
@@ -29,7 +29,6 @@ fn sha256_hex(data: &[u8]) -> String {
 /// bound on 127.0.0.1:<random port>. Returns the base URL.
 async fn spawn_fixture() -> String {
     use axum::Router;
-    use rmcp::ErrorData as McpError;
     use rmcp::handler::server::ServerHandler;
     use rmcp::model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
@@ -40,6 +39,7 @@ async fn spawn_fixture() -> String {
     use rmcp::transport::streamable_http_server::tower::{
         StreamableHttpServerConfig, StreamableHttpService,
     };
+    use rmcp::ErrorData as McpError;
 
     struct Fixture;
 
@@ -93,10 +93,12 @@ async fn spawn_fixture() -> String {
                 .unwrap_or("")
                 .to_string();
             match request.name.as_ref() {
-                "echo" => Ok(CallToolResponse::Complete(CallToolResult::success(
-                    vec![ContentBlock::text(format!("echo: {text}"))],
-                ))),
-                _ => Err(McpError::method_not_found::<rmcp::model::CallToolRequestMethod>()),
+                "echo" => Ok(CallToolResponse::Complete(CallToolResult::success(vec![
+                    ContentBlock::text(format!("echo: {text}")),
+                ]))),
+                _ => Err(McpError::method_not_found::<
+                    rmcp::model::CallToolRequestMethod,
+                >()),
             }
         }
     }
@@ -135,11 +137,7 @@ fn manifest_value(url: &str) -> Value {
 /// Installs a hubspot v2 plugin row (enabled) + registry version + secret.
 /// `seed` reuses an existing org/user (full_state) instead of creating the
 /// bootstrap admin.
-async fn install_plugin(
-    store: &Store,
-    url: &str,
-    seed: Option<(Uuid, Uuid)>,
-) -> (Uuid, Uuid) {
+async fn install_plugin(store: &Store, url: &str, seed: Option<(Uuid, Uuid)>) -> (Uuid, Uuid) {
     let (org, user_id) = match seed {
         Some(pair) => pair,
         None => {
@@ -213,10 +211,7 @@ async fn turn_start_resolves_mcp_plugin_with_namespaced_tools() {
     assert_eq!(turn.slug, "hubspot");
     assert_eq!(turn.description, "HubSpot CRM tools");
     let names: Vec<&str> = turn.tools.iter().map(|t| t.spec.name.as_str()).collect();
-    assert_eq!(
-        names,
-        vec!["int_hubspot_echo", "int_hubspot_admin_only_op"]
-    );
+    assert_eq!(names, vec!["hubspot_echo", "hubspot_admin_only_op"]);
     let echo = &turn.tools[0];
     assert_eq!(echo.class, "read");
     assert_eq!(echo.spec.description, "Echoes the text back");
@@ -226,7 +221,7 @@ async fn turn_start_resolves_mcp_plugin_with_namespaced_tools() {
     // Index line (spec §7.1).
     assert_eq!(
         index_line(turn),
-        "Integration hubspot: HubSpot CRM tools — call int_hubspot_list_tools to discover its tools."
+        "Integration hubspot: HubSpot CRM tools — call hubspot_list_tools to discover its tools."
     );
 }
 
@@ -267,17 +262,14 @@ async fn disclosure_filters_tools_by_role() {
         .iter()
         .map(|s| s.name.clone())
         .collect();
-    assert_eq!(member, vec!["int_hubspot_echo"]);
+    assert_eq!(member, vec!["hubspot_echo"]);
     // Admin sees both.
     let admin: Vec<String> = turn
         .allowed_specs("admin")
         .iter()
         .map(|s| s.name.clone())
         .collect();
-    assert_eq!(
-        admin,
-        vec!["int_hubspot_echo", "int_hubspot_admin_only_op"]
-    );
+    assert_eq!(admin, vec!["hubspot_echo", "hubspot_admin_only_op"]);
     // Owner counts as admin.
     assert_eq!(turn.allowed_specs("owner").len(), 2);
 
@@ -287,7 +279,7 @@ async fn disclosure_filters_tools_by_role() {
     assert!(tight
         .allowed_specs("admin")
         .iter()
-        .all(|s| s.name != "int_hubspot_admin_only_op"));
+        .all(|s| s.name != "hubspot_admin_only_op"));
 
     // The pure enforcement fn agrees (spec §6).
     let info = &turn.tools[1];
@@ -309,15 +301,15 @@ fn auto_tools_are_recognized_and_namespaced() {
     };
     let turns = vec![turn];
     assert_eq!(
-        parse_auto_tool(&turns, "int_hubspot_list_tools"),
+        parse_auto_tool(&turns, "hubspot_list_tools"),
         Some((0, AutoTool::ListTools))
     );
     assert_eq!(
-        parse_auto_tool(&turns, "int_hubspot_guide"),
+        parse_auto_tool(&turns, "hubspot_guide"),
         Some((0, AutoTool::Guide))
     );
-    assert_eq!(parse_auto_tool(&turns, "int_hubspot_echo"), None);
-    assert_eq!(parse_auto_tool(&turns, "int_other_list_tools"), None);
+    assert_eq!(parse_auto_tool(&turns, "hubspot_echo"), None);
+    assert_eq!(parse_auto_tool(&turns, "other_list_tools"), None);
 }
 
 // ---------- execution ----------

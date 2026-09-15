@@ -346,9 +346,7 @@ async fn summary(
     let client = state.config.clickhouse_client();
     let missing_table = |e: &str| e.contains("UNKNOWN_TABLE");
     let bind_scope = |sql: String, ts_bound: i64| {
-        let mut q = client
-            .query(&sql)
-            .bind(user.0.org_id.simple().to_string());
+        let mut q = client.query(&sql).bind(user.0.org_id.simple().to_string());
         if member_scoped {
             q = q.bind(user.0.id.simple().to_string());
         }

@@ -126,13 +126,11 @@ fn config(server: &MockServer) -> Value {
 async fn mount_token_endpoint(server: &MockServer, expires_in: u64) {
     Mock::given(method("POST"))
         .and(path("/token"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "access_token": FAKE_ACCESS_TOKEN,
-                "expires_in": expires_in,
-                "token_type": "Bearer"
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": FAKE_ACCESS_TOKEN,
+            "expires_in": expires_in,
+            "token_type": "Bearer"
+        })))
         .mount(server)
         .await;
 }
@@ -244,7 +242,13 @@ async fn gmail_search_exchanges_jwt_and_lists_messages() {
 
     let cfg = config(&server);
     let outcome = connector()
-        .execute(&cfg, "gmail_search", json!({"query": "from:alice"}), &secrets(), None)
+        .execute(
+            &cfg,
+            "gmail_search",
+            json!({"query": "from:alice"}),
+            &secrets(),
+            None,
+        )
         .await
         .expect("gmail_search succeeds");
     assert!(outcome.content.contains("msg-1"));
@@ -286,9 +290,15 @@ async fn access_token_is_cached_within_the_same_process() {
     let cfg = config(&server);
     let c = connector();
     for _ in 0..2 {
-        c.execute(&cfg, "gmail_search", json!({"query": "q"}), &secrets(), None)
-            .await
-            .expect("gmail_search succeeds");
+        c.execute(
+            &cfg,
+            "gmail_search",
+            json!({"query": "q"}),
+            &secrets(),
+            None,
+        )
+        .await
+        .expect("gmail_search succeeds");
     }
     // Two tool calls, one token exchange — the second rides the cache.
     server.verify().await;
@@ -313,9 +323,15 @@ async fn token_refreshes_once_near_expiry() {
     let cfg = config(&server);
     let c = connector();
     for _ in 0..2 {
-        c.execute(&cfg, "gmail_search", json!({"query": "q"}), &secrets(), None)
-            .await
-            .expect("gmail_search succeeds");
+        c.execute(
+            &cfg,
+            "gmail_search",
+            json!({"query": "q"}),
+            &secrets(),
+            None,
+        )
+        .await
+        .expect("gmail_search succeeds");
     }
     server.verify().await;
 }
@@ -338,7 +354,13 @@ async fn failing_token_endpoint_surfaces_the_error() {
         .mount(&server)
         .await;
     let outcome = connector()
-        .execute(&config(&server), "gmail_search", json!({"query": "q"}), &secrets(), None)
+        .execute(
+            &config(&server),
+            "gmail_search",
+            json!({"query": "q"}),
+            &secrets(),
+            None,
+        )
         .await;
     let err = outcome.expect_err("token exchange fails");
     assert!(err.contains("token endpoint"), "error: {err}");
@@ -379,7 +401,13 @@ async fn gmail_get_message_extracts_headers_and_text_body() {
         .await;
 
     let outcome = connector()
-        .execute(&config(&server), "gmail_get_message", json!({"message_id": "msg-9"}), &secrets(), None)
+        .execute(
+            &config(&server),
+            "gmail_get_message",
+            json!({"message_id": "msg-9"}),
+            &secrets(),
+            None,
+        )
         .await
         .expect("gmail_get_message succeeds");
     assert!(outcome.content.contains("Test subject"));
@@ -409,7 +437,13 @@ async fn gmail_get_message_falls_back_to_html_body() {
         .await;
 
     let outcome = connector()
-        .execute(&config(&server), "gmail_get_message", json!({"message_id": "msg-html"}), &secrets(), None)
+        .execute(
+            &config(&server),
+            "gmail_get_message",
+            json!({"message_id": "msg-html"}),
+            &secrets(),
+            None,
+        )
         .await
         .expect("gmail_get_message succeeds");
     assert!(outcome.content.contains("only html"));
@@ -436,7 +470,9 @@ async fn calendar_list_events_lists_primary_events() {
             &config(&server),
             "calendar_list_events",
             json!({"time_min": "2026-09-12T00:00:00Z"}),
-            &secrets(), None)
+            &secrets(),
+            None,
+        )
         .await
         .expect("calendar_list_events succeeds");
     assert!(outcome.content.contains("Standup"));
@@ -465,7 +501,9 @@ async fn drive_search_builds_name_contains_query() {
             &config(&server),
             "drive_search",
             json!({"name": "Quarterly Report"}),
-            &secrets(), None)
+            &secrets(),
+            None,
+        )
         .await
         .expect("drive_search succeeds");
     assert!(outcome.content.contains("Quarterly Report Q3"));
@@ -488,7 +526,13 @@ async fn directory_users_defaults_to_admin_email_domain() {
         .await;
 
     let outcome = connector()
-        .execute(&config(&server), "directory_users", json!({}), &secrets(), None)
+        .execute(
+            &config(&server),
+            "directory_users",
+            json!({}),
+            &secrets(),
+            None,
+        )
         .await
         .expect("directory_users succeeds");
     assert!(outcome.content.contains("bob@example.com"));
@@ -510,7 +554,10 @@ async fn api_passthrough_carries_identity_token() {
     mount_token_endpoint(&server, 3600).await;
     Mock::given(method("GET"))
         .and(path("/drive/v3/files"))
-        .and(header("authorization", format!("Bearer {FAKE_ACCESS_TOKEN}")))
+        .and(header(
+            "authorization",
+            format!("Bearer {FAKE_ACCESS_TOKEN}"),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"files": []})))
         .expect(1)
         .mount(&server)

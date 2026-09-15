@@ -27,7 +27,11 @@ fn main() {
             anyhow::bail!("no daemon")
         })
         .expect("connect");
-    eprintln!("{} connected, raw read handle = 0x{:x}", ts(), raw.unwrap_or(0));
+    eprintln!(
+        "{} connected, raw read handle = 0x{:x}",
+        ts(),
+        raw.unwrap_or(0)
+    );
 
     // hello round-trip, sequential.
     let hello = r#"{"jsonrpc":"2.0","id":0,"protocol":1,"method":"daemon.hello","params":{}}"#;

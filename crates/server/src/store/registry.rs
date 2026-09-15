@@ -333,7 +333,10 @@ impl<'a> RegistryStore<'a> {
                     "the bundle's content changed since the review started — inspect it again",
                 ));
             }
-            (Some(latest.clone().expect("latest checked above")), sha.to_string())
+            (
+                Some(latest.clone().expect("latest checked above")),
+                sha.to_string(),
+            )
         } else {
             (None, String::new())
         };

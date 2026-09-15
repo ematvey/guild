@@ -1,7 +1,7 @@
 pub mod agent_session;
+pub mod cli;
 pub mod cloud;
 pub mod daemon;
-pub mod cli;
 pub mod daemon_client;
 pub mod dtrace;
 pub use protocol;

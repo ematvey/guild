@@ -8,7 +8,10 @@
 //! RS256 JWT is exchanged for an access token whose `sub` carries the
 //! acting identity; tokens cache in-process until near expiry.
 
-use super::{api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration, ToolOutcome};
+use super::{
+    api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration,
+    ToolOutcome,
+};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
 use base64::Engine;
 use futures::future::BoxFuture;
@@ -162,10 +165,7 @@ async fn access_token(
         .await
         .map_err(|e| format!("google token endpoint unreachable: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!(
-            "google token endpoint returned {}",
-            resp.status()
-        ));
+        return Err(format!("google token endpoint returned {}", resp.status()));
     }
     let body: serde_json::Value = resp
         .json()
@@ -176,7 +176,10 @@ async fn access_token(
         .ok_or("google token response missing access_token")?
         .to_string();
     // Clamp: a nonsensical expires_in must not overflow Instant.
-    let expires_in = body["expires_in"].as_u64().unwrap_or(JWT_TTL_SECS).min(86_400);
+    let expires_in = body["expires_in"]
+        .as_u64()
+        .unwrap_or(JWT_TTL_SECS)
+        .min(86_400);
     // Two concurrent callers may both exchange a JWT — the token endpoint
     // tolerates that; the loser's entry overwrites harmlessly.
     connector.tokens.lock().await.insert(
@@ -237,7 +240,10 @@ fn get_request(url: &str, token: &str) -> reqwest::RequestBuilder {
 }
 
 fn max_results(args: &serde_json::Value, default: u64, cap: u64) -> u64 {
-    args["max_results"].as_u64().unwrap_or(default).clamp(1, cap)
+    args["max_results"]
+        .as_u64()
+        .unwrap_or(default)
+        .clamp(1, cap)
 }
 
 /// Decodes a Gmail base64url body part to text.
@@ -288,7 +294,11 @@ fn header_value<'a>(payload: &'a serde_json::Value, name: &str) -> Option<&'a st
     payload["headers"]
         .as_array()?
         .iter()
-        .find(|h| h["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(name)))
+        .find(|h| {
+            h["name"]
+                .as_str()
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
         .and_then(|h| h["value"].as_str())
 }
 
@@ -332,7 +342,9 @@ async fn gmail_search(
     let mut out = format!(
         "Gmail search \"{}\": {} result(s)\n",
         query,
-        body["resultSizeEstimate"].as_u64().unwrap_or(messages.len() as u64)
+        body["resultSizeEstimate"]
+            .as_u64()
+            .unwrap_or(messages.len() as u64)
     );
     for m in &messages {
         out.push_str(&format!(
@@ -472,9 +484,7 @@ async fn directory_users(
     // is scoped to the service account's workspace).
     let admin = admin_email(config, secrets).unwrap_or_default();
     let default_domain = admin.rsplit('@').next().unwrap_or_default();
-    let domain = args["domain"]
-        .as_str()
-        .unwrap_or(default_domain);
+    let domain = args["domain"].as_str().unwrap_or(default_domain);
     let url = if domain.is_empty() {
         format!(
             "{}/admin/directory/v1/users?customer=my_customer&maxResults={}",
@@ -562,9 +572,7 @@ impl Integration for GoogleWorkspace {
                 },
                 guild_core::registry::FieldSpec {
                     required: true,
-                    help: Some(
-                        "workspace admin the service account acts as by default".into(),
-                    ),
+                    help: Some("workspace admin the service account acts as by default".into()),
                     placeholder: Some("admin@yourorg.com".into()),
                     ..field("admin_email", "string")
                 },
@@ -597,11 +605,11 @@ impl Integration for GoogleWorkspace {
                     },
                     "required": ["query"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "gmail_get_message".into(),
-                description: "Fetch one Gmail message and return its headers and text body."
-                    .into(),
+                description: "Fetch one Gmail message and return its headers and text body.".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -609,11 +617,11 @@ impl Integration for GoogleWorkspace {
                     },
                     "required": ["message_id"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "calendar_list_events".into(),
-                description: "List upcoming events on the primary Google Calendar."
-                    .into(),
+                description: "List upcoming events on the primary Google Calendar.".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -622,11 +630,11 @@ impl Integration for GoogleWorkspace {
                         "max_results": { "type": "number", "description": "1-50, default 10" }
                     }
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "drive_search".into(),
-                description: "Search Google Drive files by name substring."
-                    .into(),
+                description: "Search Google Drive files by name substring.".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -635,11 +643,12 @@ impl Integration for GoogleWorkspace {
                     },
                     "required": ["name"]
                 }),
+                kind: Default::default(),
             },
             ToolSpec {
                 name: "directory_users".into(),
-                description: "List Google Workspace directory users (defaults to the admin's domain)."
-                    .into(),
+                description:
+                    "List Google Workspace directory users (defaults to the admin's domain).".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -647,6 +656,7 @@ impl Integration for GoogleWorkspace {
                         "max_results": { "type": "number", "description": "1-50, default 20" }
                     }
                 }),
+                kind: Default::default(),
             },
             api_tool_spec("Google API"),
         ])

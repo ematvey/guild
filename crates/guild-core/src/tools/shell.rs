@@ -50,8 +50,20 @@ impl Tool for RunCommand {
             c.arg("/c").arg(&command);
             c
         };
+        #[cfg(windows)]
+        {
+            // The host is a GUI-subsystem process: without this, Windows
+            // allocates a fresh console for each cmd.exe and a window
+            // flashes on the user's desktop per command.
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         let child = cmd
             .current_dir(&cwd)
+            // stdin is pinned to null so interactive prompts (e.g. bare
+            // `date`) read EOF instead of hanging until the timeout.
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             // On timeout the wait future is dropped with the child inside:

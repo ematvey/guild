@@ -194,10 +194,7 @@ async fn v2_install_creates_disabled_plugin_row_and_routines() {
         .expect("hubspot row listed")
         .clone();
     assert_eq!(row["enabled"], false);
-    assert_eq!(
-        row["config"]["mcp"]["url"],
-        "https://mcp.example.com/mcp"
-    );
+    assert_eq!(row["config"]["mcp"]["url"], "https://mcp.example.com/mcp");
     assert_eq!(row["config"]["auth"]["kind"], "org_secret");
 
     // the manifest trigger created a disabled routine
@@ -394,10 +391,7 @@ async fn no_mcp_bundle_over_builtin_slug_keeps_builtin_manifest() {
 
     // Publish an integration bundle for the built-in slug "slack" with no
     // mcp manifest, a foreign secret name, and its own settings schema.
-    let dir = std::env::temp_dir().join(format!(
-        "guild-nomcp-slack-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("guild-nomcp-slack-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let manifest = BundleManifest {

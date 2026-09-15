@@ -21,7 +21,9 @@ async fn first_app_frame(
     let res = app
         .oneshot(
             Request::builder()
-                .uri(format!("/api/v1/events/stream?machine_id={machine}&machine_name={machine}"))
+                .uri(format!(
+                    "/api/v1/events/stream?machine_id={machine}&machine_name={machine}"
+                ))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -93,7 +95,14 @@ async fn all_frames_fan_out_to_every_device_with_target_marked() {
     });
 
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-    note_client_tool(&fs.state, fs.chat_id, "call-1", "bash", r#"{"command":"ls"}"#, "M-A");
+    note_client_tool(
+        &fs.state,
+        fs.chat_id,
+        "call-1",
+        "bash",
+        r#"{"command":"ls"}"#,
+        "M-A",
+    );
 
     let frame_a = tokio::time::timeout(std::time::Duration::from_secs(10), got_a)
         .await
@@ -139,8 +148,7 @@ async fn deltas_fan_out_with_snap_replay_for_late_device() {
     // a live delta emitted while no device is connected
     emit_live_delta(&fs.state, fs.chat_id, "hello fan-out");
     let app = guild_server::build_router(fs.state.clone());
-    let frame =
-        first_app_frame(app, &fs.token, "M-A", |d: &str| d.contains("hello fan-out")).await;
+    let frame = first_app_frame(app, &fs.token, "M-A", |d: &str| d.contains("hello fan-out")).await;
     let frame = frame.expect("late device gets the accumulated delta");
     assert!(frame.contains("\"type\":\"delta\""), "{frame}");
 }

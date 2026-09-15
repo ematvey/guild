@@ -42,7 +42,13 @@ async fn superproxy_fetch_builds_content_and_meta() {
 
     let config = superproxy_config(&server, None);
     let out = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://example.com/a" }), &[], None)
+        .execute(
+            &config,
+            "web_fetch",
+            json!({ "url": "https://example.com/a" }),
+            &[],
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(out.content, "# Example Page\n\nhello body");
@@ -73,7 +79,13 @@ async fn superproxy_sends_bearer_token_when_configured() {
     let plugin = integration_by_name("superproxy").unwrap();
     let config = superproxy_config(&server, Some("sekrit"));
     let out = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://example.com/b" }), &[], None)
+        .execute(
+            &config,
+            "web_fetch",
+            json!({ "url": "https://example.com/b" }),
+            &[],
+            None,
+        )
         .await
         .unwrap();
     // No title in response -> no title header, no meta.title.
@@ -103,7 +115,9 @@ async fn superproxy_truncates_long_content() {
             &config,
             "web_fetch",
             json!({ "url": "https://example.com/long", "max_chars": 1000 }),
-            &[], None)
+            &[],
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(out.content.len(), 1000 + "\n\n[truncated]".len());
@@ -123,7 +137,13 @@ async fn superproxy_errors_map_to_err() {
     let plugin = integration_by_name("superproxy").unwrap();
     let config = superproxy_config(&server, None);
     let err = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://x.test/" }), &[], None)
+        .execute(
+            &config,
+            "web_fetch",
+            json!({ "url": "https://x.test/" }),
+            &[],
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("502"));
@@ -162,7 +182,13 @@ async fn searxng_search_builds_meta_with_sources() {
 
     let config = json!({ "base_url": server.uri() });
     let out = plugin
-        .execute(&config, "web_search", json!({ "query": "rust", "count": 5 }), &[], None)
+        .execute(
+            &config,
+            "web_search",
+            json!({ "query": "rust", "count": 5 }),
+            &[],
+            None,
+        )
         .await
         .unwrap();
     assert!(out.content.starts_with("1. Rust home"));
@@ -246,7 +272,13 @@ async fn firecrawl_omits_bearer_when_no_key_stored() {
     let plugin = integration_by_name("firecrawl").unwrap();
     let config = json!({ "base_url": server.uri() });
     let out = plugin
-        .execute(&config, "map", json!({ "url": "https://a.test" }), &[], None)
+        .execute(
+            &config,
+            "map",
+            json!({ "url": "https://a.test" }),
+            &[],
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(out.content, "https://a.test\nhttps://b.test\n");
@@ -313,16 +345,23 @@ async fn firecrawl_search_builds_search_meta_and_honors_scrape_flag() {
 async fn firecrawl_errors_map_to_err() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(502).set_body_json(
-            json!({ "success": false, "error": "upstream dead" }),
-        ))
+        .respond_with(
+            ResponseTemplate::new(502)
+                .set_body_json(json!({ "success": false, "error": "upstream dead" })),
+        )
         .mount(&server)
         .await;
 
     let plugin = integration_by_name("firecrawl").unwrap();
     let config = json!({ "base_url": server.uri() });
     let err = plugin
-        .execute(&config, "scrape", json!({ "url": "https://x.test/" }), &[], None)
+        .execute(
+            &config,
+            "scrape",
+            json!({ "url": "https://x.test/" }),
+            &[],
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("502"));
@@ -342,8 +381,7 @@ async fn firecrawl_test_connection_accepts_api_marker_and_rejects_imposter() {
     let ok = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({ "message": "Firecrawl API" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "message": "Firecrawl API" })),
         )
         .mount(&ok)
         .await;
@@ -421,7 +459,13 @@ async fn superproxy_prefers_stored_secret_over_config_token() {
     let config = superproxy_config(&server, Some("config-token"));
     let secrets = vec![("token".to_string(), "store-token".to_string())];
     let out = plugin
-        .execute(&config, "web_fetch", json!({ "url": "https://example.com/c" }), &secrets, None)
+        .execute(
+            &config,
+            "web_fetch",
+            json!({ "url": "https://example.com/c" }),
+            &secrets,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(out.content, "body");

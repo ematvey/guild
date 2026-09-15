@@ -13,7 +13,12 @@ async fn delete_user_cascades_owned_rows() {
         .ensure_bootstrap_admin("a@b.c", "hunter226")
         .await
         .unwrap();
-    let admin = store.identity().find_by_email_any("a@b.c").await.unwrap().unwrap();
+    let admin = store
+        .identity()
+        .find_by_email_any("a@b.c")
+        .await
+        .unwrap()
+        .unwrap();
     let member = store
         .identity()
         .create_user(admin.org_id, "m@b.c", "hunter226", "member")
@@ -77,12 +82,11 @@ async fn delete_user_cascades_owned_rows() {
         .delete_user(admin.org_id, admin2.id)
         .await
         .unwrap();
-    let created_by: Option<Uuid> = sqlx::query_scalar(
-        "SELECT created_by FROM routines WHERE org_id = $1 AND slug = 'r1'",
-    )
-    .bind(admin.org_id)
-    .fetch_one(store.pool())
-    .await
-    .unwrap();
+    let created_by: Option<Uuid> =
+        sqlx::query_scalar("SELECT created_by FROM routines WHERE org_id = $1 AND slug = 'r1'")
+            .bind(admin.org_id)
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
     assert_eq!(created_by, None, "routine survives with created_by nulled");
 }

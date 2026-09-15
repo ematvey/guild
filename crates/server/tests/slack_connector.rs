@@ -49,7 +49,13 @@ async fn conversations_list_maps_channels_and_sends_bearer() {
     assert_eq!(plugin.categories(), &[Category::Other]);
 
     let out = plugin
-        .execute(&server_config(&server), "conversations_list", json!({}), &secrets_with(None), None)
+        .execute(
+            &server_config(&server),
+            "conversations_list",
+            json!({}),
+            &secrets_with(None),
+            None,
+        )
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_str(&out.content).unwrap();
@@ -87,7 +93,8 @@ async fn conversations_history_maps_messages_and_error_envelope() {
     Mock::given(method("GET"))
         .and(path("/users.list"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "ok": false, "error": "invalid_auth" })),
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "ok": false, "error": "invalid_auth" })),
         )
         .mount(&server)
         .await;
@@ -99,7 +106,9 @@ async fn conversations_history_maps_messages_and_error_envelope() {
             &server_config(&server),
             "conversations_history",
             json!({ "channel": "C0123456789" }),
-            &secrets_with(None), None)
+            &secrets_with(None),
+            None,
+        )
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_str(&out.content).unwrap();
@@ -110,7 +119,13 @@ async fn conversations_history_maps_messages_and_error_envelope() {
     assert_eq!(out.meta.as_ref().unwrap()["has_more"], false);
 
     let err = plugin
-        .execute(&server_config(&server), "users_list", json!({}), &secrets_with(None), None)
+        .execute(
+            &server_config(&server),
+            "users_list",
+            json!({}),
+            &secrets_with(None),
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("invalid_auth"), "got: {err}");
@@ -125,7 +140,9 @@ async fn post_message_posts_json_with_bearer_and_maps_error() {
         .and(path("/chat.postMessage"))
         .and(header("authorization", format!("Bearer {FAKE_TOKEN}")))
         .and(header("content-type", "application/json"))
-        .and(body_json(json!({ "channel": "C0123456789", "text": "ship it" })))
+        .and(body_json(
+            json!({ "channel": "C0123456789", "text": "ship it" }),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "ok": true,
             "channel": "C0123456789",
@@ -152,7 +169,9 @@ async fn post_message_posts_json_with_bearer_and_maps_error() {
             &server_config(&server),
             "post_message",
             json!({ "channel": "C0123456789", "text": "ship it" }),
-            &secrets_with(None), None)
+            &secrets_with(None),
+            None,
+        )
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_str(&out.content).unwrap();
@@ -164,12 +183,12 @@ async fn post_message_posts_json_with_bearer_and_maps_error() {
             &server_config(&server),
             "post_message",
             json!({ "channel": "C missing", "text": "x" }),
-            &secrets_with(None), None)
+            &secrets_with(None),
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.contains("channel_not_found"), "got: {err}");
 
     server.verify().await;
 }
-
-

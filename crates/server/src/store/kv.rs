@@ -18,12 +18,14 @@ impl<'a> KvStore<'a> {
 
     /// All entries whose key starts with `prefix`.
     pub async fn list_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>, ApiError> {
-        Ok(sqlx::query_as(
-            "SELECT key, value FROM server_kv WHERE key LIKE $1 || '%' ORDER BY key",
+        Ok(
+            sqlx::query_as(
+                "SELECT key, value FROM server_kv WHERE key LIKE $1 || '%' ORDER BY key",
+            )
+            .bind(prefix)
+            .fetch_all(self.pool)
+            .await?,
         )
-        .bind(prefix)
-        .fetch_all(self.pool)
-        .await?)
     }
 
     pub async fn delete(&self, key: &str) -> Result<(), ApiError> {

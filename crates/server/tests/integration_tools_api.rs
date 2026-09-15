@@ -17,7 +17,6 @@ use uuid::Uuid;
 /// (admin), bound on 127.0.0.1:<random port>. Returns the base URL.
 async fn spawn_fixture() -> String {
     use axum::Router;
-    use rmcp::ErrorData as McpError;
     use rmcp::handler::server::ServerHandler;
     use rmcp::model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
@@ -28,6 +27,7 @@ async fn spawn_fixture() -> String {
     use rmcp::transport::streamable_http_server::tower::{
         StreamableHttpServerConfig, StreamableHttpService,
     };
+    use rmcp::ErrorData as McpError;
 
     struct Fixture;
 
@@ -89,12 +89,12 @@ async fn spawn_fixture() -> String {
                 .unwrap_or("")
                 .to_string();
             match request.name.as_ref() {
-                "echo" => Ok(CallToolResponse::Complete(CallToolResult::success(
-                    vec![ContentBlock::text(format!("echo: {text}"))],
-                ))),
-                "update_deal" => Ok(CallToolResponse::Complete(CallToolResult::success(
-                    vec![ContentBlock::text("deal updated")],
-                ))),
+                "echo" => Ok(CallToolResponse::Complete(CallToolResult::success(vec![
+                    ContentBlock::text(format!("echo: {text}")),
+                ]))),
+                "update_deal" => Ok(CallToolResponse::Complete(CallToolResult::success(vec![
+                    ContentBlock::text("deal updated"),
+                ]))),
                 _ => Err(McpError::method_not_found::<
                     rmcp::model::CallToolRequestMethod,
                 >()),
@@ -208,7 +208,11 @@ async fn setup() -> Setup {
         .unwrap();
     let (_, admin_token) = store.identity().create_session(admin_id).await.unwrap();
     let (_, member_token) = store.identity().create_session(member.id).await.unwrap();
-    let key = store.api_keys().create(org, admin_id, "scripts").await.unwrap();
+    let key = store
+        .api_keys()
+        .create(org, admin_id, "scripts")
+        .await
+        .unwrap();
     Setup {
         app: guild_server::build_router(ts.state.clone()),
         ts,
@@ -227,17 +231,25 @@ async fn call_tool(s: &Setup, auth: Option<&str>, tool: &str, extra: Value) -> (
     if let Some(token) = auth {
         req = req.header("authorization", format!("Bearer {token}"));
     }
-    for (k, v) in extra.as_object().unwrap_or(&json!({}).as_object().unwrap().clone()) {
+    for (k, v) in extra
+        .as_object()
+        .unwrap_or(&json!({}).as_object().unwrap().clone())
+    {
         req = req.header(k.as_str(), v.as_str().unwrap_or(""));
     }
     let res = s
         .app
         .clone()
-        .oneshot(req.body(Body::from(json!({ "text": "hi" }).to_string())).unwrap())
+        .oneshot(
+            req.body(Body::from(json!({ "text": "hi" }).to_string()))
+                .unwrap(),
+        )
         .await
         .unwrap();
     let status = res.status();
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     (status, v)
 }
@@ -254,7 +266,7 @@ async fn unauthenticated_call_is_401() {
 #[tokio::test]
 async fn member_can_call_read_tool_and_gets_the_fixture_answer() {
     let s = setup().await;
-    let (status, body) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
+    let (status, body) = call_tool(&s, Some(&s.member_token), "hubspot_echo", json!({})).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["ok"], true);
     assert_eq!(body["content"], "echo: hi");
@@ -263,16 +275,24 @@ async fn member_can_call_read_tool_and_gets_the_fixture_answer() {
 #[tokio::test]
 async fn member_cannot_call_write_or_admin_tools() {
     let s = setup().await;
-    let (write_status, _) = call_tool(&s, Some(&s.member_token), "int_hubspot_update_deal", json!({})).await;
+    let (write_status, _) =
+        call_tool(&s, Some(&s.member_token), "hubspot_update_deal", json!({})).await;
     assert_eq!(write_status, StatusCode::FORBIDDEN);
-    let (admin_status, _) = call_tool(&s, Some(&s.member_token), "int_hubspot_admin_only_op", json!({})).await;
+    let (admin_status, _) = call_tool(
+        &s,
+        Some(&s.member_token),
+        "hubspot_admin_only_op",
+        json!({}),
+    )
+    .await;
     assert_eq!(admin_status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn admin_can_call_write_tool() {
     let s = setup().await;
-    let (status, body) = call_tool(&s, Some(&s.admin_token), "int_hubspot_update_deal", json!({})).await;
+    let (status, body) =
+        call_tool(&s, Some(&s.admin_token), "hubspot_update_deal", json!({})).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["content"], "deal updated");
 }
@@ -284,7 +304,7 @@ async fn acting_as_override_is_admin_only() {
     let (status, _) = call_tool(
         &s,
         Some(&s.member_token),
-        "int_hubspot_echo",
+        "hubspot_echo",
         json!({ "x-guild-acting-as": "other@x.y" }),
     )
     .await;
@@ -294,7 +314,7 @@ async fn acting_as_override_is_admin_only() {
     let (status, body) = call_tool(
         &s,
         Some(&s.admin_token),
-        "int_hubspot_echo",
+        "hubspot_echo",
         json!({ "x-guild-acting-as": "other@x.y" }),
     )
     .await;
@@ -304,7 +324,7 @@ async fn acting_as_override_is_admin_only() {
 #[tokio::test]
 async fn org_api_key_auth_works() {
     let s = setup().await;
-    let (status, body) = call_tool(&s, Some(&s.api_key), "int_hubspot_echo", json!({})).await;
+    let (status, body) = call_tool(&s, Some(&s.api_key), "hubspot_echo", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["content"], "echo: hi");
 }
@@ -329,7 +349,9 @@ async fn integration_list_and_tools_are_policy_filtered() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body: Value = serde_json::from_slice(
-        &axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap(),
+        &axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap(),
     )
     .unwrap();
     let items = body["items"].as_array().unwrap();
@@ -353,21 +375,27 @@ async fn integration_list_and_tools_are_policy_filtered() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body: Value = serde_json::from_slice(
-        &axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap(),
+        &axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap(),
     )
     .unwrap();
     let tools = body["tools"].as_array().unwrap();
     assert_eq!(tools.len(), 3);
     assert!(tools
         .iter()
-        .all(|t| t["name"].as_str().unwrap().starts_with("int_hubspot_")));
+        .all(|t| t["name"].as_str().unwrap().starts_with("hubspot_")));
     assert!(tools.iter().any(|t| t["class"] == "write"));
 
     // Disabled integration -> 404 for both endpoints.
-    s.ts
-        .store()
+    s.ts.store()
         .integrations()
-        .upsert(s.org, "hubspot", &json!({ "mcp": { "url": "http://x/mcp" } }), false)
+        .upsert(
+            s.org,
+            "hubspot",
+            &json!({ "mcp": { "url": "http://x/mcp" } }),
+            false,
+        )
         .await
         .unwrap();
     let res = s
@@ -388,15 +416,9 @@ async fn integration_list_and_tools_are_policy_filtered() {
 #[tokio::test]
 async fn script_call_appends_audit_event() {
     let s = setup().await;
-    let (status, _) = call_tool(&s, Some(&s.admin_token), "int_hubspot_echo", json!({})).await;
+    let (status, _) = call_tool(&s, Some(&s.admin_token), "hubspot_echo", json!({})).await;
     assert_eq!(status, StatusCode::OK);
-    let events = s
-        .ts
-        .store()
-        .events()
-        .list(s.org, 50)
-        .await
-        .unwrap();
+    let events = s.ts.store().events().list(s.org, 50).await.unwrap();
     let audit = events
         .iter()
         .find(|e| e.kind == "integration.tool_called")
@@ -484,7 +506,13 @@ async fn republished_manifest_requires_rereview_before_resolution() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
-    let (status, _) = call_tool(&s, Some(&s.member_token), "int_hubspot_admin_only_op", json!({})).await;
+    let (status, _) = call_tool(
+        &s,
+        Some(&s.member_token),
+        "hubspot_admin_only_op",
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Re-approval binds to the republished manifest: it now governs, and
@@ -515,7 +543,13 @@ async fn republished_manifest_requires_rereview_before_resolution() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let (status, body) = call_tool(&s, Some(&s.member_token), "int_hubspot_admin_only_op", json!({})).await;
+    let (status, body) = call_tool(
+        &s,
+        Some(&s.member_token),
+        "hubspot_admin_only_op",
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
     // A new version resets again: no resolution until re-reviewed.
@@ -535,7 +569,7 @@ async fn republished_manifest_requires_rereview_before_resolution() {
         )
         .await
         .unwrap();
-    let (status, _) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
+    let (status, _) = call_tool(&s, Some(&s.member_token), "hubspot_echo", json!({})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     store
         .registry()
@@ -549,7 +583,7 @@ async fn republished_manifest_requires_rereview_before_resolution() {
         )
         .await
         .unwrap();
-    let (status, body) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
+    let (status, body) = call_tool(&s, Some(&s.member_token), "hubspot_echo", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["content"], "echo: hi");
 }
@@ -607,8 +641,11 @@ async fn unbound_approval_republish_resets_to_draft() {
         .into_iter()
         .find(|i| i.slug == "hubspot")
         .unwrap();
-    assert_eq!(item.review_status, "draft", "unbound approval must not survive a republish");
-    let (status, _) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
+    assert_eq!(
+        item.review_status, "draft",
+        "unbound approval must not survive a republish"
+    );
+    let (status, _) = call_tool(&s, Some(&s.member_token), "hubspot_echo", json!({})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Positive control: with a bound approval the identical republish keeps
@@ -649,6 +686,6 @@ async fn unbound_approval_republish_resets_to_draft() {
         .find(|i| i.slug == "hubspot")
         .unwrap();
     assert_eq!(item.review_status, "approved");
-    let (status, body) = call_tool(&s, Some(&s.member_token), "int_hubspot_echo", json!({})).await;
+    let (status, body) = call_tool(&s, Some(&s.member_token), "hubspot_echo", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
