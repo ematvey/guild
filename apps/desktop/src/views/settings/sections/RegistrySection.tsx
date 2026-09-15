@@ -9,6 +9,7 @@ import { useCachedGet } from "../use-cached-api";
 import { ArrowUpRight, Package } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../admin-api";
+import { rpcCall } from "../../../transport";
 import { Button } from "@guild/ui/components/button";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
@@ -180,6 +181,38 @@ function ItemDetail({
     versionsRes.reload();
   };
 
+  const install = async () => {
+    const projectDir = (() => {
+      try {
+        return localStorage.getItem("guild.dir:last");
+      } catch {
+        return null;
+      }
+    })();
+    if (!projectDir) {
+      toast.error("Pick a project folder first", {
+        description: "Open a chat and choose a folder to install skills into it.",
+      });
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await rpcCall("registry.install", {
+        slug,
+        version: item?.latest_version ?? undefined,
+        project_dir: projectDir,
+      });
+      toast.success("Skill installed", { description: `${slug} → .agents/skills` });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("Install failed", { description: msg });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const review = async (status: "approved" | "draft") => {
     // The approval must bind to the content the admin inspected: the
     // reviewed version and its bundle hash. Without them the server would
@@ -221,20 +254,27 @@ function ItemDetail({
         description={item?.description ?? undefined}
         back={{ label: "Registry", onClick: onBack }}
         actions={
-          item?.review_status !== "approved" ? (
-            <Button size="sm" disabled={busy} onClick={() => review("approved")}>
-              Approve
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => review("draft")}
-            >
-              Revert to draft
-            </Button>
-          )
+          <>
+            {kind === "skill" && item?.review_status === "approved" && (
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => void install()}>
+                Install
+              </Button>
+            )}
+            {item?.review_status !== "approved" ? (
+              <Button size="sm" disabled={busy} onClick={() => review("approved")}>
+                Approve
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => review("draft")}
+              >
+                Revert to draft
+              </Button>
+            )}
+          </>
         }
       />
 
