@@ -444,6 +444,12 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "registry.uninstall" => {
             tokio::spawn(registry_uninstall(shared.session.clone(), req, out_tx));
         }
+        "skills.list" => {
+            tokio::spawn(skills_list(shared.session.clone(), req, out_tx));
+        }
+        "skills.disable" => {
+            tokio::spawn(skills_disable(shared.session.clone(), req, out_tx));
+        }
         other => {
             let _ = out_tx.send(response_value(
                 req.id,
@@ -882,6 +888,52 @@ async fn registry_install(
             req.id,
             json!({"name": entry.name, "path": entry.path.to_string_lossy()}),
         ))
+    }
+    .await;
+    let _ = out_tx.send(response_value(req.id, result));
+}
+
+/// Lists locally discovered skills with provenance, scope, and disabled
+/// flag — the desktop skills manager's data source.
+async fn skills_list(
+    session: Arc<Mutex<Session>>,
+    req: Request,
+    out_tx: mpsc::UnboundedSender<Value>,
+) {
+    let result = async {
+        if let Some(d) = req.params["project_dir"].as_str() {
+            session.lock().unwrap().project_dir = Some(PathBuf::from(d));
+        }
+        let project_dir = session
+            .lock()
+            .unwrap()
+            .project_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
+        let config_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("/"))
+            .join("guild");
+        let rows = crate::skills::list(&project_dir, &config_dir);
+        Ok(Response::ok(req.id, serde_json::to_value(rows)?))
+    }
+    .await;
+    let _ = out_tx.send(response_value(req.id, result));
+}
+
+/// Enables/disables one skill by SKILL.md path (settings-backed).
+async fn skills_disable(
+    _session: Arc<Mutex<Session>>,
+    req: Request,
+    out_tx: mpsc::UnboundedSender<Value>,
+) {
+    let result = async {
+        let path = PathBuf::from(param(&req, "path")?);
+        let enabled = req.params["enabled"].as_bool().context("missing enabled")?;
+        let config_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("/"))
+            .join("guild");
+        crate::skills::set_disabled(&config_dir, &path, enabled)?;
+        Ok(Response::ok(req.id, json!({"ok": true})))
     }
     .await;
     let _ = out_tx.send(response_value(req.id, result));

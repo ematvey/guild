@@ -92,11 +92,14 @@ ownership of the prompt, the client may only append a bounded segment.
 2. Implicit invocation: the model reads the full SKILL.md via `read_file`
    when a task matches. `read_file` on skill paths must not require
    approval (it is already read-only).
-3. Explicit invocation: a `$name` token in the user prompt (where `name`
-   matches a discovered skill) injects the full SKILL.md body as a context
-   block for that turn. No approval, no tool call needed.
+3. Explicit invocation: a `/name` token in the user prompt (word-start
+   position, `name` matching a discovered skill) injects the full SKILL.md
+   body as a context block for that turn. No approval, no tool call needed.
+   The composer autocompletes on `/`.
 4. Freshness: re-discover at every `agent.start`. A watcher + `skills/changed`
-   event is later polish, not v1.
+   event is later polish, not v1. The desktop skills manager (skills.list /
+   skills.disable JSON-RPC + settings section) and the composer `/`
+   autocomplete shipped 2026-09-16 alongside T1–T7.
 5. Disable: per-skill toggle in Guild settings (persisted as path → enabled
    map); disabled skills are skipped at discovery. Simple UI later; config
    only in v1.
@@ -195,8 +198,11 @@ append a warning line "N skills omitted".
   `system: None` plumbing: call `skills::discover(project_dir, config_dir)`,
   apply the disable list, render `prompt_index` with the budget, pass it as
   `skills_index` on the `ChatCompletionRequest` (via `GatewayTurn`).
-- **T3 — `$name` explicit invocation**: in app-server's turn assembly, scan
-  the user prompt for `$`-prefixed tokens matching discovered skill names;
+- **T3 — `/name` explicit invocation** (trigger char changed from the Codex
+  `$` to `/` per user decision): in app-server's turn assembly, scan
+  the user prompt for `/`-prefixed tokens at word start (start of text or
+  after whitespace — URLs and paths don't fire it) matching discovered
+  skill names;
   for each match, append a context block (`Skill: <name> (<path>)\n\n<body>`)
   to the turn's context (as part of the user message, separated by a clear
   delimiter — the system channel stays server-owned). Unknown `$token` passes
@@ -233,4 +239,4 @@ deferred.
   without a desktop executor) — revisit when remote execution backends land.
 - Plugin/marketplace-bundled skills; ADMIN (`/etc/guild/skills`) scope.
 - skills watcher + live `skills/changed` push to the UI.
-- Skill commands (`/skill:name`) — `$name` covers explicit invocation.
+- Skill commands (`/skill:name`) — `/name` covers explicit invocation.

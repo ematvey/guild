@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { applyMention, detectMention } from "../lib/skill-mention";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
@@ -65,6 +66,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   attachmentBlobUrl,
+  rpcCall,
   chatSnapshot,
   machineId,
   postApproval,
@@ -578,6 +580,13 @@ const saveDir = (chatId: string | null, dir: string | null) => {
     /* storage unavailable — the choice just won't survive a reload */
   }
 };
+
+/// One row of the composer's /-autocomplete (skills.list result).
+interface ComposerSkill {
+  name: string;
+  description: string;
+  disabled: boolean;
+}
 
 /// Sentinel for a send stream that ended without a terminal frame: not a
 /// user-facing error — the send path converts it into a reattach watch.
@@ -1396,6 +1405,54 @@ export default function WebChat({
       (chats?.find((c) => c.id === chatId)?.generating ?? false));
   const [threadLoading, setThreadLoading] = useState(() => route.chatId !== null); // /thread/<id> fetch in flight with nothing to show
   const [prompt, setPrompt] = useState("");
+  // ---- skill mentions: / opens the autocomplete (skills design §3) ----
+  const [skills, setSkills] = useState<ComposerSkill[] | null>(null);
+  const [caret, setCaret] = useState(0);
+  const [mentionDismissed, setMentionDismissed] = useState(false);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  useEffect(() => {
+    if (!isTauri) return;
+    let cancelled = false;
+    rpcCall("skills.list", {})
+      .then((res) => {
+        if (!cancelled) setSkills((res?.result ?? []) as ComposerSkill[]);
+      })
+      .catch(() => {
+        /* skills are optional composer sugar — silence */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isTauri]);
+  const mention = useMemo(
+    () => (skills && !mentionDismissed ? detectMention(prompt, caret) : null),
+    [prompt, caret, skills, mentionDismissed],
+  );
+  const mentionMatches = useMemo(() => {
+    if (!mention || !skills) return [];
+    const q = mention.query;
+    return skills
+      .filter((s) => !s.disabled && (q === "" || s.name.startsWith(q)))
+      .slice(0, 6);
+  }, [mention, skills]);
+  // a fresh token re-opens the menu after Esc; typing within one stays closed
+  useEffect(() => {
+    setMentionDismissed(false);
+  }, [mention?.start]);
+  const acceptMention = useCallback(
+    (name: string) => {
+      const r = applyMention(prompt, caret, name);
+      setPrompt(r.text);
+      setCaret(r.caret);
+      setMentionIndex(0);
+      requestAnimationFrame(() => {
+        ta.current?.focus();
+        ta.current?.setSelectionRange(r.caret, r.caret);
+        autoGrow();
+      });
+    },
+    [prompt, caret],
+  );
   // Composer attachments: strip of previews above the input — image
   // thumbnails with an overlay ✕, file chips with an icon.
   const [pending, setPending] = useState<
@@ -2620,14 +2677,67 @@ export default function WebChat({
                 ))}
               </div>
             )}
+            {mentionMatches.length > 0 && (
+              <div className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-md">
+                {mentionMatches.map((sk, i) => (
+                  <button
+                    key={sk.name}
+                    type="button"
+                    onMouseDown={(e) => {
+                      // preventDefault keeps focus (and the caret) in the textarea
+                      e.preventDefault();
+                      acceptMention(sk.name);
+                    }}
+                    onMouseEnter={() => setMentionIndex(i)}
+                    className={`flex w-full flex-col gap-0.5 px-3 py-1.5 text-left ${
+                      i === Math.min(mentionIndex, mentionMatches.length - 1) ? "bg-accent" : ""
+                    }`}
+                  >
+                    <span className="text-sm font-medium">/{sk.name}</span>
+                    <span className="line-clamp-1 text-xs text-muted-foreground">
+                      {sk.description}
+                    </span>
+                  </button>
+                ))}
+                <p className="border-t border-border/60 px-3 py-1 text-[11px] text-muted-foreground">
+                  ↑↓ pick · Enter insert · Esc dismiss — the skill's instructions are attached when you send
+                </p>
+              </div>
+            )}
             <Textarea
               ref={ta}
               value={prompt}
               onChange={(e) => {
                 setPrompt(e.target.value);
+                setCaret(e.target.selectionStart ?? e.target.value.length);
                 autoGrow();
               }}
+              onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
               onKeyDown={(e) => {
+                if (mentionMatches.length > 0) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setMentionIndex((i) => (i + 1) % mentionMatches.length);
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setMentionIndex(
+                      (i) => (i - 1 + mentionMatches.length) % mentionMatches.length,
+                    );
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    acceptMention(mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)].name);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setMentionDismissed(true);
+                    return;
+                  }
+                }
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   void send();

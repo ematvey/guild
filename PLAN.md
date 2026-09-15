@@ -48,9 +48,12 @@ passed `system: None` — no skill ever reached the model. Implemented per
   `skills_index` field on `ChatCompletionRequest` → forwarded through
   `ChatRunPayload` → appended to `build_system_prompt` and hard-capped
   server-side (8k) — the server is the enforcement point.
-- **`$name` invocation**: `$slug` tokens in the prompt matching a discovered
-  skill append the full SKILL.md body to the turn message; unknown `$tokens`
-  pass through.
+- **`/name` invocation (composer autocompletes on `/`)**: `/slug` tokens at
+  word start (URLs/paths don't fire it) matching a discovered skill append
+  the full SKILL.md body to the turn message; unknown tokens pass through.
+  The desktop Settings has a Skills section (skills.list / skills.disable
+  JSON-RPC) with provenance badges, a disable toggle, publish (versioned,
+  stamps the sidecar) and uninstall; the Registry section installs skills.
 - **Install/uninstall**: registry installs land in `.agents/skills/<slug>`
   (repo scope, or home with `global: true` on `registry.install`); new
   `registry.uninstall`. Every Guild install/publish writes an

@@ -10,6 +10,7 @@ import {
   Layers,
   Palette,
   Plug,
+  Puzzle,
   ShieldCheck,
   Sparkles,
   User,
@@ -51,7 +52,8 @@ type SectionId =
   | "models"
   | "integrations"
   | "sso"
-  | "registry";
+  | "registry"
+  | "skills";
   // No "releases" pane: desktop releases are dev-controlled, not
   // admin-controlled.
 
@@ -106,6 +108,7 @@ export function SettingsWindow({
     { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
     { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
     { id: "machine", label: "Machine", icon: <Cpu className="size-4" />, group: "user" },
+    { id: "skills", label: "Skills", icon: <Puzzle className="size-4" />, group: "user" },
     {
       id: "approvals",
       label: "Approvals",
@@ -316,6 +319,15 @@ function SectionBody({
       );
     case "approvals":
       return <ApprovalsSection />;
+    case "skills":
+      return (
+        <LazySection
+          load={() => import("./sections/SkillsSection")}
+          name="SkillsSection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
     case "usage":
       return (
         <LazySection
