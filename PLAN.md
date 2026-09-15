@@ -20,9 +20,18 @@ from the open chat's server-side `generating` flag (the same truth the
 sidebar shows, via chat-status frames / optimistic send / fetched list);
 on web, switching away mid-send clears the global busy instead of pinning
 it forever (the reattach watcher + chat-status frames own the state from
-there). Known follow-up wart, untouched: the desktop switch-back replays
-the whole mirror onto the thread reload, so steps already persisted when
-the switch happened render their streamed text twice.
+there).
+
+The switch-back replay duplication is fixed too: the desktop mirror holds
+every frame since the turn started, while the thread reload restores the
+persisted steps — replaying both rendered a completed step's text twice.
+Everything up to the last completed tool call is durable (tool results
+persist before their completion broadcasts), so the replay trims to the
+in-flight step (`replayFrom`). Tool-start frames now upsert by call id
+instead of appending (a persisted call re-served by the replay or the
+attach endpoint no longer renders twice), and the reattach thinking seed
+starts a new reasoning block instead of overwriting the previous step's
+thinking.
 
 ## Curation fix round 1 (reviewer + verifier findings) — 2026-09-15
 

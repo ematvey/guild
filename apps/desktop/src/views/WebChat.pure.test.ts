@@ -8,8 +8,10 @@ import {
   eventsToBlocks,
   parseChatRoute,
   parseSearchResults,
+  replayFrom,
   resolveApproval,
   toolLabel,
+  toolDisplayName,
   upsertApproval,
   type Block,
 } from "./WebChat";
@@ -137,6 +139,16 @@ describe("eventsToBlocks", () => {
     expect(toolLabel(blocks[2].tool!)).toBe("Web search");
   });
 
+  it("keeps the connector slug on generic escape-hatch tool names", () => {
+    expect(toolDisplayName("atlassian_api")).toBe("atlassian api");
+    expect(toolDisplayName("gitlab_api")).toBe("gitlab api");
+    expect(toolDisplayName("int_github_api")).toBe("github api");
+    // self-describing names stay prefix-stripped
+    expect(toolDisplayName("atlassian_jira_search")).toBe("jira search");
+    // no connector prefix: bare name stands alone
+    expect(toolDisplayName("api")).toBe("api");
+  });
+
   it("renders an orphan tool_result instead of dropping it", () => {
     const blocks = eventsToBlocks([
       row(1, {
@@ -222,6 +234,48 @@ describe("parseSearchResults", () => {
 
   it("drops entries without a URL", () => {
     expect(parseSearchResults("1. Only a title\nno url here")).toEqual([]);
+  });
+});
+
+describe("replayFrom", () => {
+  it("keeps the whole list before the turn's first tool completes", () => {
+    const frames = [
+      { type: "thinking_delta", content: "hmm" },
+      { type: "delta", content: "Hi" },
+    ];
+    expect(replayFrom(frames)).toEqual(frames);
+  });
+
+  it("drops everything up to the last completed tool — that is persisted", () => {
+    const tail = [
+      { type: "thinking_delta", content: "next step" },
+      { type: "delta", content: "Working on it" },
+    ];
+    const frames = [
+      { type: "delta", content: "step one text" },
+      { type: "tool_started", call_id: "a", name: "execute" },
+      { type: "tool_completed", call_id: "a", content: "ok" },
+      ...tail,
+    ];
+    expect(replayFrom(frames)).toEqual(tail);
+  });
+
+  it("uses the LAST tool_completed, keeping a later suspended call visible", () => {
+    const frames = [
+      { type: "tool_started", call_id: "a" },
+      { type: "tool_completed", call_id: "a" },
+      { type: "tool_started", call_id: "b" },
+    ];
+    expect(replayFrom(frames)).toEqual([{ type: "tool_started", call_id: "b" }]);
+  });
+
+  it("returns an empty replay when the last frame is a completed tool", () => {
+    const frames = [
+      { type: "delta", content: "text" },
+      { type: "tool_started", call_id: "a" },
+      { type: "tool_completed", call_id: "a" },
+    ];
+    expect(replayFrom(frames)).toEqual([]);
   });
 });
 

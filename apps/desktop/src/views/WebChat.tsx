@@ -514,6 +514,20 @@ export function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
   return blocks.map((x, j) => (j === i ? { ...x, approval: { ...a } } : x));
 }
 
+/// Desktop switch-back replay: the fan-out mirror holds every frame since
+/// the turn started, while the thread reload already restored the persisted
+/// steps. Everything up to the last completed tool call is durable (results
+/// persist before the completion broadcasts), so the replay keeps only the
+/// in-flight step — the frames after the last tool_completed. Before the
+/// turn's first tool completes that is the whole frame list: the reload has
+/// none of the turn's text yet.
+export function replayFrom(frames: StreamFrame[]): StreamFrame[] {
+  for (let i = frames.length - 1; i >= 0; i--) {
+    if (frames[i].type === "tool_completed") return frames.slice(i + 1);
+  }
+  return frames;
+}
+
 /// ApprovalResolved removes the matching card — a decided approval is not
 /// conversation content (no-op when it is absent, e.g. the stream resolved
 /// before we rendered the request).
@@ -526,25 +540,13 @@ export function resolveApproval(
   return blocks.filter((x) => !(x.kind === "approval" && x.approval?.callId === callId));
 }
 
-/// Thinking deltas accumulate into the trailing reasoning block. The first
-/// frame after a (re)attach carries the full in-flight buffer (spec B.5), so
-/// it replaces instead of appending — and the replacement targets the
-/// turn's existing reasoning block even when a tool/approval card sits
-/// after it, otherwise a re-attach duplicates the whole thinking text as a
-/// second block below the approval card.
-function upsertThinking(blocks: Block[], content: string, replace: boolean): Block[] {
-  if (replace) {
-    for (let i = blocks.length - 1; i >= 0; i--) {
-      if (blocks[i].kind === "reasoning") {
-        const copy = blocks.slice();
-        copy[i] = { ...blocks[i], reasoningText: content };
-        return copy;
-      }
-    }
-    return [...blocks, { kind: "reasoning", text: "", reasoningText: content, key: liveKey() }];
-  }
+/// Thinking deltas accumulate into the trailing reasoning block. A seed
+/// frame carries the FULL in-flight reasoning buffer (spec B.5) right after
+/// the durable reload — the in-flight step has no block yet, so the seed
+/// starts one; later deltas append to the trailing reasoning block.
+function upsertThinking(blocks: Block[], content: string, seed: boolean): Block[] {
   const last = blocks[blocks.length - 1];
-  if (last?.kind === "reasoning") {
+  if (!seed && last?.kind === "reasoning") {
     const text = last.reasoningText + content;
     return [...blocks.slice(0, -1), { ...last, reasoningText: text }];
   }
@@ -772,19 +774,14 @@ const APPROVAL_MODE_LABELS: Record<ChatApprovalMode | "default", string> = {
   full_access: "Full access",
 };
 
-/** Exposed for pure tests. */
-export function toolLabel(t: ToolBlock): string {
-  const n = t.name.toLowerCase();
+/**
+ * Label for a bare wire tool name (exported for pure tests; approval cards
+ * and tool frames must render the same tool identically).
+ */
+export function toolDisplayName(name: string): string {
+  const n = name.toLowerCase();
   const direct = TOOL_LABELS[n];
   if (direct) return direct;
-  // Top-level tool kind wins: web_search/web_browse render natively no
-  // matter which integration provides the tool.
-  if (t.kind === "web_search") return "Web search";
-  if (t.kind === "web_browse") return "Browse";
-  // Older events without a persisted kind: the widget meta kind maps the
-  // same way for web tools.
-  if (t.meta?.kind === "search") return "Web search";
-  if (t.meta?.kind === "fetch") return "Browse";
   // Integration tools are namespaced on the wire (`searxng_web_search`;
   // legacy journals used `int_searxng_web_search`): the connector prefix is
   // internal, the label is the bare tool name.
@@ -793,8 +790,24 @@ export function toolLabel(t: ToolBlock): string {
     if (bare.endsWith("_" + key)) return label;
   }
   const cut = bare.indexOf("_");
-  if (cut > 0) return bare.slice(cut + 1).replace(/_/g, " ");
-  return bare;
+  const rest = cut > 0 ? bare.slice(cut + 1) : bare;
+  // Generic escape-hatch names keep the connector slug: every built-in
+  // connector exposes an `api` tool, so a bare "api" names nothing.
+  if (rest === "api") return cut > 0 ? `${bare.slice(0, cut)} api` : "api";
+  return rest.replace(/_/g, " ");
+}
+
+/** Exposed for pure tests. */
+export function toolLabel(t: ToolBlock): string {
+  // Top-level tool kind wins: web_search/web_browse render natively no
+  // matter which integration provides the tool.
+  if (t.kind === "web_search") return "Web search";
+  if (t.kind === "web_browse") return "Browse";
+  // Older events without a persisted kind: the widget meta kind maps the
+  // same way for web tools.
+  if (t.meta?.kind === "search") return "Web search";
+  if (t.meta?.kind === "fetch") return "Browse";
+  return toolDisplayName(t.name);
 }
 
 function argOf(t: ToolBlock, keys: string[]): string | undefined {
@@ -1279,7 +1292,7 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
       }
       title={
         <>
-          <span className="font-mono">{a.name}</span>
+          <span className="font-medium text-foreground/80">{toolDisplayName(a.name)}</span>
           <span className="text-muted-foreground"> — approval</span>
         </>
       }
@@ -1675,7 +1688,7 @@ export default function WebChat({
             if (seq !== loadSeq.current) return;
             appSeqRef.current.set(chatId, snap.seq);
             setBusy(snap.running);
-            for (const f of snap.frames) applyRef.current(f, chatId);
+            for (const f of replayFrom(snap.frames)) applyRef.current(f, chatId);
           } catch {
             /* link not connected yet — live frames will arrive regardless */
           }
@@ -1848,10 +1861,23 @@ export default function WebChat({
       const args = (ev.arguments as string) ?? "{}";
       const executor = ev.executor === "client" ? "client" : "server";
       const kind = (ev as { kind?: string | null }).kind ?? undefined;
-      setBlocks((b) => [
-        ...b,
-        { kind: "tool", text: "", tool: { callId, name, args, executor, status: "running", kind }, key: `tool-${callId}` },
-      ]);
+      setBlocks((b) => {
+        // Upsert by call id: the call block may already exist — the thread
+        // reload restores persisted calls (replay after a switch-back, the
+        // attach endpoint re-serves suspended calls) and a blind append
+        // would render the same tool twice.
+        const i = b.findIndex((x) => x.kind === "tool" && x.tool?.callId === callId);
+        const block: Block = {
+          kind: "tool",
+          text: "",
+          tool: { callId, name, args, executor, status: "running", kind },
+          key: i >= 0 ? b[i].key : `tool-${callId}`,
+        };
+        if (i < 0) return [...b, block];
+        const copy = b.slice();
+        copy[i] = block;
+        return copy;
+      });
     } else if (ev.type === "tool_completed") {
       const status: "done" | "error" = ev.is_error ? "error" : "done";
       const content = (ev.content as string) ?? "";
@@ -1910,7 +1936,8 @@ export default function WebChat({
           // last text block belongs to a previous turn. Later deltas append.
           let firstDelta = true;
           // Same contract for thinking: the first thinking_delta after attach
-          // carries the full in-flight reasoning buffer (spec B.5).
+          // carries the full in-flight reasoning buffer (spec B.5) and starts
+          // a new reasoning block — the reload left none for this step.
           let firstThinking = true;
           await attachGeneration(
             cid,
