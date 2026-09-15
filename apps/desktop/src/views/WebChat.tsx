@@ -740,16 +740,13 @@ const TOOL_LABELS: Record<string, string> = {
 
 /// The composer's approval-mode selector (per chat, migration 0043). The
 /// mode sets the chat's tool-approval DEFAULT; per-tool exceptions from
-/// Settings apply only while the chat is on the account default.
+/// Settings apply only while the chat is on the account default. The
+/// popup lists exactly codex's three modes — an unset chat shows the
+/// account policy without offering it as a pickable mode.
 const APPROVAL_MODES: Record<
-  ChatApprovalMode | "default",
+  ChatApprovalMode,
   { label: string; hint: string; icon: LucideIcon; iconCls?: string }
 > = {
-  default: {
-    label: "Account default",
-    hint: "Uses the approval policy from Settings",
-    icon: ShieldCheck,
-  },
   ask: {
     label: "Ask for approval",
     hint: "Always ask to edit external files and use the internet",
