@@ -604,6 +604,7 @@ async fn chat(
         "client_tools": req.client_tools,
         "attachment_ids": req.attachment_ids,
         "project_dir": req.project_dir,
+        "skills_index": req.skills_index,
         "client_id": headers
             .get("x-guild-client-id")
             .and_then(|v| v.to_str().ok()),

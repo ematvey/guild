@@ -1,9 +1,42 @@
 # Guild — current state of work
 
-Updated 2026-09-15 (tool labels keep the connector slug: chat tool frames
-and approval cards render the full namespaced name). Read this before touching
-the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
-in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+Updated 2026-09-16 (skills: agent-facing loading + install/uninstall in
+shared dirs). Read this before touching the codebase; detailed milestone
+plans live in `docs/plans/`, deploy nuances in `docs/deploy-nuances.md`,
+hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Skills system (agent-facing half) — 2026-09-16
+
+The registry half (publish → review → install) existed, but `agent.start`
+passed `system: None` — no skill ever reached the model. Implemented per
+`docs/specs/2026-09-16-skills-design.md` (modeled after Codex):
+
+- **Loading**: `agent.start` discovers skills from the shared harness dirs —
+  repo `.agents/skills` (cwd→git root), user `$HOME/.agents/skills`, legacy
+  `{project}/.guild/skills` + `{config}/guild/skills` (read-only fallback) —
+  merges by name (project wins), drops paths disabled in
+  `{config}/guild/settings.json` (`"skillsDisabled": {"<path>": false}`),
+  and renders the index into the prompt (8k-char budget: shorten
+  descriptions, then drop with an omission notice).
+- **Transport**: the system prompt stays server-owned. New additive
+  `skills_index` field on `ChatCompletionRequest` → forwarded through
+  `ChatRunPayload` → appended to `build_system_prompt` and hard-capped
+  server-side (8k) — the server is the enforcement point.
+- **`$name` invocation**: `$slug` tokens in the prompt matching a discovered
+  skill append the full SKILL.md body to the turn message; unknown `$tokens`
+  pass through.
+- **Install/uninstall**: registry installs land in `.agents/skills/<slug>`
+  (repo scope, or home with `global: true` on `registry.install`); new
+  `registry.uninstall`. Every Guild install/publish writes an
+  `agents/guild.yaml` provenance sidecar (source/slug/version/publisher/
+  review status/bundle hash); uninstall refuses dirs without a
+  `source: registry` sidecar, so codex/pi-authored skills are never deleted.
+  Publish stamps the author's dir with `published_by_me: true`.
+- TS bindings regenerated; tests: skills unit tests (scopes, budget,
+  sidecar, mentions, disable list), restate prompt-cap test, registry_client
+  roundtrip extended (sidecar, uninstall, refusal, publish stamping).
+  Desktop UI (uninstall button, provenance display, `$` autocomplete) and a
+  full cloud skill runtime are future work.
 
 ## Unset approval mode resolves to Approve for me — 2026-09-16
 

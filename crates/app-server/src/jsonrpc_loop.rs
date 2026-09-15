@@ -441,6 +441,9 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "registry.install" => {
             tokio::spawn(registry_install(shared.session.clone(), req, out_tx));
         }
+        "registry.uninstall" => {
+            tokio::spawn(registry_uninstall(shared.session.clone(), req, out_tx));
+        }
         other => {
             let _ = out_tx.send(response_value(
                 req.id,
@@ -579,7 +582,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
 /// Starts an agent run in the background: creates the chat if needed,
 /// responds immediately with `started`, streams progress as events.
 async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    // (cloud, existing chat, project dir, model, history, policy, pending approvals)
+    // (cloud, existing chat, project dir, model, history, policy, pending approvals, skills index)
     type AgentPrep = (
         CloudClient,
         Option<Uuid>,
@@ -588,6 +591,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         Vec<Message>,
         ApprovalPolicy,
         PendingApprovals,
+        Option<String>,
     );
     let prep = || -> anyhow::Result<AgentPrep> {
         let mut s = shared.session.lock().unwrap();
@@ -613,6 +617,26 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         }
         s.agent_running = true;
         let prompt = param(&req, "prompt")?.to_string();
+        // Skills: discover from the shared harness dirs + Guild legacy dirs,
+        // drop disabled ones, render the index for the server-owned prompt,
+        // and expand `$name` mentions with the full SKILL.md body.
+        let config_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("/"))
+            .join("guild");
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        let disabled = crate::skills::disabled_paths(&config_dir);
+        let skills: Vec<_> = crate::skills::discover_with_home(&project_dir, &config_dir, &home)
+            .into_iter()
+            .filter(|e| !disabled.contains(&e.path))
+            .collect();
+        let skills_index = crate::skills::prompt_index(&skills);
+        let skills_index = if skills_index.is_empty() { None } else { Some(skills_index) };
+        let prompt = match crate::skills::mention_block(&crate::skills::mention_expansions(
+            &prompt, &skills,
+        )) {
+            Some(block) => format!("{prompt}{block}"),
+            None => prompt,
+        };
         let mut history = s.messages.clone();
         history.push(Message::user(prompt));
         Ok((
@@ -623,9 +647,11 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
             history,
             s.policy.clone(),
             s.pending.clone(),
+            skills_index,
         ))
     };
-    let (cloud, chat_id_opt, project_dir, model, history, policy, pending) = match prep() {
+    let (cloud, chat_id_opt, project_dir, model, history, policy, pending, skills_index) =
+        match prep() {
         Ok(p) => p,
         Err(e) => {
             let _ = out_tx.send(response_value(req.id, Err(e)));
@@ -666,7 +692,8 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         chat_id,
         project_dir,
         model,
-        system: None, // skills index lands in Task 7
+        system: None, // the system prompt stays server-owned; skills ride skills_index
+        skills_index,
         history,
         policy,
         events: shared.events.clone(),
@@ -820,13 +847,45 @@ async fn registry_install(
             .project_dir
             .clone()
             .context("missing project_dir — pass it in registry.install params")?;
-        let entry =
-            crate::registry_client::install_skill(&cloud, &project_dir, &slug, version.as_deref())
-                .await?;
+        let global = req.params["global"].as_bool().unwrap_or(false);
+        let publisher = session.lock().unwrap().email.clone().unwrap_or_default();
+        let entry = crate::registry_client::install_skill(
+            &cloud,
+            &project_dir,
+            &slug,
+            version.as_deref(),
+            global,
+            &publisher,
+        )
+        .await?;
         Ok(Response::ok(
             req.id,
             json!({"name": entry.name, "path": entry.path.to_string_lossy()}),
         ))
+    }
+    .await;
+    let _ = out_tx.send(response_value(req.id, result));
+}
+
+async fn registry_uninstall(
+    session: Arc<Mutex<Session>>,
+    req: Request,
+    out_tx: mpsc::UnboundedSender<Value>,
+) {
+    let result = async {
+        let slug = param(&req, "slug")?.to_string();
+        if let Some(d) = req.params["project_dir"].as_str() {
+            session.lock().unwrap().project_dir = Some(PathBuf::from(d));
+        }
+        let project_dir = session
+            .lock()
+            .unwrap()
+            .project_dir
+            .clone()
+            .context("missing project_dir — pass it in registry.uninstall params")?;
+        let global = req.params["global"].as_bool().unwrap_or(false);
+        crate::registry_client::uninstall_skill(&project_dir, &slug, global)?;
+        Ok(Response::ok(req.id, json!({"uninstalled": slug})))
     }
     .await;
     let _ = out_tx.send(response_value(req.id, result));

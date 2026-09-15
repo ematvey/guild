@@ -289,6 +289,10 @@ pub struct ChatRunPayload {
     /// modality (spec §4.3).
     #[serde(default)]
     pub attachment_ids: Vec<Uuid>,
+    /// Client-discovered local-skills index; appended to the system prompt
+    /// after the hard cap (the server stays the enforcement point).
+    #[serde(default)]
+    pub skills_index: Option<String>,
 }
 
 /// Final result of the journaled completion step.
@@ -545,6 +549,7 @@ fn build_system_prompt(
     has_web_search: bool,
     project_dir: Option<&str>,
     integrations_index: &str,
+    skills_index: &str,
 ) -> String {
     let persona = match org_prompt {
         Some(p) if !p.trim().is_empty() => p.trim(),
@@ -581,8 +586,29 @@ fn build_system_prompt(
             s.push_str(&format!("\n- {line}"));
         }
     }
+    // Skills index: client-discovered local skills, appended additively and
+    // hard-capped here (8k chars — the same budget Codex applies when the
+    // context window is unknown). The client never overrides the prompt; a
+    // truncated index is preferable to an unbounded one.
+    if !skills_index.is_empty() {
+        let capped: String = if skills_index.len() > SKILLS_INDEX_CAP {
+            let mut cut = SKILLS_INDEX_CAP;
+            while !skills_index.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            skills_index[..cut].to_string()
+        } else {
+            skills_index.to_string()
+        };
+        s.push('\n');
+        s.push_str(&capped);
+    }
     s
 }
+
+/// Hard cap on the client-supplied skills index appended to the system
+/// prompt (chars). Matches the Codex fallback budget.
+const SKILLS_INDEX_CAP: usize = 8_000;
 
 /// Next turn number for a chat: max `turn` across persisted events + 1
 /// (spec §B.4 — turn = one client request, step = one model call).
@@ -1471,6 +1497,7 @@ impl ChatRunner {
                     .map(integrations::index_line)
                     .collect::<Vec<_>>()
                     .join("\n"),
+                req.skills_index.as_deref().unwrap_or(""),
             )
         };
 
@@ -3280,14 +3307,14 @@ mod tests {
 
     #[test]
     fn system_prompt_default_persona_is_helpful_assistant() {
-        let p = build_system_prompt(None, false, false, None, "");
+        let p = build_system_prompt(None, false, false, None, "", "");
         assert!(p.starts_with("You are a helpful assistant."));
         assert!(!p.contains("coding agent"));
     }
 
     #[test]
     fn system_prompt_org_persona_replaces_default_only() {
-        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some("/w"), "");
+        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some("/w"), "", "");
         assert!(p.starts_with("You are GLaDOS."));
         assert!(!p.contains("helpful assistant"));
         // Operational instructions are appended regardless of the persona.
@@ -3298,8 +3325,23 @@ mod tests {
 
     #[test]
     fn system_prompt_blank_org_prompt_falls_back_to_default() {
-        let p = build_system_prompt(Some("   "), false, false, None, "");
+        let p = build_system_prompt(Some("   "), false, false, None, "", "");
         assert!(p.starts_with("You are a helpful assistant."));
+    }
+
+    #[test]
+    fn system_prompt_appends_skills_index_and_caps_it() {
+        let idx = format!(
+            "\n# Available skills\n- a: {}\n",
+            "x".repeat(SKILLS_INDEX_CAP + 500)
+        );
+        let p = build_system_prompt(None, false, false, None, "", &idx);
+        assert!(p.contains("# Available skills"));
+        assert!(p.len() < build_system_prompt(None, false, false, None, "", "").len()
+            + SKILLS_INDEX_CAP
+            + 300);
+        // Server-side cap truncates an oversized client index.
+        assert!(p.len() < 20_000);
     }
 
     #[test]

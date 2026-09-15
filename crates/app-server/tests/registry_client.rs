@@ -44,7 +44,8 @@ async fn publish_then_install_roundtrip() {
 
     // not approved yet → member-style install rejected
     let project = scratch("proj");
-    let err = registry_client::install_skill(&cloud, &project, "deploy-check", None).await;
+    let err =
+        registry_client::install_skill(&cloud, &project, "deploy-check", None, false, "").await;
     assert!(err.is_err(), "draft must not install");
 
     // admin approves via the review endpoint
@@ -69,18 +70,83 @@ async fn publish_then_install_roundtrip() {
         .await
         .unwrap();
 
-    let entry = registry_client::install_skill(&cloud, &project, "deploy-check", None)
-        .await
+    let entry =
+        registry_client::install_skill(&cloud, &project, "deploy-check", None, false, "a@b.c")
+            .await
         .unwrap();
     assert_eq!(entry.name, "deploy-check");
     assert_eq!(entry.description, "test skill deploy-check");
     let installed = std::fs::read_to_string(&entry.path).unwrap();
     assert!(installed.contains("Do the thing."));
 
+    // install target is the shared .agents/skills dir + provenance sidecar
+    let dest = project.join(".agents/skills/deploy-check");
+    assert!(dest.join("SKILL.md").is_file());
+    let prov = guild_app_server::skills::read_sidecar(&dest).unwrap();
+    assert_eq!(prov.source, "registry");
+    assert_eq!(prov.version, "1.0.0");
+    assert_eq!(prov.review_status, "approved");
+    assert!(prov.bundle_hash.starts_with("sha256:"));
+
     // skills discovery now finds it
     let found =
         guild_app_server::skills::discover(&project, &std::env::temp_dir().join("nonexistent-cfg"));
     assert!(found.iter().any(|e| e.name == "deploy-check"));
+
+    // uninstall removes the registry-installed dir
+    registry_client::uninstall_skill(&project, "deploy-check", false).unwrap();
+    assert!(!dest.exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn uninstall_refuses_dirs_guild_did_not_install() {
+    let project = scratch("foreign");
+    let dest = project.join(".agents/skills/hand-made");
+    std::fs::create_dir_all(&dest).unwrap();
+    std::fs::write(
+        dest.join("SKILL.md"),
+        "---\nname: hand-made\ndescription: authored outside guild\n---\nbody",
+    )
+    .unwrap();
+    let err = registry_client::uninstall_skill(&project, "hand-made", false);
+    assert!(err.is_err(), "no sidecar → refuse");
+    assert!(dest.join("SKILL.md").is_file(), "dir must survive");
+
+    // a local-source sidecar is refused too
+    guild_app_server::skills::write_sidecar(
+        &dest,
+        &guild_app_server::skills::SkillProvenance {
+            source: "local".into(),
+            slug: "hand-made".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(registry_client::uninstall_skill(&project, "hand-made", false).is_err());
+    assert!(dest.join("SKILL.md").is_file());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publish_stamps_provenance_sidecar() {
+    let srv = guild_server::test_support::serve_full().await;
+    let (token, _user) = CloudClient::login(&srv.base_url, "a@b.c", "hunter226")
+        .await
+        .unwrap();
+    let cloud = CloudClient {
+        base_url: srv.base_url.clone(),
+        token,
+    };
+    let source = scratch("pubsrc");
+    let skill_dir = make_skill(&source, "my-authored");
+    registry_client::publish(&cloud, "skill", &skill_dir, "0.2.0")
+        .await
+        .unwrap();
+    let prov = guild_app_server::skills::read_sidecar(&skill_dir).unwrap();
+    assert_eq!(prov.source, "registry");
+    assert!(prov.published_by_me, "author marks their own publish");
+    assert_eq!(prov.slug, "my-authored");
+    assert_eq!(prov.version, "0.2.0");
+    assert!(prov.bundle_hash.starts_with("sha256:"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -31,4 +31,10 @@ project_dir?: string,
  * text and passes image/audio parts when the route supports the
  * modality (spec §4.3).
  */
-attachment_ids: Array<string>, };
+attachment_ids: Array<string>, 
+/**
+ * Client-discovered local-skills index, appended to the server-owned
+ * system prompt. Additive and server-capped: the client never overrides
+ * persona or tool instructions, it may only append this bounded block.
+ */
+skills_index?: string, };
