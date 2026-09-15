@@ -5,6 +5,29 @@ shared dirs). Read this before touching the codebase; detailed milestone
 plans live in `docs/plans/`, deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Machine `execute` is gated by static prefix rules first — 2026-09-16
+
+The chat's approval flow has a static layer in front of the judge, the same
+shape as codex's: Starlark prefix rules (vendored `codex-execpolicy` crate)
+classify every machine `execute` call before the approval gate. An `allow`
+rule runs the command with no gate and no judge; a `forbidden` rule is a
+hard deny whose text is the rule's justification (fed back to the model as
+an error tool result — never a card, never an escalation); `prompt` rules
+and unmatched commands go to the chat's approval mode exactly as before
+(approve_for_me judge / ask card / full access). Commands are shlex-tokenized
+and split at `&&`/`||`/`;`/`|`; every segment is evaluated independently and
+the strictest decision wins; any segment containing a shell redirection is
+never auto-approved.
+
+Rules live in `crates/server/assets/exec_policy_*.rules` (a small curated
+base + a layer extracted from a local codex install) and are parsed by the
+crate's Starlark parser at BUILD time (guild-server build.rs emits plain
+JSON into OUT_DIR; the runtime reconstructs the policy without linking
+`starlark`). The indirection is load-bearing: starlark enables
+`serde_json/arbitrary_precision`, a cargo-global feature that breaks
+internally-tagged serde deserialization of numeric fields across the whole
+binary — every StreamEvent frame parse failed while it was linked.
+
 ## Skills system (agent-facing half) — 2026-09-16
 
 The registry half (publish → review → install) existed, but `agent.start`

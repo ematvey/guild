@@ -234,3 +234,31 @@ async fn routine_run_records_failure_when_tool_fails_repeatedly() {
     let error = runs[0].error.clone().unwrap();
     assert!(error.contains("step limit"), "{error}");
 }
+
+#[test]
+fn parses_done_frame_directly() {
+    use protocol::api::StreamEvent;
+    let frame = r#"{"type":"done","message_id":"01a0a595-0c9b-7be2-8ed4-81f50bdc9907","cost_usd":0.0,"tokens_in":0,"tokens_out":0}"#;
+    let val: serde_json::Value = serde_json::from_str(frame).unwrap();
+    let v2 = serde_json::from_value::<StreamEvent>(val.clone());
+    #[derive(serde::Deserialize, Debug)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    enum Probe {
+        Done { cost_usd: f64 },
+        Idle,
+    }
+    let probe: Result<Probe, _> = serde_json::from_str(r#"{"type":"done","cost_usd":1.5}"#);
+    assert!(probe.is_ok(), "probe: {probe:?}");
+    let idle: Result<StreamEvent, _> = serde_json::from_str(r#"{"type":"idle"}"#);
+    assert!(idle.is_ok(), "idle: {idle:?}");
+    let with_cost: Result<StreamEvent, _> = serde_json::from_str(
+        r#"{"type":"done","message_id":"01a0a595-0c9b-7be2-8ed4-81f50bdc9907","cost_usd":1.5,"tokens_in":2,"tokens_out":3}"#,
+    );
+    assert!(with_cost.is_ok(), "cost 1.5: {with_cost:?}");
+    let v: Result<StreamEvent, _> = serde_json::from_str(frame);
+    assert!(v.is_ok(), "from_str: {v:?}");
+    assert!(v2.is_ok(), "from_value: {v2:?}");
+    let s: String = serde_json::to_string(&val).unwrap();
+    let v3: Result<StreamEvent, _> = serde_json::from_str(&s);
+    assert!(v3.is_ok(), "roundtrip from_str on {s}: {v3:?}");
+}
