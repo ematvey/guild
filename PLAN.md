@@ -91,6 +91,16 @@ high-level `PRD.md` (6 product documents) and `SRS.md` (47 FRs with a full
 traceability matrix). Object storage is recorded as host RustFS (:9950);
 the compose MinIO is the fallback only.
 
+## Review loop: curation rounds 1–3 (2026-09-15) — exited CLEAN
+
+Round 1 (review + verify on fd2ca5a) found the always_ask override
+ineffective plus lost-update windows and template-lock pairing defects.
+Round 2 fixed the headline items; both agents found residuals (save-vs-PUT
+lost update; a self-defeating sweep guard). Round 3 fixed those at the
+storage layer (config.tools preserved via jsonb_set on every
+upsert/update — the PUT endpoint is the single writer). Round-3 verdicts:
+reviewer CLEAN, verifier CLEAN. Reports: docs/reviews/2026-09-15-curation-{review,verify}-r{1,2,3}.md.
+
 ## Machine section copy tightened (0.3.25–0.3.26)
 
 Per maintainer: machine binding happens on entering the device sign-in token
