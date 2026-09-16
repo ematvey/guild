@@ -33,6 +33,10 @@ struct Feed {
     subs: HashMap<Uuid, (Uuid, broadcast::Receiver<StreamEvent>)>,
     slow_tick: u32,
     views: HashMap<Uuid, Value>,
+    /// (text.len, thinking.len) of the last published in-flight buffers:
+    /// a cheap pre-capture change check so the 100ms tick only captures
+    /// chats whose buffers actually moved.
+    signatures: HashMap<Uuid, (usize, usize)>,
 }
 
 impl Feed {
@@ -54,6 +58,7 @@ impl Feed {
             // Refresh bindings on the first tick.
             slow_tick: 3,
             views: HashMap::new(),
+            signatures: HashMap::new(),
         }
     }
 
@@ -163,7 +168,30 @@ impl Feed {
             {
                 continue;
             }
+            // Cheap pre-capture check: deltas only append, so equal buffer
+            // lengths mean the next capture would equal the last view.
+            let buffers = self
+                .state
+                .generations
+                .lock()
+                .unwrap()
+                .get(&chat_id)
+                .map(|g| (g.text.clone(), g.thinking.clone()));
+            let signature = match buffers {
+                Some((text, thinking)) => {
+                    Some((text.read().await.len(), thinking.read().await.len()))
+                }
+                None => None,
+            };
+            if let Some(sig) = &signature {
+                if self.signatures.get(&chat_id) == Some(sig) {
+                    continue;
+                }
+            }
             if let Ok(view) = capture_thread(&self.state, self.org_id, chat_id, None).await {
+                if let Some(sig) = signature {
+                    self.signatures.insert(chat_id, sig);
+                }
                 let mut content = serde_json::to_value(&view).expect("view serializes");
                 content["seq"] = json!(0);
                 if self.views.get(&chat_id) != Some(&content) {
@@ -178,6 +206,7 @@ impl Feed {
         if notification.channel() == "guild_thread_committed" {
             if let Ok(chat) = notification.payload().parse::<Uuid>() {
                 self.views.remove(&chat);
+                self.signatures.remove(&chat);
             }
             self.refresh_bindings().await;
             self.publish_views().await;
@@ -368,7 +397,7 @@ async fn feed_task(
             continue;
         }
         feed.views.clear();
-        let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
