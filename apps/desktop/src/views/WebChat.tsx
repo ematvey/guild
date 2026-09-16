@@ -2776,6 +2776,22 @@ function DeviceSetupDialog({
             </div>
           </div>
 
+          {os === "mac" && (
+            <div className="mt-2 rounded-md border border-amber-700/50 bg-amber-900/20 px-3 py-2 text-muted-foreground">
+              <p className="text-sm">
+                <span className="font-medium text-amber-300">macOS first install:</span> the app is
+                not notarized yet, so Gatekeeper may report it as "damaged". Run this once in
+                Terminal after copying it to Applications:
+              </p>
+              <code className="mt-1.5 block truncate rounded bg-muted px-2 py-1 font-mono text-xs">
+                xattr -dr com.apple.quarantine /Applications/Guild.app
+              </code>
+              <p className="mt-1 text-xs">
+                Updates delivered inside the app are signed and don't need this.
+              </p>
+            </div>
+          )}
+
           <div className="mt-6">
             <p className="mb-1.5 font-medium text-muted-foreground">2. Pair with your account</p>
             {pairCode ? (
