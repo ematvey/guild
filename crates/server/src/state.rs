@@ -74,6 +74,7 @@ pub struct AppState {
     /// them by evicting the half-open stale stream.
     pub machine_link_signals:
         Arc<std::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<u64>>>>,
+    pub ws_tickets: crate::http::ws::TicketStore,
 }
 
 impl AppState {
@@ -91,6 +92,7 @@ impl AppState {
                 crate::http::events::EVENT_STREAM_MAX_PER_USER,
             )),
             machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            ws_tickets: Default::default(),
         }
     }
 
@@ -143,6 +145,7 @@ impl AppState {
                 crate::http::events::EVENT_STREAM_MAX_PER_USER,
             )),
             machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            ws_tickets: Default::default(),
         }
     }
 

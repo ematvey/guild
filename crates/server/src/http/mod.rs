@@ -15,6 +15,7 @@ pub mod registry;
 pub mod releases;
 pub mod usage;
 pub mod web;
+pub mod ws;
 
 use crate::state::AppState;
 use axum::extract::Request;
@@ -45,6 +46,7 @@ pub fn build_router(state: AppState) -> Router {
             get(|| async { Json(serde_json::json!({"status": "ok"})) }),
         )
         .merge(auth::routes())
+        .merge(crate::http::ws::routes())
         .merge(chats::routes())
         .merge(gateway::routes())
         .merge(registry::routes())
