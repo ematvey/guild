@@ -297,10 +297,26 @@ impl std::fmt::Display for LinkError {
 
 const OUTBOUND_QUEUE_CAP: usize = 1024;
 const PRIORITY_QUEUE_CAP: usize = 16;
-const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const TERMINAL_WRITE_TIMEOUT: Duration = WRITE_TIMEOUT;
 const TAKEOVER_WINDOW: Duration = Duration::from_secs(5);
 
 type WsMessage = tokio_tungstenite::tungstenite::Message;
+
+async fn send_ws_message_with_deadline<W>(
+    sink: &mut W,
+    message: WsMessage,
+    deadline: Duration,
+) -> Result<(), String>
+where
+    W: futures::Sink<WsMessage> + Unpin,
+    W::Error: std::fmt::Display,
+{
+    tokio::time::timeout(deadline, sink.send(message))
+        .await
+        .map_err(|_| "socket write timed out".to_string())?
+        .map_err(|error| format!("socket write: {error}"))
+}
 
 #[derive(Clone)]
 struct OutboundQueue {
@@ -562,10 +578,7 @@ async fn ws_session(
                 ordinary = wire_rx.recv() => ordinary,
             };
             let Some(message) = message else { break };
-            socket_tx
-                .send(message)
-                .await
-                .map_err(|error| error.to_string())?;
+            send_ws_message_with_deadline(&mut socket_tx, message, WRITE_TIMEOUT).await?;
         }
         Ok::<(), String>(())
     });
@@ -1424,6 +1437,49 @@ mod tests {
             link_action(LinkEvent::Displaced, true, None, now),
             LinkAction::Takeover
         );
+    }
+
+    struct StalledSink;
+
+    impl futures::Sink<WsMessage> for StalledSink {
+        type Error = std::io::Error;
+
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Pending
+        }
+
+        fn start_send(self: std::pin::Pin<&mut Self>, _: WsMessage) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Pending
+        }
+
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn stalled_ordinary_write_hits_deadline() {
+        let mut sink = StalledSink;
+        let result = send_ws_message_with_deadline(
+            &mut sink,
+            WsMessage::Text("ordinary".into()),
+            Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), "socket write timed out");
     }
 
     #[test]
