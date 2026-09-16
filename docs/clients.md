@@ -142,13 +142,24 @@ Official Tauri NSIS installer, cross-built:
 
 ### macOS → `Guild-<VERSION>-macos-{aarch64,x86_64}.dmg`
 1. `cargo zigbuild --release -p guild-desktop --target <arch>-apple-darwin`
-   (WKWebView/AppKit link against the SDK; no Mac needed to *build*)
+   (WKWebView/AppKit link against the SDK; no Mac needed to *build*) — the
+   binary carries a valid linker-generated ad-hoc signature
 2. Hand-assemble `Guild.app` (`Contents/MacOS/Guild`, `Info.plist`,
-   `Resources/icon.icns`) — Tauri's bundler refuses to bundle off-host
+   `Resources/icon.icns`) — Tauri's bundler refuses to bundle off-host. With
+   `GUILD_APPLE_CERT_P12` (+ `GUILD_APPLE_CERT_PASSWORD`) set, the bundle is
+   Developer ID-signed via `rcodesign` before packaging
 3. 64 MB raw image → `mkfs.hfsplus` → loop-mount → copy `Guild.app` +
    `Applications` symlink → unmount → `fsck.hfsplus` must pass
 4. Wrap into UDIF: `libdmg-hfsplus/build/dmg/dmg build raw.dmg out.dmg`
 5. Verify: `dmg2img` round-trip + `7z l` shows `Guild.app` and `Applications`
+6. With `GUILD_APPLE_CERT_P12` + `GUILD_APPLE_API_KEY` (App Store Connect API
+   key JSON for `rcodesign`) set: notarize the DMG (`rcodesign notary-submit
+   --wait`) and staple it. Requires an Apple Developer account ($99/yr); the
+   `.app.tar.gz` updater artifact is signed but not stapled — the updater
+   installs it without a quarantine flag, so no ticket is needed. Without the
+   cert, quarantined downloads trip Gatekeeper's "damaged" dialog; on the
+   user's Mac the workaround is
+   `xattr -dr com.apple.quarantine /Applications/Guild.app`
 
 `tauri.conf.json` has `"bundle": { "targets": "all" }`; per-run targets are
 chosen with `--bundles`/`--output` flags.
@@ -181,8 +192,8 @@ the server-computed sha256 matches the local file before declaring success.
 |---|---|
 | linux-x86_64 (GUI + engine) | **executed**: GUI runs under xvfb (webkit alive); engine login/chat over stdio |
 | windows-x86_64 | installer produced by the official bundler; portable exe launches under wine (WebView2 cannot render in wine — full GUI session needs a real Windows box) |
-| darwin-aarch64 / darwin-x86_64 | build + Mach-O format + .app/DMG structure verified (fsck, plist, dmg2img); **never executed** — needs a Mac |
-| macOS signing | unsigned; Gatekeeper right-click → Open. Signing/notarization requires a Mac + Apple Developer cert |
+| darwin-aarch64 / darwin-x86_64 | build + Mach-O format + .app/DMG structure verified (fsck, plist, dmg2img); ad-hoc signature page hashes verified; **never executed** — needs a Mac |
+| macOS signing | ad-hoc (linker-generated, valid); Developer ID + notarization via `rcodesign` when `GUILD_APPLE_CERT_P12`/`GUILD_APPLE_API_KEY` are provided; quarantined ad-hoc downloads still hit Gatekeeper — user workaround `xattr -dr com.apple.quarantine <path to Guild.app>` |
 
 ## 7. Release scripts
 

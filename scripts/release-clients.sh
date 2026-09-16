@@ -119,7 +119,14 @@ LINUX_SIG=$(sign "$STAGE/Guild-${VERSION}-x86_64.AppImage")
 publish linux-x86_64 "$STAGE/Guild-${VERSION}-x86_64.AppImage" "Guild-${VERSION}-x86_64.AppImage" "$LINUX_SIG"
 
 # ---- macos: .app + drag-and-drop DMG (hfsprogs + libdmg-hfsplus) ----
-echo "==> macos: .app + DMG (unsigned)"
+echo "==> macos: .app + DMG"
+# The zigbuild binary ships with a valid linker-generated ad-hoc signature.
+# Without a Developer ID signature macOS Gatekeeper reports a quarantined
+# download as "damaged"; the user-side workaround is
+#   xattr -dr com.apple.quarantine /Applications/Guild.app
+# With GUILD_APPLE_CERT_P12 set (Developer ID Application certificate) the
+# artifacts are Developer ID-signed and the DMG is notarized + stapled via
+# rcodesign, which removes the Gatekeeper dialog entirely.
 make_app() { # binpath out_plist_dir
   local bindir="$1"
   local app="$2"
@@ -154,6 +161,12 @@ build_dmg() { # arch
   local APP="$STAGE/Guild.app"
   rm -rf "$APP"
   make_app "$bin" "$APP"
+  # Developer ID-sign the bundle when a cert is provided; otherwise the
+  # linker's ad-hoc signature ships as-is
+  if [[ -n "${GUILD_APPLE_CERT_P12:-}" ]]; then
+    command -v rcodesign >/dev/null || { echo "rcodesign not found (cargo install apple-codesign)" >&2; exit 1; }
+    rcodesign sign --p12-file "$GUILD_APPLE_CERT_P12" --p12-password "${GUILD_APPLE_CERT_PASSWORD:-}" "$APP"
+  fi
   local raw="$STAGE/Guild-$VERSION-macos-$arch.raw.dmg"
   rm -f "$raw"
   dd if=/dev/zero of="$raw" bs=1M count=64 status=none
@@ -165,6 +178,14 @@ build_dmg() { # arch
   sudo -n umount /mnt/guild-dmg
   fsck.hfsplus "$raw" >/dev/null 2>&1 || { echo "HFS+ fsck failed for $arch" >&2; exit 1; }
   "$HOME/opt/libdmg-hfsplus/build/dmg/dmg" build "$raw" "$STAGE/Guild-$VERSION-macos-$arch.dmg" >/dev/null 2>&1
+  # notarize + staple the DMG so quarantined downloads open without the
+  # Gatekeeper dialog (notarization covers the .app inside; the .app.tar.gz
+  # updater artifact is installed without a quarantine flag, so it needs no
+  # ticket)
+  if [[ -n "${GUILD_APPLE_CERT_P12:-}" ]]; then
+    rcodesign notary-submit --api-key-path "${GUILD_APPLE_API_KEY:?GUILD_APPLE_API_KEY required for notarization}" --wait "$STAGE/Guild-$VERSION-macos-$arch.dmg"
+    rcodesign staple "$STAGE/Guild-$VERSION-macos-$arch.dmg"
+  fi
   # updater bundle: tar.gz of the .app (what the tauri updater installs)
   (cd "$STAGE" && tar -czf "Guild-$VERSION-macos-$arch.app.tar.gz" Guild.app)
   DMG_SIG=$(sign "$STAGE/Guild-$VERSION-macos-$arch.dmg")
