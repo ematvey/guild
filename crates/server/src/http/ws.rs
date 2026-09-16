@@ -5,12 +5,14 @@
 //! authenticated HTTP session.
 
 use crate::http::auth::AuthUser;
+use crate::http::hub::Member;
 use crate::state::AppState;
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
     Json, Router,
 };
-use protocol::ws::WsServerMsg;
+use futures::{SinkExt, StreamExt};
+use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -72,43 +74,115 @@ async fn upgrade(
     Query(q): Query<UpgradeQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<axum::response::Response, crate::http::error::ApiError> {
-    let _user = state
+    let user = state
         .ws_tickets
         .consume(&q.ticket)
         .ok_or_else(|| crate::http::error::ApiError::unauthorized("invalid or expired ticket"))?;
-    let (_tx, rx) = mpsc::channel::<WsServerMsg>(256);
+    let (tx, rx) = mpsc::channel::<WsServerMsg>(256);
     let machine_id = q.machine_id.filter(|s| !s.is_empty());
     let client_id = q.client_id.unwrap_or_else(|| Uuid::now_v7().to_string());
-    let _machine_name = q.machine_name;
+    let machine_name = q.machine_name;
     Ok(ws.on_upgrade(move |socket| async move {
-        drive_socket(state, client_id, machine_id, socket, rx).await;
+        drive_socket(
+            state,
+            user,
+            client_id,
+            machine_id,
+            machine_name,
+            socket,
+            tx,
+            rx,
+        )
+        .await;
     }))
 }
 
 #[allow(dead_code)]
 pub(crate) type SocketSink = mpsc::Sender<WsServerMsg>;
 
-/// Stub: Task 3 replaces this with real hub registration + read/write pump.
-#[allow(dead_code)]
-pub(crate) async fn socket_loop(
-    _state: AppState,
-    _user: AuthUser,
-    _client_id: String,
-    _machine_id: Option<String>,
-    _ws: WebSocketUpgrade,
-    _rx: mpsc::Receiver<WsServerMsg>,
-) {
-}
-
-/// Stub: Task 3 replaces this with real hub registration + read/write pump.
 pub(crate) async fn drive_socket(
-    _state: AppState,
+    state: AppState,
+    user: AuthUser,
     _client_id: String,
-    _machine_id: Option<String>,
-    _socket: axum::extract::ws::WebSocket,
+    machine_id: Option<String>,
+    machine_name: Option<String>,
+    socket: axum::extract::ws::WebSocket,
+    tx: SocketSink,
     mut rx: mpsc::Receiver<WsServerMsg>,
 ) {
-    while rx.recv().await.is_some() {}
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let conn_id = Uuid::now_v7();
+    let member = Member {
+        conn_id,
+        user_id: user.0.id,
+        org_id: user.0.org_id,
+        sink: tx.clone(),
+        label: machine_name,
+    };
+
+    let registered = match machine_id.as_deref() {
+        Some(machine_id) => {
+            state.hub.register_machine(member.clone(), machine_id);
+            true
+        }
+        None => state.hub.register_member(member.clone(), conn_id).is_ok(),
+    };
+    if !registered {
+        let _ = ws_tx
+            .send(axum::extract::ws::Message::text(
+                serde_json::to_string(&WsServerMsg::Error {
+                    message: "too many connections".into(),
+                })
+                .unwrap(),
+            ))
+            .await;
+        return;
+    }
+
+    let _ = member.sink.send(WsServerMsg::Hello).await;
+    loop {
+        tokio::select! {
+            outgoing = rx.recv() => match outgoing {
+                Some(msg) => {
+                    let displaced = matches!(&msg, WsServerMsg::Displaced);
+                    let text = serde_json::to_string(&msg).unwrap();
+                    if ws_tx.send(axum::extract::ws::Message::text(text)).await.is_err() || displaced {
+                        break;
+                    }
+                }
+                None => break,
+            },
+            incoming = ws_rx.next() => match incoming {
+                Some(Ok(axum::extract::ws::Message::Text(text))) => {
+                    if handle_client_msg(&state, &member, &machine_id, &text).await {
+                        break;
+                    }
+                }
+                Some(Ok(axum::extract::ws::Message::Ping(payload))) => {
+                    if ws_tx.send(axum::extract::ws::Message::Pong(payload)).await.is_err() {
+                        break;
+                    }
+                }
+                Some(Ok(axum::extract::ws::Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(_)) => {}
+            },
+        }
+    }
+
+    match machine_id.as_deref() {
+        Some(machine_id) => state.hub.unregister_machine(machine_id, conn_id),
+        None => state.hub.unregister_member(user.0.id, conn_id),
+    }
+}
+
+async fn handle_client_msg(
+    _state: &AppState,
+    _member: &Member,
+    _machine_id: &Option<String>,
+    text: &str,
+) -> bool {
+    let _ = serde_json::from_str::<WsClientMsg>(text);
+    false
 }
 
 #[cfg(test)]
@@ -125,6 +199,19 @@ mod tests {
             display_name: None,
             avatar_url: None,
         })
+    }
+
+    #[tokio::test]
+    async fn unknown_client_messages_are_ignored_without_closing() {
+        let state = AppState::from_config(crate::config::Config::test_config());
+        let member = crate::http::hub::Member {
+            conn_id: Uuid::now_v7(),
+            user_id: Uuid::now_v7(),
+            org_id: Uuid::now_v7(),
+            sink: mpsc::channel(1).0,
+            label: None,
+        };
+        assert!(!handle_client_msg(&state, &member, &None, r#"{"type":"future"}"#).await);
     }
 
     #[test]
