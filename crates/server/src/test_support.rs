@@ -47,7 +47,9 @@ pub fn test_state() -> AppState {
     AppState::from_config(Config::test_config())
 }
 
-/// Registers a live hub machine for endpoint tests without opening a socket.
+/// Registers a live hub machine for endpoint tests, plus its durable
+/// registry row — the connect path does both, and the bind check reads the
+/// registry, not the hub.
 pub async fn register_test_machine(
     state: &AppState,
     machine_id: &str,
@@ -70,6 +72,16 @@ pub async fn register_test_machine(
         )
         .await
         .expect("test machine registration");
+    match state.store().await {
+        Ok(store) => {
+            store
+                .machines()
+                .upsert_connected(org_id, user_id, machine_id, label, None, None, None, None, None)
+                .await
+                .expect("test machine registry row");
+        }
+        Err(error) => panic!("test machine registry unavailable: {error:?}"),
+    }
 }
 
 /// State backed by an isolated database on the shared host Postgres.
@@ -614,7 +626,12 @@ pub async fn serve_full() -> ServedFull {
     let listener = standalone_listener().await;
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve");
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .expect("serve");
     });
     ServedFull {
         full,
