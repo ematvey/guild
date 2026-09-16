@@ -17,7 +17,7 @@ use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 use uuid::Uuid;
 
 /// Single-use, short-TTL connect tickets. They are in-memory because tickets
@@ -110,10 +110,10 @@ pub(crate) enum SocketOutput {
 #[derive(Clone)]
 pub struct SocketSink {
     tx: mpsc::Sender<SocketOutput>,
-    /// Serializes queue insertion across every clone. We reserve queue space
-    /// before taking this synchronous mutex, never hold it across `.await`,
-    /// and enqueue the sync marker under the same lock as feed output.
-    ordering: Arc<Mutex<()>>,
+    /// Serializes reservation and insertion across every clone. This async
+    /// mutex deliberately spans bounded-channel backpressure, so a sync
+    /// marker and feed output have one linearization point.
+    ordering: Arc<AsyncMutex<()>>,
 }
 
 impl SocketSink {
@@ -121,11 +121,11 @@ impl SocketSink {
         &self,
         output: SocketOutput,
     ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+        let _ordering = self.ordering.lock().await;
         let permit = match self.tx.reserve().await {
             Ok(permit) => permit,
             Err(_) => return Err(mpsc::error::SendError(output)),
         };
-        let _ordering = self.ordering.lock().unwrap();
         permit.send(output);
         Ok(())
     }
@@ -137,12 +137,13 @@ impl SocketSink {
         self.enqueue(SocketOutput::Message(message)).await
     }
 
-    pub(crate) fn try_send(
-        &self,
-        message: WsServerMsg,
-    ) -> Result<(), mpsc::error::TrySendError<SocketOutput>> {
-        let _ordering = self.ordering.lock().unwrap();
-        self.tx.try_send(SocketOutput::Message(message))
+    /// A replacement machine is already woken by its watch signal. This
+    /// best-effort terminal notice still shares the ordered enqueue path.
+    pub(crate) async fn displace(&self) {
+        let _ordering = self.ordering.lock().await;
+        let _ = self
+            .tx
+            .try_send(SocketOutput::Message(WsServerMsg::Displaced));
     }
 
     pub(crate) async fn start_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
@@ -166,7 +167,7 @@ pub(crate) fn socket_channel(capacity: usize) -> (SocketSink, mpsc::Receiver<Soc
     (
         SocketSink {
             tx,
-            ordering: Arc::new(Mutex::new(())),
+            ordering: Arc::new(AsyncMutex::new(())),
         },
         rx,
     )
@@ -247,7 +248,7 @@ pub(crate) async fn drive_socket(
     };
 
     let mut machine_shutdown = match machine_id.as_deref() {
-        Some(machine_id) => match state.hub.register_machine(member.clone(), machine_id) {
+        Some(machine_id) => match state.hub.register_machine(member.clone(), machine_id).await {
             Ok(registration) => Some(registration.shutdown),
             Err(crate::http::hub::CapRejected) => {
                 let _ = ws_tx
@@ -466,27 +467,77 @@ mod tests {
         .await;
     }
 
-    #[tokio::test]
-    async fn sync_marker_is_enqueued_before_later_live_output() {
-        let (sink, mut receiver) = socket_channel(4);
-        sink.start_sync().await.unwrap();
-        sink.send(WsServerMsg::LiveFrame {
-            chat_id: Uuid::now_v7(),
-            machine_id: None,
-            event: protocol::api::StreamEvent::Delta {
-                content: "live".into(),
-            },
-        })
-        .await
-        .unwrap();
-        assert!(matches!(
-            receiver.recv().await,
-            Some(SocketOutput::SyncStart)
-        ));
-        assert!(matches!(
-            receiver.recv().await,
-            Some(SocketOutput::Message(WsServerMsg::LiveFrame { .. }))
-        ));
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_sync_and_live_enqueue_are_serialized() {
+        for _ in 0..128 {
+            let (sink, mut receiver) = socket_channel(4);
+            let barrier = Arc::new(tokio::sync::Barrier::new(3));
+            let sync_sink = sink.clone();
+            let sync_barrier = barrier.clone();
+            let sync = tokio::spawn(async move {
+                sync_barrier.wait().await;
+                sync_sink.start_sync().await.unwrap();
+            });
+            let live_sink = sink.clone();
+            let live_barrier = barrier.clone();
+            let chat_id = Uuid::now_v7();
+            let live = tokio::spawn(async move {
+                live_barrier.wait().await;
+                live_sink
+                    .send(WsServerMsg::LiveFrame {
+                        chat_id,
+                        machine_id: None,
+                        event: protocol::api::StreamEvent::Delta {
+                            content: "live".into(),
+                        },
+                    })
+                    .await
+                    .unwrap();
+            });
+            barrier.wait().await;
+            sync.await.unwrap();
+            live.await.unwrap();
+
+            let first = receiver.recv().await.unwrap();
+            let second = receiver.recv().await.unwrap();
+            assert!(matches!(
+                (&first, &second),
+                (
+                    SocketOutput::SyncStart,
+                    SocketOutput::Message(WsServerMsg::LiveFrame { .. })
+                ) | (
+                    SocketOutput::Message(WsServerMsg::LiveFrame { .. }),
+                    SocketOutput::SyncStart
+                )
+            ));
+
+            let mut gate = SocketGate::default();
+            let first_frames = gate.push(first);
+            let second_frames = gate.push(second);
+            if first_frames.is_empty() {
+                // The marker won the race, so the concurrent live frame is
+                // held until the state-sync bracket closes.
+                assert!(second_frames.is_empty());
+                let chat_id = Uuid::now_v7();
+                assert_eq!(
+                    gate.push(SocketOutput::Message(WsServerMsg::SyncBegin { chat_id })),
+                    vec![WsServerMsg::SyncBegin { chat_id }]
+                );
+                let done = gate.push(SocketOutput::Message(WsServerMsg::SyncDone { chat_id }));
+                assert!(matches!(
+                    done.as_slice(),
+                    [WsServerMsg::SyncDone { .. }, WsServerMsg::LiveFrame { .. }]
+                ));
+            } else {
+                // The live frame won the ordering mutex and was therefore
+                // entirely before the sync transition.
+                assert!(matches!(
+                    first_frames.as_slice(),
+                    [WsServerMsg::LiveFrame { .. }]
+                ));
+                assert!(second_frames.is_empty());
+            }
+        }
     }
 
     #[test]

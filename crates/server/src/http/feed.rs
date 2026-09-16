@@ -357,9 +357,10 @@ fn spawn_feed(
     tokio::spawn(feed_task(state, org_id, user_id, broadcast));
 }
 
-/// Atomically subscribes to the singleton feed while its registry entry is
-/// locked. Returning the receiver, rather than an unsubscribed handle, keeps
-/// the task alive until the caller owns a live subscription.
+/// The only subscription path for a user's singleton feed. This replaces
+/// the plan's `FeedHandle` return contract: it atomically creates and returns
+/// a receiver while the registry entry is locked, so the task stays alive
+/// until the caller owns a live subscription.
 pub fn feed_of(state: &AppState, user: &AuthUser) -> broadcast::Receiver<WsServerMsg> {
     let (receiver, start, broadcast) = {
         let mut feeds = state.feeds.lock().unwrap();
@@ -813,6 +814,7 @@ mod tests {
                 },
                 "m1",
             )
+            .await
             .unwrap();
         let forwarders = [
             forward_to_socket(broadcast.subscribe(), member_one),
