@@ -19,6 +19,10 @@ pub fn routes() -> Router<AppState> {
             axum::routing::get(thread).post(append_thread_event),
         )
         .route(
+            "/api/v1/chats/{id}/dir",
+            axum::routing::post(set_dir),
+        )
+        .route(
             "/api/v1/chats/{id}/machine",
             axum::routing::post(set_machine),
         )
@@ -159,6 +163,8 @@ impl From<crate::store::chats::ChatRow> for Chat {
             machine_label: c.machine_label,
             generating: c.generating,
             unread: false,
+            project_dir: c.project_dir,
+            machine_online: false,
         }
     }
 }
@@ -175,6 +181,8 @@ impl From<crate::store::chats::ChatListRow> for Chat {
             machine_label: c.machine_label,
             generating: c.generating,
             unread: c.unread,
+            project_dir: c.project_dir,
+            machine_online: false,
         }
     }
 }
@@ -216,6 +224,27 @@ async fn list(
     let chats = store.chats().list_chats(user.0.org_id, user.0.id).await?;
     let chats: Vec<Chat> = chats.into_iter().map(Into::into).collect();
     Ok(Json(serde_json::json!({ "chats": chats })))
+}
+
+/// Sets (or clears) the chat's workspace folder. Owner-scoped; the bound
+/// desktop pushes its folder choice here so web and other machines render it.
+async fn set_dir(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+    Json(req): Json<Value>,
+) -> Result<Json<Chat>, ApiError> {
+    let store = state.store().await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
+    let dir = req["dir"].as_str().filter(|s| !s.is_empty());
+    let chat = store
+        .chats()
+        .set_project_dir(user.0.org_id, chat_id, &user.0, dir)
+        .await?;
+    Ok(Json(chat.into()))
 }
 
 /// The chat's full thread event log (spec §E): the durable source of truth

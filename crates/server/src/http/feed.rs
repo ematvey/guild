@@ -37,6 +37,9 @@ struct Feed {
     /// a cheap pre-capture change check so the 100ms tick only captures
     /// chats whose buffers actually moved.
     signatures: HashMap<Uuid, (usize, usize)>,
+    /// Last broadcast machine-online state per bound chat: a flip rebroadcasts
+    /// the thread list so every device's connection dot updates live.
+    presence: HashMap<Uuid, bool>,
 }
 
 impl Feed {
@@ -59,6 +62,7 @@ impl Feed {
             slow_tick: 3,
             views: HashMap::new(),
             signatures: HashMap::new(),
+            presence: HashMap::new(),
         }
     }
 
@@ -118,6 +122,28 @@ impl Feed {
                 .any(|(current, generation, _)| current == chat && generation == id)
         });
         self.publish_views().await;
+        self.watch_presence().await;
+    }
+
+    /// Rebroadcasts the thread list when a bound machine's online state
+    /// flips (the connection dot next to the folder chip must move live).
+    async fn watch_presence(&mut self) {
+        let mut changed = false;
+        for (chat_id, binding) in &self.chats {
+            let Some(machine_id) = &binding.machine_id else {
+                continue;
+            };
+            let online = self.state.hub.machine_online(machine_id);
+            if self.presence.get(chat_id) != Some(&online) {
+                self.presence.insert(*chat_id, online);
+                changed = true;
+            }
+        }
+        if changed {
+            if let Ok(chats) = thread_list(&self.state, self.org_id, self.user_id).await {
+                let _ = self.broadcast.send(WsServerMsg::ThreadList { chats });
+            }
+        }
     }
 
     async fn drain_events(&mut self) {
@@ -457,13 +483,22 @@ pub(crate) fn forward_to_socket(
 /// Returns the same thread-list payload as `GET /api/v1/chats`.
 pub(crate) async fn thread_list(
     state: &AppState,
-    user: &AuthUser,
+    org_id: Uuid,
+    user_id: Uuid,
 ) -> Result<Vec<Value>, crate::http::error::ApiError> {
     let store = state.store().await?;
-    let chats = store.chats().list_chats(user.0.org_id, user.0.id).await?;
+    let chats = store.chats().list_chats(org_id, user_id).await?;
     Ok(chats
         .into_iter()
-        .map(|chat| serde_json::to_value(protocol::api::Chat::from(chat)).expect("chat serializes"))
+        .map(|chat| {
+            let mut chat = protocol::api::Chat::from(chat);
+            chat.machine_online = chat
+                .machine_id
+                .as_deref()
+                .map(|mid| state.hub.machine_online(mid))
+                .unwrap_or(false);
+            serde_json::to_value(chat).expect("chat serializes")
+        })
         .collect())
 }
 

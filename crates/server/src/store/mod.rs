@@ -205,7 +205,7 @@ impl Store {
 /// Advisory-lock id for the migration runner: one fixed bigint every
 /// instance of this binary agrees on (ASCII "GUILDMGR" for recognizability
 /// in pg_locks).
-const MIGRATIONS: [(&str, &str); 44] = [
+const MIGRATIONS: [(&str, &str); 45] = [
     (
         "0001_identity",
         include_str!("../../migrations/0001_identity.sql"),
@@ -378,6 +378,10 @@ const MIGRATIONS: [(&str, &str); 44] = [
     (
         "0044_approval_mode_codex",
         include_str!("../../migrations/0044_approval_mode_codex.sql"),
+    ),
+    (
+        "0045_chat_project_dir",
+        include_str!("../../migrations/0045_chat_project_dir.sql"),
     ),
 ];
 

@@ -557,7 +557,7 @@ pub(crate) async fn drive_socket(
         if let Some(machine) = machine_id.as_deref() {
             crate::http::gateway::reconcile_machine_tools(&state, machine, conn_id).await;
         }
-        match feed::thread_list(&state, &user).await {
+        match feed::thread_list(&state, user.0.org_id, user.0.id).await {
             Ok(chats) => {
                 let _ = member.sink.send(WsServerMsg::ThreadList { chats }).await;
             }
