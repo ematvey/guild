@@ -424,6 +424,8 @@ export type ThreadEvent =
       call_id: string;
       approved: boolean;
       reason?: string | null;
+      /** Nobody was waiting when the decision landed; the call never ran. */
+      expired?: boolean;
     };
 
 export interface ThreadEventRow {
@@ -715,24 +717,37 @@ export type ApprovalPolicy = {
   overrides?: Record<string, "ask" | "allow" | "never">;
 };
 
-/// Delivers the user's decision on a pending tool approval. The first
-/// decision wins server-side; late posts and replays are no-ops.
+/// Delivers the user's decision on a pending tool approval. The response
+/// tells the caller how the card settles: `settled: true` with `approved`/
+/// `expired` means a recorded decision was echoed (late clicks) or the call
+/// was orphaned and journaled expired — settle the card from the response;
+/// `settled: false` means a live turn took the decision and the
+/// approval_resolved frame (or a reload) lands the pill.
+export type ApprovalPostResult = {
+  ok: boolean;
+  settled?: boolean;
+  approved?: boolean;
+  reason?: string | null;
+  expired?: boolean;
+};
+
 export async function postApproval(
   chatId: string,
   callId: string,
   approved: boolean,
   reason?: string,
-): Promise<void> {
+): Promise<ApprovalPostResult> {
   const token = getToken();
   const res = await fetch(apiUrl(`/api/v1/gateway/chat/${chatId}/approvals/${callId}`), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(reason === undefined ? { approved } : { approved, reason }),
   });
+  const v = (await res.json().catch(() => ({}))) as ApprovalPostResult;
   if (!res.ok) {
-    const v = await res.json().catch(() => ({}));
-    throw new Error(v?.error?.message ?? `approval rejected (${res.status})`);
+    throw new Error((v as { error?: { message?: string } })?.error?.message ?? `approval rejected (${res.status})`);
   }
+  return v;
 }
 
 /// Per-chat approval mode (migration 0043, the composer's selector): the

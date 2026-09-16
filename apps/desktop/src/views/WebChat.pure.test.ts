@@ -229,6 +229,23 @@ describe("approval upsert/resolve", () => {
     expect(approvals[0].approval!.callId).toBe("c2");
     expect(approvals[0].approval!.status).toBe("pending");
   });
+
+  it("history derivation keeps expired approvals — no tool result tells their story", () => {
+    const blocks = eventsToBlocks([
+      row(0, { type: "user_message", content: "go" }),
+      row(1, { type: "approval_request", call_id: "c1", name: "execute", arguments: "{}" }),
+      row(2, {
+        type: "approval_decision",
+        call_id: "c1",
+        approved: false,
+        reason: "expired — no turn was waiting for this approval",
+        expired: true,
+      }),
+    ]);
+    const approvals = blocks.filter((b) => b.kind === "approval");
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].approval!.status).toBe("expired");
+  });
 });
 
 describe("parseSearchResults", () => {

@@ -1,9 +1,38 @@
 # Guild — current state of work
 
-Updated 2026-09-16 (skills: agent-facing loading + install/uninstall in
-shared dirs). Read this before touching the codebase; detailed milestone
-plans live in `docs/plans/`, deploy nuances in `docs/deploy-nuances.md`,
-hang-patterns in `~/workspace/hanging-commands.md`.
+Updated 2026-09-16 (approvals: every decision path settles the card). Read
+this before touching the codebase; detailed milestone plans live in
+`docs/plans/`, deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
+`~/workspace/hanging-commands.md`.
+
+## Approval cards can no longer hang — every decision settles observably — 2026-09-16
+
+A stale approval card (its turn ended before the card was answered) used to
+hang forever in the client's optimistic state: the decision endpoint
+forwarded to `complete_approval`, the handler saw no `approval:{call_id}`
+state key, no-oped silently, and no `ApprovalResolved` frame ever came. The
+decision endpoint now settles every path observably:
+
+- **Recorded decision** (any earlier answer, or the 5-min timeout auto-deny):
+  echoed verbatim from the thread log; the ChatRunner is not contacted. Late
+  clicks are idempotent and settle their card from the POST response.
+- **Live turn**: forwards as before (`settled: false` in the response); the
+  gate journals the decision and broadcasts the resolved frame.
+- **Orphaned call** (no recorded decision, no live turn): journals an
+  `expired` decision (`ThreadEvent::ApprovalDecision.expired`, serde-defaulted
+  false on old events) and still forwards — a gate suspended in Restate after
+  a server restart accepts the decision even though the in-memory generation
+  registry is empty. Response settles the caller's card immediately.
+
+The new `expired` state is truthful, not a retroactive rejection: the turn
+already got its answer, the call can never execute. Expired cards stay
+visible in history (no tool result tells their story); approved/denied cards
+are still dropped as decisions-not-content. The client's card gains a muted
+`expired` pill, settles directly from the POST response when `settled: true`,
+and re-enables 15 s after a click that got no answer (retries are idempotent).
+Tests: `recorded_decision_is_echoed_verbatim`,
+`orphaned_decision_is_journaled_expired` (approval_api.rs), expired-card
+history derivation (WebChat.pure.test.ts).
 
 ## Machine `execute` is gated by static prefix rules first — 2026-09-16
 
