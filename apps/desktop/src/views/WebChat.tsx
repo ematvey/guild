@@ -102,6 +102,22 @@ export function statusFromThreads(chats: ChatSummary[]) {
   return Object.fromEntries(chats.map(chat => [chat.id, { generating: !!chat.generating, unread: !!chat.unread }]));
 }
 
+/** The open chat's remote bound machine when its socket is down — the
+ * offline warning banner's subject. Null when unbound, bound to this
+ * machine (desktop executes its own tools), online, or presence unknown. */
+export function offlineMachine(
+  chats: ChatSummary[] | null,
+  chatId: string | null,
+  isTauri: boolean,
+  localMachineId: string | undefined,
+): { label: string } | null {
+  const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
+  if (!row?.machine_id) return null;
+  if (isTauri && row.machine_id === localMachineId) return null;
+  if (row.machine_online !== false) return null;
+  return { label: row.machine_label ?? row.machine_id };
+}
+
 export function threadStateBlocks(state: ThreadState): Block[] {
   let blocks = eventsToBlocks(state.events);
   if (state.thinking) blocks = upsertThinking(blocks, state.thinking, true);
@@ -2075,6 +2091,7 @@ export default function WebChat({
   };
 
   const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
+  const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || attaching || openGenerating;
 
   const sidebar = (
@@ -2211,6 +2228,12 @@ export default function WebChat({
             )}
           </span>
         </header>
+
+        {offlineMachineBanner && (
+          <div role="status" className="border-b border-amber-700/60 bg-amber-900/30 px-4 py-2 text-amber-300">
+            {offlineMachineBanner.label} is offline — tools won't run until it reconnects.
+          </div>
+        )}
 
         {blocks.length === 0 ? (
           threadLoading ? (

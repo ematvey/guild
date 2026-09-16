@@ -8,6 +8,7 @@ pub mod identity;
 pub mod integration_secrets;
 pub mod integrations;
 pub mod kv;
+pub mod machines;
 pub mod oidc;
 pub mod org_kv;
 pub mod pairing;
@@ -173,6 +174,10 @@ impl Store {
         kv::KvStore { pool: &self.pool }
     }
 
+    pub fn machines(&self) -> machines::MachineStore<'_> {
+        machines::MachineStore { pool: &self.pool }
+    }
+
     pub fn org_kv(&self) -> org_kv::OrgKvStore<'_> {
         org_kv::OrgKvStore { pool: &self.pool }
     }
@@ -205,7 +210,7 @@ impl Store {
 /// Advisory-lock id for the migration runner: one fixed bigint every
 /// instance of this binary agrees on (ASCII "GUILDMGR" for recognizability
 /// in pg_locks).
-const MIGRATIONS: [(&str, &str); 45] = [
+const MIGRATIONS: [(&str, &str); 46] = [
     (
         "0001_identity",
         include_str!("../../migrations/0001_identity.sql"),
@@ -382,6 +387,10 @@ const MIGRATIONS: [(&str, &str); 45] = [
     (
         "0045_chat_project_dir",
         include_str!("../../migrations/0045_chat_project_dir.sql"),
+    ),
+    (
+        "0046_machines",
+        include_str!("../../migrations/0046_machines.sql"),
     ),
 ];
 

@@ -46,7 +46,12 @@ impl Fixture {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = guild_server::build_router(ts.state.clone());
         let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .unwrap();
         });
         Self {
             ts,
@@ -59,6 +64,15 @@ impl Fixture {
         }
     }
     async fn socket(&self, machine: Option<(&str, Uuid, bool)>) -> Socket {
+        let extra = match machine {
+            Some((id, instance, resume)) => {
+                format!("&machine_id={id}&instance_id={instance}&resume={resume}")
+            }
+            None => String::new(),
+        };
+        self.connect_raw(&extra).await
+    }
+    async fn ticket(&self) -> String {
         let ticket: Value = reqwest::Client::new()
             .post(format!("{}/api/v1/ws/ticket", self.base))
             .bearer_auth(&self.token)
@@ -70,14 +84,15 @@ impl Fixture {
             .json()
             .await
             .unwrap();
-        let mut url = format!(
-            "{}/api/v1/ws?ticket={}&client_id=test",
+        ticket["ticket"].as_str().unwrap().to_string()
+    }
+    async fn connect_raw(&self, extra: &str) -> Socket {
+        let url = format!(
+            "{}/api/v1/ws?ticket={}{}",
             self.base.replace("http:", "ws:"),
-            ticket["ticket"].as_str().unwrap()
+            self.ticket().await,
+            extra
         );
-        if let Some((id, instance, resume)) = machine {
-            url += &format!("&machine_id={id}&instance_id={instance}&resume={resume}");
-        }
         connect_async(url).await.unwrap().0
     }
 }
@@ -306,4 +321,77 @@ async fn legacy_transport_routes_are_retired() {
             .unwrap();
         assert_eq!(response.status(), 404);
     }
+}
+#[tokio::test]
+async fn machine_connect_registers_in_the_durable_registry() {
+    let f = Fixture::new().await;
+    let instance = Uuid::now_v7();
+    let mut socket = f
+        .connect_raw(&format!(
+            "&machine_id=reg-desktop&instance_id={instance}&resume=false\
+             &machine_name=WORKSTATION&machine_fingerprint=FP-1&machine_os=Windows\
+             &machine_os_version=11&machine_app_version=0.4.0"
+        ))
+        .await;
+    until(&mut socket, |m| matches!(m, WsServerMsg::ThreadList { .. })).await;
+
+    let row: guild_server::store::machines::MachineRow =
+        sqlx::query_as("SELECT * FROM machines WHERE machine_id = 'reg-desktop'")
+            .fetch_one(f.ts.store().pool())
+            .await
+            .unwrap();
+    assert_eq!(row.label.as_deref(), Some("WORKSTATION"));
+    assert_eq!(row.hardware_fingerprint.as_deref(), Some("FP-1"));
+    assert_eq!(row.os.as_deref(), Some("Windows"));
+    assert_eq!(row.os_version.as_deref(), Some("11"));
+    assert_eq!(row.app_version.as_deref(), Some("0.4.0"));
+    assert!(
+        row.last_ip
+            .as_deref()
+            .is_some_and(|ip| ip.starts_with("127.0.0.1")),
+        "peer ip must be captured from the socket, got {row:?}"
+    );
+    assert!(row.re_paired_at.is_none());
+    // The live hub slot stays registered under the connect id.
+    assert!(f.ts.state.hub.machine_online("reg-desktop"));
+}
+
+#[tokio::test]
+async fn re_pair_adoption_rekeys_the_row_and_displaces_the_old_socket() {
+    let f = Fixture::new().await;
+    let old_instance = Uuid::now_v7();
+    let mut old = f
+        .connect_raw(&format!(
+            "&machine_id=old-id&machine_name=OLD&machine_fingerprint=FP-9&instance_id={old_instance}"
+        ))
+        .await;
+    until(&mut old, |m| matches!(m, WsServerMsg::ThreadList { .. })).await;
+    assert!(f.ts.state.hub.machine_online("old-id"));
+
+    // Same physical machine re-pairs under a new local id: the registry row
+    // is adopted and the still-live old registration is displaced.
+    let instance = Uuid::now_v7();
+    let mut new = f
+        .connect_raw(&format!(
+            "&machine_id=new-id&machine_name=NEW&machine_fingerprint=FP-9&instance_id={instance}"
+        ))
+        .await;
+    until(&mut new, |m| matches!(m, WsServerMsg::ThreadList { .. })).await;
+    until(&mut old, |m| matches!(m, WsServerMsg::Displaced)).await;
+
+    assert!(!f.ts.state.hub.machine_online("old-id"));
+    assert!(f.ts.state.hub.machine_online("new-id"));
+    let row: guild_server::store::machines::MachineRow =
+        sqlx::query_as("SELECT * FROM machines WHERE machine_id = 'new-id'")
+            .fetch_one(f.ts.store().pool())
+            .await
+            .unwrap();
+    assert_eq!(row.hardware_fingerprint.as_deref(), Some("FP-9"));
+    assert!(row.re_paired_at.is_some(), "adoption must stamp re_paired_at");
+    let old_left: Option<guild_server::store::machines::MachineRow> =
+        sqlx::query_as("SELECT * FROM machines WHERE machine_id = 'old-id'")
+            .fetch_optional(f.ts.store().pool())
+            .await
+            .unwrap();
+    assert!(old_left.is_none(), "old id must be re-keyed away");
 }

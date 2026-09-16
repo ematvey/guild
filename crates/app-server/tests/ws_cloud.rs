@@ -24,7 +24,12 @@ async fn cloud_command_uses_ws_for_output_and_json_for_acknowledgment() {
     let base_url = format!("http://{}", listener.local_addr().unwrap());
     let app = guild_server::build_router(fixture.state.clone());
     let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let cloud = CloudClient { base_url, token };
     let stream = cloud

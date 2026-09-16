@@ -26,7 +26,8 @@ pub async fn main_entry() -> anyhow::Result<()> {
     let api_task = async {
         let app = build_router(state.clone());
         let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-        axum::serve(listener, app).await?;
+        axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .await?;
         Ok(())
     };
     let worker_task = async { worker::restate::spawn_worker(state.clone()).await };

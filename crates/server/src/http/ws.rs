@@ -8,10 +8,9 @@ use crate::http::auth::AuthUser;
 use crate::http::feed;
 use crate::http::hub::Member;
 use crate::state::AppState;
-use axum::{
-    extract::{Query, State, WebSocketUpgrade},
-    Json, Router,
-};
+use axum::extract::ConnectInfo;
+use axum::extract::{Query, State, WebSocketUpgrade};
+use axum::{Json, Router};
 use futures::{SinkExt, StreamExt};
 use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde_json::{json, Value};
@@ -80,21 +79,50 @@ async fn mint_ticket(
 
 /// Upgrade query: `?ticket=<single-use>&client_id=<stable browser id>&machine_id=<opt>&machine_name=<opt>`.
 /// `client_id` identifies the browser across tabs (member identity);
-/// `machine_id` (desktop only) claims the machine's singleton slot.
+/// `machine_id` (desktop only) claims the machine's singleton slot. The
+/// `machine_*` params carry registry metadata (desktop 0.4.0 omits them;
+/// empty values are stored as NULL).
 #[derive(serde::Deserialize)]
 pub struct UpgradeQuery {
     ticket: String,
     client_id: Option<String>,
     machine_id: Option<String>,
     machine_name: Option<String>,
+    machine_fingerprint: Option<String>,
+    machine_os: Option<String>,
+    machine_os_version: Option<String>,
+    machine_app_version: Option<String>,
     instance_id: Option<Uuid>,
     #[serde(default)]
     resume: bool,
 }
 
+/// Desktop-supplied registry metadata from the upgrade query.
+#[derive(Default, Clone)]
+struct MachineConnectMeta {
+    label: Option<String>,
+    fingerprint: Option<String>,
+    os: Option<String>,
+    os_version: Option<String>,
+    app_version: Option<String>,
+}
+
+impl MachineConnectMeta {
+    fn from_query(q: &UpgradeQuery) -> Self {
+        Self {
+            label: q.machine_name.clone(),
+            fingerprint: q.machine_fingerprint.clone(),
+            os: q.machine_os.clone(),
+            os_version: q.machine_os_version.clone(),
+            app_version: q.machine_app_version.clone(),
+        }
+    }
+}
+
 async fn upgrade(
     State(state): State<AppState>,
     Query(q): Query<UpgradeQuery>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     ws: WebSocketUpgrade,
 ) -> Result<axum::response::Response, crate::http::error::ApiError> {
     let user = state
@@ -107,23 +135,26 @@ async fn upgrade(
         ));
     }
     let (tx, rx) = socket_channel();
+    let machine_meta = MachineConnectMeta::from_query(&q);
     let machine_id = q.machine_id.filter(|s| !s.is_empty());
     if machine_id.is_some() && q.instance_id.is_none() {
         return Err(crate::http::error::ApiError::bad_request(
             "machine connections require instance_id",
         ));
     }
+    let instance_id = q.instance_id.unwrap_or_else(Uuid::now_v7);
+    let resume = q.resume;
     let client_id = q.client_id.unwrap_or_else(|| Uuid::now_v7().to_string());
-    let machine_name = q.machine_name;
     Ok(ws.on_upgrade(move |socket| async move {
         drive_socket(
             state,
             user,
             client_id,
             machine_id,
-            machine_name,
-            q.instance_id.unwrap_or_else(Uuid::now_v7),
-            q.resume,
+            machine_meta,
+            Some(peer.ip()),
+            instance_id,
+            resume,
             socket,
             tx,
             rx,
@@ -147,6 +178,9 @@ const SOCKET_HIGH_WATER: usize = 4096;
 // A socket that cannot flush its terminal notice within this deadline is
 // treated as dead. No socket write may delay eviction beyond this bound.
 const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+// Registry last_seen refreshes at most this often per machine socket; the
+// ping heartbeat itself runs faster.
+const LAST_SEEN_REFRESH: Duration = Duration::from_secs(30);
 
 struct SocketBacklog {
     pending: AtomicUsize,
@@ -313,8 +347,9 @@ async fn watch_session(
     }
 }
 
-async fn heartbeat(sink: SocketSink) {
+async fn heartbeat(state: AppState, sink: SocketSink, machine_id: Option<String>) {
     let mut pong = sink.backlog.pong.subscribe();
+    let mut last_refresh: Option<std::time::Instant> = None;
     loop {
         let challenge = Uuid::now_v7().as_bytes().to_vec();
         if sink
@@ -336,6 +371,19 @@ async fn heartbeat(sink: SocketSink) {
         .await;
         if matched.is_err() {
             return;
+        }
+        // The registry row's liveness timestamp follows the ping heartbeat
+        // on a 30 s throttle; the task only lives while the socket lives.
+        if let Some(machine_id) = machine_id.as_deref() {
+            let due = last_refresh.is_none_or(|at| at.elapsed() >= LAST_SEEN_REFRESH);
+            if due {
+                if let Ok(store) = state.store().await {
+                    if let Err(error) = store.machines().last_seen(machine_id).await {
+                        tracing::warn!(%machine_id, ?error, "last_seen refresh failed");
+                    }
+                }
+                last_refresh = Some(std::time::Instant::now());
+            }
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
@@ -459,7 +507,8 @@ pub(crate) async fn drive_socket(
     identity: TicketIdentity,
     _client_id: String,
     machine_id: Option<String>,
-    machine_name: Option<String>,
+    machine_meta: MachineConnectMeta,
+    peer_ip: Option<std::net::IpAddr>,
     instance_id: Uuid,
     resume: bool,
     socket: axum::extract::ws::WebSocket,
@@ -478,7 +527,7 @@ pub(crate) async fn drive_socket(
         user_id: user.0.id,
         org_id: user.0.org_id,
         sink: tx.clone(),
-        label: machine_name,
+        label: machine_meta.label.clone(),
     };
 
     let machine_shutdown = match machine_id.as_deref() {
@@ -487,7 +536,17 @@ pub(crate) async fn drive_socket(
             .register_machine_instance(member.clone(), machine_id, instance_id, resume)
             .await
         {
-            Ok(registration) => Some(registration.shutdown),
+            Ok(registration) => {
+                register_machine_record(
+                    &state,
+                    &user.0,
+                    machine_id,
+                    &machine_meta,
+                    peer_ip,
+                )
+                .await;
+                Some(registration.shutdown)
+            }
             Err(crate::http::hub::MachineRejected::Displaced) => {
                 let _ = tokio::time::timeout(
                     TERMINAL_WRITE_TIMEOUT,
@@ -602,7 +661,7 @@ pub(crate) async fn drive_socket(
     let bounded_reader = async {
         tokio::select! {
             _ = reader => {},
-            _ = heartbeat(tx.clone()) => {},
+            _ = heartbeat(state.clone(), tx.clone(), machine_id.clone()) => {},
             _ = watch_session(&state, &session_hash, expires_at, &tx) => {},
         }
     };
@@ -615,6 +674,55 @@ pub(crate) async fn drive_socket(
     match machine_id.as_deref() {
         Some(machine_id) => state.hub.unregister_machine(machine_id, conn_id),
         None => state.hub.unregister_member(user.0.id, member.conn_id),
+    }
+}
+
+/// Connect-time registration in the durable machine registry: adopts a
+/// fingerprint-matched row (re-pair) or inserts a new one. Registry failure
+/// never blocks the socket — the hub slot remains the liveness truth.
+async fn register_machine_record(
+    state: &AppState,
+    user: &crate::store::identity::UserRow,
+    machine_id: &str,
+    meta: &MachineConnectMeta,
+    peer_ip: Option<std::net::IpAddr>,
+) {
+    let Ok(store) = state.store().await else {
+        tracing::warn!(%machine_id, "machine registry unavailable: no store");
+        return;
+    };
+    match store
+        .machines()
+        .upsert_connected(
+            user.org_id,
+            user.id,
+            machine_id,
+            meta.label.as_deref(),
+            meta.fingerprint.as_deref(),
+            meta.os.as_deref(),
+            meta.os_version.as_deref(),
+            meta.app_version.as_deref(),
+            peer_ip.map(|ip| ip.to_string()).as_deref(),
+        )
+        .await
+    {
+        Ok(outcome) => {
+            if let Some(old) = outcome.adopted_from {
+                // The re-key left any live registration under the old id
+                // without a registry identity: displace it per the
+                // singleton rule.
+                let displaced = state.hub.displace_machine(&old);
+                tracing::info!(
+                    machine_id,
+                    old_machine_id = %old,
+                    displaced,
+                    "machine re-pair adoption"
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!(%machine_id, ?error, "machine registry upsert failed")
+        }
     }
 }
 
@@ -1161,7 +1269,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn open_silent_peer_expires_without_tcp_close() {
         let (sink, mut rx) = socket_channel();
-        let task = tokio::spawn(heartbeat(sink.clone()));
+        let state = AppState::from_config(crate::config::Config::test_config());
+        let task = tokio::spawn(heartbeat(state, sink.clone(), None));
         assert!(matches!(rx.recv().await, Some(SocketOutput::Ping(_))));
         tokio::time::advance(Duration::from_secs(11)).await;
         task.await.unwrap();
@@ -1170,7 +1279,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn only_matched_pong_keeps_peer_alive() {
         let (sink, mut rx) = socket_channel();
-        let task = tokio::spawn(heartbeat(sink.clone()));
+        let state = AppState::from_config(crate::config::Config::test_config());
+        let task = tokio::spawn(heartbeat(state, sink.clone(), None));
         let Some(SocketOutput::Ping(payload)) = rx.recv().await else {
             panic!("ping")
         };
