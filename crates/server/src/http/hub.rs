@@ -13,6 +13,12 @@ pub const MAX_SOCKETS_PER_USER: usize = 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapRejected;
 
+#[derive(Debug)]
+pub enum MachineRejected {
+    Cap,
+    Displaced,
+}
+
 pub struct MachineRegistration {
     pub displaced: bool,
     pub shutdown: watch::Receiver<bool>,
@@ -42,6 +48,9 @@ pub struct Hub {
 #[derive(Default)]
 struct HubInner {
     machines: HashMap<String, MachineSlot>,
+    /// Last instance claim survives disconnect, so a stale reconnect cannot
+    /// reclaim the slot after losing its terminal notice.
+    owners: HashMap<String, Uuid>,
     members: HashMap<Uuid, HashMap<Uuid, Member>>,
 }
 
@@ -81,9 +90,29 @@ impl Hub {
         m: Member,
         machine_id: &str,
     ) -> Result<MachineRegistration, CapRejected> {
+        self.register_machine_instance(m, machine_id, Uuid::now_v7(), false)
+            .await
+            .map_err(|_| CapRejected)
+    }
+
+    pub async fn register_machine_instance(
+        &self,
+        m: Member,
+        machine_id: &str,
+        instance: Uuid,
+        resume: bool,
+    ) -> Result<MachineRegistration, MachineRejected> {
         let (shutdown, shutdown_rx) = watch::channel(false);
         let old = {
             let mut guard = self.inner.lock().unwrap();
+            if resume
+                && guard
+                    .owners
+                    .get(machine_id)
+                    .is_some_and(|owner| *owner != instance)
+            {
+                return Err(MachineRejected::Displaced);
+            }
             let old = guard
                 .machines
                 .get(machine_id)
@@ -95,8 +124,9 @@ impl Hub {
             let socket_count_after_replace =
                 socket_count.saturating_sub(usize::from(replacing_existing_machine));
             if socket_count_after_replace >= MAX_SOCKETS_PER_USER {
-                return Err(CapRejected);
+                return Err(MachineRejected::Cap);
             }
+            guard.owners.insert(machine_id.to_owned(), instance);
             guard.machines.insert(
                 machine_id.to_owned(),
                 MachineSlot {
@@ -141,6 +171,24 @@ impl Hub {
         if is_current {
             guard.machines.remove(machine_id);
         }
+    }
+
+    pub(crate) fn machine_holder(&self, machine_id: &str) -> Option<Member> {
+        self.inner
+            .lock()
+            .unwrap()
+            .machines
+            .get(machine_id)
+            .map(|slot| slot.holder.clone())
+    }
+
+    pub fn machine_connection(&self, machine_id: &str) -> Option<Uuid> {
+        self.inner
+            .lock()
+            .unwrap()
+            .machines
+            .get(machine_id)
+            .map(|slot| slot.holder.conn_id)
     }
 
     pub fn machine_online(&self, machine_id: &str) -> bool {
@@ -237,6 +285,28 @@ mod tests {
             sink: socket_channel().0,
             label: None,
         }
+    }
+
+    #[tokio::test]
+    async fn stale_resume_cannot_displace_new_holder_even_after_old_writer_is_gone() {
+        let hub = Hub::default();
+        let old = member();
+        let new = member();
+        let old_instance = Uuid::now_v7();
+        let new_instance = Uuid::now_v7();
+        hub.register_machine_instance(old.clone(), "machine", old_instance, false)
+            .await
+            .unwrap();
+        hub.unregister_machine("machine", old.conn_id);
+        hub.register_machine_instance(new.clone(), "machine", new_instance, false)
+            .await
+            .unwrap();
+        assert!(matches!(
+            hub.register_machine_instance(old, "machine", old_instance, true)
+                .await,
+            Err(MachineRejected::Displaced)
+        ));
+        assert_eq!(hub.machine_connection("machine"), Some(new.conn_id));
     }
 
     #[tokio::test]

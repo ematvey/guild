@@ -26,13 +26,19 @@ use uuid::Uuid;
 /// are worthless after a restart; clients mint a fresh one on every connect.
 #[derive(Clone, Default)]
 pub struct TicketStore {
-    tickets: Arc<Mutex<HashMap<String, (AuthUser, std::time::Instant)>>>,
+    tickets: Arc<Mutex<HashMap<String, (TicketIdentity, std::time::Instant)>>>,
+}
+
+pub struct TicketIdentity {
+    user: AuthUser,
+    session_hash: String,
+    expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TicketStore {
     const TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
-    pub fn mint(&self, user: AuthUser) -> String {
+    pub fn mint(&self, user: TicketIdentity) -> String {
         let mut tickets = self.tickets.lock().unwrap();
         tickets.retain(|_, (_, at)| at.elapsed() < Self::TTL);
         let ticket = format!("gst_{}", Uuid::now_v7().simple());
@@ -40,7 +46,7 @@ impl TicketStore {
         ticket
     }
 
-    pub fn consume(&self, ticket: &str) -> Option<AuthUser> {
+    pub fn consume(&self, ticket: &str) -> Option<TicketIdentity> {
         let mut tickets = self.tickets.lock().unwrap();
         let (user, at) = tickets.remove(ticket)?;
         (at.elapsed() < Self::TTL).then_some(user)
@@ -56,8 +62,19 @@ pub fn routes() -> Router<AppState> {
 async fn mint_ticket(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<Value>, crate::http::error::ApiError> {
-    let ticket = state.ws_tickets.mint(user);
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| crate::http::error::ApiError::unauthorized("missing bearer"))?;
+    let (session_hash, expires_at) = state.store().await?.identity().session_grant(token).await?;
+    let ticket = state.ws_tickets.mint(TicketIdentity {
+        user,
+        session_hash,
+        expires_at,
+    });
     Ok(Json(json!({ "ticket": ticket })))
 }
 
@@ -70,6 +87,9 @@ pub struct UpgradeQuery {
     client_id: Option<String>,
     machine_id: Option<String>,
     machine_name: Option<String>,
+    instance_id: Option<Uuid>,
+    #[serde(default)]
+    resume: bool,
 }
 
 async fn upgrade(
@@ -81,8 +101,18 @@ async fn upgrade(
         .ws_tickets
         .consume(&q.ticket)
         .ok_or_else(|| crate::http::error::ApiError::unauthorized("invalid or expired ticket"))?;
+    if !session_valid(&state, &user.session_hash).await {
+        return Err(crate::http::error::ApiError::unauthorized(
+            "session expired or revoked",
+        ));
+    }
     let (tx, rx) = socket_channel();
     let machine_id = q.machine_id.filter(|s| !s.is_empty());
+    if machine_id.is_some() && q.instance_id.is_none() {
+        return Err(crate::http::error::ApiError::bad_request(
+            "machine connections require instance_id",
+        ));
+    }
     let client_id = q.client_id.unwrap_or_else(|| Uuid::now_v7().to_string());
     let machine_name = q.machine_name;
     Ok(ws.on_upgrade(move |socket| async move {
@@ -92,6 +122,8 @@ async fn upgrade(
             client_id,
             machine_id,
             machine_name,
+            q.instance_id.unwrap_or_else(Uuid::now_v7),
+            q.resume,
             socket,
             tx,
             rx,
@@ -104,8 +136,8 @@ async fn upgrade(
 pub(crate) enum SocketOutput {
     Message(WsServerMsg),
     SyncStart,
-    SyncAbort,
     Pong(axum::body::Bytes),
+    Ping(axum::body::Bytes),
 }
 
 // Slow sockets disconnect and resync on reconnect. Count queued, in-flight,
@@ -119,6 +151,8 @@ const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 struct SocketBacklog {
     pending: AtomicUsize,
     overloaded: watch::Sender<bool>,
+    pong: watch::Sender<Vec<u8>>,
+    auth_required: watch::Sender<bool>,
 }
 
 /// The one outbound queue consumed by a socket's writer task.
@@ -147,10 +181,21 @@ impl SocketSink {
         Ok(())
     }
 
+    pub(crate) fn try_send(
+        &self,
+        message: WsServerMsg,
+    ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+        self.enqueue(SocketOutput::Message(message))
+    }
+
     pub(crate) async fn send(
         &self,
         message: WsServerMsg,
     ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+        if matches!(message, WsServerMsg::AuthRequired) {
+            self.backlog.auth_required.send_replace(true);
+            return Ok(());
+        }
         self.enqueue(SocketOutput::Message(message))
     }
 
@@ -162,10 +207,6 @@ impl SocketSink {
 
     pub(crate) async fn start_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
         self.enqueue(SocketOutput::SyncStart)
-    }
-
-    pub(crate) async fn abort_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        self.enqueue(SocketOutput::SyncAbort)
     }
 
     async fn pong(
@@ -185,6 +226,8 @@ pub(crate) fn socket_channel() -> (SocketSink, mpsc::UnboundedReceiver<SocketOut
             backlog: Arc::new(SocketBacklog {
                 pending: AtomicUsize::new(0),
                 overloaded: watch::channel(false).0,
+                pong: watch::channel(Vec::new()).0,
+                auth_required: watch::channel(false).0,
             }),
         },
         rx,
@@ -215,10 +258,6 @@ impl SocketGate {
                 self.sync_depth += 1;
                 Vec::new()
             }
-            SocketOutput::SyncAbort => {
-                self.sync_depth = self.sync_depth.saturating_sub(1);
-                self.flush_if_ready()
-            }
             SocketOutput::Message(message) if self.sync_depth > 0 && Self::is_live(&message) => {
                 self.deferred.push_back(message);
                 Vec::new()
@@ -232,7 +271,7 @@ impl SocketGate {
                 }
                 out
             }
-            SocketOutput::Pong(_) => Vec::new(),
+            SocketOutput::Pong(_) | SocketOutput::Ping(_) => Vec::new(),
         }
     }
 
@@ -242,6 +281,63 @@ impl SocketGate {
         } else {
             Vec::new()
         }
+    }
+}
+
+/// Each challenge has a unique payload. Unrelated traffic cannot renew liveness.
+async fn session_valid(state: &AppState, hash: &str) -> bool {
+    matches!(
+        tokio::time::timeout(Duration::from_secs(2), async {
+            state.store().await?.identity().session_expiry(hash).await
+        })
+        .await,
+        Ok(Ok(_))
+    )
+}
+
+async fn watch_session(
+    state: &AppState,
+    hash: &str,
+    expires: chrono::DateTime<chrono::Utc>,
+    sink: &SocketSink,
+) {
+    loop {
+        if chrono::Utc::now() >= expires - chrono::Duration::seconds(60)
+            || !session_valid(state, hash).await
+        {
+            let _ = sink.send(WsServerMsg::AuthRequired).await;
+            tokio::time::sleep(TERMINAL_WRITE_TIMEOUT * 2).await;
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
+
+async fn heartbeat(sink: SocketSink) {
+    let mut pong = sink.backlog.pong.subscribe();
+    loop {
+        let challenge = Uuid::now_v7().as_bytes().to_vec();
+        if sink
+            .enqueue(SocketOutput::Ping(challenge.clone().into()))
+            .is_err()
+        {
+            return;
+        }
+        let matched = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if *pong.borrow_and_update() == challenge {
+                    return;
+                }
+                if pong.changed().await.is_err() {
+                    return;
+                }
+            }
+        })
+        .await;
+        if matched.is_err() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
 
@@ -269,45 +365,57 @@ async fn write_socket<W>(
     W: futures::Sink<axum::extract::ws::Message> + Unpin,
 {
     let mut overloaded = backlog.overloaded.subscribe();
-    let displaced = tokio::select! {
+    let mut auth_required = backlog.auth_required.subscribe();
+    let terminal = tokio::select! {
         biased;
-        _ = wait_for_shutdown(&mut shutdown) => true,
-        _ = wait_for_flag(&mut overloaded) => false,
+        _ = wait_for_shutdown(&mut shutdown) => Some(WsServerMsg::Displaced),
+        _ = wait_for_flag(&mut auth_required) => Some(WsServerMsg::AuthRequired),
+        _ = wait_for_flag(&mut overloaded) => None,
         displaced = async {
             let mut gate = SocketGate::default();
             while let Some(output) = rx.recv().await {
                 if matches!(output, SocketOutput::Message(WsServerMsg::Displaced)) {
                     return true;
                 }
-                if let SocketOutput::Pong(payload) = output {
-                    if wire.send(axum::extract::ws::Message::Pong(payload)).await.is_err() {
+                if matches!(output, SocketOutput::Pong(_) | SocketOutput::Ping(_)) {
+                    let control = match output {
+                        SocketOutput::Pong(payload) => axum::extract::ws::Message::Pong(payload),
+                        SocketOutput::Ping(payload) => axum::extract::ws::Message::Ping(payload),
+                        _ => unreachable!(),
+                    };
+                    if !matches!(tokio::time::timeout(TERMINAL_WRITE_TIMEOUT, wire.send(control)).await, Ok(Ok(()))) {
                         return false;
                     }
                     backlog.pending.fetch_sub(1, Ordering::Relaxed);
                     continue;
                 }
-                if matches!(output, SocketOutput::SyncStart | SocketOutput::SyncAbort) {
+                if matches!(output, SocketOutput::SyncStart) {
                     backlog.pending.fetch_sub(1, Ordering::Relaxed);
                 }
                 for message in gate.push(output) {
+                    let terminal = matches!(message, WsServerMsg::AuthRequired);
                     let text = serde_json::to_string(&message).expect("server message serializes");
-                    if wire.send(axum::extract::ws::Message::text(text)).await.is_err() {
+                    if !matches!(tokio::time::timeout(TERMINAL_WRITE_TIMEOUT, wire.send(axum::extract::ws::Message::text(text))).await, Ok(Ok(()))) {
                         return false;
                     }
                     backlog.pending.fetch_sub(1, Ordering::Relaxed);
+                    if terminal {
+                        let _ = tokio::time::timeout(TERMINAL_WRITE_TIMEOUT, wire.close()).await;
+                        return false;
+                    }
                 }
             }
             false
-        } => displaced,
+        } => displaced.then_some(WsServerMsg::Displaced),
     };
-    if displaced {
+    if let Some(terminal) = terminal {
         // Displacement bypasses stale queued/sync-deferred frames. Keep the
         // receiver open through the terminal flush: closing it early can
         // make the reader exit on an enqueue error and abort this notice
         // before the hub publishes shutdown. The flush has a hard deadline.
         let _ = tokio::time::timeout(TERMINAL_WRITE_TIMEOUT, async {
             wire.send(axum::extract::ws::Message::text(
-                serde_json::to_string(&WsServerMsg::Displaced).unwrap(),
+                serde_json::to_string(&terminal).unwrap(),
             ))
             .await?;
             wire.close().await
@@ -348,14 +456,21 @@ async fn supervise_socket(
 
 pub(crate) async fn drive_socket(
     state: AppState,
-    user: AuthUser,
+    identity: TicketIdentity,
     _client_id: String,
     machine_id: Option<String>,
     machine_name: Option<String>,
+    instance_id: Uuid,
+    resume: bool,
     socket: axum::extract::ws::WebSocket,
     tx: SocketSink,
     rx: mpsc::UnboundedReceiver<SocketOutput>,
 ) {
+    let TicketIdentity {
+        user,
+        session_hash,
+        expires_at,
+    } = identity;
     let (mut ws_tx, mut ws_rx) = socket.split();
     let conn_id = Uuid::now_v7();
     let member = Member {
@@ -367,30 +482,48 @@ pub(crate) async fn drive_socket(
     };
 
     let machine_shutdown = match machine_id.as_deref() {
-        Some(machine_id) => match state.hub.register_machine(member.clone(), machine_id).await {
+        Some(machine_id) => match state
+            .hub
+            .register_machine_instance(member.clone(), machine_id, instance_id, resume)
+            .await
+        {
             Ok(registration) => Some(registration.shutdown),
-            Err(crate::http::hub::CapRejected) => {
-                let _ = ws_tx
-                    .send(axum::extract::ws::Message::text(
+            Err(crate::http::hub::MachineRejected::Displaced) => {
+                let _ = tokio::time::timeout(
+                    TERMINAL_WRITE_TIMEOUT,
+                    ws_tx.send(axum::extract::ws::Message::text(
+                        serde_json::to_string(&WsServerMsg::Displaced).unwrap(),
+                    )),
+                )
+                .await;
+                return;
+            }
+            Err(crate::http::hub::MachineRejected::Cap) => {
+                let _ = tokio::time::timeout(
+                    TERMINAL_WRITE_TIMEOUT,
+                    ws_tx.send(axum::extract::ws::Message::text(
                         serde_json::to_string(&WsServerMsg::Error {
                             message: "too many connections".into(),
                         })
                         .unwrap(),
-                    ))
-                    .await;
+                    )),
+                )
+                .await;
                 return;
             }
         },
         None => {
             if state.hub.register_member(member.clone()).is_err() {
-                let _ = ws_tx
-                    .send(axum::extract::ws::Message::text(
+                let _ = tokio::time::timeout(
+                    TERMINAL_WRITE_TIMEOUT,
+                    ws_tx.send(axum::extract::ws::Message::text(
                         serde_json::to_string(&WsServerMsg::Error {
                             message: "too many connections".into(),
                         })
                         .unwrap(),
-                    ))
-                    .await;
+                    )),
+                )
+                .await;
                 return;
             }
             None
@@ -408,14 +541,22 @@ pub(crate) async fn drive_socket(
     let client_state = state.clone();
     let client_user = AuthUser(user.0.clone());
     let client_member = member.clone();
+    let client_session = session_hash.clone();
     let client_task = tokio::spawn(async move {
         while let Some(message) = client_rx.recv().await {
+            if !session_valid(&client_state, &client_session).await {
+                break;
+            }
             handle_client_msg(&client_state, &client_user, &client_member, message).await;
         }
     });
 
     let reader = async {
+        let feed_receiver = feed::feed_of(&state, &user);
         let _ = member.sink.send(WsServerMsg::Hello).await;
+        if let Some(machine) = machine_id.as_deref() {
+            crate::http::gateway::reconcile_machine_tools(&state, machine, conn_id).await;
+        }
         match feed::thread_list(&state, &user).await {
             Ok(chats) => {
                 let _ = member.sink.send(WsServerMsg::ThreadList { chats }).await;
@@ -429,10 +570,7 @@ pub(crate) async fn drive_socket(
                     .await;
             }
         }
-        feed_forwarder = Some(feed::forward_to_socket(
-            feed::feed_of(&state, &user),
-            member.sink.clone(),
-        ));
+        feed_forwarder = Some(feed::forward_to_socket(feed_receiver, member.sink.clone()));
         loop {
             match ws_rx.next().await {
                 Some(Ok(axum::extract::ws::Message::Text(text))) => {
@@ -453,12 +591,22 @@ pub(crate) async fn drive_socket(
                         break;
                     }
                 }
+                Some(Ok(axum::extract::ws::Message::Pong(payload))) => {
+                    tx.backlog.pong.send_replace(payload.to_vec());
+                }
                 Some(Ok(axum::extract::ws::Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
             }
         }
     };
-    supervise_socket(reader, writer, machine_shutdown).await;
+    let bounded_reader = async {
+        tokio::select! {
+            _ = reader => {},
+            _ = heartbeat(tx.clone()) => {},
+            _ = watch_session(&state, &session_hash, expires_at, &tx) => {},
+        }
+    };
+    supervise_socket(bounded_reader, writer, machine_shutdown).await;
 
     client_task.abort();
     if let Some(feed_forwarder) = feed_forwarder {
@@ -488,6 +636,19 @@ async fn handle_client_msg(
             is_error,
             meta,
         } => {
+            let owns_call = {
+                let generations = state.generations.lock().unwrap();
+                generations.get(&chat_id).is_some_and(|g| {
+                    g.pending_tools
+                        .lock()
+                        .unwrap()
+                        .get(&call_id)
+                        .is_some_and(|tool| tool.connection_id == Some(member.conn_id))
+                })
+            };
+            if !owns_call {
+                return;
+            }
             let result = async {
                 let store = state.store().await?;
                 store
@@ -577,6 +738,8 @@ mod tests {
                 live_sink
                     .send(WsServerMsg::LiveFrame {
                         chat_id,
+                        generation_id: Uuid::nil(),
+                        seq: 1,
                         machine_id: None,
                         event: protocol::api::StreamEvent::Delta {
                             content: "live".into(),
@@ -995,14 +1158,48 @@ mod tests {
         assert!(wire.dropped.load(Ordering::SeqCst));
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn open_silent_peer_expires_without_tcp_close() {
+        let (sink, mut rx) = socket_channel();
+        let task = tokio::spawn(heartbeat(sink.clone()));
+        assert!(matches!(rx.recv().await, Some(SocketOutput::Ping(_))));
+        tokio::time::advance(Duration::from_secs(11)).await;
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_matched_pong_keeps_peer_alive() {
+        let (sink, mut rx) = socket_channel();
+        let task = tokio::spawn(heartbeat(sink.clone()));
+        let Some(SocketOutput::Ping(payload)) = rx.recv().await else {
+            panic!("ping")
+        };
+        sink.backlog.pong.send_replace(payload.to_vec());
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let Some(SocketOutput::Ping(_)) = rx.recv().await else {
+            panic!("next ping")
+        };
+        sink.backlog.pong.send_replace(vec![99]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        task.await.unwrap();
+    }
+
     #[test]
     fn ticket_is_single_use_and_short_lived() {
         let store = TicketStore::default();
         let u = user();
-        let t = store.mint(u);
+        let t = store.mint(TicketIdentity {
+            user: u,
+            session_hash: "test".into(),
+            expires_at: chrono::Utc::now(),
+        });
         assert!(store.consume(&t).is_some());
         assert!(store.consume(&t).is_none(), "second consume must fail");
-        let t2 = store.mint(user());
+        let t2 = store.mint(TicketIdentity {
+            user: user(),
+            session_hash: "test".into(),
+            expires_at: chrono::Utc::now(),
+        });
         store.tickets.lock().unwrap().get_mut(&t2).unwrap().1 =
             std::time::Instant::now() - std::time::Duration::from_secs(60);
         assert!(store.consume(&t2).is_none(), "expired ticket must fail");
