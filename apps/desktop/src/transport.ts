@@ -762,7 +762,7 @@ export async function pushChatDir(chatId: string, dir: string | null): Promise<v
   // leaves the last known folder).
   void fetch(apiUrl(`/api/v1/chats/${chatId}/dir`), {
     method: "POST",
-    headers: { authorization: `Bearer ${getToken()}` },
+    headers: { authorization: `Bearer ${getToken()}`, "content-type": "application/json" },
     body: JSON.stringify({ dir }),
   }).catch(() => {});
 }
