@@ -3,6 +3,7 @@
 
 use crate::config::Config;
 use crate::http::error::ApiError;
+use crate::http::hub::Hub;
 use crate::s3::SharedObjectStore;
 use crate::store::Store;
 use crate::usage::SharedUsageSink;
@@ -75,6 +76,7 @@ pub struct AppState {
     pub machine_link_signals:
         Arc<std::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<u64>>>>,
     pub ws_tickets: crate::http::ws::TicketStore,
+    pub hub: Arc<Hub>,
 }
 
 impl AppState {
@@ -93,6 +95,7 @@ impl AppState {
             )),
             machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
             ws_tickets: Default::default(),
+            hub: Arc::new(Hub::default()),
         }
     }
 
@@ -146,6 +149,7 @@ impl AppState {
             )),
             machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
             ws_tickets: Default::default(),
+            hub: Arc::new(Hub::default()),
         }
     }
 

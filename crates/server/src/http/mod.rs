@@ -7,6 +7,7 @@ pub mod chats;
 pub mod error;
 pub mod events;
 pub mod gateway;
+pub mod hub;
 pub mod integration_tools;
 pub mod internal;
 pub mod oidc;
