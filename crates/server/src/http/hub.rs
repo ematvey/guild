@@ -11,6 +11,14 @@ use uuid::Uuid;
 
 pub const MAX_SOCKETS_PER_USER: usize = 32;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapRejected;
+
+pub struct MachineRegistration {
+    pub displaced: bool,
+    pub shutdown: watch::Receiver<bool>,
+}
+
 /// One connected socket. The sink is the outbound queue drained by the
 /// socket's writer task.
 #[derive(Clone)]
@@ -69,17 +77,11 @@ impl Hub {
 
     /// Registers the only socket allowed for a machine. A newer connection
     /// replaces the old holder and tells it to close before its sink drops.
-    pub fn register_machine(&self, m: Member, machine_id: &str) -> bool {
-        self.register_machine_with_shutdown(m, machine_id)
-            .map(|(displaced, _)| displaced)
-            .unwrap_or(false)
-    }
-
-    pub(crate) fn register_machine_with_shutdown(
+    pub fn register_machine(
         &self,
         m: Member,
         machine_id: &str,
-    ) -> Result<(bool, watch::Receiver<bool>), ()> {
+    ) -> Result<MachineRegistration, CapRejected> {
         let (shutdown, shutdown_rx) = watch::channel(false);
         let old = {
             let mut guard = self.inner.lock().unwrap();
@@ -94,7 +96,7 @@ impl Hub {
             let socket_count_after_replace =
                 socket_count.saturating_sub(usize::from(replacing_existing_machine));
             if socket_count_after_replace >= MAX_SOCKETS_PER_USER {
-                return Err(());
+                return Err(CapRejected);
             }
             guard.machines.insert(
                 machine_id.to_owned(),
@@ -108,9 +110,15 @@ impl Hub {
         if let Some(old) = old {
             let _ = old.shutdown.send(true);
             let _ = old.holder.sink.try_send(WsServerMsg::Displaced);
-            Ok((true, shutdown_rx))
+            Ok(MachineRegistration {
+                displaced: true,
+                shutdown: shutdown_rx,
+            })
         } else {
-            Ok((false, shutdown_rx))
+            Ok(MachineRegistration {
+                displaced: false,
+                shutdown: shutdown_rx,
+            })
         }
     }
 
@@ -217,13 +225,14 @@ mod tests {
             label: None,
         };
         let user_id = old.user_id;
-        hub.register_machine(old, "m1");
+        let first_registration = hub.register_machine(old, "m1").unwrap();
+        assert!(!first_registration.displaced);
         assert!(hub.machine_online("m1"));
 
         let mut new = member();
         new.label = Some("Desk".into());
         let new_user_id = new.user_id;
-        assert!(hub.register_machine(new, "m1"));
+        assert!(hub.register_machine(new, "m1").unwrap().displaced);
         assert!(hub.machine_online("m1"));
         assert_eq!(
             hub.machines_of_user(new_user_id),
@@ -302,9 +311,7 @@ mod tests {
             sink: mpsc::channel(1).0,
             label: None,
         };
-        assert!(hub
-            .register_machine_with_shutdown(machine, "full-machine")
-            .is_err());
+        assert!(hub.register_machine(machine, "full-machine").is_err());
     }
 
     #[test]
@@ -328,7 +335,8 @@ mod tests {
             sink: mpsc::channel(1).0,
             label: None,
         };
-        hub.register_machine(first, "replaceable");
+        let first_registration = hub.register_machine(first, "replaceable").unwrap();
+        drop(first_registration);
         let replacement = Member {
             conn_id: Uuid::now_v7(),
             user_id,
@@ -336,7 +344,11 @@ mod tests {
             sink: mpsc::channel(1).0,
             label: None,
         };
-        assert!(hub.register_machine(replacement, "replaceable"));
+        assert!(
+            hub.register_machine(replacement, "replaceable")
+                .unwrap()
+                .displaced
+        );
         assert!(hub
             .register_member(Member {
                 conn_id: Uuid::now_v7(),
@@ -360,11 +372,10 @@ mod tests {
             sink: old_sink,
             label: None,
         };
-        let (_, mut shutdown) = hub
-            .register_machine_with_shutdown(old, "full-queue")
-            .unwrap();
+        let registration = hub.register_machine(old, "full-queue").unwrap();
+        let mut shutdown = registration.shutdown;
         let new = member();
-        assert!(hub.register_machine(new, "full-queue"));
+        assert!(hub.register_machine(new, "full-queue").unwrap().displaced);
         assert!(*shutdown.borrow_and_update());
         assert_eq!(old_rx.try_recv().unwrap(), WsServerMsg::Hello);
         assert!(old_rx.try_recv().is_err());
@@ -375,7 +386,7 @@ mod tests {
         let hub = Hub::default();
         let member = member();
         let conn_id = member.conn_id;
-        hub.register_machine(member, "m2");
+        let _ = hub.register_machine(member, "m2").unwrap();
         hub.unregister_machine("m2", Uuid::now_v7());
         assert!(hub.machine_online("m2"));
         hub.unregister_machine("m2", conn_id);

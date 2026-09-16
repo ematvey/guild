@@ -121,12 +121,9 @@ pub(crate) async fn drive_socket(
     };
 
     let mut machine_shutdown = match machine_id.as_deref() {
-        Some(machine_id) => match state
-            .hub
-            .register_machine_with_shutdown(member.clone(), machine_id)
-        {
-            Ok((_, shutdown)) => Some(shutdown),
-            Err(()) => {
+        Some(machine_id) => match state.hub.register_machine(member.clone(), machine_id) {
+            Ok(registration) => Some(registration.shutdown),
+            Err(crate::http::hub::CapRejected) => {
                 let _ = ws_tx
                     .send(axum::extract::ws::Message::text(
                         serde_json::to_string(&WsServerMsg::Error {
