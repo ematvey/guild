@@ -168,14 +168,6 @@ name = "builtin_plugin"
 required-features = ["test-support"]
 
 [[test]]
-name = "app_stream_dispatch"
-required-features = ["test-support"]
-
-[[test]]
-name = "executor_registry"
-required-features = ["test-support"]
-
-[[test]]
 name = "thread_events"
 required-features = ["test-support"]
 

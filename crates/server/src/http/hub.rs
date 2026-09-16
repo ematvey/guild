@@ -147,6 +147,32 @@ impl Hub {
         self.inner.lock().unwrap().machines.contains_key(machine_id)
     }
 
+    /// Returns the connection label, falling back to the machine id.
+    pub fn machine_label(&self, machine_id: &str) -> Option<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .machines
+            .get(machine_id)
+            .map(|slot| {
+                slot.holder
+                    .label
+                    .clone()
+                    .filter(|label| !label.is_empty())
+                    .unwrap_or_else(|| machine_id.to_owned())
+            })
+    }
+
+    /// Returns whether a live machine belongs to the user or organization.
+    pub fn machine_bindable(&self, machine_id: &str, user_id: Uuid, org_id: Uuid) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .machines
+            .get(machine_id)
+            .is_some_and(|slot| slot.holder.user_id == user_id || slot.holder.org_id == org_id)
+    }
+
     /// Returns live `(machine_id, label)` entries for one user.
     pub fn machines_of_user(&self, user_id: Uuid) -> Vec<(String, String)> {
         self.inner
@@ -244,6 +270,30 @@ mod tests {
         ));
         assert!(old_rx.try_recv().is_err());
         assert!(hub.sinks_of_user(user_id).is_empty());
+    }
+
+    #[tokio::test]
+    async fn machine_label_falls_back_to_id_and_bindable_by_user_or_org() {
+        let hub = Hub::default();
+        let member = member();
+        let user_id = member.user_id;
+        let org_id = member.org_id;
+        hub.register_machine(member, "m1").await.unwrap();
+
+        assert_eq!(hub.machine_label("m1"), Some("m1".into()));
+        assert!(hub.machine_bindable("m1", user_id, Uuid::now_v7()));
+        assert!(hub.machine_bindable("m1", Uuid::now_v7(), org_id));
+        assert!(!hub.machine_bindable("m1", Uuid::now_v7(), Uuid::now_v7()));
+        assert_eq!(hub.machine_label("missing"), None);
+    }
+
+    #[tokio::test]
+    async fn machine_label_uses_connection_name() {
+        let hub = Hub::default();
+        let mut machine = member();
+        machine.label = Some("Desk".into());
+        hub.register_machine(machine, "m1").await.unwrap();
+        assert_eq!(hub.machine_label("m1"), Some("Desk".into()));
     }
 
     #[test]

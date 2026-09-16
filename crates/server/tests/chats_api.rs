@@ -1,6 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use guild_server::test_support::{insert_org_with_chat, test_state_with_db};
+use guild_server::test_support::{insert_org_with_chat, register_test_machine, test_state_with_db};
 use protocol::api::{Block, ThreadEvent, UsagePayload};
 use serde_json::json;
 use tower::ServiceExt;
@@ -160,9 +160,9 @@ async fn create_list_thread_and_org_isolation() {
     let _ = user_row;
 }
 
-/// Machine bindings must reference a machine registered (by stream connect
-/// or heartbeat) to the caller's user or org; unknown or foreign machines
-/// are rejected. Unbinding stays open.
+/// Machine bindings must reference a live hub machine belonging to the
+/// caller's user or org; unknown or foreign machines are rejected.
+/// Unbinding stays open.
 #[tokio::test]
 async fn machine_binding_requires_a_registered_machine() {
     let ts = test_state_with_db().await;
@@ -173,25 +173,38 @@ async fn machine_binding_requires_a_registered_machine() {
         .await
         .unwrap();
     let (_sid, token) = store.identity().create_session(user).await.unwrap();
+    let user_row = store.identity().validate_session(&token).await.unwrap();
     let app = guild_server::build_router(ts.state.clone());
 
-    // register the caller's machine by heartbeat
+    register_test_machine(
+        &ts.state,
+        "desk-1",
+        user_row.id,
+        user_row.org_id,
+        Some("Desk"),
+    )
+    .await;
+
     let res = app
         .clone()
         .oneshot(
             Request::builder()
-                .method("POST")
-                .uri("/api/v1/machines/heartbeat")
+                .uri("/api/v1/machines")
                 .header("authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"machine_id": "desk-1", "machine_name": "Desk"}).to_string(),
-                ))
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let machines: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        machines["machines"],
+        json!([{"machine_id": "desk-1", "name": "Desk"}])
+    );
 
     // bind at creation
     let res = app
@@ -251,23 +264,8 @@ async fn machine_binding_requires_a_registered_machine() {
         .create_user(other_org, "o@b.c", "hunter226", "member")
         .await
         .unwrap();
-    let (_osid, otok) = store.identity().create_session(outsider.id).await.unwrap();
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/machines/heartbeat")
-                .header("authorization", format!("Bearer {otok}"))
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"machine_id": "foreign-1", "machine_name": "F"}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    let (_osid, _otok) = store.identity().create_session(outsider.id).await.unwrap();
+    register_test_machine(&ts.state, "foreign-1", outsider.id, other_org, Some("F")).await;
     let res = app
         .clone()
         .oneshot(

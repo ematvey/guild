@@ -2640,7 +2640,7 @@ async fn client_tool_step(
                     } else if let Some(omid) = origin_machine_id {
                         // Auto-bind chats sent from a desktop to that
                         // desktop's machine (idempotent persist).
-                        if state.machine_connected(&omid) {
+                        if state.hub.machine_online(&omid) {
                             let label = state.machine_label(&omid).unwrap_or_else(|| omid.clone());
                             if let Ok(store) = state.store().await {
                                 let _ = store
@@ -2678,7 +2678,7 @@ async fn client_tool_step(
             move || {
                 let state = state.clone();
                 let mid = mid.clone();
-                async move { Ok(Json(state.machine_connected(&mid))) }
+                async move { Ok(Json(state.hub.machine_online(&mid))) }
             }
         })
         .await?

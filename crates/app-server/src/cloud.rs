@@ -276,8 +276,8 @@ impl CloudClient {
         self.http()
     }
 
-    /// Shared client: connect-level timeout only. No total timeout — the
-    /// SSE stream endpoints rely on the connect bound plus server keepalive;
+    /// Shared client: connect-level timeout only. No total timeout —
+    /// streaming endpoints rely on the connect bound and server keepalive;
     /// a client-level cap killed long turns at 10 minutes.
     fn http(&self) -> reqwest::Client {
         reqwest::Client::builder()
