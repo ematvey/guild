@@ -221,9 +221,9 @@ async fn list(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let store = state.store().await?;
-    let chats = store.chats().list_chats(user.0.org_id, user.0.id).await?;
-    let chats: Vec<Chat> = chats.into_iter().map(Into::into).collect();
+    // Same hub-aware rows as the socket's thread list: the connection dot
+    // must not flip gray on an HTTP refresh.
+    let chats = crate::http::feed::thread_list(&state, user.0.org_id, user.0.id).await?;
     Ok(Json(serde_json::json!({ "chats": chats })))
 }
 
