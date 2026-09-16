@@ -16,8 +16,10 @@ use futures::{SinkExt, StreamExt};
 use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
+use std::time::Duration;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 /// Single-use, short-TTL connect tickets. They are in-memory because tickets
@@ -79,7 +81,7 @@ async fn upgrade(
         .ws_tickets
         .consume(&q.ticket)
         .ok_or_else(|| crate::http::error::ApiError::unauthorized("invalid or expired ticket"))?;
-    let (tx, rx) = socket_channel(256);
+    let (tx, rx) = socket_channel();
     let machine_id = q.machine_id.filter(|s| !s.is_empty());
     let client_id = q.client_id.unwrap_or_else(|| Uuid::now_v7().to_string());
     let machine_name = q.machine_name;
@@ -106,27 +108,42 @@ pub(crate) enum SocketOutput {
     Pong(axum::body::Bytes),
 }
 
+// Slow sockets disconnect and resync on reconnect. Count queued, in-flight,
+// and sync-deferred output, so neither a stalled write nor an open sync
+// bracket can hide an overflowing backlog from the writer's watchdog.
+const SOCKET_HIGH_WATER: usize = 4096;
+// A socket that cannot flush its terminal notice within this deadline is
+// treated as dead. No socket write may delay eviction beyond this bound.
+const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+
+struct SocketBacklog {
+    pending: AtomicUsize,
+    overloaded: watch::Sender<bool>,
+}
+
 /// The one outbound queue consumed by a socket's writer task.
 #[derive(Clone)]
 pub struct SocketSink {
-    tx: mpsc::Sender<SocketOutput>,
-    /// Serializes reservation and insertion across every clone. This async
-    /// mutex deliberately spans bounded-channel backpressure, so a sync
-    /// marker and feed output have one linearization point.
-    ordering: Arc<AsyncMutex<()>>,
+    tx: mpsc::UnboundedSender<SocketOutput>,
+    /// All clones share one short enqueue critical section; no await or
+    /// capacity reservation occurs while this mutex is held.
+    ordering: Arc<Mutex<()>>,
+    backlog: Arc<SocketBacklog>,
 }
 
 impl SocketSink {
-    async fn enqueue(
-        &self,
-        output: SocketOutput,
-    ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        let _ordering = self.ordering.lock().await;
-        let permit = match self.tx.reserve().await {
-            Ok(permit) => permit,
-            Err(_) => return Err(mpsc::error::SendError(output)),
-        };
-        permit.send(output);
+    fn enqueue(&self, output: SocketOutput) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+        let _ordering = self.ordering.lock().unwrap();
+        let pending = self.backlog.pending.fetch_add(1, Ordering::Relaxed) + 1;
+        if let Err(error) = self.tx.send(output) {
+            self.backlog.pending.fetch_sub(1, Ordering::Relaxed);
+            return Err(error);
+        }
+        if pending > SOCKET_HIGH_WATER {
+            // Latched until disconnect; the writer observes this even while
+            // awaiting a permanently stalled network write.
+            self.backlog.overloaded.send_replace(true);
+        }
         Ok(())
     }
 
@@ -134,43 +151,41 @@ impl SocketSink {
         &self,
         message: WsServerMsg,
     ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        self.enqueue(SocketOutput::Message(message)).await
+        self.enqueue(SocketOutput::Message(message))
     }
 
-    /// The displaced socket receives shutdown through its watch signal.
-    /// This terminal notice preserves queue ordering but never waits for a
-    /// busy enqueue or a full queue: registration must remain independent.
+    /// A live queue always receives its ordered terminal notice. The watch
+    /// signal also lets the writer bypass stale output to flush this notice.
     pub(crate) fn displace(&self) {
-        let Ok(_ordering) = self.ordering.try_lock() else {
-            return;
-        };
-        let _ = self
-            .tx
-            .try_send(SocketOutput::Message(WsServerMsg::Displaced));
+        let _ = self.enqueue(SocketOutput::Message(WsServerMsg::Displaced));
     }
 
     pub(crate) async fn start_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        self.enqueue(SocketOutput::SyncStart).await
+        self.enqueue(SocketOutput::SyncStart)
     }
 
     pub(crate) async fn abort_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        self.enqueue(SocketOutput::SyncAbort).await
+        self.enqueue(SocketOutput::SyncAbort)
     }
 
     async fn pong(
         &self,
         payload: axum::body::Bytes,
     ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        self.enqueue(SocketOutput::Pong(payload)).await
+        self.enqueue(SocketOutput::Pong(payload))
     }
 }
 
-pub(crate) fn socket_channel(capacity: usize) -> (SocketSink, mpsc::Receiver<SocketOutput>) {
-    let (tx, rx) = mpsc::channel(capacity);
+pub(crate) fn socket_channel() -> (SocketSink, mpsc::UnboundedReceiver<SocketOutput>) {
+    let (tx, rx) = mpsc::unbounded_channel();
     (
         SocketSink {
             tx,
-            ordering: Arc::new(AsyncMutex::new(())),
+            ordering: Arc::new(Mutex::new(())),
+            backlog: Arc::new(SocketBacklog {
+                pending: AtomicUsize::new(0),
+                overloaded: watch::channel(false).0,
+            }),
         },
         rx,
     )
@@ -230,6 +245,107 @@ impl SocketGate {
     }
 }
 
+async fn wait_for_flag(signal: &mut watch::Receiver<bool>) {
+    while !*signal.borrow_and_update() {
+        if signal.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn wait_for_shutdown(signal: &mut Option<watch::Receiver<bool>>) {
+    match signal {
+        Some(signal) => wait_for_flag(signal).await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn write_socket<W>(
+    mut wire: W,
+    mut rx: mpsc::UnboundedReceiver<SocketOutput>,
+    backlog: Arc<SocketBacklog>,
+    mut shutdown: Option<watch::Receiver<bool>>,
+) where
+    W: futures::Sink<axum::extract::ws::Message> + Unpin,
+{
+    let mut overloaded = backlog.overloaded.subscribe();
+    let displaced = tokio::select! {
+        biased;
+        _ = wait_for_shutdown(&mut shutdown) => true,
+        _ = wait_for_flag(&mut overloaded) => false,
+        displaced = async {
+            let mut gate = SocketGate::default();
+            while let Some(output) = rx.recv().await {
+                if matches!(output, SocketOutput::Message(WsServerMsg::Displaced)) {
+                    return true;
+                }
+                if let SocketOutput::Pong(payload) = output {
+                    if wire.send(axum::extract::ws::Message::Pong(payload)).await.is_err() {
+                        return false;
+                    }
+                    backlog.pending.fetch_sub(1, Ordering::Relaxed);
+                    continue;
+                }
+                if matches!(output, SocketOutput::SyncStart | SocketOutput::SyncAbort) {
+                    backlog.pending.fetch_sub(1, Ordering::Relaxed);
+                }
+                for message in gate.push(output) {
+                    let text = serde_json::to_string(&message).expect("server message serializes");
+                    if wire.send(axum::extract::ws::Message::text(text)).await.is_err() {
+                        return false;
+                    }
+                    backlog.pending.fetch_sub(1, Ordering::Relaxed);
+                }
+            }
+            false
+        } => displaced,
+    };
+    if displaced {
+        // Displacement bypasses stale queued/sync-deferred frames. Keep the
+        // receiver open through the terminal flush: closing it early can
+        // make the reader exit on an enqueue error and abort this notice
+        // before the hub publishes shutdown. The flush has a hard deadline.
+        let _ = tokio::time::timeout(TERMINAL_WRITE_TIMEOUT, async {
+            wire.send(axum::extract::ws::Message::text(
+                serde_json::to_string(&WsServerMsg::Displaced).unwrap(),
+            ))
+            .await?;
+            wire.close().await
+        })
+        .await;
+    }
+}
+
+async fn supervise_socket(
+    reader: impl std::future::Future<Output = ()>,
+    mut writer: tokio::task::JoinHandle<()>,
+    mut shutdown: Option<watch::Receiver<bool>>,
+) {
+    enum Exit {
+        Displaced,
+        Reader,
+        Writer,
+    }
+    // Cancellation covers bootstrap, client-queue sends, and reader control
+    // ops, not just the wait for the next incoming WebSocket frame.
+    let exit = tokio::select! {
+        biased;
+        _ = wait_for_shutdown(&mut shutdown) => Exit::Displaced,
+        _ = &mut writer => Exit::Writer,
+        _ = reader => Exit::Reader,
+    };
+    match exit {
+        Exit::Displaced => {
+            let _ = writer.await;
+        }
+        Exit::Reader => {
+            writer.abort();
+            let _ = writer.await;
+        }
+        Exit::Writer => {}
+    }
+}
+
 pub(crate) async fn drive_socket(
     state: AppState,
     user: AuthUser,
@@ -238,7 +354,7 @@ pub(crate) async fn drive_socket(
     machine_name: Option<String>,
     socket: axum::extract::ws::WebSocket,
     tx: SocketSink,
-    mut rx: mpsc::Receiver<SocketOutput>,
+    rx: mpsc::UnboundedReceiver<SocketOutput>,
 ) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let conn_id = Uuid::now_v7();
@@ -250,7 +366,7 @@ pub(crate) async fn drive_socket(
         label: machine_name,
     };
 
-    let mut machine_shutdown = match machine_id.as_deref() {
+    let machine_shutdown = match machine_id.as_deref() {
         Some(machine_id) => match state.hub.register_machine(member.clone(), machine_id).await {
             Ok(registration) => Some(registration.shutdown),
             Err(crate::http::hub::CapRejected) => {
@@ -281,52 +397,13 @@ pub(crate) async fn drive_socket(
         }
     };
 
-    let (writer_done_tx, mut writer_done_rx) = oneshot::channel();
-    let writer = tokio::spawn(async move {
-        let mut gate = SocketGate::default();
-        while let Some(output) = rx.recv().await {
-            if let SocketOutput::Pong(payload) = output {
-                if ws_tx
-                    .send(axum::extract::ws::Message::Pong(payload))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-                continue;
-            }
-            for message in gate.push(output) {
-                let displaced = matches!(message, WsServerMsg::Displaced);
-                let text = serde_json::to_string(&message).expect("server message serializes");
-                if ws_tx
-                    .send(axum::extract::ws::Message::text(text))
-                    .await
-                    .is_err()
-                    || displaced
-                {
-                    let _ = writer_done_tx.send(());
-                    return;
-                }
-            }
-        }
-        let _ = writer_done_tx.send(());
-    });
-
-    let _ = member.sink.send(WsServerMsg::Hello).await;
-    match feed::thread_list(&state, &user).await {
-        Ok(chats) => {
-            let _ = member.sink.send(WsServerMsg::ThreadList { chats }).await;
-        }
-        Err(error) => {
-            let _ = member
-                .sink
-                .send(WsServerMsg::Error {
-                    message: error.message,
-                })
-                .await;
-        }
-    }
-    let feed_forwarder = feed::forward_to_socket(feed::feed_of(&state, &user), member.sink.clone());
+    let writer = tokio::spawn(write_socket(
+        ws_tx,
+        rx,
+        tx.backlog.clone(),
+        machine_shutdown.clone(),
+    ));
+    let mut feed_forwarder = None;
     let (client_tx, mut client_rx) = mpsc::channel(32);
     let client_state = state.clone();
     let client_user = AuthUser(user.0.clone());
@@ -337,18 +414,27 @@ pub(crate) async fn drive_socket(
         }
     });
 
-    loop {
-        tokio::select! {
-            _ = async {
-                match machine_shutdown.as_mut() {
-                    Some(shutdown) => {
-                        let _ = shutdown.changed().await;
-                    }
-                    None => std::future::pending::<()>().await,
-                }
-            } => break,
-            _ = &mut writer_done_rx => break,
-            incoming = ws_rx.next() => match incoming {
+    let reader = async {
+        let _ = member.sink.send(WsServerMsg::Hello).await;
+        match feed::thread_list(&state, &user).await {
+            Ok(chats) => {
+                let _ = member.sink.send(WsServerMsg::ThreadList { chats }).await;
+            }
+            Err(error) => {
+                let _ = member
+                    .sink
+                    .send(WsServerMsg::Error {
+                        message: error.message,
+                    })
+                    .await;
+            }
+        }
+        feed_forwarder = Some(feed::forward_to_socket(
+            feed::feed_of(&state, &user),
+            member.sink.clone(),
+        ));
+        loop {
+            match ws_rx.next().await {
                 Some(Ok(axum::extract::ws::Message::Text(text))) => {
                     let Ok(message) = serde_json::from_str::<WsClientMsg>(&text) else {
                         continue;
@@ -369,13 +455,15 @@ pub(crate) async fn drive_socket(
                 }
                 Some(Ok(axum::extract::ws::Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
-            },
+            }
         }
-    }
+    };
+    supervise_socket(reader, writer, machine_shutdown).await;
 
     client_task.abort();
-    feed_forwarder.abort();
-    writer.abort();
+    if let Some(feed_forwarder) = feed_forwarder {
+        feed_forwarder.abort();
+    }
     match machine_id.as_deref() {
         Some(machine_id) => state.hub.unregister_machine(machine_id, conn_id),
         None => state.hub.unregister_member(user.0.id, member.conn_id),
@@ -452,7 +540,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_client_messages_are_ignored_without_closing() {
         let state = AppState::from_config(crate::config::Config::test_config());
-        let (sink, _rx) = socket_channel(1);
+        let (sink, _rx) = socket_channel();
         let member = crate::http::hub::Member {
             conn_id: Uuid::now_v7(),
             user_id: Uuid::now_v7(),
@@ -473,7 +561,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn concurrent_sync_and_live_enqueue_are_serialized() {
         for _ in 0..128 {
-            let (sink, mut receiver) = socket_channel(4);
+            let (sink, mut receiver) = socket_channel();
             let barrier = Arc::new(tokio::sync::Barrier::new(3));
             let sync_sink = sink.clone();
             let sync_barrier = barrier.clone();
@@ -541,6 +629,370 @@ mod tests {
                 assert!(second_frames.is_empty());
             }
         }
+    }
+
+    #[tokio::test]
+    async fn control_enqueue_never_waits_for_writer_capacity() {
+        let (sink, mut rx) = socket_channel();
+        sink.send(WsServerMsg::Hello).await.unwrap();
+        assert!(futures::poll!(Box::pin(sink.start_sync())).is_ready());
+        assert!(futures::poll!(Box::pin(sink.pong(axum::body::Bytes::new()))).is_ready());
+        sink.displace();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            SocketOutput::Message(WsServerMsg::Hello)
+        ));
+        assert!(matches!(rx.try_recv().unwrap(), SocketOutput::SyncStart));
+        assert!(matches!(rx.try_recv().unwrap(), SocketOutput::Pong(_)));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            SocketOutput::Message(WsServerMsg::Displaced)
+        ));
+    }
+
+    #[test]
+    fn displacement_waits_for_short_enqueue_lock_instead_of_dropping_notice() {
+        let (sink, mut rx) = socket_channel();
+        let guard = sink.ordering.try_lock().unwrap();
+        let displaced_sink = sink.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            displaced_sink.displace();
+            done_tx.send(()).unwrap();
+        });
+        started_rx.recv().unwrap();
+        let result = done_rx.recv_timeout(std::time::Duration::from_millis(50));
+        drop(guard);
+        worker.join().unwrap();
+        assert!(matches!(
+            result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            SocketOutput::Message(WsServerMsg::Displaced)
+        ));
+    }
+
+    #[test]
+    fn replacement_completes_with_queued_output_and_concurrent_control_enqueue() {
+        let hub = Arc::new(crate::http::hub::Hub::default());
+        let (sink, mut rx) = socket_channel();
+        let u = user();
+        let old = Member {
+            conn_id: Uuid::now_v7(),
+            user_id: u.0.id,
+            org_id: u.0.org_id,
+            sink: sink.clone(),
+            label: None,
+        };
+        let registration = futures::executor::block_on(hub.register_machine(old, "busy")).unwrap();
+        for _ in 0..257 {
+            futures::executor::block_on(sink.send(WsServerMsg::Hello)).unwrap();
+        }
+        // Hold the short critical section so both operations contend. Queue
+        // draining remains impossible throughout: this test has no writer.
+        let guard = sink.ordering.lock().unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let control_sink = sink.clone();
+        let control_barrier = barrier.clone();
+        let (control_tx, control_rx) = std::sync::mpsc::channel();
+        let control = std::thread::spawn(move || {
+            control_barrier.wait();
+            control_tx
+                .send(futures::executor::block_on(control_sink.start_sync()))
+                .unwrap();
+        });
+        let register_barrier = barrier.clone();
+        let (registered_tx, registered_rx) = std::sync::mpsc::channel();
+        let replacement = Member {
+            conn_id: Uuid::now_v7(),
+            user_id: u.0.id,
+            org_id: u.0.org_id,
+            sink: socket_channel().0,
+            label: None,
+        };
+        let register = std::thread::spawn(move || {
+            register_barrier.wait();
+            registered_tx
+                .send(futures::executor::block_on(
+                    hub.register_machine(replacement, "busy"),
+                ))
+                .unwrap();
+        });
+        barrier.wait();
+        let while_locked = registered_rx.recv_timeout(Duration::from_millis(50));
+        drop(guard);
+        assert!(matches!(
+            while_locked,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(
+            registered_rx
+                .recv_timeout(Duration::from_millis(100))
+                .unwrap()
+                .unwrap()
+                .displaced
+        );
+        control_rx
+            .recv_timeout(Duration::from_millis(100))
+            .unwrap()
+            .unwrap();
+        register.join().unwrap();
+        control.join().unwrap();
+        assert!(*registration.shutdown.borrow());
+        for _ in 0..257 {
+            assert!(matches!(
+                rx.try_recv().unwrap(),
+                SocketOutput::Message(WsServerMsg::Hello)
+            ));
+        }
+        let first = rx.try_recv().unwrap();
+        let second = rx.try_recv().unwrap();
+        assert!(matches!(
+            (first, second),
+            (
+                SocketOutput::SyncStart,
+                SocketOutput::Message(WsServerMsg::Displaced)
+            ) | (
+                SocketOutput::Message(WsServerMsg::Displaced),
+                SocketOutput::SyncStart
+            )
+        ));
+    }
+
+    #[derive(Default)]
+    struct WireState {
+        stalled: std::sync::atomic::AtomicBool,
+        dropped: std::sync::atomic::AtomicBool,
+        polled: tokio::sync::Notify,
+        waker: futures::task::AtomicWaker,
+        messages: Mutex<Vec<axum::extract::ws::Message>>,
+    }
+
+    struct TestWire(Arc<WireState>);
+
+    impl futures::Sink<axum::extract::ws::Message> for TestWire {
+        type Error = ();
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), ()>> {
+            self.0.waker.register(cx.waker());
+            self.0.polled.notify_one();
+            if self.0.stalled.load(Ordering::SeqCst) {
+                std::task::Poll::Pending
+            } else {
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        fn start_send(
+            self: std::pin::Pin<&mut Self>,
+            message: axum::extract::ws::Message,
+        ) -> Result<(), ()> {
+            self.0.messages.lock().unwrap().push(message);
+            Ok(())
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), ()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), ()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    impl Drop for TestWire {
+        fn drop(&mut self) {
+            self.0.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    struct ReaderDropped(Option<tokio::sync::oneshot::Sender<()>>);
+    impl Drop for ReaderDropped {
+        fn drop(&mut self) {
+            let _ = self.0.take().unwrap().send(());
+        }
+    }
+
+    #[tokio::test]
+    async fn displacement_cancels_reader_and_stalled_writer_within_deadline() {
+        let hub = crate::http::hub::Hub::default();
+        let (sink, rx) = socket_channel();
+        let u = user();
+        let old = Member {
+            conn_id: Uuid::now_v7(),
+            user_id: u.0.id,
+            org_id: u.0.org_id,
+            sink: sink.clone(),
+            label: None,
+        };
+        let registration = hub.register_machine(old, "stalled").await.unwrap();
+        let wire = Arc::new(WireState::default());
+        wire.stalled.store(true, Ordering::SeqCst);
+        sink.send(WsServerMsg::Hello).await.unwrap();
+        let writer = tokio::spawn(write_socket(
+            TestWire(wire.clone()),
+            rx,
+            sink.backlog.clone(),
+            Some(registration.shutdown.clone()),
+        ));
+        tokio::time::timeout(Duration::from_millis(100), wire.polled.notified())
+            .await
+            .unwrap();
+        // A backlog remains queued while the writer is permanently stalled.
+        for _ in 0..256 {
+            sink.send(WsServerMsg::Hello).await.unwrap();
+        }
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel::<()>();
+        let reader = async move {
+            let _guard = ReaderDropped(Some(dropped_tx));
+            sink.start_sync().await.unwrap();
+            sink.pong(axum::body::Bytes::new()).await.unwrap();
+            entered_tx.send(()).unwrap();
+            // A full client-work queue or slow bootstrap is also cancellable.
+            std::future::pending::<()>().await;
+        };
+        let supervisor = tokio::spawn(supervise_socket(
+            reader,
+            writer,
+            Some(registration.shutdown),
+        ));
+        tokio::time::timeout(Duration::from_millis(100), entered_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        let replacement = Member {
+            conn_id: Uuid::now_v7(),
+            user_id: u.0.id,
+            org_id: u.0.org_id,
+            sink: socket_channel().0,
+            label: None,
+        };
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                hub.register_machine(replacement, "stalled")
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .displaced
+        );
+        tokio::time::timeout(Duration::from_millis(100), dropped_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(
+            TERMINAL_WRITE_TIMEOUT + Duration::from_millis(300),
+            supervisor,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(wire.dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn displaced_notice_flushes_when_temporary_wire_stall_clears() {
+        let (sink, rx) = socket_channel();
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let wire = Arc::new(WireState::default());
+        wire.stalled.store(true, Ordering::SeqCst);
+        sink.send(WsServerMsg::Hello).await.unwrap();
+        let writer = tokio::spawn(write_socket(
+            TestWire(wire.clone()),
+            rx,
+            sink.backlog.clone(),
+            Some(shutdown_rx),
+        ));
+        tokio::time::timeout(Duration::from_millis(100), wire.polled.notified())
+            .await
+            .unwrap();
+        sink.displace();
+        shutdown_tx.send(true).unwrap();
+        // The shutdown path attempts the terminal write despite the stall.
+        tokio::time::timeout(Duration::from_millis(100), wire.polled.notified())
+            .await
+            .unwrap();
+        wire.stalled.store(false, Ordering::SeqCst);
+        wire.waker.wake();
+        tokio::time::timeout(Duration::from_millis(100), writer)
+            .await
+            .unwrap()
+            .unwrap();
+        let messages = wire.messages.lock().unwrap();
+        assert_eq!(messages.len(), 1);
+        let axum::extract::ws::Message::Text(text) = &messages[0] else {
+            panic!("expected terminal text")
+        };
+        assert_eq!(
+            serde_json::from_str::<WsServerMsg>(text).unwrap(),
+            WsServerMsg::Displaced
+        );
+    }
+
+    #[tokio::test]
+    async fn high_water_disconnects_even_during_a_stalled_write() {
+        let (sink, rx) = socket_channel();
+        let wire = Arc::new(WireState::default());
+        wire.stalled.store(true, Ordering::SeqCst);
+        sink.send(WsServerMsg::Hello).await.unwrap();
+        let writer = tokio::spawn(write_socket(
+            TestWire(wire.clone()),
+            rx,
+            sink.backlog.clone(),
+            None,
+        ));
+        tokio::time::timeout(Duration::from_millis(100), wire.polled.notified())
+            .await
+            .unwrap();
+        for _ in 0..SOCKET_HIGH_WATER {
+            sink.send(WsServerMsg::Hello).await.unwrap();
+        }
+        tokio::time::timeout(Duration::from_millis(100), writer)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(wire.dropped.load(Ordering::SeqCst));
+        assert!(sink.send(WsServerMsg::Hello).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn high_water_counts_sync_deferred_frames() {
+        let (sink, rx) = socket_channel();
+        let wire = Arc::new(WireState::default());
+        sink.start_sync().await.unwrap();
+        let writer = tokio::spawn(write_socket(
+            TestWire(wire.clone()),
+            rx,
+            sink.backlog.clone(),
+            None,
+        ));
+        let chat_id = Uuid::now_v7();
+        for _ in 0..=SOCKET_HIGH_WATER {
+            sink.send(WsServerMsg::ChatStatus {
+                chat_id,
+                generating: true,
+            })
+            .await
+            .unwrap();
+            tokio::task::yield_now().await;
+        }
+        tokio::time::timeout(Duration::from_millis(100), writer)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(wire.messages.lock().unwrap().is_empty());
+        assert!(wire.dropped.load(Ordering::SeqCst));
     }
 
     #[test]
