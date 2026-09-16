@@ -4,6 +4,8 @@ FROM node:22 AS chatapp
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/ui ./packages/ui
+# The client type-imports the protocol's TS bindings (crates/protocol/bindings).
+COPY crates/protocol/bindings ./crates/protocol/bindings
 COPY apps/desktop ./apps/desktop
 RUN npm ci --workspace apps/desktop --no-audit --no-fund
 RUN npm run build --workspace apps/desktop
