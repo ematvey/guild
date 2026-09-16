@@ -455,6 +455,10 @@ export interface ChatSummary {
   generating?: boolean;
   /** Unseen assistant turn (sidebar dot). */
   unread?: boolean;
+  /** Workspace folder the bound machine runs tools in. */
+  project_dir?: string;
+  /** Whether the bound machine's socket is live right now. */
+  machine_online?: boolean;
 }
 
 /** Marks the chat read for the caller: the thread-list dot clears. */
@@ -753,6 +757,14 @@ export async function chatSnapshot(chatId: string): Promise<ChatSnapshot> {
 export async function pushChatDir(chatId: string, dir: string | null): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("set_chat_dir", { chatId, dir });
+  // The folder is server-visible state too: web and other machines render
+  // it next to the machine indicator (fire-and-forget; a missed push just
+  // leaves the last known folder).
+  void fetch(apiUrl(`/api/v1/chats/${chatId}/dir`), {
+    method: "POST",
+    headers: { authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({ dir }),
+  }).catch(() => {});
 }
 
 /// Hands the app process the machine identity (stable per install; keys the

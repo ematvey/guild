@@ -30,7 +30,6 @@ import {
   FolderOpen,
   X as XIcon,
   SquareTerminal,
-  Cpu,
   TriangleAlert,
   Wrench,
   type LucideIcon,
@@ -2069,7 +2068,6 @@ export default function WebChat({
   };
 
   const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
-  const boundMachine = chats?.find((c) => c.id === chatId)?.machine_label ?? null;
   const streaming = busy || attaching || openGenerating;
 
   const sidebar = (
@@ -2205,18 +2203,6 @@ export default function WebChat({
               activeTitle
             )}
           </span>
-          {boundMachine && (
-            <button
-              className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-muted-foreground outline-none hover:text-foreground"
-              title={`Machine tools run on: ${boundMachine} — click to change`}
-              onClick={() =>
-                pushRoute({ overlay: { kind: "settings", section: "machine", detail: null } })
-              }
-            >
-              <Cpu className="size-3" />
-              {boundMachine}
-            </button>
-          )}
         </header>
 
         {blocks.length === 0 ? (
@@ -2443,39 +2429,63 @@ export default function WebChat({
                 >
                   <Plus className="size-4" />
                 </Button>
-                {isTauri && (projectDir ? (
-                  <span
-                    className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-muted-foreground"
-                    title={projectDir}
-                  >
-                    <FolderOpen className="size-3.5 shrink-0" />
-                    <span className="truncate">
-                      {projectDir.split(/[\\/]/).pop() || projectDir}
-                    </span>
-                    <button
-                      type="button"
-                      title="Stop working in this folder"
-                      className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
-                      onClick={() => pickProjectDir(null)}
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  </span>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
-                    onClick={async () => {
-                      const picked = await openDialog({ directory: true, multiple: false });
-                      if (typeof picked === "string") pickProjectDir(picked);
-                    }}
-                    title="Let the agent read and edit files in a local folder"
-                  >
-                    <FolderOpen className="size-3.5" />
-                    Run in folder…
-                  </Button>
-                ))}
+                {(() => {
+                  const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
+                  const remoteMachine =
+                    row?.machine_id && (!isTauri || row.machine_id !== machineId());
+                  return (
+                    <>
+                      {remoteMachine && row!.machine_id && (
+                        <span
+                          className="flex h-7 max-w-44 shrink-0 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground"
+                          title={`Machine: ${row!.machine_label ?? row!.machine_id}${row!.machine_online ? " (online)" : " (offline)"}`}
+                        >
+                          <span
+                            className={`size-2 shrink-0 rounded-full ${row!.machine_online ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+                          />
+                          <span className="truncate">
+                            {row!.machine_label ?? row!.machine_id}
+                          </span>
+                        </span>
+                      )}
+                      {(isTauri || row?.project_dir) && (projectDir ?? row?.project_dir) ? (
+                        <span
+                          className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-muted-foreground"
+                          title={projectDir ?? row?.project_dir}
+                        >
+                          <FolderOpen className="size-3.5 shrink-0" />
+                          <span className="truncate">
+                            {(projectDir ?? row?.project_dir ?? "").split(/[\\/]/).pop()}
+                          </span>
+                          {isTauri && !chatId && (
+                            <button
+                              type="button"
+                              title="Stop working in this folder"
+                              className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
+                              onClick={() => pickProjectDir(null)}
+                            >
+                              <XIcon className="size-3" />
+                            </button>
+                          )}
+                        </span>
+                      ) : isTauri ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
+                          onClick={async () => {
+                            const picked = await openDialog({ directory: true, multiple: false });
+                            if (typeof picked === "string") pickProjectDir(picked);
+                          }}
+                          title="Let the agent read and edit files in a local folder"
+                        >
+                          <FolderOpen className="size-3.5" />
+                          Run in folder…
+                        </Button>
+                      ) : null}
+                    </>
+                  );
+                })()}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button

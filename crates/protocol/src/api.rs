@@ -113,6 +113,15 @@ pub struct Chat {
     /// The reader has an unseen assistant turn (sidebar dot).
     #[serde(default)]
     pub unread: bool,
+    /// Workspace folder the bound machine runs tools in (rendered next to
+    /// the machine indicator).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_dir: Option<String>,
+    /// Whether the bound machine's singleton socket is live right now
+    /// (drives the connection dot next to the folder chip). Always false
+    /// for unbound chats.
+    #[serde(default)]
+    pub machine_online: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

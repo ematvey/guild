@@ -20,6 +20,9 @@ pub struct ChatRow {
     /// A ChatRunner generation is in flight (server-side truth — identical
     /// for every device).
     pub generating: bool,
+    /// Workspace folder the bound machine runs tools in; pushed by the
+    /// desktop, rendered by every device.
+    pub project_dir: Option<String>,
 }
 
 /// One row of the sidebar list: the chat plus the caller's derived unread
@@ -36,6 +39,7 @@ pub struct ChatListRow {
     pub machine_label: Option<String>,
     pub generating: bool,
     pub unread: bool,
+    pub project_dir: Option<String>,
 }
 
 pub struct ChatStore<'a> {
@@ -52,7 +56,7 @@ impl<'a> ChatStore<'a> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, ChatRow>(
             "INSERT INTO chats (id, org_id, user_id, title) VALUES ($1, $2, $3, $4) \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_dir",
         )
         .bind(id)
         .bind(org_id)
@@ -70,7 +74,7 @@ impl<'a> ChatStore<'a> {
     ) -> Result<Vec<ChatListRow>, ApiError> {
         sqlx::query_as(
             "SELECT c.id, c.org_id, c.user_id, c.title, c.created_at, c.machine_id, c.machine_label, \
-                    c.generating, \
+                    c.generating, c.project_dir, \
                     c.generating = false AND EXISTS ( \
                       SELECT 1 FROM thread_events e \
                       WHERE e.chat_id = c.id AND e.type = 'assistant_message' \
@@ -99,7 +103,7 @@ impl<'a> ChatStore<'a> {
     ) -> Result<ChatRow, ApiError> {
         let is_admin = caller.role == "admin";
         sqlx::query_as(
-            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label, generating FROM chats \
+            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_dir FROM chats \
              WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)",
         )
         .bind(org_id)
@@ -122,7 +126,7 @@ impl<'a> ChatStore<'a> {
         sqlx::query_as(
             "UPDATE chats SET machine_id = $3, machine_label = $4 \
              WHERE org_id = $1 AND id = $2 \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_dir",
         )
         .bind(org_id)
         .bind(chat_id)
@@ -131,6 +135,32 @@ impl<'a> ChatStore<'a> {
         .fetch_one(self.pool)
         .await
         .map_err(Into::into)
+    }
+
+    /// Sets (or clears) the chat's workspace folder. Owner-scoped: the
+    /// folder comes from the bound desktop, but any device of the owner may
+    /// push it (the folder belongs to the chat, not to a viewer).
+    pub async fn set_project_dir(
+        &self,
+        org_id: Uuid,
+        chat_id: Uuid,
+        caller: &UserRow,
+        dir: Option<&str>,
+    ) -> Result<ChatRow, ApiError> {
+        let is_admin = caller.role == "admin";
+        sqlx::query_as(
+            "UPDATE chats SET project_dir = $3 \
+             WHERE org_id = $1 AND id = $2 AND (user_id = $4 OR $5) \
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_dir",
+        )
+        .bind(org_id)
+        .bind(chat_id)
+        .bind(dir)
+        .bind(caller.id)
+        .bind(is_admin)
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| ApiError::not_found("no such chat"))
     }
 
     /// Sets (or clears, with `None`) the chat's approval-mode override —
