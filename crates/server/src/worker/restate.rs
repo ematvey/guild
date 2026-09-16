@@ -251,6 +251,8 @@ impl RoutineRunner {
 /// inside the workflow (journaled), so the payload stays minimal.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ChatRunPayload {
+    #[serde(default)]
+    pub user_message_id: Option<Uuid>,
     pub org_id: Uuid,
     pub user_id: Uuid,
     pub chat_id: Uuid,
@@ -1520,6 +1522,7 @@ impl ChatRunner {
         let event_content = user_turn_content.clone();
         let ev_chips = att_chips.clone();
         let has_user_event = !event_content.is_empty() || !ev_chips.is_empty();
+        let user_message_id = req.user_message_id;
         ctx.run(move || {
             let state = st.clone();
             async move {
@@ -1532,12 +1535,13 @@ impl ChatRunner {
                 if has_user_event {
                     store
                         .thread()
-                        .append_event(
+                        .append_event_with_id(
                             chat_id,
                             &ThreadEvent::UserMessage {
                                 content: event_content,
                                 attachments: ev_chips,
                             },
+                            user_message_id.unwrap_or_else(Uuid::now_v7),
                         )
                         .await
                         .map_err(api_err)?;
@@ -1824,7 +1828,6 @@ impl ChatRunner {
                     let c = completion2.clone();
                     let route = route2.clone();
                     async move {
-                        let store = state.store().await.map_err(api_err)?;
                         let event = ThreadEvent::AssistantMessage {
                             turn: turn2,
                             step: step2,
@@ -1842,11 +1845,8 @@ impl ChatRunner {
                             model: model_name,
                             interrupted: None,
                         };
-                        let row = store
-                            .thread()
-                            .append_event(chat_id, &event)
-                            .await
-                            .map_err(api_err)?;
+                        let row = crate::http::gateway::persist_assistant_step(&state, chat_id, &event)
+                            .await.map_err(api_err)?;
                         Ok(Json(row.id))
                     }
                 })
@@ -2034,7 +2034,7 @@ impl ChatRunner {
                 if !step_persisted.load(std::sync::atomic::Ordering::SeqCst)
                     && (!partial_text.is_empty() || !partial_reasoning.is_empty())
                 {
-                    if let Ok(store) = state.store().await {
+                    {
                         let event = ThreadEvent::AssistantMessage {
                             turn: turn_no,
                             step: steps_used.load(std::sync::atomic::Ordering::SeqCst),
@@ -2043,7 +2043,12 @@ impl ChatRunner {
                             model: req.model.clone(),
                             interrupted: Some(true),
                         };
-                        let _ = store.thread().append_event(req.chat_id, &event).await;
+                        let _ = crate::http::gateway::persist_assistant_step(
+                            &state,
+                            req.chat_id,
+                            &event,
+                        )
+                        .await;
                     }
                 }
                 state.generations.lock().unwrap().remove(&req.chat_id);
@@ -2640,7 +2645,7 @@ async fn client_tool_step(
                     } else if let Some(omid) = origin_machine_id {
                         // Auto-bind chats sent from a desktop to that
                         // desktop's machine (idempotent persist).
-                        if state.machine_connected(&omid) {
+                        if state.hub.machine_online(&omid) {
                             let label = state.machine_label(&omid).unwrap_or_else(|| omid.clone());
                             if let Ok(store) = state.store().await {
                                 let _ = store
@@ -2678,7 +2683,7 @@ async fn client_tool_step(
             move || {
                 let state = state.clone();
                 let mid = mid.clone();
-                async move { Ok(Json(state.machine_connected(&mid))) }
+                async move { Ok(Json(state.hub.machine_online(&mid))) }
             }
         })
         .await?
@@ -2736,6 +2741,48 @@ async fn client_tool_step(
     // Journaled: notify attached clients that this call must run client-side.
     let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
     let done = note_pending_tool(state, chat_id, &call.id, &call.name, &args_json, Some(&mid));
+    let tx2 = tx.clone();
+    let call_id = call.id.clone();
+    let name = call.name.clone();
+    let args2 = args_json.clone();
+    let dispatch_state = state.clone();
+    let dispatch_id = awakeable_id.clone();
+    let dispatched_connection = ctx
+        .run(move || {
+            let state = dispatch_state.clone();
+            let dispatch_id = dispatch_id.clone();
+            let tx = tx2.clone();
+            let call_id = call_id.clone();
+            let name = name.clone();
+            let args = args2.clone();
+            async move {
+                let connection = crate::http::gateway::dispatch_pending_tool(
+                    &state,
+                    chat_id,
+                    &call_id,
+                    &dispatch_id,
+                )
+                .await
+                .map_err(api_err)?;
+                let _ = tx.send(StreamEvent::ToolStarted {
+                    call_id,
+                    name,
+                    arguments: args,
+                    executor: ToolExecutor::Client,
+                    kind: None,
+                });
+                Ok(Json(connection))
+            }
+        })
+        .await?
+        .into_inner();
+    crate::http::gateway::restore_dispatch_connection(
+        state,
+        chat_id,
+        &call.id,
+        dispatched_connection,
+    );
+
     // Termination detection: if the bound machine disappears (executor
     // connection gone, app-lifetime — not per-thread streams), resolve the
     // tool with an error after a grace window instead of dead-airing for
@@ -2750,28 +2797,6 @@ async fn client_tool_step(
         mlabel,
         done,
     );
-    let tx2 = tx.clone();
-    let call_id = call.id.clone();
-    let name = call.name.clone();
-    let args2 = args_json.clone();
-    ctx.run(move || {
-        let tx = tx2.clone();
-        let call_id = call_id.clone();
-        let name = name.clone();
-        let args = args2.clone();
-        async move {
-            let _ = tx.send(StreamEvent::ToolStarted {
-                call_id,
-                name,
-                arguments: args,
-                executor: ToolExecutor::Client,
-                kind: None,
-            });
-            Ok(Json(()))
-        }
-    })
-    .await?;
-
     // Durable timeout: schedule a journaled delayed completion instead of
     // racing futures — a dropped ctx.sleep blocks replay until the timer
     // fires, while send_after lives in Restate's timer service and never

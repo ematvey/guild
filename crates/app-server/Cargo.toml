@@ -18,7 +18,8 @@ serde_json.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
-eventsource-stream.workspace = true
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+url = "2"
 futures.workspace = true
 async-trait.workspace = true
 async-stream = "0.3"
@@ -27,6 +28,7 @@ dirs = "6"
 rmcp = { version = "3.2", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 
 [dev-dependencies]
+axum.workspace = true
 guild-server = { path = "../server", features = ["test-support"] }
 wiremock = "0.6"
 

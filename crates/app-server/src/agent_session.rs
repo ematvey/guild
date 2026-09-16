@@ -45,6 +45,7 @@ impl ModelTurn for GatewayTurn {
         let events = self
             .cloud
             .stream_completion(protocol::api::ChatCompletionRequest {
+                user_message_id: None,
                 chat_id: self.chat_id,
                 model: self.model.clone(),
                 messages: messages.to_vec(),

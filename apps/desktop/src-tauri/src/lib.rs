@@ -4,18 +4,20 @@
 //! There is no headless daemon and no cross-process pipe to one; the local
 //! socket remains only as the CLI-verb entry point, hosted by this process.
 //!
-//! Server link: exactly one standing connection (the events stream with
-//! machine params), owned by this process — presence (heartbeat upsert),
-//! client-tool dispatch, and the user fan-out bus all ride it. The webview
-//! is a pure UI: HTTP request/response plus per-turn replay, no tool
-//! execution, no presence duty.
+//! Server link: exactly one standing WebSocket connection, owned by this
+//! process — presence, client-tool dispatch, and the user fan-out bus all
+//! ride it. The webview is a pure UI: HTTP request/response plus per-turn
+//! replay, no tool execution, no presence duty.
 
+use futures::{SinkExt, StreamExt};
 use guild_app_server::jsonrpc_loop::{run_connection, Shared};
+use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Client-side IPC trace: one line per rpc step into %TEMP%, so a wedge can
@@ -201,6 +203,7 @@ struct Mirror {
 
 #[derive(Default)]
 pub struct GuildState {
+    presence: Mutex<Value>,
     /// The engine Shared: one session, one dispatch surface, shared with the
     /// CLI socket accept loop.
     shared: Mutex<Option<Shared>>,
@@ -272,247 +275,477 @@ fn qenc(s: &str) -> String {
     out
 }
 
-/// The server link task: keeps exactly one standing connection (events
-/// stream with machine params) while a session + machine identity exist.
-/// The heartbeat (upsert) task runs INDEPENDENTLY of the stream so a flap
-/// — the link stream dies and reconnects every few minutes behind
-/// Cloudflare — never takes the machine offline; the server's TTL is the
-/// only offline signal. Tool frames for this machine are executed locally
-/// and their results POSTed back.
-async fn app_link_task(state: Arc<GuildState>, app: AppHandle) {
-    let mut last_cfg: Option<(String, String, String)> = None; // base, token, machine
+#[derive(Debug)]
+enum LinkError {
+    Displaced,
+    AuthRequired,
+    Closed,
+    Backpressure,
+    Failed(String),
+}
+
+impl std::fmt::Display for LinkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Displaced => f.write_str("displaced"),
+            Self::AuthRequired => f.write_str("authentication required"),
+            Self::Closed => f.write_str("socket closed"),
+            Self::Backpressure => f.write_str("socket outbound queue full"),
+            Self::Failed(error) => f.write_str(error),
+        }
+    }
+}
+
+const OUTBOUND_QUEUE_CAP: usize = 1024;
+const PRIORITY_QUEUE_CAP: usize = 16;
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const TERMINAL_WRITE_TIMEOUT: Duration = WRITE_TIMEOUT;
+
+type WsMessage = tokio_tungstenite::tungstenite::Message;
+
+async fn send_ws_message_with_deadline<W>(
+    sink: &mut W,
+    message: WsMessage,
+    deadline: Duration,
+) -> Result<(), String>
+where
+    W: futures::Sink<WsMessage> + Unpin,
+    W::Error: std::fmt::Display,
+{
+    tokio::time::timeout(deadline, sink.send(message))
+        .await
+        .map_err(|_| "socket write timed out".to_string())?
+        .map_err(|error| format!("socket write: {error}"))
+}
+
+#[derive(Clone)]
+struct OutboundQueue {
+    tx: tokio::sync::mpsc::Sender<WsMessage>,
+    priority_tx: tokio::sync::mpsc::Sender<WsMessage>,
+    overflow: tokio::sync::watch::Sender<bool>,
+}
+
+impl OutboundQueue {
+    fn try_send(&self, message: WsMessage) -> Result<(), LinkError> {
+        self.try_send_on(&self.tx, message)
+    }
+
+    fn try_send_priority(&self, message: WsMessage) -> Result<(), LinkError> {
+        self.try_send_on(&self.priority_tx, message)
+    }
+
+    fn try_send_on(
+        &self,
+        tx: &tokio::sync::mpsc::Sender<WsMessage>,
+        message: WsMessage,
+    ) -> Result<(), LinkError> {
+        match tx.try_send(message) {
+            Ok(()) => Ok(()),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                self.overflow.send_replace(true);
+                Err(LinkError::Backpressure)
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err(LinkError::Closed),
+        }
+    }
+}
+
+async fn wait_for_overflow(signal: &mut tokio::sync::watch::Receiver<bool>) {
+    while !*signal.borrow_and_update() {
+        if signal.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkEvent {
+    Closed,
+    Displaced,
+    AuthRequired,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkAction {
+    Backoff,
+    Takeover,
+    Remint,
+}
+
+fn link_action(event: LinkEvent) -> LinkAction {
+    match event {
+        LinkEvent::Displaced => LinkAction::Takeover,
+        LinkEvent::AuthRequired => LinkAction::Remint,
+        LinkEvent::Closed | LinkEvent::Failed => LinkAction::Backoff,
+    }
+}
+
+fn publish_presence(state: &GuildState, app: &AppHandle, presence: Value) {
+    *state.presence.lock().unwrap() = presence.clone();
+    let _ = app.emit("app-presence", presence);
+}
+
+/// The WS machine link. The socket is the machine's liveness signal.
+async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
+    let mut last_cfg: Option<(String, String, String)> = None;
+    let mut instance_id = uuid::Uuid::now_v7();
+    let mut resume = false;
     let mut was_connected = false;
-    // Heartbeat task: (base, token, machine_id, machine_name) of the
-    // current config; respawned when the config changes, aborted on exit.
-    let mut hb: Option<(
-        tokio::task::JoinHandle<()>,
-        (String, String, String, String),
-    )> = None;
     loop {
         let Some((base, token, machine_id, machine_name)) = state.link_config() else {
             if was_connected {
                 was_connected = false;
-                let _ = app.emit("app-presence", serde_json::json!({ "connected": false }));
+                publish_presence(&state, &app, serde_json::json!({ "connected": false }));
             }
             last_cfg = None;
-            if let Some((t, _)) = hb.take() {
-                t.abort();
-            }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             continue;
         };
-        // Keep the heartbeat task alive across stream flaps: respawn it only
-        // when the link config (server, session, machine) changes.
-        match &hb {
-            Some((_, cfg)) if cfg.0 == base && cfg.1 == token && cfg.2 == machine_id => {}
-            _ => {
-                if let Some((t, _)) = hb.take() {
-                    t.abort();
-                }
-                hb = Some((
-                    tokio::spawn(heartbeat_task(
-                        base.clone(),
-                        token.clone(),
-                        machine_id.clone(),
-                        machine_name.clone(),
-                    )),
-                    (
-                        base.clone(),
-                        token.clone(),
-                        machine_id.clone(),
-                        machine_name.clone(),
-                    ),
-                ));
-            }
-        }
-        let changed = last_cfg.as_ref() != Some(&(base.clone(), token.clone(), machine_id.clone()));
-        if changed {
-            // New session or identity: drop the mirrors (the server replays
-            // in-flight state on connect) and let the reconnect below run.
+        let cfg = (base.clone(), token.clone(), machine_id.clone());
+        if last_cfg.as_ref() != Some(&cfg) {
             state.mirrors.lock().unwrap().clear();
-            last_cfg = Some((base.clone(), token.clone(), machine_id.clone()));
+            instance_id = uuid::Uuid::now_v7();
+            resume = false;
+            last_cfg = Some(cfg.clone());
         }
         let epoch = state.link_epoch.load(Ordering::SeqCst);
-        let res = link_once(&state, &app, &base, &token, &machine_id, &machine_name).await;
+        let result = ws_session(
+            &state,
+            &app,
+            &base,
+            &token,
+            &machine_id,
+            &machine_name,
+            instance_id,
+            resume,
+            &mut was_connected,
+        )
+        .await;
+        resume = true;
         if was_connected {
             was_connected = false;
-            let _ = app.emit("app-presence", serde_json::json!({ "connected": false }));
+            publish_presence(&state, &app, serde_json::json!({ "connected": false }));
         }
-        if let Err(e) = res {
-            ipc_trace("link", &format!("stream ended: {e}"));
+        match result {
+            Ok(()) => {
+                ipc_trace("link", "socket closed");
+            }
+            Err(error) => {
+                let event = match &error {
+                    LinkError::Displaced => LinkEvent::Displaced,
+                    LinkError::AuthRequired => LinkEvent::AuthRequired,
+                    LinkError::Closed => LinkEvent::Closed,
+                    LinkError::Backpressure | LinkError::Failed(_) => LinkEvent::Failed,
+                };
+                let action = link_action(event);
+                match action {
+                    LinkAction::Takeover => {
+                        publish_presence(
+                            &state,
+                            &app,
+                            serde_json::json!({ "connected": false, "displaced": true }),
+                        );
+                        wait_for_link_change(&state, epoch, &base, &token, &machine_id).await;
+                    }
+                    LinkAction::Remint => {
+                        let cloud = state
+                            .shared()
+                            .and_then(|s| s.session.lock().unwrap().cloud.clone());
+                        if let Some(cloud) = cloud {
+                            match cloud.refresh_session().await {
+                                Err(guild_app_server::cloud::CloudError::Unauthorized) => {
+                                    publish_presence(
+                                        &state,
+                                        &app,
+                                        serde_json::json!({"connected": false, "auth_required": true}),
+                                    );
+                                    wait_for_link_change(&state, epoch, &base, &token, &machine_id)
+                                        .await;
+                                }
+                                Err(error) => {
+                                    ipc_trace("link", &format!("session refresh failed: {error}"))
+                                }
+                                Ok(()) => {}
+                            }
+                        }
+                    }
+                    LinkAction::Backoff => {
+                        ipc_trace("link", &format!("socket ended: {error}"));
+                    }
+                }
+            }
         }
-        // Config changed while connected (login/sign-out/machine set): loop
-        // immediately; otherwise back off.
         if state.link_epoch.load(Ordering::SeqCst) == epoch
-            && last_cfg.as_ref().map(|c| c.1.as_str()) == Some(token.as_str())
+            && state
+                .link_config()
+                .is_some_and(|(b, t, m, _)| b == base && t == token && m == machine_id)
         {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
     }
 }
 
-/// One stream connection + its heartbeat loop. Returns when the stream ends.
-async fn link_once(
+async fn wait_for_link_change(
+    state: &GuildState,
+    epoch: u64,
+    base: &str,
+    token: &str,
+    machine_id: &str,
+) {
+    loop {
+        if state.link_epoch.load(Ordering::SeqCst) != epoch {
+            return;
+        }
+        let unchanged = state
+            .link_config()
+            .is_some_and(|(b, t, m, _)| b == base && t == token && m == machine_id);
+        if !unchanged {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
+async fn ws_session(
     state: &Arc<GuildState>,
     app: &AppHandle,
     base: &str,
     token: &str,
     machine_id: &str,
     machine_name: &str,
-) -> Result<(), String> {
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}/api/v1/events/stream?machine_id={}&machine_name={}",
-        base.trim_end_matches('/'),
-        qenc(machine_id),
-        qenc(machine_name)
-    );
-    let res = client
-        .get(&url)
+    instance_id: uuid::Uuid,
+    resume: bool,
+    connected: &mut bool,
+) -> Result<(), LinkError> {
+    let cloud = state
+        .shared()
+        .and_then(|shared| shared.session.lock().unwrap().cloud.clone())
+        .ok_or_else(|| LinkError::Failed("session disappeared".into()))?;
+    let ticket_url = format!("{}/api/v1/ws/ticket", base.trim_end_matches('/'));
+    let ticket_response = cloud
+        .http_pub()
+        .post(ticket_url)
         .bearer_auth(token)
-        .header("accept", "text/event-stream")
+        .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
-        .map_err(|e| format!("stream connect: {e}"))?;
-    if !res.status().is_success() {
-        return Err(format!("stream connect: HTTP {}", res.status()));
+        .map_err(|error| LinkError::Failed(format!("ticket request: {error}")))?;
+    if ticket_response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(LinkError::AuthRequired);
     }
+    if !ticket_response.status().is_success() {
+        return Err(LinkError::Failed(format!(
+            "ticket request: HTTP {}",
+            ticket_response.status()
+        )));
+    }
+    let ticket = ticket_response
+        .json::<Value>()
+        .await
+        .map_err(|error| LinkError::Failed(format!("ticket response: {error}")))?["ticket"]
+        .as_str()
+        .ok_or_else(|| LinkError::Failed("ticket response has no ticket".into()))?
+        .to_string();
 
-    // Liveness rides the independent heartbeat task in `app_link_task` —
-    // never on this stream: the link flaps behind Cloudflare every few
-    // minutes, and a flap must not unregister a running app.
+    let url = with_instance(
+        websocket_url(base, &ticket, machine_id, machine_id, machine_name)?,
+        instance_id,
+        resume,
+    );
+    let (socket, _) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio_tungstenite::connect_async(url.as_str()),
+    )
+    .await
+    .map_err(|_| LinkError::Failed("socket connect timed out".into()))?
+    .map_err(|error| LinkError::Failed(format!("socket connect: {error}")))?;
+    let (mut socket_tx, mut socket_rx) = socket.split();
+    let (wire_tx, mut wire_rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
+    let (priority_tx, mut priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
+    let (overflow_tx, overflow_rx) = tokio::sync::watch::channel(false);
+    let outbound = OutboundQueue {
+        tx: wire_tx,
+        priority_tx,
+        overflow: overflow_tx,
+    };
+    let writer = tokio::spawn(async move {
+        loop {
+            let message = tokio::select! {
+                biased;
+                priority = priority_rx.recv() => priority,
+                ordinary = wire_rx.recv() => ordinary,
+            };
+            let Some(message) = message else { break };
+            send_ws_message_with_deadline(&mut socket_tx, message, WRITE_TIMEOUT).await?;
+        }
+        Ok::<(), String>(())
+    });
 
-    let _ = app.emit("app-presence", serde_json::json!({ "connected": true }));
-    ipc_trace("link", "stream connected");
-
-    // Read the SSE body: split into events on blank lines. A STALL GUARD
-    // wraps the read: the server sends keepalives every ~30s, so 90s of
-    // silence means the connection is a zombie (a proxy swap kept it open
-    // server-side but stopped forwarding — observed behind Cloudflare on
-    // server redeploys). Break and let the link loop reconnect.
-    use futures::StreamExt as _;
-    let mut stream = res.bytes_stream();
-    let mut buf: Vec<u8> = Vec::new();
-    let mut result = Ok(());
-    loop {
-        let next = tokio::time::timeout(std::time::Duration::from_secs(90), stream.next());
-        let chunk = match next.await {
-            Err(_) => {
-                result = Err("stream stalled: no bytes for 90s".to_string());
-                break;
+    let mut writer = Box::pin(writer);
+    let mut overflow_rx = overflow_rx;
+    let bootstrap_deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let mut bootstrapped = false;
+    let result = loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(bootstrap_deadline), if !bootstrapped => {
+                break Err(LinkError::Failed("socket bootstrap deadline".into()));
             }
-            Ok(None) => break,
-            Ok(Some(Err(e))) => {
-                result = Err(format!("stream read: {e}"));
-                break;
+            _ = wait_for_overflow(&mut overflow_rx) => {
+                break Err(LinkError::Backpressure);
             }
-            Ok(Some(Ok(bytes))) => bytes,
-        };
-        {
-            buf.extend_from_slice(&chunk);
-            while let Some(pos) = find_blank_line(&buf) {
-                let event_text = String::from_utf8_lossy(&buf[..pos]).into_owned();
-                buf.drain(..pos + 2);
-                // Route by SSE event name: "app" frames are the fan-out
-                // bus (tool execution + webview mirror); "chat_status"
-                // is sidebar-only state forwarded verbatim (no seq
-                // watermark — it is idempotent, not conversation
-                // content). Anything else (org events) has no in-app
-                // consumer yet.
-                match sse_event_name(&event_text).unwrap_or("app") {
-                    "app" => {
-                        if let Some(data) = sse_data(&event_text) {
-                            if let Err(e) = handle_app_frame(
-                                state, app, &client, base, token, machine_id, &data,
-                            )
-                            .await
-                            {
-                                ipc_trace("link", &format!("frame error: {e}"));
+            writer_result = &mut writer => {
+                break writer_result
+                    .map_err(|error| LinkError::Failed(format!("socket writer: {error}")))
+                    .and_then(|result| result.map_err(LinkError::Failed))
+                    .map(|_| ());
+            }
+            incoming = receive_ws_message(&mut socket_rx, &outbound) => {
+                match incoming {
+                    Ok(message) => match message {
+                            WsServerMsg::LiveFrame { chat_id, machine_id: frame_machine_id, event, .. } => {
+                                let data = websocket_frame_data(chat_id, frame_machine_id, event);
+                                if let Err(error) = handle_app_frame(
+                                    state, app, machine_id, &data, &outbound, false,
+                                ).await {
+                                    ipc_trace("link", &format!("frame error: {error}"));
+                                }
                             }
-                        }
-                    }
-                    "chat_status" => {
-                        if let Some(data) = sse_data(&event_text) {
-                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
-                                let _ = app.emit("chat-status", v);
+                            WsServerMsg::ToolDispatch { chat_id, call_id, name, arguments } => {
+                                let data = websocket_frame_data(chat_id, Some(machine_id.into()), protocol::api::StreamEvent::ToolStarted {
+                                    call_id, name, arguments, executor: protocol::api::ToolExecutor::Client, kind: None,
+                                });
+                                let _ = handle_app_frame(state, app, machine_id, &data, &outbound, true).await;
                             }
-                        }
-                    }
-                    _ => {}
+                            WsServerMsg::ChatStatus { chat_id, generating } => {
+                                let _ = app.emit("chat-status", serde_json::json!({
+                                    "chat_id": chat_id,
+                                    "generating": generating,
+                                }));
+                            }
+                            WsServerMsg::OrgEvent { event } => {
+                                let _ = app.emit("org-event", event);
+                            }
+                            WsServerMsg::Displaced => break Err(LinkError::Displaced),
+                            WsServerMsg::AuthRequired => break Err(LinkError::AuthRequired),
+                            WsServerMsg::Error { message } => {
+                                ipc_trace("link", &format!("server error: {message}"));
+                            }
+                            WsServerMsg::Hello => {
+                                *connected = true;
+                                publish_presence(state, app, serde_json::json!({ "connected": true }));
+                            }
+                            WsServerMsg::ThreadList { .. } => { bootstrapped = true; }
+                            WsServerMsg::ThreadState { .. }
+                            | WsServerMsg::SyncBegin { .. }
+                            | WsServerMsg::SyncDone { .. } => {}
+                    },
+                    Err(error) => break Err(error),
                 }
             }
         }
-    }
+    };
+    let _ = outbound.try_send_priority(WsMessage::Close(None));
+    let _ = tokio::time::timeout(TERMINAL_WRITE_TIMEOUT, &mut writer).await;
+    writer.abort();
     let _ = app.emit("app-stream-reconnected", serde_json::json!({}));
     result
 }
 
-/// The independent liveness heartbeat: POSTs every 5s while this link
-/// config is current. Owned by `app_link_task` (respawned on config
-/// change, aborted on exit) — deliberately NOT tied to the stream, whose
-/// connection flaps behind proxies. The first beat fires immediately so a
-/// freshly started app registers without waiting for the interval.
-async fn heartbeat_task(base: String, token: String, machine_id: String, machine_name: String) {
-    let client = reqwest::Client::new();
-    let url = format!("{}/api/v1/machines/heartbeat", base.trim_end_matches('/'));
+async fn receive_ws_message<S>(
+    socket_rx: &mut S,
+    outbound: &OutboundQueue,
+) -> Result<WsServerMsg, LinkError>
+where
+    S: futures::Stream<
+            Item = Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
     loop {
-        let _ = client
-            .post(&url)
-            .bearer_auth(&token)
-            .json(&serde_json::json!({ "machine_id": machine_id, "machine_name": machine_name }))
-            .send()
-            .await;
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    }
-}
-
-fn find_blank_line(buf: &[u8]) -> Option<usize> {
-    buf.windows(2).position(|w| w == b"\n\n")
-}
-
-/// Extracts the SSE `event:` name of one event block ("app" when absent —
-/// the fan-out frames are the only eventless blocks the server sends).
-
-/// Extracts the SSE `event:` name of one event block ("app" when absent —
-/// the fan-out frames are the only eventless blocks the server sends).
-fn sse_event_name(event_text: &str) -> Option<&str> {
-    event_text
-        .lines()
-        .find_map(|l| {
-            l.strip_prefix("event: ")
-                .or_else(|| l.strip_prefix("event:"))
-        })
-        .map(|s| s.trim())
-}
-
-/// Extracts the `data:` payload of one SSE event block.
-fn sse_data(event_text: &str) -> Option<String> {
-    let mut data = String::new();
-    for line in event_text.lines() {
-        if let Some(rest) = line.strip_prefix("data: ") {
-            data.push_str(rest);
-        } else if let Some(rest) = line.strip_prefix("data:") {
-            data.push_str(rest.trim_start());
+        match tokio::time::timeout(Duration::from_secs(20), socket_rx.next())
+            .await
+            .map_err(|_| LinkError::Failed("socket read silence deadline".into()))?
+        {
+            Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                return serde_json::from_str(&text)
+                    .map_err(|error| LinkError::Failed(format!("server message: {error}")));
+            }
+            Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(payload))) => {
+                outbound.try_send_priority(WsMessage::Pong(payload))?;
+            }
+            Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
+                return Err(LinkError::Closed);
+            }
+            Some(Err(error)) => return Err(LinkError::Failed(format!("socket read: {error}"))),
+            Some(Ok(_)) => {}
         }
     }
-    if data.is_empty() {
-        None
-    } else {
-        Some(data)
-    }
 }
 
-/// Handles one fan-out frame: mirrors it for late webviews and — for client
-/// tools bound to this machine — executes it and posts the result.
-#[allow(clippy::too_many_arguments)]
+fn with_instance(mut url: url::Url, instance: uuid::Uuid, resume: bool) -> url::Url {
+    url.query_pairs_mut()
+        .append_pair("instance_id", &instance.to_string())
+        .append_pair("resume", if resume { "true" } else { "false" });
+    url
+}
+
+fn websocket_url(
+    base: &str,
+    ticket: &str,
+    client_id: &str,
+    machine_id: &str,
+    machine_name: &str,
+) -> Result<url::Url, LinkError> {
+    let mut url = url::Url::parse(base)
+        .map_err(|error| LinkError::Failed(format!("bad server URL: {error}")))?;
+    let scheme = match url.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        scheme => {
+            return Err(LinkError::Failed(format!(
+                "unsupported server scheme: {scheme}"
+            )))
+        }
+    };
+    url.set_scheme(scheme)
+        .map_err(|_| LinkError::Failed("could not set websocket scheme".into()))?;
+    let path = format!("{}/api/v1/ws", url.path().trim_end_matches('/'));
+    url.set_path(&path);
+    url.set_query(Some(&format!(
+        "ticket={}&client_id={}&machine_id={}&machine_name={}",
+        qenc(ticket),
+        qenc(client_id),
+        qenc(machine_id),
+        qenc(machine_name),
+    )));
+    Ok(url)
+}
+
+fn websocket_frame_data(
+    chat_id: uuid::Uuid,
+    machine_id: Option<String>,
+    event: protocol::api::StreamEvent,
+) -> String {
+    serde_json::json!({
+        "chat_id": chat_id,
+        "machine_id": machine_id,
+        "event": event,
+    })
+    .to_string()
+}
+
+/// Handles one WS frame: mirrors it for late webviews and — for client
+/// tools bound to this machine — executes it and sends the result.
 async fn handle_app_frame(
     state: &Arc<GuildState>,
     app: &AppHandle,
-    client: &reqwest::Client,
-    base: &str,
-    token: &str,
     machine_id: &str,
     data: &str,
+    outbound: &OutboundQueue,
+    execute: bool,
 ) -> Result<(), String> {
     let v: Value = serde_json::from_str(data).map_err(|e| format!("frame parse: {e}"))?;
     let chat_id = v["chat_id"].as_str().unwrap_or_default().to_string();
@@ -539,7 +772,7 @@ async fn handle_app_frame(
         serde_json::json!({ "chat_id": chat_id, "seq": seq, "event": ev }),
     );
 
-    if ev_type == "tool_started" && ev["executor"].as_str() == Some("client") {
+    if execute && ev_type == "tool_started" && ev["executor"].as_str() == Some("client") {
         // Execute only for THIS machine (other devices render).
         let bound = v["machine_id"].as_str().unwrap_or_default();
         if bound == machine_id {
@@ -547,14 +780,10 @@ async fn handle_app_frame(
             let name = ev["name"].as_str().unwrap_or_default().to_string();
             let args = ev["arguments"].as_str().unwrap_or("{}").to_string();
             let st = state.clone();
-            let client = client.clone();
-            let base = base.to_string();
-            let token = token.to_string();
+            let outbound = outbound.clone();
             let chat = chat_id.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    execute_tool(&st, &client, &base, &token, &chat, &call_id, &name, &args).await
-                {
+                if let Err(e) = execute_tool(&st, &outbound, &chat, &call_id, &name, &args).await {
                     ipc_trace("tool", &format!("{name} {call_id} failed: {e}"));
                 }
             });
@@ -563,12 +792,11 @@ async fn handle_app_frame(
     Ok(())
 }
 
-/// Runs one client tool in the chat's workspace folder and POSTs the result.
+/// Runs one client tool in the chat's workspace folder and sends its result
+/// over the standing machine socket.
 async fn execute_tool(
     state: &Arc<GuildState>,
-    client: &reqwest::Client,
-    base: &str,
-    token: &str,
+    outbound: &OutboundQueue,
     chat_id: &str,
     call_id: &str,
     name: &str,
@@ -598,22 +826,22 @@ async fn execute_tool(
         Ok(v) => v,
         Err(e) => serde_json::json!({ "content": e, "is_error": true }),
     };
-    let url = format!(
-        "{}/api/v1/gateway/chat/{}/tools/{}/result",
-        base.trim_end_matches('/'),
-        chat_id,
-        call_id
-    );
-    let res = client
-        .post(&url)
-        .bearer_auth(token)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("result post: {e}"))?;
-    if !res.status().is_success() {
-        return Err(format!("result post: HTTP {}", res.status()));
-    }
+    let message = WsClientMsg::ToolResult {
+        chat_id: chat_id
+            .parse()
+            .map_err(|error| format!("invalid chat id: {error}"))?,
+        call_id: call_id.to_string(),
+        content: payload["content"].as_str().unwrap_or_default().to_string(),
+        is_error: payload["is_error"].as_bool().unwrap_or(true),
+        meta: payload
+            .get("meta")
+            .cloned()
+            .filter(|value| !value.is_null()),
+    };
+    let text = serde_json::to_string(&message).expect("client message serializes");
+    outbound
+        .try_send(WsMessage::Text(text.into()))
+        .map_err(|error| error.to_string())?;
     ipc_trace("tool", &format!("{name} {call_id} ok"));
     Ok(())
 }
@@ -622,6 +850,11 @@ async fn execute_tool(
 // module trips E0255 (macro re-imports itself).
 pub mod commands {
     use super::*;
+
+    #[tauri::command]
+    pub fn machine_presence(state: State<'_, Arc<GuildState>>) -> Value {
+        state.presence.lock().unwrap().clone()
+    }
 
     /// Idempotent: the engine exists from app setup; kept so the webview's
     /// boot flow is unchanged.
@@ -1001,6 +1234,7 @@ pub fn run() {
             commands::set_machine_identity,
             commands::set_chat_dir,
             commands::chat_snapshot,
+            commands::machine_presence,
             commands::install_update,
             commands::pending_update_version
         ])
@@ -1069,7 +1303,7 @@ pub fn run() {
             {
                 let guild: State<Arc<GuildState>> = app.state();
                 let guild = guild.inner().clone();
-                tauri::async_runtime::spawn(app_link_task(guild, handle.clone()));
+                tauri::async_runtime::spawn(ws_link_task(guild, handle.clone()));
             }
 
             // Window close → collapse to tray (the process keeps executing
@@ -1143,17 +1377,250 @@ mod tests {
     }
 
     #[test]
-    fn sse_data_extracts_payload() {
-        let ev = "event: app\ndata: {\"chat_id\":\"x\"}\n\n";
-        assert_eq!(sse_data(ev).as_deref(), Some("{\"chat_id\":\"x\"}"));
-        assert_eq!(sse_data(": keepalive\n\n"), None);
-        // comment-only block without data
-        assert_eq!(sse_data(": ping\n\n"), None);
+    fn bare_close_uses_standard_backoff() {
+        assert_eq!(link_action(LinkEvent::Closed), LinkAction::Backoff);
     }
 
     #[test]
-    fn qenc_leaves_simple_ids() {
-        assert_eq!(qenc("0dfdd66e-315a"), "0dfdd66e-315a");
-        assert_eq!(qenc("my machine"), "my%20machine");
+    fn immediate_redisplacement_enters_takeover_state() {
+        assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
+    }
+
+    #[test]
+    fn repeated_bare_closes_remain_retryable() {
+        assert_eq!(link_action(LinkEvent::Closed), LinkAction::Backoff);
+    }
+
+    #[test]
+    fn explicit_displaced_enters_takeover_state() {
+        assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn silent_read_is_bounded_during_bootstrap_and_after_connect() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(1);
+        let (overflow, _) = tokio::sync::watch::channel(false);
+        let outbound = OutboundQueue {
+            tx,
+            priority_tx,
+            overflow,
+        };
+        let mut reader = futures::stream::pending();
+        let error = receive_ws_message(&mut reader, &outbound)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, LinkError::Failed(message) if message.contains("silence deadline"))
+        );
+    }
+
+    #[tokio::test]
+    async fn overloaded_old_writer_resume_uses_terminal_reconnect_policy() {
+        let (fixture, _) = guild_server::test_support::test_state_with_mock_ingress().await;
+        let user = fixture
+            .store()
+            .identity()
+            .ensure_bootstrap_admin("takeover@test", "test-password")
+            .await
+            .unwrap();
+        let (_, token) = fixture
+            .store()
+            .identity()
+            .create_session(user)
+            .await
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let router = guild_server::build_router(fixture.state.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let instance = uuid::Uuid::now_v7();
+        let connect = |instance, resume| {
+            let base = base.clone();
+            let token = token.clone();
+            async move {
+                let ticket: Value = reqwest::Client::new()
+                    .post(format!("{base}/api/v1/ws/ticket"))
+                    .bearer_auth(token)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                let url = with_instance(
+                    websocket_url(
+                        &base,
+                        ticket["ticket"].as_str().unwrap(),
+                        "client",
+                        "machine",
+                        "Desk",
+                    )
+                    .unwrap(),
+                    instance,
+                    resume,
+                );
+                tokio_tungstenite::connect_async(url.as_str())
+                    .await
+                    .unwrap()
+                    .0
+            }
+        };
+        let _old = connect(instance, false).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        guild_server::test_support::overload_machine_writer(&fixture.state, "machine");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while fixture.state.hub.machine_online("machine") {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let _successor = connect(uuid::Uuid::now_v7(), false).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let holder = fixture.state.hub.machine_connection("machine");
+        let mut stale = connect(instance, true).await;
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(1);
+        let outbound = OutboundQueue {
+            tx,
+            priority_tx,
+            overflow: tokio::sync::watch::channel(false).0,
+        };
+        let message = receive_ws_message(&mut stale, &outbound).await.unwrap();
+        assert!(matches!(message, WsServerMsg::Displaced));
+        assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
+        assert_eq!(fixture.state.hub.machine_connection("machine"), holder);
+        server.abort();
+    }
+
+    struct StalledSink;
+
+    impl futures::Sink<WsMessage> for StalledSink {
+        type Error = std::io::Error;
+
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Pending
+        }
+
+        fn start_send(self: std::pin::Pin<&mut Self>, _: WsMessage) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Pending
+        }
+
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn stalled_ordinary_write_hits_deadline() {
+        let mut sink = StalledSink;
+        let result = send_ws_message_with_deadline(
+            &mut sink,
+            WsMessage::Text("ordinary".into()),
+            Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), "socket write timed out");
+    }
+
+    #[test]
+    fn auth_required_requests_ticket_remint() {
+        assert_eq!(link_action(LinkEvent::AuthRequired), LinkAction::Remint);
+    }
+
+    #[test]
+    fn outbound_queue_marks_link_dead_when_full() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
+        let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
+        let (overflow, signal) = tokio::sync::watch::channel(false);
+        let queue = OutboundQueue {
+            tx,
+            priority_tx,
+            overflow,
+        };
+        for _ in 0..OUTBOUND_QUEUE_CAP {
+            queue.try_send(WsMessage::Text("frame".into())).unwrap();
+        }
+        assert!(matches!(
+            queue.try_send(WsMessage::Text("overflow".into())),
+            Err(LinkError::Backpressure)
+        ));
+        assert!(*signal.borrow());
+    }
+
+    #[test]
+    fn priority_replies_are_accepted_when_ordinary_queue_is_full() {
+        let (tx, _ordinary_rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
+        let (priority_tx, mut priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
+        let (overflow, _signal) = tokio::sync::watch::channel(false);
+        let queue = OutboundQueue {
+            tx,
+            priority_tx,
+            overflow,
+        };
+        for _ in 0..OUTBOUND_QUEUE_CAP {
+            queue.try_send(WsMessage::Text("ordinary".into())).unwrap();
+        }
+        queue
+            .try_send_priority(WsMessage::Pong(Vec::new().into()))
+            .unwrap();
+        queue.try_send_priority(WsMessage::Close(None)).unwrap();
+        assert!(matches!(
+            priority_rx.try_recv().unwrap(),
+            WsMessage::Pong(_)
+        ));
+        assert!(matches!(
+            priority_rx.try_recv().unwrap(),
+            WsMessage::Close(None)
+        ));
+    }
+
+    #[test]
+    fn websocket_url_uses_ws_scheme_and_encodes_all_query_values() {
+        let url = websocket_url(
+            "https://guild.example/base",
+            "ticket/+",
+            "machine id",
+            "machine id",
+            "Desk & Lab",
+        )
+        .unwrap();
+        assert_eq!(url.scheme(), "wss");
+        assert_eq!(url.path(), "/base/api/v1/ws");
+        assert_eq!(
+            url.query(),
+            Some("ticket=ticket%2F%2B&client_id=machine%20id&machine_id=machine%20id&machine_name=Desk%20%26%20Lab")
+        );
+    }
+
+    #[test]
+    fn websocket_frame_data_keeps_app_frame_shape() {
+        let data = websocket_frame_data(
+            uuid::Uuid::nil(),
+            Some("machine".into()),
+            protocol::api::StreamEvent::Delta {
+                content: "hello".into(),
+            },
+        );
+        let value: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(value["chat_id"], uuid::Uuid::nil().to_string());
+        assert_eq!(value["machine_id"], "machine");
+        assert_eq!(value["event"]["type"], "delta");
     }
 }

@@ -47,6 +47,31 @@ pub fn test_state() -> AppState {
     AppState::from_config(Config::test_config())
 }
 
+/// Registers a live hub machine for endpoint tests without opening a socket.
+pub async fn register_test_machine(
+    state: &AppState,
+    machine_id: &str,
+    user_id: Uuid,
+    org_id: Uuid,
+    label: Option<&str>,
+) {
+    let (sink, _receiver) = crate::http::ws::socket_channel();
+    state
+        .hub
+        .register_machine(
+            crate::http::hub::Member {
+                conn_id: Uuid::now_v7(),
+                user_id,
+                org_id,
+                sink,
+                label: label.map(str::to_string),
+            },
+            machine_id,
+        )
+        .await
+        .expect("test machine registration");
+}
+
 /// State backed by an isolated database on the shared host Postgres.
 pub struct TestState {
     pub state: AppState,
@@ -61,7 +86,9 @@ impl TestState {
 
 pub async fn test_state_with_db() -> TestState {
     let db = Store::connect_test().await.expect("postgres testcontainer");
-    let state = AppState::with_store(std::sync::Arc::new(db.store.clone()), Config::test_config());
+    let mut config = Config::test_config();
+    config.database_url = db.url.clone();
+    let state = AppState::with_store(std::sync::Arc::new(db.store.clone()), config);
     TestState { state, db }
 }
 
@@ -98,6 +125,7 @@ pub async fn test_state_with_mock_ingress() -> (TestState, MockIngress) {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let mut config = Config::test_config();
+    config.database_url = db.url.clone();
     config.restate_url = format!("http://{addr}");
     let state = AppState::with_store(std::sync::Arc::new(db.store.clone()), config);
     (
@@ -153,6 +181,18 @@ pub fn note_client_tool(
 ) {
     use protocol::api::{StreamEvent, ToolExecutor};
     crate::http::gateway::note_pending_tool(state, chat_id, call_id, name, args, Some(machine_id));
+    let dispatch_state = state.clone();
+    let dispatch_call = call_id.to_string();
+    tokio::spawn(async move {
+        crate::http::gateway::dispatch_pending_tool(
+            &dispatch_state,
+            chat_id,
+            &dispatch_call,
+            &dispatch_call,
+        )
+        .await
+        .unwrap();
+    });
     let gens = state.generations.lock().unwrap();
     if let Some(g) = gens.get(&chat_id) {
         let _ = g.tx.send(StreamEvent::ToolStarted {
@@ -163,6 +203,42 @@ pub fn note_client_tool(
             kind: None,
         });
     }
+}
+
+/// Fills a machine's real writer backlog past its overload limit.
+pub fn overload_machine_writer(state: &AppState, machine: &str) {
+    if let Some(holder) = state.hub.machine_holder(machine) {
+        for _ in 0..5000 {
+            let _ = holder.sink.try_send(protocol::ws::WsServerMsg::Hello);
+        }
+    }
+}
+
+/// Installs the production liveness watcher for a suspended test call.
+pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machine: &str) {
+    let done =
+        crate::http::gateway::note_pending_tool(state, chat, call, "execute", "{}", Some(machine));
+    let dispatch_state = state.clone();
+    let dispatch_call = call.to_string();
+    tokio::spawn(async move {
+        crate::http::gateway::dispatch_pending_tool(
+            &dispatch_state,
+            chat,
+            &dispatch_call,
+            &dispatch_call,
+        )
+        .await
+        .unwrap();
+    });
+    crate::http::gateway::spawn_machine_watcher(
+        state,
+        chat,
+        call.into(),
+        "execute".into(),
+        machine.into(),
+        machine.into(),
+        done,
+    );
 }
 
 /// Full stack for gateway tests: Postgres + ClickHouse + a wiremock provider

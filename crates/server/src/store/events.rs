@@ -1,5 +1,5 @@
 //! Org event log + emission (spec §4.6/§4.8). Emitters insert the record and
-//! NOTIFY the `guild_events` channel; SSE subscribers receive the fan-out.
+//! NOTIFY the `guild_events` channel; the WebSocket feed delivers the fan-out.
 
 use crate::http::error::ApiError;
 use chrono::{DateTime, Utc};

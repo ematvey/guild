@@ -63,11 +63,9 @@ import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsWindow } from "./settings/SettingsWindow";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   attachmentBlobUrl,
   rpcCall,
-  chatSnapshot,
   machineId,
   postApproval,
   pushChatDir,
@@ -79,18 +77,17 @@ import {
 import {
   createChat,
   getChatApproval,
-  getThread,
   listChats,
   listModels,
   markChatRead,
-  streamChat,
-  attachGeneration,
   createPairingToken,
   downloadRelease,
   listReleases,
   pairingCode,
   setChatApproval,
-  startEventStream,
+  startSocket,
+  watchMachinePresence,
+  type ThreadState,
   getApproval,
   type ApprovalPolicy,
   type ChatApprovalMode,
@@ -99,9 +96,19 @@ import {
   type Release,
   type ThreadContext,
   type ThreadEventRow,
-  type ThreadResult,
 } from "../transport";
 
+
+export function statusFromThreads(chats: ChatSummary[]) {
+  return Object.fromEntries(chats.map(chat => [chat.id, { generating: !!chat.generating, unread: !!chat.unread }]));
+}
+
+export function threadStateBlocks(state: ThreadState): Block[] {
+  let blocks = eventsToBlocks(state.events);
+  if (state.thinking) blocks = upsertThinking(blocks, state.thinking, true);
+  if (state.text) blocks.push({ kind: "text", text: state.text, key: `unpersisted-${state.chat_id}` });
+  return blocks;
+}
 
 interface ToolBlock {
   callId: string;
@@ -220,11 +227,43 @@ export interface Block {
   /// kind === "user": context attachment chips (metadata only; images may
   /// carry a local preview URL for optimistic rendering).
   attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
+  /// An optimistic user command not yet present in the durable history.
+  pending?: boolean;
   /// kind === "reasoning": the accumulated thinking text.
   reasoningText?: string;
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
+}
+
+export interface PendingSend {
+  chatId: string;
+  text: string;
+  key: string;
+  sentAt: number;
+  attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
+}
+
+/** Keeps a pending command visible while a sync races its HTTP request. */
+export function reconcilePendingSend(
+  rows: ThreadEventRow[],
+  blocks: Block[],
+  pending: PendingSend | null,
+): Block[] {
+  if (!pending) return blocks;
+  const durable = rows.some(row => row.event.type === "user_message" && row.id === pending.key);
+  if (durable) return blocks;
+  if (blocks.some((block) => block.key === pending.key)) return blocks;
+  return [
+    ...blocks,
+    {
+      kind: "user",
+      text: pending.text,
+      key: pending.key,
+      attachments: pending.attachments,
+      pending: true,
+    },
+  ];
 }
 
 let liveKeyCounter = 0;
@@ -598,8 +637,6 @@ interface ComposerSkill {
 
 /// Sentinel for a send stream that ended without a terminal frame: not a
 /// user-facing error — the send path converts it into a reattach watch.
-class DropError extends Error {}
-
 /// Shown while a deep-linked thread's messages are in flight (the URL says
 /// /thread/<id> but the view has nothing to render yet). Without this, the
 /// new-thread hero would flash for the whole fetch duration.
@@ -1403,9 +1440,8 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
   );
 }
 
-/// Web-mode chat: streaming conversation through the org gateway, with a
-/// server-backed conversation list. Full agent mode (local tools + project)
-/// is the desktop (Tauri) flow.
+/// Chat view backed by the org gateway. Browser and Tauri webview members
+/// render frames; the Tauri app process separately executes local tools.
 export default function WebChat({
   email,
   role = "member",
@@ -1579,14 +1615,12 @@ export default function WebChat({
   const threadCacheRef = useRef<Map<string, Block[]>>(new Map());
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
+  const pendingSendRef = useRef<Map<string, PendingSend>>(new Map());
   const [busy, setBusy] = useState(false);
   // Latest busy/attaching/threadLoading values for stable-ref consumers (the
   // deploy-freshness poll below must not read stale closure state).
   const loadStateRef = useRef({ busy: false, attaching: false, threadLoading: false });
   const [attaching, setAttaching] = useState(false); // receiving a server-side generation
-  // Watching a dropped generation for reattach (network send path): the
-  // composer must stay disabled until the watch settles.
-  const [reattaching, setReattaching] = useState(false);
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -1604,22 +1638,9 @@ export default function WebChat({
   const pane = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const ta = useRef<HTMLTextAreaElement>(null);
-  const attachAbort = useRef<AbortController | null>(null);
-  const loadAbort = useRef<AbortController | null>(null); // in-flight thread-load fetch
-  const sendAbort = useRef<AbortController | null>(null); // in-flight send stream
-  const loadSeq = useRef(0); // guards against stale thread loads landing last
+  const loadSeq = useRef(0); // guards against stale chat switches landing last
   const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
 
-  // App-lifetime presence connection: the server uses it to detect that
-  // this app instance is gone and resolve suspended client tools without
-  // waiting for the 5-minute timeout. Web clients additionally consume the
-  // connection's chat-status frames (desktop forwards them itself —
-  // "chat-status" Tauri event, see the unlisteners below).
-  useEffect(
-    () =>
-      startEventStream((f) => handleChatStatusRef.current(f.chat_id, f.generating)),
-    [],
-  );
   loadStateRef.current = { busy, attaching, threadLoading };
 
   // Reload the page once the served bundle hash differs from the running
@@ -1665,7 +1686,6 @@ export default function WebChat({
       setModels(m);
       if (m.length > 0) setModel((cur) => cur || m[0]);
     });
-    void refreshChats();
   }, []);
 
   // Browser back/forward: re-derive the whole route from the URL. The
@@ -1701,157 +1721,79 @@ export default function WebChat({
     setChats(c);
   };
 
-  /// One chat-status frame from the server (events stream on web, forwarded
-  /// "chat-status" Tauri event on desktop): drives the sidebar spinner/dot
-  /// for any chat, open or not. Turn end → the dot appears unless the turn
-  /// finished on the visible open chat (mark-read already covered it).
-  const handleChatStatus = (cid: string, generating: boolean) => {
-    setChatStatus((prev) => {
-      const seen = generating || (cid === openChatIdRef.current && document.visibilityState === "visible");
-      const unread = generating ? (prev[cid]?.unread ?? false) : !seen;
-      return { ...prev, [cid]: { generating, unread } };
-    });
-    // A status frame for a chat this client has never listed (created in
-    // another tab/device): pull the list so the row exists.
-    if (chatsRef.current && !chatsRef.current.some((c) => c.id === cid)) {
-      void refreshChats();
+  // The member socket owns thread reconciliation in both browser and Tauri
+  // webview mode. The desktop app process keeps the separate machine socket.
+  const openChatIdRef = useRef<string | null>(chatId);
+  openChatIdRef.current = chatId;
+  const socketRef = useRef<{ resync: () => void; stop: () => void } | null>(null);
+  const syncingChatsRef = useRef(new Map<string, number>());
+  const lastSeqRef = useRef(new Map<string, number>());
+
+  const applyHistory = (state: ThreadState) => {
+    const cid = state.chat_id;
+    if (state.seq <= (lastSeqRef.current.get(cid) ?? -1)) return;
+    lastSeqRef.current.set(cid, state.seq);
+    setChatStatus(prev => ({ ...prev, [cid]: {
+      generating: state.generating,
+      unread: cid === openChatIdRef.current ? false :
+        (!state.generating && prev[cid]?.generating ? true : (prev[cid]?.unread ?? false)),
+    } }));
+    if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
+    if (cid !== openChatIdRef.current) return;
+    const events = state.events;
+    setBusy(state.generating);
+    setAttaching(false);
+    const pending = pendingSendRef.current.get(cid) ?? null;
+    const rendered = reconcilePendingSend(events, threadStateBlocks(state), pending);
+    if (pending && !rendered.some((block) => block.key === pending.key)) {
+      pendingSendRef.current.delete(cid);
     }
-    if (!generating && cid === openChatIdRef.current && document.visibilityState === "visible") {
+    threadCacheRef.current.set(cid, rendered);
+    setCtx(null);
+    setBlocks(rendered);
+    if (typeof document !== "undefined" && document.visibilityState === "visible") {
       void markChatRead(cid);
-      // The sidebar row renders the fetched list, not chatStatus — patch the
-      // row here or the dot lingers until the next list refresh.
+      setChatStatus((prev) =>
+        prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
+      );
       setChats((prev) =>
         prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
       );
     }
   };
-  const handleChatStatusRef = useRef(handleChatStatus);
-  handleChatStatusRef.current = handleChatStatus;
 
-  /// Reloads blocks from thread rows and tracks the high-water seq so a later
-  /// compaction poll only waits for events newer than what is on screen.
-  /// Also carries the server-reported context usage to the gauge; a server
-  /// without it (pre-G1) leaves the gauge hidden.
-  const applyThreadRows = (res: ThreadResult) => {
-    setCtx(res.context ?? null);
-    setBlocks(eventsToBlocks(res.events));
-    // The open chat is on screen: it is read up to the newest event now.
-    // Hidden tabs skip this — the dot must survive for the hidden window.
-    if (typeof document !== "undefined" && document.visibilityState === "visible") {
-      const cid = openChatIdRef.current;
-      if (cid) {
-        void markChatRead(cid);
-        setChatStatus((prev) =>
-          prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
-        );
-        // Same sidebar-row patch as handleChatStatus: the marker moved on the
-        // server, the fetched list row must not keep showing the dot.
-        setChats((prev) =>
-          prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
-        );
-      }
-    }
-  };
-
-  // Per-chat frame watermarks (desktop fan-out bus): frames with seq ≤ the
-  // watermark are already reflected (the snapshot replay covers them).
-  const appSeqRef = useRef<Map<string, number>>(new Map());
-  const openChatIdRef = useRef<string | null>(chatId);
-  openChatIdRef.current = chatId;
-  // Reload tick: bumping re-runs the chatId load effect (fan-out reconnect).
-  const [reloadTick, setReloadTick] = useState(0);
-
-  // Load (or clear) the thread whenever the URL-driven chatId changes — one
-  // path for deep links, back/forward, sidebar picks and "new chat" alike.
+  // Chat switches keep cached content visible until the socket's History
+  // frame overwrites it, then request a fresh sync for the new chat.
   const prevLoadedChatRef = useRef<string | null>(chatId);
   useEffect(() => {
-    // Restore this thread's workspace folder (desktop); a new chat falls
-    // back to the last used one.
     if (isTauri) setProjectDir(storedDir(chatId) ?? storedDir(null));
     const prev = prevLoadedChatRef.current;
     prevLoadedChatRef.current = chatId;
     if (prev !== null && prev !== chatId && blocksRef.current.length > 0) {
-      // Bound the cache: drop the oldest entry past 20 threads.
       if (threadCacheRef.current.size >= 20) {
         const oldest = threadCacheRef.current.keys().next().value;
         if (oldest !== undefined) threadCacheRef.current.delete(oldest);
       }
       threadCacheRef.current.set(prev, blocksRef.current);
     }
+    loadSeq.current++;
+    setBusy(false);
+    stick.current = true;
     if (!chatId) {
-      loadSeq.current++; // invalidate any in-flight load or generation attach
-      loadAbort.current?.abort();
-      loadAbort.current = null;
-      sendAbort.current?.abort();
-      sendAbort.current = null;
-      attachAbort.current?.abort();
-      attachAbort.current = null;
-        setBlocks([]);
+      setBlocks([]);
       setCtx(null);
       setThreadLoading(false);
-      return;
-    }
-    if (skipLoadRef.current === chatId) {
-      // First send just created this thread and its stream is live — the
-      // URL moved to /thread/<id> but nothing may refetch/clear the view.
+    } else if (skipLoadRef.current === chatId) {
+      // Keep the optimistic first-send block, but still reconcile the new chat.
       skipLoadRef.current = null;
-      return;
+    } else {
+      const cached = threadCacheRef.current.get(chatId) ?? null;
+      setThreadLoading(cached === null);
+      setBlocks(cached ?? []);
+      setCtx(null);
     }
-    stick.current = true; // a freshly opened thread starts pinned to the bottom
-    // Switching is allowed even mid-generation: the generation runs detached
-    // server-side and keeps persisting; the client-side stream is cancelled
-    // here and re-attached (with catch-up) when this thread is reopened.
-    loadAbort.current?.abort();
-    const loadAc = new AbortController();
-    loadAbort.current = loadAc;
-    sendAbort.current?.abort();
-    sendAbort.current = null;
-    attachAbort.current?.abort(); // replaced when the new thread's attach starts
-    const seq = ++loadSeq.current;
-    const cached = threadCacheRef.current.get(chatId) ?? null;
-    setThreadLoading(cached === null);
-    setBlocks(cached ?? []);
-    setCtx(null);
-    (async () => {
-      try {
-        const res: ThreadResult = await getThread(chatId, loadAc.signal);
-        if (seq !== loadSeq.current) return; // a newer thread switch superseded this one
-        threadCacheRef.current.set(chatId, eventsToBlocks(res.events));
-        applyThreadRows(res);
-        // The app process executes tools — push the folder for this chat.
-        if (isTauri) void pushChatDir(chatId, storedDir(chatId) ?? storedDir(null));
-        if (isTauri) {
-          // Single-process link: in-flight catch-up comes from the app
-          // process's fan-out mirror, not a second server connection.
-          try {
-            const snap = await chatSnapshot(chatId);
-            if (seq !== loadSeq.current) return;
-            appSeqRef.current.set(chatId, snap.seq);
-            setBusy(snap.running);
-            for (const f of replayFrom(snap.frames)) applyRef.current(f, chatId);
-          } catch {
-            /* link not connected yet — live frames will arrive regardless */
-          }
-        } else {
-          // A generation may still be running server-side (e.g. it outlived
-          // a previous client, or the stream dropped earlier). Attach with
-          // automatic reconnection and keep streaming it into the view.
-          const ac = new AbortController();
-          attachAbort.current = ac;
-          void watchGeneration(chatId, seq, ac);
-        }
-      } catch {
-        // aborted (a newer switch superseded this one) or a real error —
-        // either way the pane falls back to the empty-thread view;
-        // switching is non-destructive
-      } finally {
-        // only the load that is still current may clear the flag; a superseded
-        // one finishing late must not extinguish a newer load's spinner
-        if (seq === loadSeq.current) setThreadLoading(false);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatId, reloadTick]);
+    socketRef.current?.resync();
+  }, [chatId]);
 
   const openChat = (id: string) => {
     // Navigation only: the chatId effect performs the actual load, so back/
@@ -1861,9 +1803,8 @@ export default function WebChat({
   };
 
   const newChat = () => {
-    // Navigation only: the chatId effect clears the pane and aborts any
-    // in-flight load/stream; the server-side generation keeps running and
-    // is re-attachable when the thread is reopened.
+    // Navigation only: the chatId effect selects the new open chat and asks
+    // the member socket to reconcile it.
     pushRoute({ chatId: null, overlay: null });
     setOpen(false);
     ta.current?.focus();
@@ -1894,289 +1835,89 @@ export default function WebChat({
     if (isTauri && chatId) void pushChatDir(chatId, dir);
   };
 
-  // ---- single-process app link (desktop): the fan-out bus ----
+  // ---- member socket frame rendering ----
 
-  /// Applies one streamed event to the blocks. Shapes match the per-turn
-  /// web path; the desktop router calls this for fan-out frames.
-  const applyStreamEvent = (ev: StreamFrame, cid: string) => {
-    if (ev.type === "delta" && ev.content) {
-      setBlocks((b) => {
-        const last = b[b.length - 1];
-        if (last?.kind === "text") return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
-        return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
-      });
-    } else if (ev.type === "thinking_delta" && ev.content) {
-      setBlocks((b) => upsertThinking(b, ev.content!, false));
-    } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
-      handleToolEvent(ev, cid, 0);
-    } else if (ev.type === "approval_requested") {
-      setBlocks((b) =>
-        upsertApproval(b, {
-          callId: ev.call_id as string,
-          name: (ev.name as string) ?? "",
-          args: (ev.arguments as string) ?? "{}",
-          status: "pending",
-        }),
-      );
-    } else if (ev.type === "approval_resolved") {
-      setBlocks((b) =>
-        resolveApproval(
-          b,
-          ev.call_id as string,
-          !!ev.approved,
-          (ev.reason as string | undefined) ?? undefined,
-        ),
-      );
-    } else if (ev.type === "error") {
-      setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error", key: liveKey() }]);
-    }
-  };
-  const applyRef = useRef(applyStreamEvent);
-  applyRef.current = applyStreamEvent;
-
-  // One subscription for the whole component lifetime; the handler reads the
-  // latest closures through refs.
+  const [machineTakenOver, setMachineTakenOver] = useState(false);
   useEffect(() => {
     if (!isTauri) return;
-    void setMachineIdentity(machineId()).catch(() => {});
-    const unlisteners: Promise<UnlistenFn>[] = [
-      listen("app-frame", (e) => {
-        const p = e.payload as { chat_id: string; seq: number; event: { type: string; [k: string]: unknown } };
-        if (p.chat_id !== openChatIdRef.current) return; // renders only the open chat
-        const seen = appSeqRef.current.get(p.chat_id) ?? -1;
-        if (p.seq <= seen) return;
-        appSeqRef.current.set(p.chat_id, p.seq);
-        // A live frame for the open chat means a turn is in flight — restore
-        // the in-progress state even when the load-time snapshot missed it
-        // (e.g. the thread was reopened before the turn's first frame reached
-        // the mirror; only done/error ever cleared busy before).
-        if (p.event.type !== "done" && p.event.type !== "error" && !loadStateRef.current.busy) {
-          setBusy(true);
-        }
-        if (p.event.type === "done") {
-          setBusy(false);
-          // done: reload the durable thread (gauge + rebuilt blocks) and the
-          // sidebar (titles)
-          void (async () => {
-            try {
-              const res: ThreadResult = await getThread(p.chat_id);
-              if (openChatIdRef.current === p.chat_id) applyThreadRows(res);
-            } catch {
-              /* keep the streamed view */
-            }
-            void refreshChats();
-          })();
-          return;
-        }
-        if (p.event.type === "error") setBusy(false);
-        applyRef.current(p.event, p.chat_id);
-      }),
-      listen("app-stream-reconnected", () => {
-        appSeqRef.current.clear();
-        if (openChatIdRef.current) setReloadTick((t) => t + 1);
-      }),
-      // Sidebar status for every chat, not just the open one (the app
-      // process forwards the events stream's chat_status frames here).
-      listen("chat-status", (e) => {
-        const p = e.payload as { chat_id?: string; generating?: boolean };
-        if (p.chat_id && typeof p.generating === "boolean") {
-          handleChatStatusRef.current(p.chat_id, p.generating);
-        }
-      }),
-    ];
-    return () => {
-      unlisteners.forEach((p) => p.then((u) => u()).catch(() => {}));
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void watchMachinePresence(presence => {
+      if (disposed) return;
+      setMachineTakenOver(!!presence.displaced);
+      if (presence.auth_required) onSignOut();
+    }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
+    return () => { disposed = true; stop?.(); };
   }, []);
 
-  /// Handles tool lifecycle events (render only): since the single-process
-  /// redesign, client tools are executed by the app process when the fan-out
-  /// bus delivers them — the webview only renders the chips.
-  const handleToolEvent = (ev: { type: string; [k: string]: unknown }, _cid: string, _seq: number) => {
-    const callId = ev.call_id as string | undefined;
-    if (!callId) return;
-    if (ev.type === "tool_started") {
-      const name = (ev.name as string) ?? "";
-      const args = (ev.arguments as string) ?? "{}";
-      const executor = ev.executor === "client" ? "client" : "server";
-      const kind = (ev as { kind?: string | null }).kind ?? undefined;
-      setBlocks((b) => {
-        // Upsert by call id: the call block may already exist — the thread
-        // reload restores persisted calls (replay after a switch-back, the
-        // attach endpoint re-serves suspended calls) and a blind append
-        // would render the same tool twice.
-        const i = b.findIndex((x) => x.kind === "tool" && x.tool?.callId === callId);
-        const block: Block = {
-          kind: "tool",
-          text: "",
-          tool: { callId, name, args, executor, status: "running", kind },
-          key: i >= 0 ? b[i].key : `tool-${callId}`,
-        };
-        if (i < 0) return [...b, block];
-        const copy = b.slice();
-        copy[i] = block;
-        return copy;
-      });
-    } else if (ev.type === "tool_completed") {
-      const status: "done" | "error" = ev.is_error ? "error" : "done";
-      const content = (ev.content as string) ?? "";
-      setBlocks((b) =>
-        b.map((x) => {
-          const t = x.tool;
-          if (x.kind !== "tool" || !t || t.callId !== callId) return x;
-          return { ...x, tool: { ...t, status, content } };
-        }),
-      );
-    }
-  };
-
-  /// Watches a chat's server-side generation, reconnecting transparently when
-  /// the SSE stream drops (server redeploy, network blip, laptop sleep).
-  /// Every (re)connect first reloads the persisted messages — the durable
-  /// source of truth — so text streamed before the drop is neither duplicated
-  /// nor lost. The attach endpoint ends with `idle` when nothing is running,
-  /// `done`/`error` when the turn finished; a stream that ends with neither
-  /// is a dropped connection → backoff, reload, reattach. Returns what was
-  /// observed so callers can decide on user-facing messaging.
-  const watchGeneration = async (
-    cid: string,
-    seq: number,
-    ac: AbortController,
-  ): Promise<{ terminal: "done" | "error" | "idle" | "none"; sawContent: boolean }> => {
-    // `attaching` feeds the visible streaming state (caret, live thinking);
-    // set it only when the stream actually carries a turn — a plain attach
-    // to an idle thread must not render as if the model were generating.
-    let attachingShown = false;
-    const showAttaching = () => {
-      if (!attachingShown) {
-        attachingShown = true;
-        setAttaching(true);
-      }
-    };
-    let sawContent = false;
-    // holder object: the SSE callbacks mutate this after an await, which a
-    // plain `let` cannot express under TS control-flow narrowing
-    const term: { v: "done" | "error" | "idle" | "none" } = { v: "none" };
-    let lastError: string | null = null;
-    try {
-      for (let attempt = 0; attempt < 12; attempt++) {
-        if (seq !== loadSeq.current || ac.signal.aborted) break;
-        try {
-          // reconcile with durable state before (re)attaching
-          const res: ThreadResult = await getThread(cid, ac.signal);
-          if (seq !== loadSeq.current || ac.signal.aborted) break;
-          applyThreadRows(res);
-          term.v = "none";
-          // The first delta after attach is the server's catch-up snapshot of
-          // the in-flight turn (full buffer, not a delta) — or, when there is
-          // no catch-up, the first live delta of that turn. Either way it
-          // starts a NEW text block: the reload above restored persisted
-          // messages only, so the in-flight turn has no block yet and the
-          // last text block belongs to a previous turn. Later deltas append.
-          let firstDelta = true;
-          // Same contract for thinking: the first thinking_delta after attach
-          // carries the full in-flight reasoning buffer (spec B.5) and starts
-          // a new reasoning block — the reload left none for this step.
-          let firstThinking = true;
-          await attachGeneration(
-            cid,
-            (ev) => {
-              if (seq !== loadSeq.current) return; // user moved to another thread
-              if (ev.type === "delta" && ev.content) {
-                showAttaching();
-                sawContent = true;
-                const seed = firstDelta;
-                firstDelta = false;
-                setBlocks((b) => {
-                  const last = b[b.length - 1];
-                  if (!seed && last?.kind === "text") return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
-                  return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
-                });
-              } else if (ev.type === "thinking_delta" && ev.content) {
-                showAttaching();
-                sawContent = true;
-                const seed = firstThinking;
-                firstThinking = false;
-                setBlocks((b) => upsertThinking(b, ev.content!, seed));
-              } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
-                showAttaching();
-                sawContent = true;
-                handleToolEvent(ev, cid, seq);
-              } else if (ev.type === "approval_requested") {
-                showAttaching();
-                sawContent = true;
-                setBlocks((b) =>
-                  upsertApproval(b, {
-                    callId: ev.call_id as string,
-                    name: (ev.name as string) ?? "",
-                    args: (ev.arguments as string) ?? "{}",
-                    status: "pending",
-                  }),
-                );
-              } else if (ev.type === "approval_resolved") {
-                showAttaching();
-                sawContent = true;
-                setBlocks((b) =>
-                  resolveApproval(
-                    b,
-                    ev.call_id as string,
-                    !!ev.approved,
-                    (ev.reason as string | undefined) ?? undefined,
-                  ),
-                );
-              } else if (ev.type === "error") {
-                lastError = ev.message ?? "model error";
-                term.v = "error";
-              } else if (ev.type === "done") {
-                term.v = "done";
-              } else if (ev.type === "idle") {
-                term.v = "idle";
-              }
-            },
-            ac.signal,
-          );
-          // re-read through a widened local: the SSE callbacks may have
-          // reassigned term.v after the await, which TS narrowing can't see
-          const outcome = term.v as "done" | "error" | "idle" | "none";
-          if (outcome === "idle" || outcome === "done") {
-            // the generation may have completed between the reload and the
-            // attach; reload once more so the final events — and the fresh
-            // context usage for the gauge — are on screen
-            try {
-              const final: ThreadResult = await getThread(cid, ac.signal);
-              if (seq === loadSeq.current) {
-                applyThreadRows(final);
-              }
-            } catch {
-              /* keep what we have */
-            }
-            break;
-          }
-          if (outcome !== "none") break; // error: real end
-          // no terminal frame → dropped connection; fall through to backoff
-        } catch {
-          /* network error while loading or attaching → retry */
-        }
-        await new Promise((r) => setTimeout(r, Math.min(500 * 2 ** attempt, 4000)));
-      }
-    } finally {
-      if (attachAbort.current === ac) {
-        attachAbort.current = null;
+  // One member socket serves both browser tabs and Tauri webviews. The
+  // Tauri app process has its own machine socket for tool execution.
+  useEffect(() => {
+    if (isTauri) void setMachineIdentity(machineId()).catch(() => {});
+    const connection = startSocket({
+      onConnect: () => {
+        syncingChatsRef.current.clear();
+        lastSeqRef.current.clear();
         setAttaching(false);
-      }
-    }
-    if (term.v === "error" && lastError !== null) {
-      // (kept as-is: reached only when the loop broke on an error frame)
-      setBlocks((b) => [...b, { kind: "error", text: lastError!, key: liveKey() }]);
-    }
-    return { terminal: term.v as "done" | "error" | "idle" | "none", sawContent };
-  };
+        setBusy(false);
+      },
+      onThreadList: (nextChats) => {
+        setChats(nextChats);
+        setChatStatus(statusFromThreads(nextChats));
+        setBusy(!!nextChats.find(chat => chat.id === openChatIdRef.current)?.generating);
+        setAttaching(false);
+      },
+      // Sequenced ThreadState owns busy state; older status notifications cannot override it.
+      onChatStatus: () => {},
+      onThreadState: (state) => applyHistory(state),
+      onSync: (cid, phase) => {
+        if (phase === "begin") {
+          syncingChatsRef.current.set(cid, (syncingChatsRef.current.get(cid) ?? 0) + 1);
+        } else {
+          const depth = (syncingChatsRef.current.get(cid) ?? 1) - 1;
+          if (depth > 0) syncingChatsRef.current.set(cid, depth);
+          else syncingChatsRef.current.delete(cid);
+        }
+        if (cid !== openChatIdRef.current) return;
+        if (phase === "begin") {
+          setThreadLoading(true);
+        } else if (!syncingChatsRef.current.has(cid)) {
+          setThreadLoading(false);
+          setAttaching(false);
+        }
+      },
+      // Content is replaced only by sequenced ThreadState, never by raw deltas.
+      onFrame: (frame) => {
+        if (frame.chat_id === openChatIdRef.current && frame.event.type === "error") {
+          toast.error(frame.event.message ?? "Model error");
+        }
+      },
+      onError: (message) => {
+        if (message === "frames dropped — resync") {
+          socketRef.current?.resync();
+        } else {
+          setThreadLoading(false);
+          toast.error(message);
+        }
+      },
+      onDisplaced: () => toast.error("This chat connection was replaced"),
+      onAuthRequired: () => onSignOut(),
+      getOpenChatId: () => openChatIdRef.current,
+    });
+    socketRef.current = connection;
+    return () => {
+      if (socketRef.current === connection) socketRef.current = null;
+      connection.stop();
+    };
+    // Stable refs keep this member socket alive for the component lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const send = async () => {
     const text = prompt.trim();
     if ((!text && pendingRef.current.length === 0) || busy || openGenerating || !model) return;
-    const mySeq = loadSeq.current; // switching away mid-send cancels the client stream
+    const mySeq = loadSeq.current; // ignores results after a chat switch
+    const sentAt = Date.now();
     setBusy(true);
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
@@ -2185,12 +1926,13 @@ export default function WebChat({
     // Send button during the same commit would otherwise move focus to
     // body and override a synchronous focus().
     requestAnimationFrame(() => ta.current?.focus());
-    const sentKey = liveKey();
+    const sentKey = crypto.randomUUID();
     setBlocks((b) => [
       ...b,
       {
         kind: "user",
         text,
+        pending: true,
         key: sentKey,
         attachments: pendingRef.current.map((a) => ({
           id: `pending-${a.id}`,
@@ -2206,8 +1948,8 @@ export default function WebChat({
     if (!cid) {
       cid = await createChat(text.slice(0, 48));
       if (cid && loadSeq.current === mySeq) {
-        // Move the URL to the new thread; the live send stream must not be
-        // interrupted by a refetch (the chatId effect skips via skipLoadRef).
+        // Move the URL to the new thread without losing the optimistic
+        // pending marker; the chatId effect still requests socket reconcile.
         if (projectDirRef.current) saveDir(cid, projectDirRef.current);
         skipLoadRef.current = cid;
         if (approvalMode !== "default") {
@@ -2229,14 +1971,23 @@ export default function WebChat({
       setBusy(false);
       return;
     }
+    pendingSendRef.current.set(cid, {
+      chatId: cid,
+      text,
+      key: sentKey,
+      sentAt,
+      attachments: pendingRef.current.map((a) => ({
+        id: `pending-${a.id}`,
+        filename: a.filename,
+        content_type: a.content_type,
+        size_bytes: a.size_bytes,
+        modality: a.modality,
+        previewUrl: a.previewUrl,
+      })),
+    });
     // Optimistic sidebar spinner: the server's generating flag lands via
     // the chat-status channel within a second; this makes it instant.
     setChatStatus((prev) => ({ ...prev, [cid]: { ...(prev[cid] ?? { unread: false }), generating: true } }));
-    const ac = new AbortController();
-    sendAbort.current = ac;
-    // The Tauri send is fire-and-forget: after the POST resolves, the
-    // fan-out done/error frames own `busy` — the finally below must leave
-    // it set (only a POST failure returns through it with busy cleared).
     let keepBusyThroughFinally = false;
     try {
       // Upload attachments first; their ids ride along with the send and
@@ -2247,9 +1998,6 @@ export default function WebChat({
         try {
           const meta = await uploadAttachment(cid, a.file);
           attachmentIds.push(meta.id);
-          // The optimistic chip's composer URL dies with the send: swap the
-          // block row to the uploaded id so its thumbnail is re-fetched from
-          // storage (the hook owns that blob URL's lifecycle).
           setBlocks((b) =>
             b.map((bl) =>
               bl.key === sentKey && bl.kind === "user"
@@ -2266,8 +2014,6 @@ export default function WebChat({
           );
         } catch (e) {
           if (loadSeq.current === mySeq) {
-            // Upload failed: the chip loses the composer-owned preview (it
-            // is revoked below) and falls back to its file icon.
             setBlocks((b) =>
               b.map((bl) =>
                 bl.key === sentKey && bl.kind === "user"
@@ -2291,151 +2037,37 @@ export default function WebChat({
           }
         }
       }
-      // Sent attachments leave the composer: revoke their preview URLs —
-      // uploaded ones now render from the uploaded id, failed ones fell
-      // back to the icon.
       for (const a of pendingRef.current) {
         if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
       }
       setPending([]);
-      if (isTauri) {
-        // Single-process link: the turn's frames arrive on the fan-out bus
-        // (the app-frame listener); this POST is fire-and-forget. Done/error
-        // frames clear `busy` and reload the durable thread.
-        void pushChatDir(cid, projectDirRef.current);
-        try {
-          await sendChatNoStream(cid, model, text, attachmentIds, projectDirRef.current);
-        } catch (e) {
-          if (loadSeq.current === mySeq) {
-            setBlocks((b) => [
-              ...b,
-              { kind: "error", text: e instanceof Error ? e.message : String(e), key: liveKey() },
-            ]);
-          }
-          // The POST failed: no turn was started, so the finally below
-          // clears busy.
-          return;
-        }
-        // The turn streams on the fan-out bus now; busy stays set through
-        // the finally below until the turn's done/error frame clears it.
-        keepBusyThroughFinally = true;
-        return;
-      }
-      let gotDone = false;
-      await streamChat(
-        cid,
-        model,
-        text,
-        (ev) => {
-          if (loadSeq.current !== mySeq) return; // user switched away mid-generation
-          if (ev.type === "done") {
-            gotDone = true;
-            return;
-          }
-          if (ev.type === "delta" && ev.content) {
-            // deltas are per model turn; every tool call emits tool_started,
-            // so a tool block always separates turns — append to the current
-            // text block, or start a new one after a tool block
-            setBlocks((b) => {
-              const last = b[b.length - 1];
-              if (last?.kind === "text") return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
-              return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
-            });
-          } else if (ev.type === "thinking_delta" && ev.content) {
-            // live deltas: the send stream has no catch-up snapshot, every
-            // frame is a pure delta (spec B.5)
-            setBlocks((b) => upsertThinking(b, ev.content!, false));
-          } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
-            handleToolEvent(ev, cid, mySeq);
-          } else if (ev.type === "approval_requested") {
-            setBlocks((b) =>
-              upsertApproval(b, {
-                callId: ev.call_id as string,
-                name: (ev.name as string) ?? "",
-                args: (ev.arguments as string) ?? "{}",
-                status: "pending",
-              }),
-            );
-          } else if (ev.type === "approval_resolved") {
-            setBlocks((b) =>
-              resolveApproval(
-                b,
-                ev.call_id as string,
-                !!ev.approved,
-                (ev.reason as string | undefined) ?? undefined,
-              ),
-            );
-          } else if (ev.type === "error") {
-            setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error", key: liveKey() }]);
-          }
-        },
-        ac.signal,
-        attachmentIds,
-        projectDirRef.current,
-      );
-      if (!gotDone) {
-        // stream ended without a terminal frame: the connection dropped while
-        // the durable generation keeps running server-side — watch it instead
-        // of surfacing a dead "network error"
-        throw new DropError();
-      }
-      // done: reload the durable thread once so the gauge's context usage
-      // reflects the completed turn (blocks rebuild to the same view)
-      try {
-        const res: ThreadResult = await getThread(cid);
-        if (loadSeq.current === mySeq) applyThreadRows(res);
-      } catch {
-        /* keep the streamed view */
-      }
-      void refreshChats();
+      if (isTauri) void pushChatDir(cid, projectDirRef.current);
+      await sendChatNoStream(cid, model, text, attachmentIds, projectDirRef.current, sentKey);
+      // Submission is not persistence. Only the committed socket echo settles the marker.
+      // The member socket delivers every effect. Busy ends on done/error or
+      // when a state sync observes that the server is no longer generating.
+      keepBusyThroughFinally = true;
     } catch (e) {
-      if (loadSeq.current !== mySeq) {
-        // deliberate switch away, not an error: the turn keeps running
-        // detached server-side — the chat-status generating truth owns both
-        // spinners from here, and reopening the thread reattaches
+      if (pendingSendRef.current.get(cid)?.key === sentKey) pendingSendRef.current.delete(cid);
+      threadCacheRef.current.set(
+        cid,
+        (threadCacheRef.current.get(cid) ?? []).filter((block) => block.key !== sentKey),
+      );
+      if (loadSeq.current === mySeq) {
+        setBlocks((b) => [
+          ...b.filter((block) => block.key !== sentKey),
+          { kind: "error", text: e instanceof Error ? e.message : String(e), key: liveKey() },
+        ]);
         setBusy(false);
-        return;
       }
-      setBusy(false);
-      if (sendAbort.current === ac) sendAbort.current = null;
-      const wac = new AbortController();
-      attachAbort.current?.abort();
-      attachAbort.current = wac;
-      setReattaching(true);
-      try {
-        const r = await watchGeneration(cid, mySeq, wac);
-        if (r.terminal === "done") {
-          void refreshChats();
-        } else if (r.terminal === "idle" && !r.sawContent) {
-          setBlocks((b) => [
-            ...b,
-            { kind: "error", text: "connection dropped before the reply started — try sending again", key: liveKey() },
-          ]);
-        } else if (r.terminal === "none") {
-          setBlocks((b) => [
-            ...b,
-            {
-              kind: "error",
-              key: liveKey(),
-              text: "lost connection and could not reattach — the reply may still arrive; reopen this thread to catch up",
-            },
-          ]);
-        }
-      } finally {
-        setReattaching(false);
-      }
-      return;
     } finally {
-      // The Tauri send hands `busy` over to the fan-out done/error frames
-      // (the comment on the POST branch); every other exit clears it.
       if (!keepBusyThroughFinally) setBusy(false);
-      if (sendAbort.current === ac) sendAbort.current = null;
     }
   };
 
   const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
   const boundMachine = chats?.find((c) => c.id === chatId)?.machine_label ?? null;
-  const streaming = busy || attaching || reattaching || openGenerating;
+  const streaming = busy || attaching || openGenerating;
 
   const sidebar = (
     <SidebarContent
@@ -2535,6 +2167,7 @@ export default function WebChat({
           addFiles(files);
         }}
       >
+        {machineTakenOver && <div role="status" className="border-b border-border px-4 py-2 text-muted-foreground">Taken over on this machine. Tools run in the other Guild app.</div>}
         {dragOver && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
             <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-muted-foreground shadow-lg">
@@ -2618,6 +2251,7 @@ export default function WebChat({
                     className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5"
                   >
                     {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
+                    {b.pending && <div className="text-xs text-muted-foreground">sending…</div>}
                     {b.attachments && b.attachments.length > 0 && (
                       <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
                         {b.attachments.filter((a) => a.modality === "image").map((a) => (

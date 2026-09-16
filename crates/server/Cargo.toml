@@ -49,6 +49,8 @@ wiremock = { version = "0.6", optional = true }
 aws-sdk-s3 = { version = "1", optional = true, default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
 
 [dev-dependencies]
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tokio = { workspace = true, features = ["test-util"] }
 wiremock = "0.6"
 uuid.workspace = true
 # Fixture MCP server for plugin tests (features union with the client dep).
@@ -165,14 +167,6 @@ required-features = ["test-support"]
 
 [[test]]
 name = "builtin_plugin"
-required-features = ["test-support"]
-
-[[test]]
-name = "app_stream_dispatch"
-required-features = ["test-support"]
-
-[[test]]
-name = "executor_registry"
 required-features = ["test-support"]
 
 [[test]]

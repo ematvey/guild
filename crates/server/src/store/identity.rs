@@ -333,6 +333,31 @@ impl<'a> IdentityStore<'a> {
         .ok_or_else(|| ApiError::unauthorized("invalid or expired session"))
     }
 
+    pub async fn session_grant(
+        &self,
+        token: &str,
+    ) -> Result<(String, chrono::DateTime<Utc>), ApiError> {
+        let hash = sha256_hex(token.as_bytes());
+        let expires = self.session_expiry(&hash).await?;
+        Ok((hash, expires))
+    }
+
+    pub async fn session_expiry(&self, hash: &str) -> Result<chrono::DateTime<Utc>, ApiError> {
+        sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()")
+            .bind(hash).fetch_optional(self.pool).await?
+            .ok_or_else(|| ApiError::unauthorized("invalid or expired session"))
+    }
+
+    /// Refresh only a still-valid session. Revocation and expiry are final.
+    pub async fn refresh_session(&self, token: &str) -> Result<(), ApiError> {
+        let result = sqlx::query("UPDATE sessions SET expires_at = now() + interval '30 days' WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()")
+            .bind(sha256_hex(token.as_bytes())).execute(self.pool).await?;
+        if result.rows_affected() == 0 {
+            return Err(ApiError::unauthorized("invalid or expired session"));
+        }
+        Ok(())
+    }
+
     pub async fn revoke_session(&self, token: &str) -> anyhow::Result<()> {
         sqlx::query("UPDATE sessions SET revoked_at = now() WHERE token_hash = $1")
             .bind(sha256_hex(token.as_bytes()))

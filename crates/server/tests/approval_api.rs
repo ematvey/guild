@@ -5,7 +5,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use guild_server::test_support::{
     insert_org_with_chat, note_generation, test_state_with_mock_ingress, MockIngress,
 };
@@ -414,47 +414,70 @@ async fn attach_replays_unresolved_approval_requests() {
         .await
         .unwrap();
 
-    let res = app
-        .clone()
-        .oneshot(req(
-            "GET",
-            format!("/api/v1/gateway/chat/{chat}/stream"),
-            &token,
-            None,
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let ticket: Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/v1/ws/ticket"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!(
+        "ws://{addr}/api/v1/ws?ticket={}",
+        ticket["ticket"].as_str().unwrap()
+    ))
+    .await
+    .unwrap();
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            json!({"type":"sync", "chat_id":chat}).to_string().into(),
         ))
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-
-    // The stream stays open (generation in flight) — read a few chunks with
-    // a timeout and stop once both expected frames arrived.
-    let mut stream = res.into_body().into_data_stream();
-    let mut buf = String::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-    while tokio::time::Instant::now() < deadline {
-        let chunk = tokio::time::timeout(Duration::from_millis(500), stream.next()).await;
-        match chunk {
-            Ok(Some(Ok(bytes))) => {
-                buf.push_str(&String::from_utf8_lossy(bytes.as_ref()));
+    let events = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match socket.next().await.unwrap().unwrap() {
+                tokio_tungstenite::tungstenite::Message::Ping(payload) => {
+                    socket
+                        .send(tokio_tungstenite::tungstenite::Message::Pong(payload))
+                        .await
+                        .unwrap();
+                }
+                tokio_tungstenite::tungstenite::Message::Text(text) => {
+                    if let Ok(protocol::ws::WsServerMsg::ThreadState { events, .. }) =
+                        serde_json::from_str(&text)
+                    {
+                        break events;
+                    }
+                }
+                _ => {}
             }
-            _ => break,
         }
-        if buf.matches("\"approval_requested\"").count() >= 1
-            && buf.contains("\"call_id\":\"a2\"")
-            && !buf.contains("\"call_id\":\"a1\"")
-            && !buf.contains("\"call_id\":\"a3\"")
-        {
-            break;
-        }
-    }
-
-    assert!(
-        buf.contains("\"approval_requested\""),
-        "no ApprovalRequested frame in:\n{buf}"
-    );
-    assert!(buf.contains("\"call_id\":\"a2\""), "a2 missing:\n{buf}");
-    assert!(
-        !buf.contains("\"call_id\":\"a1\"") && !buf.contains("\"call_id\":\"a3\""),
-        "resolved calls leaked into replay:\n{buf}"
-    );
+    })
+    .await
+    .unwrap();
+    let settled: std::collections::HashSet<_> = events
+        .iter()
+        .filter(|row| {
+            matches!(
+                row["event"]["type"].as_str(),
+                Some("approval_decision" | "tool_result")
+            )
+        })
+        .filter_map(|row| row["event"]["call_id"].as_str())
+        .collect();
+    let pending: Vec<_> = events
+        .iter()
+        .filter(|row| row["event"]["type"] == "approval_request")
+        .filter_map(|row| row["event"]["call_id"].as_str())
+        .filter(|call| !settled.contains(call))
+        .collect();
+    assert_eq!(pending, vec!["a2"]);
+    server.abort();
 }
