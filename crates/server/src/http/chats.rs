@@ -8,6 +8,7 @@ use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::{Json, Router};
 use protocol::api::{Chat, CreateChatRequest, ThreadEvent};
+use protocol::ws::WsServerMsg;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -239,11 +240,19 @@ async fn set_dir(
         .chats()
         .get_chat(user.0.org_id, chat_id, &user.0)
         .await?;
-    let dir = req["dir"].as_str().filter(|s| !s.is_empty());
+    let dir = req["dir"].as_str().filter(|s| !s.is_empty()).map(str::to_string);
     let chat = store
         .chats()
-        .set_project_dir(user.0.org_id, chat_id, &user.0, dir)
+        .set_project_dir(user.0.org_id, chat_id, &user.0, dir.as_deref())
         .await?;
+    // Every device renders the folder chip: push a fresh thread list to the
+    // caller's live sockets so the chip appears without a reload.
+    let broadcast = state.feeds.lock().unwrap().get(&user.0.id).map(|f| f.broadcast.clone());
+    if let Some(broadcast) = broadcast {
+        if let Ok(chats) = crate::http::feed::thread_list(&state, user.0.org_id, user.0.id).await {
+            let _ = broadcast.send(WsServerMsg::ThreadList { chats });
+        }
+    }
     Ok(Json(chat.into()))
 }
 
