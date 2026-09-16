@@ -2251,7 +2251,6 @@ export default function WebChat({
                     className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5"
                   >
                     {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
-                    {b.pending && <div className="text-xs text-muted-foreground">sending…</div>}
                     {b.attachments && b.attachments.length > 0 && (
                       <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
                         {b.attachments.filter((a) => a.modality === "image").map((a) => (
