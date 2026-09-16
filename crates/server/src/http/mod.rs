@@ -6,6 +6,7 @@ pub mod auth;
 pub mod chats;
 pub mod error;
 pub mod events;
+pub mod feed;
 pub mod gateway;
 pub mod hub;
 pub mod integration_tools;

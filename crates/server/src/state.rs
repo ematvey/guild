@@ -77,6 +77,8 @@ pub struct AppState {
         Arc<std::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<u64>>>>,
     pub ws_tickets: crate::http::ws::TicketStore,
     pub hub: Arc<Hub>,
+    /// One live-frame feed per user, shared by all of their sockets.
+    pub feeds: Arc<std::sync::Mutex<HashMap<Uuid, crate::http::feed::FeedHandle>>>,
 }
 
 impl AppState {
@@ -96,6 +98,7 @@ impl AppState {
             machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
             ws_tickets: Default::default(),
             hub: Arc::new(Hub::default()),
+            feeds: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -150,6 +153,7 @@ impl AppState {
             machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
             ws_tickets: Default::default(),
             hub: Arc::new(Hub::default()),
+            feeds: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 

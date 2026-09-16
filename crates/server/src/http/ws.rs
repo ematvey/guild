@@ -5,6 +5,7 @@
 //! authenticated HTTP session.
 
 use crate::http::auth::AuthUser;
+use crate::http::feed;
 use crate::http::hub::Member;
 use crate::state::AppState;
 use axum::{
@@ -152,6 +153,23 @@ pub(crate) async fn drive_socket(
     };
 
     let _ = member.sink.send(WsServerMsg::Hello).await;
+    match feed::thread_list(&state, &user).await {
+        Ok(chats) => {
+            let _ = member.sink.send(WsServerMsg::ThreadList { chats }).await;
+        }
+        Err(error) => {
+            let _ = member
+                .sink
+                .send(WsServerMsg::Error {
+                    message: error.message,
+                })
+                .await;
+        }
+    }
+    let feed_forwarder = feed::forward_to_socket(
+        feed::feed_of(&state, &user).await.broadcast.subscribe(),
+        member.sink.clone(),
+    );
     loop {
         tokio::select! {
             _ = async {
@@ -174,7 +192,7 @@ pub(crate) async fn drive_socket(
             },
             incoming = ws_rx.next() => match incoming {
                 Some(Ok(axum::extract::ws::Message::Text(text))) => {
-                    if handle_client_msg(&state, &member, &machine_id, &text).await {
+                    if handle_client_msg(&state, &user, &member, &machine_id, &text).await {
                         break;
                     }
                 }
@@ -189,6 +207,7 @@ pub(crate) async fn drive_socket(
         }
     }
 
+    feed_forwarder.abort();
     match machine_id.as_deref() {
         Some(machine_id) => state.hub.unregister_machine(machine_id, conn_id),
         None => state.hub.unregister_member(user.0.id, member.conn_id),
@@ -196,12 +215,58 @@ pub(crate) async fn drive_socket(
 }
 
 async fn handle_client_msg(
-    _state: &AppState,
-    _member: &Member,
+    state: &AppState,
+    user: &AuthUser,
+    member: &Member,
     _machine_id: &Option<String>,
     text: &str,
 ) -> bool {
-    let _ = serde_json::from_str::<WsClientMsg>(text);
+    let Ok(message) = serde_json::from_str::<WsClientMsg>(text) else {
+        return false;
+    };
+    match message {
+        WsClientMsg::Sync {
+            chat_id: Some(chat_id),
+        } => feed::run_sync(state, user, chat_id, &member.sink).await,
+        WsClientMsg::Sync { chat_id: None } => {}
+        WsClientMsg::ToolResult {
+            chat_id,
+            call_id,
+            content,
+            is_error,
+            meta,
+        } => {
+            let result = async {
+                let store = state.store().await?;
+                store
+                    .chats()
+                    .get_chat(user.0.org_id, chat_id, &user.0)
+                    .await?;
+                crate::http::internal::restate_send_one_way(
+                    state,
+                    "ChatRunner",
+                    &format!("{chat_id}/complete_tool"),
+                    json!({
+                        "call_id": call_id,
+                        "content": content,
+                        "is_error": is_error,
+                        "meta": meta,
+                    }),
+                )
+                .await?;
+                Ok::<(), crate::http::error::ApiError>(())
+            }
+            .await;
+            if let Err(error) = result {
+                let _ = member
+                    .sink
+                    .send(WsServerMsg::Error {
+                        message: error.message,
+                    })
+                    .await;
+            }
+        }
+    }
     false
 }
 
@@ -231,7 +296,7 @@ mod tests {
             sink: mpsc::channel(1).0,
             label: None,
         };
-        assert!(!handle_client_msg(&state, &member, &None, r#"{"type":"future"}"#).await);
+        assert!(!handle_client_msg(&state, &user(), &member, &None, r#"{"type":"future"}"#).await);
     }
 
     #[test]
