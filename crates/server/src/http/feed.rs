@@ -497,6 +497,15 @@ pub(crate) async fn thread_list(
                 .as_deref()
                 .map(|mid| state.hub.machine_online(mid))
                 .unwrap_or(false);
+            // Old chats stored the raw machine id as their label; the live
+            // hub label (the machine's hostname) is the truth when the slot
+            // is up.
+            if chat.machine_online {
+                if let Some(mid) = &chat.machine_id {
+                    chat.machine_label =
+                        Some(state.hub.machine_label(mid).unwrap_or_else(|| mid.clone()));
+                }
+            }
             serde_json::to_value(chat).expect("chat serializes")
         })
         .collect())
