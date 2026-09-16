@@ -7,6 +7,7 @@
 //    the org gateway; plain chat.
 //    the same localStorage token.
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { WsServerMsg } from "../../../crates/protocol/bindings/Ws";
 
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -137,12 +138,24 @@ export interface SocketLike {
 
 export type SocketFactory = (url: string) => SocketLike;
 
+export type MachinePresence = { connected: boolean; displaced?: boolean; auth_required?: boolean };
+
+export async function watchMachinePresence(update: (presence: MachinePresence) => void): Promise<() => void> {
+  const unlisten = await listen<MachinePresence>("app-presence", (event) => update(event.payload));
+  const presence = await invoke<MachinePresence>("machine_presence");
+  if (presence) update(presence);
+  return unlisten;
+}
+
+export type ThreadState = { chat_id: string; seq: number; events: ThreadEventRow[]; text: string; thinking: string; generating: boolean };
+
 export interface SocketHandlers {
+  onConnect?: () => void;
+  onThreadState?: (state: ThreadState) => void;
   onThreadList: (chats: ChatSummary[]) => void;
   onChatStatus: (frame: { chat_id: string; generating: boolean }) => void;
   onFrame: (frame: { chat_id: string; machine_id: string | null; event: StreamFrame }) => void;
   onSync: (chat_id: string, phase: "begin" | "done") => void;
-  onHistory?: (chat_id: string, events: ThreadEventRow[]) => void;
   onDisplaced?: () => void;
   onAuthRequired?: () => void;
   onError?: (message: string) => void;
@@ -161,12 +174,34 @@ export function wsUrl(): string {
   return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 }
 
+let refreshing: Promise<void> | null = null;
+export function refreshSession(): Promise<void> {
+  if (!refreshing) refreshing = (async () => {
+    const response = await fetch(apiUrl("/api/v1/auth/refresh"), {
+      method: "POST", headers: { authorization: `Bearer ${getToken()}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (response.status === 401 || response.status === 403) throw new SessionExpiredError("Sign in again to reconnect");
+    if (!response.ok) throw new Error("Session refresh is temporarily unavailable");
+    const value = await response.json();
+    if (typeof value.token === "string") setToken(value.token);
+  })().finally(() => { refreshing = null; });
+  return refreshing;
+}
+
 /** Mints a one-use ticket for a WebSocket upgrade. */
-export async function mintTicket(): Promise<string> {
+class SessionExpiredError extends Error {}
+export async function mintTicket(refreshed = false): Promise<string> {
   const res = await fetch(apiUrl("/api/v1/ws/ticket"), {
     method: "POST",
+    signal: AbortSignal.timeout(10000),
     headers: { authorization: `Bearer ${getToken()}` },
   });
+  if (res.status === 401 && !refreshed) {
+    await refreshSession();
+    return mintTicket(true);
+  }
+  if (res.status === 401) throw new SessionExpiredError("Sign in again to reconnect");
   const value = await res.json().catch(() => ({}));
   if (!res.ok || typeof value.ticket !== "string") {
     throw new Error(value?.error?.message ?? res.statusText);
@@ -183,6 +218,10 @@ export function openSocket(url: string, factory: SocketFactory = (u) => new WebS
 export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): void {
   switch (message.type) {
     case "hello":
+    case "tool_dispatch":
+      return;
+    case "thread_state":
+      handlers.onThreadState?.(message as unknown as ThreadState);
       return;
     case "thread_list":
       handlers.onThreadList(message.chats as unknown as ChatSummary[]);
@@ -193,10 +232,6 @@ export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): vo
     case "sync_begin":
       handlers.onSync(message.chat_id, "begin");
       return;
-    case "history":
-      handlers.onHistory?.(message.chat_id, message.events as unknown as ThreadEventRow[]);
-      return;
-    case "snapshot_frame":
     case "live_frame":
       handlers.onFrame({ chat_id: message.chat_id, machine_id: message.machine_id, event: message.event as StreamFrame });
       return;
@@ -230,6 +265,8 @@ export function startSocket(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
   let connecting = false;
+  let needsRefresh = false;
+  const viewWatermarks = new Map<string, number>();
 
   const sendSync = () => {
     if (socket?.readyState !== 1) return;
@@ -246,18 +283,47 @@ export function startSocket(
     if (stopped || connecting) return;
     connecting = true;
     try {
+      if (needsRefresh) { await refreshSession(); needsRefresh = false; }
       const ticket = await mintTicket();
       if (stopped) return;
       const url = `${wsUrl()}/api/v1/ws?ticket=${encodeURIComponent(ticket)}&client_id=${encodeURIComponent(clientId())}`;
       const current = openSocket(url, factory);
       socket = current;
       current.onopen = () => {
+        if (socket !== current || stopped) return;
+        viewWatermarks.clear();
+        opts.onConnect?.();
         sendSync();
       };
       current.onmessage = (event) => {
-        if (typeof event.data !== "string") return;
+        if (socket !== current || stopped || typeof event.data !== "string") return;
         try {
-          routeMessage(JSON.parse(event.data) as WsServerMsg, opts);
+          const message = JSON.parse(event.data) as WsServerMsg;
+          if (message.type === "auth_required") {
+            connecting = true;
+            needsRefresh = true;
+            current.close();
+            void refreshSession().then(() => {
+              needsRefresh = false;
+              connecting = false;
+              scheduleReconnect();
+            }).catch((error) => {
+              connecting = false;
+              if (error instanceof SessionExpiredError) {
+                stopped = true;
+                opts.onAuthRequired?.();
+              } else {
+                opts.onError?.(error instanceof Error ? error.message : String(error));
+                scheduleReconnect();
+              }
+            });
+            return;
+          }
+          if (message.type === "thread_state") {
+            if (message.seq <= (viewWatermarks.get(message.chat_id) ?? -1)) return;
+            viewWatermarks.set(message.chat_id, message.seq);
+          }
+          routeMessage(message, opts);
         } catch {
           /* malformed server message — ignore */
         }
@@ -266,11 +332,13 @@ export function startSocket(
         current.close();
       };
       current.onclose = () => {
-        if (socket === current) socket = null;
+        if (socket !== current) return;
+        socket = null;
         scheduleReconnect();
       };
     } catch (error) {
       connecting = false;
+      if (error instanceof SessionExpiredError) { stopped = true; opts.onAuthRequired?.(); return; }
       opts.onError?.(error instanceof Error ? error.message : String(error));
       scheduleReconnect();
     } finally {
@@ -630,13 +698,14 @@ export async function attachmentBlobUrl(id: string): Promise<string | null> {
 }
 
 /// Sends a chat command over HTTP. The member WebSocket delivers every
-/// resulting frame; the response body is dropped unread.
+/// resulting content. The JSON acknowledgment only confirms submission.
 export async function sendChatNoStream(
   chatId: string,
   model: string,
   prompt: string,
   attachmentIds: string[] = [],
   projectDir?: string | null,
+  messageId?: string,
 ): Promise<void> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
@@ -649,6 +718,7 @@ export async function sendChatNoStream(
     },
     body: JSON.stringify({
       chat_id: chatId,
+      user_message_id: messageId,
       model,
       messages: [{ role: "user", content: prompt }],
       client_tools: IS_TAURI,
@@ -660,11 +730,8 @@ export async function sendChatNoStream(
     const v = await res.json().catch(() => ({}));
     throw new Error(v?.error?.message ?? res.statusText);
   }
-  try {
-    await res.body?.cancel();
-  } catch {
-    /* already consumed */
-  }
+  const acknowledgment = await res.json();
+  if (acknowledgment.accepted !== true) throw new Error("Chat command was not accepted");
 }
 
 /// In-flight mirror catch-up from the app process (single-process spec):

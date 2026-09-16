@@ -86,6 +86,8 @@ import {
   pairingCode,
   setChatApproval,
   startSocket,
+  watchMachinePresence,
+  type ThreadState,
   getApproval,
   type ApprovalPolicy,
   type ChatApprovalMode,
@@ -96,6 +98,17 @@ import {
   type ThreadEventRow,
 } from "../transport";
 
+
+export function statusFromThreads(chats: ChatSummary[]) {
+  return Object.fromEntries(chats.map(chat => [chat.id, { generating: !!chat.generating, unread: !!chat.unread }]));
+}
+
+export function threadStateBlocks(state: ThreadState): Block[] {
+  let blocks = eventsToBlocks(state.events);
+  if (state.thinking) blocks = upsertThinking(blocks, state.thinking, true);
+  if (state.text) blocks.push({ kind: "text", text: state.text, key: `unpersisted-${state.chat_id}` });
+  return blocks;
+}
 
 interface ToolBlock {
   callId: string;
@@ -238,14 +251,7 @@ export function reconcilePendingSend(
   pending: PendingSend | null,
 ): Block[] {
   if (!pending) return blocks;
-  const durable = rows.some((row) => {
-    if (row.event.type !== "user_message") return false;
-    if (row.event.content !== pending.text && !row.event.content.startsWith(`${pending.text}\n\n[Attachment: `)) {
-      return false;
-    }
-    const created = Date.parse(row.created_at);
-    return Number.isNaN(created) || created >= pending.sentAt;
-  });
+  const durable = rows.some(row => row.event.type === "user_message" && row.id === pending.key);
   if (durable) return blocks;
   if (blocks.some((block) => block.key === pending.key)) return blocks;
   return [
@@ -1715,32 +1721,6 @@ export default function WebChat({
     setChats(c);
   };
 
-  /// One chat-status frame from the member socket drives the sidebar
-  /// spinner/dot for any chat, open or not. Turn end → the dot appears unless the turn
-  /// finished on the visible open chat (mark-read already covered it).
-  const handleChatStatus = (cid: string, generating: boolean) => {
-    setChatStatus((prev) => {
-      const seen = generating || (cid === openChatIdRef.current && document.visibilityState === "visible");
-      const unread = generating ? (prev[cid]?.unread ?? false) : !seen;
-      return { ...prev, [cid]: { generating, unread } };
-    });
-    // A status frame for a chat this client has never listed (created in
-    // another tab/device): pull the list so the row exists.
-    if (chatsRef.current && !chatsRef.current.some((c) => c.id === cid)) {
-      void refreshChats();
-    }
-    if (!generating && cid === openChatIdRef.current && document.visibilityState === "visible") {
-      void markChatRead(cid);
-      // The sidebar row renders the fetched list, not chatStatus — patch the
-      // row here or the dot lingers until the next list refresh.
-      setChats((prev) =>
-        prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
-      );
-    }
-  };
-  const handleChatStatusRef = useRef(handleChatStatus);
-  handleChatStatusRef.current = handleChatStatus;
-
   // The member socket owns thread reconciliation in both browser and Tauri
   // webview mode. The desktop app process keeps the separate machine socket.
   const openChatIdRef = useRef<string | null>(chatId);
@@ -1749,15 +1729,22 @@ export default function WebChat({
   const syncingChatsRef = useRef(new Map<string, number>());
   const lastSeqRef = useRef(new Map<string, number>());
 
-  const applyHistory = (cid: string, events: ThreadEventRow[]) => {
+  const applyHistory = (state: ThreadState) => {
+    const cid = state.chat_id;
+    if (state.seq <= (lastSeqRef.current.get(cid) ?? -1)) return;
+    lastSeqRef.current.set(cid, state.seq);
+    setChatStatus(prev => ({ ...prev, [cid]: {
+      generating: state.generating,
+      unread: cid === openChatIdRef.current ? false :
+        (!state.generating && prev[cid]?.generating ? true : (prev[cid]?.unread ?? false)),
+    } }));
+    if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
-    const newest = events.reduce((max, row) => Math.max(max, row.seq), -1);
-    // History rows are the only WS payload with durable sequence numbers.
-    // Ignore an older history response; live frames are ordered by SocketGate.
-    if (newest < (lastSeqRef.current.get(cid) ?? -1)) return;
-    lastSeqRef.current.set(cid, newest);
+    const events = state.events;
+    setBusy(state.generating);
+    setAttaching(false);
     const pending = pendingSendRef.current.get(cid) ?? null;
-    const rendered = reconcilePendingSend(events, eventsToBlocks(events), pending);
+    const rendered = reconcilePendingSend(events, threadStateBlocks(state), pending);
     if (pending && !rendered.some((block) => block.key === pending.key)) {
       pendingSendRef.current.delete(cid);
     }
@@ -1850,57 +1837,39 @@ export default function WebChat({
 
   // ---- member socket frame rendering ----
 
-  /// Applies one gateway event to the blocks. Snapshot deltas seed a new
-  /// in-flight block; live deltas append to the current block.
-  const applyStreamEvent = (ev: StreamFrame, cid: string, snapshot = false) => {
-    if (ev.type === "delta" && ev.content) {
-      setBlocks((b) => {
-        const last = b[b.length - 1];
-        if (!snapshot && last?.kind === "text") {
-          return [...b.slice(0, -1), { ...last, text: last.text + ev.content! }];
-        }
-        return [...b, { kind: "text", text: ev.content!, key: liveKey() }];
-      });
-    } else if (ev.type === "thinking_delta" && ev.content) {
-      setBlocks((b) => upsertThinking(b, ev.content!, snapshot));
-    } else if (ev.type === "tool_started" || ev.type === "tool_completed") {
-      handleToolEvent(ev, cid, 0);
-    } else if (ev.type === "approval_requested") {
-      setBlocks((b) =>
-        upsertApproval(b, {
-          callId: ev.call_id as string,
-          name: (ev.name as string) ?? "",
-          args: (ev.arguments as string) ?? "{}",
-          status: "pending",
-        }),
-      );
-    } else if (ev.type === "approval_resolved") {
-      setBlocks((b) =>
-        resolveApproval(
-          b,
-          ev.call_id as string,
-          !!ev.approved,
-          (ev.reason as string | undefined) ?? undefined,
-        ),
-      );
-    } else if (ev.type === "error") {
-      setBlocks((b) => [...b, { kind: "error", text: ev.message ?? "model error", key: liveKey() }]);
-    }
-  };
-  const applyRef = useRef(applyStreamEvent);
-  applyRef.current = applyStreamEvent;
-
-  const chatStatusRef = useRef(chatStatus);
-  chatStatusRef.current = chatStatus;
+  const [machineTakenOver, setMachineTakenOver] = useState(false);
+  useEffect(() => {
+    if (!isTauri) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void watchMachinePresence(presence => {
+      if (disposed) return;
+      setMachineTakenOver(!!presence.displaced);
+      if (presence.auth_required) onSignOut();
+    }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
+    return () => { disposed = true; stop?.(); };
+  }, []);
 
   // One member socket serves both browser tabs and Tauri webviews. The
   // Tauri app process has its own machine socket for tool execution.
   useEffect(() => {
     if (isTauri) void setMachineIdentity(machineId()).catch(() => {});
     const connection = startSocket({
-      onThreadList: (nextChats) => setChats(nextChats),
-      onChatStatus: (frame) => handleChatStatusRef.current(frame.chat_id, frame.generating),
-      onHistory: (cid, events) => applyHistory(cid, events),
+      onConnect: () => {
+        syncingChatsRef.current.clear();
+        lastSeqRef.current.clear();
+        setAttaching(false);
+        setBusy(false);
+      },
+      onThreadList: (nextChats) => {
+        setChats(nextChats);
+        setChatStatus(statusFromThreads(nextChats));
+        setBusy(!!nextChats.find(chat => chat.id === openChatIdRef.current)?.generating);
+        setAttaching(false);
+      },
+      // Sequenced ThreadState owns busy state; older status notifications cannot override it.
+      onChatStatus: () => {},
+      onThreadState: (state) => applyHistory(state),
       onSync: (cid, phase) => {
         if (phase === "begin") {
           syncingChatsRef.current.set(cid, (syncingChatsRef.current.get(cid) ?? 0) + 1);
@@ -1914,28 +1883,14 @@ export default function WebChat({
           setThreadLoading(true);
         } else if (!syncingChatsRef.current.has(cid)) {
           setThreadLoading(false);
-          if (!chatStatusRef.current[cid]?.generating) setBusy(false);
+          setAttaching(false);
         }
       },
+      // Content is replaced only by sequenced ThreadState, never by raw deltas.
       onFrame: (frame) => {
-        if (frame.chat_id !== openChatIdRef.current) return;
-        // WS frames have no numeric sequence. SocketGate starts the sync
-        // marker before the server emits SyncBegin, holds queued LiveFrames
-        // until SyncDone, and flushes them after the snapshot. A live frame
-        // queued before the marker may arrive before SyncBegin, but History
-        // overwrites it, so no old live frame can land after the snapshot.
-        const snapshot = syncingChatsRef.current.has(frame.chat_id);
-        if (frame.event.type === "done") {
-          setBusy(false);
-          setAttaching(false);
-          void refreshChats();
-        } else if (frame.event.type === "error") {
-          setBusy(false);
-          setAttaching(false);
-        } else if (frame.event.type !== "idle") {
-          setAttaching(true);
+        if (frame.chat_id === openChatIdRef.current && frame.event.type === "error") {
+          toast.error(frame.event.message ?? "Model error");
         }
-        applyRef.current(frame.event, frame.chat_id, snapshot);
       },
       onError: (message) => {
         if (message === "frames dropped — resync") {
@@ -1958,47 +1913,6 @@ export default function WebChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /// Handles tool lifecycle events (render only): since the single-process
-  /// redesign, client tools are executed by the app process when the fan-out
-  /// bus delivers them — the webview only renders the chips.
-  const handleToolEvent = (ev: { type: string; [k: string]: unknown }, _cid: string, _seq: number) => {
-    const callId = ev.call_id as string | undefined;
-    if (!callId) return;
-    if (ev.type === "tool_started") {
-      const name = (ev.name as string) ?? "";
-      const args = (ev.arguments as string) ?? "{}";
-      const executor = ev.executor === "client" ? "client" : "server";
-      const kind = (ev as { kind?: string | null }).kind ?? undefined;
-      setBlocks((b) => {
-        // Upsert by call id: the call block may already exist — the thread
-        // reload restores persisted calls (replay after a switch-back, the
-        // attach endpoint re-serves suspended calls) and a blind append
-        // would render the same tool twice.
-        const i = b.findIndex((x) => x.kind === "tool" && x.tool?.callId === callId);
-        const block: Block = {
-          kind: "tool",
-          text: "",
-          tool: { callId, name, args, executor, status: "running", kind },
-          key: i >= 0 ? b[i].key : `tool-${callId}`,
-        };
-        if (i < 0) return [...b, block];
-        const copy = b.slice();
-        copy[i] = block;
-        return copy;
-      });
-    } else if (ev.type === "tool_completed") {
-      const status: "done" | "error" = ev.is_error ? "error" : "done";
-      const content = (ev.content as string) ?? "";
-      setBlocks((b) =>
-        b.map((x) => {
-          const t = x.tool;
-          if (x.kind !== "tool" || !t || t.callId !== callId) return x;
-          return { ...x, tool: { ...t, status, content } };
-        }),
-      );
-    }
-  };
-
   const send = async () => {
     const text = prompt.trim();
     if ((!text && pendingRef.current.length === 0) || busy || openGenerating || !model) return;
@@ -2012,12 +1926,13 @@ export default function WebChat({
     // Send button during the same commit would otherwise move focus to
     // body and override a synchronous focus().
     requestAnimationFrame(() => ta.current?.focus());
-    const sentKey = liveKey();
+    const sentKey = crypto.randomUUID();
     setBlocks((b) => [
       ...b,
       {
         kind: "user",
         text,
+        pending: true,
         key: sentKey,
         attachments: pendingRef.current.map((a) => ({
           id: `pending-${a.id}`,
@@ -2127,15 +2042,8 @@ export default function WebChat({
       }
       setPending([]);
       if (isTauri) void pushChatDir(cid, projectDirRef.current);
-      await sendChatNoStream(cid, model, text, attachmentIds, projectDirRef.current);
-      pendingSendRef.current.delete(cid);
-      const settled = (block: Block) =>
-        block.key === sentKey && block.pending ? { ...block, pending: false } : block;
-      threadCacheRef.current.set(
-        cid,
-        (threadCacheRef.current.get(cid) ?? []).map(settled),
-      );
-      if (openChatIdRef.current === cid) setBlocks((b) => b.map(settled));
+      await sendChatNoStream(cid, model, text, attachmentIds, projectDirRef.current, sentKey);
+      // Submission is not persistence. Only the committed socket echo settles the marker.
       // The member socket delivers every effect. Busy ends on done/error or
       // when a state sync observes that the server is no longer generating.
       keepBusyThroughFinally = true;
@@ -2259,6 +2167,7 @@ export default function WebChat({
           addFiles(files);
         }}
       >
+        {machineTakenOver && <div role="status" className="border-b border-border px-4 py-2 text-muted-foreground">Taken over on this machine. Tools run in the other Guild app.</div>}
         {dragOver && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
             <div className="rounded-xl border-2 border-dashed border-border bg-card px-6 py-5 text-muted-foreground shadow-lg">
