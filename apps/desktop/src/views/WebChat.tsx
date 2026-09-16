@@ -597,8 +597,11 @@ export function resolveApproval(
 /// starts one; later deltas append to the trailing reasoning block.
 function upsertThinking(blocks: Block[], content: string, seed: boolean): Block[] {
   const last = blocks[blocks.length - 1];
-  if (!seed && last?.kind === "reasoning") {
-    const text = last.reasoningText + content;
+  // A stable key keeps the Frame instance (and its open/collapsed state)
+  // alive across views: seed views carry the full buffer, live views
+  // append — either way the trailing reasoning block persists.
+  if (last?.kind === "reasoning") {
+    const text = seed ? content : last.reasoningText + content;
     return [...blocks.slice(0, -1), { ...last, reasoningText: text }];
   }
   return [...blocks, { kind: "reasoning", text: "", reasoningText: content, key: liveKey() }];
