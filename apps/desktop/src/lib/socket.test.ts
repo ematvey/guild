@@ -74,6 +74,27 @@ describe("routeMessage", () => {
 });
 
 describe("startSocket", () => {
+  it.each(["reject", "http"])("recovers from a %s ticket failure", async (failure) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("localStorage", { getItem: () => "client-1" });
+    const fetchMock = vi.fn(async () => {
+      if (failure === "reject") throw new Error("offline");
+      return { ok: false, statusText: "Unavailable", json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const errors: string[] = [];
+    const connection = startSocket({
+      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      onError: (message) => errors.push(message), getOpenChatId: () => null,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(errors).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    connection.stop();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
   it("sends the current sync on open and reconnects after three seconds", async () => {
     vi.useFakeTimers();
     const storage = new Map<string, string>([["guild_client_id", "client-1"]]);
