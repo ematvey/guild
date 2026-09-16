@@ -1,13 +1,15 @@
 //! Cloud API client — the only path from a Guild client to model providers
 //! (spec §4.2: gateway is internal to Guild clients).
 
-use eventsource_stream::Eventsource;
+use futures::SinkExt;
 use futures::Stream;
 use protocol::api::{
     Chat, ChatCompletionRequest, CreateChatRequest, LoginRequest, LoginResponse, Message,
     PairRequest, PairResponse, StreamEvent, ThreadEvent, ToolCall, UserInfo,
 };
+use protocol::ws::WsServerMsg;
 use std::time::Duration;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CloudError {
@@ -98,6 +100,18 @@ impl CloudClient {
         Ok((base_url, pair.token, pair.user))
     }
 
+    pub async fn refresh_session(&self) -> Result<(), CloudError> {
+        let response = Self::timed(self.http().post(format!(
+            "{}/api/v1/auth/refresh",
+            self.base_url.trim_end_matches('/')
+        )))
+        .bearer_auth(&self.token)
+        .send()
+        .await?;
+        Self::check(response).await?;
+        Ok(())
+    }
+
     /// Validates the stored token and returns the user (GET /api/v1/auth/me).
     pub async fn me(&self) -> Result<UserInfo, CloudError> {
         let url = format!("{}/api/v1/auth/me", self.base_url.trim_end_matches('/'));
@@ -175,6 +189,7 @@ impl CloudClient {
         messages: &[Message],
     ) -> Result<impl Stream<Item = Result<StreamEvent, CloudError>> + 'static, CloudError> {
         self.stream_completion(ChatCompletionRequest {
+            user_message_id: None,
             chat_id,
             model: model.into(),
             messages: messages.to_vec(),
@@ -195,45 +210,109 @@ impl CloudClient {
         &self,
         req: ChatCompletionRequest,
     ) -> Result<impl Stream<Item = Result<StreamEvent, CloudError>> + 'static, CloudError> {
-        let url = format!(
+        self.refresh_session().await?;
+        // Subscribe before submitting the command. The command waits until
+        // the feed has attached to the generation before invoking the worker.
+        let ticket = Self::check(
+            Self::timed(self.http().post(format!(
+                "{}/api/v1/ws/ticket",
+                self.base_url.trim_end_matches('/')
+            )))
+            .bearer_auth(&self.token)
+            .send()
+            .await?,
+        )
+        .await?
+        .json::<serde_json::Value>()
+        .await?;
+        let mut url = url::Url::parse(&format!(
+            "{}/api/v1/ws",
+            self.base_url.trim_end_matches('/')
+        ))
+        .map_err(|e| CloudError::Request(e.to_string()))?;
+        let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
+        url.set_scheme(scheme)
+            .map_err(|_| CloudError::Request("invalid server URL".into()))?;
+        url.query_pairs_mut()
+            .append_pair(
+                "ticket",
+                ticket["ticket"]
+                    .as_str()
+                    .ok_or_else(|| CloudError::Request("missing ticket".into()))?,
+            )
+            .append_pair("client_id", &Uuid::now_v7().to_string());
+        let (mut socket, _) = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio_tungstenite::connect_async(url.as_str()),
+        )
+        .await
+        .map_err(|_| CloudError::Request("socket connect timeout".into()))?
+        .map_err(|e| CloudError::Request(e.to_string()))?;
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                match next_socket_message(&mut socket).await? {
+                    WsServerMsg::ThreadList { .. } => return Ok(()),
+                    WsServerMsg::AuthRequired => return Err(CloudError::Unauthorized),
+                    WsServerMsg::Error { message } => return Err(CloudError::Request(message)),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .map_err(|_| CloudError::Request("socket bootstrap deadline".into()))??;
+        let chat_id = req.chat_id;
+        let command = Self::timed(self.http().post(format!(
             "{}/api/v1/gateway/chat",
             self.base_url.trim_end_matches('/')
-        );
-        let resp = self
-            .http()
-            .post(&url)
-            .bearer_auth(&self.token)
-            .json(&req)
-            .send()
-            .await?;
-        let resp = Self::check(resp).await?;
-        let stream = resp
-            .bytes_stream()
-            .eventsource()
-            .filter_map(|ev| async move {
-                match ev {
-                    Ok(ev) => match serde_json::from_str::<StreamEvent>(&ev.data) {
-                        Ok(parsed) => Some(Ok(parsed)),
-                        // Unknown frame shapes (new server StreamEvent
-                        // variants) are skipped, not fatal: a running client
-                        // must survive a server adding frames. The `type`
-                        // tag makes any *existing* variant's payload still
-                        // parse-or-fail the same way.
-                        Err(e) => {
-                            if serde_json::from_str::<serde_json::Value>(&ev.data)
-                                .map(|v| v.get("type").is_some())
-                                .unwrap_or(false)
-                            {
-                                None
-                            } else {
-                                Some(Err(CloudError::Request(format!("bad stream frame: {e}"))))
-                            }
-                        }
-                    },
-                    Err(e) => Some(Err(CloudError::Request(format!("stream error: {e}")))),
+        )))
+        .bearer_auth(&self.token)
+        .json(&req)
+        .send();
+        tokio::pin!(command);
+        let mut buffered = std::collections::VecDeque::new();
+        let generation_id = loop {
+            tokio::select! {
+                response = &mut command => {
+                    let ack: serde_json::Value = Self::check(response?).await?.json().await?;
+                    break ack["generation_id"].as_str().and_then(|id| id.parse::<Uuid>().ok())
+                        .ok_or_else(|| CloudError::Request("missing generation identity".into()))?;
                 }
-            });
-        Ok(stream)
+                message = next_socket_message(&mut socket) => {
+                    let message = message?;
+                    if matches!(message, WsServerMsg::AuthRequired) { return Err(CloudError::Unauthorized); }
+                    if matches!(message, WsServerMsg::LiveFrame { chat_id: id, .. } if id == chat_id) {
+                        if buffered.len() >= 4096 { return Err(CloudError::Request("socket output overflow".into())); }
+                        buffered.push_back(message);
+                    }
+                }
+            }
+        };
+        let cloud = self.clone();
+        Ok(async_stream::stream! {
+            loop {
+                let incoming = match buffered.pop_front() {
+                    Some(message) => Ok(message),
+                    None => next_socket_message(&mut socket).await,
+                };
+                match incoming {
+                    Ok(WsServerMsg::LiveFrame { chat_id: id, generation_id: generation, event, .. }) if id == chat_id && generation == generation_id => {
+                        let done = matches!(event, StreamEvent::Done { .. } | StreamEvent::Error { .. });
+                        yield Ok(event);
+                        if done { break; }
+                    }
+                    Ok(WsServerMsg::AuthRequired) => {
+                        let _ = cloud.refresh_session().await;
+                        yield Err(CloudError::Unauthorized);
+                        break;
+                    }
+                    Ok(WsServerMsg::Error { message }) => {
+                        yield Err(CloudError::Request(message)); break;
+                    }
+                    Ok(_) => {},
+                    Err(error) => { yield Err(error); break; }
+                }
+            }
+        })
     }
 
     /// Persists a client-produced tool result to the server's thread event
@@ -305,6 +384,39 @@ impl CloudClient {
             return Err(CloudError::Request(format!("status {status}: {body}")));
         }
         Ok(resp)
+    }
+}
+
+async fn next_socket_message<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+) -> Result<WsServerMsg, CloudError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(20), socket.next())
+            .await
+            .map_err(|_| CloudError::Request("socket silence deadline".into()))?
+            .ok_or_else(|| CloudError::Request("socket closed".into()))?
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        match frame {
+            WsMessage::Text(text) => {
+                if let Ok(message) = serde_json::from_str(&text) {
+                    return Ok(message);
+                }
+            }
+            WsMessage::Ping(payload) => {
+                tokio::time::timeout(
+                    Duration::from_secs(1),
+                    socket.send(WsMessage::Pong(payload)),
+                )
+                .await
+                .map_err(|_| CloudError::Request("socket write timeout".into()))?
+                .map_err(|e| CloudError::Request(e.to_string()))?;
+            }
+            WsMessage::Close(_) => return Err(CloudError::Request("socket closed".into())),
+            _ => {}
+        }
     }
 }
 
