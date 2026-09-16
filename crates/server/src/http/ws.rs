@@ -120,28 +120,51 @@ pub(crate) async fn drive_socket(
         label: machine_name,
     };
 
-    let registered = match machine_id.as_deref() {
-        Some(machine_id) => {
-            state.hub.register_machine(member.clone(), machine_id);
-            true
+    let mut machine_shutdown = match machine_id.as_deref() {
+        Some(machine_id) => match state
+            .hub
+            .register_machine_with_shutdown(member.clone(), machine_id)
+        {
+            Ok((_, shutdown)) => Some(shutdown),
+            Err(()) => {
+                let _ = ws_tx
+                    .send(axum::extract::ws::Message::text(
+                        serde_json::to_string(&WsServerMsg::Error {
+                            message: "too many connections".into(),
+                        })
+                        .unwrap(),
+                    ))
+                    .await;
+                return;
+            }
+        },
+        None => {
+            if state.hub.register_member(member.clone()).is_err() {
+                let _ = ws_tx
+                    .send(axum::extract::ws::Message::text(
+                        serde_json::to_string(&WsServerMsg::Error {
+                            message: "too many connections".into(),
+                        })
+                        .unwrap(),
+                    ))
+                    .await;
+                return;
+            }
+            None
         }
-        None => state.hub.register_member(member.clone(), conn_id).is_ok(),
     };
-    if !registered {
-        let _ = ws_tx
-            .send(axum::extract::ws::Message::text(
-                serde_json::to_string(&WsServerMsg::Error {
-                    message: "too many connections".into(),
-                })
-                .unwrap(),
-            ))
-            .await;
-        return;
-    }
 
     let _ = member.sink.send(WsServerMsg::Hello).await;
     loop {
         tokio::select! {
+            _ = async {
+                match machine_shutdown.as_mut() {
+                    Some(shutdown) => {
+                        let _ = shutdown.changed().await;
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            } => break,
             outgoing = rx.recv() => match outgoing {
                 Some(msg) => {
                     let displaced = matches!(&msg, WsServerMsg::Displaced);
@@ -171,7 +194,7 @@ pub(crate) async fn drive_socket(
 
     match machine_id.as_deref() {
         Some(machine_id) => state.hub.unregister_machine(machine_id, conn_id),
-        None => state.hub.unregister_member(user.0.id, conn_id),
+        None => state.hub.unregister_member(user.0.id, member.conn_id),
     }
 }
 
