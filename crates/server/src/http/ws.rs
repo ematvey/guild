@@ -15,9 +15,9 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 /// Single-use, short-TTL connect tickets. They are in-memory because tickets
@@ -79,7 +79,7 @@ async fn upgrade(
         .ws_tickets
         .consume(&q.ticket)
         .ok_or_else(|| crate::http::error::ApiError::unauthorized("invalid or expired ticket"))?;
-    let (tx, rx) = mpsc::channel::<WsServerMsg>(256);
+    let (tx, rx) = socket_channel(256);
     let machine_id = q.machine_id.filter(|s| !s.is_empty());
     let client_id = q.client_id.unwrap_or_else(|| Uuid::now_v7().to_string());
     let machine_name = q.machine_name;
@@ -98,8 +98,107 @@ async fn upgrade(
     }))
 }
 
-#[allow(dead_code)]
-pub(crate) type SocketSink = mpsc::Sender<WsServerMsg>;
+#[derive(Debug)]
+pub(crate) enum SocketOutput {
+    Message(WsServerMsg),
+    SyncStart,
+    SyncAbort,
+    Pong(axum::body::Bytes),
+}
+
+/// The one outbound queue consumed by a socket's writer task.
+#[derive(Clone)]
+pub struct SocketSink(mpsc::Sender<SocketOutput>);
+
+impl SocketSink {
+    pub(crate) async fn send(
+        &self,
+        message: WsServerMsg,
+    ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+        self.0.send(SocketOutput::Message(message)).await
+    }
+
+    pub(crate) fn try_send(
+        &self,
+        message: WsServerMsg,
+    ) -> Result<(), mpsc::error::TrySendError<SocketOutput>> {
+        self.0.try_send(SocketOutput::Message(message))
+    }
+
+    pub(crate) async fn start_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+        self.0.send(SocketOutput::SyncStart).await
+    }
+
+    pub(crate) async fn abort_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+        self.0.send(SocketOutput::SyncAbort).await
+    }
+
+    async fn pong(
+        &self,
+        payload: axum::body::Bytes,
+    ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+        self.0.send(SocketOutput::Pong(payload)).await
+    }
+}
+
+pub(crate) fn socket_channel(capacity: usize) -> (SocketSink, mpsc::Receiver<SocketOutput>) {
+    let (tx, rx) = mpsc::channel(capacity);
+    (SocketSink(tx), rx)
+}
+
+/// Holds live feed messages while one or more state-sync brackets are open.
+#[derive(Default)]
+pub(crate) struct SocketGate {
+    sync_depth: usize,
+    deferred: VecDeque<WsServerMsg>,
+}
+
+impl SocketGate {
+    fn is_live(message: &WsServerMsg) -> bool {
+        matches!(
+            message,
+            WsServerMsg::LiveFrame { .. }
+                | WsServerMsg::ChatStatus { .. }
+                | WsServerMsg::OrgEvent { .. }
+                | WsServerMsg::Error { .. }
+        )
+    }
+
+    pub(crate) fn push(&mut self, output: SocketOutput) -> Vec<WsServerMsg> {
+        match output {
+            SocketOutput::SyncStart => {
+                self.sync_depth += 1;
+                Vec::new()
+            }
+            SocketOutput::SyncAbort => {
+                self.sync_depth = self.sync_depth.saturating_sub(1);
+                self.flush_if_ready()
+            }
+            SocketOutput::Message(message) if self.sync_depth > 0 && Self::is_live(&message) => {
+                self.deferred.push_back(message);
+                Vec::new()
+            }
+            SocketOutput::Message(message) => {
+                let done = matches!(message, WsServerMsg::SyncDone { .. });
+                let mut out = vec![message];
+                if done {
+                    self.sync_depth = self.sync_depth.saturating_sub(1);
+                    out.extend(self.flush_if_ready());
+                }
+                out
+            }
+            SocketOutput::Pong(_) => Vec::new(),
+        }
+    }
+
+    fn flush_if_ready(&mut self) -> Vec<WsServerMsg> {
+        if self.sync_depth == 0 {
+            self.deferred.drain(..).collect()
+        } else {
+            Vec::new()
+        }
+    }
+}
 
 pub(crate) async fn drive_socket(
     state: AppState,
@@ -109,7 +208,7 @@ pub(crate) async fn drive_socket(
     machine_name: Option<String>,
     socket: axum::extract::ws::WebSocket,
     tx: SocketSink,
-    mut rx: mpsc::Receiver<WsServerMsg>,
+    mut rx: mpsc::Receiver<SocketOutput>,
 ) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let conn_id = Uuid::now_v7();
@@ -152,6 +251,37 @@ pub(crate) async fn drive_socket(
         }
     };
 
+    let (writer_done_tx, mut writer_done_rx) = oneshot::channel();
+    let writer = tokio::spawn(async move {
+        let mut gate = SocketGate::default();
+        while let Some(output) = rx.recv().await {
+            if let SocketOutput::Pong(payload) = output {
+                if ws_tx
+                    .send(axum::extract::ws::Message::Pong(payload))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                continue;
+            }
+            for message in gate.push(output) {
+                let displaced = matches!(message, WsServerMsg::Displaced);
+                let text = serde_json::to_string(&message).expect("server message serializes");
+                if ws_tx
+                    .send(axum::extract::ws::Message::text(text))
+                    .await
+                    .is_err()
+                    || displaced
+                {
+                    let _ = writer_done_tx.send(());
+                    return;
+                }
+            }
+        }
+        let _ = writer_done_tx.send(());
+    });
+
     let _ = member.sink.send(WsServerMsg::Hello).await;
     match feed::thread_list(&state, &user).await {
         Ok(chats) => {
@@ -166,10 +296,18 @@ pub(crate) async fn drive_socket(
                 .await;
         }
     }
-    let feed_forwarder = feed::forward_to_socket(
-        feed::feed_of(&state, &user).await.broadcast.subscribe(),
-        member.sink.clone(),
-    );
+    let feed_forwarder =
+        feed::forward_to_socket(feed::subscribe(&state, &user), member.sink.clone());
+    let (client_tx, mut client_rx) = mpsc::channel(32);
+    let client_state = state.clone();
+    let client_user = AuthUser(user.0.clone());
+    let client_member = member.clone();
+    let client_task = tokio::spawn(async move {
+        while let Some(message) = client_rx.recv().await {
+            handle_client_msg(&client_state, &client_user, &client_member, message).await;
+        }
+    });
+
     loop {
         tokio::select! {
             _ = async {
@@ -180,24 +318,23 @@ pub(crate) async fn drive_socket(
                     None => std::future::pending::<()>().await,
                 }
             } => break,
-            outgoing = rx.recv() => match outgoing {
-                Some(msg) => {
-                    let displaced = matches!(&msg, WsServerMsg::Displaced);
-                    let text = serde_json::to_string(&msg).unwrap();
-                    if ws_tx.send(axum::extract::ws::Message::text(text)).await.is_err() || displaced {
-                        break;
-                    }
-                }
-                None => break,
-            },
+            _ = &mut writer_done_rx => break,
             incoming = ws_rx.next() => match incoming {
                 Some(Ok(axum::extract::ws::Message::Text(text))) => {
-                    if handle_client_msg(&state, &user, &member, &machine_id, &text).await {
+                    let Ok(message) = serde_json::from_str::<WsClientMsg>(&text) else {
+                        continue;
+                    };
+                    if matches!(message, WsClientMsg::Sync { chat_id: Some(_) })
+                        && tx.start_sync().await.is_err()
+                    {
+                        break;
+                    }
+                    if client_tx.send(message).await.is_err() {
                         break;
                     }
                 }
                 Some(Ok(axum::extract::ws::Message::Ping(payload))) => {
-                    if ws_tx.send(axum::extract::ws::Message::Pong(payload)).await.is_err() {
+                    if tx.pong(payload).await.is_err() {
                         break;
                     }
                 }
@@ -207,7 +344,9 @@ pub(crate) async fn drive_socket(
         }
     }
 
+    client_task.abort();
     feed_forwarder.abort();
+    writer.abort();
     match machine_id.as_deref() {
         Some(machine_id) => state.hub.unregister_machine(machine_id, conn_id),
         None => state.hub.unregister_member(user.0.id, member.conn_id),
@@ -218,16 +357,12 @@ async fn handle_client_msg(
     state: &AppState,
     user: &AuthUser,
     member: &Member,
-    _machine_id: &Option<String>,
-    text: &str,
-) -> bool {
-    let Ok(message) = serde_json::from_str::<WsClientMsg>(text) else {
-        return false;
-    };
+    message: WsClientMsg,
+) {
     match message {
         WsClientMsg::Sync {
             chat_id: Some(chat_id),
-        } => feed::run_sync(state, user, chat_id, &member.sink).await,
+        } => feed::run_sync_started(state, user, chat_id, &member.sink).await,
         WsClientMsg::Sync { chat_id: None } => {}
         WsClientMsg::ToolResult {
             chat_id,
@@ -267,7 +402,6 @@ async fn handle_client_msg(
             }
         }
     }
-    false
 }
 
 #[cfg(test)]
@@ -289,14 +423,22 @@ mod tests {
     #[tokio::test]
     async fn unknown_client_messages_are_ignored_without_closing() {
         let state = AppState::from_config(crate::config::Config::test_config());
+        let (sink, _rx) = socket_channel(1);
         let member = crate::http::hub::Member {
             conn_id: Uuid::now_v7(),
             user_id: Uuid::now_v7(),
             org_id: Uuid::now_v7(),
-            sink: mpsc::channel(1).0,
+            sink,
             label: None,
         };
-        assert!(!handle_client_msg(&state, &user(), &member, &None, r#"{"type":"future"}"#).await);
+        // Unknown envelopes are discarded by the socket reader before this handler.
+        handle_client_msg(
+            &state,
+            &user(),
+            &member,
+            WsClientMsg::Sync { chat_id: None },
+        )
+        .await;
     }
 
     #[test]

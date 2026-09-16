@@ -92,8 +92,9 @@ impl Feed {
         }
     }
 
-    /// Subscribes to active generations, gathers their replay/live frames,
-    /// then sends them only after the generations mutex is released.
+    /// Snapshots are read before subscriptions are created. A frame emitted
+    /// between those operations can arrive in the next poll, so this is a
+    /// tiny at-least-once overlap rather than a delta-before-snapshot reorder.
     async fn poll(&mut self) {
         self.slow_tick = (self.slow_tick + 1) % 4;
         if self.slow_tick == 0 {
@@ -101,9 +102,8 @@ impl Feed {
         }
 
         let mut frames: Vec<(Uuid, ChatBinding, StreamEvent)> = Vec::new();
-        let mut live = Vec::new();
         let mut subs = std::mem::take(&mut self.subs);
-        let mut replay: Vec<(
+        let mut snapshots: Vec<(
             Uuid,
             ChatBinding,
             Arc<tokio::sync::RwLock<String>>,
@@ -117,7 +117,6 @@ impl Feed {
                 let Some(binding) = self.chats.get(chat_id).cloned() else {
                     continue;
                 };
-                live.push(*chat_id);
                 if subs.contains_key(chat_id) {
                     continue;
                 }
@@ -127,16 +126,62 @@ impl Feed {
                         pending.push((call_id.clone(), tool.name.clone(), tool.arguments.clone()));
                     }
                 }
-                replay.push((
+                snapshots.push((
                     *chat_id,
                     binding,
                     generation.text.clone(),
                     generation.thinking.clone(),
                     pending,
                 ));
-                subs.insert(*chat_id, generation.tx.subscribe());
             }
+        }
 
+        // Send snapshots before creating receivers. The next lock attaches
+        // only after all accumulated buffers have been copied.
+        for (chat_id, binding, text, thinking, pending) in &snapshots {
+            let text = text.read().await.clone();
+            if !text.is_empty() {
+                frames.push((
+                    *chat_id,
+                    binding.clone(),
+                    StreamEvent::Delta { content: text },
+                ));
+            }
+            let thinking = thinking.read().await.clone();
+            if !thinking.is_empty() {
+                frames.push((
+                    *chat_id,
+                    binding.clone(),
+                    StreamEvent::ThinkingDelta { content: thinking },
+                ));
+            }
+            for (call_id, name, arguments) in pending {
+                frames.push((
+                    *chat_id,
+                    binding.clone(),
+                    StreamEvent::ToolStarted {
+                        call_id: call_id.clone(),
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                        executor: ToolExecutor::Client,
+                        kind: None,
+                    },
+                ));
+            }
+        }
+
+        let mut live = Vec::new();
+        {
+            let generations = self.state.generations.lock().unwrap();
+            for (chat_id, generation) in generations.iter() {
+                if !self.chats.contains_key(chat_id) {
+                    continue;
+                }
+                live.push(*chat_id);
+                if !subs.contains_key(chat_id) {
+                    subs.insert(*chat_id, generation.tx.subscribe());
+                }
+            }
             for (chat_id, receiver) in subs.iter_mut() {
                 let Some(binding) = self.chats.get(chat_id).cloned() else {
                     continue;
@@ -161,38 +206,6 @@ impl Feed {
         }
         self.subs = subs;
         self.subs.retain(|chat_id, _| live.contains(chat_id));
-
-        for (chat_id, binding, text, thinking, pending) in replay {
-            let text = text.read().await.clone();
-            if !text.is_empty() {
-                frames.push((
-                    chat_id,
-                    binding.clone(),
-                    StreamEvent::Delta { content: text },
-                ));
-            }
-            let thinking = thinking.read().await.clone();
-            if !thinking.is_empty() {
-                frames.push((
-                    chat_id,
-                    binding.clone(),
-                    StreamEvent::ThinkingDelta { content: thinking },
-                ));
-            }
-            for (call_id, name, arguments) in pending {
-                frames.push((
-                    chat_id,
-                    binding.clone(),
-                    StreamEvent::ToolStarted {
-                        call_id,
-                        name,
-                        arguments,
-                        executor: ToolExecutor::Client,
-                        kind: None,
-                    },
-                ));
-            }
-        }
 
         for (chat_id, binding, event) in frames {
             self.emit_frame(chat_id, binding, event).await;
@@ -304,25 +317,92 @@ impl Feed {
     }
 }
 
+fn spawn_feed(
+    state: AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+    broadcast: broadcast::Sender<WsServerMsg>,
+) {
+    tokio::spawn(feed_task(state, org_id, user_id, broadcast));
+}
+
 /// Returns the singleton live feed for this user and starts it on first use.
 pub async fn feed_of(state: &AppState, user: &AuthUser) -> FeedHandle {
-    let handle = {
+    let (handle, start) = {
         let mut feeds = state.feeds.lock().unwrap();
-        if let Some(handle) = feeds.get(&user.0.id) {
-            return handle.clone();
+        match feeds.get(&user.0.id) {
+            Some(handle) => (handle.clone(), false),
+            None => {
+                let (broadcast, _) = broadcast::channel(1024);
+                let handle = FeedHandle { broadcast };
+                feeds.insert(user.0.id, handle.clone());
+                (handle, true)
+            }
         }
-        let (broadcast, _) = broadcast::channel(1024);
-        let handle = FeedHandle { broadcast };
-        feeds.insert(user.0.id, handle.clone());
-        handle
     };
-    tokio::spawn(feed_task(
-        state.clone(),
-        user.0.org_id,
-        user.0.id,
-        handle.broadcast.clone(),
-    ));
+    if start {
+        spawn_feed(
+            state.clone(),
+            user.0.org_id,
+            user.0.id,
+            handle.broadcast.clone(),
+        );
+    }
     handle
+}
+
+/// Subscribes while the feed map is locked, so a retiring task cannot remove
+/// the handle between lookup and receiver creation.
+pub(crate) fn subscribe(state: &AppState, user: &AuthUser) -> broadcast::Receiver<WsServerMsg> {
+    let (receiver, start, broadcast) = {
+        let mut feeds = state.feeds.lock().unwrap();
+        match feeds.get(&user.0.id) {
+            Some(handle) => (
+                handle.broadcast.subscribe(),
+                false,
+                handle.broadcast.clone(),
+            ),
+            None => {
+                let (broadcast, _) = broadcast::channel(1024);
+                let receiver = broadcast.subscribe();
+                feeds.insert(
+                    user.0.id,
+                    FeedHandle {
+                        broadcast: broadcast.clone(),
+                    },
+                );
+                (receiver, true, broadcast)
+            }
+        }
+    };
+    if start {
+        spawn_feed(state.clone(), user.0.org_id, user.0.id, broadcast);
+    }
+    receiver
+}
+
+/// Removes only the current feed after rechecking its receiver count while
+/// holding the map lock. A concurrent subscriber either keeps this task or
+/// creates a replacement feed after this task exits.
+fn remove_feed_if_unused(
+    state: &AppState,
+    user_id: Uuid,
+    broadcast: &broadcast::Sender<WsServerMsg>,
+) -> bool {
+    if broadcast.receiver_count() != 0 {
+        return false;
+    }
+    let mut feeds = state.feeds.lock().unwrap();
+    if broadcast.receiver_count() != 0 {
+        return false;
+    }
+    let is_current = feeds
+        .get(&user_id)
+        .is_some_and(|handle| handle.broadcast.same_channel(broadcast));
+    if is_current {
+        feeds.remove(&user_id);
+    }
+    true
 }
 
 async fn feed_task(
@@ -332,6 +412,9 @@ async fn feed_task(
     broadcast: broadcast::Sender<WsServerMsg>,
 ) {
     let store = loop {
+        if remove_feed_if_unused(&state, user_id, &broadcast) {
+            return;
+        }
         match state.store().await {
             Ok(store) => break store,
             Err(error) => {
@@ -340,8 +423,11 @@ async fn feed_task(
             }
         }
     };
-    let mut feed = Feed::new(state.clone(), store, org_id, user_id, broadcast);
+    let mut feed = Feed::new(state.clone(), store, org_id, user_id, broadcast.clone());
     loop {
+        if remove_feed_if_unused(&state, user_id, &broadcast) {
+            return;
+        }
         // Standalone connection, NOT from the pool: every live listener pins
         // one connection for its lifetime, and pool-based listeners exhaust
         // the pool so authenticated requests block on checkout.
@@ -378,7 +464,12 @@ async fn feed_task(
                         break;
                     }
                 },
-                _ = tick.tick() => feed.poll().await,
+                _ = tick.tick() => {
+                    if remove_feed_if_unused(&state, user_id, &broadcast) {
+                        return;
+                    }
+                    feed.poll().await;
+                },
             }
         }
     }
@@ -397,7 +488,17 @@ pub(crate) fn forward_to_socket(
                         return;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    if sink
+                        .send(WsServerMsg::Error {
+                            message: "frames dropped — resync".into(),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
                 Err(broadcast::error::RecvError::Closed) => return,
             }
         }
@@ -419,6 +520,19 @@ pub(crate) async fn thread_list(
 
 /// Emits one chat's durable history and in-flight state directly to a socket.
 pub async fn run_sync(state: &AppState, user: &AuthUser, chat_id: Uuid, sink: &SocketSink) {
+    if sink.start_sync().await.is_err() {
+        return;
+    }
+    run_sync_started(state, user, chat_id, sink).await;
+}
+
+/// Completes a sync whose gate was opened by the socket reader.
+pub(crate) async fn run_sync_started(
+    state: &AppState,
+    user: &AuthUser,
+    chat_id: Uuid,
+    sink: &SocketSink,
+) {
     let result = async {
         let store = state.store().await?;
         let chat = store
@@ -437,6 +551,7 @@ pub async fn run_sync(state: &AppState, user: &AuthUser, chat_id: Uuid, sink: &S
                     message: error.message,
                 })
                 .await;
+            let _ = sink.abort_sync().await;
             return;
         }
     };
@@ -530,6 +645,7 @@ mod tests {
     use crate::http::auth::AuthUser;
     use crate::http::gateway::ensure_generation;
     use crate::http::hub::Member;
+    use crate::http::ws::{socket_channel, SocketGate, SocketOutput};
     use crate::test_support::{
         note_client_tool, test_state_with_mock_ingress, MockIngress, TestState,
     };
@@ -567,11 +683,16 @@ mod tests {
         (ts, AuthUser(user), chat, ingress)
     }
 
-    async fn receive(sink: &mut mpsc::Receiver<WsServerMsg>) -> WsServerMsg {
-        tokio::time::timeout(Duration::from_secs(1), sink.recv())
-            .await
-            .expect("frame timed out")
-            .expect("sink closed")
+    async fn receive(sink: &mut mpsc::Receiver<SocketOutput>) -> WsServerMsg {
+        loop {
+            let output = tokio::time::timeout(Duration::from_secs(1), sink.recv())
+                .await
+                .expect("frame timed out")
+                .expect("sink closed");
+            if let SocketOutput::Message(message) = output {
+                return message;
+            }
+        }
     }
 
     #[tokio::test]
@@ -604,7 +725,7 @@ mod tests {
         *text.write().await = "partial".into();
         note_client_tool(&ts.state, chat.id, "call-1", "read_file", "{}", "m1");
 
-        let (sink, mut frames) = mpsc::channel(16);
+        let (sink, mut frames) = socket_channel(16);
         run_sync(&ts.state, &user, chat.id, &sink).await;
 
         assert!(
@@ -658,9 +779,9 @@ mod tests {
         );
         feed.poll().await;
 
-        let (member_one, mut member_one_rx) = mpsc::channel(4);
-        let (member_two, mut member_two_rx) = mpsc::channel(4);
-        let (machine, mut machine_rx) = mpsc::channel(4);
+        let (member_one, mut member_one_rx) = socket_channel(4);
+        let (member_two, mut member_two_rx) = socket_channel(4);
+        let (machine, mut machine_rx) = socket_channel(4);
         for sink in [&member_one, &member_two] {
             ts.state
                 .hub
@@ -714,6 +835,64 @@ mod tests {
         }
     }
 
+    #[test]
+    fn unused_feed_is_removed_without_racing_a_new_subscription() {
+        let state = AppState::from_config(crate::config::Config::test_config());
+        let user = Uuid::now_v7();
+        let (broadcast, _) = broadcast::channel(4);
+        let handle = FeedHandle {
+            broadcast: broadcast.clone(),
+        };
+        state.feeds.lock().unwrap().insert(user, handle);
+
+        let receiver = broadcast.subscribe();
+        assert!(!remove_feed_if_unused(&state, user, &broadcast));
+        assert!(state.feeds.lock().unwrap().contains_key(&user));
+        drop(receiver);
+
+        assert!(remove_feed_if_unused(&state, user, &broadcast));
+        assert!(!state.feeds.lock().unwrap().contains_key(&user));
+    }
+
+    #[test]
+    fn sync_gate_defers_live_frames_until_sync_done() {
+        let chat_id = Uuid::now_v7();
+        let live = WsServerMsg::LiveFrame {
+            chat_id,
+            machine_id: None,
+            event: StreamEvent::Delta {
+                content: "live".into(),
+            },
+        };
+        let mut gate = SocketGate::default();
+        assert!(gate.push(SocketOutput::SyncStart).is_empty());
+        assert!(gate.push(SocketOutput::Message(live.clone())).is_empty());
+        assert_eq!(
+            gate.push(SocketOutput::Message(WsServerMsg::SyncBegin { chat_id })),
+            vec![WsServerMsg::SyncBegin { chat_id }]
+        );
+        assert_eq!(
+            gate.push(SocketOutput::Message(WsServerMsg::SyncDone { chat_id })),
+            vec![WsServerMsg::SyncDone { chat_id }, live]
+        );
+    }
+
+    #[tokio::test]
+    async fn lagged_feed_receiver_emits_a_resync_error() {
+        let (broadcast, _) = broadcast::channel(1);
+        let receiver = broadcast.subscribe();
+        for _ in 0..4 {
+            let _ = broadcast.send(WsServerMsg::Hello);
+        }
+        let (sink, mut sink_rx) = socket_channel(4);
+        let forwarder = forward_to_socket(receiver, sink);
+        assert!(matches!(
+            receive(&mut sink_rx).await,
+            WsServerMsg::Error { message } if message == "frames dropped — resync"
+        ));
+        forwarder.abort();
+    }
+
     #[tokio::test]
     async fn dispatch_to_offline_machine_fails_fast() {
         let (ts, user, chat, ingress) = setup().await;
@@ -741,7 +920,7 @@ mod tests {
             user.0.id,
             broadcast.clone(),
         );
-        let (sink, mut sink_rx) = mpsc::channel(4);
+        let (sink, mut sink_rx) = socket_channel(4);
         let forwarder = forward_to_socket(broadcast.subscribe(), sink);
         feed.poll().await;
 
