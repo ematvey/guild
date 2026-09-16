@@ -275,6 +275,108 @@ fn qenc(s: &str) -> String {
     out
 }
 
+fn non_empty(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Registry metadata reported on every machine connect: the durable hardware
+/// fingerprint (re-pair adoption hint at sign-in) plus OS and app versions.
+/// Unavailable values are omitted — the server stores NULL.
+#[derive(Default, Clone, Debug, PartialEq)]
+struct MachineMeta {
+    fingerprint: Option<String>,
+    os: Option<String>,
+    os_version: Option<String>,
+    app_version: Option<String>,
+}
+
+impl MachineMeta {
+    fn collect(app_version: String) -> Self {
+        Self {
+            fingerprint: machine_fingerprint(),
+            os: Some(std::env::consts::OS.to_string()),
+            os_version: machine_os_version(),
+            app_version: non_empty(&app_version),
+        }
+    }
+}
+
+/// Stable per-install hardware identity, lowercase-trimmed: MachineGuid on
+/// Windows, /etc/machine-id on Linux, IOPlatformUUID on macOS. None when the
+/// platform source is missing or empty.
+#[cfg(windows)]
+fn machine_fingerprint() -> Option<String> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey("SOFTWARE\\Microsoft\\Cryptography")
+        .ok()?;
+    let guid: String = key.get_value("MachineGuid").ok()?;
+    non_empty(&guid).map(|v| v.to_lowercase())
+}
+
+#[cfg(target_os = "linux")]
+fn machine_fingerprint() -> Option<String> {
+    let raw = std::fs::read_to_string("/etc/machine-id").ok()?;
+    non_empty(&raw).map(|v| v.to_lowercase())
+}
+
+#[cfg(target_os = "macos")]
+fn machine_fingerprint() -> Option<String> {
+    let output = std::process::Command::new("ioreg")
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().find(|l| l.contains("IOPlatformUUID"))?;
+    let value = line.split('"').nth(3)?;
+    non_empty(value).map(|v| v.to_lowercase())
+}
+
+/// Human-facing OS version (e.g. "24H2", "15.5", "12"), trimmed.
+#[cfg(windows)]
+fn machine_os_version() -> Option<String> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion")
+        .ok()?;
+    let version: String = key
+        .get_value("DisplayVersion")
+        .or_else(|_| key.get_value("CurrentVersion"))
+        .ok()?;
+    non_empty(&version)
+}
+
+#[cfg(target_os = "linux")]
+fn machine_os_version() -> Option<String> {
+    if let Ok(release) = std::fs::read_to_string("/etc/os-release") {
+        for line in release.lines() {
+            if let Some(value) = line.strip_prefix("VERSION_ID=") {
+                if let Some(v) = non_empty(value.trim().trim_matches('"')) {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    let kernel = std::process::Command::new("uname").arg("-r").output().ok()?;
+    non_empty(&String::from_utf8_lossy(&kernel.stdout))
+}
+
+#[cfg(target_os = "macos")]
+fn machine_os_version() -> Option<String> {
+    let output = std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()?;
+    non_empty(std::str::from_utf8(&output.stdout).ok()?)
+}
+
 #[derive(Debug)]
 enum LinkError {
     Displaced,
@@ -392,6 +494,9 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
     let mut instance_id = uuid::Uuid::now_v7();
     let mut resume = false;
     let mut was_connected = false;
+    // Fingerprint and OS/app versions are fixed for the app run; collected
+    // once and reported on every connect.
+    let meta = MachineMeta::collect(app.package_info().version.to_string());
     loop {
         let Some((base, token, machine_id, machine_name)) = state.link_config() else {
             if was_connected {
@@ -417,6 +522,7 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
             &token,
             &machine_id,
             &machine_name,
+            &meta,
             instance_id,
             resume,
             &mut was_connected,
@@ -514,6 +620,7 @@ async fn ws_session(
     token: &str,
     machine_id: &str,
     machine_name: &str,
+    meta: &MachineMeta,
     instance_id: uuid::Uuid,
     resume: bool,
     connected: &mut bool,
@@ -549,7 +656,7 @@ async fn ws_session(
         .to_string();
 
     let url = with_instance(
-        websocket_url(base, &ticket, machine_id, machine_id, machine_name)?,
+        websocket_url(base, &ticket, machine_id, machine_id, machine_name, meta)?,
         instance_id,
         resume,
     );
@@ -698,6 +805,7 @@ fn websocket_url(
     client_id: &str,
     machine_id: &str,
     machine_name: &str,
+    meta: &MachineMeta,
 ) -> Result<url::Url, LinkError> {
     let mut url = url::Url::parse(base)
         .map_err(|error| LinkError::Failed(format!("bad server URL: {error}")))?;
@@ -714,13 +822,24 @@ fn websocket_url(
         .map_err(|_| LinkError::Failed("could not set websocket scheme".into()))?;
     let path = format!("{}/api/v1/ws", url.path().trim_end_matches('/'));
     url.set_path(&path);
-    url.set_query(Some(&format!(
+    let mut query = format!(
         "ticket={}&client_id={}&machine_id={}&machine_name={}",
         qenc(ticket),
         qenc(client_id),
         qenc(machine_id),
         qenc(machine_name),
-    )));
+    );
+    for (key, value) in [
+        ("machine_fingerprint", &meta.fingerprint),
+        ("machine_os", &meta.os),
+        ("machine_os_version", &meta.os_version),
+        ("machine_app_version", &meta.app_version),
+    ] {
+        if let Some(value) = value {
+            query.push_str(&format!("&{key}={}", qenc(value)));
+        }
+    }
+    url.set_query(Some(&query));
     Ok(url)
 }
 
@@ -1442,7 +1561,12 @@ mod tests {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let router = guild_server::build_router(fixture.state.clone());
         let server = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .unwrap();
         });
         let instance = uuid::Uuid::now_v7();
         let connect = |instance, resume| {
@@ -1465,6 +1589,7 @@ mod tests {
                         "client",
                         "machine",
                         "Desk",
+                        &MachineMeta::default(),
                     )
                     .unwrap(),
                     instance,
@@ -1607,6 +1732,7 @@ mod tests {
             "machine id",
             "machine id",
             "Desk & Lab",
+            &MachineMeta::default(),
         )
         .unwrap();
         assert_eq!(url.scheme(), "wss");
@@ -1615,6 +1741,56 @@ mod tests {
             url.query(),
             Some("ticket=ticket%2F%2B&client_id=machine%20id&machine_id=machine%20id&machine_name=Desk%20%26%20Lab")
         );
+    }
+
+    #[test]
+    fn websocket_url_appends_machine_meta_and_omits_empty_values() {
+        let meta = MachineMeta {
+            fingerprint: Some("AB-cd/ef".into()),
+            os: Some("linux".into()),
+            os_version: Some("12".into()),
+            app_version: None,
+        };
+        let url = websocket_url(
+            "https://guild.example",
+            "t",
+            "m",
+            "m",
+            "lab",
+            &meta,
+        )
+        .unwrap();
+        assert_eq!(
+            url.query(),
+            Some("ticket=t&client_id=m&machine_id=m&machine_name=lab\
+                 &machine_fingerprint=AB-cd%2Fef&machine_os=linux&machine_os_version=12")
+        );
+    }
+
+    #[test]
+    fn machine_meta_collect_reports_os_app_version_and_normalizes_fingerprint() {
+        let meta = MachineMeta::collect("0.4.0".into());
+        assert_eq!(meta.os.as_deref(), Some(std::env::consts::OS));
+        assert_eq!(meta.app_version.as_deref(), Some("0.4.0"));
+        if let Some(fp) = &meta.fingerprint {
+            assert_eq!(fp, &fp.to_lowercase());
+            assert_eq!(fp.trim(), fp);
+            assert!(!fp.is_empty());
+        }
+        assert!(meta.os_version.as_ref().is_none_or(|v| !v.trim().is_empty()));
+    }
+
+    #[test]
+    fn linux_fingerprint_matches_etc_machine_id() {
+        match std::fs::read_to_string("/etc/machine-id") {
+            Ok(raw) => {
+                assert_eq!(
+                    machine_fingerprint().as_deref(),
+                    Some(raw.trim().to_lowercase().as_str())
+                );
+            }
+            Err(_) => assert_eq!(machine_fingerprint(), None),
+        }
     }
 
     #[test]
