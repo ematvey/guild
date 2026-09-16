@@ -116,9 +116,4 @@ impl AppState {
             Err(_) => false,
         }
     }
-
-    /// Connected machines belonging to `user_id`.
-    pub fn machines_of_user(&self, user_id: Uuid) -> Vec<(String, String)> {
-        self.hub.machines_of_user(user_id)
-    }
 }

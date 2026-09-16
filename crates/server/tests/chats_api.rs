@@ -160,6 +160,88 @@ async fn create_list_thread_and_org_isolation() {
     let _ = user_row;
 }
 
+/// GET /api/v1/machines lists every durable registry row of the user —
+/// offline rows included — with the live `connected` flag from the hub,
+/// connected machines first, then last seen descending.
+#[tokio::test]
+async fn machines_lists_registry_rows_connected_first() {
+    let ts = test_state_with_db().await;
+    let store = ts.store();
+    let user = store
+        .identity()
+        .ensure_bootstrap_admin("a@b.c", "hunter226")
+        .await
+        .unwrap();
+    let (_sid, token) = store.identity().create_session(user).await.unwrap();
+    let user_row = store.identity().validate_session(&token).await.unwrap();
+    let app = guild_server::build_router(ts.state.clone());
+
+    // One live machine (hub slot + registry row) and two offline rows:
+    // only the registry record exists, the app has long exited.
+    register_test_machine(&ts.state, "live-1", user_row.id, user_row.org_id, Some("Live")).await;
+    store
+        .machines()
+        .upsert_connected(
+            user_row.org_id,
+            user_row.id,
+            "off-old",
+            Some("OldDesk"),
+            None,
+            Some("windows"),
+            Some("11"),
+            Some("0.4.0"),
+            Some("10.1.2.3"),
+        )
+        .await
+        .unwrap();
+    store
+        .machines()
+        .upsert_connected(user_row.org_id, user_row.id, "off-recent", None, None, None, None, None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE machines SET last_seen_at = now() - interval '2 days' WHERE machine_id = 'off-old'")
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/machines")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let machines: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let list = machines["machines"].as_array().unwrap();
+    let ids: Vec<&str> = list
+        .iter()
+        .map(|m| m["machine_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["live-1", "off-recent", "off-old"]);
+
+    let by_id = |id: &str| list.iter().find(|m| m["machine_id"] == id).unwrap();
+    assert_eq!(by_id("live-1")["connected"], true);
+    assert_eq!(by_id("off-recent")["connected"], false);
+    // Missing fields: label falls back to machine_id, metadata omitted.
+    assert_eq!(by_id("off-recent")["name"], "off-recent");
+    assert!(by_id("off-recent")["os"].is_null());
+    // Offline rows still carry their last connect metadata.
+    assert_eq!(by_id("off-old")["connected"], false);
+    assert_eq!(by_id("off-old")["name"], "OldDesk");
+    assert_eq!(by_id("off-old")["os"], "windows");
+    assert_eq!(by_id("off-old")["app_version"], "0.4.0");
+    assert_eq!(by_id("off-old")["last_ip"], "10.1.2.3");
+    assert!(by_id("off-old")["first_connected_at"].is_string());
+    assert!(by_id("off-old")["last_seen_at"].is_string());
+}
+
 /// Machine bindings must reference a live hub machine belonging to the
 /// caller's user or org; unknown or foreign machines are rejected.
 /// Unbinding stays open.
@@ -201,10 +283,10 @@ async fn machine_binding_requires_a_registered_machine() {
         .await
         .unwrap();
     let machines: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        machines["machines"],
-        json!([{"machine_id": "desk-1", "name": "Desk"}])
-    );
+    assert_eq!(machines["machines"][0]["machine_id"], "desk-1");
+    assert_eq!(machines["machines"][0]["name"], "Desk");
+    // The hub slot from register_test_machine is live.
+    assert_eq!(machines["machines"][0]["connected"], true);
 
     // bind at creation
     let res = app
