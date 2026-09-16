@@ -56,23 +56,51 @@ impl<'a> ThreadStore<'a> {
         chat_id: Uuid,
         event: &ThreadEvent,
     ) -> Result<ThreadEventRow, ApiError> {
+        self.append_event_with_id(chat_id, event, Uuid::now_v7())
+            .await
+    }
+
+    /// A supplied message identity makes a retried durable append idempotent.
+    pub async fn append_event_with_id(
+        &self,
+        chat_id: Uuid,
+        event: &ThreadEvent,
+        id: Uuid,
+    ) -> Result<ThreadEventRow, ApiError> {
         let payload = serde_json::to_value(event).expect("thread event serializes");
         let event_type = payload["type"]
             .as_str()
             .expect("internally tagged event has a type")
             .to_string();
+        let mut transaction = self.pool.begin().await?;
         let row: EventRowDb = sqlx::query_as(
             "INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id \
+             WHERE thread_events.chat_id = EXCLUDED.chat_id AND thread_events.payload = EXCLUDED.payload \
              RETURNING id, chat_id, seq, payload, created_at",
         )
-        .bind(Uuid::now_v7())
+        .bind(id)
         .bind(chat_id)
         .bind(event_type)
         .bind(payload)
-        .fetch_one(self.pool)
+        .fetch_one(&mut *transaction)
         .await
         .map_err(ApiError::from)?;
+        sqlx::query("SELECT pg_notify('guild_thread_committed', $1)")
+            .bind(chat_id.to_string())
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
         row.try_into()
+    }
+
+    /// Reserves a watermark in the same order space as durable thread rows.
+    pub async fn watermark(&self) -> Result<i64, ApiError> {
+        Ok(
+            sqlx::query_scalar("SELECT nextval(pg_get_serial_sequence('thread_events', 'seq'))")
+                .fetch_one(self.pool)
+                .await?,
+        )
     }
 
     /// Lists a chat's events, org-scoped via the chats join, ordered by
@@ -85,7 +113,7 @@ impl<'a> ThreadStore<'a> {
         let rows: Vec<EventRowDb> = sqlx::query_as(
             "SELECT e.id, e.chat_id, e.seq, e.payload, e.created_at \
              FROM thread_events e JOIN chats c ON c.id = e.chat_id \
-             WHERE c.org_id = $1 AND e.chat_id = $2 ORDER BY e.id",
+             WHERE c.org_id = $1 AND e.chat_id = $2 ORDER BY e.seq",
         )
         .bind(org_id)
         .bind(chat_id)
