@@ -1,12 +1,11 @@
 use crate::http::auth::AuthUser;
-use crate::http::internal::restate_send_one_way;
 use crate::http::ws::SocketSink;
 use crate::state::AppState;
 use crate::store::Store;
-use protocol::api::{StreamEvent, ToolExecutor};
+use protocol::api::StreamEvent;
 use protocol::ws::WsServerMsg;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -15,12 +14,12 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct FeedHandle {
     pub broadcast: broadcast::Sender<WsServerMsg>,
+    prepare: tokio::sync::mpsc::UnboundedSender<tokio::sync::oneshot::Sender<()>>,
 }
 
 #[derive(Clone)]
 struct ChatBinding {
     machine_id: Option<String>,
-    machine_label: Option<String>,
 }
 
 /// One user's generation subscriptions and notification fan-out state.
@@ -31,9 +30,9 @@ struct Feed {
     user_id: Uuid,
     broadcast: broadcast::Sender<WsServerMsg>,
     chats: HashMap<Uuid, ChatBinding>,
-    subs: HashMap<Uuid, broadcast::Receiver<StreamEvent>>,
-    seen_calls: HashSet<String>,
+    subs: HashMap<Uuid, (Uuid, broadcast::Receiver<StreamEvent>)>,
     slow_tick: u32,
+    views: HashMap<Uuid, Value>,
 }
 
 impl Feed {
@@ -52,54 +51,9 @@ impl Feed {
             broadcast,
             chats: HashMap::new(),
             subs: HashMap::new(),
-            seen_calls: HashSet::new(),
             // Refresh bindings on the first tick.
             slow_tick: 3,
-        }
-    }
-
-    fn forwardable(event: &StreamEvent) -> bool {
-        !matches!(
-            event,
-            StreamEvent::ToolCallDelta { .. } | StreamEvent::ToolCallDone { .. }
-        )
-    }
-
-    fn drain_receiver(
-        &mut self,
-        chat_id: Uuid,
-        binding: &ChatBinding,
-        receiver: &mut broadcast::Receiver<StreamEvent>,
-        frames: &mut Vec<(Uuid, ChatBinding, StreamEvent)>,
-        skip_reflected_deltas: bool,
-    ) {
-        loop {
-            match receiver.try_recv() {
-                Ok(event) if Self::forwardable(&event) => {
-                    // The first drain occurs while both buffer read locks are
-                    // held, so delta frames already copied into the snapshot
-                    // cannot be emitted a second time. Later frames are
-                    // necessarily newer than that snapshot and are forwarded.
-                    if skip_reflected_deltas
-                        && matches!(
-                            event,
-                            StreamEvent::Delta { .. } | StreamEvent::ThinkingDelta { .. }
-                        )
-                    {
-                        continue;
-                    }
-                    if let StreamEvent::ToolStarted { call_id, .. } = &event {
-                        if !self.seen_calls.insert(call_id.clone()) {
-                            continue;
-                        }
-                    }
-                    frames.push((chat_id, binding.clone(), event));
-                }
-                Ok(_) => {}
-                Err(broadcast::error::TryRecvError::Empty)
-                | Err(broadcast::error::TryRecvError::Closed) => break,
-                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
-            }
+            views: HashMap::new(),
         }
     }
 
@@ -118,7 +72,6 @@ impl Feed {
                             chat.id,
                             ChatBinding {
                                 machine_id: chat.machine_id,
-                                machine_label: chat.machine_label,
                             },
                         )
                     })
@@ -130,179 +83,106 @@ impl Feed {
         }
     }
 
-    /// New generation receivers are installed before their snapshots are
-    /// read. The first receiver drain is performed while buffer read locks
-    /// are held: reflected text/thinking deltas are skipped, and later deltas
-    /// are drained after the locks release. This closes both loss and replay
-    /// duplication windows.
+    /// Command-scoped consumers subscribe before invocation. View consumers
+    /// never replay these deltas: they receive the authoritative view below.
     async fn poll(&mut self) {
         self.slow_tick = (self.slow_tick + 1) % 4;
         if self.slow_tick == 0 {
             self.refresh_bindings().await;
         }
-
-        let mut frames: Vec<(Uuid, ChatBinding, StreamEvent)> = Vec::new();
-        let mut live = Vec::new();
-        let mut subs = std::mem::take(&mut self.subs);
-        let mut snapshots: Vec<(
-            Uuid,
-            ChatBinding,
-            Arc<tokio::sync::RwLock<String>>,
-            Arc<tokio::sync::RwLock<String>>,
-            Vec<(String, String, String)>,
-        )> = Vec::new();
-        {
+        let active = {
             let generations = self.state.generations.lock().unwrap();
-            for (chat_id, generation) in generations.iter() {
-                let Some(binding) = self.chats.get(chat_id).cloned() else {
-                    continue;
-                };
-                live.push(*chat_id);
-                if subs.contains_key(chat_id) {
-                    continue;
-                }
-                // Subscribe before copying the replay buffers. We drain this
-                // receiver after emitting the snapshot below, so no update
-                // after this point is lost.
-                subs.insert(*chat_id, generation.tx.subscribe());
-                let mut pending = Vec::new();
-                for (call_id, tool) in generation.pending_tools.lock().unwrap().iter() {
-                    if self.seen_calls.insert(call_id.clone()) {
-                        pending.push((call_id.clone(), tool.name.clone(), tool.arguments.clone()));
+            generations
+                .iter()
+                .filter(|(chat, _)| self.chats.contains_key(chat))
+                .map(|(chat, generation)| (*chat, generation.id, generation.tx.clone()))
+                .collect::<Vec<_>>()
+        };
+        // A replaced generation has already emitted its terminal event.
+        // Drain that receiver before replacing it with the new generation.
+        self.drain_events().await;
+        for (chat, id, sender) in &active {
+            if self.subs.get(chat).is_none_or(|(old, _)| old != id) {
+                self.subs.insert(*chat, (*id, sender.subscribe()));
+            }
+        }
+        self.drain_events().await;
+        self.subs.retain(|chat, (id, _)| {
+            active
+                .iter()
+                .any(|(current, generation, _)| current == chat && generation == id)
+        });
+        self.publish_views().await;
+    }
+
+    async fn drain_events(&mut self) {
+        let mut frames = Vec::new();
+        for (chat, (generation_id, receiver)) in &mut self.subs {
+            loop {
+                match receiver.try_recv() {
+                    Ok(event) => frames.push((*chat, *generation_id, event)),
+                    Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                        let _ = self.broadcast.send(WsServerMsg::Error {
+                            message: "frames dropped — resync".into(),
+                        });
                     }
+                    Err(_) => break,
                 }
-                snapshots.push((
-                    *chat_id,
-                    binding,
-                    generation.text.clone(),
-                    generation.thinking.clone(),
-                    pending,
-                ));
             }
         }
-
-        for (chat_id, binding, text, thinking, pending) in snapshots {
-            // The producer updates these buffers before broadcasting a delta.
-            // Keeping both read guards through the first drain means every
-            // delta currently in this new receiver is already represented by
-            // the snapshot, while no later delta can be sent until release.
-            let text = text.read().await;
-            let thinking = thinking.read().await;
-            if !text.is_empty() {
-                frames.push((
-                    chat_id,
-                    binding.clone(),
-                    StreamEvent::Delta {
-                        content: text.clone(),
-                    },
-                ));
-            }
-            if !thinking.is_empty() {
-                frames.push((
-                    chat_id,
-                    binding.clone(),
-                    StreamEvent::ThinkingDelta {
-                        content: thinking.clone(),
-                    },
-                ));
-            }
-            for (call_id, name, arguments) in pending {
-                frames.push((
-                    chat_id,
-                    binding.clone(),
-                    StreamEvent::ToolStarted {
-                        call_id,
-                        name,
-                        arguments,
-                        executor: ToolExecutor::Client,
-                        kind: None,
-                    },
-                ));
-            }
-            if let Some(receiver) = subs.get_mut(&chat_id) {
-                self.drain_receiver(chat_id, &binding, receiver, &mut frames, true);
-            }
-            drop(thinking);
-            drop(text);
-        }
-
-        // Newly subscribed receivers were drained under the snapshot locks;
-        // only drain their later frames here. Existing receivers are drained
-        // normally.
-        for (chat_id, receiver) in subs.iter_mut() {
-            let Some(binding) = self.chats.get(chat_id).cloned() else {
+        for (chat_id, generation_id, event) in frames {
+            let Some(binding) = self.chats.get(&chat_id) else {
                 continue;
             };
-            self.drain_receiver(*chat_id, &binding, receiver, &mut frames, false);
-        }
-        self.subs = subs;
-        self.subs.retain(|chat_id, _| live.contains(chat_id));
-
-        for (chat_id, binding, event) in frames {
-            self.emit_frame(chat_id, binding, event).await;
+            let Ok(seq) = self.store.thread().watermark().await else {
+                continue;
+            };
+            let _ = self.broadcast.send(WsServerMsg::LiveFrame {
+                chat_id,
+                generation_id,
+                seq,
+                machine_id: binding.machine_id.clone(),
+                event,
+            });
         }
     }
 
-    async fn emit_frame(&self, chat_id: Uuid, binding: ChatBinding, event: StreamEvent) {
-        let offline_tool = match &event {
-            StreamEvent::ToolStarted {
-                call_id,
-                name,
-                executor: ToolExecutor::Client,
-                ..
-            } => binding.machine_id.as_ref().and_then(|machine_id| {
-                (!self.state.hub.machine_online(machine_id)).then(|| {
-                    (
-                        call_id.clone(),
-                        name.clone(),
-                        machine_id.clone(),
-                        binding
-                            .machine_label
-                            .clone()
-                            .unwrap_or_else(|| machine_id.clone()),
-                    )
-                })
-            }),
-            _ => None,
-        };
-        let machine_id = binding.machine_id.clone();
-        let _ = self.broadcast.send(WsServerMsg::LiveFrame {
-            chat_id,
-            machine_id: machine_id.clone(),
-            event,
-        });
+    async fn publish_views(&mut self) {
+        for chat_id in self.chats.keys().copied().collect::<Vec<_>>() {
+            let active = self
+                .state
+                .generations
+                .lock()
+                .unwrap()
+                .contains_key(&chat_id);
+            if !active
+                && self
+                    .views
+                    .get(&chat_id)
+                    .is_some_and(|view| view["generating"] == false)
+            {
+                continue;
+            }
+            if let Ok(view) = capture_thread(&self.state, self.org_id, chat_id, None).await {
+                let mut content = serde_json::to_value(&view).expect("view serializes");
+                content["seq"] = json!(0);
+                if self.views.get(&chat_id) != Some(&content) {
+                    self.views.insert(chat_id, content);
+                    let _ = self.broadcast.send(view);
+                }
+            }
+        }
+    }
 
-        let Some((call_id, name, _machine_id, label)) = offline_tool else {
+    async fn handle_notification(&mut self, notification: sqlx::postgres::PgNotification) {
+        if notification.channel() == "guild_thread_committed" {
+            if let Ok(chat) = notification.payload().parse::<Uuid>() {
+                self.views.remove(&chat);
+            }
+            self.refresh_bindings().await;
+            self.publish_views().await;
             return;
-        };
-        let content = format!("client tool {name} aborted: the bound machine '{label}' is offline");
-        if let Err(error) = restate_send_one_way(
-            &self.state,
-            "ChatRunner",
-            &format!("{chat_id}/complete_tool"),
-            json!({
-                "call_id": call_id,
-                "content": content,
-                "is_error": true,
-            }),
-        )
-        .await
-        {
-            tracing::warn!(error = ?error, %chat_id, "offline client-tool completion failed");
         }
-        let _ = self.broadcast.send(WsServerMsg::LiveFrame {
-            chat_id,
-            machine_id,
-            event: StreamEvent::ToolCompleted {
-                call_id,
-                name,
-                content,
-                is_error: true,
-            },
-        });
-    }
-
-    async fn handle_notification(&self, notification: sqlx::postgres::PgNotification) {
         if notification.channel() == crate::store::events::CHAT_STATUS_CHANNEL {
             let Ok(payload) = serde_json::from_str::<Value>(notification.payload()) else {
                 return;
@@ -348,13 +228,27 @@ impl Feed {
     }
 }
 
-fn spawn_feed(
-    state: AppState,
-    org_id: Uuid,
-    user_id: Uuid,
-    broadcast: broadcast::Sender<WsServerMsg>,
-) {
-    tokio::spawn(feed_task(state, org_id, user_id, broadcast));
+pub(crate) async fn prepare_generation(
+    state: &AppState,
+    user: &AuthUser,
+) -> Result<(), crate::http::error::ApiError> {
+    let _subscription = feed_of(state, user);
+    let prepare = state
+        .feeds
+        .lock()
+        .unwrap()
+        .get(&user.0.id)
+        .unwrap()
+        .prepare
+        .clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    prepare
+        .send(tx)
+        .map_err(|_| crate::http::error::ApiError::internal("feed stopped"))?;
+    tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+        .await
+        .map_err(|_| crate::http::error::ApiError::internal("feed bootstrap timed out"))?
+        .map_err(|_| crate::http::error::ApiError::internal("feed stopped"))
 }
 
 /// The only subscription path for a user's singleton feed. This replaces
@@ -362,6 +256,7 @@ fn spawn_feed(
 /// a receiver while the registry entry is locked, so the task stays alive
 /// until the caller owns a live subscription.
 pub fn feed_of(state: &AppState, user: &AuthUser) -> broadcast::Receiver<WsServerMsg> {
+    let (prepare_tx, prepare_rx) = tokio::sync::mpsc::unbounded_channel();
     let (receiver, start, broadcast) = {
         let mut feeds = state.feeds.lock().unwrap();
         match feeds.get(&user.0.id) {
@@ -377,6 +272,7 @@ pub fn feed_of(state: &AppState, user: &AuthUser) -> broadcast::Receiver<WsServe
                     user.0.id,
                     FeedHandle {
                         broadcast: broadcast.clone(),
+                        prepare: prepare_tx,
                     },
                 );
                 (receiver, true, broadcast)
@@ -384,7 +280,13 @@ pub fn feed_of(state: &AppState, user: &AuthUser) -> broadcast::Receiver<WsServe
         }
     };
     if start {
-        spawn_feed(state.clone(), user.0.org_id, user.0.id, broadcast);
+        tokio::spawn(feed_task(
+            state.clone(),
+            user.0.org_id,
+            user.0.id,
+            broadcast,
+            prepare_rx,
+        ));
     }
     receiver
 }
@@ -418,6 +320,7 @@ async fn feed_task(
     org_id: Uuid,
     user_id: Uuid,
     broadcast: broadcast::Sender<WsServerMsg>,
+    mut prepare: tokio::sync::mpsc::UnboundedReceiver<tokio::sync::oneshot::Sender<()>>,
 ) {
     let store = loop {
         if remove_feed_if_unused(&state, user_id, &broadcast) {
@@ -461,10 +364,19 @@ async fn feed_task(
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             continue;
         }
+        if listener.listen("guild_thread_committed").await.is_err() {
+            continue;
+        }
+        feed.views.clear();
         let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
+                Some(ready) = prepare.recv() => {
+                    feed.refresh_bindings().await;
+                    feed.poll().await;
+                    let _ = ready.send(());
+                },
                 notification = listener.recv() => match notification {
                     Ok(notification) => feed.handle_notification(notification).await,
                     Err(error) => {
@@ -541,110 +453,67 @@ pub(crate) async fn run_sync_started(
     chat_id: Uuid,
     sink: &SocketSink,
 ) {
-    let result = async {
-        let store = state.store().await?;
-        let chat = store
-            .chats()
-            .get_chat(user.0.org_id, chat_id, &user.0)
-            .await?;
-        let history = store.thread().list_events(user.0.org_id, chat_id).await?;
-        Ok::<_, crate::http::error::ApiError>((chat, history))
-    }
-    .await;
-    let (chat, history) = match result {
-        Ok(value) => value,
+    let _ = sink.send(WsServerMsg::SyncBegin { chat_id }).await;
+    match capture_thread(state, user.0.org_id, chat_id, Some(user)).await {
+        Ok(snapshot) => {
+            let _ = sink.send(snapshot).await;
+        }
         Err(error) => {
             let _ = sink
                 .send(WsServerMsg::Error {
                     message: error.message,
                 })
                 .await;
-            let _ = sink.abort_sync().await;
-            return;
-        }
-    };
-
-    let snapshot = {
-        let generations = state.generations.lock().unwrap();
-        generations.get(&chat_id).map(|generation| {
-            let pending = generation
-                .pending_tools
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|(call_id, tool)| (call_id.clone(), tool.name.clone(), tool.arguments.clone()))
-                .collect::<Vec<_>>();
-            (
-                generation.text.clone(),
-                generation.thinking.clone(),
-                pending,
-            )
-        })
-    };
-
-    if sink.send(WsServerMsg::SyncBegin { chat_id }).await.is_err() {
-        return;
-    }
-    let events = history
-        .into_iter()
-        .map(|event| serde_json::to_value(event).expect("thread event serializes"))
-        .collect();
-    if sink
-        .send(WsServerMsg::History { chat_id, events })
-        .await
-        .is_err()
-    {
-        return;
-    }
-    if let Some((text, thinking, pending)) = snapshot {
-        let machine_id = chat.machine_id;
-        let text = text.read().await.clone();
-        if !text.is_empty()
-            && sink
-                .send(WsServerMsg::SnapshotFrame {
-                    chat_id,
-                    machine_id: machine_id.clone(),
-                    event: StreamEvent::Delta { content: text },
-                })
-                .await
-                .is_err()
-        {
-            return;
-        }
-        let thinking = thinking.read().await.clone();
-        if !thinking.is_empty()
-            && sink
-                .send(WsServerMsg::SnapshotFrame {
-                    chat_id,
-                    machine_id: machine_id.clone(),
-                    event: StreamEvent::ThinkingDelta { content: thinking },
-                })
-                .await
-                .is_err()
-        {
-            return;
-        }
-        for (call_id, name, arguments) in pending {
-            if sink
-                .send(WsServerMsg::SnapshotFrame {
-                    chat_id,
-                    machine_id: machine_id.clone(),
-                    event: StreamEvent::ToolStarted {
-                        call_id,
-                        name,
-                        arguments,
-                        executor: ToolExecutor::Client,
-                        kind: None,
-                    },
-                })
-                .await
-                .is_err()
-            {
-                return;
-            }
         }
     }
     let _ = sink.send(WsServerMsg::SyncDone { chat_id }).await;
+}
+
+/// History and the unpersisted model buffers are one atomic view. The worker
+/// holds these same buffer locks while committing and clearing an assistant
+/// step. Capture order and watermark allocation share an async mutex.
+async fn capture_thread(
+    state: &AppState,
+    org: Uuid,
+    chat_id: Uuid,
+    user: Option<&AuthUser>,
+) -> Result<WsServerMsg, crate::http::error::ApiError> {
+    let _capture = state.thread_sync.lock().await;
+    let store = state.store().await?;
+    if let Some(user) = user {
+        store.chats().get_chat(org, chat_id, &user.0).await?;
+    }
+    let buffers = {
+        let generations = state.generations.lock().unwrap();
+        generations
+            .get(&chat_id)
+            .map(|g| (g.text.clone(), g.thinking.clone()))
+    };
+    let (text, thinking, events) = if let Some((text, thinking)) = buffers {
+        let text = text.read().await;
+        let thinking = thinking.read().await;
+        let events = store.thread().list_events(org, chat_id).await?;
+        (text.clone(), thinking.clone(), events)
+    } else {
+        (
+            String::new(),
+            String::new(),
+            store.thread().list_events(org, chat_id).await?,
+        )
+    };
+    let generating = state.generations.lock().unwrap().contains_key(&chat_id);
+    let seq = store.thread().watermark().await?;
+    Ok(WsServerMsg::ThreadState {
+        chat_id,
+        seq,
+        generating,
+        text,
+        thinking,
+        events: events
+            .into_iter()
+            .map(|row| serde_json::to_value(row).expect("thread row serializes"))
+            .collect(),
+    })
 }
 
 #[cfg(all(test, feature = "test-support"))]
@@ -740,31 +609,103 @@ mod tests {
             matches!(receive(&mut frames).await, WsServerMsg::SyncBegin { chat_id } if chat_id == chat.id)
         );
         match receive(&mut frames).await {
-            WsServerMsg::History { chat_id, events } => {
+            WsServerMsg::ThreadState {
+                chat_id,
+                seq,
+                events,
+                text,
+                generating,
+                ..
+            } => {
                 assert_eq!(chat_id, chat.id);
                 assert_eq!(events.len(), 2);
+                assert!(seq > events.last().unwrap()["seq"].as_i64().unwrap());
+                assert_eq!(text, "partial");
+                assert!(generating);
             }
-            other => panic!("expected history, got {other:?}"),
+            other => panic!("expected atomic thread state, got {other:?}"),
         }
-        assert!(matches!(
-            receive(&mut frames).await,
-            WsServerMsg::SnapshotFrame {
-                chat_id,
-                event: StreamEvent::Delta { content },
-                ..
-            } if chat_id == chat.id && content == "partial"
-        ));
-        assert!(matches!(
-            receive(&mut frames).await,
-            WsServerMsg::SnapshotFrame {
-                chat_id,
-                event: StreamEvent::ToolStarted { call_id, .. },
-                ..
-            } if chat_id == chat.id && call_id == "call-1"
-        ));
         assert!(
             matches!(receive(&mut frames).await, WsServerMsg::SyncDone { chat_id } if chat_id == chat.id)
         );
+    }
+
+    #[tokio::test]
+    async fn token_during_sync_has_a_newer_authoritative_watermark() {
+        let (ts, user, chat, _) = setup().await;
+        let (_, text, _) = ensure_generation(&ts.state, chat.id);
+        *text.write().await = "before".into();
+        let before = capture_thread(&ts.state, user.0.org_id, chat.id, Some(&user))
+            .await
+            .unwrap();
+        *text.write().await += " during sync";
+        let after = capture_thread(&ts.state, user.0.org_id, chat.id, Some(&user))
+            .await
+            .unwrap();
+        let WsServerMsg::ThreadState {
+            seq: first,
+            text: first_text,
+            ..
+        } = before
+        else {
+            panic!()
+        };
+        let WsServerMsg::ThreadState {
+            seq: second,
+            text: second_text,
+            ..
+        } = after
+        else {
+            panic!()
+        };
+        assert!(second > first);
+        assert_eq!(first_text, "before");
+        assert_eq!(second_text, "before during sync");
+    }
+
+    #[tokio::test]
+    async fn reconnect_while_awaiting_approval_does_not_replay_persisted_text() {
+        let (ts, user, chat, _) = setup().await;
+        let (_, text, thinking) = ensure_generation(&ts.state, chat.id);
+        *text.write().await = "proposal".into();
+        *thinking.write().await = "reason".into();
+        let event = serde_json::from_value::<ThreadEvent>(
+            json!({"type":"assistant_message", "turn":1, "step":0,
+            "blocks":[{"type":"text", "text":"proposal"}], "usage":{}, "model":"test"}),
+        )
+        .unwrap();
+        crate::http::gateway::persist_assistant_step(&ts.state, chat.id, &event)
+            .await
+            .unwrap();
+        ts.store()
+            .thread()
+            .append_event(
+                chat.id,
+                &ThreadEvent::ApprovalRequest {
+                    call_id: "approval".into(),
+                    name: "execute".into(),
+                    arguments: "{}".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let view = capture_thread(&ts.state, user.0.org_id, chat.id, Some(&user))
+            .await
+            .unwrap();
+        let WsServerMsg::ThreadState {
+            text,
+            thinking,
+            events,
+            generating,
+            ..
+        } = view
+        else {
+            panic!()
+        };
+        assert!(text.is_empty() && thinking.is_empty());
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1]["event"]["type"], "approval_request");
+        assert!(generating);
     }
 
     #[tokio::test]
@@ -836,6 +777,7 @@ mod tests {
                     chat_id,
                     machine_id: Some(machine_id),
                     event: StreamEvent::Delta { content },
+                    ..
                 } if chat_id == chat.id && machine_id == "m1" && content == "live"
             ));
         }
@@ -850,6 +792,7 @@ mod tests {
         let user = Uuid::now_v7();
         let (broadcast, _) = broadcast::channel(4);
         let handle = FeedHandle {
+            prepare: tokio::sync::mpsc::unbounded_channel().0,
             broadcast: broadcast.clone(),
         };
         state.feeds.lock().unwrap().insert(user, handle);
@@ -893,6 +836,8 @@ mod tests {
     fn sync_gate_defers_live_frames_until_sync_done() {
         let chat_id = Uuid::now_v7();
         let live = WsServerMsg::LiveFrame {
+            generation_id: Uuid::nil(),
+            seq: 1,
             chat_id,
             machine_id: None,
             event: StreamEvent::Delta {
@@ -929,69 +874,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_to_offline_machine_fails_fast() {
-        let (ts, user, chat, ingress) = setup().await;
-        let store = ts.store();
-        store
-            .chats()
-            .set_machine(user.0.org_id, chat.id, Some("mX"), Some("Offline desk"))
-            .await
-            .unwrap();
+    async fn dispatch_to_offline_machine_fails_fast_without_a_feed() {
+        let (ts, _user, chat, ingress) = setup().await;
         ensure_generation(&ts.state, chat.id);
-        note_client_tool(
-            &ts.state,
-            chat.id,
-            "call-1",
-            "execute",
-            "{\"cmd\":\"pwd\"}",
-            "mX",
-        );
-
-        let (broadcast, _) = tokio::sync::broadcast::channel(16);
-        let mut feed = Feed::new(
-            ts.state.clone(),
-            Arc::new(store),
-            user.0.org_id,
-            user.0.id,
-            broadcast.clone(),
-        );
-        let (sink, mut sink_rx) = socket_channel();
-        let forwarder = forward_to_socket(broadcast.subscribe(), sink);
-        feed.poll().await;
-
-        assert!(matches!(
-            receive(&mut sink_rx).await,
-            WsServerMsg::LiveFrame {
-                chat_id,
-                event: StreamEvent::ToolStarted { call_id, .. },
-                ..
-            } if chat_id == chat.id && call_id == "call-1"
-        ));
-        assert!(matches!(
-            receive(&mut sink_rx).await,
-            WsServerMsg::LiveFrame {
-                chat_id,
-                event: StreamEvent::ToolCompleted { call_id, is_error: true, content, .. },
-                ..
-            } if chat_id == chat.id
-                && call_id == "call-1"
-                && content == "client tool execute aborted: the bound machine 'Offline desk' is offline"
-        ));
-        forwarder.abort();
-
+        note_client_tool(&ts.state, chat.id, "call-1", "execute", "{}", "offline");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if !ingress.requests.lock().unwrap().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
         let sent = ingress.requests.lock().unwrap().clone();
         assert_eq!(sent.len(), 1);
         assert_eq!(
             sent[0].0,
             format!("/ChatRunner/{}/complete_tool/send", chat.id)
         );
-        assert_eq!(
-            sent[0].1,
-            serde_json::json!({
-                "call_id": "call-1",
-                "content": "client tool execute aborted: the bound machine 'Offline desk' is offline",
-                "is_error": true,
-            })
-        );
+        assert_eq!(sent[0].1["call_id"], "call-1");
+        assert_eq!(sent[0].1["is_error"], true);
     }
 }

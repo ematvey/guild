@@ -1,6 +1,5 @@
-//! LLM gateway: streaming chat through the org's provider keys and routes,
-//! usage recorded per request (spec §4.2, §4.5). Internal API — Guild
-//! clients only in v1.
+//! HTTP chat commands and provider administration. Completion output and
+//! machine tool results travel over WebSocket.
 
 use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
@@ -8,32 +7,26 @@ use crate::state::AppState;
 use crate::store::identity::UserRow;
 use axum::extract::{FromRequestParts, Path, State};
 use axum::http::request::Parts;
-use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
-use axum::response::IntoResponse;
 use axum::{Json, Router};
-use futures::Stream;
-use futures::StreamExt;
 use guild_core::provider::ProviderError;
 use protocol::api::{ChatCompletionRequest, StreamEvent, ThreadEvent};
 use serde_json::json;
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
 
 /// A server-side generation in flight, detached from any client connection.
-/// Broadcasts stream events to any number of attached SSE clients; the text
-/// buffer lets late subscribers catch up without missing or duplicating
-/// deltas.
+/// Broadcasts generation events to command-scoped WebSocket consumers.
+/// Text buffers contain only the current, unpersisted assistant step.
 pub struct ActiveGeneration {
+    pub id: Uuid,
     pub tx: broadcast::Sender<StreamEvent>,
     pub text: Arc<RwLock<String>>,
     /// Reasoning accumulated so far in the in-flight model call, for
     /// catch-up on attach (first `thinking_delta` frame carries the buffer).
     pub thinking: Arc<RwLock<String>>,
-    /// Client tool calls currently suspended by the workflow, for replay to
-    /// clients that attach after the ToolStarted event was broadcast.
+    /// Suspended machine calls and the connection responsible for each call.
     pub pending_tools: Arc<std::sync::Mutex<HashMap<String, PendingTool>>>,
 }
 
@@ -44,6 +37,7 @@ pub struct PendingTool {
     /// Bound executor machine; `None` → fall back to the 5-minute timeout
     /// only.
     pub machine_id: Option<String>,
+    pub connection_id: Option<Uuid>,
     /// Fired when the tool is resolved so the presence watcher stops.
     pub done: Arc<tokio::sync::Notify>,
 }
@@ -73,6 +67,16 @@ pub(crate) fn spawn_machine_watcher(
     done: Arc<tokio::sync::Notify>,
 ) {
     let state = state.clone();
+    let connection = {
+        let generations = state.generations.lock().unwrap();
+        generations.get(&chat_id).and_then(|g| {
+            g.pending_tools
+                .lock()
+                .unwrap()
+                .get(&call_id)
+                .and_then(|tool| tool.connection_id)
+        })
+    };
     let deadline = tokio::time::Instant::now() + crate::worker::restate::CLIENT_TOOL_TIMEOUT;
     tokio::spawn(async move {
         // The grace window covers brief disconnects and reconnects before the
@@ -88,7 +92,12 @@ pub(crate) fn spawn_machine_watcher(
             if !pending_tool_exists(&state, chat_id, &call_id) {
                 return; // resolved already
             }
-            if state.hub.machine_online(&machine_id) {
+            let current = state.hub.machine_connection(&machine_id);
+            if current.is_some() && current != connection {
+                reconcile_machine_tools(&state, &machine_id, current.unwrap()).await;
+                return;
+            }
+            if current.is_some() {
                 gone_since = None;
                 continue;
             }
@@ -117,14 +126,6 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/gateway/models", axum::routing::get(models))
         .route("/api/v1/gateway/chat", axum::routing::post(chat))
-        .route(
-            "/api/v1/gateway/chat/{id}/stream",
-            axum::routing::get(attach_stream),
-        )
-        .route(
-            "/api/v1/gateway/chat/{id}/tools/{call_id}/result",
-            axum::routing::post(tool_result),
-        )
         .route(
             "/api/v1/gateway/chat/{id}/approvals/{call_id}",
             axum::routing::post(approval_decision),
@@ -483,11 +484,6 @@ pub fn provider_err_to_api(e: ProviderError) -> ApiError {
     }
 }
 
-fn sse_event(ev: StreamEvent) -> Result<SseEvent, Infallible> {
-    let json = serde_json::to_string(&ev).expect("stream event serializes");
-    Ok(SseEvent::default().data(json))
-}
-
 /// Registry entry for the chat's in-flight generation, creating it if absent.
 /// Used by the API (placeholder before invocation) and by the Restate worker
 /// (the generation task broadcasts deltas through it). Both roles share one
@@ -505,6 +501,7 @@ pub(crate) fn note_pending_tool(
     machine_id: Option<&str>,
 ) -> Arc<tokio::sync::Notify> {
     let done = Arc::new(tokio::sync::Notify::new());
+    let holder = machine_id.and_then(|id| state.hub.machine_holder(id));
     let gens = state.generations.lock().unwrap();
     if let Some(g) = gens.get(&chat_id) {
         g.pending_tools.lock().unwrap().insert(
@@ -513,11 +510,115 @@ pub(crate) fn note_pending_tool(
                 name: name.to_string(),
                 arguments: args.to_string(),
                 machine_id: machine_id.map(str::to_string),
+                connection_id: holder.as_ref().map(|m| m.conn_id),
                 done: done.clone(),
             },
         );
     }
     done
+}
+
+/// Dispatches once inside the worker's journaled operation. The returned
+/// connection identity is replayed, not the side effect itself.
+pub(crate) async fn dispatch_pending_tool(
+    state: &AppState,
+    chat_id: Uuid,
+    call_id: &str,
+    dispatch_id: &str,
+) -> Result<Option<Uuid>, ApiError> {
+    let tool = {
+        let gens = state.generations.lock().unwrap();
+        gens.get(&chat_id).and_then(|g| {
+            g.pending_tools.lock().unwrap().get(call_id).map(|t| {
+                (
+                    t.connection_id,
+                    t.machine_id.clone(),
+                    t.name.clone(),
+                    t.arguments.clone(),
+                )
+            })
+        })
+    };
+    let Some((connection, machine, name, arguments)) = tool else {
+        return Ok(None);
+    };
+    let store = state.store().await?;
+    let key = format!("tool_dispatch:{chat_id}:{dispatch_id}");
+    if !store
+        .kv()
+        .claim(
+            &key,
+            &connection.map(|id| id.to_string()).unwrap_or_default(),
+        )
+        .await?
+    {
+        let recorded = store.kv().get(&key).await?.and_then(|id| id.parse().ok());
+        crate::http::internal::restate_send_one_way(state, "ChatRunner", &format!("{chat_id}/complete_tool"),
+            json!({"call_id": call_id, "content": "Dispatch was already reserved; execution outcome is unknown. Check effects before retrying.", "is_error": true})).await?;
+        return Ok(recorded);
+    }
+    let holder = machine
+        .as_deref()
+        .and_then(|id| state.hub.machine_holder(id));
+    if let Some(holder) = holder.filter(|h| Some(h.conn_id) == connection) {
+        if holder
+            .sink
+            .try_send(protocol::ws::WsServerMsg::ToolDispatch {
+                chat_id,
+                call_id: call_id.into(),
+                name,
+                arguments,
+            })
+            .is_ok()
+        {
+            return Ok(Some(holder.conn_id));
+        }
+    }
+    crate::http::internal::restate_send_one_way(state, "ChatRunner", &format!("{chat_id}/complete_tool"),
+        json!({"call_id": call_id, "content": "Machine is offline; tool was not dispatched", "is_error": true})).await?;
+    Ok(connection)
+}
+
+pub(crate) fn restore_dispatch_connection(
+    state: &AppState,
+    chat: Uuid,
+    call: &str,
+    connection: Option<Uuid>,
+) {
+    let generations = state.generations.lock().unwrap();
+    if let Some(generation) = generations.get(&chat) {
+        if let Some(tool) = generation.pending_tools.lock().unwrap().get_mut(call) {
+            tool.connection_id = connection;
+        }
+    }
+}
+
+/// A connection change makes the execution outcome unknown. Fail through the
+/// durable resolver; never replay a possibly side-effecting call on a new link.
+pub(crate) async fn reconcile_machine_tools(state: &AppState, machine: &str, connection: Uuid) {
+    let pending: Vec<_> = {
+        let generations = state.generations.lock().unwrap();
+        generations
+            .iter()
+            .flat_map(|(chat, generation)| {
+                generation
+                    .pending_tools
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|(call, tool)| {
+                        (tool.machine_id.as_deref() == Some(machine)
+                            && tool.connection_id != Some(connection))
+                        .then(|| (*chat, call.clone()))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    for (chat, call) in pending {
+        let _ = crate::http::internal::restate_send_one_way(state, "ChatRunner", &format!("{chat}/complete_tool"),
+            json!({"call_id": call, "content": "Machine connection changed; execution outcome is unknown. Do not retry this action without checking its effects.", "is_error": true})).await;
+    }
 }
 
 /// Removes a suspended client tool call (completed or timed out).
@@ -530,6 +631,26 @@ pub(crate) fn clear_pending_tool(state: &AppState, chat_id: Uuid, call_id: &str)
             t.done.notify_one();
         }
     }
+}
+
+/// Commits an assistant step and retires its replay buffers as one view change.
+pub(crate) async fn persist_assistant_step(
+    state: &AppState,
+    chat: Uuid,
+    event: &ThreadEvent,
+) -> Result<crate::store::thread::ThreadEventRow, ApiError> {
+    let (_, text, thinking) = ensure_generation(state, chat);
+    let mut text = text.write().await;
+    let mut thinking = thinking.write().await;
+    let row = state
+        .store()
+        .await?
+        .thread()
+        .append_event(chat, event)
+        .await?;
+    text.clear();
+    thinking.clear();
+    Ok(row)
 }
 
 pub(crate) fn ensure_generation(
@@ -546,6 +667,7 @@ pub(crate) fn ensure_generation(
     }
     let (tx, _) = broadcast::channel::<StreamEvent>(1024);
     let gen = ActiveGeneration {
+        id: Uuid::now_v7(),
         tx: tx.clone(),
         text: Arc::new(RwLock::new(String::new())),
         thinking: Arc::new(RwLock::new(String::new())),
@@ -583,6 +705,7 @@ pub(crate) fn try_begin_generation(
     }
     let (tx, _) = broadcast::channel::<StreamEvent>(1024);
     let gen = ActiveGeneration {
+        id: Uuid::now_v7(),
         tx: tx.clone(),
         text: Arc::new(RwLock::new(String::new())),
         thinking: Arc::new(RwLock::new(String::new())),
@@ -598,7 +721,7 @@ async fn chat(
     user: AuthUser,
     headers: axum::http::HeaderMap,
     Json(req): Json<ChatCompletionRequest>,
-) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
     // Org scoping: chat must belong to the caller's org. Route resolution,
     // quota, history, completion, persistence and usage all happen inside the
@@ -613,7 +736,19 @@ async fn chat(
     // concurrent sends cannot both invoke. The user turn itself is persisted
     // by the ChatRunner workflow (journaled), never here — attach/replay
     // stays consistent with the event log (spec §B.4).
-    let (tx, _text_buf, _thinking_buf) = try_begin_generation(&state, req.chat_id)?;
+    let (_tx, _text_buf, _thinking_buf) = try_begin_generation(&state, req.chat_id)?;
+    if let Err(error) = crate::http::feed::prepare_generation(&state, &user).await {
+        state.generations.lock().unwrap().remove(&req.chat_id);
+        return Err(error);
+    }
+
+    let generation_id = state
+        .generations
+        .lock()
+        .unwrap()
+        .get(&req.chat_id)
+        .unwrap()
+        .id;
 
     // Fire-and-forget invocation via the Restate ingress; the workflow runs
     // detached, so this HTTP request ending (or the client disconnecting)
@@ -630,6 +765,7 @@ async fn chat(
         "chat_id": req.chat_id,
         "model": req.model,
         "user_message": user_message,
+        "user_message_id": req.user_message_id,
         "client_tools": req.client_tools,
         "attachment_ids": req.attachment_ids,
         "project_dir": req.project_dir,
@@ -674,61 +810,9 @@ async fn chat(
         )
         .await;
 
-    let out = forward_sse(tx.subscribe());
-    Ok(Sse::new(out).keep_alive(KeepAlive::default()))
-}
-
-/// SSE body that forwards broadcast events until the generation ends. The
-/// generation itself is unaffected when this body is dropped.
-fn forward_sse(
-    mut rx: broadcast::Receiver<StreamEvent>,
-) -> impl Stream<Item = Result<SseEvent, Infallible>> {
-    async_stream::stream! {
-        loop {
-            match rx.recv().await {
-                Ok(ev) => {
-                    let ended = matches!(ev, StreamEvent::Done { .. } | StreamEvent::Error { .. });
-                    yield sse_event(ev);
-                    if ended {
-                        return;
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => return,
-            }
-        }
-    }
-}
-
-/// Attaches an SSE client to an in-flight generation: catch-up delta with the
-/// text accumulated so far, then live events. An idle chat (no generation
-/// running) gets a 200 SSE body that ends immediately.
-/// Delivers a client-side tool result to the waiting ChatRunner workflow.
-/// Late results (after the workflow timed the call out) are ignored there.
-async fn tool_result(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path((chat_id, call_id)): Path<(Uuid, String)>,
-    Json(req): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let store = state.store().await?;
-    store
-        .chats()
-        .get_chat(user.0.org_id, chat_id, &user.0)
-        .await?;
-    let content = req["content"]
-        .as_str()
-        .ok_or_else(|| ApiError::bad_request("missing content"))?;
-    let is_error = req["is_error"].as_bool().unwrap_or(false);
-    let meta = req.get("meta").cloned().filter(|v| !v.is_null());
-    crate::http::internal::restate_send_one_way(
-        &state,
-        "ChatRunner",
-        &format!("{chat_id}/complete_tool"),
-        serde_json::json!({ "call_id": call_id, "content": content, "is_error": is_error, "meta": meta }),
-    )
-    .await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(
+        json!({ "accepted": true, "invocation_id": invocation_id, "generation_id": generation_id }),
+    ))
 }
 
 /// Delivers an approval decision (phase 2, design §D). Every decision path
@@ -766,8 +850,8 @@ async fn approval_decision(
 
     // Recorded decision: echo it; the ChatRunner is not contacted.
     let events = store.thread().list_events(user.0.org_id, chat_id).await?;
-    if let Some((r_approved, r_reason, r_expired)) = events.iter().rev().find_map(|ev| {
-        match &ev.event {
+    if let Some((r_approved, r_reason, r_expired)) =
+        events.iter().rev().find_map(|ev| match &ev.event {
             ThreadEvent::ApprovalDecision {
                 call_id: c,
                 approved,
@@ -775,8 +859,8 @@ async fn approval_decision(
                 expired,
             } if c == &call_id => Some((*approved, reason.clone(), *expired)),
             _ => None,
-        }
-    }) {
+        })
+    {
         return Ok(Json(json!({
             "ok": true,
             "settled": true,
@@ -808,7 +892,14 @@ async fn approval_decision(
             },
         )
         .await?;
-    let _ = forward_approval_decision(&state, chat_id, &call_id, false, Some(APPROVAL_EXPIRED_REASON.into())).await;
+    let _ = forward_approval_decision(
+        &state,
+        chat_id,
+        &call_id,
+        false,
+        Some(APPROVAL_EXPIRED_REASON.into()),
+    )
+    .await;
     Ok(Json(json!({
         "ok": true,
         "settled": true,
@@ -847,125 +938,85 @@ async fn compact_chat(
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn attach_stream(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(chat_id): Path<Uuid>,
-) -> Result<axum::response::Response, ApiError> {
-    let store = state.store().await?;
-    store
-        .chats()
-        .get_chat(user.0.org_id, chat_id, &user.0)
-        .await?;
-    let gen = state
-        .generations
-        .lock()
-        .unwrap()
-        .get(&chat_id)
-        .map(|g| (g.tx.clone(), g.text.clone(), g.thinking.clone()));
-    let Some((tx, text, thinking)) = gen else {
-        // Nothing in flight: clients attach speculatively on every thread
-        // open, so reply 200 instead of 404 — no console error noise. Yield
-        // a single Idle frame so the client can tell "nothing running" apart
-        // from a stream that dropped mid-generation.
-        let idle = async_stream::stream! {
-            yield sse_event(StreamEvent::Idle);
-        };
-        return Ok(Sse::new(idle)
-            .keep_alive(KeepAlive::default())
-            .into_response());
-    };
-    // Subscribe and snapshot under the read guard: the generation task takes
-    // the write guard before broadcasting, so the snapshot and the live
-    // stream cannot overlap or gap.
-    let (snap, think_snap, rx) = {
-        let t = text.read().await;
-        let th = thinking.read().await;
-        (t.clone(), th.clone(), tx.subscribe())
-    };
-    // Design §E: unresolved approval requests (a request event with no later
-    // ApprovalDecision — and no later tool result — for the same call_id)
-    // replay as ApprovalRequested frames so a late-attaching client still
-    // sees the pending card.
-    let events = store.thread().list_events(user.0.org_id, chat_id).await?;
-    let mut decided: std::collections::HashSet<&str> = Default::default();
-    for ev in &events {
-        match &ev.event {
-            ThreadEvent::ApprovalDecision { call_id, .. }
-            | ThreadEvent::ToolResult { call_id, .. } => {
-                decided.insert(call_id.as_str());
-            }
-            _ => {}
-        }
-    }
-    let approvals: Vec<(String, String, String)> = events
-        .iter()
-        .filter_map(|ev| match &ev.event {
-            ThreadEvent::ApprovalRequest {
-                call_id,
-                name,
-                arguments,
-            } if !decided.contains(call_id.as_str()) => {
-                Some((call_id.clone(), name.clone(), arguments.clone()))
-            }
-            _ => None,
-        })
-        .collect();
-    // Replay suspended client tool calls so late attachers can execute them.
-    let pending: Vec<(String, String, String)> = state
-        .generations
-        .lock()
-        .unwrap()
-        .get(&chat_id)
-        .map(|g| {
-            g.pending_tools
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|(id, t)| (id.clone(), t.name.clone(), t.arguments.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let out = async_stream::stream! {
-        if !snap.is_empty() {
-            yield sse_event(StreamEvent::Delta { content: snap });
-        }
-        // Spec §B.5: the first thinking_delta frame after attach carries the
-        // full accumulated reasoning buffer, not a delta.
-        if !think_snap.is_empty() {
-            yield sse_event(StreamEvent::ThinkingDelta { content: think_snap });
-        }
-        for (call_id, name, arguments) in pending {
-            yield sse_event(StreamEvent::ToolStarted {
-                call_id,
-                name,
-                arguments,
-                executor: protocol::api::ToolExecutor::Client,
-                kind: None,
-            });
-        }
-        for (call_id, name, arguments) in approvals {
-            yield sse_event(StreamEvent::ApprovalRequested {
-                call_id,
-                name,
-                arguments,
-            });
-        }
-        // forward the live tail
-        let mut pinned = Box::pin(forward_sse(rx));
-        while let Some(item) = pinned.next().await {
-            yield item;
-        }
-    };
-    Ok(Sse::new(out)
-        .keep_alive(KeepAlive::default())
-        .into_response())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Config;
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn dispatch_reservation_survives_process_state_loss_without_reexecution() {
+        let (fixture, ingress) = crate::test_support::test_state_with_mock_ingress().await;
+        let chat = Uuid::now_v7();
+        let original = Uuid::now_v7();
+        let (sink, mut output) = crate::http::ws::socket_channel();
+        fixture
+            .state
+            .hub
+            .register_machine(
+                crate::http::hub::Member {
+                    conn_id: original,
+                    user_id: Uuid::now_v7(),
+                    org_id: Uuid::now_v7(),
+                    sink,
+                    label: None,
+                },
+                "machine",
+            )
+            .await
+            .unwrap();
+        ensure_generation(&fixture.state, chat);
+        note_pending_tool(
+            &fixture.state,
+            chat,
+            "call",
+            "execute",
+            "{}",
+            Some("machine"),
+        );
+        assert_eq!(
+            dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
+                .await
+                .unwrap(),
+            Some(original)
+        );
+        assert!(matches!(
+            output.try_recv().unwrap(),
+            crate::http::ws::SocketOutput::Message(protocol::ws::WsServerMsg::ToolDispatch { .. })
+        ));
+        let restarted =
+            AppState::with_store(Arc::new(fixture.store()), (*fixture.state.config).clone());
+        let (sink, mut replacement_output) = crate::http::ws::socket_channel();
+        restarted
+            .hub
+            .register_machine(
+                crate::http::hub::Member {
+                    conn_id: Uuid::now_v7(),
+                    user_id: Uuid::now_v7(),
+                    org_id: Uuid::now_v7(),
+                    sink,
+                    label: None,
+                },
+                "machine",
+            )
+            .await
+            .unwrap();
+        ensure_generation(&restarted, chat);
+        note_pending_tool(&restarted, chat, "call", "execute", "{}", Some("machine"));
+        assert_eq!(
+            dispatch_pending_tool(&restarted, chat, "call", "durable-awakeable")
+                .await
+                .unwrap(),
+            Some(original)
+        );
+        assert!(replacement_output.try_recv().is_err());
+        assert!(ingress
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, body)| body["is_error"] == true));
+    }
 
     /// The reservation is atomic: the second concurrent send hits 409 while
     /// the first holds the slot, and the slot frees cleanly.
