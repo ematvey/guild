@@ -18,12 +18,12 @@ export type WsServerMsg =
   | { "type": "hello", }
   | { "type": "displaced", }
   | { "type": "auth_required", }
+  | { "type": "tool_dispatch", chat_id: string, call_id: string, name: string, arguments: string }
+  | { "type": "thread_state", chat_id: string, seq: number, events: JsonValue[], text: string, thinking: string, generating: boolean }
   | { "type": "error", message: string, }
   | { "type": "thread_list", chats: JsonValue[], }
   | { "type": "chat_status", chat_id: string, generating: boolean, }
   | { "type": "sync_begin", chat_id: string, }
-  | { "type": "history", chat_id: string, events: JsonValue[], }
-  | { "type": "snapshot_frame", chat_id: string, machine_id: string | null, event: StreamEvent, }
   | { "type": "sync_done", chat_id: string, }
-  | { "type": "live_frame", chat_id: string, machine_id: string | null, event: StreamEvent, }
+  | { "type": "live_frame", chat_id: string, generation_id: string, seq: number, machine_id: string | null, event: StreamEvent, }
   | { "type": "org_event", event: JsonValue, };

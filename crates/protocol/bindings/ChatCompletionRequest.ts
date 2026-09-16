@@ -2,15 +2,19 @@
 import type { Message } from "./Message";
 import type { ToolSpec } from "./ToolSpec";
 
-export type ChatCompletionRequest = { chat_id: string, model: string, messages: Array<Message>, 
+export type ChatCompletionRequest = {
+/**
+ * Optional stable identity for the committed user-message echo.
+ */
+user_message_id?: string, chat_id: string, model: string, messages: Array<Message>,
 /**
  * Agentic tool calling: declared tools for this turn.
  */
-tools?: Array<ToolSpec>, 
+tools?: Array<ToolSpec>,
 /**
  * Optional system prompt (agent sessions set this).
  */
-system?: string, 
+system?: string,
 /**
  * True when the calling client can execute machine tools (read_file/execute/
  * edit_file/write_file) — i.e. the Tauri desktop app. Web clients cannot, and
@@ -18,20 +22,20 @@ system?: string,
  * turn suspend for the 5-minute client-tool timeout with no one to
  * answer it.
  */
-client_tools: boolean, 
+client_tools: boolean,
 /**
  * Workspace directory the client executes machine tools in. The server
  * includes it in the system prompt it builds (the server owns the
  * prompt; the client never sends one for agent turns).
  */
-project_dir?: string, 
+project_dir?: string,
 /**
  * Context attachments for this turn: uploaded beforehand via
  * POST /api/v1/chats/{id}/attachments; the server inlines documents'
  * text and passes image/audio parts when the route supports the
  * modality (spec §4.3).
  */
-attachment_ids: Array<string>, 
+attachment_ids: Array<string>,
 /**
  * Client-discovered local-skills index, appended to the server-owned
  * system prompt. Additive and server-capped: the client never overrides
