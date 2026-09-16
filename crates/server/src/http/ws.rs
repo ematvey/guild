@@ -108,42 +108,68 @@ pub(crate) enum SocketOutput {
 
 /// The one outbound queue consumed by a socket's writer task.
 #[derive(Clone)]
-pub struct SocketSink(mpsc::Sender<SocketOutput>);
+pub struct SocketSink {
+    tx: mpsc::Sender<SocketOutput>,
+    /// Serializes queue insertion across every clone. We reserve queue space
+    /// before taking this synchronous mutex, never hold it across `.await`,
+    /// and enqueue the sync marker under the same lock as feed output.
+    ordering: Arc<Mutex<()>>,
+}
 
 impl SocketSink {
+    async fn enqueue(
+        &self,
+        output: SocketOutput,
+    ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+        let permit = match self.tx.reserve().await {
+            Ok(permit) => permit,
+            Err(_) => return Err(mpsc::error::SendError(output)),
+        };
+        let _ordering = self.ordering.lock().unwrap();
+        permit.send(output);
+        Ok(())
+    }
+
     pub(crate) async fn send(
         &self,
         message: WsServerMsg,
     ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        self.0.send(SocketOutput::Message(message)).await
+        self.enqueue(SocketOutput::Message(message)).await
     }
 
     pub(crate) fn try_send(
         &self,
         message: WsServerMsg,
     ) -> Result<(), mpsc::error::TrySendError<SocketOutput>> {
-        self.0.try_send(SocketOutput::Message(message))
+        let _ordering = self.ordering.lock().unwrap();
+        self.tx.try_send(SocketOutput::Message(message))
     }
 
     pub(crate) async fn start_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        self.0.send(SocketOutput::SyncStart).await
+        self.enqueue(SocketOutput::SyncStart).await
     }
 
     pub(crate) async fn abort_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        self.0.send(SocketOutput::SyncAbort).await
+        self.enqueue(SocketOutput::SyncAbort).await
     }
 
     async fn pong(
         &self,
         payload: axum::body::Bytes,
     ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
-        self.0.send(SocketOutput::Pong(payload)).await
+        self.enqueue(SocketOutput::Pong(payload)).await
     }
 }
 
 pub(crate) fn socket_channel(capacity: usize) -> (SocketSink, mpsc::Receiver<SocketOutput>) {
     let (tx, rx) = mpsc::channel(capacity);
-    (SocketSink(tx), rx)
+    (
+        SocketSink {
+            tx,
+            ordering: Arc::new(Mutex::new(())),
+        },
+        rx,
+    )
 }
 
 /// Holds live feed messages while one or more state-sync brackets are open.
@@ -296,8 +322,7 @@ pub(crate) async fn drive_socket(
                 .await;
         }
     }
-    let feed_forwarder =
-        feed::forward_to_socket(feed::subscribe(&state, &user), member.sink.clone());
+    let feed_forwarder = feed::forward_to_socket(feed::feed_of(&state, &user), member.sink.clone());
     let (client_tx, mut client_rx) = mpsc::channel(32);
     let client_state = state.clone();
     let client_user = AuthUser(user.0.clone());
@@ -439,6 +464,29 @@ mod tests {
             WsClientMsg::Sync { chat_id: None },
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn sync_marker_is_enqueued_before_later_live_output() {
+        let (sink, mut receiver) = socket_channel(4);
+        sink.start_sync().await.unwrap();
+        sink.send(WsServerMsg::LiveFrame {
+            chat_id: Uuid::now_v7(),
+            machine_id: None,
+            event: protocol::api::StreamEvent::Delta {
+                content: "live".into(),
+            },
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            receiver.recv().await,
+            Some(SocketOutput::SyncStart)
+        ));
+        assert!(matches!(
+            receiver.recv().await,
+            Some(SocketOutput::Message(WsServerMsg::LiveFrame { .. }))
+        ));
     }
 
     #[test]

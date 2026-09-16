@@ -65,6 +65,44 @@ impl Feed {
         )
     }
 
+    fn drain_receiver(
+        &mut self,
+        chat_id: Uuid,
+        binding: &ChatBinding,
+        receiver: &mut broadcast::Receiver<StreamEvent>,
+        frames: &mut Vec<(Uuid, ChatBinding, StreamEvent)>,
+        skip_reflected_deltas: bool,
+    ) {
+        loop {
+            match receiver.try_recv() {
+                Ok(event) if Self::forwardable(&event) => {
+                    // The first drain occurs while both buffer read locks are
+                    // held, so delta frames already copied into the snapshot
+                    // cannot be emitted a second time. Later frames are
+                    // necessarily newer than that snapshot and are forwarded.
+                    if skip_reflected_deltas
+                        && matches!(
+                            event,
+                            StreamEvent::Delta { .. } | StreamEvent::ThinkingDelta { .. }
+                        )
+                    {
+                        continue;
+                    }
+                    if let StreamEvent::ToolStarted { call_id, .. } = &event {
+                        if !self.seen_calls.insert(call_id.clone()) {
+                            continue;
+                        }
+                    }
+                    frames.push((chat_id, binding.clone(), event));
+                }
+                Ok(_) => {}
+                Err(broadcast::error::TryRecvError::Empty)
+                | Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+            }
+        }
+    }
+
     async fn refresh_bindings(&mut self) {
         match self
             .store
@@ -92,9 +130,11 @@ impl Feed {
         }
     }
 
-    /// Snapshots are read before subscriptions are created. A frame emitted
-    /// between those operations can arrive in the next poll, so this is a
-    /// tiny at-least-once overlap rather than a delta-before-snapshot reorder.
+    /// New generation receivers are installed before their snapshots are
+    /// read. The first receiver drain is performed while buffer read locks
+    /// are held: reflected text/thinking deltas are skipped, and later deltas
+    /// are drained after the locks release. This closes both loss and replay
+    /// duplication windows.
     async fn poll(&mut self) {
         self.slow_tick = (self.slow_tick + 1) % 4;
         if self.slow_tick == 0 {
@@ -102,6 +142,7 @@ impl Feed {
         }
 
         let mut frames: Vec<(Uuid, ChatBinding, StreamEvent)> = Vec::new();
+        let mut live = Vec::new();
         let mut subs = std::mem::take(&mut self.subs);
         let mut snapshots: Vec<(
             Uuid,
@@ -110,16 +151,20 @@ impl Feed {
             Arc<tokio::sync::RwLock<String>>,
             Vec<(String, String, String)>,
         )> = Vec::new();
-
         {
             let generations = self.state.generations.lock().unwrap();
             for (chat_id, generation) in generations.iter() {
                 let Some(binding) = self.chats.get(chat_id).cloned() else {
                     continue;
                 };
+                live.push(*chat_id);
                 if subs.contains_key(chat_id) {
                     continue;
                 }
+                // Subscribe before copying the replay buffers. We drain this
+                // receiver after emitting the snapshot below, so no update
+                // after this point is lost.
+                subs.insert(*chat_id, generation.tx.subscribe());
                 let mut pending = Vec::new();
                 for (call_id, tool) in generation.pending_tools.lock().unwrap().iter() {
                     if self.seen_calls.insert(call_id.clone()) {
@@ -136,73 +181,59 @@ impl Feed {
             }
         }
 
-        // Send snapshots before creating receivers. The next lock attaches
-        // only after all accumulated buffers have been copied.
-        for (chat_id, binding, text, thinking, pending) in &snapshots {
-            let text = text.read().await.clone();
+        for (chat_id, binding, text, thinking, pending) in snapshots {
+            // The producer updates these buffers before broadcasting a delta.
+            // Keeping both read guards through the first drain means every
+            // delta currently in this new receiver is already represented by
+            // the snapshot, while no later delta can be sent until release.
+            let text = text.read().await;
+            let thinking = thinking.read().await;
             if !text.is_empty() {
                 frames.push((
-                    *chat_id,
+                    chat_id,
                     binding.clone(),
-                    StreamEvent::Delta { content: text },
+                    StreamEvent::Delta {
+                        content: text.clone(),
+                    },
                 ));
             }
-            let thinking = thinking.read().await.clone();
             if !thinking.is_empty() {
                 frames.push((
-                    *chat_id,
+                    chat_id,
                     binding.clone(),
-                    StreamEvent::ThinkingDelta { content: thinking },
+                    StreamEvent::ThinkingDelta {
+                        content: thinking.clone(),
+                    },
                 ));
             }
             for (call_id, name, arguments) in pending {
                 frames.push((
-                    *chat_id,
+                    chat_id,
                     binding.clone(),
                     StreamEvent::ToolStarted {
-                        call_id: call_id.clone(),
-                        name: name.clone(),
-                        arguments: arguments.clone(),
+                        call_id,
+                        name,
+                        arguments,
                         executor: ToolExecutor::Client,
                         kind: None,
                     },
                 ));
             }
+            if let Some(receiver) = subs.get_mut(&chat_id) {
+                self.drain_receiver(chat_id, &binding, receiver, &mut frames, true);
+            }
+            drop(thinking);
+            drop(text);
         }
 
-        let mut live = Vec::new();
-        {
-            let generations = self.state.generations.lock().unwrap();
-            for (chat_id, generation) in generations.iter() {
-                if !self.chats.contains_key(chat_id) {
-                    continue;
-                }
-                live.push(*chat_id);
-                if !subs.contains_key(chat_id) {
-                    subs.insert(*chat_id, generation.tx.subscribe());
-                }
-            }
-            for (chat_id, receiver) in subs.iter_mut() {
-                let Some(binding) = self.chats.get(chat_id).cloned() else {
-                    continue;
-                };
-                loop {
-                    match receiver.try_recv() {
-                        Ok(event) if Self::forwardable(&event) => {
-                            if let StreamEvent::ToolStarted { call_id, .. } = &event {
-                                if !self.seen_calls.insert(call_id.clone()) {
-                                    continue;
-                                }
-                            }
-                            frames.push((*chat_id, binding.clone(), event));
-                        }
-                        Ok(_) => {}
-                        Err(broadcast::error::TryRecvError::Empty)
-                        | Err(broadcast::error::TryRecvError::Closed) => break,
-                        Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
-                    }
-                }
-            }
+        // Newly subscribed receivers were drained under the snapshot locks;
+        // only drain their later frames here. Existing receivers are drained
+        // normally.
+        for (chat_id, receiver) in subs.iter_mut() {
+            let Some(binding) = self.chats.get(chat_id).cloned() else {
+                continue;
+            };
+            self.drain_receiver(*chat_id, &binding, receiver, &mut frames, false);
         }
         self.subs = subs;
         self.subs.retain(|chat_id, _| live.contains(chat_id));
@@ -326,34 +357,10 @@ fn spawn_feed(
     tokio::spawn(feed_task(state, org_id, user_id, broadcast));
 }
 
-/// Returns the singleton live feed for this user and starts it on first use.
-pub async fn feed_of(state: &AppState, user: &AuthUser) -> FeedHandle {
-    let (handle, start) = {
-        let mut feeds = state.feeds.lock().unwrap();
-        match feeds.get(&user.0.id) {
-            Some(handle) => (handle.clone(), false),
-            None => {
-                let (broadcast, _) = broadcast::channel(1024);
-                let handle = FeedHandle { broadcast };
-                feeds.insert(user.0.id, handle.clone());
-                (handle, true)
-            }
-        }
-    };
-    if start {
-        spawn_feed(
-            state.clone(),
-            user.0.org_id,
-            user.0.id,
-            handle.broadcast.clone(),
-        );
-    }
-    handle
-}
-
-/// Subscribes while the feed map is locked, so a retiring task cannot remove
-/// the handle between lookup and receiver creation.
-pub(crate) fn subscribe(state: &AppState, user: &AuthUser) -> broadcast::Receiver<WsServerMsg> {
+/// Atomically subscribes to the singleton feed while its registry entry is
+/// locked. Returning the receiver, rather than an unsubscribed handle, keeps
+/// the task alive until the caller owns a live subscription.
+pub fn feed_of(state: &AppState, user: &AuthUser) -> broadcast::Receiver<WsServerMsg> {
     let (receiver, start, broadcast) = {
         let mut feeds = state.feeds.lock().unwrap();
         match feeds.get(&user.0.id) {
@@ -852,6 +859,32 @@ mod tests {
 
         assert!(remove_feed_if_unused(&state, user, &broadcast));
         assert!(!state.feeds.lock().unwrap().contains_key(&user));
+    }
+
+    #[tokio::test]
+    async fn feed_of_returns_an_already_registered_receiver() {
+        let state = AppState::from_config(crate::config::Config::test_config());
+        let user = AuthUser(crate::store::identity::UserRow {
+            id: Uuid::now_v7(),
+            org_id: Uuid::now_v7(),
+            email: "feed@example.com".into(),
+            role: "member".into(),
+            identity_type: "managed".into(),
+            display_name: None,
+            avatar_url: None,
+        });
+        let receiver = feed_of(&state, &user);
+        let broadcast = state
+            .feeds
+            .lock()
+            .unwrap()
+            .get(&user.0.id)
+            .expect("feed is registered")
+            .broadcast
+            .clone();
+        assert_eq!(broadcast.receiver_count(), 1);
+        drop(receiver);
+        assert!(remove_feed_if_unused(&state, user.0.id, &broadcast));
     }
 
     #[test]
