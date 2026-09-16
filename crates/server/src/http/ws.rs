@@ -137,10 +137,13 @@ impl SocketSink {
         self.enqueue(SocketOutput::Message(message)).await
     }
 
-    /// A replacement machine is already woken by its watch signal. This
-    /// best-effort terminal notice still shares the ordered enqueue path.
-    pub(crate) async fn displace(&self) {
-        let _ordering = self.ordering.lock().await;
+    /// The displaced socket receives shutdown through its watch signal.
+    /// This terminal notice preserves queue ordering but never waits for a
+    /// busy enqueue or a full queue: registration must remain independent.
+    pub(crate) fn displace(&self) {
+        let Ok(_ordering) = self.ordering.try_lock() else {
+            return;
+        };
         let _ = self
             .tx
             .try_send(SocketOutput::Message(WsServerMsg::Displaced));
