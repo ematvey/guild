@@ -20,8 +20,8 @@ pub struct AppState {
     usage: Arc<OnceCell<SharedUsageSink>>,
     objects: Arc<OnceCell<SharedObjectStore>>,
     /// Server-side generations in flight, keyed by chat. Detached from any
-    /// client connection: a disconnect does not stop them; clients re-attach
-    /// via the gateway stream endpoint.
+    /// client connection: a disconnect does not stop them; clients reconcile
+    /// through authoritative WebSocket state.
     pub generations: Arc<std::sync::Mutex<HashMap<Uuid, crate::http::gateway::ActiveGeneration>>>,
     /// Cached MCP client connections for integration plugins (outside the
     /// Restate journal — reconnecting on replay is safe, spec §8).
@@ -30,12 +30,14 @@ pub struct AppState {
     pub hub: Arc<Hub>,
     /// One live-frame feed per user, shared by all of their sockets.
     pub feeds: Arc<std::sync::Mutex<HashMap<Uuid, crate::http::feed::FeedHandle>>>,
+    pub thread_sync: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
     pub fn from_config(cfg: Config) -> Self {
         Self {
             config: Arc::new(cfg),
+            thread_sync: Arc::new(tokio::sync::Mutex::new(())),
             db: Arc::new(OnceCell::new()),
             usage: Arc::new(OnceCell::new()),
             objects: Arc::new(OnceCell::new()),
@@ -81,6 +83,7 @@ impl AppState {
     pub fn with_store(store: Arc<Store>, cfg: Config) -> Self {
         Self {
             config: Arc::new(cfg),
+            thread_sync: Arc::new(tokio::sync::Mutex::new(())),
             db: {
                 let cell = OnceCell::new();
                 cell.set(store).unwrap_or_else(|_| panic!("fresh OnceCell"));
