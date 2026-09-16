@@ -120,7 +120,7 @@ async fn set_machine(
 ) -> Result<Json<Chat>, ApiError> {
     let machine_id = req["machine_id"].as_str().filter(|s| !s.is_empty());
     if let Some(mid) = machine_id {
-        if !state.machine_bindable(mid, user.0.id, user.0.org_id) {
+        if !state.machine_bindable(mid, user.0.id, user.0.org_id).await {
             return Err(ApiError::bad_request("unknown machine"));
         }
     }
@@ -203,7 +203,7 @@ async fn create(
     // or org, same as the bind endpoint.
     let chat = match req.machine_id.as_deref() {
         Some(mid) if !mid.is_empty() => {
-            if !state.machine_bindable(mid, user.0.id, user.0.org_id) {
+            if !state.machine_bindable(mid, user.0.id, user.0.org_id).await {
                 return Err(ApiError::bad_request("unknown machine"));
             }
             let label = state.machine_label(mid).unwrap_or_else(|| mid.to_string());

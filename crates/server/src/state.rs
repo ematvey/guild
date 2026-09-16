@@ -103,9 +103,18 @@ impl AppState {
         self.hub.machine_label(machine_id)
     }
 
-    /// True when a live machine belongs to the given user or organization.
-    pub fn machine_bindable(&self, machine_id: &str, user_id: Uuid, org_id: Uuid) -> bool {
-        self.hub.machine_bindable(machine_id, user_id, org_id)
+    /// True when the machine is durably registered (any pairing) to the
+    /// given user or organization. DB-known, not hub-live: offline machines
+    /// stay bindable.
+    pub async fn machine_bindable(&self, machine_id: &str, user_id: Uuid, org_id: Uuid) -> bool {
+        match self.store().await {
+            Ok(store) => store
+                .machines()
+                .bindable(machine_id, user_id, org_id)
+                .await
+                .unwrap_or(false),
+            Err(_) => false,
+        }
     }
 
     /// Connected machines belonging to `user_id`.
