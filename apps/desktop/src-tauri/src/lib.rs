@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::io::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Client-side IPC trace: one line per rpc step into %TEMP%, so a wedge can
@@ -278,6 +279,7 @@ enum LinkError {
     Displaced,
     AuthRequired,
     Closed,
+    Backpressure,
     Failed(String),
 }
 
@@ -287,8 +289,90 @@ impl std::fmt::Display for LinkError {
             Self::Displaced => f.write_str("displaced"),
             Self::AuthRequired => f.write_str("authentication required"),
             Self::Closed => f.write_str("socket closed"),
+            Self::Backpressure => f.write_str("socket outbound queue full"),
             Self::Failed(error) => f.write_str(error),
         }
+    }
+}
+
+const OUTBOUND_QUEUE_CAP: usize = 1024;
+const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+const TAKEOVER_WINDOW: Duration = Duration::from_secs(5);
+
+type WsMessage = tokio_tungstenite::tungstenite::Message;
+
+#[derive(Clone)]
+struct OutboundQueue {
+    tx: tokio::sync::mpsc::Sender<WsMessage>,
+    overflow: tokio::sync::watch::Sender<bool>,
+}
+
+impl OutboundQueue {
+    fn try_send(&self, message: WsMessage) -> Result<(), LinkError> {
+        match self.tx.try_send(message) {
+            Ok(()) => Ok(()),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                self.overflow.send_replace(true);
+                Err(LinkError::Backpressure)
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err(LinkError::Closed),
+        }
+    }
+}
+
+async fn wait_for_overflow(signal: &mut tokio::sync::watch::Receiver<bool>) {
+    while !*signal.borrow_and_update() {
+        if signal.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+fn should_enter_takeover(
+    explicit_displaced: bool,
+    recent_unexpected_close: Option<Instant>,
+    now: Instant,
+) -> bool {
+    explicit_displaced
+        || recent_unexpected_close.is_some_and(|closed_at| {
+            now.checked_duration_since(closed_at)
+                .is_some_and(|elapsed| elapsed <= TAKEOVER_WINDOW)
+        })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkEvent {
+    Closed,
+    Displaced,
+    AuthRequired,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkAction {
+    Backoff,
+    Takeover,
+    Remint,
+}
+
+fn link_action(
+    event: LinkEvent,
+    explicit_displaced: bool,
+    recent_unexpected_close: Option<Instant>,
+    now: Instant,
+) -> LinkAction {
+    match event {
+        LinkEvent::Displaced
+            if should_enter_takeover(explicit_displaced, recent_unexpected_close, now) =>
+        {
+            LinkAction::Takeover
+        }
+        LinkEvent::Closed if should_enter_takeover(false, recent_unexpected_close, now) => {
+            LinkAction::Takeover
+        }
+        LinkEvent::Displaced => LinkAction::Backoff,
+        LinkEvent::AuthRequired => LinkAction::Remint,
+        LinkEvent::Closed | LinkEvent::Failed => LinkAction::Backoff,
     }
 }
 
@@ -296,6 +380,7 @@ impl std::fmt::Display for LinkError {
 async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
     let mut last_cfg: Option<(String, String, String)> = None;
     let mut was_connected = false;
+    let mut recent_unexpected_close: Option<Instant> = None;
     loop {
         let Some((base, token, machine_id, machine_name)) = state.link_config() else {
             if was_connected {
@@ -326,20 +411,47 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
             was_connected = false;
             let _ = app.emit("app-presence", serde_json::json!({ "connected": false }));
         }
+        let ended_at = Instant::now();
         match result {
-            Ok(()) => ipc_trace("link", "socket closed"),
-            Err(LinkError::Displaced) => {
-                let _ = app.emit(
-                    "app-presence",
-                    serde_json::json!({ "connected": false, "displaced": true }),
+            Ok(()) => {
+                recent_unexpected_close = None;
+                ipc_trace("link", "socket closed");
+            }
+            Err(error) => {
+                let event = match &error {
+                    LinkError::Displaced => LinkEvent::Displaced,
+                    LinkError::AuthRequired => LinkEvent::AuthRequired,
+                    LinkError::Closed => LinkEvent::Closed,
+                    LinkError::Backpressure | LinkError::Failed(_) => LinkEvent::Failed,
+                };
+                let action = link_action(
+                    event,
+                    event == LinkEvent::Displaced,
+                    recent_unexpected_close,
+                    ended_at,
                 );
-                wait_for_link_change(&state, epoch, &base, &token, &machine_id).await;
+                match action {
+                    LinkAction::Takeover => {
+                        recent_unexpected_close = None;
+                        let _ = app.emit(
+                            "app-presence",
+                            serde_json::json!({ "connected": false, "displaced": true }),
+                        );
+                        wait_for_link_change(&state, epoch, &base, &token, &machine_id).await;
+                    }
+                    LinkAction::Remint => {
+                        recent_unexpected_close = None;
+                        ipc_trace("link", "authentication required; reminting ticket");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                    LinkAction::Backoff => {
+                        if event == LinkEvent::Closed && matches!(error, LinkError::Closed) {
+                            recent_unexpected_close = Some(ended_at);
+                        }
+                        ipc_trace("link", &format!("socket ended: {error}"));
+                    }
+                }
             }
-            Err(LinkError::AuthRequired) => {
-                ipc_trace("link", "authentication required; reminting ticket");
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
-            Err(error) => ipc_trace("link", &format!("socket ended: {error}")),
         }
         if state.link_epoch.load(Ordering::SeqCst) == epoch
             && state
@@ -420,10 +532,14 @@ async fn ws_session(
     .map_err(|_| LinkError::Failed("socket connect timed out".into()))?
     .map_err(|error| LinkError::Failed(format!("socket connect: {error}")))?;
     let (mut socket_tx, mut socket_rx) = socket.split();
-    let (out_tx, mut out_rx) =
-        tokio::sync::mpsc::unbounded_channel::<tokio_tungstenite::tungstenite::Message>();
+    let (wire_tx, mut wire_rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
+    let (overflow_tx, overflow_rx) = tokio::sync::watch::channel(false);
+    let outbound = OutboundQueue {
+        tx: wire_tx,
+        overflow: overflow_tx,
+    };
     let writer = tokio::spawn(async move {
-        while let Some(message) = out_rx.recv().await {
+        while let Some(message) = wire_rx.recv().await {
             socket_tx
                 .send(message)
                 .await
@@ -431,67 +547,51 @@ async fn ws_session(
         }
         Ok::<(), String>(())
     });
-    let client_tx = tokio::sync::mpsc::unbounded_channel::<WsClientMsg>();
-    let (client_msg_tx, mut client_msg_rx) = client_tx;
-    let wire_tx = out_tx.clone();
-    let client_writer = tokio::spawn(async move {
-        while let Some(message) = client_msg_rx.recv().await {
-            let text = serde_json::to_string(&message).expect("client message serializes");
-            if wire_tx
-                .send(tokio_tungstenite::tungstenite::Message::Text(text.into()))
-                .is_err()
-            {
-                return;
-            }
-        }
-    });
 
-    let hello = match receive_ws_message(&mut socket_rx, &out_tx).await {
+    let hello = match receive_ws_message(&mut socket_rx, &outbound).await {
         Ok(message) => message,
         Err(error) => {
             writer.abort();
-            client_writer.abort();
             return Err(error);
         }
     };
     if matches!(hello, WsServerMsg::Displaced) {
         writer.abort();
-        client_writer.abort();
         return Err(LinkError::Displaced);
     }
     if matches!(hello, WsServerMsg::AuthRequired) {
         writer.abort();
-        client_writer.abort();
         return Err(LinkError::AuthRequired);
     }
     if !matches!(hello, WsServerMsg::Hello) {
         writer.abort();
-        client_writer.abort();
         return Err(LinkError::Failed(format!("expected hello, got {hello:?}")));
     }
     *connected = true;
     let _ = app.emit("app-presence", serde_json::json!({ "connected": true }));
     ipc_trace("link", "socket connected");
 
-    let thread_list = match receive_ws_message(&mut socket_rx, &out_tx).await {
+    let thread_list = match receive_ws_message(&mut socket_rx, &outbound).await {
         Ok(message) => message,
         Err(error) => {
             writer.abort();
-            client_writer.abort();
             return Err(error);
         }
     };
     if !matches!(thread_list, WsServerMsg::ThreadList { .. }) {
         writer.abort();
-        client_writer.abort();
         return Err(LinkError::Failed(format!(
             "expected thread list, got {thread_list:?}"
         )));
     }
 
     let mut writer = Box::pin(writer);
+    let mut overflow_rx = overflow_rx;
     let result = loop {
         tokio::select! {
+            _ = wait_for_overflow(&mut overflow_rx) => {
+                break Err(LinkError::Backpressure);
+            }
             writer_result = &mut writer => {
                 break writer_result
                     .map_err(|error| LinkError::Failed(format!("socket writer: {error}")))
@@ -513,7 +613,7 @@ async fn ws_session(
                             | WsServerMsg::SnapshotFrame { chat_id, machine_id: frame_machine_id, event } => {
                                 let data = websocket_frame_data(chat_id, frame_machine_id, event);
                                 if let Err(error) = handle_app_frame(
-                                    state, app, machine_id, &data, &client_msg_tx,
+                                    state, app, machine_id, &data, &outbound,
                                 ).await {
                                     ipc_trace("link", &format!("frame error: {error}"));
                                 }
@@ -539,8 +639,8 @@ async fn ws_session(
                         }
                     }
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(payload))) => {
-                        if out_tx.send(tokio_tungstenite::tungstenite::Message::Pong(payload)).is_err() {
-                            break Err(LinkError::Closed);
+                        if outbound.try_send(WsMessage::Pong(payload)).is_err() {
+                            break Err(LinkError::Backpressure);
                         }
                     }
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
@@ -552,7 +652,8 @@ async fn ws_session(
             }
         }
     };
-    client_writer.abort();
+    let _ = outbound.try_send(WsMessage::Close(None));
+    let _ = tokio::time::timeout(TERMINAL_WRITE_TIMEOUT, &mut writer).await;
     writer.abort();
     let _ = app.emit("app-stream-reconnected", serde_json::json!({}));
     result
@@ -560,7 +661,7 @@ async fn ws_session(
 
 async fn receive_ws_message<S>(
     socket_rx: &mut S,
-    out_tx: &tokio::sync::mpsc::UnboundedSender<tokio_tungstenite::tungstenite::Message>,
+    outbound: &OutboundQueue,
 ) -> Result<WsServerMsg, LinkError>
 where
     S: futures::Stream<
@@ -577,9 +678,7 @@ where
                     .map_err(|error| LinkError::Failed(format!("server message: {error}")));
             }
             Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(payload))) => {
-                out_tx
-                    .send(tokio_tungstenite::tungstenite::Message::Pong(payload))
-                    .map_err(|_| LinkError::Closed)?;
+                outbound.try_send(WsMessage::Pong(payload))?;
             }
             Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
                 return Err(LinkError::Closed);
@@ -642,7 +741,7 @@ async fn handle_app_frame(
     app: &AppHandle,
     machine_id: &str,
     data: &str,
-    result_tx: &tokio::sync::mpsc::UnboundedSender<WsClientMsg>,
+    outbound: &OutboundQueue,
 ) -> Result<(), String> {
     let v: Value = serde_json::from_str(data).map_err(|e| format!("frame parse: {e}"))?;
     let chat_id = v["chat_id"].as_str().unwrap_or_default().to_string();
@@ -677,10 +776,10 @@ async fn handle_app_frame(
             let name = ev["name"].as_str().unwrap_or_default().to_string();
             let args = ev["arguments"].as_str().unwrap_or("{}").to_string();
             let st = state.clone();
-            let result_tx = result_tx.clone();
+            let outbound = outbound.clone();
             let chat = chat_id.clone();
             tokio::spawn(async move {
-                if let Err(e) = execute_tool(&st, &result_tx, &chat, &call_id, &name, &args).await {
+                if let Err(e) = execute_tool(&st, &outbound, &chat, &call_id, &name, &args).await {
                     ipc_trace("tool", &format!("{name} {call_id} failed: {e}"));
                 }
             });
@@ -693,7 +792,7 @@ async fn handle_app_frame(
 /// over the standing machine socket.
 async fn execute_tool(
     state: &Arc<GuildState>,
-    result_tx: &tokio::sync::mpsc::UnboundedSender<WsClientMsg>,
+    outbound: &OutboundQueue,
     chat_id: &str,
     call_id: &str,
     name: &str,
@@ -723,20 +822,22 @@ async fn execute_tool(
         Ok(v) => v,
         Err(e) => serde_json::json!({ "content": e, "is_error": true }),
     };
-    result_tx
-        .send(WsClientMsg::ToolResult {
-            chat_id: chat_id
-                .parse()
-                .map_err(|error| format!("invalid chat id: {error}"))?,
-            call_id: call_id.to_string(),
-            content: payload["content"].as_str().unwrap_or_default().to_string(),
-            is_error: payload["is_error"].as_bool().unwrap_or(true),
-            meta: payload
-                .get("meta")
-                .cloned()
-                .filter(|value| !value.is_null()),
-        })
-        .map_err(|_| "socket closed before tool result was sent".to_string())?;
+    let message = WsClientMsg::ToolResult {
+        chat_id: chat_id
+            .parse()
+            .map_err(|error| format!("invalid chat id: {error}"))?,
+        call_id: call_id.to_string(),
+        content: payload["content"].as_str().unwrap_or_default().to_string(),
+        is_error: payload["is_error"].as_bool().unwrap_or(true),
+        meta: payload
+            .get("meta")
+            .cloned()
+            .filter(|value| !value.is_null()),
+    };
+    let text = serde_json::to_string(&message).expect("client message serializes");
+    outbound
+        .try_send(WsMessage::Text(text.into()))
+        .map_err(|error| error.to_string())?;
     ipc_trace("tool", &format!("{name} {call_id} ok"));
     Ok(())
 }
@@ -1263,6 +1364,68 @@ mod tests {
         let v = envelope(5, "login", &serde_json::json!({"a": 1}));
         assert_eq!(v["protocol"], 1);
         assert_eq!(v["id"], 5);
+    }
+
+    #[test]
+    fn bare_close_uses_standard_backoff() {
+        let now = Instant::now();
+        assert_eq!(
+            link_action(LinkEvent::Closed, false, None, now),
+            LinkAction::Backoff
+        );
+    }
+
+    #[test]
+    fn immediate_redisplacement_enters_takeover_state() {
+        let now = Instant::now();
+        let recent = now.checked_sub(Duration::from_secs(1));
+        assert_eq!(
+            link_action(LinkEvent::Displaced, false, recent, now),
+            LinkAction::Takeover
+        );
+    }
+
+    #[test]
+    fn immediate_bare_close_after_bare_close_enters_takeover_state() {
+        let now = Instant::now();
+        let recent = now.checked_sub(Duration::from_secs(1));
+        assert_eq!(
+            link_action(LinkEvent::Closed, false, recent, now),
+            LinkAction::Takeover
+        );
+    }
+
+    #[test]
+    fn explicit_displaced_enters_takeover_state() {
+        let now = Instant::now();
+        assert_eq!(
+            link_action(LinkEvent::Displaced, true, None, now),
+            LinkAction::Takeover
+        );
+    }
+
+    #[test]
+    fn auth_required_requests_ticket_remint() {
+        let now = Instant::now();
+        assert_eq!(
+            link_action(LinkEvent::AuthRequired, false, None, now),
+            LinkAction::Remint
+        );
+    }
+
+    #[test]
+    fn outbound_queue_marks_link_dead_when_full() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
+        let (overflow, signal) = tokio::sync::watch::channel(false);
+        let queue = OutboundQueue { tx, overflow };
+        for _ in 0..OUTBOUND_QUEUE_CAP {
+            queue.try_send(WsMessage::Text("frame".into())).unwrap();
+        }
+        assert!(matches!(
+            queue.try_send(WsMessage::Text("overflow".into())),
+            Err(LinkError::Backpressure)
+        ));
+        assert!(*signal.borrow());
     }
 
     #[test]
