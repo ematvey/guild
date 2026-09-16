@@ -82,8 +82,7 @@ export function MachineSection({
                   className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none disabled:cursor-default"
                   title={chatId ? `Bind this chat to ${m.name}` : `Connected executor: ${m.name}`}
                 >
-                  {/* The endpoint only returns machines with fresh
-                      heartbeats, so presence in the list = connected. */}
+                  {/* The endpoint only returns live hub machines. */}
                   <span className="relative flex size-2 shrink-0">
                     <span className="absolute inline-flex size-2 animate-ping rounded-full bg-emerald-500/60" />
                     <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />

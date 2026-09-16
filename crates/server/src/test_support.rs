@@ -47,6 +47,31 @@ pub fn test_state() -> AppState {
     AppState::from_config(Config::test_config())
 }
 
+/// Registers a live hub machine for endpoint tests without opening a socket.
+pub async fn register_test_machine(
+    state: &AppState,
+    machine_id: &str,
+    user_id: Uuid,
+    org_id: Uuid,
+    label: Option<&str>,
+) {
+    let (sink, _receiver) = crate::http::ws::socket_channel();
+    state
+        .hub
+        .register_machine(
+            crate::http::hub::Member {
+                conn_id: Uuid::now_v7(),
+                user_id,
+                org_id,
+                sink,
+                label: label.map(str::to_string),
+            },
+            machine_id,
+        )
+        .await
+        .expect("test machine registration");
+}
+
 /// State backed by an isolated database on the shared host Postgres.
 pub struct TestState {
     pub state: AppState,

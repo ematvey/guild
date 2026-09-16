@@ -58,11 +58,10 @@ pub(crate) fn pending_tool_exists(state: &AppState, chat_id: Uuid, call_id: &str
         .unwrap_or(false)
 }
 
-/// Watches the bound machine's liveness while a machine tool is suspended.
-/// Liveness is heartbeat-based (see `ExecutorHandle`): if heartbeats stop
-/// and stay stale past the grace window, the tool is resolved with an error
-/// so the turn continues instead of dead-airing until the 5-minute timeout.
-/// All machine tool results funnel through the same durable `complete_tool`
+/// Watches the bound machine's socket liveness while a machine tool is
+/// suspended. If the socket stays offline past the grace window, the tool is
+/// resolved with an error so the turn continues instead of dead-airing until
+/// the 5-minute timeout. All machine tool results funnel through the same durable `complete_tool`
 /// handler, so this stays replay-safe; late duplicate completions no-op.
 pub(crate) fn spawn_machine_watcher(
     state: &AppState,
@@ -76,8 +75,8 @@ pub(crate) fn spawn_machine_watcher(
     let state = state.clone();
     let deadline = tokio::time::Instant::now() + crate::worker::restate::CLIENT_TOOL_TIMEOUT;
     tokio::spawn(async move {
-        // Heartbeat TTL is short (15s); the grace window on top covers blips
-        // and reconnects before the tool is declared aborted.
+        // The grace window covers brief disconnects and reconnects before the
+        // tool is declared aborted.
         const GRACE: std::time::Duration = std::time::Duration::from_secs(15);
         let mut gone_since: Option<tokio::time::Instant> = None;
         loop {
@@ -89,7 +88,7 @@ pub(crate) fn spawn_machine_watcher(
             if !pending_tool_exists(&state, chat_id, &call_id) {
                 return; // resolved already
             }
-            if state.machine_connected(&machine_id) {
+            if state.hub.machine_online(&machine_id) {
                 gone_since = None;
                 continue;
             }
