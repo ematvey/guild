@@ -3,7 +3,6 @@
 //! held across an await.
 
 use super::ws::SocketSink;
-use protocol::ws::WsServerMsg;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::sync::watch;
@@ -77,7 +76,7 @@ impl Hub {
 
     /// Registers the only socket allowed for a machine. A newer connection
     /// replaces the old holder and tells it to close before its sink drops.
-    pub fn register_machine(
+    pub async fn register_machine(
         &self,
         m: Member,
         machine_id: &str,
@@ -109,7 +108,7 @@ impl Hub {
 
         if let Some(old) = old {
             let _ = old.shutdown.send(true);
-            let _ = old.holder.sink.try_send(WsServerMsg::Displaced);
+            old.holder.sink.displace().await;
             Ok(MachineRegistration {
                 displaced: true,
                 shutdown: shutdown_rx,
@@ -202,6 +201,7 @@ impl Hub {
 mod tests {
     use super::*;
     use crate::http::ws::{socket_channel, SocketOutput};
+    use protocol::ws::WsServerMsg;
 
     fn member() -> Member {
         Member {
@@ -213,8 +213,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn machine_singleton_newest_wins_and_notifies_displaced() {
+    #[tokio::test]
+    async fn machine_singleton_newest_wins_and_notifies_displaced() {
         let hub = Hub::default();
         let (old_sink, mut old_rx) = socket_channel(8);
         let old = Member {
@@ -225,14 +225,14 @@ mod tests {
             label: None,
         };
         let user_id = old.user_id;
-        let first_registration = hub.register_machine(old, "m1").unwrap();
+        let first_registration = hub.register_machine(old, "m1").await.unwrap();
         assert!(!first_registration.displaced);
         assert!(hub.machine_online("m1"));
 
         let mut new = member();
         new.label = Some("Desk".into());
         let new_user_id = new.user_id;
-        assert!(hub.register_machine(new, "m1").unwrap().displaced);
+        assert!(hub.register_machine(new, "m1").await.unwrap().displaced);
         assert!(hub.machine_online("m1"));
         assert_eq!(
             hub.machines_of_user(new_user_id),
@@ -290,8 +290,8 @@ mod tests {
         assert_eq!(hub.sinks_of_user(first_user_id).len(), 1);
     }
 
-    #[test]
-    fn machine_counts_against_user_socket_cap() {
+    #[tokio::test]
+    async fn machine_counts_against_user_socket_cap() {
         let hub = Hub::default();
         let user_id = Uuid::now_v7();
         for _ in 0..MAX_SOCKETS_PER_USER {
@@ -311,11 +311,11 @@ mod tests {
             sink: socket_channel(1).0,
             label: None,
         };
-        assert!(hub.register_machine(machine, "full-machine").is_err());
+        assert!(hub.register_machine(machine, "full-machine").await.is_err());
     }
 
-    #[test]
-    fn machine_replacement_keeps_one_budget_slot() {
+    #[tokio::test]
+    async fn machine_replacement_keeps_one_budget_slot() {
         let hub = Hub::default();
         let user_id = Uuid::now_v7();
         for _ in 0..(MAX_SOCKETS_PER_USER - 1) {
@@ -335,7 +335,7 @@ mod tests {
             sink: socket_channel(1).0,
             label: None,
         };
-        let first_registration = hub.register_machine(first, "replaceable").unwrap();
+        let first_registration = hub.register_machine(first, "replaceable").await.unwrap();
         drop(first_registration);
         let replacement = Member {
             conn_id: Uuid::now_v7(),
@@ -346,6 +346,7 @@ mod tests {
         };
         assert!(
             hub.register_machine(replacement, "replaceable")
+                .await
                 .unwrap()
                 .displaced
         );
@@ -360,11 +361,11 @@ mod tests {
             .is_err());
     }
 
-    #[test]
-    fn displacement_signal_wakes_holder_when_sink_is_full() {
+    #[tokio::test]
+    async fn displacement_signal_wakes_holder_when_sink_is_full() {
         let hub = Hub::default();
         let (old_sink, mut old_rx) = socket_channel(1);
-        old_sink.try_send(WsServerMsg::Hello).unwrap();
+        old_sink.send(WsServerMsg::Hello).await.unwrap();
         let old = Member {
             conn_id: Uuid::now_v7(),
             user_id: Uuid::now_v7(),
@@ -372,10 +373,15 @@ mod tests {
             sink: old_sink,
             label: None,
         };
-        let registration = hub.register_machine(old, "full-queue").unwrap();
+        let registration = hub.register_machine(old, "full-queue").await.unwrap();
         let mut shutdown = registration.shutdown;
         let new = member();
-        assert!(hub.register_machine(new, "full-queue").unwrap().displaced);
+        assert!(
+            hub.register_machine(new, "full-queue")
+                .await
+                .unwrap()
+                .displaced
+        );
         assert!(*shutdown.borrow_and_update());
         assert!(matches!(
             old_rx.try_recv().unwrap(),
@@ -384,12 +390,12 @@ mod tests {
         assert!(old_rx.try_recv().is_err());
     }
 
-    #[test]
-    fn unregister_machine_only_by_current_holder() {
+    #[tokio::test]
+    async fn unregister_machine_only_by_current_holder() {
         let hub = Hub::default();
         let member = member();
         let conn_id = member.conn_id;
-        let _ = hub.register_machine(member, "m2").unwrap();
+        let _ = hub.register_machine(member, "m2").await.unwrap();
         hub.unregister_machine("m2", Uuid::now_v7());
         assert!(hub.machine_online("m2"));
         hub.unregister_machine("m2", conn_id);
