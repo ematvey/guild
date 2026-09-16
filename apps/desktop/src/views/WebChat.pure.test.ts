@@ -8,6 +8,9 @@ import {
   eventsToBlocks,
   parseChatRoute,
   parseSearchResults,
+  reconcilePendingSend,
+  threadStateBlocks,
+  statusFromThreads,
   replayFrom,
   resolveApproval,
   toolLabel,
@@ -245,6 +248,44 @@ describe("approval upsert/resolve", () => {
     const approvals = blocks.filter((b) => b.kind === "approval");
     expect(approvals).toHaveLength(1);
     expect(approvals[0].approval!.status).toBe("expired");
+  });
+});
+
+describe("authoritative socket state", () => {
+  it("overwrites reflected tokens instead of appending them during sync", () => {
+    const state = { chat_id: "chat-1", seq: 2, events: [], text: "hello", thinking: "", generating: true };
+    expect(threadStateBlocks(state).filter(b => b.kind === "text").map(b => b.text)).toEqual(["hello"]);
+    expect(threadStateBlocks({ ...state, seq: 3, text: "hello!" }).map(b => b.text)).toEqual(["hello!"]);
+  });
+  it("renders a cross-tab user echo with no optimistic local send", () => {
+    const state = { chat_id: "chat-1", seq: 3, events: [row(1, { type: "user_message", content: "other tab" })], text: "", thinking: "", generating: true };
+    expect(threadStateBlocks(state).map(b => b.text)).toEqual(["other tab"]);
+  });
+  it("replaces a stale generating overlay from the server list", () => {
+    expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, unread: false } });
+  });
+});
+
+describe("pending send reconciliation", () => {
+  it("keeps the optimistic sending marker when resync history has no message yet", () => {
+    const pending = {
+      chatId: "chat-1",
+      text: "still sending",
+      key: "pending-1",
+      sentAt: Date.parse("2026-09-16T00:00:00.000Z"),
+    };
+    expect(reconcilePendingSend([], [], pending)).toEqual([
+      { kind: "user", text: "still sending", key: "pending-1", pending: true },
+    ]);
+  });
+
+  it("settles only the matching server echo, independent of clock skew", () => {
+    const pending = { chatId: "chat-1", text: "hello", key: "e1", sentAt: 9999999999999 };
+    const rows = [row(1, { type: "user_message", content: "hello" })];
+    const result = reconcilePendingSend(rows, eventsToBlocks(rows), pending);
+    expect(result.some((block) => block.pending)).toBe(false);
+    const otherTab = [row(2, { type: "user_message", content: "hello" })];
+    expect(reconcilePendingSend(otherTab, eventsToBlocks(otherTab), pending).some(block => block.pending)).toBe(true);
   });
 });
 

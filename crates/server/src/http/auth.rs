@@ -19,6 +19,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/auth/bootstrap", axum::routing::post(bootstrap))
         .route("/api/v1/auth/login", axum::routing::post(login))
         .route("/api/v1/auth/me", axum::routing::get(me))
+        .route("/api/v1/auth/refresh", axum::routing::post(refresh))
         .route("/api/v1/auth/pair", axum::routing::post(pair))
         .route(
             "/api/v1/auth/pairing-tokens",
@@ -101,6 +102,25 @@ async fn bootstrap(
         .ensure_bootstrap_admin(&email, &password)
         .await?;
     Ok(Json(serde_json::json!({})))
+}
+
+async fn refresh(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| ApiError::unauthorized("missing bearer"))?;
+    state
+        .store()
+        .await?
+        .identity()
+        .refresh_session(token)
+        .await?;
+    Ok(Json(json!({"token": token})))
 }
 
 async fn login(

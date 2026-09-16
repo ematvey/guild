@@ -36,6 +36,18 @@ impl<'a> KvStore<'a> {
         Ok(())
     }
 
+    /// Claims a durable key once. A retry never overwrites its first owner.
+    pub async fn claim(&self, key: &str, value: &str) -> Result<bool, ApiError> {
+        let result = sqlx::query(
+            "INSERT INTO server_kv (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     pub async fn put(&self, key: &str, value: &str) -> Result<(), ApiError> {
         sqlx::query(
             "INSERT INTO server_kv (key, value) VALUES ($1, $2) \

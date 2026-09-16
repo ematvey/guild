@@ -240,6 +240,9 @@ pub struct ToolCall {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct ChatCompletionRequest {
+    /// Optional stable identity for the committed user-message echo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_message_id: Option<Uuid>,
     pub chat_id: Uuid,
     pub model: String,
     pub messages: Vec<Message>,

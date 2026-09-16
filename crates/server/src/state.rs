@@ -3,6 +3,7 @@
 
 use crate::config::Config;
 use crate::http::error::ApiError;
+use crate::http::hub::Hub;
 use crate::s3::SharedObjectStore;
 use crate::store::Store;
 use crate::usage::SharedUsageSink;
@@ -13,84 +14,38 @@ use tokio::sync::OnceCell;
 use uuid::Uuid;
 
 #[derive(Clone)]
-/// Liveness tracking for one machine executor (the desktop app running on
-/// a specific machine). Machine tools run ONLY on the machine a chat is
-/// bound to; the executor registry is the liveness source for fail-fast and
-/// disconnect detection.
-///
-/// Liveness is heartbeat-based: TCP-level disconnect detection is unreliable
-/// through docker-proxy and proxies that kill idle SSE (the desktop's link
-/// stream flaps every few minutes behind Cloudflare). The desktop runs its
-/// heartbeat loop independently of the stream — a flap never unregisters a
-/// running app; `last_seen` older than `EXECUTOR_TTL_SECS` means offline
-/// (the fast path when the app actually exits).
-pub struct ExecutorHandle {
-    pub user_id: Uuid,
-    pub org_id: Uuid,
-    pub name: String,
-    /// Unix seconds of the last heartbeat; 0 = offline.
-    pub last_seen: Arc<std::sync::atomic::AtomicI64>,
-}
-
-/// A machine is live while its heartbeats are fresher than this.
-pub const EXECUTOR_TTL_SECS: i64 = 30;
-
-/// Guard held for the lifetime of one machine-executor stream connection.
-/// Heartbeats own liveness — a stream flap must not unregister a running
-/// app, so dropping the guard is a no-op; staleness is the offline signal.
-pub struct ExecutorGuard;
-
-impl Drop for ExecutorGuard {
-    fn drop(&mut self) {
-        // Deliberately no unregister here: the link stream flaps behind
-        // proxies, and the desktop heartbeats independently — dropping the
-        // stream must not take the machine offline. TTL handles real exits.
-    }
-}
-
-#[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
     db: Arc<OnceCell<Arc<Store>>>,
     usage: Arc<OnceCell<SharedUsageSink>>,
     objects: Arc<OnceCell<SharedObjectStore>>,
     /// Server-side generations in flight, keyed by chat. Detached from any
-    /// client connection: a disconnect does not stop them; clients re-attach
-    /// via the gateway stream endpoint.
+    /// client connection: a disconnect does not stop them; clients reconcile
+    /// through authoritative WebSocket state.
     pub generations: Arc<std::sync::Mutex<HashMap<Uuid, crate::http::gateway::ActiveGeneration>>>,
-    /// Connected machine executors (see `ExecutorGuard`), keyed by machine_id.
-    pub executors: Arc<std::sync::Mutex<HashMap<String, Arc<ExecutorHandle>>>>,
     /// Cached MCP client connections for integration plugins (outside the
     /// Restate journal — reconnecting on replay is safe, spec §8).
     pub mcp_pool: Arc<McpPool>,
-    /// Event-stream budget (SSE /api/v1/events/stream): each stream pins a
-    /// dedicated Postgres connection, so total and per-user counts are
-    /// bounded.
-    pub event_streams: Arc<crate::http::events::StreamGate>,
-    /// Eviction signals for machine link streams, keyed by machine_id: a
-    /// new link connect for a machine ends the previous one. Proxy hops
-    /// (Cloudflare) keep the origin leg of a dead client connection open,
-    /// which leaks stream permits; the machine's next connect reclaims
-    /// them by evicting the half-open stale stream.
-    pub machine_link_signals:
-        Arc<std::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<u64>>>>,
+    pub ws_tickets: crate::http::ws::TicketStore,
+    pub hub: Arc<Hub>,
+    /// One live-frame feed per user, shared by all of their sockets.
+    pub feeds: Arc<std::sync::Mutex<HashMap<Uuid, crate::http::feed::FeedHandle>>>,
+    pub thread_sync: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
     pub fn from_config(cfg: Config) -> Self {
         Self {
             config: Arc::new(cfg),
+            thread_sync: Arc::new(tokio::sync::Mutex::new(())),
             db: Arc::new(OnceCell::new()),
             usage: Arc::new(OnceCell::new()),
             objects: Arc::new(OnceCell::new()),
             generations: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            executors: Arc::new(std::sync::Mutex::new(HashMap::new())),
             mcp_pool: Arc::new(McpPool::new()),
-            event_streams: Arc::new(crate::http::events::StreamGate::with_caps(
-                crate::http::events::EVENT_STREAM_MAX_GLOBAL,
-                crate::http::events::EVENT_STREAM_MAX_PER_USER,
-            )),
-            machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            ws_tickets: Default::default(),
+            hub: Arc::new(Hub::default()),
+            feeds: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -128,6 +83,7 @@ impl AppState {
     pub fn with_store(store: Arc<Store>, cfg: Config) -> Self {
         Self {
             config: Arc::new(cfg),
+            thread_sync: Arc::new(tokio::sync::Mutex::new(())),
             db: {
                 let cell = OnceCell::new();
                 cell.set(store).unwrap_or_else(|_| panic!("fresh OnceCell"));
@@ -136,193 +92,24 @@ impl AppState {
             usage: Arc::new(OnceCell::new()),
             objects: Arc::new(OnceCell::new()),
             generations: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            executors: Arc::new(std::sync::Mutex::new(HashMap::new())),
             mcp_pool: Arc::new(McpPool::new()),
-            event_streams: Arc::new(crate::http::events::StreamGate::with_caps(
-                crate::http::events::EVENT_STREAM_MAX_GLOBAL,
-                crate::http::events::EVENT_STREAM_MAX_PER_USER,
-            )),
-            machine_link_signals: Arc::new(std::sync::Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Registers one live machine-executor stream connection.
-    pub fn executor_acquire(
-        &self,
-        machine_id: &str,
-        user: &crate::store::identity::UserRow,
-        name: &str,
-    ) -> ExecutorGuard {
-        let now = chrono::Utc::now().timestamp();
-        {
-            let mut executors = self.executors.lock().unwrap();
-            let entry = executors.entry(machine_id.to_string());
-            match entry {
-                std::collections::hash_map::Entry::Occupied(mut e) => {
-                    let h = Arc::make_mut(e.get_mut());
-                    if h.user_id != user.id {
-                        // same machine_id re-registered by another user:
-                        // last writer wins (single-user deployments in v1)
-                        h.user_id = user.id;
-                        h.org_id = user.org_id;
-                        h.name = name.to_string();
-                    }
-                    h.last_seen.store(now, std::sync::atomic::Ordering::Relaxed);
-                }
-                std::collections::hash_map::Entry::Vacant(e) => {
-                    let h = Arc::new(ExecutorHandle {
-                        user_id: user.id,
-                        org_id: user.org_id,
-                        name: name.to_string(),
-                        last_seen: Arc::new(std::sync::atomic::AtomicI64::new(now)),
-                    });
-                    e.insert(h);
-                }
-            };
-        }
-        ExecutorGuard
-    }
-
-    /// Eviction signal for a machine's link stream: a new connect for
-    /// `machine_id` ends the previous (possibly half-open, permit-leaking)
-    /// stream. Returns the fresh signal the new stream's body must select
-    /// on; the OLD stream's signal is notified and retired.
-    pub fn machine_link_signal(
-        &self,
-        machine_id: &str,
-    ) -> (tokio::sync::watch::Receiver<u64>, u64) {
-        let mut signals = self.machine_link_signals.lock().unwrap();
-        let gen = match signals.get(machine_id) {
-            Some(tx) => *tx.borrow() + 1,
-            None => 1,
-        };
-        if let Some(old) = signals.get(machine_id) {
-            // Wakes the previous stream's body: its watched value leaves its
-            // own generation. watch::send stores the value, so the eviction
-            // cannot be missed between the old stream's poll iterations
-            // (unlike Notify::notify_waiters).
-            let _ = old.send(gen);
-        }
-        let (tx, rx) = tokio::sync::watch::channel(gen);
-        signals.insert(machine_id.to_string(), tx);
-        (rx, gen)
-    }
-
-    /// Heartbeat from an executor: refreshes last_seen, registering an
-    /// unknown machine (upsert) — liveness must not depend on any single
-    /// stream connection surviving; a reconnecting app re-registers by
-    /// heartbeat alone. Returns true when the entry is live afterwards.
-    /// A machine registered to another user is never touched — that would
-    /// let anyone keep (or take over) a machine they don't own; a stale
-    /// entry may be claimed by a new user, mirroring re-pairing.
-    pub fn executor_touch(
-        &self,
-        machine_id: &str,
-        user_id: Uuid,
-        org_id: Uuid,
-        name: &str,
-    ) -> bool {
-        let now = chrono::Utc::now().timestamp();
-        let mut executors = self.executors.lock().unwrap();
-        match executors.get_mut(machine_id) {
-            Some(h) => {
-                let seen = h.last_seen.load(std::sync::atomic::Ordering::Relaxed);
-                let stale = !(seen > 0 && now - seen <= EXECUTOR_TTL_SECS);
-                if h.user_id != user_id || h.org_id != org_id {
-                    if !stale {
-                        return false;
-                    }
-                    // Expired entry owned by someone else: re-register it
-                    // under the touching user (the machine re-paired).
-                    executors.remove(machine_id);
-                    executors.insert(
-                        machine_id.to_string(),
-                        Arc::new(ExecutorHandle {
-                            user_id,
-                            org_id,
-                            name: if name.is_empty() {
-                                "guild-machine".to_string()
-                            } else {
-                                name.to_string()
-                            },
-                            last_seen: Arc::new(std::sync::atomic::AtomicI64::new(now)),
-                        }),
-                    );
-                    return true;
-                }
-                let h = Arc::make_mut(h);
-                if !name.is_empty() {
-                    h.name = name.to_string();
-                }
-                h.last_seen.store(now, std::sync::atomic::Ordering::Relaxed);
-                true
-            }
-            None => {
-                executors.insert(
-                    machine_id.to_string(),
-                    Arc::new(ExecutorHandle {
-                        user_id,
-                        org_id,
-                        name: if name.is_empty() {
-                            "guild-machine".to_string()
-                        } else {
-                            name.to_string()
-                        },
-                        last_seen: Arc::new(std::sync::atomic::AtomicI64::new(now)),
-                    }),
-                );
-                true
-            }
-        }
-    }
-
-    /// True while the machine's heartbeats are fresh.
-    pub fn machine_connected(&self, machine_id: &str) -> bool {
-        let executors = self.executors.lock().unwrap();
-        match executors.get(machine_id) {
-            Some(h) => {
-                let seen = h.last_seen.load(std::sync::atomic::Ordering::Relaxed);
-                seen > 0 && chrono::Utc::now().timestamp() - seen <= EXECUTOR_TTL_SECS
-            }
-            None => false,
+            ws_tickets: Default::default(),
+            hub: Arc::new(Hub::default()),
+            feeds: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
     pub fn machine_label(&self, machine_id: &str) -> Option<String> {
-        self.executors
-            .lock()
-            .unwrap()
-            .get(machine_id)
-            .map(|h| h.name.clone())
+        self.hub.machine_label(machine_id)
     }
 
-    /// True when `machine_id` is registered (by stream connect or heartbeat)
-    /// and belongs to the given user or their org — the bind-check for chat
-    /// machine bindings. Freshness is not required: an offline-but-known
-    /// machine still binds (tool dispatch just waits for it to reconnect).
+    /// True when a live machine belongs to the given user or organization.
     pub fn machine_bindable(&self, machine_id: &str, user_id: Uuid, org_id: Uuid) -> bool {
-        self.executors
-            .lock()
-            .unwrap()
-            .get(machine_id)
-            .is_some_and(|h| h.user_id == user_id || h.org_id == org_id)
+        self.hub.machine_bindable(machine_id, user_id, org_id)
     }
 
-    /// Connected executors belonging to `user_id`.
+    /// Connected machines belonging to `user_id`.
     pub fn machines_of_user(&self, user_id: Uuid) -> Vec<(String, String)> {
-        let now = chrono::Utc::now().timestamp();
-        self.executors
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(_, h)| {
-                if h.user_id != user_id {
-                    return false;
-                }
-                let seen = h.last_seen.load(std::sync::atomic::Ordering::Relaxed);
-                seen > 0 && now - seen <= EXECUTOR_TTL_SECS
-            })
-            .map(|(id, h)| (id.clone(), h.name.clone()))
-            .collect()
+        self.hub.machines_of_user(user_id)
     }
 }

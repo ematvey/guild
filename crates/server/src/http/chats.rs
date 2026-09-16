@@ -31,7 +31,6 @@ pub fn routes() -> Router<AppState> {
             axum::routing::post(mark_chat_read),
         )
         .route("/api/v1/machines", axum::routing::get(machines))
-        .route("/api/v1/machines/heartbeat", axum::routing::post(heartbeat))
 }
 
 /// The chat's approval-mode override (the composer's per-chat policy).
@@ -78,26 +77,10 @@ async fn set_chat_approval(
     Ok(Json(json!({ "default": mode.filter(|m| *m != "default") })))
 }
 
-/// Executor heartbeat: desktop apps refresh their machine's liveness every
-/// few seconds; liveness = heartbeats fresher than `EXECUTOR_TTL_SECS`.
-/// Registers an unknown machine (upsert), so a reconnecting app re-joins
-/// by heartbeat alone without waiting for a fresh stream connect.
-async fn heartbeat(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Json(req): Json<Value>,
-) -> Result<Json<Value>, ApiError> {
-    let machine_id = req["machine_id"]
-        .as_str()
-        .ok_or_else(|| ApiError::bad_request("missing machine_id"))?;
-    let name = req["machine_name"].as_str().unwrap_or("");
-    let ok = state.executor_touch(machine_id, user.0.id, user.0.org_id, name);
-    Ok(Json(json!({ "ok": ok })))
-}
-
-/// Lists the calling user's connected machine executors.
+/// Lists the calling user's connected machines.
 async fn machines(State(state): State<AppState>, user: AuthUser) -> Result<Json<Value>, ApiError> {
     let list: Vec<Value> = state
+        .hub
         .machines_of_user(user.0.id)
         .into_iter()
         .map(|(id, name)| json!({ "machine_id": id, "name": name }))
@@ -147,7 +130,7 @@ async fn set_machine(
             .machine_label(mid)
             .unwrap_or_else(|| label.unwrap_or_else(|| mid.to_string()))
     });
-    let chat = state
+    let _chat = state
         .store()
         .await?
         .chats()

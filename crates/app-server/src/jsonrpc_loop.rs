@@ -286,7 +286,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "pair" => pair_task(shared.session.clone(), req, out_tx).await,
         "chat.send" => chat_send_task(shared.clone(), req, out_tx).await,
         "machine.info" => {
-            // Hostname label for the machine-executor registry; the id is
+            // Hostname label sent during machine registration; the id is
             // generated webview-side (stable per app install).
             let name = std::env::var("COMPUTERNAME")
                 .ok()
