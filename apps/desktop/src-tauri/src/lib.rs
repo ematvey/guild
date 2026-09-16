@@ -296,6 +296,7 @@ impl std::fmt::Display for LinkError {
 }
 
 const OUTBOUND_QUEUE_CAP: usize = 1024;
+const PRIORITY_QUEUE_CAP: usize = 16;
 const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 const TAKEOVER_WINDOW: Duration = Duration::from_secs(5);
 
@@ -304,12 +305,25 @@ type WsMessage = tokio_tungstenite::tungstenite::Message;
 #[derive(Clone)]
 struct OutboundQueue {
     tx: tokio::sync::mpsc::Sender<WsMessage>,
+    priority_tx: tokio::sync::mpsc::Sender<WsMessage>,
     overflow: tokio::sync::watch::Sender<bool>,
 }
 
 impl OutboundQueue {
     fn try_send(&self, message: WsMessage) -> Result<(), LinkError> {
-        match self.tx.try_send(message) {
+        self.try_send_on(&self.tx, message)
+    }
+
+    fn try_send_priority(&self, message: WsMessage) -> Result<(), LinkError> {
+        self.try_send_on(&self.priority_tx, message)
+    }
+
+    fn try_send_on(
+        &self,
+        tx: &tokio::sync::mpsc::Sender<WsMessage>,
+        message: WsMessage,
+    ) -> Result<(), LinkError> {
+        match tx.try_send(message) {
             Ok(()) => Ok(()),
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                 self.overflow.send_replace(true);
@@ -533,13 +547,21 @@ async fn ws_session(
     .map_err(|error| LinkError::Failed(format!("socket connect: {error}")))?;
     let (mut socket_tx, mut socket_rx) = socket.split();
     let (wire_tx, mut wire_rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
+    let (priority_tx, mut priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
     let (overflow_tx, overflow_rx) = tokio::sync::watch::channel(false);
     let outbound = OutboundQueue {
         tx: wire_tx,
+        priority_tx,
         overflow: overflow_tx,
     };
     let writer = tokio::spawn(async move {
-        while let Some(message) = wire_rx.recv().await {
+        loop {
+            let message = tokio::select! {
+                biased;
+                priority = priority_rx.recv() => priority,
+                ordinary = wire_rx.recv() => ordinary,
+            };
+            let Some(message) = message else { break };
             socket_tx
                 .send(message)
                 .await
@@ -639,7 +661,7 @@ async fn ws_session(
                         }
                     }
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(payload))) => {
-                        if outbound.try_send(WsMessage::Pong(payload)).is_err() {
+                        if outbound.try_send_priority(WsMessage::Pong(payload)).is_err() {
                             break Err(LinkError::Backpressure);
                         }
                     }
@@ -652,7 +674,7 @@ async fn ws_session(
             }
         }
     };
-    let _ = outbound.try_send(WsMessage::Close(None));
+    let _ = outbound.try_send_priority(WsMessage::Close(None));
     let _ = tokio::time::timeout(TERMINAL_WRITE_TIMEOUT, &mut writer).await;
     writer.abort();
     let _ = app.emit("app-stream-reconnected", serde_json::json!({}));
@@ -678,7 +700,7 @@ where
                     .map_err(|error| LinkError::Failed(format!("server message: {error}")));
             }
             Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(payload))) => {
-                outbound.try_send(WsMessage::Pong(payload))?;
+                outbound.try_send_priority(WsMessage::Pong(payload))?;
             }
             Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
                 return Err(LinkError::Closed);
@@ -1416,8 +1438,13 @@ mod tests {
     #[test]
     fn outbound_queue_marks_link_dead_when_full() {
         let (tx, _rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
+        let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
         let (overflow, signal) = tokio::sync::watch::channel(false);
-        let queue = OutboundQueue { tx, overflow };
+        let queue = OutboundQueue {
+            tx,
+            priority_tx,
+            overflow,
+        };
         for _ in 0..OUTBOUND_QUEUE_CAP {
             queue.try_send(WsMessage::Text("frame".into())).unwrap();
         }
@@ -1426,6 +1453,33 @@ mod tests {
             Err(LinkError::Backpressure)
         ));
         assert!(*signal.borrow());
+    }
+
+    #[test]
+    fn priority_replies_are_accepted_when_ordinary_queue_is_full() {
+        let (tx, _ordinary_rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
+        let (priority_tx, mut priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
+        let (overflow, _signal) = tokio::sync::watch::channel(false);
+        let queue = OutboundQueue {
+            tx,
+            priority_tx,
+            overflow,
+        };
+        for _ in 0..OUTBOUND_QUEUE_CAP {
+            queue.try_send(WsMessage::Text("ordinary".into())).unwrap();
+        }
+        queue
+            .try_send_priority(WsMessage::Pong(Vec::new().into()))
+            .unwrap();
+        queue.try_send_priority(WsMessage::Close(None)).unwrap();
+        assert!(matches!(
+            priority_rx.try_recv().unwrap(),
+            WsMessage::Pong(_)
+        ));
+        assert!(matches!(
+            priority_rx.try_recv().unwrap(),
+            WsMessage::Close(None)
+        ));
     }
 
     #[test]
