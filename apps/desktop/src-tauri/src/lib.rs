@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::io::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Client-side IPC trace: one line per rpc step into %TEMP%, so a wedge can
@@ -203,6 +203,7 @@ struct Mirror {
 
 #[derive(Default)]
 pub struct GuildState {
+    presence: Mutex<Value>,
     /// The engine Shared: one session, one dispatch surface, shared with the
     /// CLI socket accept loop.
     shared: Mutex<Option<Shared>>,
@@ -299,7 +300,6 @@ const OUTBOUND_QUEUE_CAP: usize = 1024;
 const PRIORITY_QUEUE_CAP: usize = 16;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const TERMINAL_WRITE_TIMEOUT: Duration = WRITE_TIMEOUT;
-const TAKEOVER_WINDOW: Duration = Duration::from_secs(5);
 
 type WsMessage = tokio_tungstenite::tungstenite::Message;
 
@@ -358,18 +358,6 @@ async fn wait_for_overflow(signal: &mut tokio::sync::watch::Receiver<bool>) {
     }
 }
 
-fn should_enter_takeover(
-    explicit_displaced: bool,
-    recent_unexpected_close: Option<Instant>,
-    now: Instant,
-) -> bool {
-    explicit_displaced
-        || recent_unexpected_close.is_some_and(|closed_at| {
-            now.checked_duration_since(closed_at)
-                .is_some_and(|elapsed| elapsed <= TAKEOVER_WINDOW)
-        })
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LinkEvent {
     Closed,
@@ -385,37 +373,30 @@ enum LinkAction {
     Remint,
 }
 
-fn link_action(
-    event: LinkEvent,
-    explicit_displaced: bool,
-    recent_unexpected_close: Option<Instant>,
-    now: Instant,
-) -> LinkAction {
+fn link_action(event: LinkEvent) -> LinkAction {
     match event {
-        LinkEvent::Displaced
-            if should_enter_takeover(explicit_displaced, recent_unexpected_close, now) =>
-        {
-            LinkAction::Takeover
-        }
-        LinkEvent::Closed if should_enter_takeover(false, recent_unexpected_close, now) => {
-            LinkAction::Takeover
-        }
-        LinkEvent::Displaced => LinkAction::Backoff,
+        LinkEvent::Displaced => LinkAction::Takeover,
         LinkEvent::AuthRequired => LinkAction::Remint,
         LinkEvent::Closed | LinkEvent::Failed => LinkAction::Backoff,
     }
 }
 
+fn publish_presence(state: &GuildState, app: &AppHandle, presence: Value) {
+    *state.presence.lock().unwrap() = presence.clone();
+    let _ = app.emit("app-presence", presence);
+}
+
 /// The WS machine link. The socket is the machine's liveness signal.
 async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
     let mut last_cfg: Option<(String, String, String)> = None;
+    let mut instance_id = uuid::Uuid::now_v7();
+    let mut resume = false;
     let mut was_connected = false;
-    let mut recent_unexpected_close: Option<Instant> = None;
     loop {
         let Some((base, token, machine_id, machine_name)) = state.link_config() else {
             if was_connected {
                 was_connected = false;
-                let _ = app.emit("app-presence", serde_json::json!({ "connected": false }));
+                publish_presence(&state, &app, serde_json::json!({ "connected": false }));
             }
             last_cfg = None;
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -424,6 +405,8 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
         let cfg = (base.clone(), token.clone(), machine_id.clone());
         if last_cfg.as_ref() != Some(&cfg) {
             state.mirrors.lock().unwrap().clear();
+            instance_id = uuid::Uuid::now_v7();
+            resume = false;
             last_cfg = Some(cfg.clone());
         }
         let epoch = state.link_epoch.load(Ordering::SeqCst);
@@ -434,17 +417,18 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
             &token,
             &machine_id,
             &machine_name,
+            instance_id,
+            resume,
             &mut was_connected,
         )
         .await;
+        resume = true;
         if was_connected {
             was_connected = false;
-            let _ = app.emit("app-presence", serde_json::json!({ "connected": false }));
+            publish_presence(&state, &app, serde_json::json!({ "connected": false }));
         }
-        let ended_at = Instant::now();
         match result {
             Ok(()) => {
-                recent_unexpected_close = None;
                 ipc_trace("link", "socket closed");
             }
             Err(error) => {
@@ -454,30 +438,39 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
                     LinkError::Closed => LinkEvent::Closed,
                     LinkError::Backpressure | LinkError::Failed(_) => LinkEvent::Failed,
                 };
-                let action = link_action(
-                    event,
-                    event == LinkEvent::Displaced,
-                    recent_unexpected_close,
-                    ended_at,
-                );
+                let action = link_action(event);
                 match action {
                     LinkAction::Takeover => {
-                        recent_unexpected_close = None;
-                        let _ = app.emit(
-                            "app-presence",
+                        publish_presence(
+                            &state,
+                            &app,
                             serde_json::json!({ "connected": false, "displaced": true }),
                         );
                         wait_for_link_change(&state, epoch, &base, &token, &machine_id).await;
                     }
                     LinkAction::Remint => {
-                        recent_unexpected_close = None;
-                        ipc_trace("link", "authentication required; reminting ticket");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        let cloud = state
+                            .shared()
+                            .and_then(|s| s.session.lock().unwrap().cloud.clone());
+                        if let Some(cloud) = cloud {
+                            match cloud.refresh_session().await {
+                                Err(guild_app_server::cloud::CloudError::Unauthorized) => {
+                                    publish_presence(
+                                        &state,
+                                        &app,
+                                        serde_json::json!({"connected": false, "auth_required": true}),
+                                    );
+                                    wait_for_link_change(&state, epoch, &base, &token, &machine_id)
+                                        .await;
+                                }
+                                Err(error) => {
+                                    ipc_trace("link", &format!("session refresh failed: {error}"))
+                                }
+                                Ok(()) => {}
+                            }
+                        }
                     }
                     LinkAction::Backoff => {
-                        if event == LinkEvent::Closed && matches!(error, LinkError::Closed) {
-                            recent_unexpected_close = Some(ended_at);
-                        }
                         ipc_trace("link", &format!("socket ended: {error}"));
                     }
                 }
@@ -521,6 +514,8 @@ async fn ws_session(
     token: &str,
     machine_id: &str,
     machine_name: &str,
+    instance_id: uuid::Uuid,
+    resume: bool,
     connected: &mut bool,
 ) -> Result<(), LinkError> {
     let cloud = state
@@ -553,7 +548,11 @@ async fn ws_session(
         .ok_or_else(|| LinkError::Failed("ticket response has no ticket".into()))?
         .to_string();
 
-    let url = websocket_url(base, &ticket, machine_id, machine_id, machine_name)?;
+    let url = with_instance(
+        websocket_url(base, &ticket, machine_id, machine_id, machine_name)?,
+        instance_id,
+        resume,
+    );
     let (socket, _) = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         tokio_tungstenite::connect_async(url.as_str()),
@@ -583,47 +582,15 @@ async fn ws_session(
         Ok::<(), String>(())
     });
 
-    let hello = match receive_ws_message(&mut socket_rx, &outbound).await {
-        Ok(message) => message,
-        Err(error) => {
-            writer.abort();
-            return Err(error);
-        }
-    };
-    if matches!(hello, WsServerMsg::Displaced) {
-        writer.abort();
-        return Err(LinkError::Displaced);
-    }
-    if matches!(hello, WsServerMsg::AuthRequired) {
-        writer.abort();
-        return Err(LinkError::AuthRequired);
-    }
-    if !matches!(hello, WsServerMsg::Hello) {
-        writer.abort();
-        return Err(LinkError::Failed(format!("expected hello, got {hello:?}")));
-    }
-    *connected = true;
-    let _ = app.emit("app-presence", serde_json::json!({ "connected": true }));
-    ipc_trace("link", "socket connected");
-
-    let thread_list = match receive_ws_message(&mut socket_rx, &outbound).await {
-        Ok(message) => message,
-        Err(error) => {
-            writer.abort();
-            return Err(error);
-        }
-    };
-    if !matches!(thread_list, WsServerMsg::ThreadList { .. }) {
-        writer.abort();
-        return Err(LinkError::Failed(format!(
-            "expected thread list, got {thread_list:?}"
-        )));
-    }
-
     let mut writer = Box::pin(writer);
     let mut overflow_rx = overflow_rx;
+    let bootstrap_deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let mut bootstrapped = false;
     let result = loop {
         tokio::select! {
+            _ = tokio::time::sleep_until(bootstrap_deadline), if !bootstrapped => {
+                break Err(LinkError::Failed("socket bootstrap deadline".into()));
+            }
             _ = wait_for_overflow(&mut overflow_rx) => {
                 break Err(LinkError::Backpressure);
             }
@@ -633,25 +600,22 @@ async fn ws_session(
                     .and_then(|result| result.map_err(LinkError::Failed))
                     .map(|_| ());
             }
-            incoming = socket_rx.next() => {
+            incoming = receive_ws_message(&mut socket_rx, &outbound) => {
                 match incoming {
-                    Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                        let message = match serde_json::from_str::<WsServerMsg>(&text) {
-                            Ok(message) => message,
-                            Err(error) => {
-                                ipc_trace("link", &format!("invalid server message: {error}"));
-                                continue;
-                            }
-                        };
-                        match message {
-                            WsServerMsg::LiveFrame { chat_id, machine_id: frame_machine_id, event }
-                            | WsServerMsg::SnapshotFrame { chat_id, machine_id: frame_machine_id, event } => {
+                    Ok(message) => match message {
+                            WsServerMsg::LiveFrame { chat_id, machine_id: frame_machine_id, event, .. } => {
                                 let data = websocket_frame_data(chat_id, frame_machine_id, event);
                                 if let Err(error) = handle_app_frame(
-                                    state, app, machine_id, &data, &outbound,
+                                    state, app, machine_id, &data, &outbound, false,
                                 ).await {
                                     ipc_trace("link", &format!("frame error: {error}"));
                                 }
+                            }
+                            WsServerMsg::ToolDispatch { chat_id, call_id, name, arguments } => {
+                                let data = websocket_frame_data(chat_id, Some(machine_id.into()), protocol::api::StreamEvent::ToolStarted {
+                                    call_id, name, arguments, executor: protocol::api::ToolExecutor::Client, kind: None,
+                                });
+                                let _ = handle_app_frame(state, app, machine_id, &data, &outbound, true).await;
                             }
                             WsServerMsg::ChatStatus { chat_id, generating } => {
                                 let _ = app.emit("chat-status", serde_json::json!({
@@ -667,22 +631,16 @@ async fn ws_session(
                             WsServerMsg::Error { message } => {
                                 ipc_trace("link", &format!("server error: {message}"));
                             }
-                            WsServerMsg::Hello | WsServerMsg::ThreadList { .. }
+                            WsServerMsg::Hello => {
+                                *connected = true;
+                                publish_presence(state, app, serde_json::json!({ "connected": true }));
+                            }
+                            WsServerMsg::ThreadList { .. } => { bootstrapped = true; }
+                            WsServerMsg::ThreadState { .. }
                             | WsServerMsg::SyncBegin { .. }
-                            | WsServerMsg::History { .. }
                             | WsServerMsg::SyncDone { .. } => {}
-                        }
-                    }
-                    Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(payload))) => {
-                        if outbound.try_send_priority(WsMessage::Pong(payload)).is_err() {
-                            break Err(LinkError::Backpressure);
-                        }
-                    }
-                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
-                        break Err(LinkError::Closed);
-                    }
-                    Some(Err(error)) => break Err(LinkError::Failed(format!("socket read: {error}"))),
-                    Some(Ok(_)) => {}
+                    },
+                    Err(error) => break Err(error),
                 }
             }
         }
@@ -707,7 +665,10 @@ where
         > + Unpin,
 {
     loop {
-        match socket_rx.next().await {
+        match tokio::time::timeout(Duration::from_secs(20), socket_rx.next())
+            .await
+            .map_err(|_| LinkError::Failed("socket read silence deadline".into()))?
+        {
             Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
                 return serde_json::from_str(&text)
                     .map_err(|error| LinkError::Failed(format!("server message: {error}")));
@@ -722,6 +683,13 @@ where
             Some(Ok(_)) => {}
         }
     }
+}
+
+fn with_instance(mut url: url::Url, instance: uuid::Uuid, resume: bool) -> url::Url {
+    url.query_pairs_mut()
+        .append_pair("instance_id", &instance.to_string())
+        .append_pair("resume", if resume { "true" } else { "false" });
+    url
 }
 
 fn websocket_url(
@@ -777,6 +745,7 @@ async fn handle_app_frame(
     machine_id: &str,
     data: &str,
     outbound: &OutboundQueue,
+    execute: bool,
 ) -> Result<(), String> {
     let v: Value = serde_json::from_str(data).map_err(|e| format!("frame parse: {e}"))?;
     let chat_id = v["chat_id"].as_str().unwrap_or_default().to_string();
@@ -803,7 +772,7 @@ async fn handle_app_frame(
         serde_json::json!({ "chat_id": chat_id, "seq": seq, "event": ev }),
     );
 
-    if ev_type == "tool_started" && ev["executor"].as_str() == Some("client") {
+    if execute && ev_type == "tool_started" && ev["executor"].as_str() == Some("client") {
         // Execute only for THIS machine (other devices render).
         let bound = v["machine_id"].as_str().unwrap_or_default();
         if bound == machine_id {
@@ -881,6 +850,11 @@ async fn execute_tool(
 // module trips E0255 (macro re-imports itself).
 pub mod commands {
     use super::*;
+
+    #[tauri::command]
+    pub fn machine_presence(state: State<'_, Arc<GuildState>>) -> Value {
+        state.presence.lock().unwrap().clone()
+    }
 
     /// Idempotent: the engine exists from app setup; kept so the webview's
     /// boot flow is unchanged.
@@ -1260,6 +1234,7 @@ pub fn run() {
             commands::set_machine_identity,
             commands::set_chat_dir,
             commands::chat_snapshot,
+            commands::machine_presence,
             commands::install_update,
             commands::pending_update_version
         ])
@@ -1403,40 +1378,122 @@ mod tests {
 
     #[test]
     fn bare_close_uses_standard_backoff() {
-        let now = Instant::now();
-        assert_eq!(
-            link_action(LinkEvent::Closed, false, None, now),
-            LinkAction::Backoff
-        );
+        assert_eq!(link_action(LinkEvent::Closed), LinkAction::Backoff);
     }
 
     #[test]
     fn immediate_redisplacement_enters_takeover_state() {
-        let now = Instant::now();
-        let recent = now.checked_sub(Duration::from_secs(1));
-        assert_eq!(
-            link_action(LinkEvent::Displaced, false, recent, now),
-            LinkAction::Takeover
-        );
+        assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
     }
 
     #[test]
-    fn immediate_bare_close_after_bare_close_enters_takeover_state() {
-        let now = Instant::now();
-        let recent = now.checked_sub(Duration::from_secs(1));
-        assert_eq!(
-            link_action(LinkEvent::Closed, false, recent, now),
-            LinkAction::Takeover
-        );
+    fn repeated_bare_closes_remain_retryable() {
+        assert_eq!(link_action(LinkEvent::Closed), LinkAction::Backoff);
     }
 
     #[test]
     fn explicit_displaced_enters_takeover_state() {
-        let now = Instant::now();
-        assert_eq!(
-            link_action(LinkEvent::Displaced, true, None, now),
-            LinkAction::Takeover
+        assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn silent_read_is_bounded_during_bootstrap_and_after_connect() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(1);
+        let (overflow, _) = tokio::sync::watch::channel(false);
+        let outbound = OutboundQueue {
+            tx,
+            priority_tx,
+            overflow,
+        };
+        let mut reader = futures::stream::pending();
+        let error = receive_ws_message(&mut reader, &outbound)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, LinkError::Failed(message) if message.contains("silence deadline"))
         );
+    }
+
+    #[tokio::test]
+    async fn overloaded_old_writer_resume_uses_terminal_reconnect_policy() {
+        let (fixture, _) = guild_server::test_support::test_state_with_mock_ingress().await;
+        let user = fixture
+            .store()
+            .identity()
+            .ensure_bootstrap_admin("takeover@test", "test-password")
+            .await
+            .unwrap();
+        let (_, token) = fixture
+            .store()
+            .identity()
+            .create_session(user)
+            .await
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let router = guild_server::build_router(fixture.state.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let instance = uuid::Uuid::now_v7();
+        let connect = |instance, resume| {
+            let base = base.clone();
+            let token = token.clone();
+            async move {
+                let ticket: Value = reqwest::Client::new()
+                    .post(format!("{base}/api/v1/ws/ticket"))
+                    .bearer_auth(token)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                let url = with_instance(
+                    websocket_url(
+                        &base,
+                        ticket["ticket"].as_str().unwrap(),
+                        "client",
+                        "machine",
+                        "Desk",
+                    )
+                    .unwrap(),
+                    instance,
+                    resume,
+                );
+                tokio_tungstenite::connect_async(url.as_str())
+                    .await
+                    .unwrap()
+                    .0
+            }
+        };
+        let _old = connect(instance, false).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        guild_server::test_support::overload_machine_writer(&fixture.state, "machine");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while fixture.state.hub.machine_online("machine") {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let _successor = connect(uuid::Uuid::now_v7(), false).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let holder = fixture.state.hub.machine_connection("machine");
+        let mut stale = connect(instance, true).await;
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(1);
+        let outbound = OutboundQueue {
+            tx,
+            priority_tx,
+            overflow: tokio::sync::watch::channel(false).0,
+        };
+        let message = receive_ws_message(&mut stale, &outbound).await.unwrap();
+        assert!(matches!(message, WsServerMsg::Displaced));
+        assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
+        assert_eq!(fixture.state.hub.machine_connection("machine"), holder);
+        server.abort();
     }
 
     struct StalledSink;
@@ -1484,11 +1541,7 @@ mod tests {
 
     #[test]
     fn auth_required_requests_ticket_remint() {
-        let now = Instant::now();
-        assert_eq!(
-            link_action(LinkEvent::AuthRequired, false, None, now),
-            LinkAction::Remint
-        );
+        assert_eq!(link_action(LinkEvent::AuthRequired), LinkAction::Remint);
     }
 
     #[test]
