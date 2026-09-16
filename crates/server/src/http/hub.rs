@@ -108,7 +108,7 @@ impl Hub {
 
         if let Some(old) = old {
             let _ = old.shutdown.send(true);
-            old.holder.sink.displace().await;
+            old.holder.sink.displace();
             Ok(MachineRegistration {
                 displaced: true,
                 shutdown: shutdown_rx,
@@ -383,6 +383,63 @@ mod tests {
                 .displaced
         );
         assert!(*shutdown.borrow_and_update());
+        assert!(matches!(
+            old_rx.try_recv().unwrap(),
+            SocketOutput::Message(WsServerMsg::Hello)
+        ));
+        assert!(old_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn machine_registration_does_not_wait_for_blocked_reader_enqueue() {
+        let hub = Hub::default();
+        let (old_sink, mut old_rx) = socket_channel(1);
+        old_sink.send(WsServerMsg::Hello).await.unwrap();
+        let old = Member {
+            sink: old_sink.clone(),
+            ..member()
+        };
+        let old_conn_id = old.conn_id;
+        let user_id = old.user_id;
+        let mut shutdown = hub
+            .register_machine(old, "blocked-reader")
+            .await
+            .unwrap()
+            .shutdown;
+
+        // Poll the reader's sync enqueue once: the full queue keeps it
+        // pending with the ordering mutex held throughout registration.
+        let mut reader_enqueue = Box::pin(old_sink.start_sync());
+        assert!(futures::poll!(&mut reader_enqueue).is_pending());
+        let (new_sink, mut new_rx) = socket_channel(1);
+        let replacement = Member {
+            user_id,
+            sink: new_sink,
+            ..member()
+        };
+        let registration = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            hub.register_machine(replacement, "blocked-reader"),
+        )
+        .await
+        .expect("registration must not wait for the old reader or writer")
+        .unwrap();
+        assert!(registration.displaced);
+        assert!(*shutdown.borrow_and_update());
+        assert!(!*registration.shutdown.borrow());
+        assert!(futures::poll!(&mut reader_enqueue).is_pending());
+
+        // Late cleanup by the old socket must leave the replacement usable.
+        hub.unregister_machine("blocked-reader", old_conn_id);
+        assert!(hub.machine_online("blocked-reader"));
+        let sinks = hub.sinks_of_user(user_id);
+        assert_eq!(sinks.len(), 1);
+        sinks[0].send(WsServerMsg::Hello).await.unwrap();
+        assert!(matches!(
+            new_rx.try_recv().unwrap(),
+            SocketOutput::Message(WsServerMsg::Hello)
+        ));
+        drop(reader_enqueue);
         assert!(matches!(
             old_rx.try_recv().unwrap(),
             SocketOutput::Message(WsServerMsg::Hello)
