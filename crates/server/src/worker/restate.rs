@@ -2561,6 +2561,7 @@ async fn approval_gate(
                                 call_id: call_id.clone(),
                                 approved,
                                 reason: reason.clone(),
+                                expired: false,
                             },
                         )
                         .await
@@ -3775,6 +3776,7 @@ mod tests {
                     call_id: "c".into(),
                     approved: true,
                     reason: None,
+                    expired: false,
                 },
                 ThreadEvent::UserMessage {
                     content: "q".into(),

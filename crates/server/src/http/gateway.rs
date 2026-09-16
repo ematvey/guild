@@ -182,6 +182,33 @@ async fn models(
 /// Wire protocols Guild can speak. A provider picks one; its name is free-form.
 const PROTOCOLS: [&str; 2] = ["openai", "anthropic"];
 
+/// Why an orphaned approval call never executed: its turn ended before the
+/// card was answered (server restart, crash, or a turn that died mid-wait).
+const APPROVAL_EXPIRED_REASON: &str = "expired — no turn was waiting for this approval";
+
+/// One-way forward of an approval decision to the ChatRunner's
+/// `complete_approval` awakeable resolver.
+async fn forward_approval_decision(
+    state: &AppState,
+    chat_id: Uuid,
+    call_id: &str,
+    approved: bool,
+    reason: Option<String>,
+) -> Result<String, ApiError> {
+    crate::http::internal::restate_send_one_way(
+        state,
+        "ChatRunner",
+        &format!("{chat_id}/complete_approval"),
+        serde_json::to_value(crate::worker::restate::ApprovalReq {
+            call_id: call_id.to_string(),
+            approved,
+            reason,
+        })
+        .expect("approval request serializes"),
+    )
+    .await
+}
+
 /// Derives the stable slug routes reference from a provider's display name.
 fn provider_slug(name: &str) -> String {
     let slug: String = name
@@ -705,10 +732,20 @@ async fn tool_result(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Delivers an approval decision (phase 2, design §D) to the waiting
-/// ChatRunner workflow: resolves the `approval:{call_id}` awakeable there.
-/// Late decisions (after the timeout auto-denied) are ignored — first answer
-/// wins. Org-scoped: 404 for foreign chats.
+/// Delivers an approval decision (phase 2, design §D). Every decision path
+/// settles the caller's card observably:
+///
+/// - a recorded decision (any earlier answer, or a timeout auto-deny) is
+///   echoed back verbatim — late clicks are idempotent;
+/// - a live turn forwards the decision to the ChatRunner's `complete_approval`
+///   awakeable, and the `ApprovalResolved` frame settles every client;
+/// - an orphaned call (no recorded decision, no live turn — the turn ended
+///   before the card was answered) journals an `expired` decision so replay
+///   and attach never resurrect the card as pending, and still forwards to
+///   the ChatRunner: after a restart the gate can be suspended in Restate
+///   while the in-memory generation registry is empty, and that forward lets
+///   it accept the decision.
+/// Org-scoped: 404 for foreign chats.
 async fn approval_decision(
     State(state): State<AppState>,
     user: AuthUser,
@@ -727,19 +764,59 @@ async fn approval_decision(
         .get("reason")
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    crate::http::internal::restate_send_one_way(
-        &state,
-        "ChatRunner",
-        &format!("{chat_id}/complete_approval"),
-        serde_json::to_value(crate::worker::restate::ApprovalReq {
-            call_id,
-            approved,
-            reason,
-        })
-        .expect("approval request serializes"),
-    )
-    .await?;
-    Ok(Json(json!({ "ok": true })))
+
+    // Recorded decision: echo it; the ChatRunner is not contacted.
+    let events = store.thread().list_events(user.0.org_id, chat_id).await?;
+    if let Some((r_approved, r_reason, r_expired)) = events.iter().rev().find_map(|ev| {
+        match &ev.event {
+            ThreadEvent::ApprovalDecision {
+                call_id: c,
+                approved,
+                reason,
+                expired,
+            } if c == &call_id => Some((*approved, reason.clone(), *expired)),
+            _ => None,
+        }
+    }) {
+        return Ok(Json(json!({
+            "ok": true,
+            "settled": true,
+            "approved": r_approved,
+            "reason": r_reason,
+            "expired": r_expired,
+        })));
+    }
+
+    if state.generations.lock().unwrap().contains_key(&chat_id) {
+        // Live turn: the waiting gate journals the decision and broadcasts
+        // the resolved frame; the card settles through the stream.
+        forward_approval_decision(&state, chat_id, &call_id, approved, reason).await?;
+        return Ok(Json(json!({ "ok": true, "settled": false })));
+    }
+    // Orphaned call: the turn is gone, the decision can never execute.
+    // Journal the expired marker (chats-side append, like chats.rs) so a
+    // reload shows the settled card instead of a pending one, then still
+    // forward — a gate suspended in Restate after a restart accepts it.
+    store
+        .thread()
+        .append_event(
+            chat_id,
+            &ThreadEvent::ApprovalDecision {
+                call_id: call_id.clone(),
+                approved: false,
+                reason: Some(APPROVAL_EXPIRED_REASON.into()),
+                expired: true,
+            },
+        )
+        .await?;
+    let _ = forward_approval_decision(&state, chat_id, &call_id, false, Some(APPROVAL_EXPIRED_REASON.into())).await;
+    Ok(Json(json!({
+        "ok": true,
+        "settled": true,
+        "approved": false,
+        "reason": APPROVAL_EXPIRED_REASON,
+        "expired": true,
+    })))
 }
 
 /// Kicks off a thread compaction (phase 3, design §D): one-way send to the

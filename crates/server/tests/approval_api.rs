@@ -193,9 +193,11 @@ async fn approval_endpoints_are_org_scoped() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 
-    // And accepts a well-formed decision: the endpoint succeeds and sends
-    // exactly one one-way invoke to ChatRunner/{chat}/complete_approval
-    // with the shared ApprovalReq shape (design §D).
+    // And accepts a well-formed decision for a LIVE turn: the endpoint
+    // forwards and sends exactly one one-way invoke to
+    // ChatRunner/{chat}/complete_approval with the shared ApprovalReq shape
+    // (design §D); the card settles through the stream, not the response.
+    note_generation(&_ts.state, _chat);
     let res = app
         .clone()
         .oneshot(req(
@@ -207,7 +209,7 @@ async fn approval_endpoints_are_org_scoped() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    assert_eq!(body_json(res).await["ok"], true);
+    assert_eq!(body_json(res).await["settled"], false);
     let sent = ingress.requests.lock().unwrap().clone();
     assert_eq!(sent.len(), 1);
     assert_eq!(
@@ -217,6 +219,122 @@ async fn approval_endpoints_are_org_scoped() {
     assert_eq!(
         sent[0].1,
         json!({"call_id": "call-1", "approved": true, "reason": "ok"})
+    );
+}
+
+/// A decision whose call already carries a recorded decision is echoed from
+/// the thread log — first answer wins, and a late click settles its card
+/// from the response without contacting the ChatRunner.
+#[tokio::test]
+async fn recorded_decision_is_echoed_verbatim() {
+    let (ts, token, app, chat, ingress) = setup().await;
+    let store = ts.store();
+    store
+        .thread()
+        .append_event(
+            chat,
+            &ThreadEvent::ApprovalRequest {
+                call_id: "a1".into(),
+                name: "execute".into(),
+                arguments: "\"ls\"".into(),
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .thread()
+        .append_event(
+            chat,
+            &ThreadEvent::ApprovalDecision {
+                call_id: "a1".into(),
+                approved: true,
+                reason: Some("judge".into()),
+                expired: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    let res = app
+        .clone()
+        .oneshot(req(
+            "POST",
+            format!("/api/v1/gateway/chat/{chat}/approvals/a1"),
+            &token,
+            Some(json!({"approved": false})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let v = body_json(res).await;
+    assert_eq!(v["settled"], true);
+    assert_eq!(v["approved"], true); // the recorded decision, not the click
+    assert_eq!(v["reason"], "judge");
+    assert_eq!(v["expired"], false);
+    assert!(ingress.requests.lock().unwrap().is_empty());
+}
+
+/// A call with no recorded decision and no live turn is orphaned: its turn
+/// ended before the card was answered and it can never execute. The
+/// endpoint journals the expired decision and settles the caller's card;
+/// it still forwards so a gate suspended in Restate after a restart can
+/// accept the decision.
+#[tokio::test]
+async fn orphaned_decision_is_journaled_expired() {
+    let (ts, token, app, chat, ingress) = setup().await;
+    let store = ts.store();
+    store
+        .thread()
+        .append_event(
+            chat,
+            &ThreadEvent::ApprovalRequest {
+                call_id: "a1".into(),
+                name: "execute".into(),
+                arguments: "\"ls\"".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let user = store
+        .identity()
+        .find_by_email_any("a@b.c")
+        .await
+        .unwrap()
+        .expect("bootstrap admin exists");
+
+    let res = app
+        .clone()
+        .oneshot(req(
+            "POST",
+            format!("/api/v1/gateway/chat/{chat}/approvals/a1"),
+            &token,
+            Some(json!({"approved": true})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let v = body_json(res).await;
+    assert_eq!(v["settled"], true);
+    assert_eq!(v["approved"], false);
+    assert_eq!(v["expired"], true);
+
+    // the expired marker is durable in the thread log
+    let events = store.thread().list_events(user.org_id, chat).await.unwrap();
+    let expired = events
+        .iter()
+        .filter_map(|ev| match &ev.event {
+            ThreadEvent::ApprovalDecision { expired, .. } => Some(*expired),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(expired, vec![true]);
+
+    // and the forward still went out (restart-suspended gate accepts it)
+    let sent = ingress.requests.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].0,
+        format!("/ChatRunner/{chat}/complete_approval/send")
     );
 }
 
@@ -248,6 +366,7 @@ async fn attach_replays_unresolved_approval_requests() {
                 call_id: "a1".into(),
                 approved: true,
                 reason: None,
+                expired: false,
             },
         )
         .await

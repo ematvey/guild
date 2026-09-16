@@ -174,12 +174,14 @@ export const chatRoutePath = (chatId: string | null, overlay: ChatOverlay): stri
 };
 
 /// One durable approval gate (design spec section F): a client tool waiting
-/// for (or having received) the user's allow/deny decision.
+/// for (or having received) the user's allow/deny decision. `expired` marks
+/// an orphaned call: its turn ended before the card was answered, so the
+/// call can never execute — the card stays visible, non-actionable.
 interface ApprovalBlock {
   callId: string;
   name: string;
   args: string;
-  status: "pending" | "approved" | "denied";
+  status: "pending" | "approved" | "denied" | "expired";
   reason?: string;
 }
 
@@ -480,7 +482,7 @@ export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
       case "approval_decision": {
         const a = byApprovalId.get(ev.call_id);
         if (a) {
-          a.status = ev.approved ? "approved" : "denied";
+          a.status = ev.expired ? "expired" : ev.approved ? "approved" : "denied";
           a.reason = ev.reason ?? undefined;
         }
         break; // orphan decision: the request block carries the story
@@ -503,9 +505,15 @@ export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
   }
   // Resolved approvals are decisions, not conversation content: a card whose
   // decision event arrived is dropped, so history renders only approvals
-  // still waiting for an answer.
+  // still waiting for an answer. Expired cards stay: no tool result tells
+  // their story — the card itself is the record that the call never ran.
   return blocks.filter(
-    (b) => !(b.kind === "approval" && b.approval && b.approval.status !== "pending"),
+    (b) =>
+      !(
+        b.kind === "approval" &&
+        b.approval &&
+        (b.approval.status === "approved" || b.approval.status === "denied")
+      ),
   );
 }
 
@@ -598,24 +606,24 @@ class DropError extends Error {}
 function ThreadSkeleton() {
   // Conversation-shaped skeleton: mirrors the real thread layout (user
   // bubbles right, assistant text + tool frames left) instead of a spinner.
-  const row = "flex flex-col gap-2";
+  const row = "flex flex-col gap-1.5";
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-6">
+      <div className="mx-auto w-full max-w-3xl space-y-3 px-4 py-4">
         <div className={row}>
-          <Skeleton className="ml-auto h-9 w-2/3 rounded-2xl" />
-          <Skeleton className="h-4 w-24 rounded-md" />
-          <Skeleton className="h-20 w-full rounded-lg" />
-          <Skeleton className="h-24 w-full rounded-lg" />
+          <Skeleton className="ml-auto h-6 w-1/2 rounded-2xl" />
+          <Skeleton className="h-3 w-20 rounded-md" />
+          <Skeleton className="h-10 w-5/6 rounded-lg" />
+          <Skeleton className="h-12 w-5/6 rounded-lg" />
         </div>
         <div className={row}>
-          <Skeleton className="h-9 w-1/2 rounded-2xl" />
-          <Skeleton className="h-4 w-32 rounded-md" />
-          <Skeleton className="h-16 w-full rounded-lg" />
-          <Skeleton className="h-28 w-full rounded-lg" />
+          <Skeleton className="h-6 w-2/5 rounded-2xl" />
+          <Skeleton className="h-3 w-24 rounded-md" />
+          <Skeleton className="h-10 w-5/6 rounded-lg" />
+          <Skeleton className="h-12 w-5/6 rounded-lg" />
         </div>
         <div className={row}>
-          <Skeleton className="ml-auto h-9 w-3/5 rounded-2xl" />
+          <Skeleton className="ml-auto h-6 w-3/5 rounded-2xl" />
         </div>
       </div>
     </div>
@@ -625,6 +633,12 @@ function ThreadSkeleton() {
 /// Markdown body class shared by text blocks and tool-card excerpts.
 const MD_CLASS =
   "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc";
+
+/// GFM tables: block-level so wide tables scroll horizontally inside the
+/// chat column instead of squishing; cell padding keeps adjacent columns
+/// visually separated (the old rendering had none, so columns merged).
+const MD_TABLE_CLASS =
+  "[&_table]:my-2 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:text-[0.92em] [&_th]:border-b-2 [&_th]:border-border [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border-t [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-top [&_tbody_tr:nth-child(even)]:bg-muted/40";
 
 /// Status pill on tool frames and page cards.
 function StatusPill({ status }: { status: "running" | "done" | "error" }) {
@@ -917,7 +931,7 @@ function CompactionCard({ c }: { c: CompactionBlock }) {
       }
     >
       <div className="space-y-2">
-        <div className={`max-h-64 overflow-y-auto leading-relaxed text-muted-foreground ${MD_CLASS}`}>
+        <div className={`max-h-64 overflow-y-auto leading-relaxed text-muted-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
           <Markdown remarkPlugins={[remarkGfm]}>{c.summary}</Markdown>
         </div>
         {c.keepLast != null && <p className="text-muted-foreground">kept last {c.keepLast} messages</p>}
@@ -1087,7 +1101,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
         </div>
         {m?.title && <p className="font-medium">{m.title}</p>}
         {t.content && (
-          <div className={`max-h-64 overflow-y-auto ${MD_CLASS}`}>
+          <div className={`max-h-64 overflow-y-auto ${MD_CLASS} ${MD_TABLE_CLASS}`}>
             <Markdown remarkPlugins={[remarkGfm]}>{t.content}</Markdown>
           </div>
         )}
@@ -1247,11 +1261,12 @@ function ToolFrame({ t }: { t: ToolBlock }) {
 }
 
 /// Status pill on approval cards (mirrors the tool-frame pill palette).
-function ApprovalPill({ status }: { status: "pending" | "approved" | "denied" }) {
+function ApprovalPill({ status }: { status: "pending" | "approved" | "denied" | "expired" }) {
   const cls = {
     pending: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
     approved: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
     denied: "border-destructive/40 bg-destructive/10 text-destructive",
+    expired: "border-border bg-muted text-muted-foreground",
   }[status];
   return (
     <span
@@ -1266,19 +1281,41 @@ function ApprovalPill({ status }: { status: "pending" | "approved" | "denied" })
 /// frames. Pending cards offer Approve/Deny wired to the approvals endpoint;
 /// the buttons optimistically disable on click and the card flips to the
 /// resolved pill when the approval_resolved frame (or a thread reload)
-/// confirms the decision.
+/// confirms the decision. A settled response (recorded decision echoed, or
+/// the call journaled expired) settles the card directly from the POST —
+/// no frame is coming for those paths. A click whose POST hangs or lands
+/// during the gate's own settle re-enables after 15 s so it can be retried;
+/// retries are idempotent (the endpoint echoes the recorded decision).
 function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }) {
   const [acted, setActed] = useState<null | "approved" | "denied">(null);
-  const resolved = a.status !== "pending";
-  const busy = !resolved && acted !== null;
+  const [remote, setRemote] = useState<null | { status: "approved" | "denied" | "expired"; reason?: string }>(
+    null,
+  );
+  const status = remote?.status ?? a.status;
+  const settled = status !== "pending";
+  const busy = !settled && acted !== null;
   const act = (approved: boolean) => {
-    if (acted || resolved || !chatId) return;
+    if (acted || settled || !chatId) return;
     setActed(approved ? "approved" : "denied");
-    // optimistic: keep the buttons disabled until the resolved frame or a
-    // thread reload confirms; only a failed post re-enables for a retry
-    void postApproval(chatId, a.callId, approved, approved ? undefined : "denied by user").catch(
-      () => setActed(null),
-    );
+    const cap = window.setTimeout(() => setActed(null), 15_000);
+    void postApproval(chatId, a.callId, approved, approved ? undefined : "denied by user")
+      .then((r) => {
+        window.clearTimeout(cap);
+        if (r.settled) {
+          setRemote({
+            status: r.expired ? "expired" : r.approved ? "approved" : "denied",
+            reason: r.reason ?? undefined,
+          });
+          setActed(null);
+        }
+        // settled=false: the gate took the decision and is journaling it —
+        // the resolved frame (or a reload) lands the pill; keep the
+        // optimistic state until then.
+      })
+      .catch(() => {
+        window.clearTimeout(cap);
+        setActed(null);
+      });
   };
   let prettyArgs = a.args;
   try {
@@ -1301,7 +1338,7 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
   return (
     <Frame
       icon={
-        resolved && a.status === "denied" ? (
+        settled && status !== "approved" ? (
           <ShieldAlert className="size-3 shrink-0 text-muted-foreground" />
         ) : (
           <ShieldCheck className="size-3 shrink-0 text-muted-foreground" />
@@ -1315,15 +1352,17 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
       }
       badge={
         <>
-          {a.reason && resolved && (
+          {a.reason && settled && status !== "expired" && (
             <span className="hidden max-w-40 truncate text-muted-foreground sm:inline">
               {a.reason}
             </span>
           )}
-          <ApprovalPill status={resolved ? a.status : busy ? (acted as "approved" | "denied") : "pending"} />
+          <ApprovalPill
+            status={settled ? (status as "approved" | "denied" | "expired") : busy ? (acted as "approved" | "denied") : "pending"}
+          />
         </>
       }
-      defaultOpen={!resolved}
+      defaultOpen={status === "pending"}
     >
       <div className="space-y-2">
         {commandLine !== null ? (
@@ -1338,10 +1377,12 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
             </pre>
           )
         )}
-        {resolved ? (
-          a.status === "denied" && a.reason ? (
-            <p className="text-muted-foreground">denied: {a.reason}</p>
-          ) : a.status === "denied" ? (
+        {settled ? (
+          status === "expired" ? (
+            <p className="text-muted-foreground">expired — the turn was no longer waiting for this approval</p>
+          ) : status === "denied" && (remote?.reason ?? a.reason) ? (
+            <p className="text-muted-foreground">denied: {remote?.reason ?? a.reason}</p>
+          ) : status === "denied" ? (
             <p className="text-muted-foreground">denied by user</p>
           ) : (
             <p className="text-muted-foreground">approved — the tool was allowed to run</p>
@@ -2392,10 +2433,7 @@ export default function WebChat({
     }
   };
 
-  const activeTitle =
-    threadLoading && blocks.length === 0
-      ? "Loading…"
-      : (chats?.find((c) => c.id === chatId)?.title ?? "New chat");
+  const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
   const boundMachine = chats?.find((c) => c.id === chatId)?.machine_label ?? null;
   const streaming = busy || attaching || reattaching || openGenerating;
 
@@ -2524,7 +2562,13 @@ export default function WebChat({
               </Button>
             )
           )}
-          <span className="min-w-0 flex-1 truncate font-medium">{activeTitle}</span>
+          <span className="min-w-0 flex-1 truncate font-medium">
+            {threadLoading && blocks.length === 0 ? (
+              <Skeleton className="h-4 w-28 rounded-md" />
+            ) : (
+              activeTitle
+            )}
+          </span>
           {boundMachine && (
             <button
               className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-muted-foreground outline-none hover:text-foreground"
@@ -2607,7 +2651,7 @@ export default function WebChat({
                 ) : (
                   <div
                     key={b.key}
-                    className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS}`}
+                    className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS}`}
                   >
                     <Markdown remarkPlugins={[remarkGfm]}>
                       {/* streaming caret rides INSIDE the markdown source so

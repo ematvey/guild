@@ -499,6 +499,10 @@ pub enum ThreadEvent {
         approved: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        /// Nobody was waiting when the decision landed: the turn is gone, so
+        /// the call can never execute. The card stays visible as expired.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        expired: bool,
     },
 }
 
