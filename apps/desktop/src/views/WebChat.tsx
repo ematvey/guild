@@ -214,11 +214,50 @@ export interface Block {
   /// kind === "user": context attachment chips (metadata only; images may
   /// carry a local preview URL for optimistic rendering).
   attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
+  /// An optimistic user command not yet present in the durable history.
+  pending?: boolean;
   /// kind === "reasoning": the accumulated thinking text.
   reasoningText?: string;
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
+}
+
+export interface PendingSend {
+  chatId: string;
+  text: string;
+  key: string;
+  sentAt: number;
+  attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
+}
+
+/** Keeps a pending command visible while a sync races its HTTP request. */
+export function reconcilePendingSend(
+  rows: ThreadEventRow[],
+  blocks: Block[],
+  pending: PendingSend | null,
+): Block[] {
+  if (!pending) return blocks;
+  const durable = rows.some((row) => {
+    if (row.event.type !== "user_message") return false;
+    if (row.event.content !== pending.text && !row.event.content.startsWith(`${pending.text}\n\n[Attachment: `)) {
+      return false;
+    }
+    const created = Date.parse(row.created_at);
+    return Number.isNaN(created) || created >= pending.sentAt;
+  });
+  if (durable) return blocks;
+  if (blocks.some((block) => block.key === pending.key)) return blocks;
+  return [
+    ...blocks,
+    {
+      kind: "user",
+      text: pending.text,
+      key: pending.key,
+      attachments: pending.attachments,
+      pending: true,
+    },
+  ];
 }
 
 let liveKeyCounter = 0;
@@ -1570,6 +1609,7 @@ export default function WebChat({
   const threadCacheRef = useRef<Map<string, Block[]>>(new Map());
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
+  const pendingSendRef = useRef<PendingSend | null>(null);
   const [busy, setBusy] = useState(false);
   // Latest busy/attaching/threadLoading values for stable-ref consumers (the
   // deploy-freshness poll below must not read stale closure state).
@@ -1675,9 +1715,8 @@ export default function WebChat({
     setChats(c);
   };
 
-  /// One chat-status frame from the server (events stream on web, forwarded
-  /// "chat-status" Tauri event on desktop): drives the sidebar spinner/dot
-  /// for any chat, open or not. Turn end → the dot appears unless the turn
+  /// One chat-status frame from the member socket drives the sidebar
+  /// spinner/dot for any chat, open or not. Turn end → the dot appears unless the turn
   /// finished on the visible open chat (mark-read already covered it).
   const handleChatStatus = (cid: string, generating: boolean) => {
     setChatStatus((prev) => {
@@ -1707,15 +1746,21 @@ export default function WebChat({
   const openChatIdRef = useRef<string | null>(chatId);
   openChatIdRef.current = chatId;
   const socketRef = useRef<{ resync: () => void; stop: () => void } | null>(null);
-  const syncingChatsRef = useRef(new Set<string>());
+  const syncingChatsRef = useRef(new Map<string, number>());
   const lastSeqRef = useRef(new Map<string, number>());
 
   const applyHistory = (cid: string, events: ThreadEventRow[]) => {
     if (cid !== openChatIdRef.current) return;
     const newest = events.reduce((max, row) => Math.max(max, row.seq), -1);
+    // History rows are the only WS payload with durable sequence numbers.
+    // Ignore an older history response; live frames are ordered by SocketGate.
     if (newest < (lastSeqRef.current.get(cid) ?? -1)) return;
     lastSeqRef.current.set(cid, newest);
-    const rendered = eventsToBlocks(events);
+    const pending = pendingSendRef.current?.chatId === cid ? pendingSendRef.current : null;
+    const rendered = reconcilePendingSend(events, eventsToBlocks(events), pending);
+    if (pending && !rendered.some((block) => block.key === pending.key)) {
+      pendingSendRef.current = null;
+    }
     threadCacheRef.current.set(cid, rendered);
     setCtx(null);
     setBlocks(rendered);
@@ -1752,8 +1797,8 @@ export default function WebChat({
       setCtx(null);
       setThreadLoading(false);
     } else if (skipLoadRef.current === chatId) {
+      // Keep the optimistic first-send block, but still reconcile the new chat.
       skipLoadRef.current = null;
-      return;
     } else {
       const cached = threadCacheRef.current.get(chatId) ?? null;
       setThreadLoading(cached === null);
@@ -1857,18 +1902,28 @@ export default function WebChat({
       onChatStatus: (frame) => handleChatStatusRef.current(frame.chat_id, frame.generating),
       onHistory: (cid, events) => applyHistory(cid, events),
       onSync: (cid, phase) => {
-        if (phase === "done") syncingChatsRef.current.delete(cid);
+        if (phase === "begin") {
+          syncingChatsRef.current.set(cid, (syncingChatsRef.current.get(cid) ?? 0) + 1);
+        } else {
+          const depth = (syncingChatsRef.current.get(cid) ?? 1) - 1;
+          if (depth > 0) syncingChatsRef.current.set(cid, depth);
+          else syncingChatsRef.current.delete(cid);
+        }
         if (cid !== openChatIdRef.current) return;
         if (phase === "begin") {
-          syncingChatsRef.current.add(cid);
           setThreadLoading(true);
-        } else {
+        } else if (!syncingChatsRef.current.has(cid)) {
           setThreadLoading(false);
           if (!chatStatusRef.current[cid]?.generating) setBusy(false);
         }
       },
       onFrame: (frame) => {
         if (frame.chat_id !== openChatIdRef.current) return;
+        // WS frames have no numeric sequence. SocketGate starts the sync
+        // marker before the server emits SyncBegin, holds queued LiveFrames
+        // until SyncDone, and flushes them after the snapshot. A live frame
+        // queued before the marker may arrive before SyncBegin, but History
+        // overwrites it, so no old live frame can land after the snapshot.
         const snapshot = syncingChatsRef.current.has(frame.chat_id);
         if (frame.event.type === "done") {
           setBusy(false);
@@ -1947,7 +2002,8 @@ export default function WebChat({
   const send = async () => {
     const text = prompt.trim();
     if ((!text && pendingRef.current.length === 0) || busy || openGenerating || !model) return;
-    const mySeq = loadSeq.current; // switching away mid-send cancels the client stream
+    const mySeq = loadSeq.current; // ignores results after a chat switch
+    const sentAt = Date.now();
     setBusy(true);
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
@@ -1977,8 +2033,8 @@ export default function WebChat({
     if (!cid) {
       cid = await createChat(text.slice(0, 48));
       if (cid && loadSeq.current === mySeq) {
-        // Move the URL to the new thread; the live send stream must not be
-        // interrupted by a refetch (the chatId effect skips via skipLoadRef).
+        // Move the URL to the new thread without losing the optimistic
+        // pending marker; the chatId effect still requests socket reconcile.
         if (projectDirRef.current) saveDir(cid, projectDirRef.current);
         skipLoadRef.current = cid;
         if (approvalMode !== "default") {
@@ -2000,6 +2056,20 @@ export default function WebChat({
       setBusy(false);
       return;
     }
+    pendingSendRef.current = {
+      chatId: cid,
+      text,
+      key: sentKey,
+      sentAt,
+      attachments: pendingRef.current.map((a) => ({
+        id: `pending-${a.id}`,
+        filename: a.filename,
+        content_type: a.content_type,
+        size_bytes: a.size_bytes,
+        modality: a.modality,
+        previewUrl: a.previewUrl,
+      })),
+    };
     // Optimistic sidebar spinner: the server's generating flag lands via
     // the chat-status channel within a second; this makes it instant.
     setChatStatus((prev) => ({ ...prev, [cid]: { ...(prev[cid] ?? { unread: false }), generating: true } }));
@@ -2062,9 +2132,10 @@ export default function WebChat({
       // when a state sync observes that the server is no longer generating.
       keepBusyThroughFinally = true;
     } catch (e) {
+      if (pendingSendRef.current?.key === sentKey) pendingSendRef.current = null;
       if (loadSeq.current === mySeq) {
         setBlocks((b) => [
-          ...b,
+          ...b.filter((block) => block.key !== sentKey),
           { kind: "error", text: e instanceof Error ? e.message : String(e), key: liveKey() },
         ]);
         setBusy(false);
@@ -2259,6 +2330,7 @@ export default function WebChat({
                     className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5"
                   >
                     {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
+                    {b.pending && <div className="text-xs text-muted-foreground">sending…</div>}
                     {b.attachments && b.attachments.length > 0 && (
                       <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
                         {b.attachments.filter((a) => a.modality === "image").map((a) => (
