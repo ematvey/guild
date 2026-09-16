@@ -12,7 +12,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsClientMsg {
-    Sync { chat_id: Option<Uuid> },
+    Sync {
+        chat_id: Option<Uuid>,
+    },
     ToolResult {
         chat_id: Uuid,
         call_id: String,
@@ -22,10 +24,9 @@ pub enum WsClientMsg {
     },
 }
 
-/// Server → client. Snapshot/live frames reuse the existing app-frame
-/// envelope shape ({chat_id, machine_id, event}) so client render code is
-/// unchanged; the sync bracket (SyncBegin..SyncDone) tells the client where
-/// "overwrite local with server state" starts and ends.
+/// Server → client. ThreadState is the only rendered-content source: both
+/// sync and live updates replace the whole view at an ordered watermark.
+/// LiveFrame is a separate, non-replayable stream for command consumers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsServerMsg {
@@ -33,22 +34,56 @@ pub enum WsServerMsg {
     /// This machine's singleton slot was taken by a newer connection.
     Displaced,
     AuthRequired,
-    Error { message: String },
-    ThreadList { chats: Vec<serde_json::Value> },
+    /// Execution is addressed to one connection, never replayed as display state.
+    ToolDispatch {
+        chat_id: Uuid,
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    Error {
+        message: String,
+    },
+    ThreadList {
+        chats: Vec<serde_json::Value>,
+    },
     /// Owner-scoped thread-list spinner/unread frame (from the existing
     /// chat-status NOTIFY channel).
-    ChatStatus { chat_id: Uuid, generating: bool },
+    ChatStatus {
+        chat_id: Uuid,
+        generating: bool,
+    },
     /// Bracket for the state-sync of one chat.
-    SyncBegin { chat_id: Uuid },
-    /// Full durable history of the chat from the thread log, oldest first.
-    History { chat_id: Uuid, events: Vec<serde_json::Value> },
-    /// In-flight generation state, frame-shaped exactly like live frames.
-    SnapshotFrame { chat_id: Uuid, machine_id: Option<String>, event: crate::api::StreamEvent },
-    SyncDone { chat_id: Uuid },
-    /// Live fan-out frame (generation delta, tool dispatch, ...).
-    LiveFrame { chat_id: Uuid, machine_id: Option<String>, event: crate::api::StreamEvent },
+    SyncBegin {
+        chat_id: Uuid,
+    },
+    /// Atomic authoritative content, used for both initial sync and live updates.
+    /// `seq` is reserved from the thread-log sequence after capture. A client
+    /// replaces its view only when this watermark is newer than its last view.
+    ThreadState {
+        chat_id: Uuid,
+        seq: i64,
+        events: Vec<serde_json::Value>,
+        text: String,
+        thinking: String,
+        generating: bool,
+    },
+    SyncDone {
+        chat_id: Uuid,
+    },
+    /// Non-replayable generation events for a command-scoped stream consumer.
+    /// View clients use ThreadState exclusively, never append these deltas to it.
+    LiveFrame {
+        chat_id: Uuid,
+        generation_id: Uuid,
+        seq: i64,
+        machine_id: Option<String>,
+        event: crate::api::StreamEvent,
+    },
     /// Org-scoped event from the events NOTIFY channel.
-    OrgEvent { event: serde_json::Value },
+    OrgEvent {
+        event: serde_json::Value,
+    },
 }
 
 #[cfg(test)]
@@ -57,7 +92,9 @@ mod tests {
 
     #[test]
     fn client_msgs_round_trip() {
-        let sync = WsClientMsg::Sync { chat_id: Some(Uuid::nil()) };
+        let sync = WsClientMsg::Sync {
+            chat_id: Some(Uuid::nil()),
+        };
         let json = serde_json::to_string(&sync).unwrap();
         assert!(json.contains(r#""type":"sync""#));
         assert_eq!(serde_json::from_str::<WsClientMsg>(&json).unwrap(), sync);
@@ -77,12 +114,22 @@ mod tests {
 
     #[test]
     fn server_msgs_round_trip_and_frame_shape() {
-        let ev = crate::api::StreamEvent::Delta { content: "hi".into() };
-        let f = WsServerMsg::LiveFrame { chat_id: Uuid::nil(), machine_id: None, event: ev };
+        let ev = crate::api::StreamEvent::Delta {
+            content: "hi".into(),
+        };
+        let f = WsServerMsg::LiveFrame {
+            chat_id: Uuid::nil(),
+            generation_id: Uuid::nil(),
+            seq: 1,
+            machine_id: None,
+            event: ev,
+        };
         let json = serde_json::to_string(&f).unwrap();
         assert!(json.contains(r#""type":"live_frame""#));
         assert_eq!(serde_json::from_str::<WsServerMsg>(&json).unwrap(), f);
         let d = WsServerMsg::Displaced;
-        assert!(serde_json::to_string(&d).unwrap().contains(r#""type":"displaced""#));
+        assert!(serde_json::to_string(&d)
+            .unwrap()
+            .contains(r#""type":"displaced""#));
     }
 }
