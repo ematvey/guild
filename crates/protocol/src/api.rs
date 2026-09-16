@@ -124,6 +124,32 @@ pub struct Chat {
     pub machine_online: bool,
 }
 
+/// One durable machine-registry row for the machines page (spec §2.3),
+/// joined with the hub's live socket state. Connected rows sort before
+/// offline ones, then by last_seen_at descending.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct MachineInfo {
+    pub machine_id: String,
+    /// Hostname label; falls back to machine_id when unset.
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
+    /// Raw peer address of the last connect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_ip: Option<String>,
+    pub first_connected_at: DateTime<Utc>,
+    pub last_connected_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    /// The machine's singleton socket is live right now.
+    pub connected: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, optional_fields))]

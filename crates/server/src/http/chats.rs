@@ -7,7 +7,7 @@ use crate::http::error::ApiError;
 use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::{Json, Router};
-use protocol::api::{Chat, CreateChatRequest, ThreadEvent};
+use protocol::api::{Chat, CreateChatRequest, MachineInfo, ThreadEvent};
 use protocol::ws::WsServerMsg;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -82,14 +82,38 @@ async fn set_chat_approval(
     Ok(Json(json!({ "default": mode.filter(|m| *m != "default") })))
 }
 
-/// Lists the calling user's connected machines.
+/// Lists the calling user's machines: every durable registry row plus the
+/// hub's live socket flag, connected machines first, then by last seen.
 async fn machines(State(state): State<AppState>, user: AuthUser) -> Result<Json<Value>, ApiError> {
-    let list: Vec<Value> = state
-        .hub
-        .machines_of_user(user.0.id)
+    let store = state.store().await?;
+    let rows = store
+        .machines()
+        .list_for_user(user.0.org_id, user.0.id)
+        .await?;
+    let mut list: Vec<MachineInfo> = rows
         .into_iter()
-        .map(|(id, name)| json!({ "machine_id": id, "name": name }))
+        .map(|row| MachineInfo {
+            connected: state.hub.machine_online(&row.machine_id),
+            name: row
+                .label
+                .clone()
+                .filter(|l| !l.is_empty())
+                .unwrap_or_else(|| row.machine_id.clone()),
+            machine_id: row.machine_id,
+            os: row.os,
+            os_version: row.os_version,
+            app_version: row.app_version,
+            last_ip: row.last_ip,
+            first_connected_at: row.first_connected_at,
+            last_connected_at: row.last_connected_at,
+            last_seen_at: row.last_seen_at,
+        })
         .collect();
+    list.sort_by(|a, b| {
+        b.connected
+            .cmp(&a.connected)
+            .then(b.last_seen_at.cmp(&a.last_seen_at))
+    });
     Ok(Json(json!({ "machines": list })))
 }
 
@@ -120,7 +144,7 @@ async fn set_machine(
 ) -> Result<Json<Chat>, ApiError> {
     let machine_id = req["machine_id"].as_str().filter(|s| !s.is_empty());
     if let Some(mid) = machine_id {
-        if !state.machine_bindable(mid, user.0.id, user.0.org_id) {
+        if !state.machine_bindable(mid, user.0.id, user.0.org_id).await {
             return Err(ApiError::bad_request("unknown machine"));
         }
     }
@@ -203,7 +227,7 @@ async fn create(
     // or org, same as the bind endpoint.
     let chat = match req.machine_id.as_deref() {
         Some(mid) if !mid.is_empty() => {
-            if !state.machine_bindable(mid, user.0.id, user.0.org_id) {
+            if !state.machine_bindable(mid, user.0.id, user.0.org_id).await {
                 return Err(ApiError::bad_request("unknown machine"));
             }
             let label = state.machine_label(mid).unwrap_or_else(|| mid.to_string());

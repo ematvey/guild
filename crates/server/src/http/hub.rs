@@ -173,6 +173,21 @@ impl Hub {
         }
     }
 
+    /// Displaces a machine's live socket without a replacement: registry
+    /// adoption re-keyed the row away from this id, so the old registration
+    /// no longer has a registry identity to hold.
+    pub fn displace_machine(&self, machine_id: &str) -> bool {
+        let slot = self.inner.lock().unwrap().machines.remove(machine_id);
+        match slot {
+            Some(slot) => {
+                slot.holder.sink.displace();
+                let _ = slot.shutdown.send(true);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub(crate) fn machine_holder(&self, machine_id: &str) -> Option<Member> {
         self.inner
             .lock()
