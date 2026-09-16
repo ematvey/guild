@@ -1609,7 +1609,7 @@ export default function WebChat({
   const threadCacheRef = useRef<Map<string, Block[]>>(new Map());
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
-  const pendingSendRef = useRef<PendingSend | null>(null);
+  const pendingSendRef = useRef<Map<string, PendingSend>>(new Map());
   const [busy, setBusy] = useState(false);
   // Latest busy/attaching/threadLoading values for stable-ref consumers (the
   // deploy-freshness poll below must not read stale closure state).
@@ -1756,10 +1756,10 @@ export default function WebChat({
     // Ignore an older history response; live frames are ordered by SocketGate.
     if (newest < (lastSeqRef.current.get(cid) ?? -1)) return;
     lastSeqRef.current.set(cid, newest);
-    const pending = pendingSendRef.current?.chatId === cid ? pendingSendRef.current : null;
+    const pending = pendingSendRef.current.get(cid) ?? null;
     const rendered = reconcilePendingSend(events, eventsToBlocks(events), pending);
     if (pending && !rendered.some((block) => block.key === pending.key)) {
-      pendingSendRef.current = null;
+      pendingSendRef.current.delete(cid);
     }
     threadCacheRef.current.set(cid, rendered);
     setCtx(null);
@@ -2056,7 +2056,7 @@ export default function WebChat({
       setBusy(false);
       return;
     }
-    pendingSendRef.current = {
+    pendingSendRef.current.set(cid, {
       chatId: cid,
       text,
       key: sentKey,
@@ -2069,7 +2069,7 @@ export default function WebChat({
         modality: a.modality,
         previewUrl: a.previewUrl,
       })),
-    };
+    });
     // Optimistic sidebar spinner: the server's generating flag lands via
     // the chat-status channel within a second; this makes it instant.
     setChatStatus((prev) => ({ ...prev, [cid]: { ...(prev[cid] ?? { unread: false }), generating: true } }));
@@ -2128,11 +2128,23 @@ export default function WebChat({
       setPending([]);
       if (isTauri) void pushChatDir(cid, projectDirRef.current);
       await sendChatNoStream(cid, model, text, attachmentIds, projectDirRef.current);
+      pendingSendRef.current.delete(cid);
+      const settled = (block: Block) =>
+        block.key === sentKey && block.pending ? { ...block, pending: false } : block;
+      threadCacheRef.current.set(
+        cid,
+        (threadCacheRef.current.get(cid) ?? []).map(settled),
+      );
+      if (openChatIdRef.current === cid) setBlocks((b) => b.map(settled));
       // The member socket delivers every effect. Busy ends on done/error or
       // when a state sync observes that the server is no longer generating.
       keepBusyThroughFinally = true;
     } catch (e) {
-      if (pendingSendRef.current?.key === sentKey) pendingSendRef.current = null;
+      if (pendingSendRef.current.get(cid)?.key === sentKey) pendingSendRef.current.delete(cid);
+      threadCacheRef.current.set(
+        cid,
+        (threadCacheRef.current.get(cid) ?? []).filter((block) => block.key !== sentKey),
+      );
       if (loadSeq.current === mySeq) {
         setBlocks((b) => [
           ...b.filter((block) => block.key !== sentKey),
