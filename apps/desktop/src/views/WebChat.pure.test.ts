@@ -8,6 +8,7 @@ import {
   eventsToBlocks,
   parseChatRoute,
   parseSearchResults,
+  reconcilePendingSend,
   replayFrom,
   resolveApproval,
   toolLabel,
@@ -245,6 +246,27 @@ describe("approval upsert/resolve", () => {
     const approvals = blocks.filter((b) => b.kind === "approval");
     expect(approvals).toHaveLength(1);
     expect(approvals[0].approval!.status).toBe("expired");
+  });
+});
+
+describe("pending send reconciliation", () => {
+  it("keeps the optimistic sending marker when resync history has no message yet", () => {
+    const pending = {
+      chatId: "chat-1",
+      text: "still sending",
+      key: "pending-1",
+      sentAt: Date.parse("2026-09-16T00:00:00.000Z"),
+    };
+    expect(reconcilePendingSend([], [], pending)).toEqual([
+      { kind: "user", text: "still sending", key: "pending-1", pending: true },
+    ]);
+  });
+
+  it("drops the marker when a matching durable message is at or after the send", () => {
+    const pending = { chatId: "chat-1", text: "hello", key: "pending-1", sentAt: 100 };
+    const rows = [row(1, { type: "user_message", content: "hello" })];
+    const result = reconcilePendingSend(rows, eventsToBlocks(rows), pending);
+    expect(result.some((block) => block.pending)).toBe(false);
   });
 });
 
