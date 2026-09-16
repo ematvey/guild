@@ -269,7 +269,9 @@ export function startSocket(
         if (socket === current) socket = null;
         scheduleReconnect();
       };
-    } catch {
+    } catch (error) {
+      connecting = false;
+      opts.onError?.(error instanceof Error ? error.message : String(error));
       scheduleReconnect();
     } finally {
       connecting = false;
