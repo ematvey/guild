@@ -691,7 +691,7 @@ mod tests {
         (ts, AuthUser(user), chat, ingress)
     }
 
-    async fn receive(sink: &mut mpsc::Receiver<SocketOutput>) -> WsServerMsg {
+    async fn receive(sink: &mut mpsc::UnboundedReceiver<SocketOutput>) -> WsServerMsg {
         loop {
             let output = tokio::time::timeout(Duration::from_secs(1), sink.recv())
                 .await
@@ -733,7 +733,7 @@ mod tests {
         *text.write().await = "partial".into();
         note_client_tool(&ts.state, chat.id, "call-1", "read_file", "{}", "m1");
 
-        let (sink, mut frames) = socket_channel(16);
+        let (sink, mut frames) = socket_channel();
         run_sync(&ts.state, &user, chat.id, &sink).await;
 
         assert!(
@@ -787,9 +787,9 @@ mod tests {
         );
         feed.poll().await;
 
-        let (member_one, mut member_one_rx) = socket_channel(4);
-        let (member_two, mut member_two_rx) = socket_channel(4);
-        let (machine, mut machine_rx) = socket_channel(4);
+        let (member_one, mut member_one_rx) = socket_channel();
+        let (member_two, mut member_two_rx) = socket_channel();
+        let (machine, mut machine_rx) = socket_channel();
         for sink in [&member_one, &member_two] {
             ts.state
                 .hub
@@ -919,7 +919,7 @@ mod tests {
         for _ in 0..4 {
             let _ = broadcast.send(WsServerMsg::Hello);
         }
-        let (sink, mut sink_rx) = socket_channel(4);
+        let (sink, mut sink_rx) = socket_channel();
         let forwarder = forward_to_socket(receiver, sink);
         assert!(matches!(
             receive(&mut sink_rx).await,
@@ -955,7 +955,7 @@ mod tests {
             user.0.id,
             broadcast.clone(),
         );
-        let (sink, mut sink_rx) = socket_channel(4);
+        let (sink, mut sink_rx) = socket_channel();
         let forwarder = forward_to_socket(broadcast.subscribe(), sink);
         feed.poll().await;
 

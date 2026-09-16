@@ -107,8 +107,8 @@ impl Hub {
         };
 
         if let Some(old) = old {
-            let _ = old.shutdown.send(true);
             old.holder.sink.displace();
+            let _ = old.shutdown.send(true);
             Ok(MachineRegistration {
                 displaced: true,
                 shutdown: shutdown_rx,
@@ -208,7 +208,7 @@ mod tests {
             conn_id: Uuid::now_v7(),
             user_id: Uuid::now_v7(),
             org_id: Uuid::now_v7(),
-            sink: socket_channel(8).0,
+            sink: socket_channel().0,
             label: None,
         }
     }
@@ -216,7 +216,7 @@ mod tests {
     #[tokio::test]
     async fn machine_singleton_newest_wins_and_notifies_displaced() {
         let hub = Hub::default();
-        let (old_sink, mut old_rx) = socket_channel(8);
+        let (old_sink, mut old_rx) = socket_channel();
         let old = Member {
             conn_id: Uuid::now_v7(),
             user_id: Uuid::now_v7(),
@@ -255,7 +255,7 @@ mod tests {
                 conn_id: Uuid::now_v7(),
                 user_id,
                 org_id: Uuid::now_v7(),
-                sink: socket_channel(1).0,
+                sink: socket_channel().0,
                 label: None,
             };
             hub.register_member(m).unwrap();
@@ -264,7 +264,7 @@ mod tests {
             conn_id: Uuid::now_v7(),
             user_id,
             org_id: Uuid::now_v7(),
-            sink: socket_channel(1).0,
+            sink: socket_channel().0,
             label: None,
         };
         assert!(hub.register_member(over).is_err());
@@ -299,7 +299,7 @@ mod tests {
                 conn_id: Uuid::now_v7(),
                 user_id,
                 org_id: Uuid::now_v7(),
-                sink: socket_channel(1).0,
+                sink: socket_channel().0,
                 label: None,
             })
             .unwrap();
@@ -308,7 +308,7 @@ mod tests {
             conn_id: Uuid::now_v7(),
             user_id,
             org_id: Uuid::now_v7(),
-            sink: socket_channel(1).0,
+            sink: socket_channel().0,
             label: None,
         };
         assert!(hub.register_machine(machine, "full-machine").await.is_err());
@@ -323,7 +323,7 @@ mod tests {
                 conn_id: Uuid::now_v7(),
                 user_id,
                 org_id: Uuid::now_v7(),
-                sink: socket_channel(1).0,
+                sink: socket_channel().0,
                 label: None,
             })
             .unwrap();
@@ -332,7 +332,7 @@ mod tests {
             conn_id: Uuid::now_v7(),
             user_id,
             org_id: Uuid::now_v7(),
-            sink: socket_channel(1).0,
+            sink: socket_channel().0,
             label: None,
         };
         let first_registration = hub.register_machine(first, "replaceable").await.unwrap();
@@ -341,7 +341,7 @@ mod tests {
             conn_id: Uuid::now_v7(),
             user_id,
             org_id: Uuid::now_v7(),
-            sink: socket_channel(1).0,
+            sink: socket_channel().0,
             label: None,
         };
         assert!(
@@ -355,16 +355,16 @@ mod tests {
                 conn_id: Uuid::now_v7(),
                 user_id,
                 org_id: Uuid::now_v7(),
-                sink: socket_channel(1).0,
+                sink: socket_channel().0,
                 label: None,
             })
             .is_err());
     }
 
     #[tokio::test]
-    async fn displacement_signal_wakes_holder_when_sink_is_full() {
+    async fn displacement_signal_and_notice_survive_queued_output() {
         let hub = Hub::default();
-        let (old_sink, mut old_rx) = socket_channel(1);
+        let (old_sink, mut old_rx) = socket_channel();
         old_sink.send(WsServerMsg::Hello).await.unwrap();
         let old = Member {
             conn_id: Uuid::now_v7(),
@@ -387,13 +387,17 @@ mod tests {
             old_rx.try_recv().unwrap(),
             SocketOutput::Message(WsServerMsg::Hello)
         ));
+        assert!(matches!(
+            old_rx.try_recv().unwrap(),
+            SocketOutput::Message(WsServerMsg::Displaced)
+        ));
         assert!(old_rx.try_recv().is_err());
     }
 
     #[tokio::test]
-    async fn machine_registration_does_not_wait_for_blocked_reader_enqueue() {
+    async fn machine_registration_does_not_wait_for_stalled_writer() {
         let hub = Hub::default();
-        let (old_sink, mut old_rx) = socket_channel(1);
+        let (old_sink, mut old_rx) = socket_channel();
         old_sink.send(WsServerMsg::Hello).await.unwrap();
         let old = Member {
             sink: old_sink.clone(),
@@ -407,11 +411,13 @@ mod tests {
             .unwrap()
             .shutdown;
 
-        // Poll the reader's sync enqueue once: the full queue keeps it
-        // pending with the ordering mutex held throughout registration.
-        let mut reader_enqueue = Box::pin(old_sink.start_sync());
-        assert!(futures::poll!(&mut reader_enqueue).is_pending());
-        let (new_sink, mut new_rx) = socket_channel(1);
+        // Queue a backlog without polling a writer.
+        for _ in 0..256 {
+            old_sink.send(WsServerMsg::Hello).await.unwrap();
+        }
+        // Pause the reader at its control operation while registration runs.
+        let reader_enqueue = old_sink.start_sync();
+        let (new_sink, mut new_rx) = socket_channel();
         let replacement = Member {
             user_id,
             sink: new_sink,
@@ -427,7 +433,7 @@ mod tests {
         assert!(registration.displaced);
         assert!(*shutdown.borrow_and_update());
         assert!(!*registration.shutdown.borrow());
-        assert!(futures::poll!(&mut reader_enqueue).is_pending());
+        assert!(futures::poll!(Box::pin(reader_enqueue)).is_ready());
 
         // Late cleanup by the old socket must leave the replacement usable.
         hub.unregister_machine("blocked-reader", old_conn_id);
@@ -439,10 +445,19 @@ mod tests {
             new_rx.try_recv().unwrap(),
             SocketOutput::Message(WsServerMsg::Hello)
         ));
-        drop(reader_enqueue);
+        for _ in 0..257 {
+            assert!(matches!(
+                old_rx.try_recv().unwrap(),
+                SocketOutput::Message(WsServerMsg::Hello)
+            ));
+        }
         assert!(matches!(
             old_rx.try_recv().unwrap(),
-            SocketOutput::Message(WsServerMsg::Hello)
+            SocketOutput::Message(WsServerMsg::Displaced)
+        ));
+        assert!(matches!(
+            old_rx.try_recv().unwrap(),
+            SocketOutput::SyncStart
         ));
         assert!(old_rx.try_recv().is_err());
     }
