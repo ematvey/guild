@@ -1184,6 +1184,13 @@ async fn check_and_prepare_update(app: &AppHandle) {
     let _ = app.emit("update-ready", serde_json::json!({"version": version}));
 }
 
+/// On-demand update check: the webview invokes this on every page load
+/// (F5, navigation) so a fresh refresh always asks the server immediately.
+#[tauri::command]
+async fn check_update_now(app: AppHandle) {
+    check_and_prepare_update(&app).await;
+}
+
 pub fn start_update_checker(app: AppHandle) {
     // debug builds run from target/ with dev sessions; never self-replace them
     // (GUILD_UPDATER_FORCE opts a debug build in for testing)
@@ -1227,6 +1234,7 @@ pub fn run() {
         .manage(UpdateState::default())
         .manage(Arc::new(GuildState::default()))
         .invoke_handler(tauri::generate_handler![
+            check_update_now,
             commands::start_engine,
             commands::rpc_request,
             commands::rpc_submit,

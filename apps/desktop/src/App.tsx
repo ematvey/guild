@@ -162,6 +162,9 @@ function UpdateToast() {
     invoke<string | null>("pending_update_version")
       .then((v) => v && setVersion(v))
       .catch(() => {});
+    // every page load (F5, navigation) asks the server immediately — the
+    // 15-minute Rust timer only covers long-lived sessions
+    invoke("check_update_now").catch(() => {});
     const unlisteners: Promise<UnlistenFn>[] = [
       listen<{ version: string }>("update-ready", (e) => setVersion(e.payload.version)),
       listen("update-failed", () => setVersion(null)),
