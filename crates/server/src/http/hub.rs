@@ -201,14 +201,14 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc;
+    use crate::http::ws::{socket_channel, SocketOutput};
 
     fn member() -> Member {
         Member {
             conn_id: Uuid::now_v7(),
             user_id: Uuid::now_v7(),
             org_id: Uuid::now_v7(),
-            sink: mpsc::channel(8).0,
+            sink: socket_channel(8).0,
             label: None,
         }
     }
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn machine_singleton_newest_wins_and_notifies_displaced() {
         let hub = Hub::default();
-        let (old_sink, mut old_rx) = mpsc::channel::<WsServerMsg>(8);
+        let (old_sink, mut old_rx) = socket_channel(8);
         let old = Member {
             conn_id: Uuid::now_v7(),
             user_id: Uuid::now_v7(),
@@ -238,11 +238,11 @@ mod tests {
             hub.machines_of_user(new_user_id),
             vec![("m1".into(), "Desk".into())]
         );
-        assert_eq!(old_rx.try_recv().unwrap(), WsServerMsg::Displaced);
         assert!(matches!(
-            old_rx.try_recv(),
-            Err(mpsc::error::TryRecvError::Disconnected)
+            old_rx.try_recv().unwrap(),
+            SocketOutput::Message(WsServerMsg::Displaced)
         ));
+        assert!(old_rx.try_recv().is_err());
         assert!(hub.sinks_of_user(user_id).is_empty());
     }
 
@@ -255,7 +255,7 @@ mod tests {
                 conn_id: Uuid::now_v7(),
                 user_id,
                 org_id: Uuid::now_v7(),
-                sink: mpsc::channel(1).0,
+                sink: socket_channel(1).0,
                 label: None,
             };
             hub.register_member(m).unwrap();
@@ -264,7 +264,7 @@ mod tests {
             conn_id: Uuid::now_v7(),
             user_id,
             org_id: Uuid::now_v7(),
-            sink: mpsc::channel(1).0,
+            sink: socket_channel(1).0,
             label: None,
         };
         assert!(hub.register_member(over).is_err());
@@ -299,7 +299,7 @@ mod tests {
                 conn_id: Uuid::now_v7(),
                 user_id,
                 org_id: Uuid::now_v7(),
-                sink: mpsc::channel(1).0,
+                sink: socket_channel(1).0,
                 label: None,
             })
             .unwrap();
@@ -308,7 +308,7 @@ mod tests {
             conn_id: Uuid::now_v7(),
             user_id,
             org_id: Uuid::now_v7(),
-            sink: mpsc::channel(1).0,
+            sink: socket_channel(1).0,
             label: None,
         };
         assert!(hub.register_machine(machine, "full-machine").is_err());
@@ -323,7 +323,7 @@ mod tests {
                 conn_id: Uuid::now_v7(),
                 user_id,
                 org_id: Uuid::now_v7(),
-                sink: mpsc::channel(1).0,
+                sink: socket_channel(1).0,
                 label: None,
             })
             .unwrap();
@@ -332,7 +332,7 @@ mod tests {
             conn_id: Uuid::now_v7(),
             user_id,
             org_id: Uuid::now_v7(),
-            sink: mpsc::channel(1).0,
+            sink: socket_channel(1).0,
             label: None,
         };
         let first_registration = hub.register_machine(first, "replaceable").unwrap();
@@ -341,7 +341,7 @@ mod tests {
             conn_id: Uuid::now_v7(),
             user_id,
             org_id: Uuid::now_v7(),
-            sink: mpsc::channel(1).0,
+            sink: socket_channel(1).0,
             label: None,
         };
         assert!(
@@ -354,7 +354,7 @@ mod tests {
                 conn_id: Uuid::now_v7(),
                 user_id,
                 org_id: Uuid::now_v7(),
-                sink: mpsc::channel(1).0,
+                sink: socket_channel(1).0,
                 label: None,
             })
             .is_err());
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn displacement_signal_wakes_holder_when_sink_is_full() {
         let hub = Hub::default();
-        let (old_sink, mut old_rx) = mpsc::channel(1);
+        let (old_sink, mut old_rx) = socket_channel(1);
         old_sink.try_send(WsServerMsg::Hello).unwrap();
         let old = Member {
             conn_id: Uuid::now_v7(),
@@ -377,7 +377,10 @@ mod tests {
         let new = member();
         assert!(hub.register_machine(new, "full-queue").unwrap().displaced);
         assert!(*shutdown.borrow_and_update());
-        assert_eq!(old_rx.try_recv().unwrap(), WsServerMsg::Hello);
+        assert!(matches!(
+            old_rx.try_recv().unwrap(),
+            SocketOutput::Message(WsServerMsg::Hello)
+        ));
         assert!(old_rx.try_recv().is_err());
     }
 
