@@ -1768,7 +1768,14 @@ export default function WebChat({
   // frame overwrites it, then request a fresh sync for the new chat.
   const prevLoadedChatRef = useRef<string | null>(chatId);
   useEffect(() => {
-    if (isTauri) setProjectDir(storedDir(chatId) ?? storedDir(null));
+    if (isTauri) {
+      const dir = storedDir(chatId) ?? storedDir(null);
+      setProjectDir(dir);
+      // The folder is server-visible state: push the restored choice so
+      // web and other machines render it (fire-and-forget; also refreshes
+      // their thread list via the dir endpoint).
+      if (chatId) void pushChatDir(chatId, dir);
+    }
     const prev = prevLoadedChatRef.current;
     prevLoadedChatRef.current = chatId;
     if (prev !== null && prev !== chatId && blocksRef.current.length > 0) {
