@@ -214,6 +214,10 @@ pub struct GuildState {
     /// Distro → /etc/os-release PRETTY_NAME, fetched lazily (first
     /// list_wsl_distros call) and cached for the app run.
     wsl_pretty: Mutex<HashMap<String, Option<String>>>,
+    /// The last parsed distro list with the time it was fetched — served
+    /// stale-while-revalidate so a dialog never waits on a cold wsl.exe;
+    /// `None` until the first fetch completes.
+    wsl_distros: Mutex<Option<(std::time::Instant, Vec<Distro>)>>,
     /// Distro → $HOME, fetched lazily on first specifier use, cached for
     /// the app run.
     wsl_homes: Mutex<HashMap<String, Option<String>>>,
@@ -290,6 +294,44 @@ fn run_wsl(args: &[&str]) -> Option<String> {
 #[cfg(not(windows))]
 fn run_wsl(_args: &[&str]) -> Option<String> {
     None
+}
+
+/// One wsl.exe listing pass: parse, filter helpers, lazy per-distro pretty
+/// names (one spawn per uncached distro), store in the stale-while-
+/// revalidate cache. The caller owns a blocking context; the first call on
+/// a cold host pays the WSL2 VM boot, later calls within the TTL return
+/// from the cache.
+fn fetch_wsl_distros(state: &Arc<GuildState>) -> Result<Vec<Distro>, String> {
+    let Some(raw) = run_wsl(&["--list", "--verbose"]) else {
+        let empty: Vec<Distro> = Vec::new();
+        *state.wsl_distros.lock().unwrap() = Some((std::time::Instant::now(), empty.clone()));
+        return Ok(empty);
+    };
+    let mut out = Vec::new();
+    for (name, running) in parse_wsl_list(&raw) {
+        if name.starts_with("docker-desktop") {
+            continue;
+        }
+        // Per-entry lock scope: drop the guard before spawning wsl.exe.
+        let cached = state.wsl_pretty.lock().unwrap().get(&name).cloned();
+        let pretty_name = match cached {
+            Some(cached) => cached,
+            None => {
+                let pretty = run_wsl(&["-d", &name, "--exec", "cat", "/etc/os-release"])
+                    .as_deref()
+                    .and_then(parse_pretty_name);
+                state
+                    .wsl_pretty
+                    .lock()
+                    .unwrap()
+                    .insert(name.clone(), pretty.clone());
+                pretty
+            }
+        };
+        out.push(Distro { name, running, pretty_name });
+    }
+    *state.wsl_distros.lock().unwrap() = Some((std::time::Instant::now(), out.clone()));
+    Ok(out)
 }
 
 /// One data row of `wsl --list --verbose` output: (name, running). The
@@ -1113,33 +1155,21 @@ pub mod commands {
     pub async fn list_wsl_distros(state: State<'_, Arc<GuildState>>) -> Result<Vec<Distro>, String> {
         let state = state.inner().clone();
         tokio::task::spawn_blocking(move || {
-            let Some(raw) = run_wsl(&["--list", "--verbose"]) else {
-                return Ok(vec![]);
-            };
-            let mut out = Vec::new();
-            for (name, running) in parse_wsl_list(&raw) {
-                if name.starts_with("docker-desktop") {
-                    continue;
+            const TTL: std::time::Duration = std::time::Duration::from_secs(60);
+            let cached = state.wsl_distros.lock().unwrap().clone();
+            if let Some((at, distros)) = cached {
+                if at.elapsed() < TTL {
+                    return Ok(distros);
                 }
-                // Per-entry lock scope: drop the guard before spawning wsl.exe.
-                let cached = state.wsl_pretty.lock().unwrap().get(&name).cloned();
-                let pretty_name = match cached {
-                    Some(cached) => cached,
-                    None => {
-                        let pretty = run_wsl(&["-d", &name, "--exec", "cat", "/etc/os-release"])
-                            .as_deref()
-                            .and_then(parse_pretty_name);
-                        state
-                            .wsl_pretty
-                            .lock()
-                            .unwrap()
-                            .insert(name.clone(), pretty.clone());
-                        pretty
-                    }
-                };
-                out.push(Distro { name, running, pretty_name });
+                // Stale: answer from the cache at once, refresh behind it —
+                // the next open sees the fresh list without ever waiting.
+                let bg = state.clone();
+                let _ = tokio::spawn(async move {
+                    let _ = tokio::task::spawn_blocking(move || fetch_wsl_distros(&bg)).await;
+                });
+                return Ok(distros);
             }
-            Ok(out)
+            fetch_wsl_distros(&state)
         })
         .await
         .map_err(|e| format!("wsl distro listing failed: {e}"))?
@@ -1526,6 +1556,16 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // Warm the WSL distro list while the window loads — the first
+            // wsl.exe call may boot the whole WSL2 VM (seconds); the dialog
+            // should never be the one paying that cost.
+            {
+                let state = app.state::<Arc<GuildState>>().inner().clone();
+                std::thread::spawn(move || {
+                    let _ = fetch_wsl_distros(&state);
+                });
+            }
 
             // One session, one dispatch surface. The CLI socket and the
             // webview pipes both serve this Shared. Bounded: an unreachable
