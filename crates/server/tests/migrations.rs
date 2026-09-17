@@ -80,8 +80,8 @@ async fn apply_migrations(
 
 /// The wipe migration (0048): chat-scoped data is gone, the fresh chats
 /// table carries project_id (never project_dir), the wiped-but-live tables
-/// come back empty and usable, and only the tool_dispatch:/approval: kv rows
-/// are cleared.
+/// come back empty and usable, and only the per-chat kv prefixes
+/// (tool_dispatch:, approval:, chatgen_inv:) are cleared.
 #[tokio::test]
 async fn wipe_migration_drops_thread_data_and_recreates_chats_on_projects() {
     let base = std::env::var("GUILD_TEST_PG_URL").expect("GUILD_TEST_PG_URL");
@@ -153,7 +153,7 @@ async fn wipe_migration_drops_thread_data_and_recreates_chats_on_projects() {
     .execute(&pool)
     .await
     .unwrap();
-    for key in ["tool_dispatch:c1:d1", "approval:c1", "keep:me"] {
+    for key in ["tool_dispatch:c1:d1", "approval:c1", "chatgen_inv:c1", "keep:me"] {
         sqlx::query("INSERT INTO server_kv (key, value) VALUES ($1, 'v')")
             .bind(key)
             .execute(&pool)

@@ -5,12 +5,15 @@
 import { describe, expect, it } from "vitest";
 import type { ChatSummary, Project } from "../../transport";
 import {
+  activeFilterId,
   breadcrumbs,
   canonicalDir,
   chatProjectOf,
   displayPath,
+  expandError,
   expandPath,
   filterProjects,
+  outgoingProjectId,
   pickerFor,
   pickerReducer,
   projectChipLabel,
@@ -73,6 +76,39 @@ describe("chatProjectOf (fallback chip state from the sidebar row)", () => {
   });
 });
 
+describe("outgoingProjectId (request-wins only for an in-session pick)", () => {
+  it("sends the project id only when the user picked it this session", () => {
+    expect(outgoingProjectId({ id: "p1", name: "web" })).toBe("p1");
+  });
+
+  it("omits the field otherwise so the server uses the persisted binding", () => {
+    // A stale sidebar row (possibly re-bound elsewhere since this list was
+    // fetched) must never ride on the request.
+    expect(outgoingProjectId(null)).toBeNull();
+    expect(outgoingProjectId(undefined)).toBeNull();
+  });
+});
+
+describe("activeFilterId (deleted-project deep links degrade to no filter)", () => {
+  const projects = [project("p1", "web"), project("p2", "api")];
+
+  it("keeps a filter id present in the projects list", () => {
+    expect(activeFilterId(projects, "p1")).toBe("p1");
+  });
+
+  it("treats an id absent from the list as no filter", () => {
+    expect(activeFilterId(projects, "dead-id")).toBeNull();
+  });
+
+  it("keeps the route id while the list is still loading", () => {
+    expect(activeFilterId(null, "p1")).toBe("p1");
+  });
+
+  it("is no filter without a route id", () => {
+    expect(activeFilterId(projects, null)).toBeNull();
+  });
+});
+
 describe("recentProjects", () => {
   it("orders projects by their most recent chat and dedupes", () => {
     const chats = [chat("c1", "p2"), chat("c2", "p1"), chat("c3", "p2"), chat("c4", "p1")];
@@ -120,6 +156,10 @@ describe("specifier paths", () => {
     expect(expandPath("\\\\wsl.localhost\\arch\\tmp\\", home)).toBe("\\\\wsl.localhost\\arch\\tmp\\");
     // without a home, ~ stays unexpandable
     expect(expandPath("~", null)).toBeNull();
+    // …and committing it is an inline error, not a silent descend
+    expect(expandError("~", null)).toBe("home directory unknown for this distro");
+    expect(expandError("~/src", null)).toBeNull();
+    expect(expandError("~", wslHomeUnc("arch", "/home/me"))).toBeNull();
   });
 
   it("canonicalizes directory paths and renders breadcrumbs", () => {
@@ -207,5 +247,14 @@ describe("picker state machine (sources → browse → confirm)", () => {
     expect(s.error).toBe("no route to host");
     s = pickerReducer(s, { type: "confirm" });
     expect(s.confirmed).toBeNull();
+  });
+
+  it("an inline commit error (like an unavailable home for ~) shows without clearing the listing", () => {
+    let s = pickerFor("arch", root);
+    s = pickerReducer(s, { type: "loading", path: root });
+    s = pickerReducer(s, { type: "loaded", path: root, entries: [{ name: "home", is_dir: true }] });
+    s = pickerReducer(s, { type: "error", message: "home directory unknown for this distro" });
+    expect(s.error).toBe("home directory unknown for this distro");
+    expect(s.entries).not.toBeNull();
   });
 });

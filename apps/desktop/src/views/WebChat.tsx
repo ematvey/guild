@@ -63,7 +63,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsWindow } from "./settings/SettingsWindow";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
 import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
-import { chatProjectOf, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
+import { activeFilterId, chatProjectOf, outgoingProjectId, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import {
   attachmentBlobUrl,
   rpcCall,
@@ -1822,6 +1822,21 @@ export default function WebChat({
       unread: cid === openChatIdRef.current ? false :
         (!state.generating && prev[cid]?.generating ? true : (prev[cid]?.unread ?? false)),
     } }));
+    // ThreadState carries the chat's project fields: a live re-bind from
+    // another device updates this client's row, so the chip and the sidebar
+    // agree without a reload.
+    setChats(prev =>
+      prev?.map(c =>
+        c.id === cid
+          ? {
+              ...c,
+              project_id: state.project_id,
+              project_name: state.project_name,
+              project_machine_label: state.project_machine_label,
+            }
+          : c,
+      ) ?? prev,
+    );
     if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
     const events = state.events;
@@ -1898,8 +1913,9 @@ export default function WebChat({
 
   const newChat = () => {
     // Navigation only: the chatId effect selects the new open chat and asks
-    // the member socket to reconcile it. A project filter stays active.
-    pushRoute({ chatId: null, projectId: route.projectId, overlay: null });
+    // the member socket to reconcile it. The new chat is projectless, so a
+    // stale project filter would hide it — the filter drops with the route.
+    pushRoute({ chatId: null, projectId: null, overlay: null });
     setOpen(false);
     ta.current?.focus();
   };
@@ -2116,14 +2132,16 @@ export default function WebChat({
         if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
       }
       setPending([]);
-      // The project binding rides on the request (request wins; the chat
-      // binding is the server's fallback).
+      // Request-wins only for an in-session pick: the pick action set the
+      // ref. Otherwise the field is omitted and the server falls back to
+      // the chat's persisted binding — a stale sidebar row must never win
+      // over a re-bind from another device.
       await sendChatNoStream(
         cid,
         model,
         text,
         attachmentIds,
-        pickedProjectRef.current?.id ?? chatProjectOf(chatsRef.current?.find((c) => c.id === cid))?.id ?? null,
+        outgoingProjectId(pickedProjectRef.current),
         sentKey,
       );
       // Submission is not persistence. Only the committed socket echo settles the marker.
@@ -2153,8 +2171,8 @@ export default function WebChat({
   const streaming = busy || attaching || openGenerating;
 
   const grouping = useMemo(
-    () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) })), projectId),
-    [chats, chatStatus, projectId],
+    () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) })), activeFilterId(projects, projectId)),
+    [chats, chatStatus, projects, projectId],
   );
   const activeProject = projects?.find((p) => p.id === projectId) ?? null;
 
