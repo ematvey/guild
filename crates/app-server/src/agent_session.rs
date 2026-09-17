@@ -55,7 +55,9 @@ impl ModelTurn for GatewayTurn {
                     Some(tools.to_vec())
                 },
                 system: self.system.clone(),
-                project_dir: self.project_dir.clone(),
+                // The engine session has a local dir, not a server project;
+                // the mapping lands with the desktop lane's project picker.
+                project_id: None,
                 skills_index: self.skills_index.clone(),
                 // the desktop app executes machine tools client-side
                 client_tools: true,

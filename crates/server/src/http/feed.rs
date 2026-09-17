@@ -576,12 +576,22 @@ async fn capture_thread(
     };
     let generating = state.generations.lock().unwrap().contains_key(&chat_id);
     let seq = store.thread().watermark().await?;
+    // The chat's project, for the sidebar's grouping (None = folderless).
+    let (project_id, project_name, project_machine_label) = match
+        store.chats().project_of(org, chat_id).await?
+    {
+        Some((id, name, label)) => (Some(id), Some(name), label),
+        None => (None, None, None),
+    };
     Ok(WsServerMsg::ThreadState {
         chat_id,
         seq,
         generating,
         text,
         thinking,
+        project_id,
+        project_name,
+        project_machine_label,
         events: events
             .into_iter()
             .map(|row| serde_json::to_value(row).expect("thread row serializes"))
@@ -627,7 +637,7 @@ mod tests {
         assert_eq!(user.id, user_id);
         let chat = store
             .chats()
-            .create_chat(user.org_id, user.id, Some("feed test"))
+            .create_chat(user.org_id, user.id, Some("feed test"), None)
             .await
             .unwrap();
         (ts, AuthUser(user), chat, ingress)

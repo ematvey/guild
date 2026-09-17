@@ -13,6 +13,7 @@ pub mod integration_tools;
 pub mod internal;
 pub mod oidc;
 pub mod openai;
+pub mod projects;
 pub mod registry;
 pub mod releases;
 pub mod usage;
@@ -50,6 +51,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(auth::routes())
         .merge(crate::http::ws::routes())
         .merge(chats::routes())
+        .merge(projects::routes())
         .merge(gateway::routes())
         .merge(registry::routes())
         .merge(admin::routes())

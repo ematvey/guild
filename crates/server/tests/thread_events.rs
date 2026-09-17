@@ -20,7 +20,7 @@ async fn thread_store_append_list_roundtrip_and_org_scope() {
     let user = store.identity().validate_session(&_token).await.unwrap();
     let chat = store
         .chats()
-        .create_chat(user.org_id, user.id, Some("thread store"))
+        .create_chat(user.org_id, user.id, Some("thread store"), None)
         .await
         .unwrap();
 
@@ -227,7 +227,7 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
     let user = store.identity().validate_session(&token).await.unwrap();
     let chat = store
         .chats()
-        .create_chat(user.org_id, user.id, Some("gauge"))
+        .create_chat(user.org_id, user.id, Some("gauge"), None)
         .await
         .unwrap();
     // A route with an explicit context window for the model used below.
