@@ -275,6 +275,42 @@ describe("approval upsert/resolve", () => {
     expect(approvals).toHaveLength(1);
     expect(approvals[0].approval!.status).toBe("expired");
   });
+
+  it("interrupted assistant events mark the last text block, not earlier ones", () => {
+    const blocks = eventsToBlocks([
+      row(0, { type: "user_message", content: "write a long essay" }),
+      row(1, {
+        type: "assistant_message",
+        turn: 1,
+        step: 0,
+        model: "m",
+        usage,
+        interrupted: true,
+        blocks: [
+          { type: "reasoning", text: "thinking…" },
+          { type: "text", text: "partial answer so far" },
+        ],
+      }),
+    ]);
+    expect(blocks.filter((b) => b.kind === "text")).toHaveLength(1);
+    expect(blocks.find((b) => b.kind === "text")!.interrupted).toBe(true);
+    expect(blocks.find((b) => b.kind === "reasoning")!.interrupted).toBeUndefined();
+  });
+
+  it("a completed turn carries no interrupted marker", () => {
+    const blocks = eventsToBlocks([
+      row(0, {
+        type: "assistant_message",
+        turn: 1,
+        step: 0,
+        model: "m",
+        usage,
+        interrupted: null,
+        blocks: [{ type: "text", text: "done" }],
+      }),
+    ]);
+    expect(blocks.find((b) => b.kind === "text")!.interrupted).toBeUndefined();
+  });
 });
 
 describe("authoritative socket state", () => {

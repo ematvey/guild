@@ -156,6 +156,15 @@ pub fn note_generation(state: &AppState, chat_id: uuid::Uuid) {
     crate::http::gateway::ensure_generation(state, chat_id);
 }
 
+/// Test seam: a chat's cancel flag (set by the stop endpoint and steered
+/// sends, read by the ChatRunner inside journaled steps).
+pub fn generation_cancel(
+    state: &AppState,
+    chat_id: uuid::Uuid,
+) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+    crate::http::gateway::generation_cancel(state, chat_id)
+}
+
 /// Test seam: expose a generation's frame sender so tests can emit live
 /// frames exactly like the worker does.
 pub fn generation_tx(

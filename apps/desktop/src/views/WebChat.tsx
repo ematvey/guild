@@ -28,6 +28,7 @@ import {
   Plus,
   Search,
   FolderOpen,
+  Square,
   X as XIcon,
   SquareTerminal,
   TriangleAlert,
@@ -58,7 +59,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@guild/ui/components/separator";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
-import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsWindow } from "./settings/SettingsWindow";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
@@ -71,6 +71,7 @@ import {
   postApproval,
   sendChatNoStream,
   setMachineIdentity,
+  stopChat,
   uploadAttachment,
   type StreamFrame,
 } from "../transport";
@@ -271,6 +272,9 @@ export interface Block {
   pending?: boolean;
   /// kind === "reasoning": the accumulated thinking text.
   reasoningText?: string;
+  /// kind === "text": the turn was stopped mid-stream; the text is the
+  /// delivered prefix.
+  interrupted?: boolean;
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
@@ -499,7 +503,8 @@ export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
       }
       case "system_message":
         break; // server-owned prompt, log-only
-      case "assistant_message":
+      case "assistant_message": {
+        const start = blocks.length;
         for (const b of ev.blocks) {
           if (b.type === "reasoning") {
             blocks.push({ kind: "reasoning", text: "", reasoningText: b.text, key: seqKey(inEvent++) });
@@ -517,7 +522,16 @@ export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
             blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(inEvent++) });
           }
         }
+        if (ev.interrupted) {
+          for (let j = blocks.length - 1; j >= start; j--) {
+            if (blocks[j].kind === "text") {
+              blocks[j].interrupted = true;
+              break;
+            }
+          }
+        }
         break;
+      }
       case "tool_result": {
         const meta = (ev.meta ?? undefined) as ToolMeta | undefined;
         const kind = (ev as { kind?: string | null }).kind ?? undefined;
@@ -1997,12 +2011,17 @@ export default function WebChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const send = async () => {
+  // mode: "normal" starts a turn (blocked while one runs); "queue" commits
+  // the message for the running turn's next pause; "steer" also interrupts
+  // the in-flight turn so the message runs immediately.
+  const send = async (mode: "normal" | "queue" | "steer" = "normal") => {
     const text = prompt.trim();
-    if ((!text && pendingRef.current.length === 0) || busy || openGenerating || !model) return;
+    if ((!text && pendingRef.current.length === 0) || !model) return;
+    const generating = busy || openGenerating;
+    if (mode === "normal" && generating) return;
     const mySeq = loadSeq.current; // ignores results after a chat switch
     const sentAt = Date.now();
-    setBusy(true);
+    if (mode === "normal") setBusy(true); // queue/steer: the spinner is already on
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
     // Focus stays in the composer after send. Scheduled after the pending
@@ -2050,8 +2069,8 @@ export default function WebChat({
     if (!cid) {
       if (loadSeq.current === mySeq) {
         setBlocks((b) => [...b, { kind: "error", text: "chat create failed", key: liveKey() }]);
+        setBusy(false);
       }
-      setBusy(false);
       return;
     }
     pendingSendRef.current.set(cid, {
@@ -2135,6 +2154,7 @@ export default function WebChat({
         attachmentIds,
         outgoingProjectId(pickedProjectRef.current),
         sentKey,
+        generating ? (mode === "steer" ? "steer" : "queue") : undefined,
       );
       // Submission is not persistence. Only the committed socket echo settles the marker.
       // The member socket delivers every effect. Busy ends on done/error or
@@ -2151,10 +2171,23 @@ export default function WebChat({
           ...b.filter((block) => block.key !== sentKey),
           { kind: "error", text: e instanceof Error ? e.message : String(e), key: liveKey() },
         ]);
-        setBusy(false);
+        if (mode === "normal") setBusy(false);
       }
     } finally {
-      if (!keepBusyThroughFinally) setBusy(false);
+      // Queue/steer never own the busy flag — the running turn does.
+      if (!keepBusyThroughFinally && mode === "normal") setBusy(false);
+    }
+  };
+
+  // Stop the chat's in-flight turn. 409 (nothing generating) resolves
+  // silently — the turn already ended between the render and the click.
+  const requestStop = async () => {
+    const cid = chatId;
+    if (!cid) return;
+    try {
+      await stopChat(cid);
+    } catch {
+      // the turn already ended; the feed's own state settles the spinner
     }
   };
 
@@ -2385,6 +2418,9 @@ export default function WebChat({
                           it lands on the forming line, not below the block */}
                       {streaming && i === blocks.length - 1 ? `${b.text}▍` : b.text}
                     </Markdown>
+                    {b.interrupted && !streaming && (
+                      <div className="text-xs text-muted-foreground">stopped</div>
+                    )}
                   </div>
                 ),
               )}
@@ -2511,7 +2547,13 @@ export default function WebChat({
                 }
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  void send();
+                  // While a turn runs: Enter queues for the turn's next
+                  // pause; Ctrl/Cmd+Enter steers — interrupts the turn and
+                  // sends immediately.
+                  const generating = busy || openGenerating;
+                  void send(
+                    generating ? (e.ctrlKey || e.metaKey ? "steer" : "queue") : "normal",
+                  );
                 }
               }}
               rows={1}
@@ -2657,17 +2699,33 @@ export default function WebChat({
                     </SelectContent>
                   </Select>
                 )}
-                <Button
-                  size="icon"
-                  className="size-7 rounded-full"
-                  onClick={() => void send()}
-                  disabled={
-                    streaming || !model || (!prompt.trim() && pending.length === 0)
-                  }
-                  title="Send"
-                >
-                  {streaming ? <Spinner className="text-primary-foreground" /> : <ArrowUp />}
-                </Button>
+                {(() => {
+                  // While a turn generates the composer stays usable: with
+                  // content the send queues (Ctrl/Cmd+Enter steers); empty,
+                  // the button turns into Stop.
+                  const generating = busy || openGenerating;
+                  const hasContent = !!prompt.trim() || pending.length > 0;
+                  const stopMode = generating && !hasContent;
+                  return (
+                    <Button
+                      size="icon"
+                      className="size-7 rounded-full"
+                      onClick={() =>
+                        stopMode ? void requestStop() : void send(generating ? "queue" : "normal")
+                      }
+                      disabled={stopMode ? false : !model || !hasContent}
+                      title={
+                        stopMode
+                          ? "Stop"
+                          : generating
+                            ? "Queue (Ctrl+Enter sends immediately)"
+                            : "Send"
+                      }
+                    >
+                      {stopMode ? <Square className="size-3.5 fill-current" /> : <ArrowUp />}
+                    </Button>
+                  );
+                })()}
               </div>
             </div>
           </div>
