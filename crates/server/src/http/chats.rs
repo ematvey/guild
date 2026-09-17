@@ -20,8 +20,8 @@ pub fn routes() -> Router<AppState> {
             axum::routing::get(thread).post(append_thread_event),
         )
         .route(
-            "/api/v1/chats/{id}/dir",
-            axum::routing::post(set_dir),
+            "/api/v1/chats/{id}/project",
+            axum::routing::post(set_project),
         )
         .route(
             "/api/v1/chats/{id}/machine",
@@ -188,7 +188,9 @@ impl From<crate::store::chats::ChatRow> for Chat {
             machine_label: c.machine_label,
             generating: c.generating,
             unread: false,
-            project_dir: c.project_dir,
+            project_id: c.project_id,
+            project_name: None,
+            project_machine_label: None,
             machine_online: false,
         }
     }
@@ -206,7 +208,9 @@ impl From<crate::store::chats::ChatListRow> for Chat {
             machine_label: c.machine_label,
             generating: c.generating,
             unread: c.unread,
-            project_dir: c.project_dir,
+            project_id: c.project_id,
+            project_name: c.project_name,
+            project_machine_label: c.project_machine_label,
             machine_online: false,
         }
     }
@@ -218,9 +222,22 @@ async fn create(
     Json(req): Json<CreateChatRequest>,
 ) -> Result<Json<Chat>, ApiError> {
     let store = state.store().await?;
+    // The project must exist and belong to the caller (admin bypass) — an
+    // arbitrary id would bind a chat to someone else's workspace.
+    if let Some(project_id) = req.project_id {
+        store
+            .projects()
+            .get(user.0.org_id, project_id, &user.0)
+            .await?;
+    }
     let chat = store
         .chats()
-        .create_chat(user.0.org_id, user.0.id, req.title.as_deref())
+        .create_chat(
+            user.0.org_id,
+            user.0.id,
+            req.title.as_deref(),
+            req.project_id,
+        )
         .await?;
     // Desktop apps auto-bind their own machine at creation so machine tools
     // work from the first turn; the machine must be registered to this user
@@ -251,26 +268,33 @@ async fn list(
     Ok(Json(serde_json::json!({ "chats": chats })))
 }
 
-/// Sets (or clears) the chat's workspace folder. Owner-scoped; the bound
-/// desktop pushes its folder choice here so web and other machines render it.
-async fn set_dir(
+/// Sets (or clears, with null) the chat's project. Owner-scoped; the
+/// composer chip binds the chat to a named workspace folder so every device
+/// renders the grouping and the runner resolves the folder.
+async fn set_project(
     State(state): State<AppState>,
     user: AuthUser,
     Path(chat_id): Path<Uuid>,
     Json(req): Json<Value>,
 ) -> Result<Json<Chat>, ApiError> {
     let store = state.store().await?;
-    store
-        .chats()
-        .get_chat(user.0.org_id, chat_id, &user.0)
-        .await?;
-    let dir = req["dir"].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+    let project_id = match req.get("project_id").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => {
+            let id: Uuid = s.parse().map_err(|_| ApiError::bad_request("bad project_id"))?;
+            store
+                .projects()
+                .get(user.0.org_id, id, &user.0)
+                .await?;
+            Some(id)
+        }
+        _ => None,
+    };
     let chat = store
         .chats()
-        .set_project_dir(user.0.org_id, chat_id, &user.0, dir.as_deref())
+        .set_project(user.0.org_id, chat_id, &user.0, project_id)
         .await?;
-    // Every device renders the folder chip: push a fresh thread list to the
-    // caller's live sockets so the chip appears without a reload.
+    // Every device renders the project grouping: push a fresh thread list to
+    // the caller's live sockets so the sidebar updates without a reload.
     let broadcast = state.feeds.lock().unwrap().get(&user.0.id).map(|f| f.broadcast.clone());
     if let Some(broadcast) = broadcast {
         if let Ok(chats) = crate::http::feed::thread_list(&state, user.0.org_id, user.0.id).await {

@@ -35,11 +35,16 @@ pub enum WsServerMsg {
     Displaced,
     AuthRequired,
     /// Execution is addressed to one connection, never replayed as display state.
+    /// `workdir` is the workspace folder the executor runs the tool in (from
+    /// the chat's project); None = no workspace (the executor errors the
+    /// machine tools).
     ToolDispatch {
         chat_id: Uuid,
         call_id: String,
         name: String,
         arguments: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workdir: Option<String>,
     },
     Error {
         message: String,
@@ -67,6 +72,14 @@ pub enum WsServerMsg {
         text: String,
         thinking: String,
         generating: bool,
+        /// The chat's project, for the sidebar's grouping. Defaults keep old
+        /// senders deserializable.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project_id: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project_machine_label: Option<String>,
     },
     SyncDone {
         chat_id: Uuid,

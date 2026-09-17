@@ -89,6 +89,44 @@ pub struct CreateChatRequest {
     /// machine so machine tools work from the first turn).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub machine_id: Option<String>,
+    /// Optional project binding at creation (the composer chip).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<Uuid>,
+}
+
+/// One project (spec §1): a named folder bound to a machine.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct Project {
+    pub id: Uuid,
+    pub name: String,
+    /// Windows path; UNC (`\\wsl.localhost\…`) for a WSL distro folder.
+    pub folder: String,
+    pub machine_id: String,
+    pub machine_label: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct CreateProjectRequest {
+    pub name: String,
+    pub folder: String,
+    pub machine_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct UpdateProjectRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -113,10 +151,14 @@ pub struct Chat {
     /// The reader has an unseen assistant turn (sidebar dot).
     #[serde(default)]
     pub unread: bool,
-    /// Workspace folder the bound machine runs tools in (rendered next to
-    /// the machine indicator).
+    /// The project (named workspace folder) the chat runs in; None =
+    /// folderless. Defaults for old clients.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_dir: Option<String>,
+    pub project_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_machine_label: Option<String>,
     /// Whether the bound machine's singleton socket is live right now
     /// (drives the connection dot next to the folder chip). Always false
     /// for unbound chats.
@@ -294,11 +336,11 @@ pub struct ChatCompletionRequest {
     /// answer it.
     #[serde(default)]
     pub client_tools: bool,
-    /// Workspace directory the client executes machine tools in. The server
-    /// includes it in the system prompt it builds (the server owns the
-    /// prompt; the client never sends one for agent turns).
+    /// The project (named workspace folder) this turn runs in; the server
+    /// resolves folder + machine label journaled and names the workspace in
+    /// the system prompt it builds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_dir: Option<String>,
+    pub project_id: Option<Uuid>,
     /// Context attachments for this turn: uploaded beforehand via
     /// POST /api/v1/chats/{id}/attachments; the server inlines documents'
     /// text and passes image/audio parts when the route supports the

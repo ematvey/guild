@@ -20,9 +20,9 @@ pub struct ChatRow {
     /// A ChatRunner generation is in flight (server-side truth — identical
     /// for every device).
     pub generating: bool,
-    /// Workspace folder the bound machine runs tools in; pushed by the
-    /// desktop, rendered by every device.
-    pub project_dir: Option<String>,
+    /// The project (named workspace folder) the chat runs in; None =
+    /// folderless.
+    pub project_id: Option<Uuid>,
 }
 
 /// One row of the sidebar list: the chat plus the caller's derived unread
@@ -39,7 +39,9 @@ pub struct ChatListRow {
     pub machine_label: Option<String>,
     pub generating: bool,
     pub unread: bool,
-    pub project_dir: Option<String>,
+    pub project_id: Option<Uuid>,
+    pub project_name: Option<String>,
+    pub project_machine_label: Option<String>,
 }
 
 pub struct ChatStore<'a> {
@@ -52,16 +54,18 @@ impl<'a> ChatStore<'a> {
         org_id: Uuid,
         user_id: Uuid,
         title: Option<&str>,
+        project_id: Option<Uuid>,
     ) -> Result<ChatRow, ApiError> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, ChatRow>(
-            "INSERT INTO chats (id, org_id, user_id, title) VALUES ($1, $2, $3, $4) \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_dir",
+            "INSERT INTO chats (id, org_id, user_id, title, project_id) VALUES ($1, $2, $3, $4, $5) \
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
         )
         .bind(id)
         .bind(org_id)
         .bind(user_id)
         .bind(title)
+        .bind(project_id)
         .fetch_one(self.pool)
         .await
         .map_err(Into::into)
@@ -74,13 +78,15 @@ impl<'a> ChatStore<'a> {
     ) -> Result<Vec<ChatListRow>, ApiError> {
         sqlx::query_as(
             "SELECT c.id, c.org_id, c.user_id, c.title, c.created_at, c.machine_id, c.machine_label, \
-                    c.generating, c.project_dir, \
+                    c.generating, c.project_id, pr.name AS project_name, m.label AS project_machine_label, \
                     c.generating = false AND EXISTS ( \
                       SELECT 1 FROM thread_events e \
                       WHERE e.chat_id = c.id AND e.type = 'assistant_message' \
                         AND (r.last_read_event_id IS NULL OR e.id > r.last_read_event_id)) AS unread \
              FROM chats c \
              LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2 \
+             LEFT JOIN projects pr ON pr.id = c.project_id \
+             LEFT JOIN machines m ON m.machine_id = pr.machine_id \
              WHERE c.org_id = $1 AND c.user_id = $2 \
              ORDER BY c.created_at DESC",
         )
@@ -103,7 +109,7 @@ impl<'a> ChatStore<'a> {
     ) -> Result<ChatRow, ApiError> {
         let is_admin = caller.role == "admin";
         sqlx::query_as(
-            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_dir FROM chats \
+            "SELECT id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id FROM chats \
              WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)",
         )
         .bind(org_id)
@@ -126,7 +132,7 @@ impl<'a> ChatStore<'a> {
         sqlx::query_as(
             "UPDATE chats SET machine_id = $3, machine_label = $4 \
              WHERE org_id = $1 AND id = $2 \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_dir",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
         )
         .bind(org_id)
         .bind(chat_id)
@@ -137,30 +143,50 @@ impl<'a> ChatStore<'a> {
         .map_err(Into::into)
     }
 
-    /// Sets (or clears) the chat's workspace folder. Owner-scoped: the
-    /// folder comes from the bound desktop, but any device of the owner may
-    /// push it (the folder belongs to the chat, not to a viewer).
-    pub async fn set_project_dir(
+    /// Sets (or clears, with `None`) the chat's project. Owner-scoped: the
+    /// composer chip binds the chat to a named workspace folder.
+    pub async fn set_project(
         &self,
         org_id: Uuid,
         chat_id: Uuid,
         caller: &UserRow,
-        dir: Option<&str>,
+        project_id: Option<Uuid>,
     ) -> Result<ChatRow, ApiError> {
         let is_admin = caller.role == "admin";
         sqlx::query_as(
-            "UPDATE chats SET project_dir = $3 \
+            "UPDATE chats SET project_id = $3 \
              WHERE org_id = $1 AND id = $2 AND (user_id = $4 OR $5) \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_dir",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
         )
         .bind(org_id)
         .bind(chat_id)
-        .bind(dir)
+        .bind(project_id)
         .bind(caller.id)
         .bind(is_admin)
         .fetch_optional(self.pool)
         .await?
         .ok_or_else(|| ApiError::not_found("no such chat"))
+    }
+
+    /// The chat's project (id, name, machine label) for the sidebar and the
+    /// sync view — a plain read; org-scoped.
+    pub async fn project_of(
+        &self,
+        org_id: Uuid,
+        chat_id: Uuid,
+    ) -> Result<Option<(Uuid, String, Option<String>)>, ApiError> {
+        sqlx::query_as(
+            "SELECT pr.id, pr.name, m.label \
+             FROM chats c \
+             JOIN projects pr ON pr.id = c.project_id \
+             LEFT JOIN machines m ON m.machine_id = pr.machine_id \
+             WHERE c.org_id = $1 AND c.id = $2",
+        )
+        .bind(org_id)
+        .bind(chat_id)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(Into::into)
     }
 
     /// Sets (or clears, with `None`) the chat's approval-mode override —
@@ -324,7 +350,7 @@ mod tests {
             .unwrap();
         let chat = store
             .chats()
-            .create_chat(org, alice.id, Some("alice's"))
+            .create_chat(org, alice.id, Some("alice's"), None)
             .await
             .unwrap();
 
@@ -370,7 +396,7 @@ mod tests {
             .unwrap();
         let chat = store
             .chats()
-            .create_chat(org, alice.id, Some("status"))
+            .create_chat(org, alice.id, Some("status"), None)
             .await
             .unwrap();
 
