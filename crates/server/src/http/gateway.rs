@@ -776,11 +776,27 @@ async fn chat(
     let project_id = match req.project_id {
         Some(pid) => {
             let project = store.projects().get(user.0.org_id, pid, &user.0).await?;
-            if Some(&project.machine_id) != chat.machine_id.as_ref() {
-                let label = project
-                    .machine_label
-                    .clone()
-                    .unwrap_or_else(|| project.machine_id.clone());
+            let label = project
+                .machine_label
+                .clone()
+                .unwrap_or_else(|| project.machine_id.clone());
+            if chat.project_id != Some(pid) {
+                // An explicit request chose the project: persist the binding
+                // and the machine together, so a later request that omits
+                // project_id cannot run the old folder on the new machine.
+                let aligned = store
+                    .chats()
+                    .set_project(
+                        user.0.org_id,
+                        req.chat_id,
+                        &user.0,
+                        Some(pid),
+                        Some((&project.machine_id, Some(&label))),
+                    )
+                    .await?;
+                machine_id = aligned.machine_id;
+                machine_label = aligned.machine_label;
+            } else if Some(&project.machine_id) != chat.machine_id.as_ref() {
                 store
                     .chats()
                     .set_machine(

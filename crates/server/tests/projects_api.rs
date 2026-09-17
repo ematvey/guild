@@ -265,6 +265,20 @@ async fn project_binding_inherits_the_projects_machine() {
     assert_eq!(chat["machine_id"], "machine-2");
     assert_eq!(chat["machine_label"], "NODE2");
 
+    // A create that carries both fields takes the project's machine — the
+    // production path (the desktop always sends its auto-bind alongside the
+    // picked project).
+    let (status, both) = post_json(
+        &app,
+        &fs,
+        "POST",
+        "/api/v1/chats",
+        json!({"title": "c1-both", "project_id": project_id, "machine_id": "machine-1"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{both}");
+    assert_eq!(both["machine_id"], "machine-2");
+
     // An existing chat bound to machine-1 re-aligns to machine-2 when the
     // project is bound afterwards.
     let (status, chat2) = post_json(

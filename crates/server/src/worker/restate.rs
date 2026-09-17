@@ -558,7 +558,9 @@ pub(crate) struct WorkspaceRef {
 pub(crate) fn parse_wsl_unc(folder: &str) -> Option<(String, String)> {
     let mut norm = folder.replace('\\', "/");
     // Device-form UNC: treat it as the plain `//` form, case-insensitively.
-    if norm.len() >= 8 && norm[..8].eq_ignore_ascii_case("//?/unc/") {
+    // Byte-wise so a multibyte character straddling the slice boundary
+    // cannot panic.
+    if norm.as_bytes().get(..8).is_some_and(|p| p.eq_ignore_ascii_case(b"//?/unc/")) {
         norm = format!("//{}", &norm[8..]);
     }
     let low = norm.to_ascii_lowercase();

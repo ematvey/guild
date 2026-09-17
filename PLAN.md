@@ -32,7 +32,7 @@ resolve their aim folder from the projects API ("most recent chat's
 project, else first project"). Desktop 0.5.0 released (all four platforms,
 sha256-verified; devbox manual exe copy), compose stack rebuilt, Restate
 state wiped at deploy. Review round 1: no blockers; fix round 1 landed the
-chatgen_inv kv cleanup in 0048, machine/project alignment at bind time,
+chatgen_inv kv cleanup as migration 0049, machine/project alignment at bind time,
 request-wins-only-for-in-session-picks, parser-agreement pin, the `wsl`
 policy rule, and desktop edge cases (dead filter id, new-chat filter,
 blocking distro fetch, `~` without home, ThreadState project fields
