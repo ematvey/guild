@@ -10,15 +10,13 @@ import { Button } from "@guild/ui/components/button";
 import { Spinner } from "@guild/ui/components/spinner";
 import { listDir, wslHome } from "../../transport";
 import {
-  breadcrumbs,
-  canonicalDir,
+  linuxBreadcrumbs,
   displayPath,
   expandError,
   expandPath,
   pickerReducer,
   pickerFor,
-  wslHomeUnc,
-  wslRoot,
+  wslFolder,
 } from "./projects";
 
 export function PathSpecifier({
@@ -29,23 +27,25 @@ export function PathSpecifier({
   /** Called with the confirmed folder (UNC path, canonical). */
   onConfirm: (folder: string) => void;
 }) {
+  // The browse state lives in inner Linux paths (`/home/user/`); the UNC
+  // form exists only at the edges — list_dir calls and the stored folder.
   const [state, dispatch] = useReducer(
     pickerReducer,
     undefined,
-    () => pickerFor(distro, wslRoot(distro)),
+    () => pickerFor(distro, "/"),
   );
-  const [homeUnc, setHomeUnc] = useState<string | null>(null);
+  const [homeLinux, setHomeLinux] = useState<string | null>(null);
   // The path field holds the DISPLAY form (~-shortened); empty means the
   // user has not typed, so Enter descends the highlighted row.
   const [typed, setTyped] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // ~ expansion needs the distro home (LINUX $HOME → UNC), fetched once.
+  // ~ expansion needs the distro home (LINUX $HOME), fetched once.
   useEffect(() => {
     let dead = false;
     void wslHome(distro)
       .then((home) => {
-        if (!dead && home) setHomeUnc(wslHomeUnc(distro, home));
+        if (!dead && home) setHomeLinux(home);
       })
       .catch(() => {});
     return () => {
@@ -60,7 +60,7 @@ export function PathSpecifier({
     const path = state.cwd;
     dispatch({ type: "loading", path });
     let dead = false;
-    void listDir(path)
+    void listDir(wslFolder(distro, path))
       .then((entries) => {
         if (!dead) dispatch({ type: "loaded", path, entries });
       })
@@ -70,15 +70,15 @@ export function PathSpecifier({
     return () => {
       dead = true;
     };
-  }, [state.cwd]);
+  }, [state.cwd, distro]);
 
   // The field mirrors the view's path until the user types over it.
   useEffect(() => {
-    setTyped(state.cwd ? displayPath(state.cwd, homeUnc) : "");
-  }, [state.cwd, homeUnc]);
+    setTyped(state.cwd ? displayPath(state.cwd, homeLinux) : "");
+  }, [state.cwd, homeLinux]);
 
   const confirmable = state.entries !== null && state.cwd !== null;
-  const dirty = state.cwd !== null && typed !== displayPath(state.cwd, homeUnc);
+  const dirty = state.cwd !== null && typed !== displayPath(state.cwd, homeLinux);
 
   const commitInput = () => {
     if (!dirty) {
@@ -86,17 +86,17 @@ export function PathSpecifier({
       return;
     }
     // A bare `~` with an unavailable home is an error, not a descend.
-    const err = expandError(typed, homeUnc);
+    const err = expandError(typed, homeLinux !== null ? homeLinux : null);
     if (err) {
       dispatch({ type: "error", message: err });
       return;
     }
-    const path = expandPath(typed, homeUnc);
+    const path = expandPath(typed, homeLinux);
     if (path) dispatch({ type: "go", path });
     else dispatch({ type: "descend" });
   };
 
-  const crumbs = state.cwd ? breadcrumbs(state.cwd) : [];
+  const crumbs = state.cwd ? linuxBreadcrumbs(distro, state.cwd) : [];
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -116,7 +116,7 @@ export function PathSpecifier({
             dispatch({ type: "highlight", index: Math.max(0, state.highlight - 1) });
           }
         }}
-        placeholder={homeUnc ? "~" : `\\\\wsl.localhost\\${distro}\\`}
+        placeholder={homeLinux ? "~" : "/"}
         className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
         title="Type a path (~ = home), Enter to jump in"
       />
@@ -193,13 +193,13 @@ export function PathSpecifier({
         </div>
       </div>
       <div className="flex items-center justify-between gap-2">
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={state.cwd ?? ""}>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={wslFolder(distro, state.cwd ?? "/")}>
           {state.cwd}
         </span>
         <Button
           size="sm"
           disabled={!confirmable}
-          onClick={() => state.cwd && onConfirm(canonicalDir(state.cwd))}
+          onClick={() => state.cwd && onConfirm(wslFolder(distro, state.cwd))}
           title={confirmable ? "Use this folder" : "Navigate to a folder first"}
         >
           <CornerDownLeft className="size-3.5" />

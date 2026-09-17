@@ -121,23 +121,69 @@ export function wslHomeUnc(distro: string, home: string): string {
   return `${wslRoot(distro)}${home.replace(/^\/+/, "").replace(/\//g, "\\")}`;
 }
 
+
+/** Joins a segment onto a canonical Linux path (trailing slash). */
+export function linuxJoin(cwd: string, name: string): string {
+  return cwd.endsWith("/") ? `${cwd}${name}/` : `${cwd}/${name}/`;
+}
+
+/** One level up; the distro root `/` is the floor. */
+export function linuxUp(cwd: string): string {
+  const body = cwd.replace(/\/+$/, "");
+  const cut = body.lastIndexOf("/");
+  return `${body.slice(0, Math.max(cut, 0))}/` || "/";
+}
+
+/** Canonical Linux directory path: exactly one leading and trailing slash,
+ * collapsed separators. The distro root is `/`. */
+/** Canonical Linux directory path: exactly one leading and trailing slash,
+ * collapsed separators. The distro root is `/`. */
+export function linuxCanonical(path: string): string {
+  const body = `/${path.replace(/^\/+/, "")}`
+    .replace(/\/{2,}/g, "/")
+    .replace(/\/+$/, "");
+  return `${body}/`;
+}
+
+/** Breadcrumbs of a canonical Linux path; the root crumb carries the
+ * distro name (its label in the UI). */
+export function linuxBreadcrumbs(
+  distro: string,
+  cwd: string,
+): { label: string; path: string }[] {
+  const segs = cwd.replace(/^\/+/, "").replace(/\/+$/, "").split("/").filter(Boolean);
+  const out = [{ label: distro, path: "/" }];
+  let acc = "/";
+  for (const seg of segs) {
+    acc = `${acc}${seg}/`;
+    out.push({ label: seg, path: acc });
+  }
+  return out;
+}
+
+/** The project folder (UNC) for a confirmed inner Linux path — the boundary
+ * where the specifier's Linux view meets the server's stored form. */
+export function wslFolder(distro: string, inner: string): string {
+  return `${wslRoot(distro)}${inner.replace(/^\/+/, "").replace(/\//g, "\\")}`;
+}
+
 /** Shortens a path under the home to `~…` form (display only). */
-export function displayPath(cwd: string, homeUnc: string | null): string {
-  if (!homeUnc) return cwd;
-  const home = homeUnc.replace(/\\+$/, "");
-  if (cwd === `${home}\\`) return "~";
-  if (cwd.startsWith(`${home}\\`)) return `~${cwd.slice(home.length)}`;
+export function displayPath(cwd: string, home: string | null): string {
+  if (!home) return cwd;
+  const h = home.replace(/\/+$/, "");
+  if (cwd === `${h}/`) return "~";
+  if (cwd.startsWith(`${h}/`)) return `~${cwd.slice(h.length)}`;
   return cwd;
 }
 
 /** Expands a typed path: a leading `~` maps onto the home directory; the
  * empty string means no navigation. */
-export function expandPath(input: string, homeUnc: string | null): string | null {
+export function expandPath(input: string, home: string | null): string | null {
   const t = input.trim();
   if (!t) return null;
-  if (!homeUnc) return t === "~" ? null : t;
-  if (t === "~") return homeUnc;
-  if (t.startsWith("~/") || t.startsWith("~\\")) return uncJoin(homeUnc, t.slice(2));
+  if (!home) return t === "~" ? null : t;
+  if (t === "~") return `${home.replace(/\/+$/, "")}/`;
+  if (t.startsWith("~/")) return linuxJoin(`${home.replace(/\/+$/, "")}/`, t.slice(2));
   return t;
 }
 
@@ -182,7 +228,7 @@ export interface PickerState {
   /** The chosen folder source: the distro name for a WSL row, null while
    * the source list shows. */
   source: string | null;
-  /** The absolute path being listed (canonical: trailing backslash). */
+  /** The absolute inner path being listed (canonical Linux: trailing slash). */
   cwd: string | null;
   /** The listing of `cwd`; null while loading or after a failed listing. */
   entries: DirEntry[] | null;
@@ -243,7 +289,7 @@ export function pickerReducer(state: PickerState, event: PickerEvent): PickerSta
       if (!state.cwd || !entry?.is_dir) return state;
       return {
         ...state,
-        cwd: uncJoin(state.cwd, entry.name),
+        cwd: linuxJoin(state.cwd, entry.name),
         entries: null,
         highlight: 0,
         error: null,
@@ -251,13 +297,13 @@ export function pickerReducer(state: PickerState, event: PickerEvent): PickerSta
     }
     case "up": {
       if (!state.cwd) return state;
-      return { ...state, cwd: uncUp(state.cwd), entries: null, highlight: 0, error: null };
+      return { ...state, cwd: linuxUp(state.cwd), entries: null, highlight: 0, error: null };
     }
     case "go": {
       if (!event.path) return state;
       return {
         ...state,
-        cwd: canonicalDir(event.path),
+        cwd: linuxCanonical(event.path),
         entries: null,
         highlight: 0,
         error: null,

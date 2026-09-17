@@ -13,6 +13,7 @@ import {
   expandError,
   expandPath,
   filterProjects,
+  linuxJoin,
   outgoingProjectId,
   pickerFor,
   pickerReducer,
@@ -21,7 +22,7 @@ import {
   sidebarGrouping,
   uncJoin,
   uncUp,
-  wslHomeUnc,
+  wslFolder,
   wslRoot,
 } from "./projects";
 
@@ -145,21 +146,23 @@ describe("specifier paths", () => {
     expect(uncUp("\\\\wsl.localhost\\arch\\")).toBe("\\\\wsl.localhost\\arch\\");
   });
 
-  it("converts the LINUX home to UNC and drives ~ display/expansion", () => {
-    const home = wslHomeUnc("arch", "/home/me");
-    expect(home).toBe("\\\\wsl.localhost\\arch\\home\\me");
-    expect(displayPath("\\\\wsl.localhost\\arch\\home\\me\\", home)).toBe("~");
-    expect(displayPath("\\\\wsl.localhost\\arch\\home\\me\\src\\", home)).toBe("~\\src\\");
-    expect(displayPath("\\\\wsl.localhost\\arch\\etc\\", home)).toBe("\\\\wsl.localhost\\arch\\etc\\");
-    expect(expandPath("~", home)).toBe(home);
-    expect(expandPath("~/src", home)).toBe("\\\\wsl.localhost\\arch\\home\\me\\src\\");
-    expect(expandPath("\\\\wsl.localhost\\arch\\tmp\\", home)).toBe("\\\\wsl.localhost\\arch\\tmp\\");
+  it("drives ~ display/expansion in Linux path space", () => {
+    const home = "/home/me";
+    expect(displayPath("/home/me/", home)).toBe("~");
+    expect(displayPath("/home/me/src/", home)).toBe("~/src/");
+    expect(displayPath("/etc/", home)).toBe("/etc/");
+    expect(expandPath("~", home)).toBe("/home/me/");
+    expect(expandPath("~/src", home)).toBe("/home/me/src/");
+    expect(expandPath("/tmp/", home)).toBe("/tmp/");
     // without a home, ~ stays unexpandable
     expect(expandPath("~", null)).toBeNull();
     // …and committing it is an inline error, not a silent descend
     expect(expandError("~", null)).toBe("home directory unknown for this distro");
     expect(expandError("~/src", null)).toBeNull();
-    expect(expandError("~", wslHomeUnc("arch", "/home/me"))).toBeNull();
+    expect(expandError("~", "/home/me")).toBeNull();
+    // the UNC boundary: the confirmed inner path becomes the stored folder
+    expect(wslFolder("arch", "/home/me/")).toBe("\\\\wsl.localhost\\arch\\home\\me\\");
+    expect(wslFolder("arch", "/")).toBe("\\\\wsl.localhost\\arch\\");
   });
 
   it("canonicalizes directory paths and renders breadcrumbs", () => {
@@ -173,7 +176,7 @@ describe("specifier paths", () => {
 });
 
 describe("picker state machine (sources → browse → confirm)", () => {
-  const root = wslRoot("arch");
+  const root = "/";
 
   it("choosing a source opens the browse view at the root", () => {
     const s = pickerFor("arch", root);
@@ -183,7 +186,7 @@ describe("picker state machine (sources → browse → confirm)", () => {
   it("loading/loaded pairs fill the listing; stale results are dropped", () => {
     let s = pickerFor("arch", root);
     s = pickerReducer(s, { type: "loading", path: root });
-    s = pickerReducer(s, { type: "go", path: uncJoin(root, "home") });
+    s = pickerReducer(s, { type: "go", path: linuxJoin(root, "home") });
     s = pickerReducer(s, { type: "loaded", path: root, entries: [{ name: "me", is_dir: true }] });
     // the load for the previous cwd must not land after the move
     expect(s.entries).toBeNull();
@@ -207,27 +210,27 @@ describe("picker state machine (sources → browse → confirm)", () => {
     });
     s = pickerReducer(s, { type: "highlight", index: 1 });
     s = pickerReducer(s, { type: "descend" });
-    expect(s.cwd).toBe("\\\\wsl.localhost\\arch\\home\\");
+    expect(s.cwd).toBe("/home/");
     s = pickerReducer(s, { type: "up" });
-    expect(s.cwd).toBe(root);
+    expect(s.cwd).toBe("/");
     s = pickerReducer(s, { type: "up" });
-    expect(s.cwd).toBe(root);
+    expect(s.cwd).toBe("/");
     // descending onto a file (or with no listing) is a no-op
     s = pickerReducer(s, { type: "descend" });
-    expect(s.cwd).toBe(root);
+    expect(s.cwd).toBe("/");
   });
 
   it("Enter-as-go navigates a typed path (canonicalized); confirm needs a loaded listing", () => {
     let s = pickerFor("arch", root);
     s = pickerReducer(s, { type: "loading", path: root });
     s = pickerReducer(s, { type: "loaded", path: root, entries: [] });
-    s = pickerReducer(s, { type: "go", path: "\\\\wsl.localhost\\arch\\var\\\\log" });
-    expect(s.cwd).toBe("\\\\wsl.localhost\\arch\\var\\log\\");
+    s = pickerReducer(s, { type: "go", path: "/var//log" });
+    expect(s.cwd).toBe("/var/log/");
     // confirm only on a real dir: the listing of the CURRENT cwd must have
     // landed (the UI confirms only when the browse pane shows it)
     s = pickerReducer(s, { type: "confirm" });
     expect(s.confirmed).toBeNull();
-    const navigated = "\\\\wsl.localhost\\arch\\var\\log\\";
+    const navigated = "/var/log/";
     s = pickerReducer(s, { type: "loading", path: navigated });
     s = pickerReducer(s, {
       type: "loaded",
@@ -235,7 +238,7 @@ describe("picker state machine (sources → browse → confirm)", () => {
       entries: [{ name: "www", is_dir: true }],
     });
     s = pickerReducer(s, { type: "confirm" });
-    expect(s.confirmed).toBe("\\\\wsl.localhost\\arch\\var\\log\\");
+    expect(s.confirmed).toBe("/var/log/");
   });
 
   it("confirm is refused without a successful listing", () => {
