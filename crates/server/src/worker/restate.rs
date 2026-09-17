@@ -549,27 +549,60 @@ pub(crate) struct WorkspaceRef {
     pub machine_label: Option<String>,
 }
 
-/// Pure helper: a WSL UNC folder (`\\wsl.localhost\<distro>\…` or the
-/// legacy `\\wsl$\<distro>\…`) parses to the distro and the inner Linux
-/// path (`\` → `/`). Any other path is not WSL.
+/// Pure helper: a WSL UNC folder (`\\wsl.localhost\<distro>\…`, the legacy
+/// `\\wsl$\<distro>\…`, either slash direction, case-insensitive, or the
+/// `\\?\UNC\` device form Windows canonicalize returns) parses to the
+/// distro and the inner Linux path. Any other path is not WSL. Mirrors
+/// guild-core's `workspace::parse_wsl` — the same literal must classify the
+/// same way here and in the tools.
 pub(crate) fn parse_wsl_unc(folder: &str) -> Option<(String, String)> {
-    let rest = folder
-        .strip_prefix(r"\\wsl.localhost\")
-        .or_else(|| folder.strip_prefix(r"\\wsl$\"))?;
-    let (distro, inner) = match rest.split_once(['\\', '/']) {
-        Some((d, i)) => (d, i),
-        None => (rest, ""),
-    };
-    if distro.is_empty() {
-        return None;
+    let mut norm = folder.replace('\\', "/");
+    // Device-form UNC: treat it as the plain `//` form, case-insensitively.
+    if norm.len() >= 8 && norm[..8].eq_ignore_ascii_case("//?/unc/") {
+        norm = format!("//{}", &norm[8..]);
     }
-    let inner = inner.replace('\\', "/");
-    let inner = if inner.starts_with('/') {
-        inner
+    let low = norm.to_ascii_lowercase();
+    const P_STD: &str = "//wsl.localhost/";
+    const P_LEGACY: &str = "//wsl$/";
+    let after = if low.starts_with(P_STD) {
+        P_STD.len()
+    } else if low.starts_with(P_LEGACY) {
+        P_LEGACY.len()
     } else {
-        format!("/{inner}")
+        return None;
     };
+    let mut parts = norm[after..].split('/').filter(|p| !p.is_empty());
+    let distro = parts.next()?;
+    let inner = format!("/{}", parts.collect::<Vec<_>>().join("/"));
     Some((distro.to_string(), inner))
+}
+
+/// Journaled project resolution: one org-scoped read of the project's
+/// folder plus its machine's registry label. The ChatRunner's turn start
+/// calls this inside `ctx.run`; tests pin the dispatch workdir through it.
+pub(crate) async fn resolve_workspace(
+    state: &AppState,
+    org_id: Uuid,
+    project_id: Option<Uuid>,
+) -> Result<Option<WorkspaceRef>, ApiError> {
+    let Some(project_id) = project_id else {
+        return Ok(None);
+    };
+    let store = state.store().await?;
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT p.folder, m.label \
+         FROM projects p \
+         LEFT JOIN machines m ON m.machine_id = p.machine_id \
+         WHERE p.id = $1 AND p.org_id = $2",
+    )
+    .bind(project_id)
+    .bind(org_id)
+    .fetch_optional(store.pool())
+    .await?;
+    Ok(row.map(|(folder, machine_label)| WorkspaceRef {
+        folder,
+        machine_label,
+    }))
 }
 
 /// Pure helper: the system-prompt sentence naming the workspace. A WSL UNC
@@ -1531,25 +1564,10 @@ impl ChatRunner {
             .run(move || {
                 let state = st.clone();
                 async move {
-                    let Some(project_id) = project_id else {
-                        return Ok(Json(None));
-                    };
-                    let store = state.store().await.map_err(api_err)?;
-                    let row: Option<(String, Option<String>)> = sqlx::query_as(
-                        "SELECT p.folder, m.label \
-                         FROM projects p \
-                         LEFT JOIN machines m ON m.machine_id = p.machine_id \
-                         WHERE p.id = $1 AND p.org_id = $2",
-                    )
-                    .bind(project_id)
-                    .bind(org)
-                    .fetch_optional(store.pool())
-                    .await
-                    .map_err(|e| api_err(e.into()))?;
-                    Ok(Json(row.map(|(folder, machine_label)| WorkspaceRef {
-                        folder,
-                        machine_label,
-                    })))
+                    let workspace = resolve_workspace(&state, org, project_id)
+                        .await
+                        .map_err(api_err)?;
+                    Ok(Json(workspace))
                 }
             })
             .await?
@@ -3499,11 +3517,92 @@ mod tests {
         assert_eq!(parse_wsl_unc(r"C:\code"), None);
         assert_eq!(parse_wsl_unc(r"\\server\share"), None);
         assert_eq!(parse_wsl_unc(r"\\wsl.localhost\"), None);
+        // Near-miss prefixes are not WSL (same verdict as guild-core).
+        assert_eq!(parse_wsl_unc(r"\\wsl.localhostx\Ubuntu\home"), None);
+        assert_eq!(parse_wsl_unc(r"\\wsl\Ubuntu\home"), None);
         // Distro-only folder → the distro root.
         assert_eq!(
             parse_wsl_unc(r"\\wsl.localhost\archlinux").unwrap(),
             ("archlinux".to_string(), "/".to_string())
         );
+    }
+
+    #[test]
+    fn wsl_unc_parse_is_case_insensitive_and_device_form_aware() {
+        assert_eq!(
+            parse_wsl_unc(r"\\WSL.LOCALHOST\archlinux\root\work").unwrap(),
+            ("archlinux".to_string(), "/root/work".to_string())
+        );
+        assert_eq!(
+            parse_wsl_unc(r"\\Wsl$\Debian\home\x").unwrap(),
+            ("Debian".to_string(), "/home/x".to_string())
+        );
+        assert_eq!(
+            parse_wsl_unc(r"\\?\UNC\wsl.localhost\Ubuntu\home\me\proj").unwrap(),
+            ("Ubuntu".to_string(), "/home/me/proj".to_string())
+        );
+        // Forward slashes parse like backslashes.
+        assert_eq!(
+            parse_wsl_unc("//wsl.localhost/debian/home/x").unwrap(),
+            ("debian".to_string(), "/home/x".to_string())
+        );
+    }
+
+    /// The two WSL parsers must agree on every literal: the system prompt
+    /// (server `parse_wsl_unc`) and the tool routing (guild-core `classify`)
+    /// derive from the same shape, so a folder the tools route into a distro
+    /// is never described to the model as a plain directory (and vice versa).
+    #[test]
+    fn server_and_core_wsl_parsers_agree_on_every_literal() {
+        use guild_core::tools::workspace::{classify, to_inner};
+        use std::path::Path;
+        let literals = [
+            r"\\wsl.localhost\Ubuntu\home\me\proj",
+            r"\\wsl$\Ubuntu\home\me\proj",
+            r"\\WSL.LOCALHOST\archlinux\root\work",
+            r"\\Wsl$\Debian\home\x",
+            "//wsl.localhost/debian/home/x",
+            "//wsl$/fedora/home/x",
+            r"\\wsl.localhost\Ubuntu-22.04\home\me",
+            r"\\?\UNC\wsl.localhost\Ubuntu\home\me\proj",
+            r"\\?\UNC\WSL$\arch\srv",
+            r"\\wsl.localhost\archlinux",
+            r"\\wsl.localhost\",
+            r"\\wsl.localhostx\Ubuntu\home",
+            r"\\wsl\Ubuntu\home",
+            r"\\server\share",
+            r"C:\code\web",
+            "/home/me/proj",
+        ];
+        for literal in literals {
+            let server = parse_wsl_unc(literal);
+            let kind = classify(Path::new(literal));
+            match (&server, &kind) {
+                (
+                    Some((distro, inner)),
+                    guild_core::tools::workspace::WorkspaceKind::Wsl {
+                        distro: core_distro,
+                    },
+                ) => {
+                    assert_eq!(distro, core_distro, "distro mismatch for {literal:?}");
+                    assert_eq!(
+                        to_inner(Path::new(literal)).as_deref(),
+                        Some(inner.as_str()),
+                        "inner-path mismatch for {literal:?}"
+                    );
+                }
+                (None, other) => assert!(
+                    !matches!(
+                        other,
+                        guild_core::tools::workspace::WorkspaceKind::Wsl { .. }
+                    ),
+                    "server says non-WSL but core says {other:?} for {literal:?}"
+                ),
+                (Some(_), other) => {
+                    panic!("server says WSL but core says {other:?} for {literal:?}")
+                }
+            }
+        }
     }
 
     #[test]
