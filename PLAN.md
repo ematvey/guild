@@ -4,6 +4,45 @@ Updated 2026-09-17 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Stop, queue, steer — turn control for the chat — 2026-09-17
+
+Three missing chat controls, all server-owned (maintainer request): **stop**
+(`POST /api/v1/gateway/chat/{id}/stop`) interrupts the running turn and the
+delivered prefix stays in history; **queue** (default when sending while a
+turn generates) commits the user turn to the thread log immediately and the
+running turn flushes it at its exit; **steer** (`send_mode: "steer"` on the
+send) queues the message AND requests the interruption, so it runs right
+after the interrupted prefix.
+
+Mechanics. `ActiveGeneration` carries an in-memory cancel flag; every cancel
+decision in `ChatRunner::generate` is read INSIDE a journaled step (per-chunk
+check in the streaming model call + a step-top check), so the interrupted
+turn's shape is a journaled output and replays deterministically — the flag
+itself is volatile: a process crash mid-turn forgets the stop request and the
+turn continues (the user can stop again). The interrupted prefix persists as
+an `interrupted` assistant event (same guards as the failure path; tool calls
+already dispatched run to completion — cancel takes effect at the next step
+top; a turn suspended on an approval card waits for that answer first, deny
+the card to release it early). A queued send commits its `user_message` event
+from the gateway (with document text inlined and route-modalities-shaped
+notes) plus a `chat_queue:{chat}` kv record carrying the queued request's
+turn parameters (model, client_tools, machine/project binding) — the flush
+invocation is an empty-turn `generate` background call the finishing turn
+sends to itself, delivered when the object lock frees; the flush derives the
+model history from the log (queued events ride automatically) and clears the
+kv on consume. A flush with nothing queued bails silently (dedupes the
+race where the finishing turn's flush and the queue fall-through both fire);
+the generating flag clears unconditionally at every successful exit and the
+flush re-sets it (a flush failing before its own flag-set must not inherit a
+stuck spinner). Failures do NOT auto-flush — a queued message after a failed
+turn stays in history and flows into the next turn. Client: the composer
+stays usable while generating — Enter queues, Ctrl/Cmd+Enter steers, and
+with an empty composer the send button becomes Stop; interrupted turns show
+a muted "stopped" marker on the delivered text. Tests: `chat_control.rs`
+(queue commit, steer flag, stop endpoint/idle-409), pure tests for
+`has_queued_user_turn`, old-journal `stopped`-default parsing, and the
+interrupted-marker derivation; desktop vitest 79/79, tsc + vite clean.
+
 ## Projects + WSL shipped — per-chat folders deleted, thread data wiped — 2026-09-17
 
 Spec `docs/specs/2026-09-17-projects-wsl-design.md`, plan

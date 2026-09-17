@@ -732,6 +732,9 @@ export async function attachmentBlobUrl(id: string): Promise<string | null> {
 
 /// Sends a chat command over HTTP. The member WebSocket delivers every
 /// resulting content. The JSON acknowledgment only confirms submission.
+/// `sendMode` matters only while a turn is already generating: "queue"
+/// (default) commits the message for the turn's next pause, "steer"
+/// interrupts the in-flight turn and runs the message immediately.
 export async function sendChatNoStream(
   chatId: string,
   model: string,
@@ -739,6 +742,7 @@ export async function sendChatNoStream(
   attachmentIds: string[] = [],
   projectId?: string | null,
   messageId?: string,
+  sendMode?: "queue" | "steer",
 ): Promise<void> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
@@ -757,6 +761,7 @@ export async function sendChatNoStream(
       client_tools: IS_TAURI,
       attachment_ids: attachmentIds,
       project_id: projectId || undefined,
+      send_mode: sendMode,
     }),
   });
   if (!res.ok) {
@@ -765,6 +770,25 @@ export async function sendChatNoStream(
   }
   const acknowledgment = await res.json();
   if (acknowledgment.accepted !== true) throw new Error("Chat command was not accepted");
+}
+
+/// Stops the chat's in-flight turn. The delivered prefix stays in history
+/// (persisted as an interrupted assistant event). 409 (nothing generating)
+/// resolves silently — the turn already ended.
+export async function stopChat(chatId: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${encodeURIComponent(chatId)}/stop`), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "x-guild-client-id": clientId(),
+    },
+  });
+  if (res.status === 409) return;
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? res.statusText);
+  }
 }
 
 /// In-flight mirror catch-up from the app process (single-process spec):

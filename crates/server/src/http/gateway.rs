@@ -16,7 +16,84 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
 
-/// A server-side generation in flight, detached from any client connection.
+/// Queued send while a turn generates: commit the user turn to the thread
+/// log right away (the open feed republishes on the commit notification),
+/// so the running turn flushes it at its exit. Document attachments inline
+/// here — the continuation turn derives its model history from this event
+/// instead of a payload turn text, and image/audio parts ride later via the
+/// event's chips.
+async fn queue_user_turn(
+    state: &AppState,
+    org_id: Uuid,
+    chat_id: Uuid,
+    user_message: &str,
+    attachment_ids: &[Uuid],
+    user_message_id: Option<Uuid>,
+    modalities: &[String],
+) -> Result<(), ApiError> {
+    let store = state.store().await?;
+    let rows: Vec<(Uuid, String, String, i64)> = store
+        .attachments()
+        .list(org_id, chat_id)
+        .await?
+        .into_iter()
+        .map(|r| (r.id, r.filename, r.content_type, r.size_bytes))
+        .collect();
+    let media = crate::worker::restate::load_media_map(state, org_id, chat_id, &[], attachment_ids)
+        .await?;
+    let (chips, inline) = crate::worker::restate::build_turn_text(
+        attachment_ids,
+        &media,
+        &rows,
+        modalities,
+    );
+    let content = match (!user_message.is_empty(), !inline.is_empty()) {
+        (true, true) => format!("{user_message}\n\n{inline}"),
+        (true, false) => user_message.to_string(),
+        (false, true) => inline,
+        (false, false) => String::new(),
+    };
+    store
+        .thread()
+        .append_event_with_id(
+            chat_id,
+            &ThreadEvent::UserMessage {
+                content,
+                attachments: chips,
+            },
+            user_message_id.unwrap_or_else(Uuid::now_v7),
+        )
+        .await?;
+    Ok(())
+}
+
+/// Stops the chat's in-flight turn. The ChatRunner observes the flag inside
+/// journaled steps: the streaming model call truncates, the delivered prefix
+/// persists as an interrupted assistant event, and the turn ends — no
+/// continuation unless user turns were queued meanwhile. Org-scoped: 404 for
+/// foreign chats, 409 when nothing is generating.
+async fn stop_chat(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = state.store().await?;
+    store
+        .chats()
+        .get_chat(user.0.org_id, chat_id, &user.0)
+        .await?;
+    let Some(cancel) = generation_cancel(&state, chat_id) else {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "not_generating",
+            "no generation is running for this chat",
+        ));
+    };
+    cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(Json(json!({ "stopped": true })))
+}
+
+/// One server-side generation in flight, detached from any client connection.
 /// Broadcasts generation events to command-scoped WebSocket consumers.
 /// Text buffers contain only the current, unpersisted assistant step.
 pub struct ActiveGeneration {
@@ -28,6 +105,43 @@ pub struct ActiveGeneration {
     pub thinking: Arc<RwLock<String>>,
     /// Suspended machine calls and the connection responsible for each call.
     pub pending_tools: Arc<std::sync::Mutex<HashMap<String, PendingTool>>>,
+    /// Set by the stop endpoint (and by steered sends): the ChatRunner checks
+    /// it inside journaled steps, so an interrupted turn's shape stays
+    /// replay-deterministic. Volatile by design — a process crash mid-turn
+    /// forgets the request; the user can stop again.
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ActiveGeneration {
+    fn new(
+        tx: broadcast::Sender<StreamEvent>,
+        text: Arc<RwLock<String>>,
+        thinking: Arc<RwLock<String>>,
+    ) -> Self {
+        Self {
+            id: Uuid::now_v7(),
+            tx,
+            text,
+            thinking,
+            pending_tools: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+}
+
+/// The cancel flag of a chat's active generation, if one is running. The
+/// stop endpoint and steered sends set it; the ChatRunner observes it inside
+/// journaled steps.
+pub(crate) fn generation_cancel(
+    state: &AppState,
+    chat_id: Uuid,
+) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+    state
+        .generations
+        .lock()
+        .unwrap()
+        .get(&chat_id)
+        .map(|g| g.cancel.clone())
 }
 
 /// One suspended machine tool call.
@@ -128,6 +242,10 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/gateway/models", axum::routing::get(models))
         .route("/api/v1/gateway/chat", axum::routing::post(chat))
+        .route(
+            "/api/v1/gateway/chat/{id}/stop",
+            axum::routing::post(stop_chat),
+        )
         .route(
             "/api/v1/gateway/chat/{id}/approvals/{call_id}",
             axum::routing::post(approval_decision),
@@ -672,13 +790,11 @@ pub(crate) fn ensure_generation(
         return (g.tx.clone(), g.text.clone(), g.thinking.clone());
     }
     let (tx, _) = broadcast::channel::<StreamEvent>(1024);
-    let gen = ActiveGeneration {
-        id: Uuid::now_v7(),
-        tx: tx.clone(),
-        text: Arc::new(RwLock::new(String::new())),
-        thinking: Arc::new(RwLock::new(String::new())),
-        pending_tools: Arc::new(std::sync::Mutex::new(HashMap::new())),
-    };
+    let gen = ActiveGeneration::new(
+        tx.clone(),
+        Arc::new(RwLock::new(String::new())),
+        Arc::new(RwLock::new(String::new())),
+    );
     gens.insert(chat_id, gen);
     let g = gens.get(&chat_id).unwrap();
     (g.tx.clone(), g.text.clone(), g.thinking.clone())
@@ -710,13 +826,11 @@ pub(crate) fn try_begin_generation(
         ));
     }
     let (tx, _) = broadcast::channel::<StreamEvent>(1024);
-    let gen = ActiveGeneration {
-        id: Uuid::now_v7(),
-        tx: tx.clone(),
-        text: Arc::new(RwLock::new(String::new())),
-        thinking: Arc::new(RwLock::new(String::new())),
-        pending_tools: Arc::new(std::sync::Mutex::new(HashMap::new())),
-    };
+    let gen = ActiveGeneration::new(
+        tx.clone(),
+        Arc::new(RwLock::new(String::new())),
+        Arc::new(RwLock::new(String::new())),
+    );
     gens.insert(chat_id, gen);
     let g = gens.get(&chat_id).unwrap();
     Ok((g.tx.clone(), g.text.clone(), g.thinking.clone()))
@@ -737,28 +851,6 @@ async fn chat(
         .get_chat(user.0.org_id, req.chat_id, &user.0)
         .await?;
 
-    // One generation per chat at a time — reserved atomically (check+insert
-    // under one lock), so a rejected send leaves nothing behind and two
-    // concurrent sends cannot both invoke. The user turn itself is persisted
-    // by the ChatRunner workflow (journaled), never here — attach/replay
-    // stays consistent with the event log (spec §B.4).
-    let (_tx, _text_buf, _thinking_buf) = try_begin_generation(&state, req.chat_id)?;
-    if let Err(error) = crate::http::feed::prepare_generation(&state, &user).await {
-        state.generations.lock().unwrap().remove(&req.chat_id);
-        return Err(error);
-    }
-
-    let generation_id = state
-        .generations
-        .lock()
-        .unwrap()
-        .get(&req.chat_id)
-        .unwrap()
-        .id;
-
-    // Fire-and-forget invocation via the Restate ingress; the workflow runs
-    // detached, so this HTTP request ending (or the client disconnecting)
-    // never cancels the generation.
     let user_message = req
         .messages
         .last()
@@ -813,15 +905,117 @@ async fn chat(
         }
         None => chat.project_id,
     };
+
+    // Turn already generating: the message queues by default — the user turn
+    // commits to the thread log now (the open feed republishes on the commit
+    // notification) and the running turn flushes it at its exit. "steer"
+    // additionally requests the running turn's interruption, so the queued
+    // message runs immediately after the interrupted prefix. When the turn
+    // finishes while we are here (entry vanished after the commit), the code
+    // falls through and the queued event starts the turn right away.
+    let mut queued = false;
+    if state.generations.lock().unwrap().contains_key(&req.chat_id) {
+        // The route's modalities shape the attachment notes; the continuation
+        // re-resolves the route anyway, so a failure here degrades to notes.
+        let modalities = match state.config.master_key() {
+            Ok(master) => store
+                .gateway()
+                .resolve_route(user.0.org_id, &req.model, &master)
+                .await
+                .map(|r| r.modalities)
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        queue_user_turn(
+            &state,
+            user.0.org_id,
+            req.chat_id,
+            &user_message,
+            &req.attachment_ids,
+            req.user_message_id,
+            &modalities,
+        )
+        .await?;
+        // The turn's continuation parameters ride a kv record the flushing
+        // turn reads (model, client tools, machine/project binding — the
+        // queued request's choices, not the in-flight turn's).
+        let opts = crate::worker::restate::ChatRunPayload {
+            user_message_id: None,
+            org_id: user.0.org_id,
+            user_id: user.0.id,
+            chat_id: req.chat_id,
+            model: req.model.clone(),
+            client_tools: req.client_tools,
+            client_id: headers
+                .get("x-guild-client-id")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from),
+            project_id,
+            machine_id: machine_id.clone(),
+            machine_label: machine_label.clone(),
+            origin_machine_id: headers
+                .get("x-guild-machine-id")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from),
+            user_message: String::new(),
+            attachment_ids: Vec::new(),
+            skills_index: req.skills_index.clone(),
+        };
+        store
+            .kv()
+            .put(
+                &format!("chat_queue:{}", req.chat_id),
+                &serde_json::to_string(&opts).unwrap_or_default(),
+            )
+            .await?;
+        if state.generations.lock().unwrap().contains_key(&req.chat_id) {
+            if req.send_mode.as_deref() == Some("steer") {
+                if let Some(cancel) = generation_cancel(&state, req.chat_id) {
+                    cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            return Ok(Json(
+                json!({ "accepted": true, "queued": true }),
+            ));
+        }
+        queued = true;
+    }
+
+    // One generation per chat at a time — reserved atomically (check+insert
+    // under one lock), so a rejected send leaves nothing behind and two
+    // concurrent sends cannot both invoke. The user turn itself is persisted
+    // by the ChatRunner workflow (journaled), never here — attach/replay
+    // stays consistent with the event log (spec §B.4). The queue fall-through
+    // is the exception: the event is already committed, so the payload's
+    // turn text stays empty and the workflow relies on the log.
+    let (_tx, _text_buf, _thinking_buf) = try_begin_generation(&state, req.chat_id)?;
+    if let Err(error) = crate::http::feed::prepare_generation(&state, &user).await {
+        state.generations.lock().unwrap().remove(&req.chat_id);
+        return Err(error);
+    }
+
+    let generation_id = state
+        .generations
+        .lock()
+        .unwrap()
+        .get(&req.chat_id)
+        .unwrap()
+        .id;
+
+    // Fire-and-forget invocation via the Restate ingress; the workflow runs
+    // detached, so this HTTP request ending (or the client disconnecting)
+    // never cancels the generation.
+    let effective_message = if queued { String::new() } else { user_message };
+    let effective_attachments = if queued { Vec::new() } else { req.attachment_ids.clone() };
     let payload = serde_json::json!({
         "org_id": user.0.org_id,
         "user_id": user.0.id,
         "chat_id": req.chat_id,
         "model": req.model,
-        "user_message": user_message,
+        "user_message": effective_message,
         "user_message_id": req.user_message_id,
         "client_tools": req.client_tools,
-        "attachment_ids": req.attachment_ids,
+        "attachment_ids": effective_attachments,
         "project_id": project_id,
         "skills_index": req.skills_index,
         "client_id": headers
@@ -1228,6 +1422,7 @@ mod tests {
             .await
             .unwrap();
         let req = ChatCompletionRequest {
+            send_mode: None,
             user_message_id: None,
             chat_id: chat_row.id,
             model: "gpt-test".into(),
@@ -1308,6 +1503,7 @@ mod tests {
             .await
             .unwrap();
         let req = ChatCompletionRequest {
+            send_mode: None,
             user_message_id: None,
             chat_id: chat_row.id,
             model: "gpt-test".into(),

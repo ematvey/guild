@@ -353,6 +353,13 @@ pub struct ChatCompletionRequest {
     /// persona or tool instructions, it may only append this bounded block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skills_index: Option<String>,
+    /// What to do when a turn is already generating in this chat:
+    /// `"queue"` (default) commits the message to the thread and the running
+    /// turn flushes it at its exit; `"steer"` also interrupts the in-flight
+    /// turn (delivered prefix stays in history) so the message runs now.
+    /// Ignored when no turn is running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_mode: Option<String>,
 }
 
 /// Frames streamed from the gateway on `POST /api/v1/gateway/chat`.

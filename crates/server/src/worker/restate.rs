@@ -307,6 +307,10 @@ struct CompletionOut {
     tokens_in: u32,
     tokens_out: u32,
     reasoning: String,
+    /// The turn was stopped mid-stream: the text/reasoning carry the
+    /// delivered prefix only. Serde default keeps old journals parseable.
+    #[serde(default)]
+    stopped: bool,
 }
 
 fn api_err(e: ApiError) -> anyhow::Error {
@@ -712,6 +716,25 @@ pub fn next_turn(events: &[ThreadEvent]) -> u32 {
         .max()
         .unwrap_or(0)
         + 1
+}
+
+/// Whether user turns are queued for the next turn: true when the last
+/// turn-bearing event (user message, assistant message, tool result) is a
+/// user message — i.e. sends that committed while a turn ran and were never
+/// answered. The finishing turn's epilogue flushes them.
+pub(crate) fn has_queued_user_turn(events: &[ThreadEvent]) -> bool {
+    matches!(
+        events
+            .iter()
+            .rev()
+            .find(|e| matches!(
+                e,
+                ThreadEvent::UserMessage { .. }
+                    | ThreadEvent::AssistantMessage { .. }
+                    | ThreadEvent::ToolResult { .. }
+            )),
+        Some(ThreadEvent::UserMessage { .. })
+    )
 }
 
 /// Model-facing history derived from the thread event log (spec §A.4, §B of
@@ -1457,6 +1480,18 @@ impl ChatRunner {
         // Journaled: load the thread event log; the model-facing history and
         // the next turn number are derivations of it (spec §A.4, §B.4).
         let prior_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
+        // Queued-turn flushes are invoked with an empty payload turn: the
+        // user event is already in the log (the gateway commits it at queue
+        // time). A flush with nothing queued to run is a duplicate (a queued
+        // send raced the finishing turn's own flush and both fired) — end
+        // quietly instead of generating an answer with no user turn.
+        let queued_flush = req.user_message.is_empty() && req.attachment_ids.is_empty();
+        if queued_flush && !has_queued_user_turn(&prior_events) {
+            clear_chatgen_kv!(ctx, state, req.chat_id);
+            state.generations.lock().unwrap().remove(&req.chat_id);
+            set_generating_step!(ctx, state, req, false);
+            return Ok(());
+        }
         let turn_no = next_turn(&prior_events);
         // Attachment media: a plain read of immutable object bytes (no
         // delete path exists, so replay re-reads identical data). Covers
@@ -1667,6 +1702,16 @@ impl ChatRunner {
         }
 
         let (tx, text_buf, thinking_buf) = ensure_generation(&state, req.chat_id);
+        // Stop requests land on this flag (the stop endpoint and steered
+        // sends); every cancel decision below reads it inside a journaled
+        // step, so the turn's shape replays deterministically.
+        let cancel = state
+            .generations
+            .lock()
+            .unwrap()
+            .get(&req.chat_id)
+            .map(|g| g.cancel.clone())
+            .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
 
         // Journaled: the chat is generating from here until the turn exits
         // (final answer, uniform failure, or step limit — each clears it).
@@ -1677,6 +1722,13 @@ impl ChatRunner {
         // Returns Ok(true) when the turn ended with a final answer, Ok(false)
         // when the step limit was exhausted without one.
         let steps_used = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        // Whether the turn was interrupted by a stop request: the epilogue
+        // persists the delivered prefix as an interrupted event and skips
+        // usage recording. Set from journaled step outputs only.
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // Id of the last persisted assistant event of this turn — the Done
+        // frame's message id when a stop lands with nothing partial buffered.
+        let last_event_id = std::sync::Arc::new(tokio::sync::Mutex::new(None::<Uuid>));
         // Whether this step's assistant event was already persisted: the
         // interrupted-append in the failure path below must not re-append a
         // turn the log already holds. The flag is reset only just before the
@@ -1689,6 +1741,24 @@ impl ChatRunner {
         let state = state.clone();
         for step in 0..CHAT_MAX_STEPS {
             steps_used.store(step as u32, std::sync::atomic::Ordering::SeqCst);
+
+            // Journaled: stop request observed as a step output, so replay
+            // deterministically ends the turn here whatever the flag does
+            // later. At a step top nothing partial is buffered — the previous
+            // step's events already stand in history.
+            let stop_now: bool = {
+                let cancel = cancel.clone();
+                ctx.run(move || {
+                    let stop = cancel.load(std::sync::atomic::Ordering::SeqCst);
+                    async move { Ok(Json(stop)) }
+                })
+                .await?
+                .into_inner()
+            };
+            if stop_now {
+                cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+                break;
+            }
 
             // Auto-compact, proactive path: before each model call,
             // when the last known request size crossed the route's window
@@ -1732,6 +1802,7 @@ impl ChatRunner {
                 let buf_loop = text_buf.clone();
                 let think_loop = thinking_buf.clone();
                 let flag_loop = step_persisted.clone();
+                let cancel_loop = cancel.clone();
                 let attempt_msgs = msgs.clone();
                 let call = ctx
                     .run(move || {
@@ -1797,8 +1868,16 @@ impl ChatRunner {
                         let mut tokens_out = 0u32;
                         let mut tool_calls: Vec<ToolCall> = Vec::new();
                         let mut reasoning = String::new();
+                        // A stop request truncates the stream at the next
+                        // chunk boundary; the delivered prefix stays in the
+                        // buffers and persists as an interrupted event.
+                        let mut stopped = false;
                         let mut pinned = Box::pin(stream);
                         while let Some(item) = pinned.next().await {
+                            if cancel_loop.load(std::sync::atomic::Ordering::SeqCst) {
+                                stopped = true;
+                                break;
+                            }
                             match item {
                                 Ok(ProviderChunk::Text(chunk)) => {
                                     if !chunk.text_delta.is_empty() {
@@ -1859,6 +1938,7 @@ impl ChatRunner {
                             tokens_in,
                             tokens_out,
                             reasoning,
+                            stopped,
                         }))
                     }
                 })
@@ -1902,6 +1982,13 @@ impl ChatRunner {
                     };
                     break json.into_inner();
             };
+            if completion.stopped {
+                // Journaled step output says the stream was truncated: end
+                // the turn with the delivered prefix (the epilogue persists
+                // it as an interrupted event).
+                cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+                break;
+            }
             if completion.tokens_in > 0 {
                 last_context_tokens = completion.tokens_in;
             }
@@ -1962,9 +2049,11 @@ impl ChatRunner {
             // "interrupted" — the flag stays set until the next model call
             // starts streaming, so every step-top failure path sees it.
             step_persisted.store(true, std::sync::atomic::Ordering::SeqCst);
+            *last_event_id.lock().await = Some(event_id);
 
             if is_final {
-                // Journaled: record usage, then finish.
+                // Journaled: record usage, then finish. The chat-freeing and
+                // queued-flush epilogue runs after the turn block exits.
                 record_usage!(ctx, state, req, completion, route);
                 let _ = tx.send(StreamEvent::Done {
                     message_id: event_id,
@@ -1977,11 +2066,6 @@ impl ChatRunner {
                     tokens_in: completion.tokens_in,
                     tokens_out: completion.tokens_out,
                 });
-                clear_chatgen_kv!(ctx, state, req.chat_id);
-                state.generations.lock().unwrap().remove(&req.chat_id);
-                // Journaled: turn done — the sidebar spinner clears and the
-                // (unread) dot takes over.
-                set_generating_step!(ctx, state, req, false);
                 return Ok(true);
             }
 
@@ -2170,11 +2254,9 @@ impl ChatRunner {
             }
         };
         if final_sent {
-            // Registry and recorded invocation were already cleared on the
-            // final-answer path.
-            return Ok(());
-        }
-
+            // The epilogue below frees the chat and flushes queued turns for
+            // every successful ending.
+        } else {
         // Step limit reached: tell the model-facing history and the client.
         let st = state.clone();
         let chat_id = req.chat_id;
@@ -2213,10 +2295,129 @@ impl ChatRunner {
             tokens_in: 0,
             tokens_out: 0,
         });
-        clear_chatgen_kv!(ctx, state, req.chat_id);
+        }
+
+        // Stop epilogue: the delivered prefix persists as an interrupted
+        // assistant event (journaled — replay keeps it), then the turn ends
+        // with a Done frame. Same guards as the failure path: only when this
+        // step's assistant event is not persisted yet and something was
+        // delivered.
+        if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            let partial_text = text_buf.read().await.clone();
+            let partial_reasoning = thinking_buf.read().await.clone();
+            let mut interrupted_id: Option<Uuid> = None;
+            if !step_persisted.load(std::sync::atomic::Ordering::SeqCst)
+                && (!partial_text.is_empty() || !partial_reasoning.is_empty())
+            {
+                let event = ThreadEvent::AssistantMessage {
+                    turn: turn_no,
+                    step: steps_used.load(std::sync::atomic::Ordering::SeqCst),
+                    blocks: assistant_blocks(&partial_reasoning, &partial_text, &[]),
+                    usage: UsagePayload::default(),
+                    model: req.model.clone(),
+                    interrupted: Some(true),
+                };
+                let st = state.clone();
+                let chat_id = req.chat_id;
+                interrupted_id = ctx
+                    .run(move || {
+                        let state = st.clone();
+                        let event = event.clone();
+                        async move {
+                            let row = crate::http::gateway::persist_assistant_step(
+                                &state,
+                                chat_id,
+                                &event,
+                            )
+                            .await
+                            .map_err(api_err)?;
+                            Ok(Json(row.id))
+                        }
+                    })
+                    .await
+                    .ok()
+                    .map(|j| j.into_inner());
+            }
+            let done_id = interrupted_id
+                .or(*last_event_id.lock().await)
+                .unwrap_or_else(Uuid::now_v7);
+            let _ = tx.send(StreamEvent::Done {
+                message_id: done_id,
+                cost_usd: 0.0,
+                tokens_in: 0,
+                tokens_out: 0,
+            });
+        }
+
+        // Common exit: free the chat first — a send arriving from here on
+        // takes the normal start path, while anything committed before the
+        // queued-flush check below is picked up by this turn's epilogue.
         state.generations.lock().unwrap().remove(&req.chat_id);
-        // Journaled: step limit exhausted — the turn is over.
+        clear_chatgen_kv!(ctx, state, req.chat_id);
+
+        // Queued-turn flush: the last turn-bearing event is a user message
+        // (a send that queued while this turn ran). Invoke a fresh turn —
+        // journaled background call, delivered when this handler exits —
+        // whose parameters come from the queueing send's kv record when one
+        // exists. The flag clears unconditionally here (a flush that fails
+        // before its own flag-set must not inherit it); the flush re-sets
+        // it, so at worst the sidebar spinner blinks across the boundary.
+        let has_queued: bool = {
+            let st = state.clone();
+            let chat_id = req.chat_id;
+            let org_id = req.org_id;
+            ctx.run(move || {
+                let state = st.clone();
+                async move {
+                    let store = state.store().await.map_err(api_err)?;
+                    let events = store
+                        .thread()
+                        .list_events(org_id, chat_id)
+                        .await
+                        .map_err(api_err)?;
+                    Ok(Json(has_queued_user_turn(
+                        &events.into_iter().map(|r| r.event).collect::<Vec<_>>(),
+                    )))
+                }
+            })
+            .await?
+            .into_inner()
+        };
+        // Journaled: turn over — the sidebar spinner clears and the (unread)
+        // dot takes over; a queued flush turns it back on within moments.
         set_generating_step!(ctx, state, req, false);
+        if !has_queued {
+            return Ok(());
+        }
+        let opts: Option<ChatRunPayload> = {
+            let st = state.clone();
+            let chat_id = req.chat_id;
+            ctx.run(move || {
+                let state = st.clone();
+                async move {
+                    let store = state.store().await.map_err(api_err)?;
+                    let raw = store
+                        .kv()
+                        .get(&format!("chat_queue:{chat_id}"))
+                        .await
+                        .map_err(api_err)?;
+                    let parsed = raw.as_deref().and_then(|v| serde_json::from_str(v).ok());
+                    if raw.is_some() {
+                        let _ = store.kv().delete(&format!("chat_queue:{chat_id}")).await;
+                    }
+                    Ok(Json(parsed))
+                }
+            })
+            .await?
+            .into_inner()
+        };
+        let mut flush = opts.unwrap_or_else(|| req.clone());
+        flush.user_message_id = None;
+        flush.user_message = String::new();
+        flush.attachment_ids = Vec::new();
+        ctx.object_client::<ChatRunnerClient>(&req.chat_id.to_string())
+            .generate(Json(flush))
+            .send();
         Ok(())
     }
 
@@ -3744,6 +3945,52 @@ mod tests {
             model: "deepseek-test".into(),
             interrupted: None,
         }
+    }
+
+    fn tool_result(turn: u32, call_id: &str) -> ThreadEvent {
+        ThreadEvent::ToolResult {
+            turn,
+            step: 0,
+            call_id: call_id.into(),
+            name: "execute".into(),
+            content: "ok".into(),
+            is_error: false,
+            meta: None,
+            images: Vec::new(),
+            kind: None,
+        }
+    }
+
+    #[test]
+    fn queued_turn_detection_follows_the_last_turn_bearing_event() {
+        // Completed turn: not queued.
+        assert!(!has_queued_user_turn(&[user_ev("q"), text_assistant(1, 0, "a")]));
+        // Queued send after the completed turn: queued.
+        assert!(has_queued_user_turn(&[
+            user_ev("q"),
+            text_assistant(1, 0, "a"),
+            user_ev("second")
+        ]));
+        // Turn paused on tool results with a queued send behind: queued.
+        assert!(has_queued_user_turn(&[
+            user_ev("q"),
+            text_assistant(1, 0, "with tools"),
+            tool_result(1, "c1"),
+            user_ev("while you are at it")
+        ]));
+        // Interrupted turn without a queued send: not queued.
+        assert!(!has_queued_user_turn(&[user_ev("q"), text_assistant(1, 0, "partial")]));
+        // Empty log: not queued.
+        assert!(!has_queued_user_turn(&[]));
+    }
+
+    #[test]
+    fn completion_out_parses_old_journals_without_the_stopped_flag() {
+        let out: CompletionOut = serde_json::from_str(
+            r#"{"text":"t","tool_calls":[],"tokens_in":1,"tokens_out":2,"reasoning":""}"#,
+        )
+        .unwrap();
+        assert!(!out.stopped);
     }
 
     fn compaction(summary: &str, keep_last: Option<u32>) -> ThreadEvent {
