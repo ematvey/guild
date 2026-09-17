@@ -863,6 +863,12 @@ export async function wslHome(distro: string): Promise<string | null> {
   return invoke<string | null>("wsl_home", { distro });
 }
 
+/** The distro's PRETTY_NAME (e.g. Arch Linux); null when unknown. Fetched
+ * on first browse (user-driven), cached per boot in the app process. */
+export async function wslPrettyName(distro: string): Promise<string | null> {
+  return invoke<string | null>("wsl_pretty_name", { distro });
+}
+
 /** Unfiltered directory listing (dotfiles included), dirs first. */
 export async function listDir(path: string): Promise<DirEntry[]> {
   return invoke<DirEntry[]>("list_dir", { path });

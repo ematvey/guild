@@ -20,6 +20,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   createProject,
   listWslDistros,
+  wslPrettyName,
   type Distro,
   type MachineInfo,
   type Project,
@@ -53,6 +54,22 @@ export function CreateProjectDialog({
   const localMachine = machines?.find((m) => m.machine_id === localMachineId);
   const localLabel = localMachine?.name ?? "this computer";
   const otherMachines = machines?.filter((m) => m.machine_id !== localMachineId) ?? [];
+
+  // Entering a distro's browse view boots that distro (the listing needs
+  // it) — the moment the pretty-name lookup can also run without starting
+  // anything the user did not choose.
+  useEffect(() => {
+    if (view.kind !== "browse") return;
+    const distro = view.distro;
+    void wslPrettyName(distro)
+      .then((pretty) => {
+        if (!pretty) return;
+        setDistros((cur) =>
+          cur?.map((d) => (d.name === distro && !d.pretty_name ? { ...d, pretty_name: pretty } : d)) ?? cur,
+        );
+      })
+      .catch(() => {});
+  }, [view]);
 
   useEffect(() => {
     if (!open) {
