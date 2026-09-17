@@ -56,9 +56,26 @@ impl<'a> ChatStore<'a> {
         title: Option<&str>,
         project_id: Option<Uuid>,
     ) -> Result<ChatRow, ApiError> {
+        self.create_chat_with_machine(org_id, user_id, title, project_id, None, None)
+            .await
+    }
+
+    /// Creates a chat, binding the machine in the same INSERT as the project
+    /// (bind-time machine inheritance: a chat runs where its project's
+    /// folder lives). One statement, so the binding is atomic.
+    pub async fn create_chat_with_machine(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+        title: Option<&str>,
+        project_id: Option<Uuid>,
+        machine_id: Option<&str>,
+        machine_label: Option<&str>,
+    ) -> Result<ChatRow, ApiError> {
         let id = Uuid::now_v7();
         sqlx::query_as::<_, ChatRow>(
-            "INSERT INTO chats (id, org_id, user_id, title, project_id) VALUES ($1, $2, $3, $4, $5) \
+            "INSERT INTO chats (id, org_id, user_id, title, project_id, machine_id, machine_label) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
              RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
         )
         .bind(id)
@@ -66,6 +83,8 @@ impl<'a> ChatStore<'a> {
         .bind(user_id)
         .bind(title)
         .bind(project_id)
+        .bind(machine_id)
+        .bind(machine_label)
         .fetch_one(self.pool)
         .await
         .map_err(Into::into)
@@ -144,17 +163,23 @@ impl<'a> ChatStore<'a> {
     }
 
     /// Sets (or clears, with `None`) the chat's project. Owner-scoped: the
-    /// composer chip binds the chat to a named workspace folder.
+    /// composer chip binds the chat to a named workspace folder. When a
+    /// project is bound, its machine rides along in the same UPDATE (bind-time
+    /// machine inheritance — the project's machine wins, a per-chat rebind is
+    /// a later override); unbinding keeps the current machine.
     pub async fn set_project(
         &self,
         org_id: Uuid,
         chat_id: Uuid,
         caller: &UserRow,
         project_id: Option<Uuid>,
+        machine: Option<(&str, Option<&str>)>,
     ) -> Result<ChatRow, ApiError> {
         let is_admin = caller.role == "admin";
         sqlx::query_as(
-            "UPDATE chats SET project_id = $3 \
+            "UPDATE chats SET project_id = $3, \
+             machine_id = COALESCE($6, machine_id), \
+             machine_label = COALESCE($7, machine_label) \
              WHERE org_id = $1 AND id = $2 AND (user_id = $4 OR $5) \
              RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
         )
@@ -163,6 +188,8 @@ impl<'a> ChatStore<'a> {
         .bind(project_id)
         .bind(caller.id)
         .bind(is_admin)
+        .bind(machine.map(|(id, _)| id))
+        .bind(machine.and_then(|(_, label)| label))
         .fetch_optional(self.pool)
         .await?
         .ok_or_else(|| ApiError::not_found("no such chat"))

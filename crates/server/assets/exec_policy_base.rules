@@ -39,3 +39,11 @@ prefix_rule(pattern=["reboot"], decision="forbidden", justification="reboots the
 prefix_rule(pattern=["format"], decision="forbidden", justification="formats a volume; destructive and irreversible")
 prefix_rule(pattern=["mkfs"], decision="forbidden", justification="creates a filesystem; destructive and irreversible")
 prefix_rule(pattern=["dd"], decision="forbidden", justification="raw disk copying; destructive and irreversible — use a targeted tool instead")
+
+# --- model-invoked WSL -----------------------------------------------------
+# A `wsl`/`wsl.exe` command from the model always goes through the chat's
+# approval flow — the distro transport is the executor's own concern, not
+# something the model improvises. The first token is matched verbatim (no
+# normalization on this host build), so both spellings need their own rule.
+prefix_rule(pattern=["wsl"], decision="prompt", justification="WSL invocation from the model is gated")
+prefix_rule(pattern=["wsl.exe"], decision="prompt", justification="WSL invocation from the model is gated")

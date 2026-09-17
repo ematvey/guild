@@ -55,8 +55,9 @@ impl ModelTurn for GatewayTurn {
                     Some(tools.to_vec())
                 },
                 system: self.system.clone(),
-                // The engine session has a local dir, not a server project;
-                // the mapping lands with the desktop lane's project picker.
+                // Local engine sessions carry no project id yet: the server
+                // builds the workspace sentence only from a bound project.
+                // Wiring agent.start sessions to projects is future work.
                 project_id: None,
                 skills_index: self.skills_index.clone(),
                 // the desktop app executes machine tools client-side

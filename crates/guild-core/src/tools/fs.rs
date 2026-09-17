@@ -423,6 +423,10 @@ impl Tool for EditFile {
                 path.display()
             ))),
             _ => {
+                // Read-modify-write, not atomic: a change landing between the
+                // read and the write is silently overwritten (last write
+                // wins). Accepted for this tool shape; a size/mtime guard
+                // would be the follow-up if it ever matters.
                 let updated = content.replacen(old, new, 1);
                 write_bytes(&path, updated.as_bytes()).await?;
                 Ok(ToolOutcome {
