@@ -1003,7 +1003,7 @@ async fn execute_tool(
 ) -> Result<(), String> {
     let args: Value = serde_json::from_str(args_json).unwrap_or(serde_json::json!({}));
     let outcome: Result<Value, String> = match workdir {
-        None => Err("no workspace folder is set for this chat — pick one with 'Run in folder…' in the composer".to_string()),
+        None => Err("no workspace folder is set for this chat — pick a project with 'Choose project' in the composer".to_string()),
         Some(dir) => {
             let registry = guild_core::tools::ToolRegistry::builtins();
             match registry.get(name) {
