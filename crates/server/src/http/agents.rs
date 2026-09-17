@@ -63,7 +63,7 @@ async fn create_session(
     let store = state.store().await?;
     let chat = store
         .chats()
-        .create_chat(user.0.org_id, user.0.id, Some(name))
+        .create_chat(user.0.org_id, user.0.id, Some(name), None)
         .await?;
     let session = store
         .agent_sessions()

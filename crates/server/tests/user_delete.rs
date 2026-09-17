@@ -28,7 +28,7 @@ async fn delete_user_cascades_owned_rows() {
     let (_sid, _token) = store.identity().create_session(member.id).await.unwrap();
     let chat = store
         .chats()
-        .create_chat(admin.org_id, member.id, Some("owned"))
+        .create_chat(admin.org_id, member.id, Some("owned"), None)
         .await
         .unwrap();
 
