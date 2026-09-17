@@ -1105,49 +1105,73 @@ pub mod commands {
 
     /// WSL distros on this machine, for the project folder sources. Each
     /// row: `wsl --list --verbose` name + running state, plus the distro's
-    /// PRETTY_NAME (lazy, cached per boot). Windows only; every other
-    /// platform returns an empty list.
+    /// PRETTY_NAME (lazy, cached per distro). Runs on the blocking pool —
+    /// one wsl.exe spawn per uncached distro would otherwise stall the async
+    /// runtime; the cache lock is never held across a spawn. Windows only;
+    /// every other platform returns an empty list.
     #[tauri::command]
     pub async fn list_wsl_distros(state: State<'_, Arc<GuildState>>) -> Result<Vec<Distro>, String> {
-        let Some(raw) = run_wsl(&["--list", "--verbose"]) else {
-            return Ok(vec![]);
-        };
-        let mut cache = state.wsl_pretty.lock().unwrap();
-        let mut out = Vec::new();
-        for (name, running) in parse_wsl_list(&raw) {
-            if name.starts_with("docker-desktop") {
-                continue;
-            }
-            let pretty_name = if let Some(cached) = cache.get(&name) {
-                cached.clone()
-            } else {
-                let pretty = run_wsl(&["-d", &name, "--exec", "cat", "/etc/os-release"])
-                    .as_deref()
-                    .and_then(parse_pretty_name);
-                cache.insert(name.clone(), pretty.clone());
-                pretty
+        let state = state.inner().clone();
+        tokio::task::spawn_blocking(move || {
+            let Some(raw) = run_wsl(&["--list", "--verbose"]) else {
+                return Ok(vec![]);
             };
-            out.push(Distro { name, running, pretty_name });
-        }
-        Ok(out)
+            let mut out = Vec::new();
+            for (name, running) in parse_wsl_list(&raw) {
+                if name.starts_with("docker-desktop") {
+                    continue;
+                }
+                // Per-entry lock scope: drop the guard before spawning wsl.exe.
+                let cached = state.wsl_pretty.lock().unwrap().get(&name).cloned();
+                let pretty_name = match cached {
+                    Some(cached) => cached,
+                    None => {
+                        let pretty = run_wsl(&["-d", &name, "--exec", "cat", "/etc/os-release"])
+                            .as_deref()
+                            .and_then(parse_pretty_name);
+                        state
+                            .wsl_pretty
+                            .lock()
+                            .unwrap()
+                            .insert(name.clone(), pretty.clone());
+                        pretty
+                    }
+                };
+                out.push(Distro { name, running, pretty_name });
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|e| format!("wsl distro listing failed: {e}"))?
     }
 
     /// The distro's default user's home directory (LINUX path, e.g.
-    /// /home/me), for `~` expansion in the path specifier. Cached per boot.
+    /// /home/me), for `~` expansion in the path specifier. Cached per
+    /// distro; the lookup runs on the blocking pool (one wsl.exe spawn on
+    /// the first call), with the cache lock never held across the spawn.
     #[tauri::command]
     pub async fn wsl_home(
         state: State<'_, Arc<GuildState>>,
         distro: String,
     ) -> Result<Option<String>, String> {
-        let mut cache = state.wsl_homes.lock().unwrap();
-        if let Some(cached) = cache.get(&distro) {
-            return Ok(cached.clone());
-        }
-        let home = run_wsl(&["-d", &distro, "--exec", "sh", "-c", "echo $HOME"])
-            .map(|raw| raw.trim().to_string())
-            .filter(|h| h.starts_with('/') && !h.is_empty());
-        cache.insert(distro, home.clone());
-        Ok(home)
+        let state = state.inner().clone();
+        tokio::task::spawn_blocking(move || {
+            let cached = state.wsl_homes.lock().unwrap().get(&distro).cloned();
+            if let Some(cached) = cached {
+                return Ok(cached);
+            }
+            let home = run_wsl(&["-d", &distro, "--exec", "sh", "-c", "echo $HOME"])
+                .map(|raw| raw.trim().to_string())
+                .filter(|h| h.starts_with('/') && !h.is_empty());
+            state
+                .wsl_homes
+                .lock()
+                .unwrap()
+                .insert(distro, home.clone());
+            Ok(home)
+        })
+        .await
+        .map_err(|e| format!("wsl home lookup failed: {e}"))?
     }
 
     /// Directory listing for the path specifier: unfiltered (dotfiles

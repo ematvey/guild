@@ -55,6 +55,24 @@ export function chatProjectOf(row: ChatSummary | undefined): PickedProject | nul
   };
 }
 
+/** The project_id a gateway send carries: only a pick made in this session
+ * rides on the request (request-wins). Otherwise the field is omitted and
+ * the server falls back to the chat's persisted binding — a stale sidebar
+ * row must never win over it (another device may have re-bound the chat). */
+export function outgoingProjectId(picked: PickedProject | null | undefined): string | null {
+  return picked?.id ?? null;
+}
+
+/** The project filter that actually applies to the sidebar: a route id
+ * absent from the (loaded) projects list — a deleted project's deep link —
+ * behaves as no filter. While the list is still loading the route id is
+ * kept, so the view does not flicker to Recents and back. */
+export function activeFilterId(projects: Project[] | null, routeId: string | null): string | null {
+  if (!routeId) return null;
+  if (projects === null) return routeId;
+  return projects.some((p) => p.id === routeId) ? routeId : null;
+}
+
 // ---- the picker dialog's recency ordering ----
 
 /** Projects that have chats, most recently used first (chat list order). */
@@ -123,6 +141,15 @@ export function expandPath(input: string, homeUnc: string | null): string | null
   return t;
 }
 
+/** The commit-time error for a typed path: a bare `~` needs the distro's
+ * home directory. When the home lookup failed, the specifier shows this
+ * inline error instead of silently descending into the current folder. */
+export function expandError(input: string, homeUnc: string | null): string | null {
+  const t = input.trim();
+  if (t === "~" && !homeUnc) return "home directory unknown for this distro";
+  return null;
+}
+
 /** Canonical directory path: one separator per boundary, exactly one
  * trailing backslash (the UNC \\server lead is preserved). */
 export function canonicalDir(path: string): string {
@@ -171,6 +198,7 @@ export type PickerEvent =
   | { type: "loading"; path: string }
   | { type: "loaded"; path: string; entries: DirEntry[] }
   | { type: "failed"; path: string; error: string }
+  | { type: "error"; message: string }
   | { type: "descend" }
   | { type: "up" }
   | { type: "go"; path: string }
@@ -208,6 +236,8 @@ export function pickerReducer(state: PickerState, event: PickerEvent): PickerSta
       return state.cwd === event.path
         ? { ...state, entries: null, error: event.error }
         : state;
+    case "error":
+      return { ...state, error: event.message };
     case "descend": {
       const entry = state.entries?.[state.highlight];
       if (!state.cwd || !entry?.is_dir) return state;
