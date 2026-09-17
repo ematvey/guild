@@ -72,7 +72,7 @@ export function ProjectPickerDialog({
               autoFocus
             />
           </div>
-          <div className="max-h-80 min-h-40 overflow-y-auto">
+          <div className="max-h-80 min-h-40 overflow-y-auto overscroll-contain">
             {projects === null && <p className="p-3 text-sm text-muted-foreground">Loading…</p>}
             {projects !== null && (
               <div className="space-y-0.5">

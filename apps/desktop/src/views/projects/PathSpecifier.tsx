@@ -146,7 +146,7 @@ export function PathSpecifier({
           </button>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border border-border">
         {state.entries === null && !state.error && (
           <div className="flex items-center gap-2 p-3 text-muted-foreground">
             <Spinner className="size-3.5" /> listing…
