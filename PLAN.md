@@ -1,9 +1,44 @@
 # Guild — current state of work
 
-Updated 2026-09-16 (approvals: every decision path settles the card). Read
-this before touching the codebase; detailed milestone plans live in
-`docs/plans/`, deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
-`~/workspace/hanging-commands.md`.
+Updated 2026-09-17 (projects + WSL milestone). Read this before touching
+the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
+in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Projects + WSL shipped — per-chat folders deleted, thread data wiped — 2026-09-17
+
+Spec `docs/specs/2026-09-17-projects-wsl-design.md`, plan
+`docs/plans/2026-09-17-projects-wsl.md`; three implementation lanes merged
+on `projects-wsl` (server, guild-core, desktop), review round 1
+(security + correctness) in `docs/reviews/2026-09-17-projects-*r1.md`.
+Decisions (maintainer, interview 2026-09-17): Codex-style project model
+(project = name + one folder + owning machine; server-side table; sidebar
+Projects/Recents; project optional per chat; per-chat folder mechanism
+deleted outright — no migration of old state, thread data wiped: chats,
+thread events, chat reads, attachments, agent sessions, chat-keyed kv, and
+the Restate container state at deploy). WSL: a distro is a folder source on
+its Windows machine (`\\wsl.localhost\…`), not a machine of its own;
+distro list hides `docker-desktop*`, lists stopped distros (auto-start on
+pick); shell tool runs `wsl.exe -d <distro> --cd <inner> --exec bash -lc
+<cmd>` (login shell, default user only); file tools route through wsl.exe
+(base64 read, stdin-piped `cat >` write, host-checked `mkdir -p`), never
+the 9P share; the exec-policy gate classifies the model-written raw command
+(the wsl.exe wrapper is added at spawn inside guild-core) and model-written
+`wsl` gets a documenting Prompt rule. Folder delivery is server-owned:
+`ToolDispatch` carries `workdir` from the project row — the volatile
+app-process chat→dir map, `set_chat_dir`, and the `guild.dir:*` localStorage
+keys are gone. Project binding sets the chat's machine (chats inherit; the
+per-chat rebind endpoint stays as an override). Skills/registry sections
+resolve their aim folder from the projects API ("most recent chat's
+project, else first project"). Desktop 0.5.0 released (all four platforms,
+sha256-verified; devbox manual exe copy), compose stack rebuilt, Restate
+state wiped at deploy. Review round 1: no blockers; fix round 1 landed the
+chatgen_inv kv cleanup in 0048, machine/project alignment at bind time,
+request-wins-only-for-in-session-picks, parser-agreement pin, the `wsl`
+policy rule, and desktop edge cases (dead filter id, new-chat filter,
+blocking distro fetch, `~` without home, ThreadState project fields
+consumed). Known follow-ups: remote-machine folder browsing (same
+folder-source shape), skills discovery through wsl.exe, optional `list_dir`
+scoping hardening, edit_file non-atomic (accepted, commented).
 
 ## Thinking frames survive republishes; no inner scroll — 2026-09-16
 
