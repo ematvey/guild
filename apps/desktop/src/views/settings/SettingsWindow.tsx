@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Bot,
   Cpu,
+  Info,
   KeyRound,
   Layers,
   Palette,
@@ -37,6 +38,7 @@ import {
   storedSidebarWidth,
 } from "../../lib/sidebar-width";
 import { MachineSection } from "./sections/MachineSection";
+import { AboutSection } from "./sections/AboutSection";
 import { ApprovalsSection } from "./sections/ApprovalsSection";
 import { AssistantSection } from "./sections/AssistantSection";
 
@@ -53,7 +55,8 @@ type SectionId =
   | "integrations"
   | "sso"
   | "registry"
-  | "skills";
+  | "skills"
+  | "about";
   // No "releases" pane: desktop releases are dev-controlled, not
   // admin-controlled.
 
@@ -129,6 +132,7 @@ export function SettingsWindow({
     },
     { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "org", admin: true },
     { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "org", admin: true },
+    { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
   ];
   const visible = sections.filter((s) => !s.admin || isAdmin);
   // Section is URL-driven (WebChat owns it); an unknown section (stale deep
@@ -393,6 +397,8 @@ function SectionBody({
           onDetailChange={onDetailChange}
         />
       );
+    case "about":
+      return <AboutSection />;
   }
 }
 
