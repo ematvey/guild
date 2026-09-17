@@ -37,6 +37,8 @@ pub struct PendingTool {
     /// Bound executor machine; `None` → fall back to the 5-minute timeout
     /// only.
     pub machine_id: Option<String>,
+    /// Workspace folder the tool runs in (from the chat's project).
+    pub workdir: Option<String>,
     pub connection_id: Option<Uuid>,
     /// Fired when the tool is resolved so the presence watcher stops.
     pub done: Arc<tokio::sync::Notify>,
@@ -499,6 +501,7 @@ pub(crate) fn note_pending_tool(
     name: &str,
     args: &str,
     machine_id: Option<&str>,
+    workdir: Option<&str>,
 ) -> Arc<tokio::sync::Notify> {
     let done = Arc::new(tokio::sync::Notify::new());
     let holder = machine_id.and_then(|id| state.hub.machine_holder(id));
@@ -510,6 +513,7 @@ pub(crate) fn note_pending_tool(
                 name: name.to_string(),
                 arguments: args.to_string(),
                 machine_id: machine_id.map(str::to_string),
+                workdir: workdir.map(str::to_string),
                 connection_id: holder.as_ref().map(|m| m.conn_id),
                 done: done.clone(),
             },
@@ -535,11 +539,12 @@ pub(crate) async fn dispatch_pending_tool(
                     t.machine_id.clone(),
                     t.name.clone(),
                     t.arguments.clone(),
+                    t.workdir.clone(),
                 )
             })
         })
     };
-    let Some((connection, machine, name, arguments)) = tool else {
+    let Some((connection, machine, name, arguments, workdir)) = tool else {
         return Ok(None);
     };
     let store = state.store().await?;
@@ -568,6 +573,7 @@ pub(crate) async fn dispatch_pending_tool(
                 call_id: call_id.into(),
                 name,
                 arguments,
+                workdir,
             })
             .is_ok()
         {
@@ -759,6 +765,54 @@ async fn chat(
         .filter(|m| m.role == "user")
         .map(|m| m.content.clone())
         .unwrap_or_default();
+    // Effective project: the request's binding wins (validated against the
+    // caller — an arbitrary id would leak another member's workspace); the
+    // chat's persisted binding applies when the request omits one. An
+    // explicit request chose the project, so the chat's machine aligns to
+    // the project's when they differ (persisted) — a chat must run where
+    // its workspace folder lives.
+    let mut machine_id = chat.machine_id.clone();
+    let mut machine_label = chat.machine_label.clone();
+    let project_id = match req.project_id {
+        Some(pid) => {
+            let project = store.projects().get(user.0.org_id, pid, &user.0).await?;
+            let label = project
+                .machine_label
+                .clone()
+                .unwrap_or_else(|| project.machine_id.clone());
+            if chat.project_id != Some(pid) {
+                // An explicit request chose the project: persist the binding
+                // and the machine together, so a later request that omits
+                // project_id cannot run the old folder on the new machine.
+                let aligned = store
+                    .chats()
+                    .set_project(
+                        user.0.org_id,
+                        req.chat_id,
+                        &user.0,
+                        Some(pid),
+                        Some((&project.machine_id, Some(&label))),
+                    )
+                    .await?;
+                machine_id = aligned.machine_id;
+                machine_label = aligned.machine_label;
+            } else if Some(&project.machine_id) != chat.machine_id.as_ref() {
+                store
+                    .chats()
+                    .set_machine(
+                        user.0.org_id,
+                        req.chat_id,
+                        Some(&project.machine_id),
+                        Some(&label),
+                    )
+                    .await?;
+                machine_id = Some(project.machine_id.clone());
+                machine_label = Some(label);
+            }
+            Some(pid)
+        }
+        None => chat.project_id,
+    };
     let payload = serde_json::json!({
         "org_id": user.0.org_id,
         "user_id": user.0.id,
@@ -768,13 +822,13 @@ async fn chat(
         "user_message_id": req.user_message_id,
         "client_tools": req.client_tools,
         "attachment_ids": req.attachment_ids,
-        "project_dir": req.project_dir,
+        "project_id": project_id,
         "skills_index": req.skills_index,
         "client_id": headers
             .get("x-guild-client-id")
             .and_then(|v| v.to_str().ok()),
-        "machine_id": chat.machine_id,
-        "machine_label": chat.machine_label,
+        "machine_id": machine_id,
+        "machine_label": machine_label,
         "origin_machine_id": headers
             .get("x-guild-machine-id")
             .and_then(|v| v.to_str().ok()),
@@ -973,6 +1027,7 @@ mod tests {
             "execute",
             "{}",
             Some("machine"),
+            None,
         );
         assert_eq!(
             dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
@@ -1002,7 +1057,7 @@ mod tests {
             .await
             .unwrap();
         ensure_generation(&restarted, chat);
-        note_pending_tool(&restarted, chat, "call", "execute", "{}", Some("machine"));
+        note_pending_tool(&restarted, chat, "call", "execute", "{}", Some("machine"), None);
         assert_eq!(
             dispatch_pending_tool(&restarted, chat, "call", "durable-awakeable")
                 .await
@@ -1016,6 +1071,290 @@ mod tests {
             .unwrap()
             .iter()
             .any(|(_, body)| body["is_error"] == true));
+    }
+
+    /// The dispatch frame carries the workspace folder: the executor runs
+    /// the tool there (the volatile per-chat dir map is gone).
+    #[tokio::test]
+    async fn dispatch_carries_workdir_from_project_folder() {
+        let (fixture, _ingress) = crate::test_support::test_state_with_mock_ingress().await;
+        let chat = Uuid::now_v7();
+        let conn = Uuid::now_v7();
+        let (sink, mut output) = crate::http::ws::socket_channel();
+        fixture
+            .state
+            .hub
+            .register_machine(
+                crate::http::hub::Member {
+                    conn_id: conn,
+                    user_id: Uuid::now_v7(),
+                    org_id: Uuid::now_v7(),
+                    sink,
+                    label: None,
+                },
+                "machine",
+            )
+            .await
+            .unwrap();
+        ensure_generation(&fixture.state, chat);
+        note_pending_tool(
+            &fixture.state,
+            chat,
+            "call",
+            "execute",
+            "{}",
+            Some("machine"),
+            Some(r"\\wsl.localhost\Ubuntu-22.04\home\u\repo"),
+        );
+        dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
+            .await
+            .unwrap();
+        match output.try_recv().unwrap() {
+            crate::http::ws::SocketOutput::Message(protocol::ws::WsServerMsg::ToolDispatch {
+                workdir,
+                ..
+            }) => {
+                assert_eq!(
+                    workdir.as_deref(),
+                    Some(r"\\wsl.localhost\Ubuntu-22.04\home\u\repo")
+                );
+            }
+            other => panic!("expected ToolDispatch, got {other:?}"),
+        }
+    }
+
+    /// The dispatch workdir comes from the journaled project resolution: a
+    /// chat bound to a project carries the project's folder (the resolver
+    /// the ChatRunner's turn start journals, not a hand-set workdir).
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn dispatch_workdir_follows_the_journaled_project_resolution() {
+        let (fixture, _ingress) = crate::test_support::test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let user_id = store
+            .identity()
+            .ensure_bootstrap_admin("a@b.c", "hunter226")
+            .await
+            .unwrap();
+        let user = store.identity().get_user(user_id).await.unwrap();
+        let project = store
+            .projects()
+            .create(
+                user.org_id,
+                user.id,
+                "repo",
+                r"\\wsl.localhost\Ubuntu-22.04\home\u\repo",
+                "machine",
+            )
+            .await
+            .unwrap();
+        let chat_row = store
+            .chats()
+            .create_chat(user.org_id, user.id, Some("t"), Some(project.id))
+            .await
+            .unwrap();
+        let conn = Uuid::now_v7();
+        let (sink, mut output) = crate::http::ws::socket_channel();
+        fixture
+            .state
+            .hub
+            .register_machine(
+                crate::http::hub::Member {
+                    conn_id: conn,
+                    user_id: user.id,
+                    org_id: user.org_id,
+                    sink,
+                    label: None,
+                },
+                "machine",
+            )
+            .await
+            .unwrap();
+        // The journaled resolution (what the ChatRunner runs at turn start).
+        let workspace = crate::worker::restate::resolve_workspace(
+            &fixture.state,
+            user.org_id,
+            chat_row.project_id,
+        )
+        .await
+        .unwrap()
+        .expect("bound project resolves");
+        assert_eq!(workspace.folder, project.folder);
+        ensure_generation(&fixture.state, chat_row.id);
+        note_pending_tool(
+            &fixture.state,
+            chat_row.id,
+            "call",
+            "execute",
+            "{}",
+            Some("machine"),
+            Some(&workspace.folder),
+        );
+        dispatch_pending_tool(&fixture.state, chat_row.id, "call", "durable-awakeable")
+            .await
+            .unwrap();
+        match output.try_recv().unwrap() {
+            crate::http::ws::SocketOutput::Message(protocol::ws::WsServerMsg::ToolDispatch {
+                workdir,
+                ..
+            }) => assert_eq!(workdir.as_deref(), Some(project.folder.as_str())),
+            other => panic!("expected ToolDispatch, got {other:?}"),
+        }
+    }
+
+    /// A request without `project_id` uses the chat's persisted binding:
+    /// the ChatRunner payload carries it, and the journaled resolution
+    /// yields the project's folder (the rule every stale/deep-link client
+    /// relies on — the request never re-sends a stale sidebar row).
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn gateway_request_without_project_id_falls_back_to_the_persisted_binding() {
+        let (fixture, ingress) = crate::test_support::test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let user_id = store
+            .identity()
+            .ensure_bootstrap_admin("a@b.c", "hunter226")
+            .await
+            .unwrap();
+        let user = store.identity().get_user(user_id).await.unwrap();
+        let project = store
+            .projects()
+            .create(user.org_id, user.id, "repo", r"C:\code\repo", "machine")
+            .await
+            .unwrap();
+        let chat_row = store
+            .chats()
+            .create_chat(user.org_id, user.id, Some("t"), Some(project.id))
+            .await
+            .unwrap();
+        let req = ChatCompletionRequest {
+            user_message_id: None,
+            chat_id: chat_row.id,
+            model: "gpt-test".into(),
+            messages: vec![protocol::api::Message {
+                role: "user".into(),
+                content: "hi".into(),
+                images: Vec::new(),
+                audio: Vec::new(),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning: None,
+            }],
+            tools: None,
+            system: None,
+            client_tools: false,
+            project_id: None,
+            attachment_ids: Vec::new(),
+            skills_index: None,
+        };
+        let res = chat(
+            State(fixture.state.clone()),
+            AuthUser(user.clone()),
+            axum::http::HeaderMap::new(),
+            Json(req),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["accepted"], json!(true));
+        let gen = ingress
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(path, _)| path.contains("/generate"))
+            .expect("ChatRunner invocation captured")
+            .1
+            .clone();
+        assert_eq!(gen["project_id"], json!(project.id));
+        // The workspace the turn resolves from the persisted binding:
+        let workspace = crate::worker::restate::resolve_workspace(
+            &fixture.state,
+            user.org_id,
+            gen["project_id"].as_str().map(|s| s.parse().unwrap()),
+        )
+        .await
+        .unwrap()
+        .expect("persisted project resolves");
+        assert_eq!(workspace.folder, project.folder);
+    }
+
+    /// A request with `project_id` whose machine differs from the chat's
+    /// persisted machine aligns the chat to the project's machine (the
+    /// request explicitly chose the project) and dispatches there.
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn gateway_request_with_project_id_aligns_the_chats_machine() {
+        let (fixture, ingress) = crate::test_support::test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let user_id = store
+            .identity()
+            .ensure_bootstrap_admin("a@b.c", "hunter226")
+            .await
+            .unwrap();
+        let user = store.identity().get_user(user_id).await.unwrap();
+        let project = store
+            .projects()
+            .create(user.org_id, user.id, "repo", r"C:\code\repo", "mB")
+            .await
+            .unwrap();
+        let chat_row = store
+            .chats()
+            .create_chat(user.org_id, user.id, Some("t"), None)
+            .await
+            .unwrap();
+        store
+            .chats()
+            .set_machine(user.org_id, chat_row.id, Some("mA"), Some("Machine A"))
+            .await
+            .unwrap();
+        let req = ChatCompletionRequest {
+            user_message_id: None,
+            chat_id: chat_row.id,
+            model: "gpt-test".into(),
+            messages: vec![protocol::api::Message {
+                role: "user".into(),
+                content: "hi".into(),
+                images: Vec::new(),
+                audio: Vec::new(),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning: None,
+            }],
+            tools: None,
+            system: None,
+            client_tools: false,
+            project_id: Some(project.id),
+            attachment_ids: Vec::new(),
+            skills_index: None,
+        };
+        let res = chat(
+            State(fixture.state.clone()),
+            AuthUser(user.clone()),
+            axum::http::HeaderMap::new(),
+            Json(req),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.0["accepted"], json!(true));
+        // The chat's persisted machine now follows the project's.
+        let aligned = store
+            .chats()
+            .get_chat(user.org_id, chat_row.id, &user)
+            .await
+            .unwrap();
+        assert_eq!(aligned.machine_id.as_deref(), Some("mB"));
+        // The turn dispatches on the aligned machine with the project bound.
+        let gen = ingress
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(path, _)| path.contains("/generate"))
+            .expect("ChatRunner invocation captured")
+            .1
+            .clone();
+        assert_eq!(gen["project_id"], json!(project.id));
+        assert_eq!(gen["machine_id"], json!("mB"));
     }
 
     /// The reservation is atomic: the second concurrent send hits 409 while

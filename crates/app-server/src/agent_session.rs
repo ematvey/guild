@@ -55,7 +55,10 @@ impl ModelTurn for GatewayTurn {
                     Some(tools.to_vec())
                 },
                 system: self.system.clone(),
-                project_dir: self.project_dir.clone(),
+                // Local engine sessions carry no project id yet: the server
+                // builds the workspace sentence only from a bound project.
+                // Wiring agent.start sessions to projects is future work.
+                project_id: None,
                 skills_index: self.skills_index.clone(),
                 // the desktop app executes machine tools client-side
                 client_tools: true,

@@ -38,7 +38,7 @@ impl Fixture {
         let u = store.identity().validate_session(&token).await.unwrap();
         let chat = store
             .chats()
-            .create_chat(u.org_id, u.id, Some("contract"))
+            .create_chat(u.org_id, u.id, Some("contract"), None)
             .await
             .unwrap()
             .id;

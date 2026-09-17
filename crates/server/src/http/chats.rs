@@ -20,8 +20,8 @@ pub fn routes() -> Router<AppState> {
             axum::routing::get(thread).post(append_thread_event),
         )
         .route(
-            "/api/v1/chats/{id}/dir",
-            axum::routing::post(set_dir),
+            "/api/v1/chats/{id}/project",
+            axum::routing::post(set_project),
         )
         .route(
             "/api/v1/chats/{id}/machine",
@@ -188,7 +188,9 @@ impl From<crate::store::chats::ChatRow> for Chat {
             machine_label: c.machine_label,
             generating: c.generating,
             unread: false,
-            project_dir: c.project_dir,
+            project_id: c.project_id,
+            project_name: None,
+            project_machine_label: None,
             machine_online: false,
         }
     }
@@ -206,7 +208,9 @@ impl From<crate::store::chats::ChatListRow> for Chat {
             machine_label: c.machine_label,
             generating: c.generating,
             unread: c.unread,
-            project_dir: c.project_dir,
+            project_id: c.project_id,
+            project_name: c.project_name,
+            project_machine_label: c.project_machine_label,
             machine_online: false,
         }
     }
@@ -218,15 +222,46 @@ async fn create(
     Json(req): Json<CreateChatRequest>,
 ) -> Result<Json<Chat>, ApiError> {
     let store = state.store().await?;
+    // The project must exist and belong to the caller (admin bypass) — an
+    // arbitrary id would bind a chat to someone else's workspace.
+    let project = match req.project_id {
+        Some(project_id) => Some(
+            store
+                .projects()
+                .get(user.0.org_id, project_id, &user.0)
+                .await?,
+        ),
+        None => None,
+    };
+    // Bind-time machine inheritance: the chat runs where its project's
+    // folder lives, so a bound project's machine is the authority (the
+    // project's label comes from the machines registry); a per-chat rebind
+    // is a later override. INSERT sets project and machine atomically.
+    let machine = project.as_ref().map(|p| {
+        (
+            p.machine_id.clone(),
+            p.machine_label
+                .clone()
+                .unwrap_or_else(|| p.machine_id.clone()),
+        )
+    });
     let chat = store
         .chats()
-        .create_chat(user.0.org_id, user.0.id, req.title.as_deref())
+        .create_chat_with_machine(
+            user.0.org_id,
+            user.0.id,
+            req.title.as_deref(),
+            req.project_id,
+            machine.as_ref().map(|(id, _)| id.as_str()),
+            machine.as_ref().map(|(_, label)| label.as_str()),
+        )
         .await?;
-    // Desktop apps auto-bind their own machine at creation so machine tools
-    // work from the first turn; the machine must be registered to this user
-    // or org, same as the bind endpoint.
-    let chat = match req.machine_id.as_deref() {
-        Some(mid) if !mid.is_empty() => {
+    // Desktop apps auto-bind their own machine at creation when no project
+    // chose the machine, so machine tools work from the first turn; the
+    // machine must be registered to this user or org, same as the bind
+    // endpoint.
+    let chat = match (req.machine_id.as_deref(), project) {
+        (Some(mid), None) if !mid.is_empty() => {
             if !state.machine_bindable(mid, user.0.id, user.0.org_id).await {
                 return Err(ApiError::bad_request("unknown machine"));
             }
@@ -251,27 +286,57 @@ async fn list(
     Ok(Json(serde_json::json!({ "chats": chats })))
 }
 
-/// Sets (or clears) the chat's workspace folder. Owner-scoped; the bound
-/// desktop pushes its folder choice here so web and other machines render it.
-async fn set_dir(
+/// Sets (or clears, with null) the chat's project. Owner-scoped; the
+/// composer chip binds the chat to a named workspace folder so every device
+/// renders the grouping and the runner resolves the folder.
+async fn set_project(
     State(state): State<AppState>,
     user: AuthUser,
     Path(chat_id): Path<Uuid>,
     Json(req): Json<Value>,
 ) -> Result<Json<Chat>, ApiError> {
     let store = state.store().await?;
-    store
-        .chats()
-        .get_chat(user.0.org_id, chat_id, &user.0)
-        .await?;
-    let dir = req["dir"].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+    let project = match req.get("project_id").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => {
+            let id: Uuid = s
+                .parse()
+                .map_err(|_| ApiError::bad_request("bad project_id"))?;
+            Some(store.projects().get(user.0.org_id, id, &user.0).await?)
+        }
+        _ => None,
+    };
+    let project_id = project.as_ref().map(|p| p.id);
+    // Bind-time machine inheritance: the chat's machine follows the
+    // project's (the project's label comes from the machines registry) in
+    // the same UPDATE as the binding; unbinding keeps the current machine.
+    let machine = project.as_ref().map(|p| {
+        (
+            p.machine_id.clone(),
+            p.machine_label
+                .clone()
+                .unwrap_or_else(|| p.machine_id.clone()),
+        )
+    });
     let chat = store
         .chats()
-        .set_project_dir(user.0.org_id, chat_id, &user.0, dir.as_deref())
+        .set_project(
+            user.0.org_id,
+            chat_id,
+            &user.0,
+            project_id,
+            machine
+                .as_ref()
+                .map(|(id, label)| (id.as_str(), Some(label.as_str()))),
+        )
         .await?;
-    // Every device renders the folder chip: push a fresh thread list to the
-    // caller's live sockets so the chip appears without a reload.
-    let broadcast = state.feeds.lock().unwrap().get(&user.0.id).map(|f| f.broadcast.clone());
+    // Every device renders the project grouping: push a fresh thread list to
+    // the caller's live sockets so the sidebar updates without a reload.
+    let broadcast = state
+        .feeds
+        .lock()
+        .unwrap()
+        .get(&user.0.id)
+        .map(|f| f.broadcast.clone());
     if let Some(broadcast) = broadcast {
         if let Ok(chats) = crate::http::feed::thread_list(&state, user.0.org_id, user.0.id).await {
             let _ = broadcast.send(WsServerMsg::ThreadList { chats });

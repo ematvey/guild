@@ -29,37 +29,49 @@ function row(seq: number, event: ThreadEvent): ThreadEventRow {
 const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
 
 describe("parseChatRoute / chatRoutePath", () => {
+  const roundTrip = (path: string) =>
+    chatRoutePath(
+      parseChatRoute(path).chatId,
+      parseChatRoute(path).projectId,
+      parseChatRoute(path).overlay,
+    );
+
   it("round-trips every route shape", () => {
     for (const path of [
       "/",
       "/thread/abc-123",
       "/thread/abc-123/device",
+      "/project/p1",
+      "/project/p1/thread/abc-123",
       "/device",
       "/settings",
       "/settings/models",
       "/settings/integrations/my-slug",
     ]) {
-      expect(chatRoutePath(parseChatRoute(path).chatId, parseChatRoute(path).overlay)).toBe(path);
+      expect(roundTrip(path)).toBe(path);
     }
   });
 
   it("parses thread + overlay combinations", () => {
-    expect(parseChatRoute("/thread/x")).toEqual({ chatId: "x", overlay: null });
+    expect(parseChatRoute("/thread/x")).toEqual({ chatId: "x", projectId: null, overlay: null });
     expect(parseChatRoute("/thread/x/device")).toEqual({
       chatId: "x",
+      projectId: null,
       overlay: { kind: "device" },
     });
     expect(parseChatRoute("/settings/integrations/a/b")).toEqual({
       chatId: null,
+      projectId: null,
       overlay: { kind: "settings", section: "integrations", detail: "a/b" },
     });
     // trailing slashes and empty segments are ignored
-    expect(parseChatRoute("/thread/x/")).toEqual({ chatId: "x", overlay: null });
-    expect(parseChatRoute("")).toEqual({ chatId: null, overlay: null });
+    expect(parseChatRoute("/thread/x/")).toEqual({ chatId: "x", projectId: null, overlay: null });
+    expect(parseChatRoute("")).toEqual({ chatId: null, projectId: null, overlay: null });
     // a detail carrying an encoded slash parses to the full id and the
     // rebuilt path is parse-stable from there on
     const once = chatRoutePath(
       parseChatRoute("/settings/integrations/my%2Fslug").chatId,
+      parseChatRoute("/settings/integrations/my%2Fslug").projectId,
       parseChatRoute("/settings/integrations/my%2Fslug").overlay,
     );
     expect(parseChatRoute(once).overlay).toEqual({
@@ -67,6 +79,19 @@ describe("parseChatRoute / chatRoutePath", () => {
       section: "integrations",
       detail: "my/slug",
     });
+  });
+
+  it("parses the project filter, with and without an open thread", () => {
+    expect(parseChatRoute("/project/p1")).toEqual({ chatId: null, projectId: "p1", overlay: null });
+    expect(parseChatRoute("/project/p1/thread/c1")).toEqual({
+      chatId: "c1",
+      projectId: "p1",
+      overlay: null,
+    });
+    // a bare /thread/<id> has no project filter (deep link)
+    expect(parseChatRoute("/thread/c1").projectId).toBeNull();
+    // /project without an id is not a project route
+    expect(parseChatRoute("/project")).toEqual({ chatId: null, projectId: null, overlay: null });
   });
 });
 

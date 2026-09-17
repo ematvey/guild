@@ -3,6 +3,7 @@
 
 pub mod fs;
 pub mod shell;
+pub mod workspace;
 
 use async_trait::async_trait;
 use protocol::api::ToolSpec;

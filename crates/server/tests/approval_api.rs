@@ -37,7 +37,7 @@ async fn setup() -> (
     let user_row = store.identity().validate_session(&token).await.unwrap();
     let chat = store
         .chats()
-        .create_chat(user_row.org_id, user_row.id, Some("approval test"))
+        .create_chat(user_row.org_id, user_row.id, Some("approval test"), None)
         .await
         .unwrap();
     let app = guild_server::build_router(ts.state.clone());
