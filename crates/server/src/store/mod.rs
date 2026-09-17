@@ -12,6 +12,7 @@ pub mod machines;
 pub mod oidc;
 pub mod org_kv;
 pub mod pairing;
+pub mod projects;
 pub mod registry;
 pub mod releases;
 pub mod routines;
@@ -57,7 +58,7 @@ impl Store {
             .execute(pool)
             .await?;
 
-        for (name, sql) in MIGRATIONS {
+        for (name, sql) in migrations() {
             let hash = migration_hash(sql);
             let mut tx = pool.begin().await?;
             // Advisory lock held to the end of the transaction: a second
@@ -142,6 +143,10 @@ impl Store {
         chats::ChatStore { pool: &self.pool }
     }
 
+    pub fn projects(&self) -> projects::ProjectStore<'_> {
+        projects::ProjectStore { pool: &self.pool }
+    }
+
     pub fn thread(&self) -> thread::ThreadStore<'_> {
         thread::ThreadStore { pool: &self.pool }
     }
@@ -210,7 +215,9 @@ impl Store {
 /// Advisory-lock id for the migration runner: one fixed bigint every
 /// instance of this binary agrees on (ASCII "GUILDMGR" for recognizability
 /// in pg_locks).
-const MIGRATIONS: [(&str, &str); 46] = [
+/// Migrations are append-only; the split lets tests stage a pre-wipe
+/// database (everything through 0046) and then apply 0047+ for real.
+pub static MIGRATIONS_UPTO_0046: [(&str, &str); 46] = [
     (
         "0001_identity",
         include_str!("../../migrations/0001_identity.sql"),
@@ -394,6 +401,28 @@ const MIGRATIONS: [(&str, &str); 46] = [
     ),
 ];
 
+pub static MIGRATIONS_FROM_0047: [(&str, &str); 3] = [
+    (
+        "0047_projects",
+        include_str!("../../migrations/0047_projects.sql"),
+    ),
+    (
+        "0048_wipe_chats",
+        include_str!("../../migrations/0048_wipe_chats.sql"),
+    ),
+    (
+        "0049_chatgen_inv_cleanup",
+        include_str!("../../migrations/0049_chatgen_inv_cleanup.sql"),
+    ),
+];
+
+/// The full migration set, in filename order.
+fn migrations() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
+    MIGRATIONS_UPTO_0046
+        .iter()
+        .chain(MIGRATIONS_FROM_0047.iter())
+}
+
 const MIGRATION_LOCK_ID: i64 = 0x4755_494C_444D_4752;
 /// Serializes test-template database builds (connect_test fast path).
 const TEST_TEMPLATE_LOCK_ID: i64 = 0x4755_494C_4444_5450;
@@ -408,7 +437,7 @@ fn migration_hash(sql: &str) -> String {
 
 #[cfg(feature = "test-support")]
 mod test_db {
-    use super::{migration_hash, Store, MIGRATIONS, TEST_TEMPLATE_LOCK_ID};
+    use super::{migration_hash, Store, TEST_TEMPLATE_LOCK_ID};
     use tokio::sync::OnceCell;
 
     /// Host Postgres shared by all tests on this box: the neutral host
@@ -534,7 +563,7 @@ mod test_db {
         async fn ensure_test_template(admin: &sqlx::PgPool) -> anyhow::Result<String> {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
-            for (name, sql) in MIGRATIONS {
+            for (name, sql) in super::migrations() {
                 hasher.update(name.as_bytes());
                 hasher.update([0]);
                 hasher.update(migration_hash(sql).as_bytes());

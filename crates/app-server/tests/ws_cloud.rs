@@ -16,7 +16,7 @@ async fn cloud_command_uses_ws_for_output_and_json_for_acknowledgment() {
     let user = store.identity().validate_session(&token).await.unwrap();
     let chat = store
         .chats()
-        .create_chat(user.org_id, user.id, Some("cloud"))
+        .create_chat(user.org_id, user.id, Some("cloud"), None)
         .await
         .unwrap()
         .id;

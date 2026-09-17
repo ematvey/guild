@@ -12,6 +12,7 @@
 use futures::{SinkExt, StreamExt};
 use guild_app_server::jsonrpc_loop::{run_connection, Shared};
 use protocol::ws::{WsClientMsg, WsServerMsg};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -210,9 +211,12 @@ pub struct GuildState {
     /// Machine identity — the webview's localStorage id (it keys the chat
     /// bindings), passed in at boot. Presence starts only once it is set.
     machine_id: Mutex<Option<String>>,
-    /// chat_id → workspace folder for local tool execution (pushed by the
-    /// webview's run-in-folder state).
-    dirs: Mutex<HashMap<String, String>>,
+    /// Distro → /etc/os-release PRETTY_NAME, fetched lazily (first
+    /// list_wsl_distros call) and cached for the app run.
+    wsl_pretty: Mutex<HashMap<String, Option<String>>>,
+    /// Distro → $HOME, fetched lazily on first specifier use, cached for
+    /// the app run.
+    wsl_homes: Mutex<HashMap<String, Option<String>>>,
     /// chat_id → in-flight mirror.
     mirrors: Mutex<HashMap<String, Mirror>>,
     /// Bump to force the link task to re-read its config (login, sign-out,
@@ -246,6 +250,77 @@ impl GuildState {
         f(m);
         m.seq
     }
+}
+
+// ---- WSL + local filesystem browsing (project folder sources, spec §5) ----
+
+/// One WSL distro as a folder source.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Distro {
+    pub name: String,
+    pub running: bool,
+    pub pretty_name: Option<String>,
+}
+
+/// One row of a directory listing.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ListEntry {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+/// Runs wsl.exe with clean UTF-8 output; None on a non-Windows host, a
+/// missing wsl.exe, or a failed command.
+#[cfg(windows)]
+fn run_wsl(args: &[&str]) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = std::process::Command::new("wsl.exe")
+        .env("WSL_UTF8", "1")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(not(windows))]
+fn run_wsl(_args: &[&str]) -> Option<String> {
+    None
+}
+
+/// One data row of `wsl --list --verbose` output: (name, running). The
+/// header row and blank lines are skipped; a leading `*` (default distro)
+/// is stripped.
+fn parse_wsl_list_row(line: &str) -> Option<(String, bool)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with("NAME") {
+        return None;
+    }
+    let mut tokens = trimmed.trim_start_matches('*').split_whitespace();
+    let name = tokens.next()?.to_string();
+    let state = tokens.next().unwrap_or("");
+    Some((name, state.eq_ignore_ascii_case("running")))
+}
+
+/// Parses `wsl --list --verbose` output into (name, running) rows. NUL
+/// separators are stripped defensively (older wsl.exe emits UTF-16-ish
+/// output even with WSL_UTF8=1).
+fn parse_wsl_list(raw: &str) -> Vec<(String, bool)> {
+    let clean: String = raw.chars().filter(|c| *c != '\0').collect();
+    clean.lines().filter_map(parse_wsl_list_row).collect()
+}
+
+/// PRETTY_NAME of an /etc/os-release body (first match, quotes stripped).
+fn parse_pretty_name(os_release: &str) -> Option<String> {
+    os_release
+        .lines()
+        .find_map(|line| line.strip_prefix("PRETTY_NAME="))
+        .map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn machine_name() -> String {
@@ -711,17 +786,17 @@ async fn ws_session(
                 match incoming {
                     Ok(message) => match message {
                             WsServerMsg::LiveFrame { chat_id, machine_id: frame_machine_id, event, .. } => {
-                                let data = websocket_frame_data(chat_id, frame_machine_id, event);
+                                let data = websocket_frame_data(chat_id, frame_machine_id, event, None);
                                 if let Err(error) = handle_app_frame(
                                     state, app, machine_id, &data, &outbound, false,
                                 ).await {
                                     ipc_trace("link", &format!("frame error: {error}"));
                                 }
                             }
-                            WsServerMsg::ToolDispatch { chat_id, call_id, name, arguments } => {
+                            WsServerMsg::ToolDispatch { chat_id, call_id, name, arguments, workdir } => {
                                 let data = websocket_frame_data(chat_id, Some(machine_id.into()), protocol::api::StreamEvent::ToolStarted {
                                     call_id, name, arguments, executor: protocol::api::ToolExecutor::Client, kind: None,
-                                });
+                                }, workdir);
                                 let _ = handle_app_frame(state, app, machine_id, &data, &outbound, true).await;
                             }
                             WsServerMsg::ChatStatus { chat_id, generating } => {
@@ -847,13 +922,17 @@ fn websocket_frame_data(
     chat_id: uuid::Uuid,
     machine_id: Option<String>,
     event: protocol::api::StreamEvent,
+    workdir: Option<String>,
 ) -> String {
-    serde_json::json!({
+    let mut v = serde_json::json!({
         "chat_id": chat_id,
         "machine_id": machine_id,
         "event": event,
-    })
-    .to_string()
+    });
+    if let Some(workdir) = workdir {
+        v["workdir"] = workdir.into();
+    }
+    v.to_string()
 }
 
 /// Handles one WS frame: mirrors it for late webviews and — for client
@@ -898,11 +977,12 @@ async fn handle_app_frame(
             let call_id = ev["call_id"].as_str().unwrap_or_default().to_string();
             let name = ev["name"].as_str().unwrap_or_default().to_string();
             let args = ev["arguments"].as_str().unwrap_or("{}").to_string();
-            let st = state.clone();
+            // The dispatch carries the workspace: the chat's project folder.
+            let workdir = v["workdir"].as_str().map(str::to_string);
             let outbound = outbound.clone();
             let chat = chat_id.clone();
             tokio::spawn(async move {
-                if let Err(e) = execute_tool(&st, &outbound, &chat, &call_id, &name, &args).await {
+                if let Err(e) = execute_tool(&outbound, &chat, &call_id, &name, &args, workdir).await {
                     ipc_trace("tool", &format!("{name} {call_id} failed: {e}"));
                 }
             });
@@ -911,20 +991,19 @@ async fn handle_app_frame(
     Ok(())
 }
 
-/// Runs one client tool in the chat's workspace folder and sends its result
-/// over the standing machine socket.
+/// Runs one client tool in the dispatch's workspace folder and sends its
+/// result over the standing machine socket.
 async fn execute_tool(
-    state: &Arc<GuildState>,
     outbound: &OutboundQueue,
     chat_id: &str,
     call_id: &str,
     name: &str,
     args_json: &str,
+    workdir: Option<String>,
 ) -> Result<(), String> {
-    let dir = state.dirs.lock().unwrap().get(chat_id).cloned();
     let args: Value = serde_json::from_str(args_json).unwrap_or(serde_json::json!({}));
-    let outcome: Result<Value, String> = match dir {
-        None => Err("no workspace folder is set for this chat — pick one with 'Run in folder…' in the composer".to_string()),
+    let outcome: Result<Value, String> = match workdir {
+        None => Err("no workspace folder is set for this chat — pick a project with 'Choose project' in the composer".to_string()),
         Some(dir) => {
             let registry = guild_core::tools::ToolRegistry::builtins();
             match registry.get(name) {
@@ -1024,24 +1103,102 @@ pub mod commands {
         Ok(())
     }
 
-    /// The webview pushes the run-in-folder state (per chat) so the app
-    /// process can execute tools — including while the window is closed.
+    /// WSL distros on this machine, for the project folder sources. Each
+    /// row: `wsl --list --verbose` name + running state, plus the distro's
+    /// PRETTY_NAME (lazy, cached per distro). Runs on the blocking pool —
+    /// one wsl.exe spawn per uncached distro would otherwise stall the async
+    /// runtime; the cache lock is never held across a spawn. Windows only;
+    /// every other platform returns an empty list.
     #[tauri::command]
-    pub async fn set_chat_dir(
-        state: State<'_, Arc<GuildState>>,
-        chat_id: String,
-        dir: Option<String>,
-    ) -> Result<(), String> {
-        let mut dirs = state.dirs.lock().unwrap();
-        match dir {
-            Some(d) => {
-                dirs.insert(chat_id, d);
+    pub async fn list_wsl_distros(state: State<'_, Arc<GuildState>>) -> Result<Vec<Distro>, String> {
+        let state = state.inner().clone();
+        tokio::task::spawn_blocking(move || {
+            let Some(raw) = run_wsl(&["--list", "--verbose"]) else {
+                return Ok(vec![]);
+            };
+            let mut out = Vec::new();
+            for (name, running) in parse_wsl_list(&raw) {
+                if name.starts_with("docker-desktop") {
+                    continue;
+                }
+                // Per-entry lock scope: drop the guard before spawning wsl.exe.
+                let cached = state.wsl_pretty.lock().unwrap().get(&name).cloned();
+                let pretty_name = match cached {
+                    Some(cached) => cached,
+                    None => {
+                        let pretty = run_wsl(&["-d", &name, "--exec", "cat", "/etc/os-release"])
+                            .as_deref()
+                            .and_then(parse_pretty_name);
+                        state
+                            .wsl_pretty
+                            .lock()
+                            .unwrap()
+                            .insert(name.clone(), pretty.clone());
+                        pretty
+                    }
+                };
+                out.push(Distro { name, running, pretty_name });
             }
-            None => {
-                dirs.remove(&chat_id);
+            Ok(out)
+        })
+        .await
+        .map_err(|e| format!("wsl distro listing failed: {e}"))?
+    }
+
+    /// The distro's default user's home directory (LINUX path, e.g.
+    /// /home/me), for `~` expansion in the path specifier. Cached per
+    /// distro; the lookup runs on the blocking pool (one wsl.exe spawn on
+    /// the first call), with the cache lock never held across the spawn.
+    #[tauri::command]
+    pub async fn wsl_home(
+        state: State<'_, Arc<GuildState>>,
+        distro: String,
+    ) -> Result<Option<String>, String> {
+        let state = state.inner().clone();
+        tokio::task::spawn_blocking(move || {
+            let cached = state.wsl_homes.lock().unwrap().get(&distro).cloned();
+            if let Some(cached) = cached {
+                return Ok(cached);
+            }
+            let home = run_wsl(&["-d", &distro, "--exec", "sh", "-c", "echo $HOME"])
+                .map(|raw| raw.trim().to_string())
+                .filter(|h| h.starts_with('/') && !h.is_empty());
+            state
+                .wsl_homes
+                .lock()
+                .unwrap()
+                .insert(distro, home.clone());
+            Ok(home)
+        })
+        .await
+        .map_err(|e| format!("wsl home lookup failed: {e}"))?
+    }
+
+    /// Directory listing for the path specifier: unfiltered (dotfiles
+    /// included), dirs first, then files, each alphabetically. Works over
+    /// `\\wsl.localhost\<distro>\…` UNC paths on Windows and plain paths
+    /// elsewhere.
+    #[tauri::command]
+    pub async fn list_dir(path: String) -> Result<Vec<ListEntry>, String> {
+        let (mut dirs, mut files): (Vec<ListEntry>, Vec<ListEntry>) = (Vec::new(), Vec::new());
+        for entry in std::fs::read_dir(&path).map_err(|e| format!("{path}: {e}"))? {
+            let Ok(entry) = entry else { continue };
+            let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
+            let item = ListEntry {
+                name: entry.file_name().to_string_lossy().to_string(),
+                is_dir,
+            };
+            if is_dir {
+                dirs.push(item);
+            } else {
+                files.push(item);
             }
         }
-        Ok(())
+        let key = |e: &ListEntry| e.name.to_lowercase();
+        dirs.sort_by(|a, b| key(a).cmp(&key(b)));
+        files.sort_by(|a, b| key(a).cmp(&key(b)));
+        dirs.extend(files);
+        Ok(dirs)
     }
 
     /// In-flight mirror catch-up for a webview opening (or reloading) a chat
@@ -1359,7 +1516,9 @@ pub fn run() {
             commands::rpc_submit,
             commands::rpc_poll,
             commands::set_machine_identity,
-            commands::set_chat_dir,
+            commands::list_wsl_distros,
+            commands::wsl_home,
+            commands::list_dir,
             commands::chat_snapshot,
             commands::machine_presence,
             commands::install_update,
@@ -1426,7 +1585,7 @@ pub fn run() {
             }
 
             // The single standing server connection: shares the managed
-            // state (machine identity, dirs, mirrors) with the commands.
+            // state (machine identity, WSL caches, mirrors) with the commands.
             {
                 let guild: State<Arc<GuildState>> = app.state();
                 let guild = guild.inner().clone();
@@ -1801,10 +1960,60 @@ mod tests {
             protocol::api::StreamEvent::Delta {
                 content: "hello".into(),
             },
+            None,
         );
         let value: Value = serde_json::from_str(&data).unwrap();
         assert_eq!(value["chat_id"], uuid::Uuid::nil().to_string());
         assert_eq!(value["machine_id"], "machine");
         assert_eq!(value["event"]["type"], "delta");
+        assert!(value.get("workdir").is_none());
+    }
+
+    #[test]
+    fn dispatch_frame_carries_workdir() {
+        let data = websocket_frame_data(
+            uuid::Uuid::nil(),
+            Some("machine".into()),
+            protocol::api::StreamEvent::Delta {
+                content: "hi".into(),
+            },
+            Some("\\\\wsl.localhost\\arch\\home\\me".into()),
+        );
+        let value: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(value["workdir"], "\\\\wsl.localhost\\arch\\home\\me");
+    }
+
+    #[test]
+    fn wsl_list_rows_parse_name_and_running_state() {
+        let raw = "  NAME            STATE           VERSION\n\
+                   * Ubuntu-22.04    Running         2\n\
+                     docker-desktop  Stopped         2\n\
+                   \n";
+        assert_eq!(
+            parse_wsl_list(raw),
+            vec![
+                ("Ubuntu-22.04".to_string(), true),
+                ("docker-desktop".to_string(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn wsl_list_survives_nul_separators_and_uses_lowercase_running() {
+        let raw = "N\u{0}A\u{0}M\u{0}E\u{0}\n\u{0} a\u{0}r\u{0}c\u{0}h\u{0} \u{0}R\u{0}u\u{0}n\u{0}n\u{0}i\u{0}n\u{0}g\u{0} \u{0}2\u{0}\n\u{0}";
+        assert_eq!(
+            parse_wsl_list(raw),
+            vec![("arch".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn pretty_name_parses_from_os_release() {
+        assert_eq!(
+            parse_pretty_name("NAME=\"Arch Linux\"\nPRETTY_NAME=\"Arch Linux\"\nID=arch\n"),
+            Some("Arch Linux".to_string())
+        );
+        assert_eq!(parse_pretty_name("ID=arch\n"), None);
+        assert_eq!(parse_pretty_name("PRETTY_NAME=\n"), None);
     }
 }

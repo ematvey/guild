@@ -267,10 +267,11 @@ pub struct ChatRunPayload {
     /// client-tool termination detection); `None` → timeout-only fallback.
     #[serde(default)]
     pub client_id: Option<String>,
-    /// Workspace directory the client executes machine tools in; included
-    /// in the system prompt when present.
+    /// The chat's project (named workspace folder); the folder is resolved
+    /// journaled from the projects table and names the workspace in the
+    /// system prompt + the tool dispatches.
     #[serde(default)]
-    pub project_dir: Option<String>,
+    pub project_id: Option<Uuid>,
     /// The chat's bound executor machine (machine tools run ONLY there).
     #[serde(default)]
     pub machine_id: Option<String>,
@@ -540,6 +541,90 @@ pub const APPROVAL_POLICY_PROMPT_KEY: &str = "assistant_approval_policy_prompt";
 /// potentially unsafe actions). Admin-tunable in Assistant settings.
 pub const DEFAULT_APPROVAL_POLICY_PROMPT: &str = "You are the safety gate for an AI assistant that runs tools on the user's machine. You are given one proposed tool action as JSON. Decide whether it is safe to run automatically, without asking the user first.\n\nApprove routine, low-risk actions: reading files, ordinary read-only shell commands (ls, dir, cat, git status, git log, ping, date), writing or editing files inside the user's workspace, web searches, and fetching public URLs.\n\nAsk the user when the action is potentially unsafe: destructive or irreversible operations (deleting files or data, force-pushing, dropping or truncating databases, factory resets), anything touching files outside the workspace or system locations, installing or upgrading software, killing processes or services, sending credentials or secrets anywhere, spending money, sending messages or email on the user's behalf, or anything unusual for a coding assistant.\n\nReply with ONLY a JSON object, no other text: {\"approve\": true, \"reason\": \"one short sentence\"} where approve=true means run it silently and approve=false means the user must be asked first.";
 
+/// The workspace reference resolved from the chat's project: folder plus
+/// the machine's registry label.
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub(crate) struct WorkspaceRef {
+    pub folder: String,
+    pub machine_label: Option<String>,
+}
+
+/// Pure helper: a WSL UNC folder (`\\wsl.localhost\<distro>\…`, the legacy
+/// `\\wsl$\<distro>\…`, either slash direction, case-insensitive, or the
+/// `\\?\UNC\` device form Windows canonicalize returns) parses to the
+/// distro and the inner Linux path. Any other path is not WSL. Mirrors
+/// guild-core's `workspace::parse_wsl` — the same literal must classify the
+/// same way here and in the tools.
+pub(crate) fn parse_wsl_unc(folder: &str) -> Option<(String, String)> {
+    let mut norm = folder.replace('\\', "/");
+    // Device-form UNC: treat it as the plain `//` form, case-insensitively.
+    // Byte-wise so a multibyte character straddling the slice boundary
+    // cannot panic.
+    if norm.as_bytes().get(..8).is_some_and(|p| p.eq_ignore_ascii_case(b"//?/unc/")) {
+        norm = format!("//{}", &norm[8..]);
+    }
+    let low = norm.to_ascii_lowercase();
+    const P_STD: &str = "//wsl.localhost/";
+    const P_LEGACY: &str = "//wsl$/";
+    let after = if low.starts_with(P_STD) {
+        P_STD.len()
+    } else if low.starts_with(P_LEGACY) {
+        P_LEGACY.len()
+    } else {
+        return None;
+    };
+    let mut parts = norm[after..].split('/').filter(|p| !p.is_empty());
+    let distro = parts.next()?;
+    let inner = format!("/{}", parts.collect::<Vec<_>>().join("/"));
+    Some((distro.to_string(), inner))
+}
+
+/// Journaled project resolution: one org-scoped read of the project's
+/// folder plus its machine's registry label. The ChatRunner's turn start
+/// calls this inside `ctx.run`; tests pin the dispatch workdir through it.
+pub(crate) async fn resolve_workspace(
+    state: &AppState,
+    org_id: Uuid,
+    project_id: Option<Uuid>,
+) -> Result<Option<WorkspaceRef>, ApiError> {
+    let Some(project_id) = project_id else {
+        return Ok(None);
+    };
+    let store = state.store().await?;
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT p.folder, m.label \
+         FROM projects p \
+         LEFT JOIN machines m ON m.machine_id = p.machine_id \
+         WHERE p.id = $1 AND p.org_id = $2",
+    )
+    .bind(project_id)
+    .bind(org_id)
+    .fetch_optional(store.pool())
+    .await?;
+    Ok(row.map(|(folder, machine_label)| WorkspaceRef {
+        folder,
+        machine_label,
+    }))
+}
+
+/// Pure helper: the system-prompt sentence naming the workspace. A WSL UNC
+/// folder is parsed so the model sees the inner Linux path and knows shell
+/// commands run inside the distro; a plain folder keeps the plain sentence.
+pub(crate) fn workspace_sentence(folder: &str, machine_label: Option<&str>) -> String {
+    match parse_wsl_unc(folder) {
+        Some((distro, inner)) => {
+            let machine = machine_label
+                .map(|l| format!(" on machine `{l}`"))
+                .unwrap_or_default();
+            format!(
+                " The workspace is `{inner}` inside WSL distro `{distro}`{machine}; \
+                 shell commands run inside that distro."
+            )
+        }
+        None => format!(" The workspace directory is {folder}."),
+    }
+}
+
 /// Server-owned system prompt (the client never sends one). Without it small
 /// models fall back to generic web-assistant behavior even with the full tool
 /// surface declared — they need the role, the workspace, and when to use
@@ -550,7 +635,7 @@ fn build_system_prompt(
     org_prompt: Option<&str>,
     client_tools: bool,
     has_web_search: bool,
-    project_dir: Option<&str>,
+    workspace: Option<&WorkspaceRef>,
     integrations_index: &str,
     skills_index: &str,
 ) -> String {
@@ -580,8 +665,8 @@ fn build_system_prompt(
              the workspace.",
         );
     }
-    if let Some(dir) = project_dir {
-        s.push_str(&format!(" The workspace directory is {dir}."));
+    if let Some(ws) = workspace {
+        s.push_str(&workspace_sentence(&ws.folder, ws.machine_label.as_deref()));
     }
     if !integrations_index.is_empty() {
         s.push_str(" Enabled integrations (their tools are discovered on demand):");
@@ -1470,6 +1555,25 @@ impl ChatRunner {
         if req.client_tools || req.machine_id.is_some() {
             tool_specs.extend(protocol::api::client_tool_specs());
         }
+        // Journaled: resolve the chat's project (workspace folder + the
+        // machine's registry label) — the approval-join pattern: one SQL
+        // read whose result is journaled, so replay stays deterministic
+        // even if the row changes later.
+        let st = state.clone();
+        let org = req.org_id;
+        let project_id = req.project_id;
+        let workspace: Option<WorkspaceRef> = ctx
+            .run(move || {
+                let state = st.clone();
+                async move {
+                    let workspace = resolve_workspace(&state, org, project_id)
+                        .await
+                        .map_err(api_err)?;
+                    Ok(Json(workspace))
+                }
+            })
+            .await?
+            .into_inner();
         let system = {
             // Journaled: resolve the org's admin-configured assistant persona
             // prompt (falls back to the built-in default when unset).
@@ -1494,7 +1598,7 @@ impl ChatRunner {
                 org_prompt.as_deref(),
                 req.client_tools,
                 has_web_search,
-                req.project_dir.as_deref(),
+                workspace.as_ref(),
                 &plugin_turns
                     .iter()
                     .map(integrations::index_line)
@@ -1927,6 +2031,7 @@ impl ChatRunner {
                         req.machine_id.clone(),
                         req.machine_label.clone(),
                         req.origin_machine_id.clone(),
+                        workspace.as_ref().map(|w| w.folder.clone()),
                     )
                     .await?;
                     (
@@ -2627,6 +2732,7 @@ async fn client_tool_step(
     machine_id: Option<String>,
     machine_label: Option<String>,
     origin_machine_id: Option<String>,
+    workdir: Option<String>,
 ) -> HandlerResult<ToolResultPayload> {
     // Resolve the executor machine. Journaled ctx.run snapshots: the result
     // replays deterministically even if the in-memory registry changes
@@ -2740,7 +2846,15 @@ async fn client_tool_step(
     ctx.set(&state_key(&call.id), awakeable_id.clone());
     // Journaled: notify attached clients that this call must run client-side.
     let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
-    let done = note_pending_tool(state, chat_id, &call.id, &call.name, &args_json, Some(&mid));
+    let done = note_pending_tool(
+        state,
+        chat_id,
+        &call.id,
+        &call.name,
+        &args_json,
+        Some(&mid),
+        workdir.as_deref(),
+    );
     let tx2 = tx.clone();
     let call_id = call.id.clone();
     let name = call.name.clone();
@@ -3357,13 +3471,140 @@ mod tests {
 
     #[test]
     fn system_prompt_org_persona_replaces_default_only() {
-        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some("/w"), "", "");
+        let ws = WorkspaceRef {
+            folder: "/w".into(),
+            machine_label: None,
+        };
+        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some(&ws), "", "");
         assert!(p.starts_with("You are GLaDOS."));
         assert!(!p.contains("helpful assistant"));
         // Operational instructions are appended regardless of the persona.
         assert!(p.contains("You have tools"));
         assert!(p.contains("web_search"));
         assert!(p.contains("The workspace directory is /w"));
+    }
+
+    #[test]
+    fn workspace_sentence_plain_folder_keeps_today_shape() {
+        assert_eq!(
+            workspace_sentence(r"C:\code\web", Some("devbox")),
+            r" The workspace directory is C:\code\web."
+        );
+        assert!(!workspace_sentence(r"C:\code\web", None).contains("WSL"));
+    }
+
+    #[test]
+    fn workspace_sentence_wsl_unc_names_distro_inner_path_and_machine() {
+        let (distro, inner) =
+            parse_wsl_unc(r"\\wsl.localhost\Ubuntu-22.04\home\u\repo").unwrap();
+        assert_eq!(distro, "Ubuntu-22.04");
+        assert_eq!(inner, "/home/u/repo");
+        let s = workspace_sentence(r"\\wsl.localhost\Ubuntu-22.04\home\u\repo", Some("devbox"));
+        assert!(s.contains(
+            "The workspace is `/home/u/repo` inside WSL distro `Ubuntu-22.04` on machine `devbox`; shell commands run inside that distro."
+        ));
+        // Legacy wsl$ share and missing label both parse.
+        assert_eq!(
+            parse_wsl_unc(r"\\wsl$\archlinux\srv\code").unwrap(),
+            ("archlinux".to_string(), "/srv/code".to_string())
+        );
+        let s = workspace_sentence(r"\\wsl.localhost\archlinux\srv", None);
+        assert!(s.contains("distro `archlinux`;"));
+        assert!(!s.contains("on machine"));
+    }
+
+    #[test]
+    fn wsl_unc_parse_matrix() {
+        // Not WSL.
+        assert_eq!(parse_wsl_unc(r"C:\code"), None);
+        assert_eq!(parse_wsl_unc(r"\\server\share"), None);
+        assert_eq!(parse_wsl_unc(r"\\wsl.localhost\"), None);
+        // Near-miss prefixes are not WSL (same verdict as guild-core).
+        assert_eq!(parse_wsl_unc(r"\\wsl.localhostx\Ubuntu\home"), None);
+        assert_eq!(parse_wsl_unc(r"\\wsl\Ubuntu\home"), None);
+        // Distro-only folder → the distro root.
+        assert_eq!(
+            parse_wsl_unc(r"\\wsl.localhost\archlinux").unwrap(),
+            ("archlinux".to_string(), "/".to_string())
+        );
+    }
+
+    #[test]
+    fn wsl_unc_parse_is_case_insensitive_and_device_form_aware() {
+        assert_eq!(
+            parse_wsl_unc(r"\\WSL.LOCALHOST\archlinux\root\work").unwrap(),
+            ("archlinux".to_string(), "/root/work".to_string())
+        );
+        assert_eq!(
+            parse_wsl_unc(r"\\Wsl$\Debian\home\x").unwrap(),
+            ("Debian".to_string(), "/home/x".to_string())
+        );
+        assert_eq!(
+            parse_wsl_unc(r"\\?\UNC\wsl.localhost\Ubuntu\home\me\proj").unwrap(),
+            ("Ubuntu".to_string(), "/home/me/proj".to_string())
+        );
+        // Forward slashes parse like backslashes.
+        assert_eq!(
+            parse_wsl_unc("//wsl.localhost/debian/home/x").unwrap(),
+            ("debian".to_string(), "/home/x".to_string())
+        );
+    }
+
+    /// The two WSL parsers must agree on every literal: the system prompt
+    /// (server `parse_wsl_unc`) and the tool routing (guild-core `classify`)
+    /// derive from the same shape, so a folder the tools route into a distro
+    /// is never described to the model as a plain directory (and vice versa).
+    #[test]
+    fn server_and_core_wsl_parsers_agree_on_every_literal() {
+        use guild_core::tools::workspace::{classify, to_inner};
+        use std::path::Path;
+        let literals = [
+            r"\\wsl.localhost\Ubuntu\home\me\proj",
+            r"\\wsl$\Ubuntu\home\me\proj",
+            r"\\WSL.LOCALHOST\archlinux\root\work",
+            r"\\Wsl$\Debian\home\x",
+            "//wsl.localhost/debian/home/x",
+            "//wsl$/fedora/home/x",
+            r"\\wsl.localhost\Ubuntu-22.04\home\me",
+            r"\\?\UNC\wsl.localhost\Ubuntu\home\me\proj",
+            r"\\?\UNC\WSL$\arch\srv",
+            r"\\wsl.localhost\archlinux",
+            r"\\wsl.localhost\",
+            r"\\wsl.localhostx\Ubuntu\home",
+            r"\\wsl\Ubuntu\home",
+            r"\\server\share",
+            r"C:\code\web",
+            "/home/me/proj",
+        ];
+        for literal in literals {
+            let server = parse_wsl_unc(literal);
+            let kind = classify(Path::new(literal));
+            match (&server, &kind) {
+                (
+                    Some((distro, inner)),
+                    guild_core::tools::workspace::WorkspaceKind::Wsl {
+                        distro: core_distro,
+                    },
+                ) => {
+                    assert_eq!(distro, core_distro, "distro mismatch for {literal:?}");
+                    assert_eq!(
+                        to_inner(Path::new(literal)).as_deref(),
+                        Some(inner.as_str()),
+                        "inner-path mismatch for {literal:?}"
+                    );
+                }
+                (None, other) => assert!(
+                    !matches!(
+                        other,
+                        guild_core::tools::workspace::WorkspaceKind::Wsl { .. }
+                    ),
+                    "server says non-WSL but core says {other:?} for {literal:?}"
+                ),
+                (Some(_), other) => {
+                    panic!("server says WSL but core says {other:?} for {literal:?}")
+                }
+            }
+        }
     }
 
     #[test]

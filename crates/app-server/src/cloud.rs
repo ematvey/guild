@@ -169,6 +169,7 @@ impl CloudClient {
             .json(&CreateChatRequest {
                 title: title.map(Into::into),
                 machine_id: None,
+                project_id: None,
             })
             .send()
             .await?;
@@ -199,7 +200,7 @@ impl CloudClient {
             // suspend the turn until the server-side tool timeout
             client_tools: false,
             attachment_ids: Vec::new(),
-            project_dir: None,
+            project_id: None,
             skills_index: None,
         })
         .await

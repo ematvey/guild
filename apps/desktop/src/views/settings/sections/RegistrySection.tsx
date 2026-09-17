@@ -10,6 +10,7 @@ import { ArrowUpRight, Package } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../admin-api";
 import { rpcCall } from "../../../transport";
+import { resolveProjectDir } from "../resolve-project-dir";
 import { Button } from "@guild/ui/components/button";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
@@ -182,16 +183,10 @@ function ItemDetail({
   };
 
   const install = async () => {
-    const projectDir = (() => {
-      try {
-        return localStorage.getItem("guild.dir:last");
-      } catch {
-        return null;
-      }
-    })();
+    const projectDir = await resolveProjectDir();
     if (!projectDir) {
-      toast.error("Pick a project folder first", {
-        description: "Open a chat and choose a folder to install skills into it.",
+      toast.error("Create a project first", {
+        description: "Skills install into a project's folder; make one in the composer.",
       });
       return;
     }
