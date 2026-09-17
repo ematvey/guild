@@ -61,14 +61,16 @@ import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Spinner } from "@guild/ui/components/spinner";
 import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsWindow } from "./settings/SettingsWindow";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { CreateProjectDialog } from "./projects/CreateProjectDialog";
+import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
+import { chatProjectOf, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import {
   attachmentBlobUrl,
   rpcCall,
   machineId,
   postApproval,
-  pushChatDir,
   sendChatNoStream,
+  setChatProject,
   setMachineIdentity,
   uploadAttachment,
   type StreamFrame,
@@ -77,7 +79,9 @@ import {
   createChat,
   getChatApproval,
   listChats,
+  listMachines,
   listModels,
+  listProjects,
   markChatRead,
   createPairingToken,
   downloadRelease,
@@ -91,7 +95,9 @@ import {
   type ApprovalPolicy,
   type ChatApprovalMode,
   type ChatSummary,
+  type MachineInfo,
   type MessageAttachmentMeta,
+  type Project,
   type Release,
   type ThreadContext,
   type ThreadEventRow,
@@ -141,8 +147,10 @@ interface ToolBlock {
 
 /// URL-driven navigation: the pathname is the single source of truth for
 /// where the user is. Routes:
-///   /                          — new chat
+///   /                          — new chat (recents view)
 ///   /thread/<id>               — open thread
+///   /project/<id>              — sidebar filtered to one project
+///   /project/<id>/thread/<cid> — open thread within its project view
 ///   /device                    — device-setup dialog, optionally over a
 ///                                thread: /thread/<id>/device
 ///   /settings[/<section>[/<detail>]] — settings overlay (top-level; the
@@ -158,6 +166,8 @@ type ChatOverlay =
   | null;
 interface ChatRoute {
   chatId: string | null;
+  /** Sidebar project filter (deep-linked /project/<id>). */
+  projectId: string | null;
   overlay: ChatOverlay;
 }
 
@@ -168,22 +178,37 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     .filter(Boolean)
     .map(decodeURIComponent);
   let chatId: string | null = null;
+  let projectId: string | null = null;
+  if (parts[0] === "project" && parts[1]) {
+    projectId = parts[1];
+    parts.splice(0, 2);
+  }
   if (parts[0] === "thread" && parts[1]) {
     chatId = parts[1];
     parts.splice(0, 2);
   }
-  if (parts[0] === "device") return { chatId, overlay: { kind: "device" } };
+  if (parts[0] === "device") return { chatId, projectId, overlay: { kind: "device" } };
   if (parts[0] === "settings") {
     // Everything after the section is the sub-page id; each segment was
     // encoded separately, so a model id like "a/b" round-trips as one part.
     const detail = parts.length > 2 ? parts.slice(2).map(decodeURIComponent).join("/") : null;
-    return { chatId, overlay: { kind: "settings", section: parts[1] ?? null, detail } };
+    return { chatId, projectId, overlay: { kind: "settings", section: parts[1] ?? null, detail } };
   }
-  return { chatId, overlay: null };
+  return { chatId, projectId, overlay: null };
 };
 
-export const chatRoutePath = (chatId: string | null, overlay: ChatOverlay): string => {
-  const base = chatId ? `/thread/${encodeURIComponent(chatId)}` : "";
+export const chatRoutePath = (
+  chatId: string | null,
+  projectId: string | null,
+  overlay: ChatOverlay,
+): string => {
+  const base = projectId
+    ? `/project/${encodeURIComponent(projectId)}${
+        chatId ? `/thread/${encodeURIComponent(chatId)}` : ""
+      }`
+    : chatId
+      ? `/thread/${encodeURIComponent(chatId)}`
+      : "";
   if (overlay?.kind === "device") return `${base}/device`;
   // Settings is chat-independent — top-level URL even when opened over a
   // thread (the thread stays loaded; closing the overlay restores it).
@@ -639,25 +664,9 @@ function upsertThinking(
 /// browser they stay pending until the server-side timeout releases the turn.
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-/// Per-chat workspace folder ("run in folder"), desktop only: web clients
-/// never show the picker and never send a project_dir. `null` chatId is the
-/// last-used default a new chat starts from.
-const dirKey = (chatId: string | null) => (chatId ? `guild.dir:${chatId}` : "guild.dir:last");
-const storedDir = (chatId: string | null): string | null => {
-  try {
-    return localStorage.getItem(dirKey(chatId));
-  } catch {
-    return null;
-  }
-};
-const saveDir = (chatId: string | null, dir: string | null) => {
-  try {
-    if (dir) localStorage.setItem(dirKey(chatId), dir);
-    else localStorage.removeItem(dirKey(chatId));
-  } catch {
-    /* storage unavailable — the choice just won't survive a reload */
-  }
-};
+/// Per-chat workspace state lives server-side now: the chat's project
+/// (spec §5). No local folder storage — the project binding is the single
+/// source of truth.
 
 /// One row of the composer's /-autocomplete (skills.list result).
 interface ComposerSkill {
@@ -1504,6 +1513,7 @@ export default function WebChat({
   // reloads and deep links all land in exactly the right place.
   const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
   const chatId = route.chatId;
+  const projectId = route.projectId;
   const overlay = route.overlay;
   // The open chat's server-side generating flag — the same truth the sidebar
   // spinner shows (live chat-status frames, optimistic send, then the fetched
@@ -1732,12 +1742,13 @@ export default function WebChat({
 
   // Every navigation goes through here: history and route state move
   // together, so the URL always reflects what is on screen.
-  const pushRoute = (next: { chatId?: string | null; overlay?: ChatOverlay }) => {
+  const pushRoute = (next: { chatId?: string | null; projectId?: string | null; overlay?: ChatOverlay }) => {
     const chatId = "chatId" in next ? (next.chatId as string | null) : route.chatId;
+    const projectId = "projectId" in next ? (next.projectId as string | null) : route.projectId;
     const ov = "overlay" in next ? (next.overlay as ChatOverlay) : route.overlay;
-    const path = chatRoutePath(chatId, ov);
+    const path = chatRoutePath(chatId, projectId, ov);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setRoute({ chatId, overlay: ov });
+    setRoute({ chatId, projectId, overlay: ov });
   };
 
   useEffect(() => {
@@ -1752,6 +1763,46 @@ export default function WebChat({
       return;
     }
     setChats(c);
+  };
+
+  // ---- projects (sidebar grouping + the composer's project binding) ----
+
+  const [projects, setProjects] = useState<Project[] | null>(null);
+  const [machines, setMachines] = useState<MachineInfo[] | null>(null);
+  const refreshProjects = useCallback(async () => {
+    const p = await listProjects();
+    if (p === null) return; // silent: the sidebar degrades, chat keeps working
+    setProjects(p);
+  }, []);
+  useEffect(() => {
+    void refreshProjects();
+    void listMachines().then(setMachines).catch(() => {});
+  }, [refreshProjects]);
+
+  // The composer's project binding. For an existing chat a pick persists
+  // via POST /chats/{id}/project; for a new (unsent) chat it applies when
+  // the send creates the chat. Projectless is the default state.
+  const [pickedProject, setPickedProject] = useState<PickedProject | null>(null);
+  const pickedProjectRef = useRef<PickedProject | null>(pickedProject);
+  pickedProjectRef.current = pickedProject;
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const openRow = chatId ? chats?.find((c) => c.id === chatId) : undefined;
+  const currentProject = pickedProject ?? chatProjectOf(openRow);
+  const pickProject = (p: PickedProject | null) => {
+    setPickedProject(p);
+    if (!chatId) return; // new thread: the pick applies when the send creates the chat
+    void setChatProject(chatId, p?.id ?? null).then((ok) => {
+      if (ok === null) {
+        toast.error("Could not save the chat's project");
+        setPickedProject(null);
+      }
+      void refreshChats();
+    });
+  };
+  const projectCreated = (project: Project) => {
+    void refreshProjects();
+    pickProject({ id: project.id, name: project.name, machine_label: project.machine_label });
   };
 
   // The member socket owns thread reconciliation in both browser and Tauri
@@ -1796,17 +1847,12 @@ export default function WebChat({
   };
 
   // Chat switches keep cached content visible until the socket's History
-  // frame overwrites it, then request a fresh sync for the new chat.
+  // frame overwrites it, then request a fresh sync for the new chat. The
+  // project pick is per-chat: a pending pick (pre-first-send) or an old
+  // chat's pick never carries over.
   const prevLoadedChatRef = useRef<string | null>(chatId);
   useEffect(() => {
-    if (isTauri) {
-      const dir = storedDir(chatId) ?? storedDir(null);
-      setProjectDir(dir);
-      // The folder is server-visible state: push the restored choice so
-      // web and other machines render it (fire-and-forget; also refreshes
-      // their thread list via the dir endpoint).
-      if (chatId) void pushChatDir(chatId, dir);
-    }
+    setPickedProject(null);
     const prev = prevLoadedChatRef.current;
     prevLoadedChatRef.current = chatId;
     if (prev !== null && prev !== chatId && blocksRef.current.length > 0) {
@@ -1837,15 +1883,23 @@ export default function WebChat({
 
   const openChat = (id: string) => {
     // Navigation only: the chatId effect performs the actual load, so back/
-    // forward, deep links and sidebar picks all share one code path.
+    // forward, deep links and sidebar picks all share one code path. The
+    // chat's project rides along so the sidebar's project filter stays in
+    // step with the URL.
+    const row = chatsRef.current?.find((c) => c.id === id);
     setOpen(false);
-    pushRoute({ chatId: id, overlay: null });
+    pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
+  };
+
+  const openProject = (id: string | null) => {
+    pushRoute({ chatId: null, projectId: id, overlay: null });
+    setOpen(false);
   };
 
   const newChat = () => {
     // Navigation only: the chatId effect selects the new open chat and asks
-    // the member socket to reconcile it.
-    pushRoute({ chatId: null, overlay: null });
+    // the member socket to reconcile it. A project filter stays active.
+    pushRoute({ chatId: null, projectId: route.projectId, overlay: null });
     setOpen(false);
     ta.current?.focus();
   };
@@ -1855,24 +1909,6 @@ export default function WebChat({
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  };
-
-  // ---- server-side tool loop support ----
-
-  // Workspace folder ("run in folder"): desktop only. A new chat starts
-  // from the last used folder; an existing chat restores its own (the
-  // chatId effect below re-reads it on every switch).
-  const [projectDir, setProjectDir] = useState<string | null>(() =>
-    isTauri ? storedDir(route.chatId) ?? storedDir(null) : null,
-  );
-  const projectDirRef = useRef(projectDir);
-  projectDirRef.current = projectDir;
-  const pickProjectDir = (dir: string | null) => {
-    setProjectDir(dir);
-    saveDir(chatId, dir);
-    saveDir(null, dir); // next new chat starts here
-    // The app process executes tools — it needs the folder pushed.
-    if (isTauri && chatId) void pushChatDir(chatId, dir);
   };
 
   // ---- member socket frame rendering ----
@@ -1986,11 +2022,10 @@ export default function WebChat({
     ]);
     let cid = chatId;
     if (!cid) {
-      cid = await createChat(text.slice(0, 48));
+      cid = await createChat(text.slice(0, 48), pickedProjectRef.current?.id ?? null);
       if (cid && loadSeq.current === mySeq) {
         // Move the URL to the new thread without losing the optimistic
         // pending marker; the chatId effect still requests socket reconcile.
-        if (projectDirRef.current) saveDir(cid, projectDirRef.current);
         skipLoadRef.current = cid;
         if (approvalMode !== "default") {
           // The pick was made before the chat existed — persist it now.
@@ -2081,8 +2116,16 @@ export default function WebChat({
         if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
       }
       setPending([]);
-      if (isTauri) void pushChatDir(cid, projectDirRef.current);
-      await sendChatNoStream(cid, model, text, attachmentIds, projectDirRef.current, sentKey);
+      // The project binding rides on the request (request wins; the chat
+      // binding is the server's fallback).
+      await sendChatNoStream(
+        cid,
+        model,
+        text,
+        attachmentIds,
+        pickedProjectRef.current?.id ?? chatProjectOf(chatsRef.current?.find((c) => c.id === cid))?.id ?? null,
+        sentKey,
+      );
       // Submission is not persistence. Only the committed socket echo settles the marker.
       // The member socket delivers every effect. Busy ends on done/error or
       // when a state sync observes that the server is no longer generating.
@@ -2109,19 +2152,26 @@ export default function WebChat({
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || attaching || openGenerating;
 
+  const grouping = useMemo(
+    () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) })), projectId),
+    [chats, chatStatus, projectId],
+  );
+  const activeProject = projects?.find((p) => p.id === projectId) ?? null;
+
   const sidebar = (
     <SidebarContent
-      chats={
-        chats === null
-          ? null
-          : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) }))
-      }
+      grouping={grouping}
+      projects={projects}
+      loadingChats={chats === null}
+      selectedProject={activeProject}
       chatId={chatId}
       email={email}
       displayName={displayName}
       avatarUrl={avatarUrl}
       onNewChat={newChat}
       onOpenChat={openChat}
+      onOpenProject={openProject}
+      onNewProject={() => setCreateProjectOpen(true)}
       onSignOut={onSignOut}
       onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
       onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
@@ -2493,41 +2543,34 @@ export default function WebChat({
                           </span>
                         </span>
                       )}
-                      {(isTauri || row?.project_dir) && (projectDir ?? row?.project_dir) ? (
-                        <span
-                          className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-muted-foreground"
-                          title={projectDir ?? row?.project_dir}
-                        >
-                          <FolderOpen className="size-3.5 shrink-0" />
-                          <span className="truncate">
-                            {(projectDir ?? row?.project_dir ?? "").split(/[\\/]/).pop()}
-                          </span>
-                          {isTauri && !chatId && (
-                            <button
-                              type="button"
-                              title="Stop working in this folder"
-                              className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
-                              onClick={() => pickProjectDir(null)}
-                            >
-                              <XIcon className="size-3" />
-                            </button>
-                          )}
-                        </span>
-                      ) : isTauri ? (
+                      <span
+                        className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-muted-foreground"
+                        title={
+                          currentProject
+                            ? `${currentProject.name} — ${currentProject.machine_label ?? "project"}`
+                            : "Pick the folder the agent works in"
+                        }
+                      >
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="h-7 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
-                          onClick={async () => {
-                            const picked = await openDialog({ directory: true, multiple: false });
-                            if (typeof picked === "string") pickProjectDir(picked);
-                          }}
-                          title="Let the agent read and edit files in a local folder"
+                          className="h-7 max-w-44 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
+                          onClick={() => setProjectPickerOpen(true)}
                         >
                           <FolderOpen className="size-3.5" />
-                          Run in folder…
+                          <span className="truncate">{projectChipLabel(currentProject)}</span>
                         </Button>
-                      ) : null}
+                        {currentProject && (
+                          <button
+                            type="button"
+                            title="Detach the project (the agent works without a folder)"
+                            className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
+                            onClick={() => pickProject(null)}
+                          >
+                            <XIcon className="size-3" />
+                          </button>
+                        )}
+                      </span>
                     </>
                   );
                 })()}
@@ -2611,6 +2654,25 @@ export default function WebChat({
         onOpenChange={(o) => {
           if (!o) pushRoute({ overlay: null });
         }}
+      />
+
+      <ProjectPickerDialog
+        open={projectPickerOpen}
+        onOpenChange={setProjectPickerOpen}
+        projects={projects}
+        chats={chats}
+        current={currentProject}
+        onPick={pickProject}
+        onCreateProject={() => setCreateProjectOpen(true)}
+      />
+
+      <CreateProjectDialog
+        open={createProjectOpen}
+        onOpenChange={setCreateProjectOpen}
+        machines={machines}
+        localMachineId={machineId()}
+        isTauri={isTauri}
+        onCreated={projectCreated}
       />
 
       <SettingsWindow
@@ -2905,31 +2967,52 @@ function ChatListItem({
 }
 
 function SidebarContent({
-  chats,
+  grouping,
+  projects,
+  loadingChats,
+  selectedProject,
   chatId,
   email,
   displayName,
   avatarUrl,
   onNewChat,
   onOpenChat,
+  onOpenProject,
+  onNewProject,
   onSignOut,
   onOpenSettings,
   onOpenDevice,
   onCollapse,
 }: {
-  chats: ChatSummary[] | null;
+  grouping: ReturnType<typeof sidebarGrouping>;
+  projects: Project[] | null;
+  /** True while the chat list is still loading (skeleton rows). */
+  loadingChats: boolean;
+  selectedProject: Project | null;
   chatId: string | null;
   email: string;
   displayName?: string | null;
   avatarUrl?: string | null;
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
+  /** Sidebar project filter: a project id, or null for the recents view. */
+  onOpenProject: (id: string | null) => void;
+  onNewProject: () => void;
   onSignOut: () => void;
   onOpenSettings: () => void;
   onOpenDevice: () => void;
   /** Desktop only: collapse the sidebar from within its own header. */
   onCollapse?: () => void;
 }) {
+  const [projectsOpen, setProjectsOpen] = useState(true);
+  const machineBadge = (label: string | null | undefined, fallback: string) => (
+    <span
+      className="shrink-0 rounded-full bg-secondary px-1.5 py-px text-[10px] leading-4 text-muted-foreground"
+      title={`Folder on ${label ?? fallback}`}
+    >
+      {label ?? fallback}
+    </span>
+  );
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
@@ -2951,25 +3034,111 @@ function SidebarContent({
           <Plus /> New chat
         </Button>
       </div>
-      <div className="px-3 pb-1 pt-4 font-medium text-muted-foreground">Chats</div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2">
+        {/* Projects: collapsible section; a row filters the thread list to
+            that project (URL-driven via /project/<id>). */}
+        <button
+          type="button"
+          onClick={() => setProjectsOpen((o) => !o)}
+          className="flex w-full items-center justify-between px-1 pb-1 pt-4 font-medium text-muted-foreground outline-none hover:text-foreground"
+        >
+          <span>Projects</span>
+          <span className="flex items-center gap-1">
+            <span
+              role="button"
+              tabIndex={0}
+              title="New project"
+              className="rounded p-0.5 hover:bg-accent hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNewProject();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  onNewProject();
+                }
+              }}
+            >
+              <Plus className="size-3.5" />
+            </span>
+            {projectsOpen ? (
+              <ChevronUp className="size-3.5" />
+            ) : (
+              <ChevronDown className="size-3.5" />
+            )}
+          </span>
+        </button>
+        {projectsOpen && (
+          <div className="space-y-0.5 pb-1">
+            {projects === null &&
+              [0, 1].map((i) => <Skeleton key={i} className="h-8 w-full rounded-md" />)}
+            {projects?.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => onOpenProject(p.id)}
+                className={`flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors ${
+                  selectedProject?.id === p.id
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                }`}
+                title={p.folder}
+              >
+                <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                {machineBadge(p.machine_label, p.machine_id)}
+                {grouping.counts[p.id] ? (
+                  <span className="shrink-0 text-xs text-muted-foreground/70">
+                    {grouping.counts[p.id]}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+            {projects !== null && projects.length === 0 && (
+              <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet.</p>
+            )}
+          </div>
+        )}
+        {/* Thread list: the selected project's chats, or every chat in
+            recency order (the default recents view). */}
+        <div className="flex items-center gap-1.5 pb-1 pt-4 font-medium text-muted-foreground">
+          {selectedProject ? (
+            <>
+              <span className="min-w-0 flex-1 truncate" title={selectedProject.folder}>
+                {selectedProject.name}
+              </span>
+              <button
+                type="button"
+                title="Back to all chats"
+                className="rounded p-0.5 hover:bg-accent hover:text-foreground"
+                onClick={() => onOpenProject(null)}
+              >
+                <XIcon className="size-3.5" />
+              </button>
+            </>
+          ) : (
+            <span className="px-1">Recents</span>
+          )}
+        </div>
         <div className="space-y-0.5 pb-2">
-          {chats === null &&
+          {loadingChats &&
             [0, 1, 2, 3, 4].map((i) => (
               <Skeleton key={i} className="h-8 w-full rounded-md" style={{ opacity: 1 - i * 0.15 }} />
             ))}
-          {chats !== null &&
-            chats.map((c) => (
-              <ChatListItem
-                key={c.id}
-                title={c.title || "Untitled"}
-                active={c.id === chatId}
-                status={{ generating: !!c.generating, unread: !!c.unread }}
-                onClick={() => onOpenChat(c.id)}
-              />
-            ))}
-          {chats !== null && chats.length === 0 && (
-            <p className="px-2 py-1.5 text-muted-foreground">No conversations yet.</p>
+          {!loadingChats &&
+            grouping.visible.map((c) => (
+            <ChatListItem
+              key={c.id}
+              title={c.title || "Untitled"}
+              active={c.id === chatId}
+              status={{ generating: !!c.generating, unread: !!c.unread }}
+              onClick={() => onOpenChat(c.id)}
+            />
+          ))}
+          {!loadingChats && projects !== null && grouping.visible.length === 0 && (
+            <p className="px-2 py-1.5 text-muted-foreground">
+              {selectedProject ? "No chats in this project yet." : "No conversations yet."}
+            </p>
           )}
         </div>
       </div>
