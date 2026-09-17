@@ -27,7 +27,9 @@ the 9P share; the exec-policy gate classifies the model-written raw command
 `ToolDispatch` carries `workdir` from the project row — the volatile
 app-process chat→dir map, `set_chat_dir`, and the `guild.dir:*` localStorage
 keys are gone. Project binding sets the chat's machine (chats inherit; the
-per-chat rebind endpoint stays as an override). Skills/registry sections
+per-chat rebind endpoint stays as an override) and is fixed at chat start —
+the composer chip is interactive only on a new (unsent) chat; existing
+chats display their project read-only (maintainer, 2026-09-17). Skills/registry sections
 resolve their aim folder from the projects API ("most recent chat's
 project, else first project"). Desktop 0.5.0 released (all four platforms,
 sha256-verified; devbox manual exe copy), compose stack rebuilt, Restate
