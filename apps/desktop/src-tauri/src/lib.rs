@@ -296,11 +296,11 @@ fn run_wsl(_args: &[&str]) -> Option<String> {
     None
 }
 
-/// One wsl.exe listing pass: parse, filter helpers, lazy per-distro pretty
-/// names (one spawn per uncached distro), store in the stale-while-
-/// revalidate cache. The caller owns a blocking context; the first call on
-/// a cold host pays the WSL2 VM boot, later calls within the TTL return
-/// from the cache.
+/// One wsl.exe listing pass: parse, filter helpers, store in the stale-
+/// while-revalidate cache. Deliberately spawns NOTHING per distro — a
+/// per-distro os-release read would start every distro at app startup;
+/// pretty names are fetched on first browse instead (the user-driven
+/// boot). The caller owns a blocking context.
 fn fetch_wsl_distros(state: &Arc<GuildState>) -> Result<Vec<Distro>, String> {
     let Some(raw) = run_wsl(&["--list", "--verbose"]) else {
         let empty: Vec<Distro> = Vec::new();
@@ -312,22 +312,7 @@ fn fetch_wsl_distros(state: &Arc<GuildState>) -> Result<Vec<Distro>, String> {
         if name.starts_with("docker-desktop") {
             continue;
         }
-        // Per-entry lock scope: drop the guard before spawning wsl.exe.
-        let cached = state.wsl_pretty.lock().unwrap().get(&name).cloned();
-        let pretty_name = match cached {
-            Some(cached) => cached,
-            None => {
-                let pretty = run_wsl(&["-d", &name, "--exec", "cat", "/etc/os-release"])
-                    .as_deref()
-                    .and_then(parse_pretty_name);
-                state
-                    .wsl_pretty
-                    .lock()
-                    .unwrap()
-                    .insert(name.clone(), pretty.clone());
-                pretty
-            }
-        };
+        let pretty_name = state.wsl_pretty.lock().unwrap().get(&name).cloned().flatten();
         out.push(Distro { name, running, pretty_name });
     }
     *state.wsl_distros.lock().unwrap() = Some((std::time::Instant::now(), out.clone()));
@@ -1175,6 +1160,35 @@ pub mod commands {
         .map_err(|e| format!("wsl distro listing failed: {e}"))?
     }
 
+    /// The distro's PRETTY_NAME (e.g. Arch Linux), fetched on first browse
+    /// of that distro — a user-driven moment, since the browse listing
+    /// already boots the distro. Cached for the app run; the lookup runs on
+    /// the blocking pool with the cache lock never held across the spawn.
+    #[tauri::command]
+    pub async fn wsl_pretty_name(
+        state: State<'_, Arc<GuildState>>,
+        distro: String,
+    ) -> Result<Option<String>, String> {
+        let state = state.inner().clone();
+        tokio::task::spawn_blocking(move || {
+            let cached = state.wsl_pretty.lock().unwrap().get(&distro).cloned();
+            if let Some(cached) = cached {
+                return Ok(cached);
+            }
+            let pretty = run_wsl(&["-d", &distro, "--exec", "cat", "/etc/os-release"])
+                .as_deref()
+                .and_then(parse_pretty_name);
+            state
+                .wsl_pretty
+                .lock()
+                .unwrap()
+                .insert(distro, pretty.clone());
+            Ok(pretty)
+        })
+        .await
+        .map_err(|e| format!("wsl pretty-name lookup failed: {e}"))?
+    }
+
     /// The distro's default user's home directory (LINUX path, e.g.
     /// /home/me), for `~` expansion in the path specifier. Cached per
     /// distro; the lookup runs on the blocking pool (one wsl.exe spawn on
@@ -1548,6 +1562,7 @@ pub fn run() {
             commands::set_machine_identity,
             commands::list_wsl_distros,
             commands::wsl_home,
+            commands::wsl_pretty_name,
             commands::list_dir,
             commands::chat_snapshot,
             commands::machine_presence,
