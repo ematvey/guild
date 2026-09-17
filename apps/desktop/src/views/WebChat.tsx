@@ -693,6 +693,33 @@ interface ComposerSkill {
   disabled: boolean;
 }
 
+/// Built-in composer commands — shown in the `/` autocomplete ahead of
+/// skills, with a help comment each.
+const BUILTIN_COMMANDS: { name: string; description: string }[] = [
+  {
+    name: "compact",
+    description: "Compact this thread — summarize older messages to free context",
+  },
+];
+
+/// The `/` autocomplete pool: built-in commands first, then enabled skills;
+/// prefix-matched on the typed fragment. Pure for tests.
+export function mentionCandidates(
+  builtins: { name: string; description: string }[],
+  skills: ComposerSkill[] | null,
+  query: string,
+): { name: string; description: string; builtin: boolean }[] {
+  const pool: { name: string; description: string; builtin: boolean }[] = [
+    ...builtins.map((c) => ({ ...c, builtin: true })),
+    ...(skills ?? [])
+      .filter((s) => !s.disabled)
+      .map((s) => ({ name: s.name, description: s.description, builtin: false })),
+  ];
+  return pool
+    .filter((c) => query === "" || c.name.startsWith(query))
+    .slice(0, 6);
+}
+
 /// Sentinel for a send stream that ended without a terminal frame: not a
 /// user-facing error — the send path converts it into a reattach watch.
 /// Shown while a deep-linked thread's messages are in flight (the URL says
@@ -1563,16 +1590,13 @@ export default function WebChat({
     };
   }, [isTauri]);
   const mention = useMemo(
-    () => (skills && !mentionDismissed ? detectMention(prompt, caret) : null),
-    [prompt, caret, skills, mentionDismissed],
+    () => (!mentionDismissed ? detectMention(prompt, caret) : null),
+    [prompt, caret, mentionDismissed],
   );
-  const mentionMatches = useMemo(() => {
-    if (!mention || !skills) return [];
-    const q = mention.query;
-    return skills
-      .filter((s) => !s.disabled && (q === "" || s.name.startsWith(q)))
-      .slice(0, 6);
-  }, [mention, skills]);
+  const mentionMatches = useMemo(
+    () => mentionCandidates(BUILTIN_COMMANDS, skills, mention?.query ?? ""),
+    [mention, skills],
+  );
   // a fresh token re-opens the menu after Esc; typing within one stays closed
   useEffect(() => {
     setMentionDismissed(false);
@@ -2539,12 +2563,12 @@ export default function WebChat({
                   >
                     <span className="text-sm font-medium">/{sk.name}</span>
                     <span className="line-clamp-1 text-xs text-muted-foreground">
-                      {sk.description}
+                      {sk.builtin ? sk.description : `${sk.description} — the skill's instructions are attached when you send`}
                     </span>
                   </button>
                 ))}
                 <p className="border-t border-border/60 px-3 py-1 text-[11px] text-muted-foreground">
-                  ↑↓ pick · Enter insert · Esc dismiss — the skill's instructions are attached when you send
+                  ↑↓ pick · Enter insert · Esc dismiss
                 </p>
               </div>
             )}

@@ -6,6 +6,7 @@ import {
   chatRoutePath,
   compareVersions,
   eventsToBlocks,
+  mentionCandidates,
   parseChatRoute,
   parseSearchResults,
   reconcilePendingSend,
@@ -467,5 +468,39 @@ describe("compareVersions", () => {
     expect(compareVersions("0.2", "0.10.1")).toBeLessThan(0);
     // missing segments count as 0
     expect(compareVersions("1.0", "1.0.0")).toBe(0);
+  });
+});
+
+describe("mentionCandidates (slash autocomplete pool)", () => {
+  const builtins = [
+    { name: "compact", description: "Compact this thread" },
+    { name: "clear", description: "another command" },
+  ];
+  const skills = [
+    { name: "deploy-check", description: "verify a deploy", disabled: false },
+    { name: "compactor", description: "dup-ish prefix", disabled: false },
+    { name: "hidden", description: "disabled skill", disabled: true },
+  ];
+
+  it("lists builtins first, then enabled skills, prefix-filtered and capped", () => {
+    expect(mentionCandidates(builtins, skills, "").map((c) => c.name)).toEqual([
+      "compact",
+      "clear",
+      "deploy-check",
+      "compactor",
+    ]);
+    expect(mentionCandidates(builtins, skills, "comp").map((c) => c.name)).toEqual([
+      "compact",
+      "compactor",
+    ]);
+    expect(mentionCandidates(builtins, skills, "c").length).toBe(3); // cap at 6 not hit
+  });
+
+  it("works without local skills (browser mode) and tags builtins", () => {
+    const res = mentionCandidates(builtins, null, "");
+    expect(res.map((c) => c.name)).toEqual(["compact", "clear"]);
+    expect(res.every((c) => c.builtin)).toBe(true);
+    const mixed = mentionCandidates(builtins, skills, "deploy");
+    expect(mixed[0].builtin).toBe(false);
   });
 });
