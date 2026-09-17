@@ -9,6 +9,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { WsServerMsg } from "../../../crates/protocol/bindings/Ws";
+import type { Project } from "../../../crates/protocol/bindings/Project";
+import type { CreateProjectRequest } from "../../../crates/protocol/bindings/CreateProjectRequest";
 
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -147,7 +149,18 @@ export async function watchMachinePresence(update: (presence: MachinePresence) =
   return unlisten;
 }
 
-export type ThreadState = { chat_id: string; seq: number; events: ThreadEventRow[]; text: string; thinking: string; generating: boolean };
+export type ThreadState = {
+  chat_id: string;
+  seq: number;
+  events: ThreadEventRow[];
+  text: string;
+  thinking: string;
+  generating: boolean;
+  /** The chat's project, for the sidebar's grouping. */
+  project_id?: string;
+  project_name?: string;
+  project_machine_label?: string;
+};
 
 export interface SocketHandlers {
   onConnect?: () => void;
@@ -455,8 +468,11 @@ export interface ChatSummary {
   generating?: boolean;
   /** Unseen assistant turn (sidebar dot). */
   unread?: boolean;
-  /** Workspace folder the bound machine runs tools in. */
-  project_dir?: string;
+  /** The project (named workspace folder) the chat runs in; absent =
+   * folderless. */
+  project_id?: string;
+  project_name?: string;
+  project_machine_label?: string;
   /** Whether the bound machine's socket is live right now. */
   machine_online?: boolean;
 }
@@ -645,12 +661,16 @@ export async function getThread(
   return { events: v.events ?? [], context: v.context ?? undefined };
 }
 
-export async function createChat(title: string): Promise<string | null> {
+export async function createChat(title: string, projectId?: string | null): Promise<string | null> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/chats"), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify(IS_TAURI ? { title, machine_id: machineId() } : { title }),
+    body: JSON.stringify(
+      IS_TAURI
+        ? { title, machine_id: machineId(), ...(projectId ? { project_id: projectId } : {}) }
+        : { title, ...(projectId ? { project_id: projectId } : {}) },
+    ),
   });
   if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
@@ -717,7 +737,7 @@ export async function sendChatNoStream(
   model: string,
   prompt: string,
   attachmentIds: string[] = [],
-  projectDir?: string | null,
+  projectId?: string | null,
   messageId?: string,
 ): Promise<void> {
   const token = getToken();
@@ -736,7 +756,7 @@ export async function sendChatNoStream(
       messages: [{ role: "user", content: prompt }],
       client_tools: IS_TAURI,
       attachment_ids: attachmentIds,
-      project_dir: projectDir || undefined,
+      project_id: projectId || undefined,
     }),
   });
   if (!res.ok) {
@@ -761,19 +781,91 @@ export async function chatSnapshot(chatId: string): Promise<ChatSnapshot> {
   return invoke("chat_snapshot", { chatId });
 }
 
-/// Pushes the run-in-folder state to the app process (tool execution lives
-/// there now — including while the window is closed).
-export async function pushChatDir(chatId: string, dir: string | null): Promise<void> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("set_chat_dir", { chatId, dir });
-  // The folder is server-visible state too: web and other machines render
-  // it next to the machine indicator (fire-and-forget; a missed push just
-  // leaves the last known folder).
-  void fetch(apiUrl(`/api/v1/chats/${chatId}/dir`), {
+/// Chat project binding (replaces the removed per-chat folder): null
+/// clears the chat's project.
+export async function setChatProject(
+  chatId: string,
+  projectId: string | null,
+): Promise<ChatSummary | null> {
+  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/project`), {
     method: "POST",
-    headers: { authorization: `Bearer ${getToken()}`, "content-type": "application/json" },
-    body: JSON.stringify({ dir }),
-  }).catch(() => {});
+    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({ project_id: projectId }),
+  });
+  if (!res.ok) return null;
+  return res.json().catch(() => null);
+}
+
+// ---- Projects (spec §1/§2: a named folder bound to a machine) ----
+
+export type { Project, CreateProjectRequest };
+
+/** The signed-in user's projects (admin: all org projects). */
+export async function listProjects(): Promise<Project[] | null> {
+  const res = await fetch(apiUrl("/api/v1/projects"), {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  // null = request failed (distinguishable from a legitimately empty list)
+  if (!res.ok) return null;
+  const v = await res.json().catch(() => ({}));
+  return v.projects ?? [];
+}
+
+/** Creates a project; throws with the API message (409 = name taken). */
+export async function createProject(req: CreateProjectRequest): Promise<Project> {
+  const res = await fetch(apiUrl("/api/v1/projects"), {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify(req),
+  });
+  const v = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(v?.error?.message ?? res.statusText);
+  return v as Project;
+}
+
+/** Renames/re-binds a project (PUT /projects/{id}); no UI surface yet. */
+export async function updateProject(
+  id: string,
+  patch: { name?: string; folder?: string; machine_id?: string },
+): Promise<Project> {
+  const res = await fetch(apiUrl(`/api/v1/projects/${id}`), {
+    method: "PUT",
+    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify(patch),
+  });
+  const v = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(v?.error?.message ?? res.statusText);
+  return v as Project;
+}
+
+// ---- Folder sources (app-process commands; spec §5) ----
+
+/** One WSL distro as a folder source. */
+export interface Distro {
+  name: string;
+  running: boolean;
+  pretty_name?: string | null;
+}
+
+/** One row of a directory listing. */
+export interface DirEntry {
+  name: string;
+  is_dir: boolean;
+}
+
+export async function listWslDistros(): Promise<Distro[]> {
+  return invoke<Distro[]>("list_wsl_distros");
+}
+
+/** The distro's default user home (LINUX path, e.g. /home/me); null when
+ * unavailable. Cached per boot in the app process. */
+export async function wslHome(distro: string): Promise<string | null> {
+  return invoke<string | null>("wsl_home", { distro });
+}
+
+/** Unfiltered directory listing (dotfiles included), dirs first. */
+export async function listDir(path: string): Promise<DirEntry[]> {
+  return invoke<DirEntry[]>("list_dir", { path });
 }
 
 /// Hands the app process the machine identity (stable per install; keys the

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Download, RefreshCw, Upload, Ban, CircleCheck, Trash2, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { rpcCall } from "../../../transport";
+import { resolveProjectDir } from "../resolve-project-dir";
 import { Button } from "@guild/ui/components/button";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
@@ -40,16 +41,6 @@ interface SkillRow {
   installed: boolean;
   published_by_me: boolean;
   disabled: boolean;
-}
-
-/// The project folder registry installs/publishes resolve against — the
-/// chat's "run in folder" choice (next-new-chat slot).
-function storedProjectDir(): string | null {
-  try {
-    return localStorage.getItem("guild.dir:last");
-  } catch {
-    return null;
-  }
 }
 
 function SourceBadge({ row }: { row: SkillRow }) {
@@ -94,7 +85,7 @@ export default function SkillsSection() {
     setError(null);
     try {
       const res = await rpcCall("skills.list", {
-        project_dir: storedProjectDir() ?? undefined,
+        project_dir: (await resolveProjectDir()) ?? undefined,
       });
       setRows((res?.result ?? []) as SkillRow[]);
     } catch (e) {
@@ -223,11 +214,11 @@ export default function SkillsSection() {
                     onClick={() =>
                       void act(
                         `rm-${row.path}`,
-                        () =>
+                        async () =>
                           rpcCall("registry.uninstall", {
                             slug: row.provenance?.slug ?? row.name,
                             global: row.scope === "user",
-                            project_dir: storedProjectDir() ?? undefined,
+                            project_dir: (await resolveProjectDir()) ?? undefined,
                           }),
                         "Skill uninstalled",
                       )
