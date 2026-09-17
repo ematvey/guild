@@ -3104,7 +3104,7 @@ dependencies = [
 
 [[package]]
 name = "guild-app-server"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3135,7 +3135,7 @@ dependencies = [
 
 [[package]]
 name = "guild-core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3191,7 +3191,7 @@ dependencies = [
 
 [[package]]
 name = "guild-server"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -5638,7 +5638,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "chrono",
  "serde",
