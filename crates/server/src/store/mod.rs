@@ -401,7 +401,7 @@ pub static MIGRATIONS_UPTO_0046: [(&str, &str); 46] = [
     ),
 ];
 
-pub static MIGRATIONS_FROM_0047: [(&str, &str); 2] = [
+pub static MIGRATIONS_FROM_0047: [(&str, &str); 3] = [
     (
         "0047_projects",
         include_str!("../../migrations/0047_projects.sql"),
@@ -409,6 +409,10 @@ pub static MIGRATIONS_FROM_0047: [(&str, &str); 2] = [
     (
         "0048_wipe_chats",
         include_str!("../../migrations/0048_wipe_chats.sql"),
+    ),
+    (
+        "0049_chatgen_inv_cleanup",
+        include_str!("../../migrations/0049_chatgen_inv_cleanup.sql"),
     ),
 ];
 
