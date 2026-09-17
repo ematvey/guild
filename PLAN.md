@@ -5,6 +5,24 @@ this before touching the codebase; detailed milestone plans live in
 `docs/plans/`, deploy nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
 
+## Thinking frames survive republishes; no inner scroll — 2026-09-16
+
+While a turn generates, the feed republishes the open chat's ThreadState
+roughly every 100ms (buffer-length signature check), and the client rebuilds
+all blocks from durable events. The in-flight thinking text is not a durable
+event yet, so `upsertThinking` appended it as a fresh block with a new
+`liveKey()` on every publish — the `ReasoningFrame` remounted ~10×/s and its
+`open` state reset, so clicking the header to expand was undone within the
+next publish ("can't expand while it generates"). The seed block now takes a
+caller-chosen deterministic key (`live-thinking-<chat_id>`), so the frame
+instance and its expanded state survive every republish; a step boundary
+replaces it with the persisted event's stable seqKey block as before.
+Also removed the `max-h-64 overflow-y-auto` inner scroll on the frame body —
+large thinking blocks now render at full height in the conversation flow and
+the pane's own scroll owns the page. Pure test added (key stable across
+publishes); desktop vitest 28/28, tsc + vite clean; compose server rebuilt
+and serving on :18080. Note: packaged desktop clients pick this up only with
+the next client release.
 ## Approval cards can no longer hang — every decision settles observably — 2026-09-16
 
 A stale approval card (its turn ended before the card was answered) used to
