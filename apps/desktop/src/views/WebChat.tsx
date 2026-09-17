@@ -1594,7 +1594,7 @@ export default function WebChat({
     [prompt, caret, mentionDismissed],
   );
   const mentionMatches = useMemo(
-    () => mentionCandidates(BUILTIN_COMMANDS, skills, mention?.query ?? ""),
+    () => (mention ? mentionCandidates(BUILTIN_COMMANDS, skills, mention.query) : []),
     [mention, skills],
   );
   // a fresh token re-opens the menu after Esc; typing within one stays closed
@@ -2567,9 +2567,6 @@ export default function WebChat({
                     </span>
                   </button>
                 ))}
-                <p className="border-t border-border/60 px-3 py-1 text-[11px] text-muted-foreground">
-                  ↑↓ pick · Enter insert · Esc dismiss
-                </p>
               </div>
             )}
             <Textarea
