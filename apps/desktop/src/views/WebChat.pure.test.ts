@@ -262,6 +262,18 @@ describe("authoritative socket state", () => {
     const state = { chat_id: "chat-1", seq: 3, events: [row(1, { type: "user_message", content: "other tab" })], text: "", thinking: "", generating: true };
     expect(threadStateBlocks(state).map(b => b.text)).toEqual(["other tab"]);
   });
+  it("keeps the in-flight thinking block's key stable across publishes", () => {
+    // The state feed republishes the whole thread (~100ms) while thinking
+    // streams; the reasoning block is not a durable event yet, so its key
+    // must not change between publishes — a changing key remounts the
+    // frame and snaps an expanded block shut mid-click.
+    const state = { chat_id: "chat-1", seq: 7, events: [row(1, { type: "user_message", content: "go" })], text: "", thinking: "part one", generating: true };
+    const first = threadStateBlocks(state).find(b => b.kind === "reasoning");
+    const second = threadStateBlocks({ ...state, seq: 8, thinking: "part one part two" }).find(b => b.kind === "reasoning");
+    expect(first?.key).toBeTruthy();
+    expect(second?.key).toBe(first?.key);
+    expect(second?.reasoningText).toBe("part one part two");
+  });
   it("replaces a stale generating overlay from the server list", () => {
     expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, unread: false } });
   });

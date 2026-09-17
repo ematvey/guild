@@ -120,7 +120,8 @@ export function offlineMachine(
 
 export function threadStateBlocks(state: ThreadState): Block[] {
   let blocks = eventsToBlocks(state.events);
-  if (state.thinking) blocks = upsertThinking(blocks, state.thinking, true);
+  if (state.thinking)
+    blocks = upsertThinking(blocks, state.thinking, true, `live-thinking-${state.chat_id}`);
   if (state.text) blocks.push({ kind: "text", text: state.text, key: `unpersisted-${state.chat_id}` });
   return blocks;
 }
@@ -610,16 +611,28 @@ export function resolveApproval(
 /// frame carries the FULL in-flight reasoning buffer (spec B.5) right after
 /// the durable reload — the in-flight step has no block yet, so the seed
 /// starts one; later deltas append to the trailing reasoning block.
-function upsertThinking(blocks: Block[], content: string, seed: boolean): Block[] {
+function upsertThinking(
+  blocks: Block[],
+  content: string,
+  seed: boolean,
+  seedKey?: string,
+): Block[] {
   const last = blocks[blocks.length - 1];
   // A stable key keeps the Frame instance (and its open/collapsed state)
   // alive across views: seed views carry the full buffer, live views
-  // append — either way the trailing reasoning block persists.
+  // append — either way the trailing reasoning block persists. The seed
+  // key must be caller-chosen and deterministic: the state feed rebuilds
+  // blocks from events every publish (~100ms while thinking streams), and
+  // a per-call liveKey() would remount the frame each time, snapping an
+  // expanded block shut mid-click.
   if (last?.kind === "reasoning") {
     const text = seed ? content : last.reasoningText + content;
     return [...blocks.slice(0, -1), { ...last, reasoningText: text }];
   }
-  return [...blocks, { kind: "reasoning", text: "", reasoningText: content, key: liveKey() }];
+  return [
+    ...blocks,
+    { kind: "reasoning", text: "", reasoningText: content, key: seedKey ?? liveKey() },
+  ];
 }
 
 /// Client-side tools need the desktop runtime (local files, shell); in a plain
@@ -781,7 +794,9 @@ function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
         </>
       )}
     >
-      <div className="max-h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed text-muted-foreground">
+      {/* Full height in the page flow: the conversation pane owns
+          scrolling, the block itself never clips or inner-scrolls. */}
+      <div className="whitespace-pre-wrap leading-relaxed text-muted-foreground">
         {text || "…"}
       </div>
     </Frame>
