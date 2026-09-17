@@ -4,6 +4,14 @@ Updated 2026-09-17 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## 0.5.8: popup fixes — 2026-09-18
+
+Two callouts from the first live look: the `/` popup rendered statically on
+an empty composer (mentionMatches fell back to an empty query when no token
+was open — every command listed) and the self-evident keybinding hint bar
+was noise — both fixed. Server rebuilt, new bundle live; 0.5.8 released all
+four platforms, updater serving it.
+
 ## 0.5.6: /compact command; skills as slash commands in chat — 2026-09-18
 
 The composer's `/` autocomplete now round-trips. `/compact` (exact match)
