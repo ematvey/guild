@@ -13,6 +13,7 @@ import {
   breadcrumbs,
   canonicalDir,
   displayPath,
+  expandError,
   expandPath,
   pickerReducer,
   pickerFor,
@@ -82,6 +83,12 @@ export function PathSpecifier({
   const commitInput = () => {
     if (!dirty) {
       dispatch({ type: "descend" });
+      return;
+    }
+    // A bare `~` with an unavailable home is an error, not a descend.
+    const err = expandError(typed, homeUnc);
+    if (err) {
+      dispatch({ type: "error", message: err });
       return;
     }
     const path = expandPath(typed, homeUnc);
