@@ -9,11 +9,7 @@ DROP TABLE IF EXISTS attachments;
 DROP TABLE IF EXISTS agent_sessions;
 DROP TABLE IF EXISTS chats;
 
--- Every per-chat kv prefix goes with the tables: the durable tool
--- dispatches, the approval cards, and the stuck-generation invocation
--- records (chatgen_inv:% is swept by the worker's startup scan — stale
--- rows there would retry a kill against wiped Restate state forever).
-DELETE FROM server_kv WHERE key LIKE 'tool_dispatch:%' OR key LIKE 'approval:%' OR key LIKE 'chatgen_inv:%';
+DELETE FROM server_kv WHERE key LIKE 'tool_dispatch:%' OR key LIKE 'approval:%';
 
 CREATE TABLE chats (
     id            UUID PRIMARY KEY,
