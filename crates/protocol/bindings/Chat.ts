@@ -13,4 +13,15 @@ generating: boolean,
 /**
  * The reader has an unseen assistant turn (sidebar dot).
  */
-unread: boolean, };
+unread: boolean, 
+/**
+ * The project (named workspace folder) the chat runs in; None =
+ * folderless. Defaults for old clients.
+ */
+project_id?: string, project_name?: string, project_machine_label?: string, 
+/**
+ * Whether the bound machine's singleton socket is live right now
+ * (drives the connection dot next to the folder chip). Always false
+ * for unbound chats.
+ */
+machine_online: boolean, };
