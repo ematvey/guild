@@ -2562,13 +2562,17 @@ export default function WebChat({
                         }
                       >
                         {chatId ? (
-                          // An existing chat: the binding is fixed, label only.
-                          <span className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-muted-foreground">
-                            <span className="flex max-w-44 items-center gap-1 truncate px-2">
-                              <FolderOpen className="size-3.5 shrink-0" />
-                              <span className="truncate">{projectChipLabel(currentProject)}</span>
+                          // An existing chat: the binding is fixed at chat
+                          // start — a bound project shows as a read-only
+                          // label, a projectless chat shows no chip at all.
+                          currentProject && (
+                            <span className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-muted-foreground">
+                              <span className="flex max-w-44 items-center gap-1 truncate px-2">
+                                <FolderOpen className="size-3.5 shrink-0" />
+                                <span className="truncate">{projectChipLabel(currentProject)}</span>
+                              </span>
                             </span>
-                          </span>
+                          )
                         ) : (
                           <>
                             <Button
