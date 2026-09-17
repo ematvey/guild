@@ -1,4 +1,4 @@
-//! Project routes (spec §2): CRUD roundtrip, duplicate-name 409, machine
+//! Project routes (spec §2): CRUD roundtrip, folder-derived names, machine
 //! validation, chat binding, and delete-unlinks-chats.
 
 #![cfg(feature = "test-support")]
@@ -61,7 +61,7 @@ async fn get_json(app: &axum::Router, fs: &FullState, uri: &str) -> (StatusCode,
 }
 
 #[tokio::test]
-async fn projects_crud_roundtrip_with_name_conflict_and_delete_unlink() {
+async fn projects_crud_roundtrip_with_delete_unlink() {
     let fs = full_state().await;
     register_test_machine(&fs.state, "machine-1", fs.user_id, fs.org_id, Some("WORKSTATION")).await;
     let app = guild_server::build_router(fs.state.clone());
@@ -82,7 +82,9 @@ async fn projects_crud_roundtrip_with_name_conflict_and_delete_unlink() {
     assert_eq!(body["machine_label"], "WORKSTATION");
     assert_eq!(body["folder"], r"\\wsl.localhost\Ubuntu-22.04\home\u\repo");
 
-    // Duplicate name → 409, machine must be registered.
+    // Duplicate name is fine now (names are folder-derived labels); an
+    // omitted name defaults to the folder's basename; machine must be
+    // registered.
     let (status, body) = post_json(
         &app,
         &fs,
@@ -91,8 +93,28 @@ async fn projects_crud_roundtrip_with_name_conflict_and_delete_unlink() {
         json!({"name": "web", "folder": "C:\\x", "machine_id": "machine-1"}),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["error"]["code"], "project_name_taken");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "web");
+    let (status, body) = post_json(
+        &app,
+        &fs,
+        "POST",
+        "/api/v1/projects",
+        json!({"folder": r"\\\\wsl.localhost\\Ubuntu-22.04\\home\\u\\repo2", "machine_id": "machine-1"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "repo2");
+    let (status, body) = post_json(
+        &app,
+        &fs,
+        "POST",
+        "/api/v1/projects",
+        json!({"folder": "\\\\wsl.localhost\\Ubuntu-22.04\\", "machine_id": "machine-1"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "Ubuntu-22.04");
     let (status, _) = post_json(
         &app,
         &fs,
@@ -103,10 +125,10 @@ async fn projects_crud_roundtrip_with_name_conflict_and_delete_unlink() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // List shows the project.
+    // List shows the projects.
     let (status, body) = get_json(&app, &fs, "/api/v1/projects").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(body["projects"].as_array().unwrap().len(), 4);
 
     // Update: rename + refolder.
     let (status, body) = post_json(
@@ -226,7 +248,7 @@ async fn projects_crud_roundtrip_with_name_conflict_and_delete_unlink() {
     assert_eq!(after.project_id, None);
     let (status, body) = get_json(&app, &fs, "/api/v1/projects").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["projects"].as_array().unwrap().len(), 0);
+    assert_eq!(body["projects"].as_array().unwrap().len(), 3);
 }
 
 /// Bind-time machine inheritance: a chat bound to a project runs where the

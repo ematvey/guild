@@ -1,5 +1,6 @@
 //! Project routes (spec §2): CRUD over the caller's named workspace folders.
-//! Owner-scoped with admin bypass; a duplicate name is a 409.
+//! Owner-scoped with admin bypass; names are display labels derived from
+//! the folder when omitted — duplicates are allowed.
 
 use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
@@ -36,16 +37,20 @@ impl From<crate::store::projects::ProjectRow> for Project {
 
 /// Creates a project. The machine must be registered to the caller or their
 /// org — a folder on an unregistered machine can never execute anything.
+/// The name defaults to the folder's basename; the UI never asks for one.
 async fn create(
     State(state): State<AppState>,
     user: AuthUser,
     Json(req): Json<CreateProjectRequest>,
 ) -> Result<Json<Project>, ApiError> {
-    let name = req.name.trim();
     let folder = req.folder.trim();
-    if name.is_empty() || folder.is_empty() || req.machine_id.is_empty() {
-        return Err(ApiError::bad_request("name, folder, and machine_id are required"));
+    if folder.is_empty() || req.machine_id.is_empty() {
+        return Err(ApiError::bad_request("folder and machine_id are required"));
     }
+    let name = match req.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) => n.to_string(),
+        None => folder_basename(folder),
+    };
     if !state
         .machine_bindable(&req.machine_id, user.0.id, user.0.org_id)
         .await
@@ -55,9 +60,20 @@ async fn create(
     let store = state.store().await?;
     let row = store
         .projects()
-        .create(user.0.org_id, user.0.id, name, folder, &req.machine_id)
+        .create(user.0.org_id, user.0.id, &name, folder, &req.machine_id)
         .await?;
     Ok(Json(row.into()))
+}
+
+/// The display name for a folder: its last path segment (Windows or POSIX
+/// separators); a drive or share root names itself.
+fn folder_basename(folder: &str) -> String {
+    let trimmed = folder.trim_end_matches(['\\', '/']);
+    let base = trimmed
+        .rsplit(['\\', '/'])
+        .find(|seg| !seg.is_empty())
+        .unwrap_or(trimmed);
+    base.to_string()
 }
 
 /// Lists the caller's projects (admin: the whole org's).

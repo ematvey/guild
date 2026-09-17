@@ -21,9 +21,13 @@ import {
 
 export function PathSpecifier({
   distro,
+  existingFor,
   onConfirm,
 }: {
   distro: string;
+  /** Matches a folder against the caller's existing projects — the Confirm
+   * button reads "Open project" when the browsed folder is one. */
+  existingFor?: (folder: string) => unknown;
   /** Called with the confirmed folder (UNC path, canonical). */
   onConfirm: (folder: string) => void;
 }) {
@@ -203,7 +207,11 @@ export function PathSpecifier({
           title={confirmable ? "Use this folder" : "Navigate to a folder first"}
         >
           <CornerDownLeft className="size-3.5" />
-          Confirm
+          {(() => {
+            if (!confirmable) return "Confirm";
+            const folder = wslFolder(distro, state.cwd!);
+            return existingFor?.(folder) ? "Open project" : "Create project";
+          })()}
         </Button>
       </div>
     </div>
