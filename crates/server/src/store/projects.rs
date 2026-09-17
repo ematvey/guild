@@ -34,8 +34,8 @@ const ROW_COLUMNS: &str =
 const ROW_FROM: &str = "projects p LEFT JOIN machines m ON m.machine_id = p.machine_id";
 
 impl<'a> ProjectStore<'a> {
-    /// Creates a project. The (user_id, name) pair is unique: a duplicate
-    /// name is a 409, not a 500.
+    /// Creates a project. Names are display labels derived from the chosen
+    /// folder — duplicates are allowed.
     pub async fn create(
         &self,
         org_id: Uuid,
@@ -56,8 +56,7 @@ impl<'a> ProjectStore<'a> {
         .bind(folder)
         .bind(machine_id)
         .execute(self.pool)
-        .await
-        .map_err(unique_name_taken)?;
+        .await?;
         debug_assert_eq!(result.rows_affected(), 1);
         self.fetch_by_id(id).await
     }
@@ -130,8 +129,7 @@ impl<'a> ProjectStore<'a> {
         .bind(caller.id)
         .bind(caller.role == "admin")
         .fetch_optional(self.pool)
-        .await
-        .map_err(unique_name_taken)?
+        .await?
         .ok_or_else(|| ApiError::not_found("no such project"))?;
         self.fetch_by_id(updated).await
     }
@@ -181,23 +179,6 @@ impl<'a> ProjectStore<'a> {
     }
 }
 
-/// A (user_id, name) unique-violation is the caller's duplicate project
-/// name — a 409, not a 500. Every other error passes through.
-fn unique_name_taken(e: sqlx::Error) -> ApiError {
-    if let sqlx::Error::Database(db) = &e {
-        if db
-            .constraint()
-            .is_some_and(|c| c.contains("projects_user_id_name_key"))
-        {
-            return ApiError::conflict(
-                "project_name_taken",
-                "a project with this name already exists",
-            );
-        }
-    }
-    e.into()
-}
-
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use crate::store::Store;
@@ -221,7 +202,7 @@ mod tests {
 
     /// CRUD roundtrip: create → list → update; a duplicate name is a 409.
     #[tokio::test]
-    async fn projects_crud_and_duplicate_name_conflict() {
+    async fn projects_crud_and_duplicate_names_allowed() {
         let (db, org, user) = fixture().await;
         let store = &db.store;
         let projects = store.projects();
@@ -232,13 +213,14 @@ mod tests {
         assert_eq!(created.name, "web");
         assert_eq!(created.machine_label, None);
 
-        let dup = projects
+        // Duplicate names are allowed (folder-derived labels), same user
+        // or different users alike.
+        let _dup = projects
             .create(org, user.id, "web", r"D:\other", "machine-1")
             .await
-            .unwrap_err();
-        assert_eq!(dup.status, axum::http::StatusCode::CONFLICT);
+            .unwrap();
 
-        // Same name for a different user is fine (unique per user).
+        // Same name for a different user is fine as well.
         let other = store
             .identity()
             .create_user(org, "proj2@example.org", "hunter226", "member")
@@ -250,8 +232,8 @@ mod tests {
             .unwrap();
 
         let listed = projects.list(org, user.id, &user).await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].id, created.id);
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().any(|p| p.id == created.id));
 
         let updated = projects
             .update(org, created.id, &user, Some("web2"), Some(r"C:\code\web2"), None)

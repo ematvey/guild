@@ -2697,6 +2697,7 @@ export default function WebChat({
         machines={machines}
         localMachineId={machineId()}
         isTauri={isTauri}
+        projects={projects}
         onCreated={projectCreated}
       />
 

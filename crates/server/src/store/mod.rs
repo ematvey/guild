@@ -401,7 +401,7 @@ pub static MIGRATIONS_UPTO_0046: [(&str, &str); 46] = [
     ),
 ];
 
-pub static MIGRATIONS_FROM_0047: [(&str, &str); 3] = [
+pub static MIGRATIONS_FROM_0047: [(&str, &str); 4] = [
     (
         "0047_projects",
         include_str!("../../migrations/0047_projects.sql"),
@@ -413,6 +413,10 @@ pub static MIGRATIONS_FROM_0047: [(&str, &str); 3] = [
     (
         "0049_chatgen_inv_cleanup",
         include_str!("../../migrations/0049_chatgen_inv_cleanup.sql"),
+    ),
+    (
+        "0050_project_name_not_unique",
+        include_str!("../../migrations/0050_project_name_not_unique.sql"),
     ),
 ];
 

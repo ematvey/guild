@@ -112,7 +112,8 @@ pub struct Project {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, optional_fields))]
 pub struct CreateProjectRequest {
-    pub name: String,
+    /// Display label; defaults to the folder's basename when omitted.
+    pub name: Option<String>,
     pub folder: String,
     pub machine_id: String,
 }

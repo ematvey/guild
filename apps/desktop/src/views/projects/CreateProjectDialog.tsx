@@ -4,7 +4,7 @@
 // listed but disabled — remote browsing is a follow-up.
 
 import { useEffect, useState } from "react";
-import { FolderOpen, HardDrive, Monitor, X as XIcon } from "lucide-react";
+import { HardDrive, Monitor, X as XIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,6 @@ import {
   DialogTitle,
 } from "@guild/ui/components/dialog";
 import { Button } from "@guild/ui/components/button";
-import { Input } from "@guild/ui/components/input";
 import { Spinner } from "@guild/ui/components/spinner";
 import { toast } from "sonner";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -35,6 +34,7 @@ export function CreateProjectDialog({
   machines,
   localMachineId,
   isTauri,
+  projects,
   onCreated,
 }: {
   open: boolean;
@@ -42,14 +42,15 @@ export function CreateProjectDialog({
   machines: MachineInfo[] | null;
   localMachineId: string;
   isTauri: boolean;
-  /** Called with the created project (the caller selects it). */
+  /** The caller's project list — a picked folder that is already a project
+   * opens it instead of creating a duplicate. */
+  projects: Project[] | null;
+  /** Called with the opened-or-created project (the caller selects it). */
   onCreated: (project: Project) => void;
 }) {
-  const [name, setName] = useState("");
-  const [folder, setFolder] = useState<string | null>(null);
   const [view, setView] = useState<View>({ kind: "sources" });
   const [distros, setDistros] = useState<Distro[] | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [, setBusy] = useState(false);
 
   const localMachine = machines?.find((m) => m.machine_id === localMachineId);
   const localLabel = localMachine?.name ?? "this computer";
@@ -73,8 +74,6 @@ export function CreateProjectDialog({
 
   useEffect(() => {
     if (!open) {
-      setName("");
-      setFolder(null);
       setView({ kind: "sources" });
       setDistros(null);
       return;
@@ -88,15 +87,27 @@ export function CreateProjectDialog({
     }
   }, [open, isTauri]);
 
-  const create = async () => {
-    if (!name.trim() || !folder) return;
+  /** The project already bound to this machine + folder, if any. Folder
+   * comparison is case-insensitive: Windows paths differ in case freely. */
+  const existingFor = (folder: string): Project | null =>
+    (projects ?? []).find(
+      (p) =>
+        p.machine_id === localMachineId &&
+        p.folder.replace(/\\+$/, "").toLowerCase() === folder.replace(/\\+$/, "").toLowerCase(),
+    ) ?? null;
+
+  /** Choosing a folder commits immediately: an existing project opens, a
+   * new one is created with the folder's basename as its name. */
+  const commitFolder = async (folder: string) => {
+    const existing = existingFor(folder);
+    if (existing) {
+      onCreated(existing);
+      onOpenChange(false);
+      return;
+    }
     setBusy(true);
     try {
-      const project = await createProject({
-        name: name.trim(),
-        folder,
-        machine_id: localMachineId,
-      });
+      const project = await createProject({ folder, machine_id: localMachineId });
       onCreated(project);
       onOpenChange(false);
     } catch (e) {
@@ -108,32 +119,19 @@ export function CreateProjectDialog({
 
   const pickNativeFolder = async () => {
     const picked = await openDialog({ directory: true, multiple: false });
-    if (typeof picked === "string") setFolder(picked);
+    if (typeof picked === "string") void commitFolder(picked);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!flex max-h-[calc(100dvh-3rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New project</DialogTitle>
+          <DialogTitle>Add project</DialogTitle>
           <DialogDescription>
-            A project is a named folder the agent works in; threads attach to it.
+            Pick a folder — a project is created for it, or an existing one opens.
           </DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-          <div>
-            <label htmlFor="project-name" className="mb-1 block text-sm font-medium">
-              Name
-            </label>
-            <Input
-              id="project-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="my-project"
-              autoFocus
-            />
-          </div>
-
           {view.kind === "browse" ? (
             <div className="flex min-h-40 min-w-0 flex-1 flex-col gap-2">
               <div className="flex items-center justify-between">
@@ -144,10 +142,7 @@ export function CreateProjectDialog({
                   size="icon"
                   variant="ghost"
                   className="size-7 text-muted-foreground"
-                  onClick={() => {
-                    setFolder(null);
-                    setView({ kind: "sources" });
-                  }}
+                  onClick={() => setView({ kind: "sources" })}
                   title="Back to sources"
                 >
                   <XIcon />
@@ -155,10 +150,8 @@ export function CreateProjectDialog({
               </div>
               <PathSpecifier
                 distro={view.distro}
-                onConfirm={(f) => {
-                  setFolder(f);
-                  setView({ kind: "sources" });
-                }}
+                existingFor={existingFor}
+                onConfirm={(f) => void commitFolder(f)}
               />
             </div>
           ) : (
@@ -171,29 +164,24 @@ export function CreateProjectDialog({
                   <button
                     type="button"
                     onClick={() => void pickNativeFolder()}
-                    className={`flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left hover:bg-accent ${
-                      folder && !folder.startsWith("\\\\") ? "border-ring bg-accent/50" : ""
-                    }`}
+                    className="flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left hover:bg-accent"
                   >
                     <Monitor className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium">This computer</span>
-                      <span className="block min-w-0 truncate text-xs text-muted-foreground" title={folder ?? undefined}>
-                        {folder && !folder.startsWith("\\\\") ? folder : "Pick a folder with the system dialog"}
+                      <span className="block min-w-0 truncate text-xs text-muted-foreground">
+                        Pick a folder with the system dialog
                       </span>
                     </span>
                   </button>
                 )}
                 {(distros ?? []).map((d) => {
-                  const selected = !!folder?.startsWith(`\\\\wsl.localhost\\${d.name}\\`);
                   return (
                     <button
                       key={d.name}
                       type="button"
                       onClick={() => setView({ kind: "browse", distro: d.name })}
-                      className={`flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left hover:bg-accent ${
-                        selected ? "border-ring bg-accent/50" : ""
-                      }`}
+                      className="flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left hover:bg-accent"
                     >
                       <span
                         className={`size-2 shrink-0 rounded-full ${d.running ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
@@ -241,33 +229,9 @@ export function CreateProjectDialog({
                   </div>
                 ))}
               </div>
-              {folder && (
-                <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  <FolderOpen className="size-3.5 shrink-0" />
-                  <span className="min-w-0 truncate font-mono" title={folder}>
-                    {folder}
-                  </span>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded p-0.5 hover:bg-foreground/10"
-                    onClick={() => setFolder(null)}
-                    title="Clear folder"
-                  >
-                    <XIcon className="size-3" />
-                  </button>
-                </p>
-              )}
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" disabled={!name.trim() || !folder || busy} onClick={() => void create()}>
-              {busy ? "Creating…" : "Create project"}
-            </Button>
-          </div>
         </div>
       </DialogContent>
     </Dialog>
