@@ -70,6 +70,8 @@ import {
   machineId,
   postApproval,
   sendChatNoStream,
+  prepareTurn,
+  compactChat,
   setMachineIdentity,
   stopChat,
   uploadAttachment,
@@ -490,12 +492,15 @@ export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
     switch (ev.type) {
       case "user_message": {
         // Event content is the model-facing turn: typed text plus inlined
-        // "[Attachment: …]" blocks. Show the typed text; chips carry the
-        // file references.
-        const at = ev.attachments?.length ? ev.content.indexOf("\n\n[Attachment: ") : -1;
+        // "[Attachment: …]" blocks, plus the skill-invocation block the
+        // client expanded for `/name` mentions. Show the typed text; the
+        // model-facing payloads stay in the event.
+        const at = ev.content.indexOf("\n\n[Attachment: ");
+        const inv = ev.content.indexOf("\n\n---\nInvoked skills");
+        const cut = [at, inv].filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1;
         blocks.push({
           kind: "user",
-          text: at >= 0 ? ev.content.slice(0, at) : ev.content,
+          text: cut >= 0 ? ev.content.slice(0, cut) : ev.content,
           attachments: ev.attachments,
           key: seqKey(inEvent++),
         });
@@ -2017,6 +2022,23 @@ export default function WebChat({
   const send = async (mode: "normal" | "queue" | "steer" = "normal") => {
     const text = prompt.trim();
     if ((!text && pendingRef.current.length === 0) || !model) return;
+    // Composer command: /compact manually compacts this chat instead of
+    // sending a turn. Needs an existing chat; while generating the server
+    // rejects with its own error, surfaced below.
+    if (text.toLowerCase() === "/compact") {
+      if (!chatId) {
+        toast.error("Compact needs an existing chat — send a message first");
+        return;
+      }
+      setPrompt("");
+      try {
+        await compactChat(chatId);
+        toast.success("Compacting thread…");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+      return;
+    }
     const generating = busy || openGenerating;
     if (mode === "normal" && generating) return;
     const mySeq = loadSeq.current; // ignores results after a chat switch
@@ -2147,14 +2169,29 @@ export default function WebChat({
       // ref. Otherwise the field is omitted and the server falls back to
       // the chat's persisted binding — a stale sidebar row must never win
       // over a re-bind from another device.
+      // Skill slash commands: expand `/name` mentions with the full
+      // SKILL.md body and carry the skills index (app-process RPC; browser
+      // mode has no local skills and sends the prompt through untouched).
+      let turnText = text;
+      let turnSkillsIndex: string | undefined;
+      if (isTauri) {
+        try {
+          const prep = await prepareTurn(text);
+          turnText = prep.prompt;
+          if (prep.index) turnSkillsIndex = prep.index;
+        } catch {
+          /* expansion is sugar — send the typed text */
+        }
+      }
       await sendChatNoStream(
         cid,
         model,
-        text,
+        turnText,
         attachmentIds,
         outgoingProjectId(pickedProjectRef.current),
         sentKey,
         generating ? (mode === "steer" ? "steer" : "queue") : undefined,
+        turnSkillsIndex,
       );
       // Submission is not persistence. Only the committed socket echo settles the marker.
       // The member socket delivers every effect. Busy ends on done/error or

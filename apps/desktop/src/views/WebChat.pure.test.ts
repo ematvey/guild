@@ -311,6 +311,21 @@ describe("approval upsert/resolve", () => {
     ]);
     expect(blocks.find((b) => b.kind === "text")!.interrupted).toBeUndefined();
   });
+
+  it("user turns strip the invoked-skills expansion and attachment blocks", () => {
+    const blocks = eventsToBlocks([
+      row(0, {
+        type: "user_message",
+        content:
+          "run it\n\n---\nInvoked skills (follow their instructions):\n\n### Skill: deploy-check (/x/SKILL.md)\nbody…",
+      }),
+      row(1, {
+        type: "user_message",
+        content: "see this\n\n[Attachment: notes.txt (text/plain, 5 bytes)]\nhello",
+      }),
+    ]);
+    expect(blocks.map((b) => (b as Block).text)).toEqual(["run it", "see this"]);
+  });
 });
 
 describe("authoritative socket state", () => {

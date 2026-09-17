@@ -447,6 +447,9 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "skills.list" => {
             tokio::spawn(skills_list(shared.session.clone(), req, out_tx));
         }
+        "skills.prepare_turn" => {
+            tokio::spawn(skills_prepare_turn(req, out_tx));
+        }
         "skills.disable" => {
             tokio::spawn(skills_disable(shared.session.clone(), req, out_tx));
         }
@@ -915,6 +918,41 @@ async fn skills_list(
             .join("guild");
         let rows = crate::skills::list(&project_dir, &config_dir);
         Ok(Response::ok(req.id, serde_json::to_value(rows)?))
+    }
+    .await;
+    let _ = out_tx.send(response_value(req.id, result));
+}
+
+/// Expands `/name` skill mentions in a chat-turn prompt (the gateway path's
+/// counterpart of the engine's send expansion) and renders the skills index
+/// for the turn's `skills_index` field. One call, one answer: the webview
+/// calls it right before `gateway/chat`.
+async fn skills_prepare_turn(req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+    let result = async {
+        let prompt = req.params["prompt"]
+            .as_str()
+            .context("missing prompt")?;
+        let config_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("/"))
+            .join("guild");
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        let project_dir = PathBuf::from(req.params["project_dir"].as_str().unwrap_or("."));
+        let disabled = crate::skills::disabled_paths(&config_dir);
+        let skills: Vec<_> = crate::skills::discover_with_home(&project_dir, &config_dir, &home)
+            .into_iter()
+            .filter(|e| !disabled.contains(&e.path))
+            .collect();
+        let expanded = match crate::skills::mention_block(&crate::skills::mention_expansions(
+            prompt, &skills,
+        )) {
+            Some(block) => format!("{prompt}{block}"),
+            None => prompt.to_string(),
+        };
+        let index = crate::skills::prompt_index(&skills);
+        Ok(Response::ok(
+            req.id,
+            json!({ "prompt": expanded, "index": index }),
+        ))
     }
     .await;
     let _ = out_tx.send(response_value(req.id, result));

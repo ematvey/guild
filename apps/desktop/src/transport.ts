@@ -743,6 +743,7 @@ export async function sendChatNoStream(
   projectId?: string | null,
   messageId?: string,
   sendMode?: "queue" | "steer",
+  skillsIndex?: string,
 ): Promise<void> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
@@ -762,6 +763,7 @@ export async function sendChatNoStream(
       attachment_ids: attachmentIds,
       project_id: projectId || undefined,
       send_mode: sendMode,
+      skills_index: skillsIndex || undefined,
     }),
   });
   if (!res.ok) {
@@ -789,6 +791,34 @@ export async function stopChat(chatId: string): Promise<void> {
     const v = await res.json().catch(() => ({}));
     throw new Error(v?.error?.message ?? res.statusText);
   }
+}
+
+/// Compacts the thread manually (the /compact composer command): one
+/// summarization call replaces the pre-compaction history in the model's
+/// view. Fire-and-forget — the compaction card lands via the thread sync.
+export async function compactChat(chatId: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${encodeURIComponent(chatId)}/compact`), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "x-guild-client-id": clientId(),
+    },
+  });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? res.statusText);
+  }
+}
+
+/// Expands `/name` skill mentions in a turn prompt against the local skill
+/// discovery and renders the skills index (app-process RPC; browser mode has
+/// no local skills and passes the prompt through untouched).
+export async function prepareTurn(
+  prompt: string,
+): Promise<{ prompt: string; index: string }> {
+  const res = await rpcCall("skills.prepare_turn", { prompt });
+  return { prompt: res?.result?.prompt ?? prompt, index: res?.result?.index ?? "" };
 }
 
 /// In-flight mirror catch-up from the app process (single-process spec):
