@@ -70,7 +70,6 @@ import {
   machineId,
   postApproval,
   sendChatNoStream,
-  setChatProject,
   setMachineIdentity,
   uploadAttachment,
   type StreamFrame,
@@ -1779,9 +1778,10 @@ export default function WebChat({
     void listMachines().then(setMachines).catch(() => {});
   }, [refreshProjects]);
 
-  // The composer's project binding. For an existing chat a pick persists
-  // via POST /chats/{id}/project; for a new (unsent) chat it applies when
-  // the send creates the chat. Projectless is the default state.
+  // The composer's project binding. The chip is interactive only on a new
+  // (unsent) chat, where the pick applies when the send creates the chat;
+  // an existing chat displays its project read-only — the binding cannot
+  // change after the chat started. Projectless is the default state.
   const [pickedProject, setPickedProject] = useState<PickedProject | null>(null);
   const pickedProjectRef = useRef<PickedProject | null>(pickedProject);
   pickedProjectRef.current = pickedProject;
@@ -1791,14 +1791,6 @@ export default function WebChat({
   const currentProject = pickedProject ?? chatProjectOf(openRow);
   const pickProject = (p: PickedProject | null) => {
     setPickedProject(p);
-    if (!chatId) return; // new thread: the pick applies when the send creates the chat
-    void setChatProject(chatId, p?.id ?? null).then((ok) => {
-      if (ok === null) {
-        toast.error("Could not save the chat's project");
-        setPickedProject(null);
-      }
-      void refreshChats();
-    });
   };
   const projectCreated = (project: Project) => {
     void refreshProjects();
@@ -2569,24 +2561,36 @@ export default function WebChat({
                             : "Pick the folder the agent works in"
                         }
                       >
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 max-w-44 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
-                          onClick={() => setProjectPickerOpen(true)}
-                        >
-                          <FolderOpen className="size-3.5" />
-                          <span className="truncate">{projectChipLabel(currentProject)}</span>
-                        </Button>
-                        {currentProject && (
-                          <button
-                            type="button"
-                            title="Detach the project (the agent works without a folder)"
-                            className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
-                            onClick={() => pickProject(null)}
-                          >
-                            <XIcon className="size-3" />
-                          </button>
+                        {chatId ? (
+                          // An existing chat: the binding is fixed, label only.
+                          <span className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-muted-foreground">
+                            <span className="flex max-w-44 items-center gap-1 truncate px-2">
+                              <FolderOpen className="size-3.5 shrink-0" />
+                              <span className="truncate">{projectChipLabel(currentProject)}</span>
+                            </span>
+                          </span>
+                        ) : (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 max-w-44 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
+                              onClick={() => setProjectPickerOpen(true)}
+                            >
+                              <FolderOpen className="size-3.5" />
+                              <span className="truncate">{projectChipLabel(currentProject)}</span>
+                            </Button>
+                            {currentProject && (
+                              <button
+                                type="button"
+                                title="Detach the project (the agent works without a folder)"
+                                className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
+                                onClick={() => pickProject(null)}
+                              >
+                                <XIcon className="size-3" />
+                              </button>
+                            )}
+                          </>
                         )}
                       </span>
                     </>
