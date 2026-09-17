@@ -113,14 +113,14 @@ export function CreateProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[calc(100dvh-3rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-lg">
+      <DialogContent className="!flex max-h-[calc(100dvh-3rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>New project</DialogTitle>
           <DialogDescription>
             A project is a named folder the agent works in; threads attach to it.
           </DialogDescription>
         </DialogHeader>
-        <div className="min-h-0 min-w-0 flex-1 space-y-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
           <div>
             <label htmlFor="project-name" className="mb-1 block text-sm font-medium">
               Name
