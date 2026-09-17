@@ -46,7 +46,12 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route(
             "/api/v1/health",
-            get(|| async { Json(serde_json::json!({"status": "ok"})) }),
+            get(|| async {
+                Json(serde_json::json!({
+                    "status": "ok",
+                    "version": env!("CARGO_PKG_VERSION")
+                }))
+            }),
         )
         .merge(auth::routes())
         .merge(crate::http::ws::routes())
