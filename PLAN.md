@@ -4,6 +4,22 @@ Updated 2026-09-17 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## 0.5.6: /compact command; skills as slash commands in chat — 2026-09-18
+
+The composer's `/` autocomplete now round-trips. `/compact` (exact match)
+triggers the manual compaction endpoint instead of a turn — feedback via
+toast, the card lands through the thread sync; while generating the server's
+rejection surfaces as an error toast. Skills: a new `skills.prepare_turn`
+engine RPC expands `/name` mentions with the full SKILL.md body and renders
+the skills index — the gateway path's counterpart of the engine's send
+expansion (until now the token reached the model as plain text with no
+index); chat sends carry `skills_index`, and user turns strip the
+`Invoked skills` block at render (the marker joins `\n\n[Attachment: ` as a
+client strip boundary; model-facing history keeps the body). Browser mode
+has no local skills and sends the prompt through untouched. Desktop 0.5.6
+released all four platforms, updater serving it; server rebuilt, new bundle
+live.
+
 ## Desktop 0.5.5 released (stop/queue/steer reaches installed clients) — 2026-09-18
 
 `scripts/release-clients.sh` VERSION=0.5.5, all four platforms published
