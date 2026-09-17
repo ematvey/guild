@@ -4,6 +4,19 @@ Updated 2026-09-17 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Desktop 0.5.5 released (stop/queue/steer reaches installed clients) — 2026-09-18
+
+`scripts/release-clients.sh` VERSION=0.5.5, all four platforms published
+and sha256-verified (windows NSIS setup, linux AppImage, darwin .app.tar.gz
+updater artifacts for both arches); `updates/latest.json` serves 0.5.5 with
+tauri signatures, so existing clients auto-update. Session token for the
+publish minted directly in Postgres and revoked after (the standing recipe).
+Server itself already ran the feature (same-day deploy). Pending: devbox's
+raw-exe manual copy (`AppData/Local/Guild/guild-desktop.exe` — its installed
+layout bypasses the NSIS updater) — devbox unreachable over SSH at release
+time; new exe staged at
+`target/x86_64-pc-windows-msvc/release/guild-desktop.exe`.
+
 ## Stop, queue, steer — turn control for the chat — 2026-09-17
 
 Three missing chat controls, all server-owned (maintainer request): **stop**
