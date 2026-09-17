@@ -192,7 +192,15 @@ pub fn note_client_tool(
     machine_id: &str,
 ) {
     use protocol::api::{StreamEvent, ToolExecutor};
-    crate::http::gateway::note_pending_tool(state, chat_id, call_id, name, args, Some(machine_id));
+    crate::http::gateway::note_pending_tool(
+        state,
+        chat_id,
+        call_id,
+        name,
+        args,
+        Some(machine_id),
+        None,
+    );
     let dispatch_state = state.clone();
     let dispatch_call = call_id.to_string();
     tokio::spawn(async move {
@@ -228,8 +236,15 @@ pub fn overload_machine_writer(state: &AppState, machine: &str) {
 
 /// Installs the production liveness watcher for a suspended test call.
 pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machine: &str) {
-    let done =
-        crate::http::gateway::note_pending_tool(state, chat, call, "execute", "{}", Some(machine));
+    let done = crate::http::gateway::note_pending_tool(
+        state,
+        chat,
+        call,
+        "execute",
+        "{}",
+        Some(machine),
+        None,
+    );
     let dispatch_state = state.clone();
     let dispatch_call = call.to_string();
     tokio::spawn(async move {
@@ -544,7 +559,7 @@ pub async fn full_state() -> FullState {
         .unwrap();
     let chat = store
         .chats()
-        .create_chat(org_id, user_id, Some("t"))
+        .create_chat(org_id, user_id, Some("t"), None)
         .await
         .unwrap();
     let (_sid, token) = store.identity().create_session(user_id).await.unwrap();
