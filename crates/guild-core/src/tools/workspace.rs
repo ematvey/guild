@@ -45,8 +45,9 @@ pub fn to_inner(path: &Path) -> Option<String> {
 fn parse_wsl(path: &Path) -> Option<(String, String)> {
     let mut norm = path.to_string_lossy().replace('\\', "/");
     // Device-form UNC (`\\?\UNC\wsl.localhost\…`) — canonicalize on Windows
-    // can produce it; treat it as the plain `\\` form.
-    if norm.len() >= 8 && norm[..8].eq_ignore_ascii_case("//?/unc/") {
+    // can produce it; treat it as the plain `\\` form. Byte-wise so a
+    // multibyte character straddling the slice boundary cannot panic.
+    if norm.as_bytes().get(..8).is_some_and(|p| p.eq_ignore_ascii_case(b"//?/unc/")) {
         norm = format!("//{}", &norm[8..]);
     }
     let low = norm.to_ascii_lowercase();
