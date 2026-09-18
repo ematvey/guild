@@ -297,6 +297,11 @@ pub struct ChatRunPayload {
     /// after the hard cap (the server stays the enforcement point).
     #[serde(default)]
     pub skills_index: Option<String>,
+    /// Client-discovered AGENTS.md instructions (global config-dir file +
+    /// project chain, Codex semantics); rendered into the system prompt with
+    /// the `# AGENTS.md instructions` markers and the server's hard cap.
+    #[serde(default)]
+    pub agents_md: Option<String>,
 }
 
 /// Final result of the journaled completion step.
@@ -640,6 +645,7 @@ fn build_system_prompt(
     workspace: Option<&WorkspaceRef>,
     integrations_index: &str,
     skills_index: &str,
+    agents_md: Option<&str>,
 ) -> String {
     let persona = match org_prompt {
         Some(p) if !p.trim().is_empty() => p.trim(),
@@ -667,6 +673,22 @@ fn build_system_prompt(
              the workspace.",
         );
     }
+    // AGENTS.md instructions (Codex semantics): rendered with the same
+    // user-instructions markers Codex uses, before the environment context
+    // (the workspace sentence). Client-assembled — global config-dir file
+    // plus the project chain — but the server caps and owns the framing.
+    if let Some(md) = agents_md {
+        if !md.trim().is_empty() {
+            let capped = cap_chars(md, AGENTS_MD_CAP);
+            s.push_str(&format!(
+                "\n\n# AGENTS.md instructions{}\n\n<INSTRUCTIONS>\n{}\n</INSTRUCTIONS>",
+                workspace
+                    .map(|ws| format!(" for {}", ws.folder))
+                    .unwrap_or_default(),
+                capped,
+            ));
+        }
+    }
     if let Some(ws) = workspace {
         s.push_str(&workspace_sentence(&ws.folder, ws.machine_label.as_deref()));
     }
@@ -681,24 +703,33 @@ fn build_system_prompt(
     // context window is unknown). The client never overrides the prompt; a
     // truncated index is preferable to an unbounded one.
     if !skills_index.is_empty() {
-        let capped: String = if skills_index.len() > SKILLS_INDEX_CAP {
-            let mut cut = SKILLS_INDEX_CAP;
-            while !skills_index.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            skills_index[..cut].to_string()
-        } else {
-            skills_index.to_string()
-        };
+        let capped = cap_chars(skills_index, SKILLS_INDEX_CAP);
         s.push('\n');
         s.push_str(&capped);
     }
     s
 }
 
+/// Truncates to `cap` chars on a char boundary.
+fn cap_chars(text: &str, cap: usize) -> String {
+    if text.len() <= cap {
+        return text.to_string();
+    }
+    let mut cut = cap;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text[..cut].to_string()
+}
+
 /// Hard cap on the client-supplied skills index appended to the system
 /// prompt (chars). Matches the Codex fallback budget.
 const SKILLS_INDEX_CAP: usize = 8_000;
+
+/// Hard cap on the client-supplied AGENTS.md instructions (chars). Matches
+/// Codex's `project_doc_max_bytes` default — the client applies the same
+/// budget at discovery; the server stays the enforcement point.
+const AGENTS_MD_CAP: usize = 32 * 1024;
 
 /// Next turn number for a chat: max `turn` across persisted events + 1
 /// (spec §B.4 — turn = one client request, step = one model call).
@@ -1638,6 +1669,7 @@ impl ChatRunner {
                     .collect::<Vec<_>>()
                     .join("\n"),
                 req.skills_index.as_deref().unwrap_or(""),
+                req.agents_md.as_deref(),
             )
         };
 
@@ -3659,7 +3691,7 @@ mod tests {
 
     #[test]
     fn system_prompt_default_persona_is_helpful_assistant() {
-        let p = build_system_prompt(None, false, false, None, "", "");
+        let p = build_system_prompt(None, false, false, None, "", "", None);
         assert!(p.starts_with("You are a helpful assistant."));
         assert!(!p.contains("coding agent"));
     }
@@ -3670,7 +3702,7 @@ mod tests {
             folder: "/w".into(),
             machine_label: None,
         };
-        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some(&ws), "", "");
+        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some(&ws), "", "", None);
         assert!(p.starts_with("You are GLaDOS."));
         assert!(!p.contains("helpful assistant"));
         // Operational instructions are appended regardless of the persona.
@@ -3804,7 +3836,7 @@ mod tests {
 
     #[test]
     fn system_prompt_blank_org_prompt_falls_back_to_default() {
-        let p = build_system_prompt(Some("   "), false, false, None, "", "");
+        let p = build_system_prompt(Some("   "), false, false, None, "", "", None);
         assert!(p.starts_with("You are a helpful assistant."));
     }
 
@@ -3814,16 +3846,36 @@ mod tests {
             "\n# Available skills\n- a: {}\n",
             "x".repeat(SKILLS_INDEX_CAP + 500)
         );
-        let p = build_system_prompt(None, false, false, None, "", &idx);
+        let p = build_system_prompt(None, false, false, None, "", &idx, None);
         assert!(p.contains("# Available skills"));
         assert!(
             p.len()
-                < build_system_prompt(None, false, false, None, "", "").len()
+                < build_system_prompt(None, false, false, None, "", "", None).len()
                     + SKILLS_INDEX_CAP
                     + 300
         );
         // Server-side cap truncates an oversized client index.
         assert!(p.len() < 20_000);
+    }
+
+    #[test]
+    fn system_prompt_renders_agents_md_with_codex_markers_and_caps_it() {
+        let md = "Project conventions here.".to_string();
+        let ws = WorkspaceRef {
+            folder: "/home/u/repo".into(),
+            machine_label: Some("box".into()),
+        };
+        let p = build_system_prompt(None, false, false, Some(&ws), "", "", Some(&md));
+        // Codex's user-instructions fragment format, with the directory label.
+        assert!(p.contains("# AGENTS.md instructions for /home/u/repo"));
+        assert!(p.contains("<INSTRUCTIONS>\nProject conventions here.\n</INSTRUCTIONS>"));
+        // Cap: an oversized payload is truncated server-side.
+        let big = "x".repeat(AGENTS_MD_CAP + 1000);
+        let p2 = build_system_prompt(None, false, false, None, "", "", Some(&big));
+        assert!(p2.len() < AGENTS_MD_CAP + 200);
+        // Blank client payload renders nothing.
+        let p3 = build_system_prompt(None, false, false, None, "", "", Some("   "));
+        assert!(!p3.contains("AGENTS.md"));
     }
 
     #[test]

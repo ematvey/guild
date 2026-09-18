@@ -761,6 +761,7 @@ export async function sendChatNoStream(
   messageId?: string,
   sendMode?: "queue" | "steer",
   skillsIndex?: string,
+  projectInstructions?: string,
 ): Promise<void> {
   const token = getToken();
   const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
@@ -781,6 +782,7 @@ export async function sendChatNoStream(
       project_id: projectId || undefined,
       send_mode: sendMode,
       skills_index: skillsIndex || undefined,
+      agents_md: projectInstructions || undefined,
     }),
   });
   if (!res.ok) {
@@ -829,13 +831,23 @@ export async function compactChat(chatId: string): Promise<void> {
 }
 
 /// Expands `/name` skill mentions in a turn prompt against the local skill
-/// discovery and renders the skills index (app-process RPC; browser mode has
-/// no local skills and passes the prompt through untouched).
+/// discovery, renders the skills index, and assembles the AGENTS.md
+/// instructions (global config-dir file + the bound project's chain, Codex
+/// semantics) — app-process RPC; browser mode has no local files and passes
+/// the prompt through untouched.
 export async function prepareTurn(
   prompt: string,
-): Promise<{ prompt: string; index: string }> {
-  const res = await rpcCall("skills.prepare_turn", { prompt });
-  return { prompt: res?.result?.prompt ?? prompt, index: res?.result?.index ?? "" };
+  projectDir?: string,
+): Promise<{ prompt: string; index: string; instructions?: string }> {
+  const res = await rpcCall("skills.prepare_turn", {
+    prompt,
+    ...(projectDir ? { project_dir: projectDir } : {}),
+  });
+  return {
+    prompt: res?.result?.prompt ?? prompt,
+    index: res?.result?.index ?? "",
+    instructions: res?.result?.instructions ?? undefined,
+  };
 }
 
 /// In-flight mirror catch-up from the app process (single-process spec):

@@ -1,4 +1,5 @@
 pub mod agent_session;
+pub mod agents_md;
 pub mod cli;
 pub mod cloud;
 pub mod daemon;

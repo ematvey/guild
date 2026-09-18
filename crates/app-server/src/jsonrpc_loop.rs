@@ -592,7 +592,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
 /// responds immediately with `started`, streams progress as events.
 async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     // (cloud, existing chat, project dir, model, history, policy, pending
-    // approvals, skills index, skill read roots)
+    // approvals, skills index, skill read roots, AGENTS.md instructions)
     type AgentPrep = (
         CloudClient,
         Option<Uuid>,
@@ -603,6 +603,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         PendingApprovals,
         Option<String>,
         Vec<PathBuf>,
+        Option<String>,
     );
     let prep = || -> anyhow::Result<AgentPrep> {
         let mut s = shared.session.lock().unwrap();
@@ -642,6 +643,10 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
             .collect();
         let skills_index = crate::skills::prompt_index(&skills);
         let skills_index = if skills_index.is_empty() { None } else { Some(skills_index) };
+        // AGENTS.md instructions (Codex semantics): the global config-dir
+        // file plus the project chain from the git root down to the project
+        // dir — assembled here where the files live, rendered server-side.
+        let agents_md = crate::agents_md::assemble(&config_dir, &project_dir);
         // read_file may read skill dirs outside the workspace so the index
         // paths are actually loadable
         let skill_roots: Vec<PathBuf> = skills
@@ -668,6 +673,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
             s.pending.clone(),
             skills_index,
             skill_roots,
+            agents_md,
         ))
     };
     let (
@@ -680,6 +686,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         pending,
         skills_index,
         skill_roots,
+        agents_md,
     ) = match prep() {
         Ok(p) => p,
         Err(e) => {
@@ -723,6 +730,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         model,
         system: None, // the system prompt stays server-owned; skills ride skills_index
         skills_index,
+        agents_md,
         history,
         policy,
         events: shared.events.clone(),
@@ -924,9 +932,11 @@ async fn skills_list(
 }
 
 /// Expands `/name` skill mentions in a chat-turn prompt (the gateway path's
-/// counterpart of the engine's send expansion) and renders the skills index
-/// for the turn's `skills_index` field. One call, one answer: the webview
-/// calls it right before `gateway/chat`.
+/// counterpart of the engine's send expansion), renders the skills index
+/// for the turn's `skills_index` field, and assembles the AGENTS.md
+/// instructions (global config-dir file + the bound project's chain) for
+/// the turn's `agents_md` field. One call, one answer: the webview calls it
+/// right before `gateway/chat`.
 async fn skills_prepare_turn(req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let result = async {
         let prompt = req.params["prompt"]
@@ -936,9 +946,11 @@ async fn skills_prepare_turn(req: Request, out_tx: mpsc::UnboundedSender<Value>)
             .unwrap_or_else(|| PathBuf::from("/"))
             .join("guild");
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        let project_dir = PathBuf::from(req.params["project_dir"].as_str().unwrap_or("."));
+        let project_dir = req.params["project_dir"].as_str().map(PathBuf::from);
         let disabled = crate::skills::disabled_paths(&config_dir);
-        let skills: Vec<_> = crate::skills::discover_with_home(&project_dir, &config_dir, &home)
+        let default_dir = PathBuf::from(".");
+        let scan_dir = project_dir.as_deref().unwrap_or(&default_dir);
+        let skills: Vec<_> = crate::skills::discover_with_home(scan_dir, &config_dir, &home)
             .into_iter()
             .filter(|e| !disabled.contains(&e.path))
             .collect();
@@ -949,9 +961,15 @@ async fn skills_prepare_turn(req: Request, out_tx: mpsc::UnboundedSender<Value>)
             None => prompt.to_string(),
         };
         let index = crate::skills::prompt_index(&skills);
+        // Codex semantics: the global file always applies; the project chain
+        // needs a bound project (no folder → global only).
+        let instructions = match &project_dir {
+            Some(dir) => crate::agents_md::assemble(&config_dir, dir),
+            None => crate::agents_md::load_global(&config_dir).map(|g| g.contents),
+        };
         Ok(Response::ok(
             req.id,
-            json!({ "prompt": expanded, "index": index }),
+            json!({ "prompt": expanded, "index": index, "instructions": instructions }),
         ))
     }
     .await;

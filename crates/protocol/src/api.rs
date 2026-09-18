@@ -369,6 +369,13 @@ pub struct ChatCompletionRequest {
     /// persona or tool instructions, it may only append this bounded block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skills_index: Option<String>,
+    /// Client-discovered AGENTS.md instructions (Codex semantics: the global
+    /// config-dir file plus the project chain from the git root down to the
+    /// working folder). Additive like skills_index — the server renders it
+    /// into the system prompt with the `# AGENTS.md instructions` markers
+    /// and a hard cap; the client may not override persona or tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_md: Option<String>,
     /// What to do when a turn is already generating in this chat:
     /// `"queue"` (default) commits the message to the thread and the running
     /// turn flushes it at its exit; `"steer"` also interrupts the in-flight

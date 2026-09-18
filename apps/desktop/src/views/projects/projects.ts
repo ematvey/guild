@@ -36,6 +36,9 @@ export interface PickedProject {
   id: string;
   name: string;
   machine_label?: string | null;
+  /** Local folder path, when the pick carried it (the send path resolves
+   * the project's AGENTS.md chain from it — Codex semantics). */
+  folder?: string;
 }
 
 /** Label on the composer's chip: the project name (plus its machine) when a

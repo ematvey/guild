@@ -1037,6 +1037,7 @@ async fn chat(
             user_message: String::new(),
             attachment_ids: Vec::new(),
             skills_index: req.skills_index.clone(),
+            agents_md: req.agents_md.clone(),
         };
         store
             .kv()
@@ -1095,6 +1096,7 @@ async fn chat(
         "attachment_ids": effective_attachments,
         "project_id": project_id,
         "skills_index": req.skills_index,
+        "agents_md": req.agents_md,
         "client_id": headers
             .get("x-guild-client-id")
             .and_then(|v| v.to_str().ok()),
@@ -1518,6 +1520,7 @@ mod tests {
             project_id: None,
             attachment_ids: Vec::new(),
             skills_index: None,
+            agents_md: None,
         };
         let res = chat(
             State(fixture.state.clone()),
@@ -1599,6 +1602,7 @@ mod tests {
             project_id: Some(project.id),
             attachment_ids: Vec::new(),
             skills_index: None,
+            agents_md: None,
         };
         let res = chat(
             State(fixture.state.clone()),

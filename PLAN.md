@@ -4,6 +4,30 @@ Updated 2026-09-18 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## AGENTS.md loading + skills parity with Codex — 2026-09-18
+
+maintainer: chats bound to a project now load project instructions exactly like
+Codex (to the letter, per codex-rs `core/src/agents_md.rs`). Discovery runs
+in the desktop daemon where the files live (`guild-app-server/src/agents_md.rs`):
+global `{config_dir}/AGENTS.override.md` → `AGENTS.md` (first non-empty), then
+the project chain from the git root down to the project folder (inclusive),
+one file per dir (`AGENTS.override.md` beats `AGENTS.md`), empty files skipped,
+32 KiB shared budget with per-file truncation; global→project transition uses
+Codex's `--- project-doc ---` separator. Rides a new additive `agents_md`
+field on `ChatCompletionRequest` (same pattern as `skills_index` — the client
+never owns the system prompt); the server renders Codex's user-instructions
+fragment (`# AGENTS.md instructions for <folder>` + `<INSTRUCTIONS>` markers)
+into the system prompt before the workspace sentence, capped server-side at
+32 KiB. Wired on both paths: `agent.start` engine sessions (assembles for the
+session's project dir) and `skills.prepare_turn` (new optional `project_dir`
+param; no project → global only). Desktop resolves the picked project's folder
+(PickedProject now carries `folder`) and passes both fields through.
+Browser (non-Tauri) chats unchanged — no local files, as with skills.
+Tests: discovery unit tests (order, override, empty-skip, budget, no-git),
+system-prompt rendering/cap tests, engine_stdio + gateway_api green. Also
+fixed pre-existing migration-test counts (50 → 51, stale since 0051_archive).
+Server rebuilt; frontend lives on :18080.
+
 ## Sidebar rows: hover kebab menu — rename + archive; 0.5.12 server — 2026-09-18
 
 maintainer: a hover-only button on every sidebar row (chat rows in Recents and
