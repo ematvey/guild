@@ -4,6 +4,20 @@ Updated 2026-09-18 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Architecture decision: one agent loop + thin desktop backend — 2026-09-18
+
+maintainer decided the target architecture; spec at
+`docs/specs/2026-09-18-agent-loop-unification-design.md`. The durable
+gateway workflow becomes the only agent loop (engine `agent.start`/B1 is a
+shim to it; `run_agent` dies with its last caller); the desktop Rust
+backend shrinks to an executor (machine tools via the machine WS —
+already how the Tauri host works), a primitive allowlisted file bridge,
+registry crypto, and the auth store; TS owns all interaction + context
+assembly (skills index, `/name`, AGENTS.md). Web/desktop parity is an
+executor taxonomy: web gains agentic power via a future server-side
+sandbox executor, never via a second loop. Phased migration in spec §4;
+phase 1 (B1 shim) is the first buildable step. No code yet — spec only.
+
 ## AGENTS.md loading + skills parity with Codex — 2026-09-18
 
 maintainer: chats bound to a project now load project instructions exactly like
