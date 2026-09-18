@@ -4,6 +4,17 @@ Updated 2026-09-18 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Sidebar truncation fades, count badge removed; 0.5.11 clients — 2026-09-18
+
+maintainer: remove the red project-count badge in the Projects sidebar, and
+truncate by shading, not "…". The badge (plus the WORKSTATION machine pill on
+project rows) is gone; the project rows already shaded via `FadeTitle` and
+the composer project chip now does too (both chip variants; the label
+measures overflow with a ResizeObserver and masks the last ~22px with a
+to-transparent gradient when it overflows — no ellipsis anywhere on these
+surfaces). Server rebuilt and live on :18080; 0.5.11 clients released on
+all four platforms, updater manifest serving them.
+
 ## "Compacting thread…" flash on the first send; 0.5.10 — 2026-09-18
 
 maintainer's screencast caught it: the optimistic "Compacting thread…" line
