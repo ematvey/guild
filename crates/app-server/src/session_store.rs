@@ -14,6 +14,17 @@ pub struct StoredSession {
     /// server-side identity instead).
     #[serde(default)]
     pub email: Option<String>,
+    /// The machine identity (webview-generated, stable per app install)
+    /// once the client passed it in — the executor role keys on it. None
+    /// until the first `machine.identify`.
+    #[serde(default)]
+    pub machine_id: Option<String>,
+    /// Stable per-daemon-install client id (the WS presence key).
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Human-facing machine label reported at connect (hostname).
+    #[serde(default)]
+    pub machine_name: Option<String>,
 }
 
 pub fn default_path() -> anyhow::Result<PathBuf> {
@@ -67,6 +78,9 @@ mod tests {
             base_url: "http://x".into(),
             token: "t".into(),
             email: Some("a@b".into()),
+            machine_id: Some("m".into()),
+            client_id: Some("c".into()),
+            machine_name: Some("box".into()),
         };
         save(&path, &s).unwrap();
         // The token file must be owner-only.
@@ -77,6 +91,11 @@ mod tests {
             assert_eq!(mode & 0o777, 0o600);
         }
         assert_eq!(load(&path).unwrap().token, "t");
+        assert_eq!(load(&path).unwrap().machine_id.as_deref(), Some("m"));
+        // A pre-machine-id store (older build) still loads.
+        std::fs::write(&path, r#"{"base_url":"http://x","token":"t"}"#).unwrap();
+        let old = load(&path).unwrap();
+        assert!(old.machine_id.is_none() && old.client_id.is_none());
         clear(&path).unwrap();
         assert!(load(&path).is_none());
         let _ = default_path(); // smoke: builds on this OS

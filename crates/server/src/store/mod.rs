@@ -524,8 +524,9 @@ mod test_db {
         ///
         /// Fast path (adapters-era speedup): instead of running all 44
         /// migrations per test database, a fully-migrated template database
-        /// (`test_tpl_<schema-hash>`) is built once and every test clones
-        /// it via `CREATE DATABASE ... TEMPLATE`. The name embeds the
+        /// (`test_tpl_<role>_<schema-hash>`) is built once and every test
+        /// clones it via `CREATE DATABASE ... TEMPLATE`. The name embeds the
+        /// connecting role (the shared host serves several) and the
         /// migration-set hash, so an edited migration list rebuilds the
         /// template automatically; per-test `connect` still walks
         /// `schema_history` and verifies every content hash, so drift is
@@ -587,7 +588,18 @@ mod test_db {
                 hasher.update([0]);
             }
             let digest = format!("{:x}", hasher.finalize());
-            let template = format!("test_tpl_{}", &digest[..12]);
+            // The template is role-scoped: the shared host Postgres serves
+            // several roles (concurrent sessions use different credentials),
+            // and only the owner can clone or drop a database. A shared name
+            // would let the second role collide with (and be unable to
+            // rebuild) the first role's template.
+            let role: String = sqlx::query_scalar::<_, String>("SELECT current_user")
+                .fetch_one(&mut *admin.acquire().await?)
+                .await?
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            let template = format!("test_tpl_{role}_{}", &digest[..12]);
             let mut conn = admin.acquire().await?;
             sqlx::query("SELECT pg_advisory_lock($1)")
                 .bind(TEST_TEMPLATE_LOCK_ID)
@@ -599,19 +611,20 @@ mod test_db {
                 // hostile peer database name out of the dynamic DDL.
                 let stale: Vec<String> = sqlx::query_scalar(
                     "SELECT datname FROM pg_database \
-                     WHERE (datname LIKE 'test_tpl_%' AND datname != $1) \
-                        OR datname LIKE 'test_tpl_build_%'",
+                     WHERE datname LIKE $2 || '_%' AND datname != $1 \
+                        OR datname LIKE $2 || '_build_%'",
                 )
                 .bind(&template)
+                .bind(format!("test_tpl_{role}"))
                 .fetch_all(&mut *conn)
                 .await
                 .unwrap_or_default();
                 for name in stale {
-                    // Safe charset: test_tpl_<12 hex> (templates) and
-                    // test_tpl_build_<hex> (crashed builds). The literal
-                    // `build_` segment must be allowed or the sweep can
-                    // never drop its own targets.
-                    let rest = &name["test_tpl_".len()..];
+                    // Safe charset: test_tpl_<role>_<12 hex> (templates) and
+                    // test_tpl_<role>_build_<hex> (crashed builds). The
+                    // literal `build_` segment must be allowed or the sweep
+                    // can never drop its own targets.
+                    let rest = &name[format!("test_tpl_{role}_").len()..];
                     let rest = rest.strip_prefix("build_").unwrap_or(rest);
                     let safe =
                         !rest.is_empty() && rest.chars().all(|c| c.is_ascii_hexdigit() || c == '_');
@@ -631,7 +644,10 @@ mod test_db {
                 if exists {
                     return Ok(template.clone());
                 }
-                let build = format!("test_tpl_build_{}", uuid::Uuid::now_v7().simple());
+                let build = format!(
+                    "test_tpl_{role}_build_{}",
+                    uuid::Uuid::now_v7().simple()
+                );
                 sqlx::query(&format!("CREATE DATABASE {build}"))
                     .execute(&mut *conn)
                     .await?;

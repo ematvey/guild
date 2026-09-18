@@ -7,6 +7,7 @@
 use crate::agent_session::{AgentRun, PendingApprovals};
 use crate::artifacts::{registry_hooks, spawn_thread_sync_prefetch};
 use crate::cloud::{collect_turn, CloudClient, CloudError};
+use crate::machine_link::MachineLinkConfig;
 use crate::session_store::{save, StoredSession};
 use anyhow::Context as _;
 use guild_core::agent::policy::ApprovalPolicy;
@@ -34,6 +35,12 @@ pub struct Session {
     /// An agent.run loop is in flight; a second agent.start would race on
     /// session.messages.
     pub agent_running: bool,
+    /// The webview-generated machine identity (stable per app install) once
+    /// reported via `machine.identify`; the executor link keys on it.
+    pub machine_id: Option<String>,
+    /// Stable per-daemon-install WS presence key, generated on first
+    /// identify and persisted with the session.
+    pub client_id: Option<String>,
 }
 
 enum Incoming {
@@ -57,19 +64,51 @@ pub struct Shared {
     pub artifacts: Arc<ArtifactIndex>,
     /// Set true by `daemon.shutdown`; the daemon's accept loop watches it.
     pub shutdown: Arc<tokio::sync::watch::Sender<bool>>,
+    /// The machine link's config channel: publish a config to connect the
+    /// executor link, `None` to drop it (sign-out). The link task subscribes.
+    pub machine_link: Arc<tokio::sync::watch::Sender<Option<MachineLinkConfig>>>,
 }
 
 impl Shared {
     pub fn new(session: Session) -> Self {
         let (events, _) = broadcast::channel(256);
         let (shutdown, _) = watch::channel(false);
+        let (machine_link, _) = watch::channel(None);
         Self {
             session: Arc::new(Mutex::new(session)),
             events,
             agents: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
             artifacts: Arc::new(ArtifactIndex::new()),
             shutdown: Arc::new(shutdown),
+            machine_link: Arc::new(machine_link),
         }
+    }
+
+    /// Recomputes the machine link config from the session and publishes it.
+    /// A link exists when the daemon is logged in AND the webview reported
+    /// its machine identity. Called after login, pair, identify, sign-out,
+    /// and boot.
+    pub fn publish_machine_link(&self) {
+        let cfg = {
+            let mut s = self.session.lock().unwrap();
+            match (s.cloud.clone(), s.machine_id.clone()) {
+                (Some(cloud), Some(machine_id)) => {
+                    let client_id = s
+                        .client_id
+                        .get_or_insert_with(|| uuid::Uuid::now_v7().to_string())
+                        .clone();
+                    Some(MachineLinkConfig {
+                        base_url: cloud.base_url,
+                        token: cloud.token,
+                        machine_id,
+                        client_id,
+                        machine_name: crate::machine_link::hostname_label(),
+                    })
+                }
+                _ => None,
+            }
+        };
+        let _ = self.machine_link.send(cfg);
     }
 }
 
@@ -83,6 +122,8 @@ pub async fn restored_session() -> anyhow::Result<Session> {
             base_url: stored.base_url.clone(),
             token: stored.token,
         };
+        session.machine_id = stored.machine_id.clone();
+        session.client_id = stored.client_id.clone();
         match cloud.me().await {
             Ok(user) => {
                 session.email = Some(user.email.clone());
@@ -91,10 +132,13 @@ pub async fn restored_session() -> anyhow::Result<Session> {
                 if stored.email.is_none() {
                     crate::session_store::save(
                         &crate::session_store::default_path()?,
-                        &crate::session_store::StoredSession {
+                        &StoredSession {
                             base_url: stored.base_url,
                             token: cloud.token,
                             email: Some(user.email),
+                            machine_id: stored.machine_id,
+                            client_id: stored.client_id,
+                            machine_name: stored.machine_name,
                         },
                     )?;
                 }
@@ -327,21 +371,10 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             let _ = out_tx.send(response_value(req.id, result));
         }
         "session.clear" => {
-            // Full sign-out: drop the cloud session in memory and the
-            // persisted token (token.json), so the next restore shows the
-            // pair/sign-in screen instead of re-logging in silently.
-            let result = (|| -> anyhow::Result<()> {
-                {
-                    let mut s = shared.session.lock().unwrap();
-                    s.cloud = None;
-                    s.email = None;
-                }
-                crate::session_store::clear(&crate::session_store::default_path()?)
-            })();
-            let _ = out_tx.send(response_value(
-                req.id,
-                result.map(|_| Response::ok(req.id, json!({ "ok": true }))),
-            ));
+            session_clear(shared.clone(), req, out_tx).await;
+        }
+        "machine.identify" => {
+            tokio::spawn(machine_identify(shared.clone(), req, out_tx));
         }
         "models.list" => {
             let session = shared.session.clone();
@@ -476,8 +509,81 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
     crate::dtrace::dtrace(&format!("dispatch: END {} in {:?}", method, t0.elapsed()));
 }
 
-fn param<'a>(req: &'a Request, key: &str) -> anyhow::Result<&'a str> {
+fn param<'a>(req: &'a Request, key: &'a str) -> anyhow::Result<&'a str> {
     req.params[key].as_str().context(format!("missing {key}"))
+}
+
+async fn machine_identify(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+    let path = crate::session_store::default_path().ok();
+    machine_identify_with_store(shared, req, out_tx, path).await;
+}
+
+/// Records the webview-reported machine identity (stable per app install)
+/// and publishes the machine link config. The store path is injectable for
+/// tests; the daemon path uses the real token.json.
+async fn machine_identify_with_store(
+    shared: Shared,
+    req: Request,
+    out_tx: mpsc::UnboundedSender<Value>,
+    store_path: Option<PathBuf>,
+) {
+    let result = async {
+        let machine_id = param(&req, "machine_id")?.to_string();
+        anyhow::ensure!(!machine_id.is_empty(), "machine_id must not be empty");
+        {
+            let mut s = shared.session.lock().unwrap();
+            s.machine_id = Some(machine_id);
+            s.client_id
+                .get_or_insert_with(|| uuid::Uuid::now_v7().to_string());
+        }
+        // Persist alongside a real session only — an anonymous identify
+        // stays in memory until login adopts it.
+        if let Some(path) = store_path {
+            let persist = {
+                let s = shared.session.lock().unwrap();
+                match (&s.cloud, &s.machine_id) {
+                    (Some(cloud), Some(machine_id)) => Some(StoredSession {
+                        base_url: cloud.base_url.clone(),
+                        token: cloud.token.clone(),
+                        email: s.email.clone(),
+                        machine_id: Some(machine_id.clone()),
+                        client_id: s.client_id.clone(),
+                        machine_name: Some(crate::machine_link::hostname_label()),
+                    }),
+                    _ => None,
+                }
+            };
+            if let Some(stored) = persist {
+                save(&path, &stored)?;
+            }
+        }
+        shared.publish_machine_link();
+        Ok(Response::ok(req.id, json!({ "ok": true })))
+    }
+    .await;
+    let _ = out_tx.send(response_value(req.id, result));
+}
+
+/// Full sign-out: drop the cloud session and machine identity in memory and
+/// the persisted token (token.json), so the next restore shows the
+/// pair/sign-in screen instead of re-logging in silently — and drop the
+/// machine link (the webview re-identifies on the next login).
+async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+    let result = (|| -> anyhow::Result<()> {
+        {
+            let mut s = shared.session.lock().unwrap();
+            s.cloud = None;
+            s.email = None;
+            s.machine_id = None;
+            s.client_id = None;
+        }
+        crate::session_store::clear(&crate::session_store::default_path()?)
+    })();
+    shared.publish_machine_link();
+    let _ = out_tx.send(response_value(
+        req.id,
+        result.map(|_| Response::ok(req.id, json!({ "ok": true }))),
+    ));
 }
 
 async fn login_task(
@@ -498,6 +604,10 @@ async fn login_task(
             });
             s.email = Some(user.email.clone());
         }
+        let (machine_id, client_id) = {
+            let s = session.lock().unwrap();
+            (s.machine_id.clone(), s.client_id.clone())
+        };
         let path = crate::session_store::default_path()?;
         save(
             &path,
@@ -505,6 +615,9 @@ async fn login_task(
                 base_url,
                 token,
                 email: Some(user.email.clone()),
+                machine_id,
+                client_id,
+                machine_name: Some(crate::machine_link::hostname_label()),
             },
         )?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
@@ -531,6 +644,10 @@ async fn pair_task(
             });
             s.email = Some(user.email.clone());
         }
+        let (machine_id, client_id) = {
+            let s = session.lock().unwrap();
+            (s.machine_id.clone(), s.client_id.clone())
+        };
         let path = crate::session_store::default_path()?;
         save(
             &path,
@@ -538,6 +655,9 @@ async fn pair_task(
                 base_url,
                 token,
                 email: Some(user.email.clone()),
+                machine_id,
+                client_id,
+                machine_name: Some(crate::machine_link::hostname_label()),
             },
         )?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
@@ -1041,4 +1161,131 @@ async fn registry_uninstall(
     }
     .await;
     let _ = out_tx.send(response_value(req.id, result));
+}
+
+#[cfg(test)]
+mod machine_link_tests {
+    use super::*;
+    use crate::cloud::CloudClient;
+    use tokio::sync::mpsc;
+
+    fn identify_req(id: u64, machine_id: &str) -> Request {
+        Request {
+            jsonrpc: "2.0".into(),
+            id,
+            protocol: protocol::rpc::PROTOCOL_VERSION,
+            method: "machine.identify".into(),
+            params: serde_json::json!({ "machine_id": machine_id }),
+        }
+    }
+
+    fn logged_in_shared() -> Shared {
+        let session = Session {
+            cloud: Some(CloudClient {
+                base_url: "http://srv".into(),
+                token: "tok".into(),
+            }),
+            email: Some("a@b".into()),
+            ..Default::default()
+        };
+        Shared::new(session)
+    }
+
+    #[tokio::test]
+    async fn identify_stores_identity_and_publishes_link_config() {
+        let shared = logged_in_shared();
+        let mut link_rx = shared.machine_link.subscribe();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+
+        machine_identify(shared.clone(), identify_req(1, "machine-1"), out_tx).await;
+
+        // The RPC answered ok.
+        let resp = out_rx.recv().await.unwrap();
+        assert_eq!(resp["result"]["ok"], serde_json::json!(true));
+        // The session carries the identity.
+        assert_eq!(
+            shared.session.lock().unwrap().machine_id.as_deref(),
+            Some("machine-1")
+        );
+        // The link config was published from the session's cloud + identity,
+        // with a generated client id and the hostname label.
+        let cfg = link_rx.borrow_and_update().clone().expect("link published");
+        assert_eq!(cfg.machine_id, "machine-1");
+        assert_eq!(cfg.base_url, "http://srv");
+        assert_eq!(cfg.token, "tok");
+        assert!(!cfg.client_id.is_empty());
+        assert!(!cfg.machine_name.is_empty());
+    }
+
+    #[tokio::test]
+    async fn identify_persists_identity_into_the_session_store() {
+        let shared = logged_in_shared();
+        let path = std::env::temp_dir().join(format!(
+            "guild-identify-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::now_v7().simple()
+        ));
+        // Seed the store the way login left it.
+        save(
+            &path,
+            &StoredSession {
+                base_url: "http://srv".into(),
+                token: "tok".into(),
+                email: Some("a@b".into()),
+                machine_id: None,
+                client_id: None,
+                machine_name: None,
+            },
+        )
+        .unwrap();
+
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        machine_identify_with_store(
+            shared.clone(),
+            identify_req(2, "machine-2"),
+            out_tx,
+            Some(path.clone()),
+        )
+        .await;
+        let _ = out_rx.recv().await.unwrap();
+
+        let stored = crate::session_store::load(&path).unwrap();
+        assert_eq!(stored.machine_id.as_deref(), Some("machine-2"));
+        assert!(stored.client_id.is_some());
+        assert_eq!(stored.base_url, "http://srv");
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn identify_without_login_parks_the_link_but_keeps_identity() {
+        let shared = Shared::new(Session::default());
+        let mut link_rx = shared.machine_link.subscribe();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+
+        machine_identify(shared.clone(), identify_req(3, "machine-3"), out_tx).await;
+        let _ = out_rx.recv().await.unwrap();
+
+        // Identity is remembered (a later login adopts it)…
+        assert_eq!(
+            shared.session.lock().unwrap().machine_id.as_deref(),
+            Some("machine-3")
+        );
+        // …but no link config is published without a session.
+        assert!(link_rx.borrow_and_update().is_none());
+    }
+
+    #[tokio::test]
+    async fn signing_out_drops_the_link() {
+        let shared = logged_in_shared();
+        let mut link_rx = shared.machine_link.subscribe();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        machine_identify(shared.clone(), identify_req(4, "machine-4"), out_tx).await;
+        let _ = out_rx.recv().await.unwrap();
+        assert!(link_rx.borrow_and_update().is_some());
+
+        let (out_tx2, mut out_rx2) = mpsc::unbounded_channel();
+        session_clear(shared.clone(), identify_req(5, ""), out_tx2).await;
+        let _ = out_rx2.recv().await.unwrap();
+        assert!(link_rx.borrow_and_update().is_none(), "sign-out drops the link");
+    }
 }

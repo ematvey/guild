@@ -11,7 +11,7 @@
 
 use futures::{SinkExt, StreamExt};
 use guild_app_server::jsonrpc_loop::{run_connection, Shared};
-use protocol::ws::{WsClientMsg, WsServerMsg};
+use protocol::ws::WsServerMsg;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -233,19 +233,14 @@ impl GuildState {
         self.shared.lock().unwrap().clone()
     }
 
-    /// Snapshot of what the link needs right now: None until the webview
-    /// provided the machine identity and a session exists.
-    fn link_config(&self) -> Option<(String, String, String, String)> {
-        let machine_id = self.machine_id.lock().unwrap().clone()?;
+    /// Snapshot of what the link needs right now. The desktop WS is a plain
+    /// member connection — the machine (executor) role lives in the
+    /// daemon's machine link (spec 2026-09-18 agent-loop unification §3).
+    fn link_config(&self) -> Option<(String, String)> {
         let shared = self.shared()?;
         let s = shared.session.lock().unwrap();
         let cloud = s.cloud.as_ref()?;
-        Some((
-            cloud.base_url.clone(),
-            cloud.token.clone(),
-            machine_id,
-            machine_name(),
-        ))
+        Some((cloud.base_url.clone(), cloud.token.clone()))
     }
 
     fn mirror_update<F: FnOnce(&mut Mirror)>(&self, chat_id: &str, f: F) -> u64 {
@@ -342,26 +337,6 @@ fn parse_wsl_list(raw: &str) -> Vec<(String, bool)> {
 }
 
 /// PRETTY_NAME of an /etc/os-release body (first match, quotes stripped).
-fn parse_pretty_name(os_release: &str) -> Option<String> {
-    os_release
-        .lines()
-        .find_map(|line| line.strip_prefix("PRETTY_NAME="))
-        .map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string())
-        .filter(|v| !v.is_empty())
-}
-
-fn machine_name() -> String {
-    std::env::var("COMPUTERNAME")
-        .ok()
-        .or_else(|| {
-            std::fs::read_to_string("/etc/hostname")
-                .ok()
-                .map(|s| s.trim().to_string())
-        })
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "guild-machine".to_string())
-}
-
 /// Percent-encode a query component (machine ids/names are simple, but the
 /// name can carry spaces).
 fn qenc(s: &str) -> String {
@@ -377,107 +352,14 @@ fn qenc(s: &str) -> String {
     out
 }
 
-fn non_empty(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+fn parse_pretty_name(os_release: &str) -> Option<String> {
+    os_release
+        .lines()
+        .find_map(|line| line.strip_prefix("PRETTY_NAME="))
+        .map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string())
+        .filter(|v| !v.is_empty())
 }
 
-/// Registry metadata reported on every machine connect: the durable hardware
-/// fingerprint (re-pair adoption hint at sign-in) plus OS and app versions.
-/// Unavailable values are omitted — the server stores NULL.
-#[derive(Default, Clone, Debug, PartialEq)]
-struct MachineMeta {
-    fingerprint: Option<String>,
-    os: Option<String>,
-    os_version: Option<String>,
-    app_version: Option<String>,
-}
-
-impl MachineMeta {
-    fn collect(app_version: String) -> Self {
-        Self {
-            fingerprint: machine_fingerprint(),
-            os: Some(std::env::consts::OS.to_string()),
-            os_version: machine_os_version(),
-            app_version: non_empty(&app_version),
-        }
-    }
-}
-
-/// Stable per-install hardware identity, lowercase-trimmed: MachineGuid on
-/// Windows, /etc/machine-id on Linux, IOPlatformUUID on macOS. None when the
-/// platform source is missing or empty.
-#[cfg(windows)]
-fn machine_fingerprint() -> Option<String> {
-    use winreg::enums::HKEY_LOCAL_MACHINE;
-    use winreg::RegKey;
-    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey("SOFTWARE\\Microsoft\\Cryptography")
-        .ok()?;
-    let guid: String = key.get_value("MachineGuid").ok()?;
-    non_empty(&guid).map(|v| v.to_lowercase())
-}
-
-#[cfg(target_os = "linux")]
-fn machine_fingerprint() -> Option<String> {
-    let raw = std::fs::read_to_string("/etc/machine-id").ok()?;
-    non_empty(&raw).map(|v| v.to_lowercase())
-}
-
-#[cfg(target_os = "macos")]
-fn machine_fingerprint() -> Option<String> {
-    let output = std::process::Command::new("ioreg")
-        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let line = text.lines().find(|l| l.contains("IOPlatformUUID"))?;
-    let value = line.split('"').nth(3)?;
-    non_empty(value).map(|v| v.to_lowercase())
-}
-
-/// Human-facing OS version (e.g. "24H2", "15.5", "12"), trimmed.
-#[cfg(windows)]
-fn machine_os_version() -> Option<String> {
-    use winreg::enums::HKEY_LOCAL_MACHINE;
-    use winreg::RegKey;
-    let key = RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion")
-        .ok()?;
-    let version: String = key
-        .get_value("DisplayVersion")
-        .or_else(|_| key.get_value("CurrentVersion"))
-        .ok()?;
-    non_empty(&version)
-}
-
-#[cfg(target_os = "linux")]
-fn machine_os_version() -> Option<String> {
-    if let Ok(release) = std::fs::read_to_string("/etc/os-release") {
-        for line in release.lines() {
-            if let Some(value) = line.strip_prefix("VERSION_ID=") {
-                if let Some(v) = non_empty(value.trim().trim_matches('"')) {
-                    return Some(v);
-                }
-            }
-        }
-    }
-    let kernel = std::process::Command::new("uname").arg("-r").output().ok()?;
-    non_empty(&String::from_utf8_lossy(&kernel.stdout))
-}
-
-#[cfg(target_os = "macos")]
-fn machine_os_version() -> Option<String> {
-    let output = std::process::Command::new("sw_vers")
-        .arg("-productVersion")
-        .output()
-        .ok()?;
-    non_empty(std::str::from_utf8(&output.stdout).ok()?)
-}
 
 #[derive(Debug)]
 enum LinkError {
@@ -590,17 +472,18 @@ fn publish_presence(state: &GuildState, app: &AppHandle, presence: Value) {
     let _ = app.emit("app-presence", presence);
 }
 
-/// The WS machine link. The socket is the machine's liveness signal.
+/// The WS link: the desktop's member connection (frame delivery to the
+/// webview). The machine (executor) role lives in the daemon's machine
+/// link — this socket carries no machine_id (spec 2026-09-18 agent-loop
+/// unification §3).
 async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
-    let mut last_cfg: Option<(String, String, String)> = None;
+    guild_app_server::machine_link::ensure_crypto_provider();
+    let mut last_cfg: Option<(String, String)> = None;
     let mut instance_id = uuid::Uuid::now_v7();
     let mut resume = false;
     let mut was_connected = false;
-    // Fingerprint and OS/app versions are fixed for the app run; collected
-    // once and reported on every connect.
-    let meta = MachineMeta::collect(app.package_info().version.to_string());
     loop {
-        let Some((base, token, machine_id, machine_name)) = state.link_config() else {
+        let Some((base, token)) = state.link_config() else {
             if was_connected {
                 was_connected = false;
                 publish_presence(&state, &app, serde_json::json!({ "connected": false }));
@@ -609,7 +492,7 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             continue;
         };
-        let cfg = (base.clone(), token.clone(), machine_id.clone());
+        let cfg = (base.clone(), token.clone());
         if last_cfg.as_ref() != Some(&cfg) {
             state.mirrors.lock().unwrap().clear();
             instance_id = uuid::Uuid::now_v7();
@@ -622,9 +505,6 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
             &app,
             &base,
             &token,
-            &machine_id,
-            &machine_name,
-            &meta,
             instance_id,
             resume,
             &mut was_connected,
@@ -654,7 +534,7 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
                             &app,
                             serde_json::json!({ "connected": false, "displaced": true }),
                         );
-                        wait_for_link_change(&state, epoch, &base, &token, &machine_id).await;
+                        wait_for_link_change(&state, epoch, &base, &token).await;
                     }
                     LinkAction::Remint => {
                         let cloud = state
@@ -668,8 +548,7 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
                                         &app,
                                         serde_json::json!({"connected": false, "auth_required": true}),
                                     );
-                                    wait_for_link_change(&state, epoch, &base, &token, &machine_id)
-                                        .await;
+                                    wait_for_link_change(&state, epoch, &base, &token).await;
                                 }
                                 Err(error) => {
                                     ipc_trace("link", &format!("session refresh failed: {error}"))
@@ -685,9 +564,7 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
             }
         }
         if state.link_epoch.load(Ordering::SeqCst) == epoch
-            && state
-                .link_config()
-                .is_some_and(|(b, t, m, _)| b == base && t == token && m == machine_id)
+            && state.link_config().is_some_and(|(b, t)| b == base && t == token)
         {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
@@ -699,7 +576,6 @@ async fn wait_for_link_change(
     epoch: u64,
     base: &str,
     token: &str,
-    machine_id: &str,
 ) {
     loop {
         if state.link_epoch.load(Ordering::SeqCst) != epoch {
@@ -707,7 +583,7 @@ async fn wait_for_link_change(
         }
         let unchanged = state
             .link_config()
-            .is_some_and(|(b, t, m, _)| b == base && t == token && m == machine_id);
+            .is_some_and(|(b, t)| b == base && t == token);
         if !unchanged {
             return;
         }
@@ -720,9 +596,6 @@ async fn ws_session(
     app: &AppHandle,
     base: &str,
     token: &str,
-    machine_id: &str,
-    machine_name: &str,
-    meta: &MachineMeta,
     instance_id: uuid::Uuid,
     resume: bool,
     connected: &mut bool,
@@ -757,11 +630,7 @@ async fn ws_session(
         .ok_or_else(|| LinkError::Failed("ticket response has no ticket".into()))?
         .to_string();
 
-    let url = with_instance(
-        websocket_url(base, &ticket, machine_id, machine_id, machine_name, meta)?,
-        instance_id,
-        resume,
-    );
+    let url = with_instance(websocket_url(state, base, &ticket)?, instance_id, resume);
     let (socket, _) = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         tokio_tungstenite::connect_async(url.as_str()),
@@ -814,17 +683,9 @@ async fn ws_session(
                     Ok(message) => match message {
                             WsServerMsg::LiveFrame { chat_id, machine_id: frame_machine_id, event, .. } => {
                                 let data = websocket_frame_data(chat_id, frame_machine_id, event, None);
-                                if let Err(error) = handle_app_frame(
-                                    state, app, machine_id, &data, &outbound, false,
-                                ).await {
+                                if let Err(error) = handle_app_frame(state, app, &data).await {
                                     ipc_trace("link", &format!("frame error: {error}"));
                                 }
-                            }
-                            WsServerMsg::ToolDispatch { chat_id, call_id, name, arguments, workdir } => {
-                                let data = websocket_frame_data(chat_id, Some(machine_id.into()), protocol::api::StreamEvent::ToolStarted {
-                                    call_id, name, arguments, executor: protocol::api::ToolExecutor::Client, kind: None,
-                                }, workdir);
-                                let _ = handle_app_frame(state, app, machine_id, &data, &outbound, true).await;
                             }
                             WsServerMsg::ChatStatus { chat_id, generating } => {
                                 let _ = app.emit("chat-status", serde_json::json!({
@@ -832,6 +693,10 @@ async fn ws_session(
                                     "generating": generating,
                                 }));
                             }
+                            // Members never receive dispatches (the executor
+                            // role is the daemon's machine link); the arm
+                            // keeps the match exhaustive.
+                            WsServerMsg::ToolDispatch { .. } => {}
                             WsServerMsg::OrgEvent { event } => {
                                 let _ = app.emit("org-event", event);
                             }
@@ -901,14 +766,7 @@ fn with_instance(mut url: url::Url, instance: uuid::Uuid, resume: bool) -> url::
     url
 }
 
-fn websocket_url(
-    base: &str,
-    ticket: &str,
-    client_id: &str,
-    machine_id: &str,
-    machine_name: &str,
-    meta: &MachineMeta,
-) -> Result<url::Url, LinkError> {
+fn websocket_url(state: &Arc<GuildState>, base: &str, ticket: &str) -> Result<url::Url, LinkError> {
     let mut url = url::Url::parse(base)
         .map_err(|error| LinkError::Failed(format!("bad server URL: {error}")))?;
     let scheme = match url.scheme() {
@@ -924,24 +782,20 @@ fn websocket_url(
         .map_err(|_| LinkError::Failed("could not set websocket scheme".into()))?;
     let path = format!("{}/api/v1/ws", url.path().trim_end_matches('/'));
     url.set_path(&path);
-    let mut query = format!(
-        "ticket={}&client_id={}&machine_id={}&machine_name={}",
+    // Member connection: ticket + the stable client id (the webview's
+    // per-install machine id doubles as the presence key). The machine
+    // identity itself rides the daemon's machine link, not this socket.
+    let client_id = state
+        .machine_id
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| "guild-desktop".into());
+    url.set_query(Some(&format!(
+        "ticket={}&client_id={}",
         qenc(ticket),
-        qenc(client_id),
-        qenc(machine_id),
-        qenc(machine_name),
-    );
-    for (key, value) in [
-        ("machine_fingerprint", &meta.fingerprint),
-        ("machine_os", &meta.os),
-        ("machine_os_version", &meta.os_version),
-        ("machine_app_version", &meta.app_version),
-    ] {
-        if let Some(value) = value {
-            query.push_str(&format!("&{key}={}", qenc(value)));
-        }
-    }
-    url.set_query(Some(&query));
+        qenc(&client_id)
+    )));
     Ok(url)
 }
 
@@ -962,15 +816,13 @@ fn websocket_frame_data(
     v.to_string()
 }
 
-/// Handles one WS frame: mirrors it for late webviews and — for client
-/// tools bound to this machine — executes it and sends the result.
+/// Handles one WS frame: mirrors it for late webviews and forwards it to
+/// the webview. Tool execution is the daemon's machine link's job — this
+/// path only displays (spec 2026-09-18 agent-loop unification §3).
 async fn handle_app_frame(
     state: &Arc<GuildState>,
     app: &AppHandle,
-    machine_id: &str,
     data: &str,
-    outbound: &OutboundQueue,
-    execute: bool,
 ) -> Result<(), String> {
     let v: Value = serde_json::from_str(data).map_err(|e| format!("frame parse: {e}"))?;
     let chat_id = v["chat_id"].as_str().unwrap_or_default().to_string();
@@ -997,77 +849,6 @@ async fn handle_app_frame(
         serde_json::json!({ "chat_id": chat_id, "seq": seq, "event": ev }),
     );
 
-    if execute && ev_type == "tool_started" && ev["executor"].as_str() == Some("client") {
-        // Execute only for THIS machine (other devices render).
-        let bound = v["machine_id"].as_str().unwrap_or_default();
-        if bound == machine_id {
-            let call_id = ev["call_id"].as_str().unwrap_or_default().to_string();
-            let name = ev["name"].as_str().unwrap_or_default().to_string();
-            let args = ev["arguments"].as_str().unwrap_or("{}").to_string();
-            // The dispatch carries the workspace: the chat's project folder.
-            let workdir = v["workdir"].as_str().map(str::to_string);
-            let outbound = outbound.clone();
-            let chat = chat_id.clone();
-            tokio::spawn(async move {
-                if let Err(e) = execute_tool(&outbound, &chat, &call_id, &name, &args, workdir).await {
-                    ipc_trace("tool", &format!("{name} {call_id} failed: {e}"));
-                }
-            });
-        }
-    }
-    Ok(())
-}
-
-/// Runs one client tool in the dispatch's workspace folder and sends its
-/// result over the standing machine socket.
-async fn execute_tool(
-    outbound: &OutboundQueue,
-    chat_id: &str,
-    call_id: &str,
-    name: &str,
-    args_json: &str,
-    workdir: Option<String>,
-) -> Result<(), String> {
-    let args: Value = serde_json::from_str(args_json).unwrap_or(serde_json::json!({}));
-    let outcome: Result<Value, String> = match workdir {
-        None => Err("no workspace folder is set for this chat — pick a project with 'Choose project' in the composer".to_string()),
-        Some(dir) => {
-            let registry = guild_core::tools::ToolRegistry::builtins();
-            match registry.get(name) {
-                Some(tool) => match tool.run(std::path::Path::new(&dir), args).await {
-                    Ok(out) => Ok(serde_json::json!({
-                        "content": out.output_for_model,
-                        "is_error": false,
-                        "meta": out.meta,
-                        "images": out.images,
-                    })),
-                    Err(e) => Ok(serde_json::json!({ "content": e.to_string(), "is_error": true })),
-                },
-                None => Err(format!("unknown tool {name}")),
-            }
-        }
-    };
-    let payload = match outcome {
-        Ok(v) => v,
-        Err(e) => serde_json::json!({ "content": e, "is_error": true }),
-    };
-    let message = WsClientMsg::ToolResult {
-        chat_id: chat_id
-            .parse()
-            .map_err(|error| format!("invalid chat id: {error}"))?,
-        call_id: call_id.to_string(),
-        content: payload["content"].as_str().unwrap_or_default().to_string(),
-        is_error: payload["is_error"].as_bool().unwrap_or(true),
-        meta: payload
-            .get("meta")
-            .cloned()
-            .filter(|value| !value.is_null()),
-    };
-    let text = serde_json::to_string(&message).expect("client message serializes");
-    outbound
-        .try_send(WsMessage::Text(text.into()))
-        .map_err(|error| error.to_string())?;
-    ipc_trace("tool", &format!("{name} {call_id} ok"));
     Ok(())
 }
 
@@ -1759,6 +1540,7 @@ mod tests {
 
     #[tokio::test]
     async fn overloaded_old_writer_resume_uses_terminal_reconnect_policy() {
+        guild_app_server::machine_link::ensure_crypto_provider();
         let (fixture, _) = guild_server::test_support::test_state_with_mock_ingress().await;
         let user = fixture
             .store()
@@ -1798,13 +1580,11 @@ mod tests {
                     .await
                     .unwrap();
                 let url = with_instance(
-                    websocket_url(
+                    machine_url_for_test(
                         &base,
                         ticket["ticket"].as_str().unwrap(),
-                        "client",
                         "machine",
                         "Desk",
-                        &MachineMeta::default(),
                     )
                     .unwrap(),
                     instance,
@@ -1940,72 +1720,50 @@ mod tests {
     }
 
     #[test]
-    fn websocket_url_uses_ws_scheme_and_encodes_all_query_values() {
-        let url = websocket_url(
-            "https://guild.example/base",
-            "ticket/+",
-            "machine id",
-            "machine id",
-            "Desk & Lab",
-            &MachineMeta::default(),
-        )
-        .unwrap();
+    fn websocket_url_uses_ws_scheme_and_encodes_the_member_query() {
+        let state = Arc::new(GuildState::default());
+        *state.machine_id.lock().unwrap() = Some("machine id".into());
+        let url = websocket_url(&state, "https://guild.example/base", "ticket/+").unwrap();
         assert_eq!(url.scheme(), "wss");
         assert_eq!(url.path(), "/base/api/v1/ws");
+        // Member connection: ticket + the per-install client id only — no
+        // machine keys (the executor role is the daemon's machine link).
         assert_eq!(
             url.query(),
-            Some("ticket=ticket%2F%2B&client_id=machine%20id&machine_id=machine%20id&machine_name=Desk%20%26%20Lab")
+            Some("ticket=ticket%2F%2B&client_id=machine%20id")
         );
     }
 
-    #[test]
-    fn websocket_url_appends_machine_meta_and_omits_empty_values() {
-        let meta = MachineMeta {
-            fingerprint: Some("AB-cd/ef".into()),
-            os: Some("linux".into()),
-            os_version: Some("12".into()),
-            app_version: None,
-        };
-        let url = websocket_url(
-            "https://guild.example",
-            "t",
-            "m",
-            "m",
-            "lab",
-            &meta,
+    /// Builds the machine-role upgrade URL the daemon's machine link sends
+    /// (the takeover semantics this suite exercises moved there with the
+    /// machine role; the server contract is unchanged).
+    fn machine_url_for_test(
+        base: &str,
+        ticket: &str,
+        machine_id: &str,
+        machine_name: &str,
+    ) -> Result<url::Url, LinkError> {
+        let mut url = url::Url::parse(base)
+            .map_err(|error| LinkError::Failed(format!("bad server URL: {error}")))?;
+        url.set_scheme(
+            match url.scheme() {
+                "https" => "wss",
+                _ => "ws",
+            },
         )
-        .unwrap();
-        assert_eq!(
-            url.query(),
-            Some("ticket=t&client_id=m&machine_id=m&machine_name=lab\
-                 &machine_fingerprint=AB-cd%2Fef&machine_os=linux&machine_os_version=12")
-        );
-    }
-
-    #[test]
-    fn machine_meta_collect_reports_os_app_version_and_normalizes_fingerprint() {
-        let meta = MachineMeta::collect("0.4.0".into());
-        assert_eq!(meta.os.as_deref(), Some(std::env::consts::OS));
-        assert_eq!(meta.app_version.as_deref(), Some("0.4.0"));
-        if let Some(fp) = &meta.fingerprint {
-            assert_eq!(fp, &fp.to_lowercase());
-            assert_eq!(fp.trim(), fp);
-            assert!(!fp.is_empty());
-        }
-        assert!(meta.os_version.as_ref().is_none_or(|v| !v.trim().is_empty()));
-    }
-
-    #[test]
-    fn linux_fingerprint_matches_etc_machine_id() {
-        match std::fs::read_to_string("/etc/machine-id") {
-            Ok(raw) => {
-                assert_eq!(
-                    machine_fingerprint().as_deref(),
-                    Some(raw.trim().to_lowercase().as_str())
-                );
-            }
-            Err(_) => assert_eq!(machine_fingerprint(), None),
-        }
+        .map_err(|_| LinkError::Failed("scheme".into()))?;
+        url.set_path(&format!(
+            "{}/api/v1/ws",
+            url.path().trim_end_matches('/')
+        ));
+        url.set_query(Some(&format!(
+            "ticket={}&client_id={}&machine_id={}&machine_name={}",
+            qenc(ticket),
+            qenc(machine_id),
+            qenc(machine_id),
+            qenc(machine_name)
+        )));
+        Ok(url)
     }
 
     #[test]

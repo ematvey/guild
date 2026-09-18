@@ -8,6 +8,7 @@ pub mod daemon_client;
 pub mod dtrace;
 pub use protocol;
 pub mod jsonrpc_loop;
+pub mod machine_link;
 pub mod mcp;
 pub mod registry_client;
 pub mod session_store;
