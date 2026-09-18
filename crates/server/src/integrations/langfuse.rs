@@ -232,6 +232,7 @@ async fn list_traces(
         "count": traces.len().min(limit),
     });
     Ok(ToolOutcome {
+        artifact: None,
         content,
         meta: Some(meta),
     })
@@ -262,6 +263,7 @@ async fn get_trace(
         "id": trace["id"],
     });
     Ok(ToolOutcome {
+        artifact: None,
         content,
         meta: Some(meta),
     })
@@ -300,6 +302,7 @@ async fn get_prompt(
         "version": version,
     });
     Ok(ToolOutcome {
+        artifact: None,
         content,
         meta: Some(meta),
     })

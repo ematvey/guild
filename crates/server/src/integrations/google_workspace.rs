@@ -335,6 +335,7 @@ async fn gmail_search(
     let messages = body["messages"].as_array().cloned().unwrap_or_default();
     if messages.is_empty() {
         return Ok(ToolOutcome {
+            artifact: None,
             content: "No messages match the search.".to_string(),
             meta: None,
         });
@@ -357,6 +358,7 @@ async fn gmail_search(
         out.push_str("(more results available — narrow the query)\n");
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
     })
@@ -392,6 +394,7 @@ async fn gmail_get_message(
         )),
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
     })
@@ -417,6 +420,7 @@ async fn calendar_list_events(
     let items = body["items"].as_array().cloned().unwrap_or_default();
     if items.is_empty() {
         return Ok(ToolOutcome {
+            artifact: None,
             content: "No events in the requested window.".to_string(),
             meta: None,
         });
@@ -434,6 +438,7 @@ async fn calendar_list_events(
         ));
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
     })
@@ -455,6 +460,7 @@ async fn drive_search(
     let files = body["files"].as_array().cloned().unwrap_or_default();
     if files.is_empty() {
         return Ok(ToolOutcome {
+            artifact: None,
             content: format!("No Drive files matching \"{}\".", name),
             meta: None,
         });
@@ -469,6 +475,7 @@ async fn drive_search(
         ));
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
     })
@@ -503,6 +510,7 @@ async fn directory_users(
     let users = body["users"].as_array().cloned().unwrap_or_default();
     if users.is_empty() {
         return Ok(ToolOutcome {
+            artifact: None,
             content: format!("No directory users in domain \"{}\".", domain),
             meta: None,
         });
@@ -516,6 +524,7 @@ async fn directory_users(
         ));
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
     })

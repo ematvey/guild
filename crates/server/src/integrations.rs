@@ -64,6 +64,11 @@ impl std::fmt::Display for Category {
 pub struct ToolOutcome {
     pub content: String,
     pub meta: Option<serde_json::Value>,
+    /// Binary payload the tool hands the model as a spilled artifact (tool
+    /// artifacts design): the worker stores the bytes in object storage and
+    /// replaces `content` with a pointer to the materialized file. Carrying
+    /// a payload always spills, regardless of size.
+    pub artifact: Option<guild_core::tools::ToolArtifact>,
 }
 
 /// One integration plugin. `config` is the admin-supplied JSON with the
@@ -504,6 +509,7 @@ pub async fn mcp_call_tool(
         return Err(format!("mcp tool error: {text}"));
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: text,
         meta: None,
     })
@@ -577,11 +583,13 @@ pub mod testplug {
                     "secret_echo" => {
                         let present = secrets.iter().any(|(name, _)| name == "api_key");
                         Ok(ToolOutcome {
+                            artifact: None,
                             content: format!("api_key present: {present}"),
                             meta: None,
                         })
                     }
                     "admin_op" => Ok(ToolOutcome {
+                        artifact: None,
                         content: "admin ok".to_string(),
                         meta: None,
                     }),
@@ -730,6 +738,7 @@ pub mod searxng {
                     "truncated": truncated,
                 });
                 Ok(ToolOutcome {
+                    artifact: None,
                     content: out,
                     meta: Some(meta),
                 })
@@ -916,6 +925,7 @@ pub mod superproxy {
                     meta["title"] = serde_json::Value::String(t.to_string());
                 }
                 Ok(ToolOutcome {
+                    artifact: None,
                     content,
                     meta: Some(meta),
                 })
@@ -1179,6 +1189,7 @@ pub mod firecrawl {
                             meta["title"] = serde_json::Value::String(t.to_string());
                         }
                         Ok(ToolOutcome {
+                            artifact: None,
                             content,
                             meta: Some(meta),
                         })
@@ -1246,6 +1257,7 @@ pub mod firecrawl {
                             "truncated": truncated,
                         });
                         Ok(ToolOutcome {
+                            artifact: None,
                             content: out,
                             meta: Some(meta),
                         })
@@ -1278,6 +1290,7 @@ pub mod firecrawl {
                             out = "No links found.".to_string();
                         }
                         Ok(ToolOutcome {
+                            artifact: None,
                             content: out,
                             meta: None,
                         })
@@ -1425,6 +1438,7 @@ pub(super) async fn call_vendor_api(
     let truncated = text.chars().count() > max_chars;
     let content: String = text.chars().take(max_chars).collect();
     Ok(ToolOutcome {
+        artifact: None,
         content: if truncated {
             format!("{content}\n\n[truncated]")
         } else {

@@ -409,6 +409,7 @@ async fn attach_replays_unresolved_approval_requests() {
                 meta: None,
                 images: Vec::new(),
                 kind: None,
+                artifact_id: None,
             },
         )
         .await

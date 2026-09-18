@@ -17,7 +17,7 @@ use guild_core::agent::{
     run_agent, AgentConfig, AgentHooks, ApprovalDecision, ModelTurn, ProviderTurn,
 };
 use guild_core::provider::{ProviderChunk, ProviderError};
-use guild_core::tools::{ToolFailure, ToolOutcome, ToolRegistry};
+use guild_core::tools::{ToolArtifact, ToolFailure, ToolOutcome, ToolRegistry};
 use protocol::api::{Block, Message, ThreadEvent, ToolCall, ToolSpec, UsagePayload};
 use serde_json::{json, Value};
 use std::convert::Infallible;
@@ -117,6 +117,10 @@ struct TurnFrame {
 
 struct SseHooks {
     tx: mpsc::Sender<TurnFrame>,
+    /// Tool-carried artifact payloads (tool artifacts design) captured from
+    /// tool results, keyed by call id — the persist loop spills them into
+    /// tool_artifacts after the run.
+    artifacts: Arc<std::sync::Mutex<std::collections::HashMap<String, ToolArtifact>>>,
 }
 
 impl SseHooks {
@@ -140,6 +144,14 @@ impl AgentHooks for SseHooks {
     }
 
     async fn on_tool_result(&self, call: &ToolCall, outcome: &Result<ToolOutcome, ToolFailure>) {
+        if let Ok(o) = outcome {
+            if let Some(artifact) = &o.artifact {
+                self.artifacts
+                    .lock()
+                    .unwrap()
+                    .insert(call.id.clone(), artifact.clone());
+            }
+        }
         let payload = match outcome {
             Ok(o) => json!({"id": call.id, "name": call.name, "ok": true, "summary": o.ui_summary}),
             Err(e) => {
@@ -281,6 +293,7 @@ async fn run_turn(
     let workdir = workspace_dir(&state, user.0.org_id, &session.workspace_name);
     let chat_id = session.chat_id;
     let store_for_loop = store.clone();
+    let state_for_loop = state.clone();
     let usage = state.usage().await?;
     let org_id = user.0.org_id;
     let user_id = user.0.id;
@@ -305,7 +318,12 @@ async fn run_turn(
             tokens_out: tokens_out.clone(),
         };
         let (hook_tx, mut hook_rx) = mpsc::channel::<TurnFrame>(64);
-        let hooks = SseHooks { tx: hook_tx };
+        let artifacts: Arc<std::sync::Mutex<std::collections::HashMap<String, ToolArtifact>>> =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let hooks = SseHooks {
+            tx: hook_tx,
+            artifacts: artifacts.clone(),
+        };
         let before = history.len();
         let result = run_agent(
             &turn,
@@ -376,6 +394,43 @@ async fn run_turn(
                             let Some(call_id) = &m.tool_call_id else {
                                 continue;
                             };
+                            let name = call_names.get(call_id).cloned().unwrap_or_default();
+                            // Spill choke point (tool artifacts design): a
+                            // tool-carried artifact payload spills always,
+                            // replacing the inline content with the pointer
+                            // text on the event. The model-facing history
+                            // already holds the inline text — the event is
+                            // the log of record.
+                            let mut content = m.content.clone();
+                            let mut meta = None;
+                            let mut artifact_id = None;
+                            let artifact = artifacts.lock().unwrap().remove(call_id);
+                            if let Some(artifact) = artifact {
+                                match crate::worker::spill::spill_tool_artifact(
+                                    &state_for_loop,
+                                    org_id,
+                                    chat_id,
+                                    call_id,
+                                    &name,
+                                    &artifact,
+                                )
+                                .await
+                                {
+                                    Ok((spilled, pointer)) => {
+                                        content = pointer;
+                                        meta = Some(crate::worker::spill::artifact_meta(
+                                            None, &spilled,
+                                        ));
+                                        artifact_id = Some(spilled.artifact_id);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            tool = %name,
+                                            "artifact spill failed, keeping inline: {e:?}"
+                                        );
+                                    }
+                                }
+                            }
                             let _ = store_for_loop
                                 .thread()
                                 .append_event(
@@ -384,12 +439,13 @@ async fn run_turn(
                                         turn: turn_no,
                                         step,
                                         call_id: call_id.clone(),
-                                        name: call_names.get(call_id).cloned().unwrap_or_default(),
-                                        content: m.content.clone(),
+                                        name,
+                                        content,
                                         is_error: false,
-                                        meta: None,
+                                        meta,
                                         images: Vec::new(),
                                         kind: None,
+                                        artifact_id,
                                     },
                                 )
                                 .await;
