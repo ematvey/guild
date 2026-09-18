@@ -1,8 +1,39 @@
 # Guild — current state of work
 
-Updated 2026-09-18 (unification complete). Read this before touching
+Updated 2026-09-19 (architecture deepening round). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Architecture deepening round: executor funnel + GenerationTable, thread-reducer, rider cleanups — 2026-09-19
+
+maintainer accepted the r3 architecture-review suggestions and had them
+implemented via three parallel Herdr lanes (reports:
+`docs/reports/2026-09-19-arch-deepening-{funnel,riders,reducer}.md`).
+Server lane (4 commits): `GenerationTable` in state.rs — the per-chat
+streaming map is private behind verbs, and `take_buffers_for_capture` turns
+the feed.rs capture-atomicity comment into code (pinned by a
+`capture_during_commit_never_shows_a_step_twice` test); new
+`worker/funnel.rs` owns suspend→dispatch→watch→resolve for all executor arms
+behind two ports — `funnel::suspend(ctx, …, Executor)` where `Executor` is
+the spec's taxonomy as a type (`Desktop`/`Sandbox`/`ServerLocal`), and the
+transport side calls `complete`; the three arms in restate.rs collapse to
+thin suspend calls; new `worker/turn.rs` carries the turn derivations
+(`build_turn_text`, `load_media_map`, `media_parts`, `enforce_quota`) so
+restate.rs imports nothing from http::gateway and gateway.rs went 1671 → 993
+lines. Desktop lane: `apps/desktop/src/lib/thread-reducer.ts` is the single
+source of the visible-block merge rules (holds state, exposes
+`applyEvent`/`applyFrame`/`reconcileSend`/`setCompacting`; every `setBlocks`
+site routed through it; per-bug-class tests incl. the 0.5.10 compaction-flash
+guard, now reducer data instead of a component conditional). Rider lane:
+`run_agent` and its loop types deleted from guild-core (loop-level tests
+gone; `agent::policy` kept); `chat.send` rides the shim's drive path
+(`drive_chat` in agent_start.rs) — the second completion loop is gone;
+new `auth_state.rs` owns token.json + machine identity + link publication
+(mutate ⇒ persist ⇒ publish is one `transition` method; login / pair /
+identify / session.clear are thin; `tool.run` retired — no callers).
+Merged funnel→riders→reducer; full suite green on master (guild-server
+119 lib + all integration suites, guild-core 76, protocol 9,
+guild-app-server incl. engine_stdio, desktop 121 + tsc).
 
 ## Phase 5 landed: web parity — machine-mediated AGENTS.md + sandbox executor — 2026-09-18
 
