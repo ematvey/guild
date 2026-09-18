@@ -490,6 +490,32 @@ impl GenerationTable {
     }
 }
 
+/// Commits an assistant step and retires its replay buffers as one view
+/// change (the commit-side twin of GenerationTable::take_buffers_for_capture):
+/// the buffer write locks are held across the durable append, so a
+/// concurrent capture sees the view either before or after the commit,
+/// never torn.
+pub(crate) async fn persist_assistant_step(
+    state: &AppState,
+    chat: Uuid,
+    event: &protocol::api::ThreadEvent,
+) -> Result<crate::store::thread::ThreadEventRow, ApiError> {
+    let gen = state.generations.attach(chat);
+    let text = gen.text;
+    let thinking = gen.thinking;
+    let mut text = text.write().await;
+    let mut thinking = thinking.write().await;
+    let row = state
+        .store()
+        .await?
+        .thread()
+        .append_event(chat, event)
+        .await?;
+    text.clear();
+    thinking.clear();
+    Ok(row)
+}
+
 #[cfg(test)]
 mod generation_table_tests {
     use super::*;
@@ -657,7 +683,7 @@ mod generation_table_tests {
     #[cfg(feature = "test-support")]
     #[tokio::test]
     async fn capture_during_commit_never_shows_a_step_twice() {
-        use crate::http::gateway::persist_assistant_step;
+        use crate::state::persist_assistant_step;
         use crate::test_support::full_state;
         use protocol::api::{Block, ThreadEvent};
 
