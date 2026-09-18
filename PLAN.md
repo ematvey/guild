@@ -1,8 +1,41 @@
 # Guild — current state of work
 
-Updated 2026-09-18 (projects + WSL milestone). Read this before touching
+Updated 2026-09-18 (tool artifacts milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Tool artifacts: large tool results spill to object storage + materialize on the client — 2026-09-18
+
+maintainer: oversized server-tool results no longer truncate or bloat history.
+One primitive (spec `docs/specs/2026-09-18-tool-artifacts-design.md`): a
+result over 64 KiB — or a tool that carries an `artifact` payload (new
+`ToolOutcome.artifact {filename, content_type, bytes}` on both the
+guild-core and integration shapes) — is spilled into `tool_artifacts`
+(migration 0052: row in Postgres, bytes in rustfs, cascade on chat,
+no cleanup yet — TODO). `ThreadEvent::ToolResult` gained optional typed
+`artifact_id`; spilled content is a pointer line + 2 KiB head excerpt
+(binary mime: path + size + mime only) with meta.card
+`{card:"artifact", id, filename, content_type, size_bytes, path}`.
+Replay-safe: the spill rides the journaled tool run and creation is
+idempotent (uuid v5 over chat_id+call_id, INSERT ON CONFLICT DO NOTHING).
+Endpoints: `GET /api/v1/tool_artifacts/{id}` (org-scoped bytes) and
+`GET /api/v1/chats/{chat_id}/tool_artifacts` (list). The model addresses
+`.guild/artifacts/<chat_id>/<filename>` — a real workspace path, shell
+compatible; guild-core gained the artifact path contract + index +
+touch-time materialization hooks, and app-server materializes on first read
+(explicit "not materialized; will be fetched when online" error text),
+prefetches in the background on both agent start (thread-log sync) and live
+ToolCompleted frames. Desktop renders an artifact download card on spilled
+tool_result frames (authed blob fetch mirroring attachments, retry).
+google_workspace: `api` cap 12K → 1 MiB (spill now protects history),
+`gmail_get_message` lists attachment parts, new `gmail_get_attachment`
+decodes base64url and hands bytes through the artifact channel — the
+patents XLSX case that motivated this lands as a real file. Local tools
+keep their inline caps (their output already has a local copy).
+Delivered by three parallel Herdr lanes (server / client / UI) on separate
+worktree branches, merged server→client→UI; bindings regenerated, full
+suite green (`guild-server --features test-support`, `guild-core`,
+`protocol`, `guild-app-server`, desktop tsc + WebChat tests).
 
 ## Architecture decision: one agent loop + thin desktop backend — 2026-09-18
 
