@@ -15,12 +15,11 @@ use crate::http::error::ApiError;
 use crate::http::gateway::enforce_quota;
 use crate::worker::funnel::{
     clear_pending_tool, dispatch_pending_tool, note_pending_tool,
-    restore_dispatch_connection, spawn_machine_watcher, spawn_stop_approval_watcher,
-    spawn_stop_watcher,
+    restore_dispatch_connection, spawn_machine_watcher, spawn_stop_approval_watcher, suspend,
+    Executor, APPROVAL_TIMEOUT,
 };
 use crate::integrations;
 use crate::state::AppState;
-use crate::worker::exec_policy_gate;
 use crate::worker::executor::{tool_registry, Completion, RoutineConfig, RoutineExecutor};
 use crate::worker::overflow::is_context_overflow;
 use crate::worker::run::MAX_STEPS;
@@ -326,7 +325,7 @@ struct CompletionOut {
     stopped: bool,
 }
 
-fn api_err(e: ApiError) -> anyhow::Error {
+pub(crate) fn api_err(e: ApiError) -> anyhow::Error {
     anyhow::anyhow!(e.message)
 }
 
@@ -360,15 +359,15 @@ pub struct ChatRunner {
 
 /// Client-side tool result as delivered back through the awakeable.
 #[derive(Serialize, Deserialize, Clone)]
-struct ToolResultPayload {
-    content: String,
-    is_error: bool,
+pub(crate) struct ToolResultPayload {
+    pub(crate) content: String,
+    pub(crate) is_error: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    meta: Option<Value>,
+    pub(crate) meta: Option<Value>,
     /// Image parts (data URIs) the executing client attached — persisted on
     /// the tool_result event and sent to vision-capable models.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    images: Vec<String>,
+    pub(crate) images: Vec<String>,
 }
 
 /// Body of the `complete_tool` handler.
@@ -502,16 +501,11 @@ fn approval_on_decision(
     })
 }
 
-/// How long the loop waits for a client to execute a client-side tool.
-pub(crate) const CLIENT_TOOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
-/// How long the approval gate waits for a user decision before auto-denying.
-pub(crate) const APPROVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
-
 fn client_tool_names() -> &'static [&'static str] {
     &["read_file", "execute", "edit_file", "write_file"]
 }
 
-fn state_key(call_id: &str) -> String {
+pub(crate) fn state_key(call_id: &str) -> String {
     format!("pending_tool:{call_id}")
 }
 
@@ -2206,7 +2200,16 @@ impl ChatRunner {
                         // the server itself runs the tool in the org
                         // workspace — same dispatch shape, no hub.
                         let dir = crate::http::agents::workspace_dir(&state, req.org_id, &ws_name);
-                        server_local_tool_step(&ctx, &state, &tx, call, req.org_id, req.chat_id, dir)
+                        server_local_tool_step(
+                            &ctx,
+                            &state,
+                            &tx,
+                            req.org_id,
+                            &req.model,
+                            req.chat_id,
+                            call,
+                            dir,
+                        )
                             .await?
                     } else {
                         client_tool_step(
@@ -2771,7 +2774,7 @@ async fn approval_policy_verdict(
     Ok(approved)
 }
 
-async fn approval_gate(
+pub(crate) async fn approval_gate(
     ctx: &ObjectContext<'_>,
     state: &AppState,
     tx: &broadcast::Sender<StreamEvent>,
@@ -3006,10 +3009,9 @@ async fn approval_gate(
 }
 
 /// Phase 5b: the sandbox executor for web chats with no desktop present —
-/// the same tool runs on the server against a per-chat sandbox dir
-/// (`data_dir/sandbox/{chat_id}`), behind the same static exec-policy and
-/// interactive approval gates as client tools. The sandbox is private to
-/// the chat; shell tools additionally require the server allowlist flag.
+/// the same tool runs on the server against a per-chat sandbox dir, behind
+/// the same static exec-policy and interactive approval gates as client
+/// tools. Everything below the gates is the funnel's.
 async fn sandbox_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
@@ -3019,165 +3021,44 @@ async fn sandbox_tool_step(
     chat_id: Uuid,
     call: &ToolCall,
 ) -> HandlerResult<ToolResultPayload> {
-    // Static exec policy first (codex model): a `forbidden` rule is a hard
-    // deny; `prompt` rules and unmatched commands fall through to the
-    // chat's interactive approval flow — the web client answers it like any
-    // other executor's.
-    let static_decision = exec_policy_gate::evaluate_execute(&call.arguments);
-    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) = &static_decision {
-        return Ok(ToolResultPayload {
-            content: format!("denied by exec policy: {reason}"),
-            is_error: true,
-            meta: None,
-            images: Vec::new(),
-        });
-    }
-    if !matches!(static_decision, exec_policy_gate::ExecPolicyDecision::Allow) {
-        if let Some(denial) =
-            approval_gate(ctx, state, tx, org_id, model, chat_id, call, Approval::Ask, false)
-                .await?
-        {
-            return Ok(denial);
-        }
-    } // static allow skips the interactive gate entirely
-    let dir = std::path::Path::new(&state.config.data_dir)
-        .join("sandbox")
-        .join(chat_id.to_string());
-    server_local_tool_step(ctx, state, tx, call, org_id, chat_id, dir).await
+    suspend(
+        ctx,
+        state,
+        tx,
+        org_id,
+        model,
+        chat_id,
+        call,
+        Executor::Sandbox,
+    )
+    .await
 }
 
-/// One server-local tool call (spec 2026-09-18 unification §4 phases 4+5b):
-/// the server executes the client-tool in-process against the given
-/// workspace dir — journaled side effect (the result replays without
-/// re-running), then notifies attached clients exactly like the machine
-/// dispatch does. No interactive approvals here: the batch contract is
-/// "trusted workspace, pre-approved" and the sandbox caller runs its gates
-/// before dispatching; `execute` still passes the static exec-policy gate,
-/// and shell tools require the server allowlist flag.
+/// One server-local tool call (spec 2026-09-18 unification §4 phase 4): the
+/// batch backend — the server executes the client-tool in-process against
+/// the org workspace dir, pre-approved by contract. Everything below the
+/// contract is the funnel's.
 async fn server_local_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
     tx: &broadcast::Sender<StreamEvent>,
+    org_id: Uuid,
+    model: &str,
+    chat_id: Uuid,
     call: &ToolCall,
-    _org_id: Uuid,
-    _chat_id: Uuid,
     dir: std::path::PathBuf,
 ) -> HandlerResult<ToolResultPayload> {
-    let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
-    // Journaled: notify attached clients that this call runs server-side.
-    let tx2 = tx.clone();
-    let call_id = call.id.clone();
-    let name = call.name.clone();
-    let args2 = args_json.clone();
-    ctx.run(move || {
-        let tx = tx2.clone();
-        let call_id = call_id.clone();
-        let name = name.clone();
-        let args = args2.clone();
-        async move {
-            let _ = tx.send(StreamEvent::ToolStarted {
-                call_id,
-                name,
-                arguments: args,
-                executor: ToolExecutor::Server,
-                kind: None,
-            });
-            Ok(Json(()))
-        }
-    })
-    .await?;
-
-    let shell_allowed = state.config.allow_shell_tools;
-    let name = call.name.clone();
-    let args = call.arguments.clone();
-    let payload: ToolResultPayload = ctx
-        .run(move || {
-            let dir = dir.clone();
-            let name = name.clone();
-            let args = args.clone();
-            async move {
-                if name == "execute" && !shell_allowed {
-                    return Ok(Json(ToolResultPayload {
-                        content: "denied: shell tools are disabled on this server".into(),
-                        is_error: true,
-                        meta: None,
-                        images: Vec::new(),
-                    }));
-                }
-                if name == "execute" {
-                    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) =
-                        exec_policy_gate::evaluate_execute(&args)
-                    {
-                        return Ok(Json(ToolResultPayload {
-                            content: format!("denied by exec policy: {reason}"),
-                            is_error: true,
-                            meta: None,
-                            images: Vec::new(),
-                        }));
-                    }
-                }
-                tokio::fs::create_dir_all(&dir)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("workspace dir: {e}"))?;
-                let mut registry = guild_core::tools::ToolRegistry::new();
-                registry.add(Arc::new(guild_core::tools::fs::ReadFile::default()));
-                registry.add(Arc::new(guild_core::tools::fs::WriteFile));
-                registry.add(Arc::new(guild_core::tools::fs::EditFile));
-                if shell_allowed {
-                    registry.add(Arc::new(guild_core::tools::shell::RunCommand));
-                }
-                let payload = match registry.get(&name) {
-                    Some(tool) => match tool.run(std::path::Path::new(&dir), args).await {
-                        Ok(out) => ToolResultPayload {
-                            content: out.output_for_model,
-                            is_error: false,
-                            meta: out.meta,
-                            images: out.images,
-                        },
-                        Err(e) => ToolResultPayload {
-                            content: e.to_string(),
-                            is_error: true,
-                            meta: None,
-                            images: Vec::new(),
-                        },
-                    },
-                    None => ToolResultPayload {
-                        content: format!("unknown tool {name}"),
-                        is_error: true,
-                        meta: None,
-                        images: Vec::new(),
-                    },
-                };
-                Ok(Json(payload))
-            }
-        })
-        .await?
-        .into_inner();
-
-    // Journaled: report completion.
-    let tx2 = tx.clone();
-    let call_id = call.id.clone();
-    let name2 = call.name.clone();
-    let content2 = payload.content.clone();
-    let is_error = payload.is_error;
-    ctx.run(move || {
-        let tx = tx2.clone();
-        let call_id = call_id.clone();
-        let name = name2.clone();
-        let content = content2.clone();
-        async move {
-            let _ = tx.send(StreamEvent::ToolCompleted {
-                call_id,
-                name,
-                content,
-                is_error,
-            });
-            Ok(Json(()))
-        }
-    })
-    .await?;
-
-    Ok(payload)
+    suspend(
+        ctx,
+        state,
+        tx,
+        org_id,
+        model,
+        chat_id,
+        call,
+        Executor::ServerLocal { dir },
+    )
+    .await
 }
 
 /// Phase 5a: one machine-mediated read_file for the bound project's
@@ -3420,172 +3301,22 @@ async fn client_tool_step(
         });
     }
 
-    // ---- Static exec policy (codex model): Starlark prefix rules decide
-    // before the interactive gate. An `allow` rule runs the command with no
-    // gate at all; a `forbidden` rule is a hard deny whose text is the rule's
-    // justification (the model recovers by trying a materially different
-    // command, never by escalating); `prompt` rules and unmatched commands
-    // fall through to the chat's approval flow below. Pure function of the
-    // compiled-in rules and the command string — replay-stable.
-    let static_decision = exec_policy_gate::evaluate_execute(&call.arguments);
-    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) = &static_decision {
-        return Ok(ToolResultPayload {
-            content: format!("denied by exec policy: {reason}"),
-            is_error: true,
-            meta: None,
-            images: Vec::new(),
-        });
-    }
-    if !matches!(static_decision, exec_policy_gate::ExecPolicyDecision::Allow) {
-        // ---- Approval gate (phase 2, design §C). Journaled request/decision
-        // flow; denial is a normal tool_result payload the caller persists.
-        if let Some(denial) = approval_gate(
-            ctx,
-            state,
-            tx,
-            org_id,
-            model,
-            chat_id,
-            call,
-            Approval::Ask,
-            false,
-        )
-        .await?
-        {
-            return Ok(denial);
-        }
-    } // static allow skips the interactive gate entirely
-
-    // Journaled awakeable: stable id across replays.
-    let (awakeable_id, promise) = ctx.awakeable::<Json<ToolResultPayload>>();
-    ctx.set(&state_key(&call.id), awakeable_id.clone());
-    // Journaled: notify attached clients that this call must run client-side.
-    let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
-    let done = note_pending_tool(
+    // Gates, dispatch, watchers and resolution are the funnel's.
+    suspend(
+        ctx,
         state,
+        tx,
+        org_id,
+        model,
         chat_id,
-        &call.id,
-        &call.name,
-        &args_json,
-        Some(&mid),
-        workdir.as_deref(),
-    );
-    let tx2 = tx.clone();
-    let call_id = call.id.clone();
-    let name = call.name.clone();
-    let args2 = args_json.clone();
-    let dispatch_state = state.clone();
-    let dispatch_id = awakeable_id.clone();
-    let dispatched_connection = ctx
-        .run(move || {
-            let state = dispatch_state.clone();
-            let dispatch_id = dispatch_id.clone();
-            let tx = tx2.clone();
-            let call_id = call_id.clone();
-            let name = name.clone();
-            let args = args2.clone();
-            async move {
-                let connection = dispatch_pending_tool(
-                    &state,
-                    chat_id,
-                    &call_id,
-                    &dispatch_id,
-                )
-                .await
-                .map_err(api_err)?;
-                let _ = tx.send(StreamEvent::ToolStarted {
-                    call_id,
-                    name,
-                    arguments: args,
-                    executor: ToolExecutor::Client,
-                    kind: None,
-                });
-                Ok(Json(connection))
-            }
-        })
-        .await?
-        .into_inner();
-    restore_dispatch_connection(
-        state,
-        chat_id,
-        &call.id,
-        dispatched_connection,
-    );
-
-    // Termination detection: if the bound machine disappears (executor
-    // connection gone, app-lifetime — not per-thread streams), resolve the
-    // tool with an error after a grace window instead of dead-airing for
-    // the full timeout. Spawned outside the journaled sections on purpose:
-    // a worker restart replays this handler and re-spawns the watcher.
-    spawn_machine_watcher(
-        state,
-        chat_id,
-        call.id.clone(),
-        call.name.clone(),
-        mid,
-        mlabel,
-        done.clone(),
-    );
-    // Stop responsiveness: a stop while the tool is suspended resolves it
-    // immediately (same durable funnel), so the turn ends at the next
-    // journaled cancel check instead of waiting out the executor.
-    spawn_stop_watcher(state, chat_id, call.id.clone(), done);
-    // Durable timeout: schedule a journaled delayed completion instead of
-    // racing futures — a dropped ctx.sleep blocks replay until the timer
-    // fires, while send_after lives in Restate's timer service and never
-    // gates this workflow's journal. The delayed complete_tool targets the
-    // shared handler, so it runs while `generate` is suspended; when the
-    // client result arrived first, complete_tool is a no-op (state cleared).
-    ctx.object_client::<ChatRunnerClient>(&chat_id.to_string())
-        .complete_tool(Json(ToolResultReq {
-            call_id: call.id.clone(),
-            content: format!(
-                "client tool {} ({}) timed out after 5 minutes: no client result arrived",
-                call.name, call.id
-            ),
-            is_error: true,
-            meta: None,
-            images: Vec::new(),
-        }))
-        .send_after(CLIENT_TOOL_TIMEOUT);
-
-    let payload: ToolResultPayload = match promise.await {
-        Ok(Json(p)) => p,
-        Err(t) => ToolResultPayload {
-            content: format!("client tool failed: {t}"),
-            is_error: true,
-            meta: None,
-            images: Vec::new(),
+        call,
+        Executor::Desktop {
+            machine_id: mid,
+            machine_label: mlabel,
+            workdir,
         },
-    };
-
-    ctx.clear(&state_key(&call.id));
-    clear_pending_tool(state, chat_id, &call.id);
-
-    // Journaled: report completion to attached clients.
-    let tx2 = tx.clone();
-    let call_id = call.id.clone();
-    let name = call.name.clone();
-    let content2 = payload.content.clone();
-    let is_error = payload.is_error;
-    ctx.run(move || {
-        let tx = tx2.clone();
-        let call_id = call_id.clone();
-        let name = name.clone();
-        let content = content2.clone();
-        async move {
-            let _ = tx.send(StreamEvent::ToolCompleted {
-                call_id,
-                name,
-                content,
-                is_error,
-            });
-            Ok(Json(()))
-        }
-    })
-    .await?;
-
-    Ok(payload)
+    )
+    .await
 }
 
 /// One server-side tool call: notify clients, execute the integration plugin
