@@ -1,6 +1,5 @@
 pub mod agent_session;
 pub mod agent_start;
-pub mod agents_md;
 pub mod artifacts;
 pub mod cli;
 pub mod cloud;
@@ -14,4 +13,3 @@ pub mod machine_link;
 pub mod mcp;
 pub mod registry_client;
 pub mod session_store;
-pub mod skills;

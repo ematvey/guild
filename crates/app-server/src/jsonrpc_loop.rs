@@ -1,8 +1,10 @@
 //! JSON-RPC stdio loop — async, so agent runs and approvals proceed
 //! concurrently (spec §3.2, §6). The UI-facing surface of the local engine.
 //!
-//! Methods: `login`, `chat.send` (plain chat), `agent.start`, `agent.approve`,
-//! `agent.policy.set`, `agent.policy.get`. Streaming arrives as events.
+//! Methods: `login`, `pair`, `chat.send` (plain chat over the gateway
+//! workflow), `agent.start` (the gateway shim), `agent.approve`,
+//! `machine.identify`, `fs.*` (the file bridge), `session.*`, `models.list`,
+//! `registry.*`, `mcp.*`. Streaming arrives as events.
 
 use crate::agent_session::PendingApprovals;
 use crate::artifacts::registry_hooks;
@@ -28,12 +30,10 @@ pub struct Session {
     pub model: String,
     pub chat_id: Option<Uuid>,
     pub project_dir: Option<PathBuf>,
-    /// Local working history; tool messages sync to the server after runs.
-    pub messages: Vec<Message>,
     pub policy: ApprovalPolicy,
     pub pending: PendingApprovals,
-    /// An agent.run loop is in flight; a second agent.start would race on
-    /// session.messages.
+    /// An agent turn is in flight; a second agent.start would double-bind
+    /// the session's project.
     pub agent_running: bool,
     /// The webview-generated machine identity (stable per app install) once
     /// reported via `machine.identify`; the executor link keys on it.
@@ -517,8 +517,8 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
 
 /// The fs.* file bridge (fs_bridge.rs): primitive allowlisted operations
 /// the webview uses for context assembly. The project folder arrives per
-/// call (the webview owns the project binding — same trust as the old
-/// skills.prepare_turn's project_dir param).
+/// call — the webview owns the project binding (and thus the trust in it),
+/// the same as every other client-owned request field.
 fn fs_bridge_call(req: &Request) -> anyhow::Result<Response> {
     let project_dir = req.params["project_dir"].as_str().map(PathBuf::from);
     let path = req.params["path"]
@@ -717,19 +717,8 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
         };
         let stream = cloud.chat_stream(chat_id, &model, &[Message::user(text.clone())]).await?;
         let (full_text, done) = collect_turn(stream).await?;
-        {
-            let mut s = shared.session.lock().unwrap();
-            s.messages.push(Message::user(text));
-            s.messages.push(Message {
-                role: "assistant".into(),
-                content: full_text.clone(),
-                images: Vec::new(),
-                audio: Vec::new(),
-                tool_calls: None,
-                tool_call_id: None,
-                reasoning: None,
-            });
-        }
+        // History lives in the server's thread journal; nothing is mirrored
+        // locally (unification spec §3).
         // Broadcast: every connected client sees chat events.
         let _ = shared.events.send(event_value("chat.delta", json!({"content": full_text})));
         let (message_id, cost_usd, tokens_in, tokens_out) = match done {
@@ -803,27 +792,11 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         }
     };
 
-    // Client-side context assembly (phase 2 moves this to TS): skills
-    // discovery from the harness + Guild dirs, disabled filtering, index
-    // rendering, `$name` expansion, and the AGENTS.md chain.
-    let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("/"))
-        .join("guild");
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-    let disabled = crate::skills::disabled_paths(&config_dir);
-    let skills: Vec<_> = crate::skills::discover_with_home(&project_dir, &config_dir, &home)
-        .into_iter()
-        .filter(|e| !disabled.contains(&e.path))
-        .collect();
-    let skills_index = crate::skills::prompt_index(&skills);
-    let skills_index = if skills_index.is_empty() { None } else { Some(skills_index) };
-    let agents_md = crate::agents_md::assemble(&config_dir, &project_dir);
-    let prompt = match crate::skills::mention_block(&crate::skills::mention_expansions(
-        &prompt, &skills,
-    )) {
-        Some(block) => format!("{prompt}{block}"),
-        None => prompt,
-    };
+    // Caller-assembled context (the client owns discovery — the webview
+    // via lib/context.ts, an engine client via its own assembly over the
+    // fs.* bridge): the shim forwards it into the additive request fields.
+    let skills_index = req.params["skills_index"].as_str().map(str::to_string);
+    let agents_md = req.params["agents_md"].as_str().map(str::to_string);
 
     // 2. The workflow dispatches tools to the machine the project is bound
     //    to — it must be this daemon's own executor link. Then chat

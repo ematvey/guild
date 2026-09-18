@@ -1,7 +1,9 @@
 //! Registry client: publish and install over the cloud API (spec §4.4).
 
 use crate::cloud::{CloudClient, CloudError};
-use crate::skills::{SkillProvenance, SIDECAR_REL};
+use serde::{Deserialize, Serialize};
+use anyhow::Context as _;
+use std::collections::BTreeMap;
 use guild_core::registry::{self, BundleManifest};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -94,7 +96,7 @@ fn stamp_publish_sidecar(
         bundle_hash: bundle_hash.into(),
         ..Default::default()
     };
-    if let Err(e) = crate::skills::write_sidecar(source_dir, &p) {
+    if let Err(e) = crate::registry_client::write_sidecar(source_dir, &p) {
         eprintln!("[guild] failed to write {SIDECAR_REL}: {e}");
     }
 }
@@ -110,7 +112,7 @@ pub async fn install_skill(
     version: Option<&str>,
     global: bool,
     publisher: &str,
-) -> Result<crate::skills::SkillEntry, CloudError> {
+) -> Result<crate::registry_client::SkillEntry, CloudError> {
     let base = cloud.base_url.trim_end_matches('/');
     let version = match version {
         Some(v) => v.to_string(),
@@ -176,9 +178,9 @@ pub async fn install_skill(
         bundle_hash: format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
         ..Default::default()
     };
-    crate::skills::write_sidecar(&dest, &provenance)
+    crate::registry_client::write_sidecar(&dest, &provenance)
         .map_err(|e| CloudError::Request(format!("sidecar write failed: {e}")))?;
-    Ok(crate::skills::SkillEntry {
+    Ok(crate::registry_client::SkillEntry {
         name: manifest.slug,
         description: manifest.description,
         path: dest.join("SKILL.md"),
@@ -201,7 +203,7 @@ pub fn uninstall_skill(project_dir: &Path, slug: &str, global: bool) -> Result<(
             slug
         )));
     }
-    match crate::skills::read_sidecar(&dest) {
+    match crate::registry_client::read_sidecar(&dest) {
         Some(p) if p.source == "registry" => {}
         Some(p) => {
             return Err(CloudError::Request(format!(
@@ -231,3 +233,81 @@ fn urlencode(s: &str) -> String {
     }
     out
 }
+
+// ---------- provenance sidecar + skill entries (registry-owned; discovery lives client-side — spec 2026-09-18 unification §3) ----------
+
+#[derive(Debug, Clone)]
+pub struct SkillEntry {
+    pub name: String,
+    pub description: String,
+    /// Directory holding SKILL.md (the agent reads it with read_file).
+    pub path: PathBuf,
+}
+
+
+pub fn parse_frontmatter(body: &str, fallback_name: &str) -> (String, String) {
+    guild_core::registry::parse_frontmatter(body, fallback_name)
+}
+
+/// Scans `<dir>/skills/*/SKILL.md` and `<dir>/skills/<file>.md`.
+
+/// Provenance for one installed/published skill dir. Guild metadata never
+/// enters SKILL.md; this rides beside it where other harnesses ignore it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct SkillProvenance {
+    /// registry | local
+    pub source: String,
+    pub slug: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub publisher: String,
+    #[serde(default)]
+    pub published_by_me: bool,
+    #[serde(default)]
+    pub review_status: String,
+    #[serde(default)]
+    pub installed_at: String,
+    #[serde(default)]
+    pub bundle_hash: String,
+}
+
+/// Sidecar path relative to the skill dir.
+pub const SIDECAR_REL: &str = "agents/guild.yaml";
+
+/// Writes the flat sidecar as `key: value` YAML (all fields are plain
+/// scalars; no nesting, no quoting needed).
+pub fn write_sidecar(dir: &Path, p: &SkillProvenance) -> anyhow::Result<()> {
+    let path = dir.join(SIDECAR_REL);
+    std::fs::create_dir_all(path.parent().context("no sidecar parent")?)?;
+    let body = format!(
+        "source: {}\nslug: {}\nversion: {}\npublisher: {}\npublished_by_me: {}\nreview_status: {}\ninstalled_at: {}\nbundle_hash: {}\n",
+        p.source, p.slug, p.version, p.publisher, p.published_by_me, p.review_status, p.installed_at, p.bundle_hash,
+    );
+    std::fs::write(path, body)?;
+    Ok(())
+}
+
+/// Reads the sidecar; `None` when absent or unparsable (a dir without a
+/// sidecar is a plain skill folder — never Guild-managed).
+pub fn read_sidecar(dir: &Path) -> Option<SkillProvenance> {
+    let body = std::fs::read_to_string(dir.join(SIDECAR_REL)).ok()?;
+    let mut map: BTreeMap<String, String> = BTreeMap::new();
+    for line in body.lines() {
+        let Some((k, v)) = line.split_once(':') else { continue };
+        map.insert(k.trim().to_string(), v.trim().to_string());
+    }
+    let get = |k: &str| map.get(k).cloned().unwrap_or_default();
+    Some(SkillProvenance {
+        source: get("source"),
+        slug: get("slug"),
+        version: get("version"),
+        publisher: get("publisher"),
+        published_by_me: get("published_by_me") == "true",
+        review_status: get("review_status"),
+        installed_at: get("installed_at"),
+        bundle_hash: get("bundle_hash"),
+    })
+}
+
+// ---------- /name explicit invocation ----------

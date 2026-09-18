@@ -82,16 +82,15 @@ async fn publish_then_install_roundtrip() {
     // install target is the shared .agents/skills dir + provenance sidecar
     let dest = project.join(".agents/skills/deploy-check");
     assert!(dest.join("SKILL.md").is_file());
-    let prov = guild_app_server::skills::read_sidecar(&dest).unwrap();
+    let prov = guild_app_server::registry_client::read_sidecar(&dest).unwrap();
     assert_eq!(prov.source, "registry");
     assert_eq!(prov.version, "1.0.0");
     assert_eq!(prov.review_status, "approved");
     assert!(prov.bundle_hash.starts_with("sha256:"));
 
-    // skills discovery now finds it
-    let found =
-        guild_app_server::skills::discover(&project, &std::env::temp_dir().join("nonexistent-cfg"));
-    assert!(found.iter().any(|e| e.name == "deploy-check"));
+    // the installed SKILL.md is on disk where discovery (client-side now)
+    // would find it
+    assert!(dest.join("SKILL.md").is_file());
 
     // uninstall removes the registry-installed dir
     registry_client::uninstall_skill(&project, "deploy-check", false).unwrap();
@@ -113,9 +112,9 @@ async fn uninstall_refuses_dirs_guild_did_not_install() {
     assert!(dest.join("SKILL.md").is_file(), "dir must survive");
 
     // a local-source sidecar is refused too
-    guild_app_server::skills::write_sidecar(
+    guild_app_server::registry_client::write_sidecar(
         &dest,
-        &guild_app_server::skills::SkillProvenance {
+        &guild_app_server::registry_client::SkillProvenance {
             source: "local".into(),
             slug: "hand-made".into(),
             ..Default::default()
@@ -141,7 +140,7 @@ async fn publish_stamps_provenance_sidecar() {
     registry_client::publish(&cloud, "skill", &skill_dir, "0.2.0")
         .await
         .unwrap();
-    let prov = guild_app_server::skills::read_sidecar(&skill_dir).unwrap();
+    let prov = guild_app_server::registry_client::read_sidecar(&skill_dir).unwrap();
     assert_eq!(prov.source, "registry");
     assert!(prov.published_by_me, "author marks their own publish");
     assert_eq!(prov.slug, "my-authored");
