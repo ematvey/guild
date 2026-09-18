@@ -302,6 +302,11 @@ pub struct ChatRunPayload {
     /// the `# AGENTS.md instructions` markers and the server's hard cap.
     #[serde(default)]
     pub agents_md: Option<String>,
+    /// Server-local execution (batch backend, spec 2026-09-18 unification
+    /// §4 phase 4): the NAME of the org workspace the server itself
+    /// executes tools in — resolved server-side, never a client path.
+    #[serde(default)]
+    pub server_workspace: Option<String>,
 }
 
 /// Final result of the journaled completion step.
@@ -642,6 +647,7 @@ fn build_system_prompt(
     org_prompt: Option<&str>,
     client_tools: bool,
     has_web_search: bool,
+    server_workspace: Option<&str>,
     workspace: Option<&WorkspaceRef>,
     integrations_index: &str,
     skills_index: &str,
@@ -655,7 +661,14 @@ fn build_system_prompt(
         }
     };
     let mut s = String::from(persona);
-    if client_tools {
+    if server_workspace.is_some() {
+        s.push_str(
+            " You have tools (read_file, execute, edit_file, write_file) that execute on \
+             the Guild server inside your org's private workspace directory. Inspect the \
+             workspace with them BEFORE answering anything that could be about \
+             the workspace's files.",
+        );
+    } else if client_tools {
         s.push_str(
             " You have tools (read_file, execute, edit_file, write_file) that execute on \
              the user's machine via the Guild desktop executor — you never run \
@@ -1616,7 +1629,7 @@ impl ChatRunner {
             });
         }
 
-        if req.client_tools || req.machine_id.is_some() {
+        if req.client_tools || req.machine_id.is_some() || req.server_workspace.is_some() {
             tool_specs.extend(protocol::api::client_tool_specs());
         }
         // Journaled: resolve the chat's project (workspace folder + the
@@ -1662,6 +1675,7 @@ impl ChatRunner {
                 org_prompt.as_deref(),
                 req.client_tools,
                 has_web_search,
+                req.server_workspace.as_deref(),
                 workspace.as_ref(),
                 &plugin_turns
                     .iter()
@@ -2155,21 +2169,31 @@ impl ChatRunner {
                 // event's artifact_id and claims the meta card.
                 let mut spilled: Option<crate::worker::spill::SpilledArtifact> = None;
                 let (content, is_error, meta, tool_images) = if is_client_tool {
-                    let payload = client_tool_step(
-                        &ctx,
-                        &state,
-                        &tx,
-                        req.org_id,
-                        &req.model,
-                        req.chat_id,
-                        call,
-                        format!("{step}.{idx}"),
-                        req.machine_id.clone(),
-                        req.machine_label.clone(),
-                        req.origin_machine_id.clone(),
-                        workspace.as_ref().map(|w| w.folder.clone()),
-                    )
-                    .await?;
+                    let payload = if let Some(ws_name) = req.server_workspace.clone() {
+                        // Server-local executor (batch workspace backend):
+                        // the server itself runs the tool in the org
+                        // workspace — same dispatch shape, no hub.
+                        server_local_tool_step(
+                            &ctx, &state, &tx, call, req.org_id, req.chat_id, &ws_name,
+                        )
+                        .await?
+                    } else {
+                        client_tool_step(
+                            &ctx,
+                            &state,
+                            &tx,
+                            req.org_id,
+                            &req.model,
+                            req.chat_id,
+                            call,
+                            format!("{step}.{idx}"),
+                            req.machine_id.clone(),
+                            req.machine_label.clone(),
+                            req.origin_machine_id.clone(),
+                            workspace.as_ref().map(|w| w.folder.clone()),
+                        )
+                        .await?
+                    };
                     (
                         payload.content,
                         payload.is_error,
@@ -2948,6 +2972,137 @@ async fn approval_gate(
         }
     }
     Ok(None)
+}
+
+/// One server-local tool call (batch workspace backend, spec 2026-09-18
+/// unification §4 phase 4): the server executes the client-tool in-process
+/// against the org workspace dir — journaled side effect (the result
+/// replays without re-running), then notifies attached clients exactly like
+/// the machine dispatch does. No interactive approvals: the batch contract
+/// is "trusted workspace, pre-approved"; `execute` still passes the static
+/// exec-policy gate, and shell tools require the server allowlist flag.
+async fn server_local_tool_step(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    tx: &broadcast::Sender<StreamEvent>,
+    call: &ToolCall,
+    org_id: Uuid,
+    _chat_id: Uuid,
+    workspace_name: &str,
+) -> HandlerResult<ToolResultPayload> {
+    let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
+    // Journaled: notify attached clients that this call runs server-side.
+    let tx2 = tx.clone();
+    let call_id = call.id.clone();
+    let name = call.name.clone();
+    let args2 = args_json.clone();
+    ctx.run(move || {
+        let tx = tx2.clone();
+        let call_id = call_id.clone();
+        let name = name.clone();
+        let args = args2.clone();
+        async move {
+            let _ = tx.send(StreamEvent::ToolStarted {
+                call_id,
+                name,
+                arguments: args,
+                executor: ToolExecutor::Server,
+                kind: None,
+            });
+            Ok(Json(()))
+        }
+    })
+    .await?;
+
+    let dir = crate::http::agents::workspace_dir(state, org_id, workspace_name);
+    let shell_allowed = state.config.allow_shell_tools;
+    let name = call.name.clone();
+    let args = call.arguments.clone();
+    let payload: ToolResultPayload = ctx
+        .run(move || {
+            let dir = dir.clone();
+            let name = name.clone();
+            let args = args.clone();
+            async move {
+                if name == "execute" && !shell_allowed {
+                    return Ok(Json(ToolResultPayload {
+                        content: "denied: shell tools are disabled on this server".into(),
+                        is_error: true,
+                        meta: None,
+                        images: Vec::new(),
+                    }));
+                }
+                if name == "execute" {
+                    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) =
+                        exec_policy_gate::evaluate_execute(&args)
+                    {
+                        return Ok(Json(ToolResultPayload {
+                            content: format!("denied by exec policy: {reason}"),
+                            is_error: true,
+                            meta: None,
+                            images: Vec::new(),
+                        }));
+                    }
+                }
+                let mut registry = guild_core::tools::ToolRegistry::new();
+                registry.add(Arc::new(guild_core::tools::fs::ReadFile::default()));
+                registry.add(Arc::new(guild_core::tools::fs::WriteFile));
+                registry.add(Arc::new(guild_core::tools::fs::EditFile));
+                if shell_allowed {
+                    registry.add(Arc::new(guild_core::tools::shell::RunCommand));
+                }
+                let payload = match registry.get(&name) {
+                    Some(tool) => match tool.run(std::path::Path::new(&dir), args).await {
+                        Ok(out) => ToolResultPayload {
+                            content: out.output_for_model,
+                            is_error: false,
+                            meta: out.meta,
+                            images: out.images,
+                        },
+                        Err(e) => ToolResultPayload {
+                            content: e.to_string(),
+                            is_error: true,
+                            meta: None,
+                            images: Vec::new(),
+                        },
+                    },
+                    None => ToolResultPayload {
+                        content: format!("unknown tool {name}"),
+                        is_error: true,
+                        meta: None,
+                        images: Vec::new(),
+                    },
+                };
+                Ok(Json(payload))
+            }
+        })
+        .await?
+        .into_inner();
+
+    // Journaled: report completion.
+    let tx2 = tx.clone();
+    let call_id = call.id.clone();
+    let name2 = call.name.clone();
+    let content2 = payload.content.clone();
+    let is_error = payload.is_error;
+    ctx.run(move || {
+        let tx = tx2.clone();
+        let call_id = call_id.clone();
+        let name = name2.clone();
+        let content = content2.clone();
+        async move {
+            let _ = tx.send(StreamEvent::ToolCompleted {
+                call_id,
+                name,
+                content,
+                is_error,
+            });
+            Ok(Json(()))
+        }
+    })
+    .await?;
+
+    Ok(payload)
 }
 
 /// One machine-tool call: resolve the bound executor machine (fail fast when
@@ -3786,7 +3941,7 @@ mod tests {
 
     #[test]
     fn system_prompt_default_persona_is_helpful_assistant() {
-        let p = build_system_prompt(None, false, false, None, "", "", None);
+        let p = build_system_prompt(None, false, false, None, None, "", "", None);
         assert!(p.starts_with("You are a helpful assistant."));
         assert!(!p.contains("coding agent"));
     }
@@ -3797,7 +3952,7 @@ mod tests {
             folder: "/w".into(),
             machine_label: None,
         };
-        let p = build_system_prompt(Some("You are GLaDOS."), true, true, Some(&ws), "", "", None);
+        let p = build_system_prompt(Some("You are GLaDOS."), true, true, None, Some(&ws), "", "", None);
         assert!(p.starts_with("You are GLaDOS."));
         assert!(!p.contains("helpful assistant"));
         // Operational instructions are appended regardless of the persona.
@@ -3931,7 +4086,7 @@ mod tests {
 
     #[test]
     fn system_prompt_blank_org_prompt_falls_back_to_default() {
-        let p = build_system_prompt(Some("   "), false, false, None, "", "", None);
+        let p = build_system_prompt(Some("   "), false, false, None, None, "", "", None);
         assert!(p.starts_with("You are a helpful assistant."));
     }
 
@@ -3941,11 +4096,11 @@ mod tests {
             "\n# Available skills\n- a: {}\n",
             "x".repeat(SKILLS_INDEX_CAP + 500)
         );
-        let p = build_system_prompt(None, false, false, None, "", &idx, None);
+        let p = build_system_prompt(None, false, false, None, None, "", &idx, None);
         assert!(p.contains("# Available skills"));
         assert!(
             p.len()
-                < build_system_prompt(None, false, false, None, "", "", None).len()
+                < build_system_prompt(None, false, false, None, None, "", "", None).len()
                     + SKILLS_INDEX_CAP
                     + 300
         );
@@ -3960,16 +4115,16 @@ mod tests {
             folder: "/home/u/repo".into(),
             machine_label: Some("box".into()),
         };
-        let p = build_system_prompt(None, false, false, Some(&ws), "", "", Some(&md));
+        let p = build_system_prompt(None, false, false, None, Some(&ws), "", "", Some(&md));
         // Codex's user-instructions fragment format, with the directory label.
         assert!(p.contains("# AGENTS.md instructions for /home/u/repo"));
         assert!(p.contains("<INSTRUCTIONS>\nProject conventions here.\n</INSTRUCTIONS>"));
         // Cap: an oversized payload is truncated server-side.
         let big = "x".repeat(AGENTS_MD_CAP + 1000);
-        let p2 = build_system_prompt(None, false, false, None, "", "", Some(&big));
+        let p2 = build_system_prompt(None, false, false, None, None, "", "", Some(&big));
         assert!(p2.len() < AGENTS_MD_CAP + 200);
         // Blank client payload renders nothing.
-        let p3 = build_system_prompt(None, false, false, None, "", "", Some("   "));
+        let p3 = build_system_prompt(None, false, false, None, None, "", "", Some("   "));
         assert!(!p3.contains("AGENTS.md"));
     }
 

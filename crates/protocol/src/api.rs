@@ -364,6 +364,12 @@ pub struct ChatCompletionRequest {
     /// modality (spec §4.3).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachment_ids: Vec<Uuid>,
+    /// Server-local execution: the NAME of this org's workspace directory
+    /// the server itself executes tools in (batch/automation backend). The
+    /// name is resolved against the org's workspace root server-side — a
+    /// request can never point the executor outside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_workspace: Option<String>,
     /// Client-discovered local-skills index, appended to the server-owned
     /// system prompt. Additive and server-capped: the client never overrides
     /// persona or tool instructions, it may only append this bounded block.

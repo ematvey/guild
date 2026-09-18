@@ -919,13 +919,40 @@ async fn chat(
     headers: axum::http::HeaderMap,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    submit_turn(
+        &state,
+        &user.0,
+        req,
+        headers
+            .get("x-guild-client-id")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from),
+        headers
+            .get("x-guild-machine-id")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from),
+    )
+    .await
+}
+
+/// The turn-submission core shared by every caller of the durable workflow
+/// (the chat gateway with its headers; the workspace-agent batch backend
+/// with none — spec 2026-09-18 unification §4 phase 4). Validates the chat,
+/// aligns an explicit project binding, queues or invokes ChatRunner::generate.
+pub(crate) async fn submit_turn(
+    state: &AppState,
+    user: &crate::store::identity::UserRow,
+    req: ChatCompletionRequest,
+    client_id: Option<String>,
+    origin_machine_id: Option<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
     // Org scoping: chat must belong to the caller's org. Route resolution,
     // quota, history, completion, persistence and usage all happen inside the
     // durable Restate workflow (ChatRunner::generate) — see worker/restate.rs.
     let chat = store
         .chats()
-        .get_chat(user.0.org_id, req.chat_id, &user.0)
+        .get_chat(user.org_id, req.chat_id, user)
         .await?;
 
     let user_message = req
@@ -944,7 +971,7 @@ async fn chat(
     let mut machine_label = chat.machine_label.clone();
     let project_id = match req.project_id {
         Some(pid) => {
-            let project = store.projects().get(user.0.org_id, pid, &user.0).await?;
+            let project = store.projects().get(user.org_id, pid, user).await?;
             let label = project
                 .machine_label
                 .clone()
@@ -956,9 +983,9 @@ async fn chat(
                 let aligned = store
                     .chats()
                     .set_project(
-                        user.0.org_id,
+                        user.org_id,
                         req.chat_id,
-                        &user.0,
+                        user,
                         Some(pid),
                         Some((&project.machine_id, Some(&label))),
                     )
@@ -969,7 +996,7 @@ async fn chat(
                 store
                     .chats()
                     .set_machine(
-                        user.0.org_id,
+                        user.org_id,
                         req.chat_id,
                         Some(&project.machine_id),
                         Some(&label),
@@ -997,7 +1024,7 @@ async fn chat(
         let modalities = match state.config.master_key() {
             Ok(master) => store
                 .gateway()
-                .resolve_route(user.0.org_id, &req.model, &master)
+                .resolve_route(user.org_id, &req.model, &master)
                 .await
                 .map(|r| r.modalities)
                 .unwrap_or_default(),
@@ -1005,7 +1032,7 @@ async fn chat(
         };
         queue_user_turn(
             &state,
-            user.0.org_id,
+            user.org_id,
             req.chat_id,
             &user_message,
             &req.attachment_ids,
@@ -1018,24 +1045,19 @@ async fn chat(
         // queued request's choices, not the in-flight turn's).
         let opts = crate::worker::restate::ChatRunPayload {
             user_message_id: None,
-            org_id: user.0.org_id,
-            user_id: user.0.id,
+            org_id: user.org_id,
+            user_id: user.id,
             chat_id: req.chat_id,
             model: req.model.clone(),
             client_tools: req.client_tools,
-            client_id: headers
-                .get("x-guild-client-id")
-                .and_then(|v| v.to_str().ok())
-                .map(String::from),
+            client_id: client_id.clone(),
             project_id,
             machine_id: machine_id.clone(),
             machine_label: machine_label.clone(),
-            origin_machine_id: headers
-                .get("x-guild-machine-id")
-                .and_then(|v| v.to_str().ok())
-                .map(String::from),
+            origin_machine_id: origin_machine_id.clone(),
             user_message: String::new(),
             attachment_ids: Vec::new(),
+            server_workspace: req.server_workspace.clone(),
             skills_index: req.skills_index.clone(),
             agents_md: req.agents_md.clone(),
         };
@@ -1067,7 +1089,7 @@ async fn chat(
     // is the exception: the event is already committed, so the payload's
     // turn text stays empty and the workflow relies on the log.
     let (_tx, _text_buf, _thinking_buf) = try_begin_generation(&state, req.chat_id)?;
-    if let Err(error) = crate::http::feed::prepare_generation(&state, &user).await {
+    if let Err(error) = crate::http::feed::prepare_generation(state, &crate::http::auth::AuthUser(user.clone())).await {
         state.generations.lock().unwrap().remove(&req.chat_id);
         return Err(error);
     }
@@ -1086,8 +1108,8 @@ async fn chat(
     let effective_message = if queued { String::new() } else { user_message };
     let effective_attachments = if queued { Vec::new() } else { req.attachment_ids.clone() };
     let payload = serde_json::json!({
-        "org_id": user.0.org_id,
-        "user_id": user.0.id,
+        "org_id": user.org_id,
+        "user_id": user.id,
         "chat_id": req.chat_id,
         "model": req.model,
         "user_message": effective_message,
@@ -1095,16 +1117,13 @@ async fn chat(
         "client_tools": req.client_tools,
         "attachment_ids": effective_attachments,
         "project_id": project_id,
+        "server_workspace": req.server_workspace,
         "skills_index": req.skills_index,
         "agents_md": req.agents_md,
-        "client_id": headers
-            .get("x-guild-client-id")
-            .and_then(|v| v.to_str().ok()),
+        "client_id": client_id,
         "machine_id": machine_id,
         "machine_label": machine_label,
-        "origin_machine_id": headers
-            .get("x-guild-machine-id")
-            .and_then(|v| v.to_str().ok()),
+        "origin_machine_id": origin_machine_id,
     });
     let invoke = crate::http::internal::restate_send_one_way(
         &state,
@@ -1501,6 +1520,7 @@ mod tests {
             .await
             .unwrap();
         let req = ChatCompletionRequest {
+            server_workspace: None,
             send_mode: None,
             user_message_id: None,
             chat_id: chat_row.id,
@@ -1583,6 +1603,7 @@ mod tests {
             .await
             .unwrap();
         let req = ChatCompletionRequest {
+            server_workspace: None,
             send_mode: None,
             user_message_id: None,
             chat_id: chat_row.id,
