@@ -4,6 +4,19 @@ Updated 2026-09-18 (tool artifacts milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Phase 2 landed: context assembly is client-side — 2026-09-18
+
+Skills discovery/index, `/name` expansion, and the AGENTS.md chain moved
+from the daemon to the webview (aabf8af): `apps/desktop/src/lib/context.ts`
+ports the Rust logic to the letter (16 vitest tests), backed by the new
+allowlisted `fs.*` RPC bridge (read: project + git-root chain + config dir
++ ~/.agents; existence probes above the roots answer `.git` discovery
+only; writes: config + project; symlinks resolved eagerly, `..` escaped
+normalized). Daemon verbs skills.list/prepare_turn/disable removed; the
+engine shim keeps Rust-internal discovery until phase 3. Server rebuilt,
+bundle live. Phase 3 next: merge the daemon into the Tauri host (one
+binary: executor + fs bridge + registry crypto + CLI auth).
+
 ## Phase 1b landed: agent.start is a gateway shim — 2026-09-18
 
 Loop B1 is dead (7dd203c): the daemon's `agent.start` drives the durable
