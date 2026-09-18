@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Brain,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Check,
   Copy,
@@ -62,7 +63,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsWindow } from "./settings/SettingsWindow";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
 import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
-import { activeFilterId, chatProjectOf, outgoingProjectId, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
+import { chatProjectOf, outgoingProjectId, projectChipLabel, PROJECT_PAGE_INITIAL, PROJECT_PAGE_STEP, sidebarGrouping, type PickedProject } from "./projects/projects";
 import {
   attachmentBlobUrl,
   rpcCall,
@@ -1586,7 +1587,6 @@ export default function WebChat({
   // reloads and deep links all land in exactly the right place.
   const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
   const chatId = route.chatId;
-  const projectId = route.projectId;
   const overlay = route.overlay;
   // The open chat's server-side generating flag — the same truth the sidebar
   // spinner shows (live chat-status frames, optimistic send, then the fetched
@@ -1993,15 +1993,10 @@ export default function WebChat({
     pushRoute({ chatId: id, projectId: row?.project_id ?? null, overlay: null });
   };
 
-  const openProject = (id: string | null) => {
-    pushRoute({ chatId: null, projectId: id, overlay: null });
-    setOpen(false);
-  };
-
   const newChat = () => {
     // Navigation only: the chatId effect selects the new open chat and asks
-    // the member socket to reconcile it. The new chat is projectless, so a
-    // stale project filter would hide it — the filter drops with the route.
+    // the member socket to reconcile it. The new chat is projectless, so the
+    // route's project id drops with it.
     pushRoute({ chatId: null, projectId: null, overlay: null });
     setOpen(false);
     ta.current?.focus();
@@ -2314,24 +2309,21 @@ export default function WebChat({
   const streaming = busy || attaching || openGenerating;
 
   const grouping = useMemo(
-    () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) })), activeFilterId(projects, projectId)),
-    [chats, chatStatus, projects, projectId],
+    () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) }))),
+    [chats, chatStatus],
   );
-  const activeProject = projects?.find((p) => p.id === projectId) ?? null;
 
   const sidebar = (
     <SidebarContent
       grouping={grouping}
       projects={projects}
       loadingChats={chats === null}
-      selectedProject={activeProject}
       chatId={chatId}
       email={email}
       displayName={displayName}
       avatarUrl={avatarUrl}
       onNewChat={newChat}
       onOpenChat={openChat}
-      onOpenProject={openProject}
       onNewProject={() => setCreateProjectOpen(true)}
       onSignOut={onSignOut}
       onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
@@ -3177,14 +3169,12 @@ function SidebarContent({
   grouping,
   projects,
   loadingChats,
-  selectedProject,
   chatId,
   email,
   displayName,
   avatarUrl,
   onNewChat,
   onOpenChat,
-  onOpenProject,
   onNewProject,
   onSignOut,
   onOpenSettings,
@@ -3195,15 +3185,12 @@ function SidebarContent({
   projects: Project[] | null;
   /** True while the chat list is still loading (skeleton rows). */
   loadingChats: boolean;
-  selectedProject: Project | null;
   chatId: string | null;
   email: string;
   displayName?: string | null;
   avatarUrl?: string | null;
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
-  /** Sidebar project filter: a project id, or null for the recents view. */
-  onOpenProject: (id: string | null) => void;
   onNewProject: () => void;
   onSignOut: () => void;
   onOpenSettings: () => void;
@@ -3212,6 +3199,11 @@ function SidebarContent({
   onCollapse?: () => void;
 }) {
   const [projectsOpen, setProjectsOpen] = useState(true);
+  /** Which project fold-outs are expanded (per-session, all collapsed). */
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  /** How many chats each expanded fold-out shows; starts at
+   * PROJECT_PAGE_INITIAL, "Show more" adds PROJECT_PAGE_STEP. */
+  const [limits, setLimits] = useState<Record<string, number>>({});
   const machineBadge = (label: string | null | undefined, fallback: string) => (
     <span
       className="shrink-0 rounded-full bg-secondary px-1.5 py-px text-[10px] leading-4 text-muted-foreground"
@@ -3242,8 +3234,8 @@ function SidebarContent({
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2">
-        {/* Projects: collapsible section; a row filters the thread list to
-            that project (URL-driven via /project/<id>). */}
+        {/* Projects: collapsible section; a row folds out that project's
+            chats inline (the fold-out keeps its own pagination). */}
         <button
           type="button"
           onClick={() => setProjectsOpen((o) => !o)}
@@ -3280,52 +3272,67 @@ function SidebarContent({
           <div className="space-y-0.5 pb-1">
             {projects === null &&
               [0, 1].map((i) => <Skeleton key={i} className="h-8 w-full rounded-md" />)}
-            {projects?.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => onOpenProject(p.id)}
-                className={`flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors ${
-                  selectedProject?.id === p.id
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                }`}
-                title={p.folder}
-              >
-                <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                {machineBadge(p.machine_label, p.machine_id)}
-                {grouping.counts[p.id] ? (
-                  <span className="shrink-0 text-xs text-muted-foreground/70">
-                    {grouping.counts[p.id]}
-                  </span>
-                ) : null}
-              </button>
-            ))}
+            {projects?.map((p) => {
+              const open = !!expanded[p.id];
+              const chats = grouping.chatsByProject[p.id] ?? [];
+              const limit = limits[p.id] ?? PROJECT_PAGE_INITIAL;
+              return (
+                <div key={p.id}>
+                  <button
+                    type="button"
+                    onClick={() => setExpanded((e) => ({ ...e, [p.id]: !open }))}
+                    className="flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    title={p.folder}
+                  >
+                    <ChevronRight
+                      className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                    {machineBadge(p.machine_label, p.machine_id)}
+                    {grouping.counts[p.id] ? (
+                      <span className="shrink-0 text-xs text-muted-foreground/70">
+                        {grouping.counts[p.id]}
+                      </span>
+                    ) : null}
+                  </button>
+                  {open && (
+                    <div className="ml-4 space-y-0.5 border-l border-border/60 py-0.5 pl-2">
+                      {chats.slice(0, limit).map((c) => (
+                        <ChatListItem
+                          key={c.id}
+                          title={c.title || "Untitled"}
+                          active={c.id === chatId}
+                          status={{ generating: !!c.generating, unread: !!c.unread }}
+                          onClick={() => onOpenChat(c.id)}
+                        />
+                      ))}
+                      {chats.length === 0 && (
+                        <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet.</p>
+                      )}
+                      {chats.length > limit && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLimits((l) => ({ ...l, [p.id]: limit + PROJECT_PAGE_STEP }))
+                          }
+                          className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground"
+                        >
+                          <ChevronDown className="size-3" />
+                          Show {Math.min(PROJECT_PAGE_STEP, chats.length - limit)} more
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {projects !== null && projects.length === 0 && (
               <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet.</p>
             )}
           </div>
         )}
-        {/* Thread list: the selected project's chats, or every chat in
-            recency order (the default recents view). */}
         <div className="flex items-center gap-1.5 pb-1 pt-4 font-medium text-muted-foreground">
-          {selectedProject ? (
-            <>
-              <span className="min-w-0 flex-1 truncate" title={selectedProject.folder}>
-                {selectedProject.name}
-              </span>
-              <button
-                type="button"
-                title="Back to all chats"
-                className="rounded p-0.5 hover:bg-accent hover:text-foreground"
-                onClick={() => onOpenProject(null)}
-              >
-                <XIcon className="size-3.5" />
-              </button>
-            </>
-          ) : (
-            <span className="px-1">Recents</span>
-          )}
+          <span className="px-1">Recents</span>
         </div>
         <div className="space-y-0.5 pb-2">
           {loadingChats &&
@@ -3343,9 +3350,7 @@ function SidebarContent({
             />
           ))}
           {!loadingChats && projects !== null && grouping.visible.length === 0 && (
-            <p className="px-2 py-1.5 text-muted-foreground">
-              {selectedProject ? "No chats in this project yet." : "No conversations yet."}
-            </p>
+            <p className="px-2 py-1.5 text-muted-foreground">No conversations yet.</p>
           )}
         </div>
       </div>

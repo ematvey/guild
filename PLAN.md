@@ -4,6 +4,15 @@ Updated 2026-09-18 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Sidebar: project rows are fold-outs, Recents never filters — 2026-09-18
+
+maintainer call: selecting a project must not filter the thread list. Recents
+always shows every chat; a project row toggles an inline fold-out listing
+that project's chats (they intentionally duplicate Recents rows). The
+fold-out opens with the latest 5 chats and a "Show more" row at its bottom
+adds 20 per click. The `/project/<id>` route filter is gone from the
+sidebar (`activeFilterId` removed; the route still parses harmlessly).
+
 ## /compact: in-thread progress + busy thread — 2026-09-18
 
 The `/compact` toast is gone. The composer command now appends an
