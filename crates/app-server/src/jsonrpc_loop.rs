@@ -4,15 +4,15 @@
 //! Methods: `login`, `chat.send` (plain chat), `agent.start`, `agent.approve`,
 //! `agent.policy.set`, `agent.policy.get`. Streaming arrives as events.
 
-use crate::agent_session::{AgentRun, PendingApprovals};
-use crate::artifacts::{registry_hooks, spawn_thread_sync_prefetch};
+use crate::agent_session::PendingApprovals;
+use crate::artifacts::registry_hooks;
 use crate::cloud::{collect_turn, CloudClient, CloudError};
 use crate::machine_link::MachineLinkConfig;
 use crate::session_store::{save, StoredSession};
 use anyhow::Context as _;
 use guild_core::agent::policy::ApprovalPolicy;
 use guild_core::tools::artifacts::ArtifactIndex;
-use guild_core::tools::{Approval, ToolRegistry};
+use guild_core::tools::Approval;
 use protocol::api::Message;
 use protocol::rpc::{Event, Request, Response, RpcError, PROTOCOL_VERSION};
 use serde_json::{json, Value};
@@ -721,29 +721,24 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
     let _ = out_tx.send(response_value(req.id, result));
 }
 
-/// Starts an agent run in the background: creates the chat if needed,
-/// responds immediately with `started`, streams progress as events.
+/// Starts an agent turn in the background: the shim (agent_start.rs) —
+/// validates params, binds the machine-bound project, and drives the same
+/// durable gateway workflow the GUI uses; progress streams as agent.*
+/// events mapped from the workflow's frames. Acks immediately (the old
+/// contract); failures before the ack are RPC errors, failures during the
+/// run arrive as agent.error events.
 async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    // (cloud, existing chat, project dir, model, history, policy, pending
-    // approvals, skills index, skill read roots, AGENTS.md instructions)
-    type AgentPrep = (
-        CloudClient,
-        Option<Uuid>,
-        PathBuf,
-        String,
-        Vec<Message>,
-        ApprovalPolicy,
-        PendingApprovals,
-        Option<String>,
-        Vec<PathBuf>,
-        Option<String>,
-    );
-    let prep = || -> anyhow::Result<AgentPrep> {
+    // 1. Session state under the lock; context assembly and all HTTP after.
+    let (cloud, project_dir, model, prompt, machine_id) = match (|| {
         let mut s = shared.session.lock().unwrap();
         let cloud = s
             .cloud
             .clone()
             .context("not logged in — call login first")?;
+        anyhow::ensure!(
+            s.machine_id.is_some(),
+            "no machine identity reported — call machine.identify first (the workflow dispatches tools to this machine's executor link)"
+        );
         if let Some(d) = req.params["project_dir"].as_str() {
             s.project_dir = Some(PathBuf::from(d));
         }
@@ -757,145 +752,142 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         if s.model.is_empty() {
             s.model = "gpt-4o-mini".into();
         }
-        if s.agent_running {
-            anyhow::bail!("an agent run is already in progress for this session");
-        }
+        anyhow::ensure!(
+            !s.agent_running,
+            "an agent run is already in progress for this session"
+        );
         s.agent_running = true;
         let prompt = param(&req, "prompt")?.to_string();
-        // Skills: discover from the shared harness dirs + Guild legacy dirs,
-        // drop disabled ones, render the index for the server-owned prompt,
-        // and expand `$name` mentions with the full SKILL.md body.
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("/"))
-            .join("guild");
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        let disabled = crate::skills::disabled_paths(&config_dir);
-        let skills: Vec<_> = crate::skills::discover_with_home(&project_dir, &config_dir, &home)
-            .into_iter()
-            .filter(|e| !disabled.contains(&e.path))
-            .collect();
-        let skills_index = crate::skills::prompt_index(&skills);
-        let skills_index = if skills_index.is_empty() { None } else { Some(skills_index) };
-        // AGENTS.md instructions (Codex semantics): the global config-dir
-        // file plus the project chain from the git root down to the project
-        // dir — assembled here where the files live, rendered server-side.
-        let agents_md = crate::agents_md::assemble(&config_dir, &project_dir);
-        // read_file may read skill dirs outside the workspace so the index
-        // paths are actually loadable
-        let skill_roots: Vec<PathBuf> = skills
-            .iter()
-            .filter_map(|e| e.path.parent().map(std::path::Path::to_path_buf))
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-        let prompt = match crate::skills::mention_block(&crate::skills::mention_expansions(
-            &prompt, &skills,
-        )) {
-            Some(block) => format!("{prompt}{block}"),
-            None => prompt,
-        };
-        let mut history = s.messages.clone();
-        history.push(Message::user(prompt));
         Ok((
             cloud,
-            s.chat_id,
             project_dir,
             s.model.clone(),
-            history,
-            s.policy.clone(),
-            s.pending.clone(),
-            skills_index,
-            skill_roots,
-            agents_md,
+            prompt,
+            s.machine_id.clone().context("machine id checked above")?,
         ))
-    };
-    let (
-        cloud,
-        chat_id_opt,
-        project_dir,
-        model,
-        history,
-        policy,
-        pending,
-        skills_index,
-        skill_roots,
-        agents_md,
-    ) = match prep() {
-        Ok(p) => p,
+    })() {
+        Ok(v) => v,
         Err(e) => {
             let _ = out_tx.send(response_value(req.id, Err(e)));
             return;
         }
     };
 
-    // ensure chat exists
-    let chat_id = match chat_id_opt {
-        Some(c) => c,
-        None => match cloud.create_chat(Some("agent")).await {
-            Ok(c) => {
+    // Client-side context assembly (phase 2 moves this to TS): skills
+    // discovery from the harness + Guild dirs, disabled filtering, index
+    // rendering, `$name` expansion, and the AGENTS.md chain.
+    let config_dir = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("/"))
+        .join("guild");
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    let disabled = crate::skills::disabled_paths(&config_dir);
+    let skills: Vec<_> = crate::skills::discover_with_home(&project_dir, &config_dir, &home)
+        .into_iter()
+        .filter(|e| !disabled.contains(&e.path))
+        .collect();
+    let skills_index = crate::skills::prompt_index(&skills);
+    let skills_index = if skills_index.is_empty() { None } else { Some(skills_index) };
+    let agents_md = crate::agents_md::assemble(&config_dir, &project_dir);
+    let prompt = match crate::skills::mention_block(&crate::skills::mention_expansions(
+        &prompt, &skills,
+    )) {
+        Some(block) => format!("{prompt}{block}"),
+        None => prompt,
+    };
+
+    // 2. The workflow dispatches tools to the machine the project is bound
+    //    to — it must be this daemon's own executor link. Then chat
+    //    attach/create. Failures here are RPC errors (nothing acked yet).
+    let bound = async {
+        let project =
+            crate::agent_start::ensure_project(&cloud, &project_dir.to_string_lossy(), &machine_id)
+                .await?;
+        let chat_id = shared.session.lock().unwrap().chat_id;
+        let chat_id = match chat_id {
+            Some(c) => c,
+            None => {
+                let c = cloud.create_chat(Some("agent")).await?;
                 shared.session.lock().unwrap().chat_id = Some(c);
                 c
             }
-            Err(e) => {
-                // the run flag was claimed in prep — release it on this exit
-                shared.session.lock().unwrap().agent_running = false;
-                let _ = out_tx.send(response_value(
-                    req.id,
-                    Err(anyhow::anyhow!("chat create failed: {e}")),
-                ));
-                return;
-            }
-        },
+        };
+        Ok::<_, anyhow::Error>((project, chat_id))
     };
-    let _ = out_tx.send(
-        serde_json::to_value(Response::ok(
-            req.id,
-            json!({"started": true, "chat_id": chat_id}),
-        ))
-        .unwrap(),
-    );
+    let (project, chat_id) = match bound.await {
+        Ok(v) => v,
+        Err(e) => {
+            shared.session.lock().unwrap().agent_running = false;
+            let _ = out_tx.send(response_value(
+                req.id,
+                Err(anyhow::anyhow!("agent start failed: {e:#}")),
+            ));
+            return;
+        }
+    };
 
     // Rebuild the artifact path→id index from the thread log and prefetch
     // every artifact missing on disk, in the background.
-    spawn_thread_sync_prefetch(cloud.clone(), shared.artifacts.clone(), project_dir.clone(), chat_id);
-
-    // run the agent loop; events broadcast to every connected client
-    let run = AgentRun {
-        cloud: cloud.clone(),
+    crate::artifacts::spawn_thread_sync_prefetch(
+        cloud.clone(),
+        shared.artifacts.clone(),
+        project_dir.clone(),
         chat_id,
-        project_dir: project_dir.clone(),
-        model,
-        system: None, // the system prompt stays server-owned; skills ride skills_index
-        skills_index,
-        agents_md,
-        history,
-        policy,
-        events: shared.events.clone(),
-        pending,
-        artifacts: Some(crate::agent_session::TurnArtifacts {
-            cloud: cloud.clone(),
-            workdir: project_dir,
-            index: shared.artifacts.clone(),
-        }),
-    };
-    let registry = ToolRegistry::builtins_with_read_roots(skill_roots)
-        .with_artifacts(registry_hooks(cloud, shared.artifacts.clone()));
-    let updated = match run.spawn(registry).await {
-        Ok(v) => Some(v),
-        // A panicked or cancelled run must not wipe the session history
-        // (the join default would assign an empty vec); keep what we had.
-        Err(e) => {
-            crate::dtrace::dtrace(&format!("agent run failed to join (chat {chat_id}): {e}"));
-            None
-        }
-    };
+    );
 
-    {
-        let mut s = shared.session.lock().unwrap();
-        s.agent_running = false;
-        if let Some(v) = updated {
-            s.messages = v;
+    // 3. Ack before the run: progress arrives as events, run failures as
+    //    agent.error — the old agent.start contract.
+    let _ = out_tx.send(response_value(
+        req.id,
+        Ok(Response::ok(req.id, serde_json::json!({"started": true, "chat_id": chat_id}))),
+    ));
+
+    let (policy, pending) = {
+        let s = shared.session.lock().unwrap();
+        (s.policy.clone(), s.pending.clone())
+    };
+    let streamed = cloud
+        .stream_completion(protocol::api::ChatCompletionRequest {
+            send_mode: None,
+            user_message_id: None,
+            chat_id,
+            model,
+            messages: vec![Message::user(prompt)],
+            // The workflow declares the client tools from the project's
+            // machine binding; the daemon's link answers the dispatches.
+            tools: None,
+            system: None,
+            client_tools: true,
+            attachment_ids: Vec::new(),
+            project_id: Some(project.id),
+            skills_index,
+            agents_md,
+        })
+        .await;
+    let run = match streamed {
+        Ok(stream) => {
+            crate::agent_start::drive(
+                cloud.clone(),
+                chat_id,
+                policy,
+                pending,
+                shared.events.clone(),
+                stream,
+            )
+            .await
         }
+        Err(e) => Err(e),
+    };
+    shared.session.lock().unwrap().agent_running = false;
+    if let Err(e) = run {
+        // Surface model/policy/stream failures so the client unblocks
+        // instead of waiting for agent.done forever.
+        let _ = shared.events.send(
+            serde_json::to_value(protocol::rpc::Event::new(
+                "agent.error",
+                serde_json::json!({ "message": e.to_string() }),
+            ))
+            .unwrap_or(Value::Null),
+        );
     }
 }
 

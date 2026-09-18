@@ -272,7 +272,12 @@ async fn ws_session(
             }
         }
     };
+    // Close cleanly, then let the writer drain: dropping the sender is what
+    // unblocks `recv` — without it the writer (and this function) hang
+    // whenever the loop broke while the socket was still healthy (config
+    // change, shutdown) and the link never reconnects.
     let _ = outbound_tx.send(WsMessage::Close(None));
+    drop(outbound_tx);
     let _ = writer.await;
     end
 }
@@ -348,6 +353,7 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 return; // channel closed — daemon shutting down
             }
         };
+        crate::dtrace::dtrace(&format!("machine-link connecting as {}", cfg.machine_id));
         match ws_session(
             &shared,
             &cfg,

@@ -406,16 +406,13 @@ where
 
 #[derive(Clone)]
 struct OutboundQueue {
-    tx: tokio::sync::mpsc::Sender<WsMessage>,
+    // Single channel: since the machine role moved to the daemon's link,
+    // every host frame is priority-classed (pongs, terminal notices).
     priority_tx: tokio::sync::mpsc::Sender<WsMessage>,
     overflow: tokio::sync::watch::Sender<bool>,
 }
 
 impl OutboundQueue {
-    fn try_send(&self, message: WsMessage) -> Result<(), LinkError> {
-        self.try_send_on(&self.tx, message)
-    }
-
     fn try_send_priority(&self, message: WsMessage) -> Result<(), LinkError> {
         self.try_send_on(&self.priority_tx, message)
     }
@@ -639,22 +636,15 @@ async fn ws_session(
     .map_err(|_| LinkError::Failed("socket connect timed out".into()))?
     .map_err(|error| LinkError::Failed(format!("socket connect: {error}")))?;
     let (mut socket_tx, mut socket_rx) = socket.split();
-    let (wire_tx, mut wire_rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
     let (priority_tx, mut priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
     let (overflow_tx, overflow_rx) = tokio::sync::watch::channel(false);
     let outbound = OutboundQueue {
-        tx: wire_tx,
         priority_tx,
         overflow: overflow_tx,
     };
     let writer = tokio::spawn(async move {
         loop {
-            let message = tokio::select! {
-                biased;
-                priority = priority_rx.recv() => priority,
-                ordinary = wire_rx.recv() => ordinary,
-            };
-            let Some(message) = message else { break };
+            let Some(message) = priority_rx.recv().await else { break };
             send_ws_message_with_deadline(&mut socket_tx, message, WRITE_TIMEOUT).await?;
         }
         Ok::<(), String>(())
@@ -1521,11 +1511,9 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn silent_read_is_bounded_during_bootstrap_and_after_connect() {
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(1);
         let (overflow, _) = tokio::sync::watch::channel(false);
         let outbound = OutboundQueue {
-            tx,
             priority_tx,
             overflow,
         };
@@ -1610,10 +1598,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let holder = fixture.state.hub.machine_connection("machine");
         let mut stale = connect(instance, true).await;
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(1);
         let outbound = OutboundQueue {
-            tx,
             priority_tx,
             overflow: tokio::sync::watch::channel(false).0,
         };
@@ -1674,37 +1660,30 @@ mod tests {
 
     #[test]
     fn outbound_queue_marks_link_dead_when_full() {
-        let (tx, _rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
         let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
         let (overflow, signal) = tokio::sync::watch::channel(false);
         let queue = OutboundQueue {
-            tx,
             priority_tx,
             overflow,
         };
-        for _ in 0..OUTBOUND_QUEUE_CAP {
-            queue.try_send(WsMessage::Text("frame".into())).unwrap();
+        for _ in 0..PRIORITY_QUEUE_CAP {
+            queue.try_send_priority(WsMessage::Text("frame".into())).unwrap();
         }
         assert!(matches!(
-            queue.try_send(WsMessage::Text("overflow".into())),
+            queue.try_send_priority(WsMessage::Text("overflow".into())),
             Err(LinkError::Backpressure)
         ));
         assert!(*signal.borrow());
     }
 
     #[test]
-    fn priority_replies_are_accepted_when_ordinary_queue_is_full() {
-        let (tx, _ordinary_rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAP);
+    fn priority_replies_flow_through_the_single_queue() {
         let (priority_tx, mut priority_rx) = tokio::sync::mpsc::channel(PRIORITY_QUEUE_CAP);
         let (overflow, _signal) = tokio::sync::watch::channel(false);
         let queue = OutboundQueue {
-            tx,
             priority_tx,
             overflow,
         };
-        for _ in 0..OUTBOUND_QUEUE_CAP {
-            queue.try_send(WsMessage::Text("ordinary".into())).unwrap();
-        }
         queue
             .try_send_priority(WsMessage::Pong(Vec::new().into()))
             .unwrap();

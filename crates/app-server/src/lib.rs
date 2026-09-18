@@ -1,4 +1,5 @@
 pub mod agent_session;
+pub mod agent_start;
 pub mod agents_md;
 pub mod artifacts;
 pub mod cli;

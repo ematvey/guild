@@ -4,8 +4,9 @@
 use futures::SinkExt;
 use futures::Stream;
 use protocol::api::{
-    Chat, ChatCompletionRequest, CreateChatRequest, LoginRequest, LoginResponse, Message,
-    PairRequest, PairResponse, StreamEvent, ThreadEvent, ToolCall, UserInfo,
+    Chat, ChatCompletionRequest, CreateChatRequest, CreateProjectRequest, LoginRequest,
+    LoginResponse, Message, PairRequest, PairResponse, Project, StreamEvent, ThreadEvent,
+    ToolCall, UserInfo,
 };
 use protocol::ws::WsServerMsg;
 use std::time::Duration;
@@ -179,6 +180,66 @@ impl CloudClient {
             .await
             .map_err(|e| CloudError::Request(e.to_string()))?;
         Ok(chat.id)
+    }
+
+    /// Projects of the caller's org (workspace folders + machine bindings).
+    pub async fn list_projects(&self) -> Result<Vec<Project>, CloudError> {
+        let url = format!("{}/api/v1/projects", self.base_url.trim_end_matches('/'));
+        let resp = Self::check(Self::timed(self.http().get(&url))
+            .bearer_auth(&self.token)
+            .send()
+            .await?)
+        .await?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        serde_json::from_value(body["projects"].clone())
+            .map_err(|e| CloudError::Request(format!("bad projects body: {e}")))
+    }
+
+    /// Creates a project (a named workspace folder bound to a machine).
+    pub async fn create_project(
+        &self,
+        req: &CreateProjectRequest,
+    ) -> Result<Project, CloudError> {
+        let url = format!("{}/api/v1/projects", self.base_url.trim_end_matches('/'));
+        let resp = Self::check(Self::timed(self.http().post(&url))
+            .bearer_auth(&self.token)
+            .json(req)
+            .send()
+            .await?)
+        .await?;
+        resp.json::<Project>()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))
+    }
+
+    /// Records an approval decision for a client-tool call the durable
+    /// workflow is waiting on (the engine protocol's agent.approve surface).
+    pub async fn resolve_approval(
+        &self,
+        chat_id: Uuid,
+        call_id: &str,
+        approved: bool,
+        reason: Option<&str>,
+    ) -> Result<(), CloudError> {
+        let url = format!(
+            "{}/api/v1/gateway/chat/{chat_id}/approvals/{}",
+            self.base_url.trim_end_matches('/'),
+            call_id
+        );
+        let mut body = serde_json::json!({ "approved": approved });
+        if let Some(reason) = reason {
+            body["reason"] = serde_json::json!(reason);
+        }
+        Self::check(Self::timed(self.http().post(&url))
+            .bearer_auth(&self.token)
+            .json(&body)
+            .send()
+            .await?)
+        .await?;
+        Ok(())
     }
 
     /// Streams `StreamEvent` frames for one completion. The server persists
