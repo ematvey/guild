@@ -744,16 +744,10 @@ async fn handle_client_msg(
             is_error,
             meta,
         } => {
-            let owns_call = {
-                let generations = state.generations.lock().unwrap();
-                generations.get(&chat_id).is_some_and(|g| {
-                    g.pending_tools
-                        .lock()
-                        .unwrap()
-                        .get(&call_id)
-                        .is_some_and(|tool| tool.connection_id == Some(member.conn_id))
-                })
-            };
+            let owns_call =
+                state
+                    .generations
+                    .owns_pending_tool(chat_id, &call_id, member.conn_id);
             if !owns_call {
                 return;
             }

@@ -9,12 +9,12 @@ use axum::extract::{FromRequestParts, Path, State};
 use axum::http::request::Parts;
 use axum::{Json, Router};
 use guild_core::provider::ProviderError;
-use protocol::api::{ChatCompletionRequest, StreamEvent, ThreadEvent};
+use protocol::api::{ChatCompletionRequest, ThreadEvent};
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
+
+pub(crate) use crate::state::PendingTool;
 
 /// Queued send while a turn generates: commit the user turn to the thread
 /// log right away (the open feed republishes on the commit notification),
@@ -93,42 +93,6 @@ async fn stop_chat(
     Ok(Json(json!({ "stopped": true })))
 }
 
-/// One server-side generation in flight, detached from any client connection.
-/// Broadcasts generation events to command-scoped WebSocket consumers.
-/// Text buffers contain only the current, unpersisted assistant step.
-pub struct ActiveGeneration {
-    pub id: Uuid,
-    pub tx: broadcast::Sender<StreamEvent>,
-    pub text: Arc<RwLock<String>>,
-    /// Reasoning accumulated so far in the in-flight model call, for
-    /// catch-up on attach (first `thinking_delta` frame carries the buffer).
-    pub thinking: Arc<RwLock<String>>,
-    /// Suspended machine calls and the connection responsible for each call.
-    pub pending_tools: Arc<std::sync::Mutex<HashMap<String, PendingTool>>>,
-    /// Set by the stop endpoint (and by steered sends): the ChatRunner checks
-    /// it inside journaled steps, so an interrupted turn's shape stays
-    /// replay-deterministic. Volatile by design — a process crash mid-turn
-    /// forgets the request; the user can stop again.
-    pub cancel: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl ActiveGeneration {
-    fn new(
-        tx: broadcast::Sender<StreamEvent>,
-        text: Arc<RwLock<String>>,
-        thinking: Arc<RwLock<String>>,
-    ) -> Self {
-        Self {
-            id: Uuid::now_v7(),
-            tx,
-            text,
-            thinking,
-            pending_tools: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        }
-    }
-}
-
 /// The cancel flag of a chat's active generation, if one is running. The
 /// stop endpoint and steered sends set it; the ChatRunner observes it inside
 /// journaled steps.
@@ -136,36 +100,13 @@ pub(crate) fn generation_cancel(
     state: &AppState,
     chat_id: Uuid,
 ) -> Option<Arc<std::sync::atomic::AtomicBool>> {
-    state
-        .generations
-        .lock()
-        .unwrap()
-        .get(&chat_id)
-        .map(|g| g.cancel.clone())
+    state.generations.cancel_flag(chat_id)
 }
 
-/// One suspended machine tool call.
-pub struct PendingTool {
-    pub name: String,
-    pub arguments: String,
-    /// Bound executor machine; `None` → fall back to the 5-minute timeout
-    /// only.
-    pub machine_id: Option<String>,
-    /// Workspace folder the tool runs in (from the chat's project).
-    pub workdir: Option<String>,
-    pub connection_id: Option<Uuid>,
-    /// Fired when the tool is resolved so the presence watcher stops.
-    pub done: Arc<tokio::sync::Notify>,
-}
+
 
 pub(crate) fn pending_tool_exists(state: &AppState, chat_id: Uuid, call_id: &str) -> bool {
-    state
-        .generations
-        .lock()
-        .unwrap()
-        .get(&chat_id)
-        .map(|g| g.pending_tools.lock().unwrap().contains_key(call_id))
-        .unwrap_or(false)
+    state.generations.has_pending_tool(chat_id, call_id)
 }
 
 /// Watches the bound machine's socket liveness while a machine tool is
@@ -183,16 +124,10 @@ pub(crate) fn spawn_machine_watcher(
     done: Arc<tokio::sync::Notify>,
 ) {
     let state = state.clone();
-    let connection = {
-        let generations = state.generations.lock().unwrap();
-        generations.get(&chat_id).and_then(|g| {
-            g.pending_tools
-                .lock()
-                .unwrap()
-                .get(&call_id)
-                .and_then(|tool| tool.connection_id)
-        })
-    };
+    let connection = state
+        .generations
+        .pending_tool(chat_id, &call_id)
+        .and_then(|tool| tool.connection_id);
     let deadline = tokio::time::Instant::now() + crate::worker::restate::CLIENT_TOOL_TIMEOUT;
     tokio::spawn(async move {
         // The grace window covers brief disconnects and reconnects before the
@@ -681,12 +616,6 @@ pub fn provider_err_to_api(e: ProviderError) -> ApiError {
     }
 }
 
-/// Registry entry for the chat's in-flight generation, creating it if absent.
-/// Used by the API (placeholder before invocation) and by the Restate worker
-/// (the generation task broadcasts deltas through it). Both roles share one
-/// process in this deployment; with split roles, live deltas only reach
-/// clients attached on the worker's process — catch-up after completion is
-/// unaffected since Postgres is the record system.
 /// Registers a suspended client tool call for late-attaching clients and
 /// returns the watcher's completion signal.
 pub(crate) fn note_pending_tool(
@@ -700,20 +629,18 @@ pub(crate) fn note_pending_tool(
 ) -> Arc<tokio::sync::Notify> {
     let done = Arc::new(tokio::sync::Notify::new());
     let holder = machine_id.and_then(|id| state.hub.machine_holder(id));
-    let gens = state.generations.lock().unwrap();
-    if let Some(g) = gens.get(&chat_id) {
-        g.pending_tools.lock().unwrap().insert(
-            call_id.to_string(),
-            PendingTool {
-                name: name.to_string(),
-                arguments: args.to_string(),
-                machine_id: machine_id.map(str::to_string),
-                workdir: workdir.map(str::to_string),
-                connection_id: holder.as_ref().map(|m| m.conn_id),
-                done: done.clone(),
-            },
-        );
-    }
+    state.generations.set_pending_tool(
+        chat_id,
+        call_id,
+        PendingTool {
+            name: name.to_string(),
+            arguments: args.to_string(),
+            machine_id: machine_id.map(str::to_string),
+            workdir: workdir.map(str::to_string),
+            connection_id: holder.as_ref().map(|m| m.conn_id),
+            done: done.clone(),
+        },
+    );
     done
 }
 
@@ -725,20 +652,18 @@ pub(crate) async fn dispatch_pending_tool(
     call_id: &str,
     dispatch_id: &str,
 ) -> Result<Option<Uuid>, ApiError> {
-    let tool = {
-        let gens = state.generations.lock().unwrap();
-        gens.get(&chat_id).and_then(|g| {
-            g.pending_tools.lock().unwrap().get(call_id).map(|t| {
-                (
-                    t.connection_id,
-                    t.machine_id.clone(),
-                    t.name.clone(),
-                    t.arguments.clone(),
-                    t.workdir.clone(),
-                )
-            })
-        })
-    };
+    let tool = state
+        .generations
+        .pending_tool(chat_id, call_id)
+        .map(|t| {
+            (
+                t.connection_id,
+                t.machine_id,
+                t.name,
+                t.arguments,
+                t.workdir,
+            )
+        });
     let Some((connection, machine, name, arguments, workdir)) = tool else {
         return Ok(None);
     };
@@ -786,36 +711,15 @@ pub(crate) fn restore_dispatch_connection(
     call: &str,
     connection: Option<Uuid>,
 ) {
-    let generations = state.generations.lock().unwrap();
-    if let Some(generation) = generations.get(&chat) {
-        if let Some(tool) = generation.pending_tools.lock().unwrap().get_mut(call) {
-            tool.connection_id = connection;
-        }
-    }
+    state
+        .generations
+        .set_pending_tool_connection(chat, call, connection);
 }
 
 /// A connection change makes the execution outcome unknown. Fail through the
 /// durable resolver; never replay a possibly side-effecting call on a new link.
 pub(crate) async fn reconcile_machine_tools(state: &AppState, machine: &str, connection: Uuid) {
-    let pending: Vec<_> = {
-        let generations = state.generations.lock().unwrap();
-        generations
-            .iter()
-            .flat_map(|(chat, generation)| {
-                generation
-                    .pending_tools
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter_map(|(call, tool)| {
-                        (tool.machine_id.as_deref() == Some(machine)
-                            && tool.connection_id != Some(connection))
-                        .then(|| (*chat, call.clone()))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect()
-    };
+    let pending = state.generations.stale_machine_calls(machine, connection);
     for (chat, call) in pending {
         let _ = crate::http::internal::restate_send_one_way(state, "ChatRunner", &format!("{chat}/complete_tool"),
             json!({"call_id": call, "content": "Machine connection changed; execution outcome is unknown. Do not retry this action without checking its effects.", "is_error": true})).await;
@@ -824,14 +728,7 @@ pub(crate) async fn reconcile_machine_tools(state: &AppState, machine: &str, con
 
 /// Removes a suspended client tool call (completed or timed out).
 pub(crate) fn clear_pending_tool(state: &AppState, chat_id: Uuid, call_id: &str) {
-    let gens = state.generations.lock().unwrap();
-    if let Some(g) = gens.get(&chat_id) {
-        if let Some(t) = g.pending_tools.lock().unwrap().remove(call_id) {
-            // notify_one stores a permit even if the watcher is between
-            // iterations, so it cannot miss this signal.
-            t.done.notify_one();
-        }
-    }
+    state.generations.clear_pending_tool(chat_id, call_id);
 }
 
 /// Commits an assistant step and retires its replay buffers as one view change.
@@ -840,7 +737,9 @@ pub(crate) async fn persist_assistant_step(
     chat: Uuid,
     event: &ThreadEvent,
 ) -> Result<crate::store::thread::ThreadEventRow, ApiError> {
-    let (_, text, thinking) = ensure_generation(state, chat);
+    let gen = state.generations.attach(chat);
+    let text = gen.text;
+    let thinking = gen.thinking;
     let mut text = text.write().await;
     let mut thinking = thinking.write().await;
     let row = state
@@ -852,65 +751,6 @@ pub(crate) async fn persist_assistant_step(
     text.clear();
     thinking.clear();
     Ok(row)
-}
-
-pub(crate) fn ensure_generation(
-    state: &AppState,
-    chat_id: Uuid,
-) -> (
-    broadcast::Sender<StreamEvent>,
-    Arc<RwLock<String>>,
-    Arc<RwLock<String>>,
-) {
-    let mut gens = state.generations.lock().unwrap();
-    if let Some(g) = gens.get(&chat_id) {
-        return (g.tx.clone(), g.text.clone(), g.thinking.clone());
-    }
-    let (tx, _) = broadcast::channel::<StreamEvent>(1024);
-    let gen = ActiveGeneration::new(
-        tx.clone(),
-        Arc::new(RwLock::new(String::new())),
-        Arc::new(RwLock::new(String::new())),
-    );
-    gens.insert(chat_id, gen);
-    let g = gens.get(&chat_id).unwrap();
-    (g.tx.clone(), g.text.clone(), g.thinking.clone())
-}
-
-/// Atomic check+insert: returns the generation's stream parts or 409 when a
-/// generation is already running for the chat. One lock acquisition covers
-/// both the check and the insert, so two concurrent sends cannot both start
-/// a ChatRunner invocation. The restate worker and test support use
-/// `ensure_generation` directly — they re-attach to a running generation
-/// instead of reserving a new one.
-pub(crate) fn try_begin_generation(
-    state: &AppState,
-    chat_id: Uuid,
-) -> Result<
-    (
-        broadcast::Sender<StreamEvent>,
-        Arc<RwLock<String>>,
-        Arc<RwLock<String>>,
-    ),
-    ApiError,
-> {
-    let mut gens = state.generations.lock().unwrap();
-    if gens.contains_key(&chat_id) {
-        return Err(ApiError::new(
-            axum::http::StatusCode::CONFLICT,
-            "generation_in_progress",
-            "a generation is already running for this chat — wait for it to finish",
-        ));
-    }
-    let (tx, _) = broadcast::channel::<StreamEvent>(1024);
-    let gen = ActiveGeneration::new(
-        tx.clone(),
-        Arc::new(RwLock::new(String::new())),
-        Arc::new(RwLock::new(String::new())),
-    );
-    gens.insert(chat_id, gen);
-    let g = gens.get(&chat_id).unwrap();
-    Ok((g.tx.clone(), g.text.clone(), g.thinking.clone()))
 }
 
 async fn chat(
@@ -1018,7 +858,7 @@ pub(crate) async fn submit_turn(
     // finishes while we are here (entry vanished after the commit), the code
     // falls through and the queued event starts the turn right away.
     let mut queued = false;
-    if state.generations.lock().unwrap().contains_key(&req.chat_id) {
+    if state.generations.is_generating(req.chat_id) {
         // The route's modalities shape the attachment notes; the continuation
         // re-resolves the route anyway, so a failure here degrades to notes.
         let modalities = match state.config.master_key() {
@@ -1068,7 +908,7 @@ pub(crate) async fn submit_turn(
                 &serde_json::to_string(&opts).unwrap_or_default(),
             )
             .await?;
-        if state.generations.lock().unwrap().contains_key(&req.chat_id) {
+        if state.generations.is_generating(req.chat_id) {
             if req.send_mode.as_deref() == Some("steer") {
                 if let Some(cancel) = generation_cancel(&state, req.chat_id) {
                     cancel.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1088,19 +928,13 @@ pub(crate) async fn submit_turn(
     // stays consistent with the event log (spec §B.4). The queue fall-through
     // is the exception: the event is already committed, so the payload's
     // turn text stays empty and the workflow relies on the log.
-    let (_tx, _text_buf, _thinking_buf) = try_begin_generation(&state, req.chat_id)?;
+    state.generations.try_begin(req.chat_id)?;
     if let Err(error) = crate::http::feed::prepare_generation(state, &crate::http::auth::AuthUser(user.clone())).await {
-        state.generations.lock().unwrap().remove(&req.chat_id);
+        state.generations.remove(req.chat_id);
         return Err(error);
     }
 
-    let generation_id = state
-        .generations
-        .lock()
-        .unwrap()
-        .get(&req.chat_id)
-        .unwrap()
-        .id;
+    let generation_id = state.generations.handle(req.chat_id).unwrap().id;
 
     // Fire-and-forget invocation via the Restate ingress; the workflow runs
     // detached, so this HTTP request ending (or the client disconnecting)
@@ -1136,7 +970,7 @@ pub(crate) async fn submit_turn(
         Ok(id) => id,
         Err(e) => {
             // Invocation failed — free the chat instead of leaving a stuck lock.
-            state.generations.lock().unwrap().remove(&req.chat_id);
+            state.generations.remove(req.chat_id);
             return Err(e);
         }
     };
@@ -1216,7 +1050,7 @@ async fn approval_decision(
         })));
     }
 
-    if state.generations.lock().unwrap().contains_key(&chat_id) {
+    if state.generations.is_generating(chat_id) {
         // Live turn: the waiting gate journals the decision and broadcasts
         // the resolved frame; the card settles through the stream.
         forward_approval_decision(&state, chat_id, &call_id, approved, reason).await?;
@@ -1311,7 +1145,7 @@ mod tests {
             )
             .await
             .unwrap();
-        ensure_generation(&fixture.state, chat);
+        fixture.state.generations.attach(chat);
         note_pending_tool(
             &fixture.state,
             chat,
@@ -1348,7 +1182,7 @@ mod tests {
             )
             .await
             .unwrap();
-        ensure_generation(&restarted, chat);
+        restarted.generations.attach(chat);
         note_pending_tool(&restarted, chat, "call", "execute", "{}", Some("machine"), None);
         assert_eq!(
             dispatch_pending_tool(&restarted, chat, "call", "durable-awakeable")
@@ -1388,7 +1222,7 @@ mod tests {
             )
             .await
             .unwrap();
-        ensure_generation(&fixture.state, chat);
+        fixture.state.generations.attach(chat);
         note_pending_tool(
             &fixture.state,
             chat,
@@ -1472,7 +1306,7 @@ mod tests {
         .unwrap()
         .expect("bound project resolves");
         assert_eq!(workspace.folder, project.folder);
-        ensure_generation(&fixture.state, chat_row.id);
+        fixture.state.generations.attach(chat_row.id);
         note_pending_tool(
             &fixture.state,
             chat_row.id,
@@ -1661,11 +1495,11 @@ mod tests {
     fn try_begin_generation_is_atomic() {
         let state = crate::state::AppState::from_config(Config::test_config());
         let chat = Uuid::now_v7();
-        assert!(try_begin_generation(&state, chat).is_ok());
-        let err = try_begin_generation(&state, chat).unwrap_err();
+        assert!(state.generations.try_begin(chat).is_ok());
+        let err = state.generations.try_begin(chat).unwrap_err();
         assert_eq!(err.code, "generation_in_progress");
         assert_eq!(err.status, axum::http::StatusCode::CONFLICT);
-        state.generations.lock().unwrap().remove(&chat);
-        assert!(try_begin_generation(&state, chat).is_ok());
+        state.generations.remove(chat);
+        assert!(state.generations.try_begin(chat).is_ok());
     }
 }
