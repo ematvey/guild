@@ -4,65 +4,31 @@ use guild_server::test_support::{clickhouse_usage_rows, full_state, standalone_l
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-/// Provider script: model call 1 → write_file; call 2 → execute (must be
-/// refused); call 3 → final text.
-async fn scripted_provider() -> wiremock::MockServer {
-    let server = wiremock::MockServer::builder()
+/// A turn submits the durable ChatRunner workflow (spec 2026-09-18
+/// unification §4 phase 4): the endpoint acknowledges the invocation; the
+/// server itself executes the turn's tools in the org workspace. The deep
+/// execution behavior (tools run journaled, exec-policy-gated, history in
+/// the thread journal) is verified by the live E2E — like every gateway
+/// workflow path, in-repo tests would need an embedded Restate runtime
+/// (see the gateway test notes).
+#[tokio::test]
+async fn workspace_turn_submits_the_durable_workflow() {
+    // Accept every ingress POST (the workflow runs detached — the test only
+    // asserts the submission contract).
+    let restate = wiremock::MockServer::builder()
         .listener(standalone_listener().await.into_std().unwrap())
         .start()
         .await;
-    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let c = calls.clone();
-    let sse = |body: String| {
-        wiremock::ResponseTemplate::new(200)
-            .insert_header("content-type", "text/event-stream")
-            .set_body_string(body)
-    };
-    let call_frame = |id: &str, name: &str, args: &str| {
-        format!(
-            "data: {}\n\ndata: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n",
-            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":id,"function":{"name":name,"arguments":args}}]}}]})
-        )
-    };
     wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .respond_with(move |_req: &wiremock::Request| {
-            let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            match n {
-                0 => sse(call_frame(
-                    "w1",
-                    "write_file",
-                    "{\"path\":\"hello.txt\",\"content\":\"hi from workspace\"}",
-                )),
-                1 => sse(call_frame("r1", "execute", "{\"command\":\"ls\"}")),
-                _ => sse(String::from(concat!(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"workspace updated\"}}]}\n\n",
-                    "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4}}\n\n",
-                    "data: [DONE]\n\n",
-                ))),
-            }
-        })
-        .mount(&server)
+        .respond_with(wiremock::ResponseTemplate::new(202))
+        .mount(&restate)
         .await;
-    server
-}
 
-#[tokio::test]
-async fn workspace_session_turn_executes_tools_and_persists() {
-    let provider = scripted_provider().await;
     let fs = full_state().await;
-    let master = fs.state.config.master_key().unwrap();
-    fs.store()
-        .gateway()
-        .upsert_provider_key(
-            fs.org_id,
-            "openai",
-            provider.uri().as_str(),
-            "sk-test",
-            &master,
-        )
-        .await
-        .unwrap();
-    let app = guild_server::build_router(fs.state.clone());
+    let mut cfg = (*fs.state.config).clone();
+    cfg.restate_url = restate.uri();
+    let state = guild_server::state::AppState::from_config(cfg);
+    let app = guild_server::build_router(state);
 
     // create a session
     let res = app
@@ -119,7 +85,8 @@ async fn workspace_session_turn_executes_tools_and_persists() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 
-    // run a turn: the scripted provider writes a file, tries execute, finishes
+    // submit a turn: the durable workflow is invoked, the ack carries the
+    // invocation identity (submit + poll — history is the thread journal)
     let res = app
         .clone()
         .oneshot(
@@ -139,71 +106,9 @@ async fn workspace_session_turn_executes_tools_and_persists() {
     let body = axum::body::to_bytes(res.into_body(), usize::MAX)
         .await
         .unwrap();
-    let text = String::from_utf8(body.to_vec()).unwrap();
-    assert!(text.contains("event: tool_call"), "{text}");
-    assert!(text.contains("write_file"));
-    assert!(text.contains("event: tool_result"));
-    // execute is refused by default
-    assert!(text.contains("\"ok\":false"), "{text}");
-    assert!(text.contains("event: done"), "{text}");
-
-    // the file was written into the workspace dir
-    let dir = guild_server::http::agents::workspace_dir(&fs.state, fs.org_id, "repo-a");
-    let written = tokio::fs::read_to_string(dir.join("hello.txt"))
-        .await
-        .unwrap();
-    assert_eq!(written, "hi from workspace");
-
-    // history persisted as thread events: user + assistant(tool_calls) + tool + assistant final
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/v1/agents/sessions/{session_id}"))
-                .header("authorization", format!("Bearer {}", fs.token))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
-        .await
-        .unwrap();
     let v: Value = serde_json::from_slice(&body).unwrap();
-    let types: Vec<String> = v["events"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|e| e["event"]["type"].as_str().unwrap().to_string())
-        .collect();
-    // user turn + two assistant turns with tool calls, two tool results, final text
-    assert_eq!(
-        types,
-        vec![
-            "user_message",
-            "assistant_message",
-            "tool_result",
-            "assistant_message",
-            "tool_result",
-            "assistant_message"
-        ]
-    );
-    let events = v["events"].as_array().unwrap();
-    assert_eq!(
-        events[4]["event"]["content"],
-        "execution failed: disabled by policy"
-    );
-    assert_eq!(events[4]["event"]["name"], "execute");
-    assert_eq!(events[5]["event"]["blocks"][0]["text"], "workspace updated");
-    // step numbering: 0-based model call index within the turn
-    assert_eq!(events[1]["event"]["step"], 0);
-    assert_eq!(events[3]["event"]["step"], 1);
-    assert_eq!(events[5]["event"]["step"], 2);
-
-    // usage recorded for the run
-    let (count, _) = clickhouse_usage_rows(&fs.state).await;
-    assert!(count >= 1, "usage recorded");
+    assert_eq!(v["accepted"], true, "{v}");
+    assert!(v["invocation_id"].as_str().is_some(), "{v}");
 
     // session appears in the list
     let res = app
@@ -222,9 +127,6 @@ async fn workspace_session_turn_executes_tools_and_persists() {
     assert!(String::from_utf8(body.to_vec()).unwrap().contains("repo-a"));
 }
 
-/// An agent turn is a model call, so the route's monthly quota gates it like
-/// every other spend path — a 0-USD quota rejects the turn before any
-/// provider contact and before anything lands in the thread log.
 #[tokio::test]
 async fn agent_turn_enforces_route_quota() {
     let fs = full_state().await;

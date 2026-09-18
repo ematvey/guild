@@ -850,6 +850,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
     };
     let streamed = cloud
         .stream_completion(protocol::api::ChatCompletionRequest {
+            server_workspace: None,
             send_mode: None,
             user_message_id: None,
             chat_id,

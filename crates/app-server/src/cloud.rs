@@ -251,6 +251,7 @@ impl CloudClient {
         messages: &[Message],
     ) -> Result<impl Stream<Item = Result<StreamEvent, CloudError>> + 'static, CloudError> {
         self.stream_completion(ChatCompletionRequest {
+            server_workspace: None,
             send_mode: None,
             user_message_id: None,
             chat_id,

@@ -1,8 +1,28 @@
 # Guild — current state of work
 
-Updated 2026-09-18 (tool artifacts milestone). Read this before touching
+Updated 2026-09-18 (unification phase 4). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Phase 4 landed: B2 re-homed onto the durable gateway workflow — 2026-09-18
+
+Server workspace sessions (`/api/v1/agents/sessions`) no longer run
+`run_agent` in-process; a turn submits the same `ChatRunner` workflow every
+gateway chat uses, with `ChatCompletionRequest.server_workspace` naming the
+org workspace the **server itself** executes tools in (never a client path —
+resolved server-side under `workspaces/{org}/{name}`). Execution is a
+journaled workflow step (`server_local_tool_step`): guild-core fs tools +
+shell-when-allowed, static exec-policy gate on `execute`, no interactive
+approvals (batch contract), ToolStarted/ToolCompleted streamed with
+`executor: Server`. The agents HTTP API became submit + poll (JSON ack
+`{accepted, generation_id, invocation_id}`; history is the thread journal);
+the gateway turn-submission core was factored out as
+`gateway::submit_turn` shared by both callers. Verified live on :18080:
+write_file executed server-locally into the workspace dir, execute denied
+with `allow_shell_tools` off. In-repo test asserts the submission contract
+(mock restate ingress); deep behavior is the live E2E, like every gateway
+workflow path. Phase 5 next: web-parity completions (5a AGENTS.md for web
+chats, 5b sandbox executor on the new server-local mechanism).
 
 ## Phase 3 landed: the thin desktop backend contract — 2026-09-18
 

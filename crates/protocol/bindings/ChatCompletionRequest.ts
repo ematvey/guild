@@ -37,6 +37,13 @@ project_id?: string,
  */
 attachment_ids: Array<string>, 
 /**
+ * Server-local execution: the NAME of this org's workspace directory
+ * the server itself executes tools in (batch/automation backend). The
+ * name is resolved against the org's workspace root server-side — a
+ * request can never point the executor outside it.
+ */
+server_workspace?: string, 
+/**
  * Client-discovered local-skills index, appended to the server-owned
  * system prompt. Additive and server-capped: the client never overrides
  * persona or tool instructions, it may only append this bounded block.

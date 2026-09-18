@@ -1,29 +1,19 @@
 //! Server-side execution backend: workspace agent sessions (spec §10.6, M6
-//! task 3). The agent loop runs in-process with guild-core tools scoped to a
-//! per-org workspace directory; history persists as thread events on the
-//! session's chat (derivation, spec §A).
+//! task 3; re-homed onto the durable gateway workflow — unification spec
+//! 2026-09-18 §4 phase 4). A turn submits the same ChatRunner workflow every
+//! chat uses, with `server_workspace` naming the org workspace the server
+//! itself executes tools in (journaled, exec-policy-gated, pre-approved —
+//! the batch contract). Callers submit and poll: history is the thread
+//! journal (`GET /api/v1/agents/sessions/{id}`).
 
 use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
 use crate::state::AppState;
-use crate::worker::restate::{build_model_history, next_turn};
 use axum::extract::{Path, State};
-use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::{Json, Router};
-use futures::Stream;
-use futures::StreamExt;
-use guild_core::agent::policy::ApprovalPolicy;
-use guild_core::agent::{
-    run_agent, AgentConfig, AgentHooks, ApprovalDecision, ModelTurn, ProviderTurn,
-};
-use guild_core::provider::{ProviderChunk, ProviderError};
-use guild_core::tools::{ToolArtifact, ToolFailure, ToolOutcome, ToolRegistry};
-use protocol::api::{Block, Message, ThreadEvent, ToolCall, ToolSpec, UsagePayload};
+use protocol::api::ChatCompletionRequest;
 use serde_json::{json, Value};
-use std::convert::Infallible;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
@@ -107,115 +97,14 @@ async fn session_history(
     Ok(Json(json!({ "events": rows })))
 }
 
-// ---------- turn execution ----------
-
-#[derive(Clone)]
-struct TurnFrame {
-    event: &'static str,
-    payload: Value,
-}
-
-struct SseHooks {
-    tx: mpsc::Sender<TurnFrame>,
-    /// Tool-carried artifact payloads (tool artifacts design) captured from
-    /// tool results, keyed by call id — the persist loop spills them into
-    /// tool_artifacts after the run.
-    artifacts: Arc<std::sync::Mutex<std::collections::HashMap<String, ToolArtifact>>>,
-}
-
-impl SseHooks {
-    async fn send(&self, event: &'static str, payload: Value) {
-        let _ = self.tx.send(TurnFrame { event, payload }).await;
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentHooks for SseHooks {
-    async fn on_text(&self, delta: &str) {
-        self.send("delta", json!({ "content": delta })).await;
-    }
-
-    async fn on_tool_call(&self, call: &ToolCall) {
-        self.send(
-            "tool_call",
-            json!({"id": call.id, "name": call.name, "arguments": call.arguments}),
-        )
-        .await;
-    }
-
-    async fn on_tool_result(&self, call: &ToolCall, outcome: &Result<ToolOutcome, ToolFailure>) {
-        if let Ok(o) = outcome {
-            if let Some(artifact) = &o.artifact {
-                self.artifacts
-                    .lock()
-                    .unwrap()
-                    .insert(call.id.clone(), artifact.clone());
-            }
-        }
-        let payload = match outcome {
-            Ok(o) => json!({"id": call.id, "name": call.name, "ok": true, "summary": o.ui_summary}),
-            Err(e) => {
-                json!({"id": call.id, "name": call.name, "ok": false, "error": e.to_string()})
-            }
-        };
-        self.send("tool_result", payload).await;
-    }
-
-    async fn request_approval(&self, _call: &ToolCall) -> ApprovalDecision {
-        // Server sessions are pre-approved by policy; Never-gated tools are
-        // rejected by the policy layer before this is reached.
-        ApprovalDecision::Approve
-    }
-
-    async fn on_done(&self, summary: &str) {
-        self.send("done", json!({ "summary": summary })).await;
-    }
-}
-
-/// Wraps `ProviderTurn` to accumulate token usage across turns (M6: usage
-/// events are per request; one agent run emits one aggregated event).
-struct TurnWithUsage<'a> {
-    inner: ProviderTurn<'a>,
-    tokens_in: Arc<std::sync::atomic::AtomicU32>,
-    tokens_out: Arc<std::sync::atomic::AtomicU32>,
-}
-
-#[async_trait::async_trait]
-impl ModelTurn for TurnWithUsage<'_> {
-    async fn stream_turn(
-        &self,
-        messages: &[Message],
-        tools: &[ToolSpec],
-    ) -> Result<
-        futures::stream::BoxStream<'static, Result<ProviderChunk, ProviderError>>,
-        ProviderError,
-    > {
-        use std::sync::atomic::Ordering;
-        let stream = self.inner.stream_turn(messages, tools).await?;
-        let ti = self.tokens_in.clone();
-        let to = self.tokens_out.clone();
-        Ok(stream
-            .map(move |item| {
-                if let Ok(ProviderChunk::Text(t)) = &item {
-                    if let Some(n) = t.tokens_in {
-                        ti.fetch_add(n, Ordering::SeqCst);
-                    }
-                    if let Some(n) = t.tokens_out {
-                        to.fetch_add(n, Ordering::SeqCst);
-                    }
-                }
-                item
-            })
-            .boxed())
-    }
-}
+// ---------- turn submission ----------
 
 async fn run_turn(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<Uuid>,
     Json(body): Json<Value>,
-) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, ApiError> {
+) -> Result<Json<Value>, ApiError> {
     let message = body["message"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing message"))?
@@ -230,266 +119,31 @@ async fn run_turn(
         .agent_sessions()
         .get(user.0.org_id, id, &user.0)
         .await?;
+    // Same spend gate as the chat gateway: an agent turn is a model call,
+    // so the route's monthly quota applies before any tokens flow.
     let master = state.config.master_key()?;
     let route = store
         .gateway()
         .resolve_route(user.0.org_id, &model, &master)
         .await?;
-
-    // Same spend gate as the chat gateway and the OpenAI endpoint: an agent
-    // turn is a model call, so the route's monthly quota applies before any
-    // tokens flow.
     crate::http::gateway::enforce_quota(&state, user.0.org_id, &model, &route).await?;
 
-    // history derived from the thread event log (spec §A.4)
-    let prior_events: Vec<ThreadEvent> = store
-        .thread()
-        .list_events(user.0.org_id, session.chat_id)
-        .await?
-        .into_iter()
-        .map(|r| r.event)
-        .collect();
-    let mut history: Vec<Message> = build_model_history(&prior_events, &Default::default(), &[]);
-    let turn_no = next_turn(&prior_events);
-    store
-        .thread()
-        .append_event(
-            session.chat_id,
-            &ThreadEvent::UserMessage {
-                content: message.clone(),
-                attachments: Vec::new(),
-            },
-        )
-        .await?;
-
-    history.push(Message::user(message.clone()));
-
-    let provider: Arc<dyn guild_core::provider::ModelProvider> =
-        guild_core::provider::for_protocol(&route.protocol)
-            .ok_or_else(|| ApiError::internal(format!("unknown protocol {}", route.protocol)))?;
-
-    // tools scoped to the workspace; shell tools opt-in only
-    let mut registry = ToolRegistry::new();
-    registry.add(Arc::new(guild_core::tools::fs::ReadFile::default()));
-    registry.add(Arc::new(guild_core::tools::fs::WriteFile));
-    registry.add(Arc::new(guild_core::tools::fs::EditFile));
-    if state.config.allow_shell_tools {
-        registry.add(Arc::new(guild_core::tools::shell::RunCommand));
-    }
-    let registry = Arc::new(registry);
-
-    let policy = ApprovalPolicy {
-        default: Some(guild_core::tools::Approval::Allow),
-        overrides: if state.config.allow_shell_tools {
-            Default::default()
-        } else {
-            [("execute".to_string(), guild_core::tools::Approval::Never)]
-                .into_iter()
-                .collect()
-        },
+    let req = ChatCompletionRequest {
+        send_mode: None,
+        user_message_id: None,
+        chat_id: session.chat_id,
+        model,
+        messages: vec![protocol::api::Message::user(message)],
+        tools: None,
+        system: None,
+        // The executor is the server itself: `server_workspace` names the
+        // org workspace the workflow runs tools in.
+        client_tools: false,
+        attachment_ids: Vec::new(),
+        project_id: None,
+        server_workspace: Some(session.workspace_name.clone()),
+        skills_index: None,
+        agents_md: None,
     };
-
-    let (tx, mut rx) = mpsc::channel::<TurnFrame>(64);
-    let workdir = workspace_dir(&state, user.0.org_id, &session.workspace_name);
-    let chat_id = session.chat_id;
-    let store_for_loop = store.clone();
-    let state_for_loop = state.clone();
-    let usage = state.usage().await?;
-    let org_id = user.0.org_id;
-    let user_id = user.0.id;
-    let price_in = route.price_in;
-    let price_out = route.price_out;
-
-    let loop_handle = tokio::spawn(async move {
-        use guild_core::usage::UsageEvent;
-        use std::sync::atomic::{AtomicU32, Ordering};
-
-        let tokens_in = Arc::new(AtomicU32::new(0));
-        let tokens_out = Arc::new(AtomicU32::new(0));
-        let turn = TurnWithUsage {
-            inner: ProviderTurn {
-                provider: provider.as_ref(),
-                model: &model,
-                system: Some("You are Guild, a coding agent working in an org workspace."),
-                base_url: &route.base_url,
-                api_key: &route.api_key,
-            },
-            tokens_in: tokens_in.clone(),
-            tokens_out: tokens_out.clone(),
-        };
-        let (hook_tx, mut hook_rx) = mpsc::channel::<TurnFrame>(64);
-        let artifacts: Arc<std::sync::Mutex<std::collections::HashMap<String, ToolArtifact>>> =
-            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
-        let hooks = SseHooks {
-            tx: hook_tx,
-            artifacts: artifacts.clone(),
-        };
-        let before = history.len();
-        let result = run_agent(
-            &turn,
-            &registry,
-            &policy,
-            &mut history,
-            &workdir,
-            &hooks,
-            &AgentConfig::default(),
-        )
-        .await;
-        drop(hooks);
-        while let Some(frame) = hook_rx.recv().await {
-            let _ = tx.send(frame).await;
-        }
-
-        match result {
-            Ok(_res) => {
-                // persist the new messages as thread events: assistant →
-                // assistant_message with blocks, tool → tool_result (spec §A).
-                // step = model call index within the turn (0-based),
-                // incremented per assistant message.
-                let mut step: u32 = 0;
-                let mut call_names: std::collections::HashMap<String, String> =
-                    std::collections::HashMap::new();
-                for m in &history[before..] {
-                    match m.role.as_str() {
-                        "assistant" => {
-                            let mut blocks: Vec<Block> = Vec::new();
-                            if let Some(r) = &m.reasoning {
-                                if !r.is_empty() {
-                                    blocks.push(Block::Reasoning { text: r.clone() });
-                                }
-                            }
-                            if !m.content.is_empty() {
-                                blocks.push(Block::Text {
-                                    text: m.content.clone(),
-                                });
-                            }
-                            if let Some(calls) = &m.tool_calls {
-                                for c in calls {
-                                    call_names.insert(c.id.clone(), c.name.clone());
-                                    blocks.push(Block::ToolCall {
-                                        id: c.id.clone(),
-                                        name: c.name.clone(),
-                                        arguments: serde_json::to_string(&c.arguments)
-                                            .unwrap_or_default(),
-                                    });
-                                }
-                            }
-                            let _ = store_for_loop
-                                .thread()
-                                .append_event(
-                                    chat_id,
-                                    &ThreadEvent::AssistantMessage {
-                                        turn: turn_no,
-                                        step,
-                                        blocks,
-                                        usage: UsagePayload::default(),
-                                        model: model.clone(),
-                                        interrupted: None,
-                                    },
-                                )
-                                .await;
-                            step += 1;
-                        }
-                        "tool" => {
-                            let Some(call_id) = &m.tool_call_id else {
-                                continue;
-                            };
-                            let name = call_names.get(call_id).cloned().unwrap_or_default();
-                            // Spill choke point (tool artifacts design): a
-                            // tool-carried artifact payload spills always,
-                            // replacing the inline content with the pointer
-                            // text on the event. The model-facing history
-                            // already holds the inline text — the event is
-                            // the log of record.
-                            let mut content = m.content.clone();
-                            let mut meta = None;
-                            let mut artifact_id = None;
-                            let artifact = artifacts.lock().unwrap().remove(call_id);
-                            if let Some(artifact) = artifact {
-                                match crate::worker::spill::spill_tool_artifact(
-                                    &state_for_loop,
-                                    org_id,
-                                    chat_id,
-                                    call_id,
-                                    &name,
-                                    &artifact,
-                                )
-                                .await
-                                {
-                                    Ok((spilled, pointer)) => {
-                                        content = pointer;
-                                        meta = Some(crate::worker::spill::artifact_meta(
-                                            None, &spilled,
-                                        ));
-                                        artifact_id = Some(spilled.artifact_id);
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            tool = %name,
-                                            "artifact spill failed, keeping inline: {e:?}"
-                                        );
-                                    }
-                                }
-                            }
-                            let _ = store_for_loop
-                                .thread()
-                                .append_event(
-                                    chat_id,
-                                    &ThreadEvent::ToolResult {
-                                        turn: turn_no,
-                                        step,
-                                        call_id: call_id.clone(),
-                                        name,
-                                        content,
-                                        is_error: false,
-                                        meta,
-                                        images: Vec::new(),
-                                        kind: None,
-                                        artifact_id,
-                                    },
-                                )
-                                .await;
-                        }
-                        _ => {}
-                    }
-                }
-                let ti = tokens_in.load(Ordering::SeqCst);
-                let to = tokens_out.load(Ordering::SeqCst);
-                let cost = UsageEvent::cost_usd(ti, to, price_in, price_out);
-                usage
-                    .record(UsageEvent {
-                        ts: chrono::Utc::now(),
-                        org_id,
-                        user_id,
-                        team_id: None,
-                        session_id: chat_id,
-                        model: model.clone(),
-                        provider: route.provider.clone(),
-                        tokens_in: ti,
-                        tokens_out: to,
-                        cost_usd: cost,
-                        request_id: Uuid::now_v7(),
-                    })
-                    .await;
-            }
-            Err(e) => {
-                let _ = tx
-                    .send(TurnFrame {
-                        event: "error",
-                        payload: json!({"message": e.to_string()}),
-                    })
-                    .await;
-            }
-        }
-        drop(tx);
-    });
-
-    let out = async_stream::stream! {
-        while let Some(frame) = rx.recv().await {
-            yield Ok(SseEvent::default().event(frame.event).data(frame.payload.to_string()));
-        }
-        let _ = loop_handle.await;
-    };
-
-    Ok(Sse::new(out).keep_alive(KeepAlive::default()))
+    crate::http::gateway::submit_turn(&state, &user.0, req, None, None).await
 }
