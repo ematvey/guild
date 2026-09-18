@@ -14,7 +14,6 @@ adds 20 per click. The `/project/<id>` route filter is gone from the
 sidebar (`activeFilterId` removed; the route still parses harmlessly).
 
 ## /compact: in-thread progress + busy thread — 2026-09-18
-
 The `/compact` toast is gone. The composer command now appends an
 optimistic in-thread line ("Compacting thread…", spinner) that clears when
 the durable `Compaction` event lands through the thread sync — at which
@@ -24,6 +23,12 @@ generating flag (journaled, cleared on every exit), so the thread reads
 busy — sidebar spinner, sends queue behind it — same as a turn. A failed
 compaction appends nothing to the log; the client reconciles on the busy
 flag dropping back to false without a new compaction event.
+
+The compaction card no longer shows the icon or the model name — the
+header reads just "Context compacted". Desktop 0.5.9 released all four
+platforms, updater serving it (token minted in Postgres, revoked after).
+The release ran from a throwaway worktree at the release commit: a sibling
+session's in-flight edits in the main tree broke `tsc` mid-build.
 
 ## External links; stop watcher for suspended tools — 2026-09-18
 
