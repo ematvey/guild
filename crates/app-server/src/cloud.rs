@@ -405,6 +405,28 @@ impl CloudClient {
         self.http()
     }
 
+    /// Mints a single-use WS connect ticket (30 s TTL, in-memory). The
+    /// machine link mints one per (re)connect — long-lived tokens never
+    /// appear in the upgrade query string.
+    pub async fn ws_ticket(&self) -> Result<String, CloudError> {
+        let resp = Self::check(
+            Self::timed(
+                self.http()
+                    .post(format!("{}/api/v1/ws/ticket", self.base_url.trim_end_matches('/'))),
+            )
+            .bearer_auth(&self.token)
+            .send()
+            .await?,
+        )
+        .await?
+        .json::<serde_json::Value>()
+        .await?;
+        Ok(resp["ticket"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or(CloudError::Request("ticket response missing ticket".into()))?)
+    }
+
     /// Shared client: connect-level timeout only. No total timeout —
     /// streaming endpoints rely on the connect bound and server keepalive;
     /// a client-level cap killed long turns at 10 minutes.

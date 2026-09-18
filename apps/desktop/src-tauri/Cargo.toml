@@ -24,6 +24,10 @@ guild-core = { path = "../../../crates/guild-core" }
 reqwest.workspace = true
 futures.workspace = true
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+# The dependency tree enables both ring and aws-lc-rs; rustls cannot
+# auto-select a provider then — install the ring one explicitly (see
+# ensure_crypto_provider).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 uuid.workspace = true
 
 tokio = { version = "1", features = ["sync", "rt-multi-thread"] }

@@ -235,6 +235,16 @@ pub async fn run_daemon_on(path: PathBuf, session: Session) -> anyhow::Result<()
     let shared = Shared::new(session);
     let shutdown_rx = shared.shutdown.subscribe();
 
+    // The machine link: the daemon's executor connection. Seeded from the
+    // restored session (persisted identity) and re-published on every
+    // login/pair/identify/sign-out via the watch channel.
+    {
+        let link_shared = shared.clone();
+        let link_rx = shared.machine_link.subscribe();
+        tokio::spawn(crate::machine_link::run(link_shared, link_rx));
+        shared.publish_machine_link();
+    }
+
     // Reap finished agent runs so the JoinSet doesn't grow unbounded.
     {
         let agents = shared.agents.clone();

@@ -7,7 +7,7 @@ import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
 import { Bot } from "lucide-react";
-import { IS_TAURI, apiLogin, apiMe, clearToken, rpcCall, setToken } from "./transport";
+import { IS_TAURI, apiLogin, apiMe, clearToken, machineId, rpcCall, setToken } from "./transport";
 import { clearApiCache } from "./views/settings/use-cached-api";
 import { clearMachinesCache } from "./views/settings/sections/MachineSection";
 import { ThemeProvider, useTheme } from "./theme";
@@ -244,6 +244,18 @@ function DesktopApp() {
     // token (works for both pairing and manual login).
     const info = await rpcCall("session.info", {}, 20_000);
     const baseUrl = info.result?.base_url ?? url;
+    // Machine identity: the daemon's executor link (machine WS + tool
+    // execution) keys on the webview's stable per-install id — report it
+    // after every auth so the link connects. Desktop only (browsers have
+    // no daemon socket); non-fatal: without it the machine stays offline
+    // (same as an unreported id ever did).
+    if (IS_TAURI) {
+      try {
+        await rpcCall("machine.identify", { machine_id: machineId() }, 10_000);
+      } catch {
+        /* the link parks until the next identify */
+      }
+    }
     // Resolve the server profile before entering the shell: the splash holds
     // until the IdP name/avatar are known, so the sidebar never flashes the
     // bare-email fallback. Bounded: an unreachable server must not hang the
