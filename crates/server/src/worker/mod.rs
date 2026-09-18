@@ -3,6 +3,7 @@
 
 pub mod exec_policy_gate;
 pub mod executor;
+pub mod funnel;
 pub mod mcp_pool;
 pub mod overflow;
 pub mod restate;

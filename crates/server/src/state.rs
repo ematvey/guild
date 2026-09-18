@@ -499,7 +499,7 @@ mod generation_table_tests {
         AppState::from_config(Config::test_config())
     }
 
-    fn tool(call: &str, machine: Option<&str>, connection: Option<Uuid>) -> PendingTool {
+    fn tool(_call: &str, machine: Option<&str>, connection: Option<Uuid>) -> PendingTool {
         PendingTool {
             name: "execute".into(),
             arguments: "{}".into(),

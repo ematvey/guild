@@ -655,7 +655,7 @@ mod tests {
             .unwrap();
 
         let gen = ts.state.generations.attach(chat.id);
-        let (text, thinking) = (gen.text.clone(), gen.thinking.clone());
+        let (text, _thinking) = (gen.text.clone(), gen.thinking.clone());
         *text.write().await = "partial".into();
         note_client_tool(&ts.state, chat.id, "call-1", "read_file", "{}", "m1");
 
@@ -691,7 +691,7 @@ mod tests {
     async fn token_during_sync_has_a_newer_authoritative_watermark() {
         let (ts, user, chat, _) = setup().await;
         let gen = ts.state.generations.attach(chat.id);
-        let (text, thinking) = (gen.text.clone(), gen.thinking.clone());
+        let (text, _thinking) = (gen.text.clone(), gen.thinking.clone());
         *text.write().await = "before".into();
         let before = capture_thread(&ts.state, user.0.org_id, chat.id, Some(&user))
             .await
