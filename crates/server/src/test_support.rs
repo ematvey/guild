@@ -153,7 +153,7 @@ pub async fn test_state_with_mock_ingress() -> (TestState, MockIngress) {
 /// exercise the in-flight path (pending-tool and approval replay, catch-up)
 /// instead of the immediate Idle frame.
 pub fn note_generation(state: &AppState, chat_id: uuid::Uuid) {
-    crate::http::gateway::ensure_generation(state, chat_id);
+    state.generations.attach(chat_id);
 }
 
 /// Test seam: a chat's cancel flag (set by the stop endpoint and steered
@@ -162,7 +162,7 @@ pub fn generation_cancel(
     state: &AppState,
     chat_id: uuid::Uuid,
 ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
-    crate::http::gateway::generation_cancel(state, chat_id)
+    state.generations.cancel_flag(chat_id)
 }
 
 /// Test seam: expose a generation's frame sender so tests can emit live
@@ -171,14 +171,15 @@ pub fn generation_tx(
     state: &AppState,
     chat_id: uuid::Uuid,
 ) -> tokio::sync::broadcast::Sender<protocol::api::StreamEvent> {
-    crate::http::gateway::ensure_generation(state, chat_id).0
+    state.generations.attach(chat_id).tx
 }
 
 /// Mirrors the worker's delta emission: appends to the generation's text
 /// buffer (what replay reads) AND broadcasts the live frame.
 pub fn emit_live_delta(state: &AppState, chat_id: uuid::Uuid, content: &str) {
     use protocol::api::StreamEvent;
-    let (tx, text, _) = crate::http::gateway::ensure_generation(state, chat_id);
+    let gen = state.generations.attach(chat_id);
+    let (tx, text) = (gen.tx, gen.text);
     let buf = text.clone();
     let value = content.to_string();
     tokio::spawn(async move {
@@ -201,7 +202,7 @@ pub fn note_client_tool(
     machine_id: &str,
 ) {
     use protocol::api::{StreamEvent, ToolExecutor};
-    crate::http::gateway::note_pending_tool(
+    crate::worker::funnel::note_pending_tool(
         state,
         chat_id,
         call_id,
@@ -213,7 +214,7 @@ pub fn note_client_tool(
     let dispatch_state = state.clone();
     let dispatch_call = call_id.to_string();
     tokio::spawn(async move {
-        crate::http::gateway::dispatch_pending_tool(
+        crate::worker::funnel::dispatch_pending_tool(
             &dispatch_state,
             chat_id,
             &dispatch_call,
@@ -222,8 +223,7 @@ pub fn note_client_tool(
         .await
         .unwrap();
     });
-    let gens = state.generations.lock().unwrap();
-    if let Some(g) = gens.get(&chat_id) {
+    if let Some(g) = state.generations.handle(chat_id) {
         let _ = g.tx.send(StreamEvent::ToolStarted {
             call_id: call_id.to_string(),
             name: name.to_string(),
@@ -245,7 +245,7 @@ pub fn overload_machine_writer(state: &AppState, machine: &str) {
 
 /// Installs the production liveness watcher for a suspended test call.
 pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machine: &str) {
-    let done = crate::http::gateway::note_pending_tool(
+    let done = crate::worker::funnel::note_pending_tool(
         state,
         chat,
         call,
@@ -257,7 +257,7 @@ pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machin
     let dispatch_state = state.clone();
     let dispatch_call = call.to_string();
     tokio::spawn(async move {
-        crate::http::gateway::dispatch_pending_tool(
+        crate::worker::funnel::dispatch_pending_tool(
             &dispatch_state,
             chat,
             &dispatch_call,
@@ -266,7 +266,7 @@ pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machin
         .await
         .unwrap();
     });
-    crate::http::gateway::spawn_machine_watcher(
+    crate::worker::funnel::spawn_machine_watcher(
         state,
         chat,
         call.into(),

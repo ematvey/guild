@@ -138,7 +138,7 @@ async fn stop_sets_the_flag_and_conflicts_when_idle() {
     assert_eq!(body_json(res).await["stopped"], json!(true));
     assert!(generation_cancel(&fs.state, fs.chat_id).unwrap().load(SeqCst));
 
-    fs.state.generations.lock().unwrap().remove(&fs.chat_id);
+    fs.state.generations.remove(fs.chat_id);
     let res = app.oneshot(req("POST", uri, &fs.token, None)).await.unwrap();
     assert_eq!(res.status(), StatusCode::CONFLICT);
 }
