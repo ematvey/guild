@@ -5,9 +5,10 @@
 //! permanently killed the executor link while the daemon looked healthy.
 
 use futures::{SinkExt, StreamExt};
+use guild_app_server::auth_state::AuthState;
 use guild_app_server::cloud::CloudClient;
 use guild_app_server::jsonrpc_loop::{Session, Shared};
-use guild_app_server::machine_link::{run, MachineLinkConfig};
+use guild_app_server::machine_link::run;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,11 +87,15 @@ async fn link_reconnects_after_a_server_side_close() {
     tokio::spawn(flaky_server(listener, connects.clone()));
 
     let mut session = Session::default();
-    session.cloud = Some(CloudClient {
-        base_url: format!("http://127.0.0.1:{port}"),
-        token: "tok".into(),
-    });
-    session.machine_id = Some("machine-reconnect".into());
+    session.auth = AuthState::from_parts(
+        Some(CloudClient {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "tok".into(),
+        }),
+        None,
+        Some("machine-reconnect".into()),
+        None,
+    );
     let shared = Shared::new(session);
 
     let link_shared = shared.clone();
