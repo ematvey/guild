@@ -490,14 +490,20 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "registry.uninstall" => {
             tokio::spawn(registry_uninstall(shared.session.clone(), req, out_tx));
         }
-        "skills.list" => {
-            tokio::spawn(skills_list(shared.session.clone(), req, out_tx));
+        "fs.scopes" => {
+            let _ = out_tx.send(response_value(
+                req.id,
+                Ok(Response::ok(
+                    req.id,
+                    json!({
+                        "config_dir": crate::fs_bridge::guild_config_dir().to_string_lossy(),
+                        "home": crate::fs_bridge::home_dir().to_string_lossy(),
+                    }),
+                )),
+            ));
         }
-        "skills.prepare_turn" => {
-            tokio::spawn(skills_prepare_turn(req, out_tx));
-        }
-        "skills.disable" => {
-            tokio::spawn(skills_disable(shared.session.clone(), req, out_tx));
+        "fs.read_text" | "fs.list_dir" | "fs.exists" | "fs.write_text" => {
+            let _ = out_tx.send(response_value(req.id, fs_bridge_call(&req)));
         }
         other => {
             let _ = out_tx.send(response_value(
@@ -507,6 +513,30 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         }
     }
     crate::dtrace::dtrace(&format!("dispatch: END {} in {:?}", method, t0.elapsed()));
+}
+
+/// The fs.* file bridge (fs_bridge.rs): primitive allowlisted operations
+/// the webview uses for context assembly. The project folder arrives per
+/// call (the webview owns the project binding — same trust as the old
+/// skills.prepare_turn's project_dir param).
+fn fs_bridge_call(req: &Request) -> anyhow::Result<Response> {
+    let project_dir = req.params["project_dir"].as_str().map(PathBuf::from);
+    let path = req.params["path"]
+        .as_str()
+        .context("missing path")?
+        .to_string();
+    let payload = match req.method.as_str() {
+        "fs.read_text" => json!({ "content": crate::fs_bridge::read_text(project_dir.as_deref(), &path)? }),
+        "fs.list_dir" => json!({ "entries": crate::fs_bridge::list_dir(project_dir.as_deref(), &path)? }),
+        "fs.exists" => json!({ "exists": crate::fs_bridge::exists(project_dir.as_deref(), &path) }),
+        "fs.write_text" => {
+            let body = req.params["body"].as_str().context("missing body")?;
+            crate::fs_bridge::write_text(project_dir.as_deref(), &path, body)?;
+            json!({ "ok": true })
+        }
+        other => anyhow::bail!("unknown fs verb {other}"),
+    };
+    Ok(Response::ok(req.id, payload.into()))
 }
 
 fn param<'a>(req: &'a Request, key: &'a str) -> anyhow::Result<&'a str> {
@@ -1042,95 +1072,6 @@ async fn registry_install(
 
 /// Lists locally discovered skills with provenance, scope, and disabled
 /// flag — the desktop skills manager's data source.
-async fn skills_list(
-    session: Arc<Mutex<Session>>,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
-    let result = async {
-        if let Some(d) = req.params["project_dir"].as_str() {
-            session.lock().unwrap().project_dir = Some(PathBuf::from(d));
-        }
-        let project_dir = session
-            .lock()
-            .unwrap()
-            .project_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("."));
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("/"))
-            .join("guild");
-        let rows = crate::skills::list(&project_dir, &config_dir);
-        Ok(Response::ok(req.id, serde_json::to_value(rows)?))
-    }
-    .await;
-    let _ = out_tx.send(response_value(req.id, result));
-}
-
-/// Expands `/name` skill mentions in a chat-turn prompt (the gateway path's
-/// counterpart of the engine's send expansion), renders the skills index
-/// for the turn's `skills_index` field, and assembles the AGENTS.md
-/// instructions (global config-dir file + the bound project's chain) for
-/// the turn's `agents_md` field. One call, one answer: the webview calls it
-/// right before `gateway/chat`.
-async fn skills_prepare_turn(req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    let result = async {
-        let prompt = req.params["prompt"]
-            .as_str()
-            .context("missing prompt")?;
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("/"))
-            .join("guild");
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        let project_dir = req.params["project_dir"].as_str().map(PathBuf::from);
-        let disabled = crate::skills::disabled_paths(&config_dir);
-        let default_dir = PathBuf::from(".");
-        let scan_dir = project_dir.as_deref().unwrap_or(&default_dir);
-        let skills: Vec<_> = crate::skills::discover_with_home(scan_dir, &config_dir, &home)
-            .into_iter()
-            .filter(|e| !disabled.contains(&e.path))
-            .collect();
-        let expanded = match crate::skills::mention_block(&crate::skills::mention_expansions(
-            prompt, &skills,
-        )) {
-            Some(block) => format!("{prompt}{block}"),
-            None => prompt.to_string(),
-        };
-        let index = crate::skills::prompt_index(&skills);
-        // Codex semantics: the global file always applies; the project chain
-        // needs a bound project (no folder → global only).
-        let instructions = match &project_dir {
-            Some(dir) => crate::agents_md::assemble(&config_dir, dir),
-            None => crate::agents_md::load_global(&config_dir).map(|g| g.contents),
-        };
-        Ok(Response::ok(
-            req.id,
-            json!({ "prompt": expanded, "index": index, "instructions": instructions }),
-        ))
-    }
-    .await;
-    let _ = out_tx.send(response_value(req.id, result));
-}
-
-/// Enables/disables one skill by SKILL.md path (settings-backed).
-async fn skills_disable(
-    _session: Arc<Mutex<Session>>,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
-    let result = async {
-        let path = PathBuf::from(param(&req, "path")?);
-        let enabled = req.params["enabled"].as_bool().context("missing enabled")?;
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("/"))
-            .join("guild");
-        crate::skills::set_disabled(&config_dir, &path, enabled)?;
-        Ok(Response::ok(req.id, json!({"ok": true})))
-    }
-    .await;
-    let _ = out_tx.send(response_value(req.id, result));
-}
-
 async fn registry_uninstall(
     session: Arc<Mutex<Session>>,
     req: Request,

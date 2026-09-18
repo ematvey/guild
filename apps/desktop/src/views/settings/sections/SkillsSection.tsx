@@ -7,6 +7,7 @@ import { Download, RefreshCw, Upload, Ban, CircleCheck, Trash2, type LucideIcon 
 import { toast } from "sonner";
 import { rpcCall } from "../../../transport";
 import { resolveProjectDir } from "../resolve-project-dir";
+import { daemonFs, listSkills, setSkillDisabled } from "../../../lib/context";
 import { Button } from "@guild/ui/components/button";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
@@ -84,10 +85,11 @@ export default function SkillsSection() {
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const res = await rpcCall("skills.list", {
-        project_dir: (await resolveProjectDir()) ?? undefined,
-      });
-      setRows((res?.result ?? []) as SkillRow[]);
+      // Discovery moved client-side (lib/context.ts over the fs bridge).
+      const fs = daemonFs(rpcCall);
+      const scopes = await fs.scopes();
+      const rows = await listSkills(fs, scopes, (await resolveProjectDir()) ?? undefined);
+      setRows(rows as SkillRow[]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setRows([]);
@@ -175,11 +177,13 @@ export default function SkillsSection() {
                   onClick={() =>
                     void act(
                       `toggle-${row.path}`,
-                      () =>
-                        rpcCall("skills.disable", {
-                          path: row.path,
-                          enabled: row.disabled,
-                        }),
+                      async () =>
+                        setSkillDisabled(
+                          daemonFs(rpcCall),
+                          await daemonFs(rpcCall).scopes(),
+                          row.path,
+                          row.disabled,
+                        ),
                       row.disabled ? "Skill enabled" : "Skill disabled",
                     )
                   }

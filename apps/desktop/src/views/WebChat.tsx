@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyMention, detectMention } from "../lib/skill-mention";
+import { daemonFs, listSkills } from "../lib/context";
 import Markdown, { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
@@ -1728,9 +1729,12 @@ export default function WebChat({
   useEffect(() => {
     if (!isTauri) return;
     let cancelled = false;
-    rpcCall("skills.list", {})
-      .then((res) => {
-        if (!cancelled) setSkills((res?.result ?? []) as ComposerSkill[]);
+    // Skills discovery moved client-side (lib/context.ts over the fs bridge).
+    const fs = daemonFs(rpcCall);
+    fs.scopes()
+      .then((scopes) => listSkills(fs, scopes))
+      .then((rows) => {
+        if (!cancelled) setSkills(rows as ComposerSkill[]);
       })
       .catch(() => {
         /* skills are optional composer sugar — silence */

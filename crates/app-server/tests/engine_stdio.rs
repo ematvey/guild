@@ -250,33 +250,3 @@ async fn engine_stdio_unknown_method_is_correlated_error() {
     let err = engine.call("nope.method", json!({})).unwrap_err();
     assert!(err.contains("unknown method"), "got: {err}");
 }
-
-/// skills.prepare_turn expands `/name` mentions with the SKILL.md body and
-/// renders the index — the web-chat counterpart of the engine's send
-/// expansion. Skills come from the requested project dir's legacy scope
-/// (`.guild/skills`), isolated from the real home via XDG_CONFIG_HOME.
-#[tokio::test]
-async fn engine_stdio_skills_prepare_turn_expands_mentions() {
-    let _srv = guild_server::test_support::serve_full().await;
-    let tmp = std::env::temp_dir().join(format!("guild-skills-{}", std::process::id()));
-    let skill_dir = tmp.join(".guild/skills/deploy-check");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(
-        skill_dir.join("SKILL.md"),
-        "---\nname: deploy-check\ndescription: verify a deploy\n---\n\nRun the deploy checklist.",
-    )
-    .unwrap();
-    let mut engine = EngineProc::spawn();
-    let res = engine
-        .call(
-            "skills.prepare_turn",
-            json!({ "prompt": "/deploy-check please", "project_dir": tmp.to_string_lossy() }),
-        )
-        .expect("prepare_turn reply");
-    let expanded = res["prompt"].as_str().unwrap();
-    assert!(expanded.starts_with("/deploy-check please\n\n---\nInvoked skills"), "{expanded}");
-    assert!(expanded.contains("### Skill: deploy-check ("));
-    assert!(expanded.contains("Run the deploy checklist."));
-    assert!(res["index"].as_str().unwrap().contains("deploy-check"));
-    let _ = std::fs::remove_dir_all(&tmp);
-}

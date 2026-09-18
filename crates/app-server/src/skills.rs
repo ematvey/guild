@@ -148,35 +148,6 @@ pub fn disabled_paths(config_dir: &Path) -> HashSet<PathBuf> {
         .unwrap_or_default()
 }
 
-/// Writes the disabled-skill map back to `{config_dir}/settings.json`,
-/// merging with any other settings already there.
-pub fn set_disabled(config_dir: &Path, path: &Path, enabled: bool) -> anyhow::Result<()> {
-    std::fs::create_dir_all(config_dir)?;
-    let settings_path = config_dir.join("settings.json");
-    let mut v: serde_json::Value = std::fs::read_to_string(&settings_path)
-        .ok()
-        .and_then(|b| serde_json::from_str(&b).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    {
-        let obj = v.as_object_mut().context("settings.json is not an object")?;
-        let map = obj
-            .entry("skillsDisabled")
-            .or_insert_with(|| serde_json::json!({}));
-        let map = map.as_object_mut().context("skillsDisabled is not an object")?;
-        let key = path.to_string_lossy().into_owned();
-        if enabled {
-            map.remove(&key);
-        } else {
-            map.insert(key, serde_json::json!(false));
-        }
-    }
-    std::fs::write(
-        &settings_path,
-        serde_json::to_string_pretty(&v)? + "\n",
-    )?;
-    Ok(())
-}
-
 /// Char budget for the rendered index (Codex's fallback budget).
 const INDEX_BUDGET: usize = 8_000;
 
@@ -351,66 +322,6 @@ pub fn mention_block(mentions: &[(SkillEntry, String)]) -> Option<String> {
     Some(s)
 }
 
-// ---------- UI listing (skills.list) ----------
-
-/// One row of the desktop skills manager: discovery + provenance + scope.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillListEntry {
-    pub name: String,
-    pub description: String,
-    /// Full path to SKILL.md.
-    pub path: String,
-    /// Where the loader found it.
-    pub scope: String, // repo | user | legacy
-    /// Present when Guild manages this dir (installed or published).
-    pub provenance: Option<SkillProvenance>,
-    /// True when a version was installed from the registry (uninstallable).
-    pub installed: bool,
-    /// True when the author published this copy (re-publishable).
-    pub published_by_me: bool,
-    pub disabled: bool,
-}
-
-/// Everything the skills UI needs, in one call.
-pub fn list(project_dir: &Path, config_dir: &Path) -> Vec<SkillListEntry> {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-    list_with_home(project_dir, config_dir, &home)
-}
-
-pub fn list_with_home(
-    project_dir: &Path,
-    config_dir: &Path,
-    home: &Path,
-) -> Vec<SkillListEntry> {
-    let disabled = disabled_paths(config_dir);
-    let user_root = home.join(".agents");
-    let legacy_roots = [project_dir.join(".guild"), config_dir.to_path_buf()];
-    let mut out = Vec::new();
-    for e in discover_with_home(project_dir, config_dir, home) {
-        let scope = if e.path.starts_with(&user_root) {
-            "user"
-        } else if legacy_roots.iter().any(|r| e.path.starts_with(r)) {
-            "legacy"
-        } else {
-            "repo"
-        };
-        let prov = read_sidecar(e.path.parent().unwrap_or(Path::new("/")));
-        out.push(SkillListEntry {
-            installed: prov
-                .as_ref()
-                .is_some_and(|p| p.source == "registry" && !p.published_by_me),
-            published_by_me: prov.as_ref().is_some_and(|p| p.published_by_me),
-            provenance: prov,
-            scope: scope.into(),
-            name: e.name,
-            description: e.description,
-            path: e.path.to_string_lossy().into_owned(),
-            disabled: disabled.contains(&e.path),
-        });
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,30 +435,6 @@ mod tests {
     }
 
     #[test]
-    fn set_disabled_roundtrip_and_merge() {
-        let base = std::env::temp_dir().join(format!("guild-skills-sd-{}", std::process::id()));
-        let cfg = base.join("cfg");
-        // merge with pre-existing unrelated settings
-        std::fs::create_dir_all(&cfg).unwrap();
-        std::fs::write(cfg.join("settings.json"), r#"{"theme": "dark"}"#).unwrap();
-        let p1 = Path::new("/tmp/a/SKILL.md");
-        let p2 = Path::new("/tmp/b/SKILL.md");
-        set_disabled(&cfg, p1, false).unwrap();
-        set_disabled(&cfg, p2, false).unwrap();
-        let dis = disabled_paths(&cfg);
-        assert!(dis.contains(p1) && dis.contains(p2));
-        let settings: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(cfg.join("settings.json")).unwrap())
-                .unwrap();
-        assert_eq!(settings["theme"], "dark", "unrelated keys survive");
-        // re-enable removes the entry
-        set_disabled(&cfg, p1, true).unwrap();
-        assert!(!disabled_paths(&cfg).contains(p1));
-        assert!(disabled_paths(&cfg).contains(p2));
-        std::fs::remove_dir_all(&base).unwrap();
-    }
-
-    #[test]
     fn prompt_index_lists_entries() {
         let idx = prompt_index(&[SkillEntry {
             name: "review".into(),
@@ -596,48 +483,6 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
-    #[test]
-    fn list_reports_scope_provenance_and_disabled() {
-        let base = std::env::temp_dir().join(format!("guild-skills-ls-{}", std::process::id()));
-        let cfg = base.join("cfg");
-        let home = base.join("home");
-        let proj = base.join("proj");
-        write_skill(&home.join(".agents"), "skills/home-skill", "home-skill", "h");
-        write_skill(&proj, ".guild/skills/legacy-skill", "legacy-skill", "l");
-        write_skill(&proj, ".agents/skills/repo-skill", "repo-skill", "p");
-        crate::skills::write_sidecar(
-            &proj.join(".agents/skills/repo-skill"),
-            &SkillProvenance {
-                source: "registry".into(),
-                slug: "repo-skill".into(),
-                version: "1.0.0".into(),
-                publisher: "a@b.c".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        std::fs::create_dir_all(&cfg).unwrap();
-        std::fs::write(
-            cfg.join("settings.json"),
-            format!(
-                r#"{{"skillsDisabled": {{"{}": false}}}}"#,
-                proj.join(".agents/skills/repo-skill/SKILL.md").display()
-            ),
-        )
-        .unwrap();
-        let rows = list_with_home(&proj, &cfg, &home);
-        let by = |n: &str| rows.iter().find(|r| r.name == n).unwrap();
-        assert_eq!(by("home-skill").scope, "user");
-        assert_eq!(by("legacy-skill").scope, "legacy");
-        let repo = by("repo-skill");
-        assert_eq!(repo.scope, "repo");
-        assert!(repo.installed && !repo.published_by_me);
-        assert_eq!(repo.provenance.as_ref().unwrap().version, "1.0.0");
-        assert!(repo.disabled);
-        assert!(!by("home-skill").installed);
-        assert!(!by("home-skill").disabled);
-        std::fs::remove_dir_all(&base).unwrap();
-    }
 
     #[test]
     fn mention_expansions_match_exact_names_only() {
