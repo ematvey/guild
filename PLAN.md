@@ -4,6 +4,17 @@ Updated 2026-09-18 (tool artifacts milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Phase 3 landed: the thin desktop backend contract — 2026-09-18
+
+The desktop backend now matches spec §3 exactly (4f4f89f): executor +
+fs.* bridge + registry crypto + CLI auth store, nothing else. Session
+message mirroring removed (the thread journal is the only history);
+agent.start takes caller-assembled context (verified live — markers ride
+into the server prompt); skills.rs/agents_md.rs deleted (registry client
+kept the sidecar types it needs). The single-process merge itself was
+already in (2026-09-13 spec). Phase 4 next: re-home B2 (server workspace
+sessions off run_agent), then phase 5 web-parity completions.
+
 ## Phase 2 landed: context assembly is client-side — 2026-09-18
 
 Skills discovery/index, `/name` expansion, and the AGENTS.md chain moved
