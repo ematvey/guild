@@ -1,8 +1,37 @@
 # Guild — current state of work
 
-Updated 2026-09-18 (unification phase 4). Read this before touching
+Updated 2026-09-18 (unification complete). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Phase 5 landed: web parity — machine-mediated AGENTS.md + sandbox executor — 2026-09-18
+
+Both completions of the unification spec §4 phase 5 are in:
+
+- **5a** — when a turn arrives with no client-assembled AGENTS.md chain
+  (browser tab) and the chat runs against a bound project, the workflow
+  dispatches ONE read_file for the project's AGENTS.md through the machine
+  channel before the system prompt is built (same durable dispatch shape as
+  client tools, minus gates/events; 30s durable timeout, offline → turn
+  proceeds without it). Freshness is a TTL cache per project folder
+  (10 min, in-memory) — the machine channel has no mtime verb, so the
+  spec's "per project + mtime" resolves to a bounded TTL.
+- **5b** — a web chat with nothing bound (no machine, no desktop origin)
+  falls back to the **sandbox executor**: the same tools run server-side in
+  a per-chat `data_dir/sandbox/{chat_id}`, behind the same static exec
+  policy and interactive approval gates as client tools (web client answers
+  approvals like any other executor). A bound-but-offline desktop keeps its
+  explicit message — the user's workspace is on that machine, not the
+  sandbox. No API or protocol change: the fallback is derived, and the
+  served UI now declares tools for browser clients too (`client_tools:
+  true`).
+
+Verified live on :18080: 5a — browser-style turn on a project-bound chat
+pulled AGENTS.md from the daemon machine and the model obeyed its
+instructions; 5b — a no-binding chat executed write_file server-side into
+the per-chat sandbox dir. The unification spec (§4) is fully implemented:
+phases 1–5 all landed (1a 34a48fb, 1b 7dd203c, 2 aabf8af, 3 4f4f89f,
+4 74fdfb3, 5 this commit).
 
 ## Phase 4 landed: B2 re-homed onto the durable gateway workflow — 2026-09-18
 
