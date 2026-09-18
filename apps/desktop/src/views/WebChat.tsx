@@ -3270,7 +3270,7 @@ function RowActions({
           tabIndex={0}
           title="Row actions"
           onClick={(e) => e.stopPropagation()}
-          className="absolute right-1 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
+          className="absolute right-1 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md bg-foreground/10 text-muted-foreground opacity-0 outline-none transition-all hover:bg-foreground/20 hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
         >
           <EllipsisVertical className="size-4" />
         </span>
@@ -3406,7 +3406,7 @@ function ProjectHeader({
               onNewChat();
             }
           }}
-          className="absolute right-7 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
+          className="absolute right-7 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md bg-foreground/10 text-muted-foreground opacity-0 outline-none transition-all hover:bg-foreground/20 hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
         >
           <Plus className="size-4" />
         </span>
