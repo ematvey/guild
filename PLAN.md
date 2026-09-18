@@ -4,6 +4,24 @@ Updated 2026-09-18 (tool artifacts milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Phase 1a landed: the daemon owns the machine link — 2026-09-18
+
+maintainer approved the unification spec
+(`docs/specs/2026-09-18-agent-loop-unification-design.md`); phase 1a shipped
+(34a48fb): the daemon now owns the machine's executor connection
+(`guild-app-server/src/machine_link.rs`) — machine WS + ToolDispatch
+execution + identity persistence in token.json (survives restarts, works
+with no GUI open). New `machine.identify` RPC; webview reports its id after
+auth. The Tauri host's WS is member-only (frame delivery; its execute path
+deleted). TDD throughout (10 new tests); fixed two latent bugs en route:
+rustls provider never installed (dual ring/aws-lc-rs in tree → connect
+panic) and test-template databases not role-scoped (two roles on the host
+PG collided on clone). Verified live E2E on :18080: link registered,
+workflow dispatched read_file, daemon executed, result flowed. Installed
+desktop clients keep old behavior until the next release (single binary).
+Phase 1b next: agent.start → gateway-workflow shim (kills loop B1).
+Server rebuilt; frontend lives on :18080.
+
 ## Tool artifacts: large tool results spill to object storage + materialize on the client — 2026-09-18
 
 maintainer: oversized server-tool results no longer truncate or bloat history.
