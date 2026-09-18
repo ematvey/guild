@@ -1875,6 +1875,14 @@ export default function WebChat({
   pickedProjectRef.current = pickedProject;
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  /** Where the create-project dialog was opened from: only the composer's
+   * project picker binds the new project to the chat — the sidebar's
+   * "+" merely creates it. */
+  const createProjectFromRef = useRef<"picker" | "sidebar">("picker");
+  const openCreateProject = (from: "picker" | "sidebar") => {
+    createProjectFromRef.current = from;
+    setCreateProjectOpen(true);
+  };
   const openRow = chatId ? chats?.find((c) => c.id === chatId) : undefined;
   const currentProject = pickedProject ?? chatProjectOf(openRow);
   const pickProject = (p: PickedProject | null) => {
@@ -1882,7 +1890,9 @@ export default function WebChat({
   };
   const projectCreated = (project: Project) => {
     void refreshProjects();
+    if (createProjectFromRef.current !== "picker") return;
     pickProject({ id: project.id, name: project.name, machine_label: project.machine_label });
+    setProjectPickerOpen(false);
   };
 
   // ---- sidebar row menu: rename + archive (row drop-out = list refresh) ----
@@ -2364,7 +2374,7 @@ export default function WebChat({
       avatarUrl={avatarUrl}
       onNewChat={newChat}
       onOpenChat={openChat}
-      onNewProject={() => setCreateProjectOpen(true)}
+      onNewProject={() => openCreateProject("sidebar")}
       onSignOut={onSignOut}
       onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
       onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
@@ -2908,7 +2918,7 @@ export default function WebChat({
         chats={chats}
         current={currentProject}
         onPick={pickProject}
-        onCreateProject={() => setCreateProjectOpen(true)}
+        onCreateProject={() => openCreateProject("picker")}
       />
 
       <CreateProjectDialog
