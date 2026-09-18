@@ -574,6 +574,11 @@ pub enum ThreadEvent {
         /// label the frame natively. Absent on old events (serde default).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kind: Option<ToolKind>,
+        /// Oversized results are spilled into `tool_artifacts` (bytes in
+        /// object storage); `content` carries the pointer text and head
+        /// excerpt. Absent on inline results and old events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact_id: Option<Uuid>,
     },
     /// Compaction checkpoint (phase 3): the model-facing history before
     /// this event is replaced by `summary` (plus a verbatim tail of
