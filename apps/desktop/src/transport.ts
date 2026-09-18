@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { WsServerMsg } from "../../../crates/protocol/bindings/Ws";
+import { browserFs, daemonFs, prepareTurn as assembleTurn } from "./lib/context";
 import type { Project } from "../../../crates/protocol/bindings/Project";
 import type { CreateProjectRequest } from "../../../crates/protocol/bindings/CreateProjectRequest";
 
@@ -858,15 +859,11 @@ export async function prepareTurn(
   prompt: string,
   projectDir?: string,
 ): Promise<{ prompt: string; index: string; instructions?: string }> {
-  const res = await rpcCall("skills.prepare_turn", {
-    prompt,
-    ...(projectDir ? { project_dir: projectDir } : {}),
-  });
-  return {
-    prompt: res?.result?.prompt ?? prompt,
-    index: res?.result?.index ?? "",
-    instructions: res?.result?.instructions ?? undefined,
-  };
+  // Context assembly moved to the client (lib/context.ts) over the fs
+  // bridge; browser mode has no local files and passes through untouched.
+  const fs = IS_TAURI ? daemonFs(rpcCall) : browserFs;
+  const scopes = await fs.scopes();
+  return assembleTurn(fs, scopes, prompt, projectDir);
 }
 
 /// In-flight mirror catch-up from the app process (single-process spec):
