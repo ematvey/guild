@@ -238,6 +238,83 @@ pub(crate) fn spawn_machine_watcher(
     });
 }
 
+/// Watches the chat's cancel flag while a client tool is suspended. A stop
+/// resolves the tool immediately with an interrupt notice, so the turn
+/// resumes and ends at the next journaled cancel check instead of waiting
+/// out the executor or the 5-minute timeout. Same durable `complete_tool`
+/// funnel as every other resolution; late client results no-op.
+pub(crate) fn spawn_stop_watcher(
+    state: &AppState,
+    chat_id: Uuid,
+    call_id: String,
+    done: Arc<tokio::sync::Notify>,
+) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = done.notified() => return,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+            }
+            if !pending_tool_exists(&state, chat_id, &call_id) {
+                return; // resolved already
+            }
+            let Some(cancel) = generation_cancel(&state, chat_id) else {
+                return; // generation gone; the turn cannot resume anyway
+            };
+            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = crate::http::internal::restate_send_one_way(
+                    &state,
+                    "ChatRunner",
+                    &format!("{chat_id}/complete_tool"),
+                    serde_json::json!({
+                        "call_id": call_id,
+                        "content": "turn interrupted before the tool result arrived",
+                        "is_error": true,
+                    }),
+                )
+                .await;
+                return;
+            }
+        }
+    });
+}
+
+/// Watches the chat's cancel flag while an approval decision is pending. A
+/// stop resolves the gate as denied so the turn resumes and ends at the
+/// next journaled cancel check instead of waiting out the user or the
+/// auto-deny timer. Duplicate resolutions against an already-resolved
+/// awakeable are dropped by Restate; the loser no-ops.
+pub(crate) fn spawn_stop_approval_watcher(state: &AppState, chat_id: Uuid, call_id: String) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + crate::worker::restate::APPROVAL_TIMEOUT;
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => return,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+            }
+            let Some(cancel) = generation_cancel(&state, chat_id) else {
+                return; // generation gone; the turn cannot resume anyway
+            };
+            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = crate::http::internal::restate_send_one_way(
+                    &state,
+                    "ChatRunner",
+                    &format!("{chat_id}/complete_approval"),
+                    serde_json::json!({
+                        "call_id": call_id,
+                        "approved": false,
+                        "reason": "turn interrupted",
+                    }),
+                )
+                .await;
+                return;
+            }
+        }
+    });
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/gateway/models", axum::routing::get(models))
