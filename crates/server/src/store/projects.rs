@@ -71,7 +71,7 @@ impl<'a> ProjectStore<'a> {
         let is_admin = caller.role == "admin";
         sqlx::query_as(&format!(
             "SELECT {ROW_COLUMNS} FROM {ROW_FROM} \
-             WHERE p.org_id = $1 AND (p.user_id = $2 OR $3) \
+             WHERE p.org_id = $1 AND (p.user_id = $2 OR $3) AND p.archived_at IS NULL \
              ORDER BY p.created_at DESC"
         ))
         .bind(org_id)
@@ -104,6 +104,8 @@ impl<'a> ProjectStore<'a> {
     }
 
     /// Updates the editable fields (`None` = keep). A duplicate name is a 409.
+    /// `archived` soft-hides: archived projects drop out of `list` but direct
+    /// fetches still resolve.
     pub async fn update(
         &self,
         org_id: Uuid,
@@ -112,12 +114,17 @@ impl<'a> ProjectStore<'a> {
         name: Option<&str>,
         folder: Option<&str>,
         machine_id: Option<&str>,
+        archived: Option<bool>,
     ) -> Result<ProjectRow, ApiError> {
         let updated = sqlx::query_scalar::<_, Uuid>(
             "UPDATE projects SET \
              name = COALESCE($3, name), \
              folder = COALESCE($4, folder), \
-             machine_id = COALESCE($5, machine_id) \
+             machine_id = COALESCE($5, machine_id), \
+             archived_at = CASE \
+               WHEN $8::bool IS NULL THEN archived_at \
+               WHEN $8::bool THEN now() \
+               ELSE NULL END \
              WHERE org_id = $1 AND id = $2 AND (user_id = $6 OR $7) \
              RETURNING id",
         )
@@ -128,6 +135,7 @@ impl<'a> ProjectStore<'a> {
         .bind(machine_id)
         .bind(caller.id)
         .bind(caller.role == "admin")
+        .bind(archived)
         .fetch_optional(self.pool)
         .await?
         .ok_or_else(|| ApiError::not_found("no such project"))?;
@@ -236,7 +244,15 @@ mod tests {
         assert!(listed.iter().any(|p| p.id == created.id));
 
         let updated = projects
-            .update(org, created.id, &user, Some("web2"), Some(r"C:\code\web2"), None)
+            .update(
+                org,
+                created.id,
+                &user,
+                Some("web2"),
+                Some(r"C:\code\web2"),
+                None,
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(updated.name, "web2");
@@ -274,5 +290,40 @@ mod tests {
         let chat = store.chats().get_chat(org, chat.id, &user).await.unwrap();
         assert_eq!(chat.project_id, None);
         assert!(store.projects().list(org, user.id, &user).await.unwrap().is_empty());
+    }
+
+    /// Archiving soft-hides: archived projects drop out of `list` but a
+    /// direct fetch still resolves; unarchiving brings them back.
+    #[tokio::test]
+    async fn project_archive_hides_from_list_only() {
+        let (db, org, user) = fixture().await;
+        let store = &db.store;
+        let project = store
+            .projects()
+            .create(org, user.id, "web", r"C:\code\web", "machine-1")
+            .await
+            .unwrap();
+
+        store
+            .projects()
+            .update(org, project.id, &user, None, None, None, Some(true))
+            .await
+            .unwrap();
+        assert!(store.projects().list(org, user.id, &user).await.unwrap().is_empty());
+        // Direct fetch still resolves — direct links keep working.
+        assert_eq!(
+            store.projects().get(org, project.id, &user).await.unwrap().id,
+            project.id
+        );
+
+        store
+            .projects()
+            .update(org, project.id, &user, None, None, None, Some(false))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.projects().list(org, user.id, &user).await.unwrap()[0].id,
+            project.id
+        );
     }
 }

@@ -7,7 +7,7 @@ use crate::http::error::ApiError;
 use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::{Json, Router};
-use protocol::api::{Chat, CreateChatRequest, MachineInfo, ThreadEvent};
+use protocol::api::{Chat, CreateChatRequest, MachineInfo, ThreadEvent, UpdateChatRequest};
 use protocol::ws::WsServerMsg;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -35,7 +35,26 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/chats/{id}/read",
             axum::routing::post(mark_chat_read),
         )
+        .route("/api/v1/chats/{id}", axum::routing::patch(update_chat))
         .route("/api/v1/machines", axum::routing::get(machines))
+}
+
+/// Renames and/or archives the chat. Only present fields change; archived
+/// chats drop out of the list (GET /api/v1/chats) but direct links still
+/// resolve.
+async fn update_chat(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(chat_id): Path<Uuid>,
+    Json(req): Json<UpdateChatRequest>,
+) -> Result<Json<Chat>, ApiError> {
+    let title = req.title.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let store = state.store().await?;
+    let row = store
+        .chats()
+        .update_chat(user.0.org_id, chat_id, &user.0, title, req.archived)
+        .await?;
+    Ok(Json(Chat::from(row)))
 }
 
 /// The chat's approval-mode override (the composer's per-chat policy).

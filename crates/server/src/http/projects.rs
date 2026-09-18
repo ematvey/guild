@@ -119,6 +119,7 @@ async fn update(
             name,
             folder,
             req.machine_id.as_deref(),
+            req.archived,
         )
         .await?;
     Ok(Json(row.into()))

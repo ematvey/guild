@@ -550,6 +550,23 @@ export async function listChats(): Promise<ChatSummary[] | null> {
   return v.chats ?? [];
 }
 
+/// Renames and/or archives a chat. Archived chats drop out of `listChats`
+/// but direct links still resolve; `archived: false` unarchives.
+export async function updateChat(
+  id: string,
+  patch: { title?: string; archived?: boolean },
+): Promise<void> {
+  const res = await fetch(apiUrl(`/api/v1/chats/${id}`), {
+    method: "PATCH",
+    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? res.statusText);
+  }
+}
+
 // ---- Thread events (shapes mirror crates/protocol/bindings/ThreadEvent.ts;
 // the event log is the durable source of truth, message history and the
 // rendered thread are both derivations of it) ----
@@ -880,7 +897,7 @@ export async function createProject(req: CreateProjectRequest): Promise<Project>
 /** Renames/re-binds a project (PUT /projects/{id}); no UI surface yet. */
 export async function updateProject(
   id: string,
-  patch: { name?: string; folder?: string; machine_id?: string },
+  patch: { name?: string; folder?: string; machine_id?: string; archived?: boolean },
 ): Promise<Project> {
   const res = await fetch(apiUrl(`/api/v1/projects/${id}`), {
     method: "PUT",

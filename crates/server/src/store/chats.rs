@@ -106,7 +106,7 @@ impl<'a> ChatStore<'a> {
              LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2 \
              LEFT JOIN projects pr ON pr.id = c.project_id \
              LEFT JOIN machines m ON m.machine_id = pr.machine_id \
-             WHERE c.org_id = $1 AND c.user_id = $2 \
+             WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL \
              ORDER BY c.created_at DESC",
         )
         .bind(org_id)
@@ -133,6 +133,40 @@ impl<'a> ChatStore<'a> {
         )
         .bind(org_id)
         .bind(chat_id)
+        .bind(caller.id)
+        .bind(is_admin)
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| ApiError::not_found("no such chat"))
+    }
+
+    /// Renames and/or archives the chat (owner-scoped, admin bypass — the
+    /// same gate as reads). `None` fields stay unchanged; archiving stamps
+    /// `archived_at`, unarchiving clears it. The sidebar list never returns
+    /// archived chats, but direct links still resolve.
+    pub async fn update_chat(
+        &self,
+        org_id: Uuid,
+        chat_id: Uuid,
+        caller: &UserRow,
+        title: Option<&str>,
+        archived: Option<bool>,
+    ) -> Result<ChatRow, ApiError> {
+        let is_admin = caller.role == "admin";
+        sqlx::query_as(
+            "UPDATE chats SET \
+             title = COALESCE($3, title), \
+             archived_at = CASE \
+               WHEN $4::bool IS NULL THEN archived_at \
+               WHEN $4::bool THEN now() \
+               ELSE NULL END \
+             WHERE org_id = $1 AND id = $2 AND (user_id = $5 OR $6) \
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
+        )
+        .bind(org_id)
+        .bind(chat_id)
+        .bind(title)
+        .bind(archived)
         .bind(caller.id)
         .bind(is_admin)
         .fetch_optional(self.pool)
@@ -508,5 +542,77 @@ mod tests {
             axum::http::StatusCode::NOT_FOUND
         );
         assert!(list().await.unwrap()[0].unread == false);
+    }
+
+    /// Rename + archive roundtrip: PATCH changes the title, archiving hides
+    /// the chat from the list while direct fetch still resolves,
+    /// unarchiving brings it back; a foreign member gets 404.
+    #[tokio::test]
+    async fn chat_rename_and_archive() {
+        let db = Store::connect_test().await.unwrap();
+        let store = &db.store;
+        let org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+            .bind(org)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let alice = store
+            .identity()
+            .create_user(org, "arch@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let bob = store
+            .identity()
+            .create_user(org, "arch2@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let chat = store
+            .chats()
+            .create_chat(org, alice.id, Some("before"), None)
+            .await
+            .unwrap();
+
+        // rename
+        let renamed = store
+            .chats()
+            .update_chat(org, chat.id, &alice, Some("after"), None)
+            .await
+            .unwrap();
+        assert_eq!(renamed.title.as_deref(), Some("after"));
+
+        // archive hides from the list, fetch still resolves
+        store
+            .chats()
+            .update_chat(org, chat.id, &alice, None, Some(true))
+            .await
+            .unwrap();
+        assert!(store.chats().list_chats(org, alice.id).await.unwrap().is_empty());
+        assert_eq!(
+            store.chats().get_chat(org, chat.id, &alice).await.unwrap().id,
+            chat.id
+        );
+
+        // unarchive
+        store
+            .chats()
+            .update_chat(org, chat.id, &alice, None, Some(false))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.chats().list_chats(org, alice.id).await.unwrap()[0].id,
+            chat.id
+        );
+
+        // a foreign member of the same org cannot rename or archive it
+        assert_eq!(
+            store
+                .chats()
+                .update_chat(org, chat.id, &bob, Some("x"), None)
+                .await
+                .unwrap_err()
+                .status,
+            axum::http::StatusCode::NOT_FOUND
+        );
     }
 }
