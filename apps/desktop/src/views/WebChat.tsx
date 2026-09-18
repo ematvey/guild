@@ -2727,9 +2727,9 @@ export default function WebChat({
                           // start — a bound project shows as a read-only
                           // label; a projectless existing chat renders no
                           // chip at all (outer guard above).
-                          <span className="flex max-w-44 items-center gap-1 truncate px-2">
+                          <span className="flex max-w-44 items-center gap-1 px-2">
                             <FolderOpen className="size-3.5 shrink-0" />
-                            <span className="truncate">{projectChipLabel(currentProject)}</span>
+                            <FadeTitle text={projectChipLabel(currentProject)} />
                           </span>
                         ) : (
                           <>
@@ -2740,7 +2740,7 @@ export default function WebChat({
                               onClick={() => setProjectPickerOpen(true)}
                             >
                               <FolderOpen className="size-3.5" />
-                              <span className="truncate">{projectChipLabel(currentProject)}</span>
+                              <FadeTitle text={projectChipLabel(currentProject)} />
                             </Button>
                             {currentProject && (
                               <button
@@ -3111,17 +3111,9 @@ function DeviceSetupDialog({
 }
 
 
-function ChatListItem({
-  title,
-  active,
-  status,
-  onClick,
-}: {
-  title: string;
-  active: boolean;
-  status: { generating: boolean; unread: boolean };
-  onClick: () => void;
-}) {
+/** Sidebar row title that fades out at the right edge when it overflows
+ * (instead of an ellipsis) — used by both chat and project rows. */
+function FadeTitle({ text }: { text: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [overflowing, setOverflowing] = useState(false);
 
@@ -3133,7 +3125,7 @@ function ChatListItem({
     const ro = new ResizeObserver(check);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [title]);
+  }, [text]);
 
   const fade = overflowing
     ? {
@@ -3142,6 +3134,24 @@ function ChatListItem({
       }
     : undefined;
 
+  return (
+    <span ref={ref} className="block min-w-0 flex-1 whitespace-nowrap" style={fade}>
+      {text}
+    </span>
+  );
+}
+
+function ChatListItem({
+  title,
+  active,
+  status,
+  onClick,
+}: {
+  title: string;
+  active: boolean;
+  status: { generating: boolean; unread: boolean };
+  onClick: () => void;
+}) {
   return (
     <button
       onClick={onClick}
@@ -3152,13 +3162,7 @@ function ChatListItem({
       }`}
       title={title}
     >
-      <span
-        ref={ref}
-        className="block min-w-0 flex-1 whitespace-nowrap"
-        style={fade}
-      >
-        {title}
-      </span>
+      <FadeTitle text={title} />
       {status.generating ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
       ) : status.unread ? (
@@ -3207,14 +3211,6 @@ function SidebarContent({
   /** How many chats each expanded fold-out shows; starts at
    * PROJECT_PAGE_INITIAL, "Show more" adds PROJECT_PAGE_STEP. */
   const [limits, setLimits] = useState<Record<string, number>>({});
-  const machineBadge = (label: string | null | undefined, fallback: string) => (
-    <span
-      className="shrink-0 rounded-full bg-secondary px-1.5 py-px text-[10px] leading-4 text-muted-foreground"
-      title={`Folder on ${label ?? fallback}`}
-    >
-      {label ?? fallback}
-    </span>
-  );
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
@@ -3290,13 +3286,7 @@ function SidebarContent({
                     <ChevronRight
                       className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
                     />
-                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                    {machineBadge(p.machine_label, p.machine_id)}
-                    {grouping.counts[p.id] ? (
-                      <span className="shrink-0 text-xs text-muted-foreground/70">
-                        {grouping.counts[p.id]}
-                      </span>
-                    ) : null}
+                    <FadeTitle text={p.name} />
                   </button>
                   {open && (
                     <div className="ml-4 space-y-0.5 border-l border-border/60 py-0.5 pl-2">

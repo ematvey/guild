@@ -36,10 +36,9 @@ const project = (id: string, name = id, machine_label?: string): Project =>
 describe("sidebarGrouping", () => {
   const chats = [chat("c1", "p1"), chat("c2"), chat("c3", "p2"), chat("c4", "p1")];
 
-  it("recents shows every chat in list order and counts per project", () => {
+  it("recents shows every chat in list order", () => {
     const g = sidebarGrouping(chats);
     expect(g.visible.map((c) => c.id)).toEqual(["c1", "c2", "c3", "c4"]);
-    expect(g.counts).toEqual({ p1: 2, p2: 1 });
   });
 
   it("each project's fold-out list carries only that project's chats, in list order", () => {
@@ -57,7 +56,7 @@ describe("sidebarGrouping", () => {
   });
 
   it("tolerates a null list (still loading)", () => {
-    expect(sidebarGrouping(null)).toEqual({ visible: [], chatsByProject: {}, counts: {} });
+    expect(sidebarGrouping(null)).toEqual({ visible: [], chatsByProject: {} });
   });
 
   it("pagination constants: a fold-out opens with 5, each click adds 20", () => {

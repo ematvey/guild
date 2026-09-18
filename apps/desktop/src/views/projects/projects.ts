@@ -13,20 +13,16 @@ export interface SidebarGrouping {
   /** Each project's chats in list order — the fold-out under the project
    * row (they duplicate Recents rows by design). */
   chatsByProject: Record<string, ChatSummary[]>;
-  /** Chat count per project id (badge on the project rows). */
-  counts: Record<string, number>;
 }
 
 export function sidebarGrouping(chats: ChatSummary[] | null): SidebarGrouping {
   const list = chats ?? [];
-  const counts: Record<string, number> = {};
   const chatsByProject: Record<string, ChatSummary[]> = {};
   for (const chat of list) {
     if (!chat.project_id) continue;
-    counts[chat.project_id] = (counts[chat.project_id] ?? 0) + 1;
     (chatsByProject[chat.project_id] ??= []).push(chat);
   }
-  return { visible: list, chatsByProject, counts };
+  return { visible: list, chatsByProject };
 }
 
 /** The project fold-out opens showing this many chats, newest first. */
