@@ -615,6 +615,10 @@ export type ThreadEvent =
       /** Coarse tool category (web_search | web_browse | generic); absent on
        * pre-kind events. */
       kind?: "web_search" | "web_browse" | "generic" | null;
+      /** Spilled-result artifact this result points at (bytes via
+       * /api/v1/tool_artifacts/{id}); the render card lives in `meta.card`.
+       * Absent on inline results and old events. */
+      artifact_id?: string | null;
     }
   | {
       type: "compaction";
@@ -737,6 +741,21 @@ export async function uploadAttachment(
 export async function attachmentBlobUrl(id: string): Promise<string | null> {
   try {
     const res = await fetch(apiUrl(`/api/v1/attachments/${id}`), {
+      headers: { authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
+/** Fetches a spilled tool artifact as a blob URL for the download card
+ * (authed, same mechanism as attachmentBlobUrl). */
+export async function toolArtifactBlobUrl(id: string): Promise<string | null> {
+  try {
+    const res = await fetch(apiUrl(`/api/v1/tool_artifacts/${id}`), {
       headers: { authorization: `Bearer ${getToken()}` },
     });
     if (!res.ok) return null;
