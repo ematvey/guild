@@ -35,7 +35,13 @@ images?: Array<string>,
  * Coarse category of the tool (the spec's `kind`), so the UI can
  * label the frame natively. Absent on old events (serde default).
  */
-kind?: ToolKind | null, } | { "type": "compaction", summary: string, tokens_before?: number | null, keep_last?: number | null, model?: string | null, usage?: UsagePayload | null, } | { "type": "approval_request", call_id: string, name: string, arguments: string, } | { "type": "approval_decision", call_id: string, approved: boolean, reason?: string | null, 
+kind?: ToolKind | null, 
+/**
+ * Oversized results are spilled into `tool_artifacts` (bytes in
+ * object storage); `content` carries the pointer text and head
+ * excerpt. Absent on inline results and old events.
+ */
+artifact_id?: string | null, } | { "type": "compaction", summary: string, tokens_before?: number | null, keep_last?: number | null, model?: string | null, usage?: UsagePayload | null, } | { "type": "approval_request", call_id: string, name: string, arguments: string, } | { "type": "approval_decision", call_id: string, approved: boolean, reason?: string | null, 
 /**
  * Nobody was waiting when the decision landed: the turn is gone, so
  * the call can never execute. The card stays visible as expired.

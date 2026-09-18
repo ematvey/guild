@@ -41,4 +41,12 @@ attachment_ids: Array<string>,
  * system prompt. Additive and server-capped: the client never overrides
  * persona or tool instructions, it may only append this bounded block.
  */
-skills_index?: string, };
+skills_index?: string, 
+/**
+ * What to do when a turn is already generating in this chat:
+ * `"queue"` (default) commits the message to the thread and the running
+ * turn flushes it at its exit; `"steer"` also interrupts the in-flight
+ * turn (delivered prefix stays in history) so the message runs now.
+ * Ignored when no turn is running.
+ */
+send_mode?: string, };
