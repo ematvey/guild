@@ -8,27 +8,31 @@ import type { ChatSummary, DirEntry, Project } from "../../transport";
 // ---- sidebar grouping ----
 
 export interface SidebarGrouping {
-  /** The thread rows for the active view: the selected project's chats, or
-   * every chat (recency order) when no project is selected. */
+  /** Every chat in list (recency) order — the Recents list never filters. */
   visible: ChatSummary[];
+  /** Each project's chats in list order — the fold-out under the project
+   * row (they duplicate Recents rows by design). */
+  chatsByProject: Record<string, ChatSummary[]>;
   /** Chat count per project id (badge on the project rows). */
   counts: Record<string, number>;
 }
 
-export function sidebarGrouping(
-  chats: ChatSummary[] | null,
-  selectedProjectId: string | null,
-): SidebarGrouping {
+export function sidebarGrouping(chats: ChatSummary[] | null): SidebarGrouping {
   const list = chats ?? [];
   const counts: Record<string, number> = {};
+  const chatsByProject: Record<string, ChatSummary[]> = {};
   for (const chat of list) {
-    if (chat.project_id) counts[chat.project_id] = (counts[chat.project_id] ?? 0) + 1;
+    if (!chat.project_id) continue;
+    counts[chat.project_id] = (counts[chat.project_id] ?? 0) + 1;
+    (chatsByProject[chat.project_id] ??= []).push(chat);
   }
-  const visible = selectedProjectId
-    ? list.filter((c) => c.project_id === selectedProjectId)
-    : list;
-  return { visible, counts };
+  return { visible: list, chatsByProject, counts };
 }
+
+/** The project fold-out opens showing this many chats, newest first. */
+export const PROJECT_PAGE_INITIAL = 5;
+/** Each "Show more" click reveals this many additional chats. */
+export const PROJECT_PAGE_STEP = 20;
 
 // ---- composer chip ----
 
@@ -61,16 +65,6 @@ export function chatProjectOf(row: ChatSummary | undefined): PickedProject | nul
  * row must never win over it (another device may have re-bound the chat). */
 export function outgoingProjectId(picked: PickedProject | null | undefined): string | null {
   return picked?.id ?? null;
-}
-
-/** The project filter that actually applies to the sidebar: a route id
- * absent from the (loaded) projects list — a deleted project's deep link —
- * behaves as no filter. While the list is still loading the route id is
- * kept, so the view does not flicker to Recents and back. */
-export function activeFilterId(projects: Project[] | null, routeId: string | null): string | null {
-  if (!routeId) return null;
-  if (projects === null) return routeId;
-  return projects.some((p) => p.id === routeId) ? routeId : null;
 }
 
 // ---- the picker dialog's recency ordering ----

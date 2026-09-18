@@ -5,7 +5,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatSummary, Project } from "../../transport";
 import {
-  activeFilterId,
+  PROJECT_PAGE_INITIAL,
+  PROJECT_PAGE_STEP,
   breadcrumbs,
   canonicalDir,
   chatProjectOf,
@@ -35,24 +36,33 @@ const project = (id: string, name = id, machine_label?: string): Project =>
 describe("sidebarGrouping", () => {
   const chats = [chat("c1", "p1"), chat("c2"), chat("c3", "p2"), chat("c4", "p1")];
 
-  it("recents view shows every chat in list order and counts per project", () => {
-    const g = sidebarGrouping(chats, null);
+  it("recents shows every chat in list order and counts per project", () => {
+    const g = sidebarGrouping(chats);
     expect(g.visible.map((c) => c.id)).toEqual(["c1", "c2", "c3", "c4"]);
     expect(g.counts).toEqual({ p1: 2, p2: 1 });
   });
 
-  it("a selected project shows only its chats", () => {
-    expect(sidebarGrouping(chats, "p1").visible.map((c) => c.id)).toEqual(["c1", "c4"]);
-    expect(sidebarGrouping(chats, "p2").visible.map((c) => c.id)).toEqual(["c3"]);
+  it("each project's fold-out list carries only that project's chats, in list order", () => {
+    const g = sidebarGrouping(chats);
+    expect(g.chatsByProject["p1"].map((c) => c.id)).toEqual(["c1", "c4"]);
+    expect(g.chatsByProject["p2"].map((c) => c.id)).toEqual(["c3"]);
+    expect(g.chatsByProject["missing"]).toBeUndefined();
   });
 
   it("projectless chats never appear under any project", () => {
-    expect(sidebarGrouping(chats, "p1").visible.every((c) => c.project_id === "p1")).toBe(true);
-    expect(sidebarGrouping(chats, "missing").visible).toEqual([]);
+    const g = sidebarGrouping(chats);
+    for (const list of Object.values(g.chatsByProject)) {
+      expect(list.every((c) => !!c.project_id)).toBe(true);
+    }
   });
 
   it("tolerates a null list (still loading)", () => {
-    expect(sidebarGrouping(null, null)).toEqual({ visible: [], counts: {} });
+    expect(sidebarGrouping(null)).toEqual({ visible: [], chatsByProject: {}, counts: {} });
+  });
+
+  it("pagination constants: a fold-out opens with 5, each click adds 20", () => {
+    expect(PROJECT_PAGE_INITIAL).toBe(5);
+    expect(PROJECT_PAGE_STEP).toBe(20);
   });
 });
 
@@ -87,26 +97,6 @@ describe("outgoingProjectId (request-wins only for an in-session pick)", () => {
     // fetched) must never ride on the request.
     expect(outgoingProjectId(null)).toBeNull();
     expect(outgoingProjectId(undefined)).toBeNull();
-  });
-});
-
-describe("activeFilterId (deleted-project deep links degrade to no filter)", () => {
-  const projects = [project("p1", "web"), project("p2", "api")];
-
-  it("keeps a filter id present in the projects list", () => {
-    expect(activeFilterId(projects, "p1")).toBe("p1");
-  });
-
-  it("treats an id absent from the list as no filter", () => {
-    expect(activeFilterId(projects, "dead-id")).toBeNull();
-  });
-
-  it("keeps the route id while the list is still loading", () => {
-    expect(activeFilterId(null, "p1")).toBe("p1");
-  });
-
-  it("is no filter without a route id", () => {
-    expect(activeFilterId(projects, null)).toBeNull();
   });
 });
 
