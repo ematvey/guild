@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyMention, detectMention } from "../lib/skill-mention";
-import Markdown from "react-markdown";
+import Markdown, { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import {
@@ -396,7 +396,9 @@ function AttachmentImageThumb({
       type="button"
       title={att.filename}
       className="group relative size-14 shrink-0 overflow-hidden rounded-lg border border-border bg-secondary"
-      onClick={() => !onRemove && url && window.open(url, "_blank")}
+      onClick={() => {
+        if (!onRemove && url) openExternal(url);
+      }}
     >
       {url ? (
         <img src={url} alt={att.filename} className="size-full object-cover" />
@@ -681,6 +683,37 @@ function upsertThinking(
 /// Client-side tools need the desktop runtime (local files, shell); in a plain
 /// browser they stay pending until the server-side timeout releases the turn.
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/// Links always open in the user's browser, never navigate the app window:
+/// in the Tauri webview a plain anchor navigation would load the URL in
+/// place, so external opens go through the opener plugin there.
+const openExternal = (url: string) => {
+  if (isTauri) {
+    void import("@tauri-apps/plugin-opener")
+      .then(m => m.openUrl(url))
+      .catch(() => {});
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+};
+
+/// Anchor for markdown content: every link routes through `openExternal`.
+const mdComponents: Components = {
+  a: ({ node: _node, href, children, ...rest }) => (
+    <a
+      {...rest}
+      href={href}
+      onClick={e => {
+        if (href) {
+          e.preventDefault();
+          openExternal(href);
+        }
+      }}
+    >
+      {children}
+    </a>
+  ),
+};
 
 /// Per-chat workspace state lives server-side now: the chat's project
 /// (spec §5). No local folder storage — the project binding is the single
@@ -1056,7 +1089,7 @@ function CompactionCard({ c }: { c: CompactionBlock }) {
     >
       <div className="space-y-2">
         <div className={`max-h-64 overflow-y-auto leading-relaxed text-muted-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-          <Markdown remarkPlugins={[remarkGfm]}>{c.summary}</Markdown>
+          <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{c.summary}</Markdown>
         </div>
         {c.keepLast != null && <p className="text-muted-foreground">kept last {c.keepLast} messages</p>}
       </div>
@@ -1166,9 +1199,11 @@ function ToolBody({ t }: { t: ToolBlock }) {
               {href ? (
                 <a
                   href={href}
-                  target="_blank"
-                  rel="noreferrer noopener"
                   className="break-all font-medium underline decoration-border underline-offset-2 hover:decoration-foreground"
+                  onClick={e => {
+                    e.preventDefault();
+                    openExternal(href);
+                  }}
                 >
                   {s.title || s.url}
                 </a>
@@ -1200,10 +1235,12 @@ function ToolBody({ t }: { t: ToolBlock }) {
             return href ? (
               <a
                 href={href}
-                target="_blank"
-                rel="noreferrer noopener"
                 className="min-w-0 flex-1 truncate underline decoration-border underline-offset-2 hover:decoration-foreground"
                 title={url}
+                onClick={e => {
+                  e.preventDefault();
+                  openExternal(href);
+                }}
               >
                 {url}
               </a>
@@ -1226,7 +1263,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
         {m?.title && <p className="font-medium">{m.title}</p>}
         {t.content && (
           <div className={`max-h-64 overflow-y-auto ${MD_CLASS} ${MD_TABLE_CLASS}`}>
-            <Markdown remarkPlugins={[remarkGfm]}>{t.content}</Markdown>
+            <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{t.content}</Markdown>
           </div>
         )}
         {t.status === "running" && (
@@ -2474,7 +2511,7 @@ export default function WebChat({
                     key={b.key}
                     className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS}`}
                   >
-                    <Markdown remarkPlugins={[remarkGfm]}>
+                    <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                       {/* streaming caret rides INSIDE the markdown source so
                           it lands on the forming line, not below the block */}
                       {streaming && i === blocks.length - 1 ? `${b.text}▍` : b.text}

@@ -489,8 +489,6 @@ fn approval_on_decision(
     })
 }
 
-/// How many model/tool round-trips one turn may take.
-const CHAT_MAX_STEPS: usize = 25;
 /// How long the loop waits for a client to execute a client-side tool.
 pub(crate) const CLIENT_TOOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 /// How long the approval gate waits for a user decision before auto-denying.
@@ -1719,8 +1717,8 @@ impl ChatRunner {
         // before the flag exists, so nothing to clear on that path.
         set_generating_step!(ctx, state, req, true);
 
-        // Returns Ok(true) when the turn ended with a final answer, Ok(false)
-        // when the step limit was exhausted without one.
+        // Returns Ok(()) when the turn ended — a final answer, or a stop
+        // request the epilogue below settles. Errors propagate.
         let steps_used = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         // Whether the turn was interrupted by a stop request: the epilogue
         // persists the delivered prefix as an interrupted event and skips
@@ -1737,9 +1735,10 @@ impl ChatRunner {
         // previous step's persist as done, while the streaming window
         // itself (partial delivery, persist failure) stays covered.
         let step_persisted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let turn_out: HandlerResult<bool> = async {
+        let turn_out: HandlerResult<()> = async {
         let state = state.clone();
-        for step in 0..CHAT_MAX_STEPS {
+        let mut step: usize = 0;
+        loop {
             steps_used.store(step as u32, std::sync::atomic::Ordering::SeqCst);
 
             // Journaled: stop request observed as a step output, so replay
@@ -1873,7 +1872,24 @@ impl ChatRunner {
                         // buffers and persists as an interrupted event.
                         let mut stopped = false;
                         let mut pinned = Box::pin(stream);
-                        while let Some(item) = pinned.next().await {
+                        loop {
+                            // Cancel is checked on every chunk AND on a
+                            // 250 ms tick — a provider that streams nothing
+                            // (slow first token, hung connection) must not
+                            // delay a stop past its next chunk.
+                            let item = tokio::select! {
+                                item = pinned.next() => match item {
+                                    Some(item) => item,
+                                    None => break,
+                                },
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                                    if cancel_loop.load(std::sync::atomic::Ordering::SeqCst) {
+                                        stopped = true;
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            };
                             if cancel_loop.load(std::sync::atomic::Ordering::SeqCst) {
                                 stopped = true;
                                 break;
@@ -2066,7 +2082,7 @@ impl ChatRunner {
                     tokens_in: completion.tokens_in,
                     tokens_out: completion.tokens_out,
                 });
-                return Ok(true);
+                return Ok(());
             }
 
             // Reasoning replay: the next model call sees the reasoning of
@@ -2196,17 +2212,16 @@ impl ChatRunner {
                     reasoning: None,
                 });
             }
+        step += 1;
         }
-        Ok(false)
+        Ok(())
         }
         .await;
         // Uniform failure path: notify clients, persist the delivered prefix
         // as an interrupted assistant event (best effort), and free the chat
         // (registry + recorded invocation) so a failed turn never jams the
         // thread.
-        let final_sent = match turn_out {
-            Ok(sent) => sent,
-            Err(e) => {
+        if let Err(e) = turn_out {
                 tracing::error!(chat = %req.chat_id, "turn failed: {e:?}");
                 let _ = tx.send(StreamEvent::Error {
                     code: "turn_failed".into(),
@@ -2251,51 +2266,9 @@ impl ChatRunner {
                 // workflow ends (terminal error, no further steps run).
                 set_generating_step!(ctx, state, req, false);
                 return Err(e);
-            }
-        };
-        if final_sent {
-            // The epilogue below frees the chat and flushes queued turns for
-            // every successful ending.
-        } else {
-        // Step limit reached: tell the model-facing history and the client.
-        let st = state.clone();
-        let chat_id = req.chat_id;
-        let model_name = req.model.clone();
-        let turn2 = turn_no;
-        let note = format!(
-            "Turn stopped after {CHAT_MAX_STEPS} model/tool rounds without a final answer."
-        );
-        let event_id: Uuid = ctx
-            .run(move || {
-                let state = st.clone();
-                let note = note.clone();
-                async move {
-                    let store = state.store().await.map_err(api_err)?;
-                    let event = ThreadEvent::AssistantMessage {
-                        turn: turn2,
-                        step: CHAT_MAX_STEPS as u32,
-                        blocks: vec![Block::Text { text: note }],
-                        usage: UsagePayload::default(),
-                        model: model_name,
-                        interrupted: None,
-                    };
-                    let row = store
-                        .thread()
-                        .append_event(chat_id, &event)
-                        .await
-                        .map_err(api_err)?;
-                    Ok(Json(row.id))
-                }
-            })
-            .await?
-            .into_inner();
-        let _ = tx.send(StreamEvent::Done {
-            message_id: event_id,
-            cost_usd: 0.0,
-            tokens_in: 0,
-            tokens_out: 0,
-        });
         }
+        // Every Ok ending already delivered its Done frame: a final answer
+        // sent it inline, a stop lands in the stop epilogue below.
 
         // Stop epilogue: the delivered prefix persists as an interrupted
         // assistant event (journaled — replay keeps it), then the turn ends
@@ -2844,6 +2817,11 @@ async fn approval_gate(
                     reason: Some("timed out awaiting approval".to_string()),
                 }))
                 .send_after(APPROVAL_TIMEOUT);
+            // Stop responsiveness: a stop while the gate is pending resolves
+            // it as denied so the turn resumes and ends at the next
+            // journaled cancel check. Spawned outside journaled sections on
+            // purpose: a replay re-spawns the watcher.
+            crate::http::gateway::spawn_stop_approval_watcher(state, chat_id, call.id.clone());
 
             let decision: ApprovalResolution = match promise.await {
                 Ok(Json(d)) => d,
@@ -3110,8 +3088,12 @@ async fn client_tool_step(
         call.name.clone(),
         mid,
         mlabel,
-        done,
+        done.clone(),
     );
+    // Stop responsiveness: a stop while the tool is suspended resolves it
+    // immediately (same durable funnel), so the turn ends at the next
+    // journaled cancel check instead of waiting out the executor.
+    crate::http::gateway::spawn_stop_watcher(state, chat_id, call.id.clone(), done);
     // Durable timeout: schedule a journaled delayed completion instead of
     // racing futures — a dropped ctx.sleep blocks replay until the timer
     // fires, while send_after lives in Restate's timer service and never
