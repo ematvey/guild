@@ -4,6 +4,22 @@ Updated 2026-09-18 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## "Compacting thread…" flash on the first send; 0.5.10 — 2026-09-18
+
+maintainer's screencast caught it: the optimistic "Compacting thread…" line
+rendered for ~1.5s under the pending first message of a brand-new chat. The
+render guard was `compacting === chatId`, and while the chat is still being
+created both are null — `null === null` holds, so every initial send flashed
+the compact line for the create round-trip. The guard is now
+`compacting !== null && compacting === chatId`. Server rebuilt (browser UI
+live on :18080); 0.5.10 clients released on all four platforms, updater
+serving them — the desktop app needs the 0.5.10 auto-update to pick the fix
+up.
+
+Side finding while reproducing: the member socket's session watcher treats a
+>2s DB hiccup as auth failure (ws.rs `session_valid` → AuthRequired → the
+tab logs out spuriously). Left as-is; worth hardening if it shows up again.
+
 ## Sidebar: project rows are fold-outs, Recents never filters — 2026-09-18
 
 maintainer call: selecting a project must not filter the thread list. Recents
