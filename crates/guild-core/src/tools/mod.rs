@@ -1,6 +1,7 @@
 //! Built-in tools and the tool registry (spec §3.2). Tools are the agent's
 //! hands: scoped to the project dir, schema-validated, approval-gated.
 
+pub mod artifacts;
 pub mod fs;
 pub mod shell;
 pub mod workspace;
@@ -56,6 +57,10 @@ pub trait Tool: Send + Sync {
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     order: Vec<String>,
+    /// Materialization hooks consulted before a tool runs: spilled
+    /// tool-result artifacts are pulled on first touch (tool-artifacts
+    /// spec). Absent → tools run without artifact handling.
+    artifacts: Option<Arc<artifacts::ArtifactHooks>>,
 }
 
 impl ToolRegistry {
@@ -63,7 +68,15 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
             order: Vec::new(),
+            artifacts: None,
         }
+    }
+
+    /// Installs artifact materialization hooks (shared index + fetch
+    /// source) for the engine's runs of one process.
+    pub fn with_artifacts(mut self, hooks: Arc<artifacts::ArtifactHooks>) -> Self {
+        self.artifacts = Some(hooks);
+        self
     }
 
     pub fn builtins() -> Self {
@@ -125,6 +138,9 @@ impl ToolRegistry {
             return Err(ToolFailure::InvalidInput(format!(
                 "arguments for {name} failed validation: {first}"
             )));
+        }
+        if let Some(hooks) = &self.artifacts {
+            artifacts::prepare(hooks, name, workdir, &args).await?;
         }
         tool.run(workdir, args).await
     }
