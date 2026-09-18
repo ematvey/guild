@@ -797,7 +797,10 @@ export async function sendChatNoStream(
       user_message_id: messageId,
       model,
       messages: [{ role: "user", content: prompt }],
-      client_tools: IS_TAURI,
+      // Tools are declared for every client: desktop turns dispatch to the
+      // bound machine, browser turns fall back to the server-side per-chat
+      // sandbox (spec 2026-09-18 unification §4 phase 5b).
+      client_tools: true,
       attachment_ids: attachmentIds,
       project_id: projectId || undefined,
       send_mode: sendMode,

@@ -646,6 +646,7 @@ pub(crate) fn workspace_sentence(folder: &str, machine_label: Option<&str>) -> S
 fn build_system_prompt(
     org_prompt: Option<&str>,
     client_tools: bool,
+    sandbox_tools: bool,
     has_web_search: bool,
     server_workspace: Option<&str>,
     workspace: Option<&WorkspaceRef>,
@@ -667,6 +668,13 @@ fn build_system_prompt(
              the Guild server inside your org's private workspace directory. Inspect the \
              workspace with them BEFORE answering anything that could be about \
              the workspace's files.",
+        );
+    } else if sandbox_tools {
+        s.push_str(
+            " You have tools (read_file, execute, edit_file, write_file) that execute on \
+             the Guild server inside a private per-chat sandbox workspace directory. \
+             Inspect it with them BEFORE answering anything that could be about files. \
+             Commands may require the user's approval.",
         );
     } else if client_tools {
         s.push_str(
@@ -1651,6 +1659,27 @@ impl ChatRunner {
             })
             .await?
             .into_inner();
+        // Phase 5a (spec 2026-09-18 unification): machine-mediated AGENTS.md
+        // fetch. A web chat's caller cannot read files (browser tab), so when
+        // no client-assembled chain arrived and the turn runs against a bound
+        // project, dispatch ONE read_file for the project's AGENTS.md through
+        // the machine channel before the system prompt is built. Cached per
+        // project folder (in-memory, TTL-bounded — the machine channel
+        // exposes no mtime verb).
+        let agents_md: Option<String> =
+            if req.agents_md.is_some() || req.server_workspace.is_some() {
+                req.agents_md.clone()
+            } else {
+                fetch_agents_md_via_machine(
+                    &ctx,
+                    &state,
+                    req.chat_id,
+                    workspace.clone(),
+                    req.machine_id.clone(),
+                    turn_no,
+                )
+                .await?
+            };
         let system = {
             // Journaled: resolve the org's admin-configured assistant persona
             // prompt (falls back to the built-in default when unset).
@@ -1674,6 +1703,9 @@ impl ChatRunner {
             build_system_prompt(
                 org_prompt.as_deref(),
                 req.client_tools,
+                req.client_tools
+                    && req.machine_id.is_none()
+                    && req.server_workspace.is_none(),
                 has_web_search,
                 req.server_workspace.as_deref(),
                 workspace.as_ref(),
@@ -1683,7 +1715,7 @@ impl ChatRunner {
                     .collect::<Vec<_>>()
                     .join("\n"),
                 req.skills_index.as_deref().unwrap_or(""),
-                req.agents_md.as_deref(),
+                agents_md.as_deref(),
             )
         };
 
@@ -2173,10 +2205,9 @@ impl ChatRunner {
                         // Server-local executor (batch workspace backend):
                         // the server itself runs the tool in the org
                         // workspace — same dispatch shape, no hub.
-                        server_local_tool_step(
-                            &ctx, &state, &tx, call, req.org_id, req.chat_id, &ws_name,
-                        )
-                        .await?
+                        let dir = crate::http::agents::workspace_dir(&state, req.org_id, &ws_name);
+                        server_local_tool_step(&ctx, &state, &tx, call, req.org_id, req.chat_id, dir)
+                            .await?
                     } else {
                         client_tool_step(
                             &ctx,
@@ -2974,21 +3005,63 @@ async fn approval_gate(
     Ok(None)
 }
 
-/// One server-local tool call (batch workspace backend, spec 2026-09-18
-/// unification §4 phase 4): the server executes the client-tool in-process
-/// against the org workspace dir — journaled side effect (the result
-/// replays without re-running), then notifies attached clients exactly like
-/// the machine dispatch does. No interactive approvals: the batch contract
-/// is "trusted workspace, pre-approved"; `execute` still passes the static
-/// exec-policy gate, and shell tools require the server allowlist flag.
+/// Phase 5b: the sandbox executor for web chats with no desktop present —
+/// the same tool runs on the server against a per-chat sandbox dir
+/// (`data_dir/sandbox/{chat_id}`), behind the same static exec-policy and
+/// interactive approval gates as client tools. The sandbox is private to
+/// the chat; shell tools additionally require the server allowlist flag.
+async fn sandbox_tool_step(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    tx: &broadcast::Sender<StreamEvent>,
+    org_id: Uuid,
+    model: &str,
+    chat_id: Uuid,
+    call: &ToolCall,
+) -> HandlerResult<ToolResultPayload> {
+    // Static exec policy first (codex model): a `forbidden` rule is a hard
+    // deny; `prompt` rules and unmatched commands fall through to the
+    // chat's interactive approval flow — the web client answers it like any
+    // other executor's.
+    let static_decision = exec_policy_gate::evaluate_execute(&call.arguments);
+    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) = &static_decision {
+        return Ok(ToolResultPayload {
+            content: format!("denied by exec policy: {reason}"),
+            is_error: true,
+            meta: None,
+            images: Vec::new(),
+        });
+    }
+    if !matches!(static_decision, exec_policy_gate::ExecPolicyDecision::Allow) {
+        if let Some(denial) =
+            approval_gate(ctx, state, tx, org_id, model, chat_id, call, Approval::Ask, false)
+                .await?
+        {
+            return Ok(denial);
+        }
+    } // static allow skips the interactive gate entirely
+    let dir = std::path::Path::new(&state.config.data_dir)
+        .join("sandbox")
+        .join(chat_id.to_string());
+    server_local_tool_step(ctx, state, tx, call, org_id, chat_id, dir).await
+}
+
+/// One server-local tool call (spec 2026-09-18 unification §4 phases 4+5b):
+/// the server executes the client-tool in-process against the given
+/// workspace dir — journaled side effect (the result replays without
+/// re-running), then notifies attached clients exactly like the machine
+/// dispatch does. No interactive approvals here: the batch contract is
+/// "trusted workspace, pre-approved" and the sandbox caller runs its gates
+/// before dispatching; `execute` still passes the static exec-policy gate,
+/// and shell tools require the server allowlist flag.
 async fn server_local_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
     tx: &broadcast::Sender<StreamEvent>,
     call: &ToolCall,
-    org_id: Uuid,
+    _org_id: Uuid,
     _chat_id: Uuid,
-    workspace_name: &str,
+    dir: std::path::PathBuf,
 ) -> HandlerResult<ToolResultPayload> {
     let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
     // Journaled: notify attached clients that this call runs server-side.
@@ -3014,7 +3087,6 @@ async fn server_local_tool_step(
     })
     .await?;
 
-    let dir = crate::http::agents::workspace_dir(state, org_id, workspace_name);
     let shell_allowed = state.config.allow_shell_tools;
     let name = call.name.clone();
     let args = call.arguments.clone();
@@ -3044,6 +3116,9 @@ async fn server_local_tool_step(
                         }));
                     }
                 }
+                tokio::fs::create_dir_all(&dir)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("workspace dir: {e}"))?;
                 let mut registry = guild_core::tools::ToolRegistry::new();
                 registry.add(Arc::new(guild_core::tools::fs::ReadFile::default()));
                 registry.add(Arc::new(guild_core::tools::fs::WriteFile));
@@ -3105,6 +3180,146 @@ async fn server_local_tool_step(
     Ok(payload)
 }
 
+/// Phase 5a: one machine-mediated read_file for the bound project's
+/// AGENTS.md (web chats: the caller cannot assemble the chain). Same durable
+/// dispatch shape as a client tool, minus the interactive gate (read-only,
+/// pre-approved) and minus thread events (internal fetch — nothing
+/// user-visible, nothing journaled beyond the dispatch itself). An offline
+/// machine, an error result, or a timeout yields None: the turn proceeds
+/// without project instructions rather than failing.
+async fn fetch_agents_md_via_machine(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    chat_id: Uuid,
+    workspace: Option<WorkspaceRef>,
+    machine_id: Option<String>,
+    turn_no: u32,
+) -> HandlerResult<Option<String>> {
+    const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+    let Some(ws) = workspace else {
+        return Ok(None);
+    };
+    let Some(mid) = machine_id else {
+        return Ok(None);
+    };
+    {
+        let cache = state.agents_md_cache.lock().unwrap();
+        if let Some((at, content)) = cache.get(&ws.folder) {
+            if at.elapsed() < CACHE_TTL {
+                return Ok(Some(content.clone()));
+            }
+        }
+    }
+    // Journaled snapshot: dispatch only when the machine is reachable (a
+    // replayed turn re-derives this from the hub state at its own time —
+    // both outcomes degrade to None, so replay stays safe).
+    let online: bool = ctx
+        .run({
+            let state = state.clone();
+            let mid = mid.clone();
+            move || {
+                let state = state.clone();
+                let mid = mid.clone();
+                async move { Ok(Json(state.hub.machine_online(&mid))) }
+            }
+        })
+        .await?
+        .into_inner();
+    if !online {
+        return Ok(None);
+    }
+    // Deterministic per-turn dispatch id (replay-stable, never collides
+    // with real tool-call ids).
+    let call_id = format!("agents_md_fetch:{turn_no}");
+    let arguments = serde_json::json!({ "path": "AGENTS.md" }).to_string();
+    let (awakeable_id, promise) = ctx.awakeable::<Json<ToolResultPayload>>();
+    ctx.set(&state_key(&call_id), awakeable_id.clone());
+    let label = ws.machine_label.clone().unwrap_or_else(|| mid.clone());
+    let done = note_pending_tool(
+        state,
+        chat_id,
+        &call_id,
+        "read_file",
+        &arguments,
+        Some(&mid),
+        Some(&ws.folder),
+    );
+    let dispatch_state = state.clone();
+    let dispatch_id = awakeable_id.clone();
+    let dispatch_call = call_id.clone();
+    let dispatched_connection = ctx
+        .run(move || {
+            let state = dispatch_state.clone();
+            let dispatch_id = dispatch_id.clone();
+            let call_id = dispatch_call.clone();
+            async move {
+                Ok(Json(
+                    crate::http::gateway::dispatch_pending_tool(
+                        &state,
+                        chat_id,
+                        &call_id,
+                        &dispatch_id,
+                    )
+                    .await
+                    .map_err(api_err)?,
+                ))
+            }
+        })
+        .await?
+        .into_inner();
+    crate::http::gateway::restore_dispatch_connection(
+        state,
+        chat_id,
+        &call_id,
+        dispatched_connection,
+    );
+    // Executor disappearance mid-fetch resolves with an error after a grace
+    // window (same watcher as client tools). No stop watcher: the internal
+    // fetch resolves on its own within the timeout, and the turn's stop
+    // checks resume right after.
+    crate::http::gateway::spawn_machine_watcher(
+        state,
+        chat_id,
+        call_id.clone(),
+        "read_file".to_string(),
+        mid.clone(),
+        label,
+        done,
+    );
+    // Durable timeout: the delayed complete_tool resolves the awakeable while
+    // this handler is suspended (shared handler — see complete_tool).
+    ctx.object_client::<ChatRunnerClient>(&chat_id.to_string())
+        .complete_tool(Json(ToolResultReq {
+            call_id: call_id.clone(),
+            content: "AGENTS.md fetch timed out after 30 seconds".into(),
+            is_error: true,
+            meta: None,
+            images: Vec::new(),
+        }))
+        .send_after(FETCH_TIMEOUT);
+    let payload: ToolResultPayload = match promise.await {
+        Ok(Json(p)) => p,
+        Err(t) => ToolResultPayload {
+            content: format!("AGENTS.md fetch failed: {t}"),
+            is_error: true,
+            meta: None,
+            images: Vec::new(),
+        },
+    };
+    ctx.clear(&state_key(&call_id));
+    crate::http::gateway::clear_pending_tool(state, chat_id, &call_id);
+    if payload.is_error {
+        return Ok(None);
+    }
+    state
+        .agents_md_cache
+        .lock()
+        .unwrap()
+        .insert(ws.folder, (std::time::Instant::now(), payload.content.clone()));
+    Ok(Some(payload.content))
+}
+
 /// One machine-tool call: resolve the bound executor machine (fail fast when
 /// unbound/offline), notify attached clients, durably wait for the machine's
 /// result (bounded), report completion. Returns the tool result payload for
@@ -3128,6 +3343,7 @@ async fn client_tool_step(
     // Resolve the executor machine. Journaled ctx.run snapshots: the result
     // replays deterministically even if the in-memory registry changes
     // between execution and replay (e.g. worker restart).
+    let sandbox_fallback = machine_id.is_none() && origin_machine_id.is_none();
     let bound: Option<(String, String)> = ctx
         .run({
             let state = state.clone();
@@ -3163,6 +3379,14 @@ async fn client_tool_step(
         .await?
         .into_inner();
     let Some((mid, mlabel)) = bound else {
+        // Phase 5b (spec 2026-09-18 unification): a web chat with no desktop
+        // present — nothing was ever bound, so the tools run on the server in
+        // a per-chat sandbox (same specs, same policy/approval gates, no hub
+        // round trip). A bound-but-offline desktop keeps its explicit
+        // message: the user's workspace is on that machine, not the sandbox.
+        if sandbox_fallback {
+            return sandbox_tool_step(&ctx, state, tx, org_id, model, chat_id, call).await;
+        }
         return Ok(ToolResultPayload {
             content:
                 "client tool not executed: this chat is not bound to a machine — bind it in the chat settings, or send the message from the Guild desktop app on the target machine"
@@ -3941,7 +4165,7 @@ mod tests {
 
     #[test]
     fn system_prompt_default_persona_is_helpful_assistant() {
-        let p = build_system_prompt(None, false, false, None, None, "", "", None);
+        let p = build_system_prompt(None, false, false, false, None, None, "", "", None);
         assert!(p.starts_with("You are a helpful assistant."));
         assert!(!p.contains("coding agent"));
     }
@@ -3952,7 +4176,7 @@ mod tests {
             folder: "/w".into(),
             machine_label: None,
         };
-        let p = build_system_prompt(Some("You are GLaDOS."), true, true, None, Some(&ws), "", "", None);
+        let p = build_system_prompt(Some("You are GLaDOS."), true, false, true, None, Some(&ws), "", "", None);
         assert!(p.starts_with("You are GLaDOS."));
         assert!(!p.contains("helpful assistant"));
         // Operational instructions are appended regardless of the persona.
@@ -4086,7 +4310,7 @@ mod tests {
 
     #[test]
     fn system_prompt_blank_org_prompt_falls_back_to_default() {
-        let p = build_system_prompt(Some("   "), false, false, None, None, "", "", None);
+        let p = build_system_prompt(Some("   "), false, false, false, None, None, "", "", None);
         assert!(p.starts_with("You are a helpful assistant."));
     }
 
@@ -4096,11 +4320,11 @@ mod tests {
             "\n# Available skills\n- a: {}\n",
             "x".repeat(SKILLS_INDEX_CAP + 500)
         );
-        let p = build_system_prompt(None, false, false, None, None, "", &idx, None);
+        let p = build_system_prompt(None, false, false, false, None, None, "", &idx, None);
         assert!(p.contains("# Available skills"));
         assert!(
             p.len()
-                < build_system_prompt(None, false, false, None, None, "", "", None).len()
+                < build_system_prompt(None, false, false, false, None, None, "", "", None).len()
                     + SKILLS_INDEX_CAP
                     + 300
         );
@@ -4115,16 +4339,16 @@ mod tests {
             folder: "/home/u/repo".into(),
             machine_label: Some("box".into()),
         };
-        let p = build_system_prompt(None, false, false, None, Some(&ws), "", "", Some(&md));
+        let p = build_system_prompt(None, false, false, false, None, Some(&ws), "", "", Some(&md));
         // Codex's user-instructions fragment format, with the directory label.
         assert!(p.contains("# AGENTS.md instructions for /home/u/repo"));
         assert!(p.contains("<INSTRUCTIONS>\nProject conventions here.\n</INSTRUCTIONS>"));
         // Cap: an oversized payload is truncated server-side.
         let big = "x".repeat(AGENTS_MD_CAP + 1000);
-        let p2 = build_system_prompt(None, false, false, None, None, "", "", Some(&big));
+        let p2 = build_system_prompt(None, false, false, false, None, None, "", "", Some(&big));
         assert!(p2.len() < AGENTS_MD_CAP + 200);
         // Blank client payload renders nothing.
-        let p3 = build_system_prompt(None, false, false, None, None, "", "", Some("   "));
+        let p3 = build_system_prompt(None, false, false, false, None, None, "", "", Some("   "));
         assert!(!p3.contains("AGENTS.md"));
     }
 

@@ -31,6 +31,12 @@ pub struct AppState {
     /// One live-frame feed per user, shared by all of their sockets.
     pub feeds: Arc<std::sync::Mutex<HashMap<Uuid, crate::http::feed::FeedHandle>>>,
     pub thread_sync: Arc<tokio::sync::Mutex<()>>,
+    /// Machine-fetched AGENTS.md chains per project folder (web parity, spec
+    /// 2026-09-18 unification §4 phase 5a): the machine channel exposes no
+    /// mtime verb, so freshness is a TTL bound instead. Outside the Restate
+    /// journal — a cache miss just re-dispatches the read.
+    pub agents_md_cache:
+        Arc<std::sync::Mutex<HashMap<String, (std::time::Instant, String)>>>,
 }
 
 impl AppState {
@@ -46,6 +52,7 @@ impl AppState {
             ws_tickets: Default::default(),
             hub: Arc::new(Hub::default()),
             feeds: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            agents_md_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -96,6 +103,7 @@ impl AppState {
             ws_tickets: Default::default(),
             hub: Arc::new(Hub::default()),
             feeds: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            agents_md_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
