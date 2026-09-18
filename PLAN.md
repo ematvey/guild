@@ -1,8 +1,35 @@
 # Guild — current state of work
 
-Updated 2026-09-17 (projects + WSL milestone). Read this before touching
+Updated 2026-09-18 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## /compact: in-thread progress + busy thread — 2026-09-18
+
+The `/compact` toast is gone. The composer command now appends an
+optimistic in-thread line ("Compacting thread…", spinner) that clears when
+the durable `Compaction` event lands through the thread sync — at which
+point the collapsed card reads "Context compacted". While the server-side
+compaction runs, the `compact` ChatRunner handler holds the chat's
+generating flag (journaled, cleared on every exit), so the thread reads
+busy — sidebar spinner, sends queue behind it — same as a turn. A failed
+compaction appends nothing to the log; the client reconciles on the busy
+flag dropping back to false without a new compaction event.
+
+## External links; stop watcher for suspended tools — 2026-09-18
+
+Taken over from an idle session (already deployed and exercised live):
+
+- **External links** open in the user's browser, never navigate the app
+  window (a plain anchor navigation would load the URL inside the Tauri
+  webview). `@tauri-apps/plugin-opener` registered in the desktop shell;
+  markdown content and attachment links route through an `openExternal`
+  helper (opener plugin under Tauri, `window.open` elsewhere).
+- **Stop watcher**: while a client tool is suspended, a watcher polls the
+  chat's cancel flag; a stop resolves the pending tool immediately with an
+  interrupt notice (durable `complete_tool` funnel), so the turn ends at
+  its next journaled cancel check instead of waiting out the executor or
+  the 5-minute timeout.
 
 ## 0.5.8: popup fixes — 2026-09-18
 

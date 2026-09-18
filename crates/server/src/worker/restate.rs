@@ -2497,8 +2497,9 @@ impl ChatRunner {
     /// durable `Compaction` event appended to the thread log. The log itself
     /// is never rewritten — compaction is a derivation change (the next
     /// `generate` derives through the event). Fire-and-forget: no broadcast,
-    /// no generation registry entry; clients poll GET /thread for the new
-    /// event. Virtual-object serialization already keeps compact and
+    /// no generation registry entry — the chat's generating flag is set for
+    /// the duration, so the thread reads busy and sends queue behind it;
+    /// clients poll GET /thread for the new event. Virtual-object serialization already keeps compact and
     /// generate from overlapping on the same key; the generations-registry
     /// check below is a terminal guard against a stale in-flight turn
     /// (nothing is taken that would need freeing on failure).
@@ -2513,11 +2514,22 @@ impl ChatRunner {
             return Err(TerminalError::new("cannot compact while a generation is running").into());
         }
 
+        // Journaled: the thread is busy while the summarization call runs —
+        // the same generating flag the turn path drives (sidebar spinner,
+        // composer busy state). Cleared on every exit below.
+        set_generating_step!(ctx, state, req, true);
+
         // Journaled: load the thread event log; the shared core derives the
         // pre-compaction history, runs the summarization call and appends
         // the durable checkpoint (also used by auto-compaction).
         let prior_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
-        compact_core(&ctx, &state, req.org_id, req.chat_id, &prior_events).await
+        let result = compact_core(&ctx, &state, req.org_id, req.chat_id, &prior_events).await;
+
+        // Journaled: compaction over — success or failure, the spinner
+        // clears. Bound (not `?`) so the clear also runs on the error path;
+        // a failed compaction appends nothing to the log.
+        set_generating_step!(ctx, state, req, false);
+        result
     }
 }
 

@@ -16,7 +16,6 @@ import {
   Download,
   FileText,
   Hand,
-  Minimize2,
   Globe,
   Menu,
   Film,
@@ -819,7 +818,7 @@ function Frame({
   defaultOpen = false,
   children,
 }: {
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   /** A node, or a render function receiving `open` (to e.g. hide the
    * collapsed-row preview once the full content is shown below). */
   title: React.ReactNode | ((open: boolean) => React.ReactNode);
@@ -1078,15 +1077,7 @@ function ToolKindIcon({ kind }: { kind: string }) {
 /// retained-tail note. Always collapsed by default.
 function CompactionCard({ c }: { c: CompactionBlock }) {
   return (
-    <Frame
-      icon={<Minimize2 className="size-3 shrink-0 text-muted-foreground" />}
-      title={
-        <>
-          <span>Thread compacted</span>
-          {c.model && <span className="text-muted-foreground"> — {c.model}</span>}
-        </>
-      }
-    >
+    <Frame title={<span>Context compacted</span>}>
       <div className="space-y-2">
         <div className={`max-h-64 overflow-y-auto leading-relaxed text-muted-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
           <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{c.summary}</Markdown>
@@ -1606,6 +1597,18 @@ export default function WebChat({
     (chatStatus[chatId]?.generating ??
       (chats?.find((c) => c.id === chatId)?.generating ?? false));
   const [threadLoading, setThreadLoading] = useState(() => route.chatId !== null); // /thread/<id> fetch in flight with nothing to show
+  // Manual /compact in flight: the optimistic "Compacting thread…" line at
+  // the end of the feed until the durable compaction event lands (or the
+  // busy flag clears — a failed compaction appends nothing to the log).
+  const [compacting, setCompacting] = useState<string | null>(null);
+  const compactingRef = useRef<string | null>(null);
+  compactingRef.current = compacting;
+  // Compaction block keys present when /compact was sent: a sync that adds
+  // a new one means the compaction landed. sawBusy tracks the server's
+  // generating flag — busy→false while pending means the compaction exited
+  // without appending an event.
+  const compactKeysRef = useRef<string[]>([]);
+  const sawCompactBusyRef = useRef(false);
   const [prompt, setPrompt] = useState("");
   // ---- skill mentions: / opens the autocomplete (skills design §3) ----
   const [skills, setSkills] = useState<ComposerSkill[] | null>(null);
@@ -1922,6 +1925,18 @@ export default function WebChat({
     threadCacheRef.current.set(cid, rendered);
     setCtx(null);
     setBlocks(rendered);
+    // Pending /compact reconciliation: a newly appeared compaction event is
+    // the success signal; the server's busy flag dropping back to false
+    // without one means the compaction failed (nothing was appended).
+    if (compactingRef.current === cid) {
+      if (rendered.some((b) => b.kind === "compaction" && !compactKeysRef.current.includes(b.key))) {
+        setCompacting(null);
+      } else if (state.generating) {
+        sawCompactBusyRef.current = true;
+      } else if (sawCompactBusyRef.current) {
+        setCompacting(null);
+      }
+    }
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
       void markChatRead(cid);
       setChatStatus((prev) =>
@@ -2092,10 +2107,15 @@ export default function WebChat({
         return;
       }
       setPrompt("");
+      compactKeysRef.current = blocksRef.current
+        .filter((b) => b.kind === "compaction")
+        .map((b) => b.key);
+      sawCompactBusyRef.current = false;
+      setCompacting(chatId);
       try {
         await compactChat(chatId);
-        toast.success("Compacting thread…");
       } catch (e) {
+        setCompacting(null);
         toast.error(e instanceof Error ? e.message : String(e));
       }
       return;
@@ -2521,6 +2541,14 @@ export default function WebChat({
                     )}
                   </div>
                 ),
+              )}
+              {/* in-progress /compact line: replaced by the durable
+                  "Context compacted" card when the event lands */}
+              {compacting === chatId && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <span>Compacting thread…</span>
+                </div>
               )}
               {/* caret only while reply text is actually streaming; tool
                   blocks have their own status, silence shows nothing */}
