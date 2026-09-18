@@ -237,6 +237,7 @@ impl Integration for Gitlab {
                         content = "No projects.".to_string();
                     }
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: None,
                     })
@@ -269,6 +270,7 @@ impl Integration for Gitlab {
                         content = "No issues.".to_string();
                     }
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: None,
                     })
@@ -305,6 +307,7 @@ impl Integration for Gitlab {
                         content = "No merge requests.".to_string();
                     }
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: None,
                     })
@@ -331,6 +334,7 @@ impl Integration for Gitlab {
                     let iid = body["iid"].as_u64().unwrap_or(0);
                     let url = body["web_url"].as_str().unwrap_or("");
                     Ok(ToolOutcome {
+                        artifact: None,
                         content: format!("Created issue !{iid}: {url}"),
                         meta: Some(serde_json::json!({ "iid": iid, "url": url })),
                     })

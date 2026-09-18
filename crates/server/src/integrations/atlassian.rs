@@ -328,6 +328,7 @@ impl Integration for Atlassian {
                         content = "No issues match the query.".to_string();
                     }
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: Some(serde_json::json!({
                             "kind": "jira_search",
@@ -349,6 +350,7 @@ impl Integration for Atlassian {
                     .await?;
                     let block = jira_issue_block(&creds, &issue);
                     Ok(ToolOutcome {
+                        artifact: None,
                         content: block,
                         meta: Some(serde_json::json!({
                             "kind": "jira_issue",
@@ -391,6 +393,7 @@ impl Integration for Atlassian {
                         content = "No results match the query.".to_string();
                     }
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: Some(serde_json::json!({
                             "kind": "confluence_search",
@@ -423,6 +426,7 @@ impl Integration for Atlassian {
                         content.push_str(&format!("\n\n{}{}", creds.site, webui));
                     }
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: Some(serde_json::json!({
                             "kind": "confluence_page",
@@ -474,6 +478,7 @@ impl Integration for Atlassian {
                         meta["url"] = serde_json::Value::String(u);
                     }
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: Some(meta),
                     })

@@ -135,6 +135,7 @@ impl Tool for RunCommand {
             output.push_str(&stderr);
         }
         Ok(ToolOutcome {
+            artifact: None,
             images: Vec::new(),
             output_for_model: truncate(output),
             ui_summary: Some(format!("$ {command}")),

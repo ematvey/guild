@@ -283,6 +283,7 @@ impl Tool for ReadFile {
             meta["size_kb"] = serde_json::json!(kb);
             if bytes.len() > MAX_IMAGE_BYTES {
                 return Ok(ToolOutcome {
+                    artifact: None,
                     images: Vec::new(),
                     output_for_model: format!(
                         "[image file: {display} ({kb} KB) — too large to attach (limit 4 MB)]"
@@ -297,6 +298,7 @@ impl Tool for ReadFile {
                 base64::engine::general_purpose::STANDARD.encode(&bytes)
             );
             return Ok(ToolOutcome {
+                artifact: None,
                 images: vec![uri],
                 output_for_model: format!(
                     "[image file: {display} ({kb} KB) — the image is attached to this result; describe what you see when asked]"
@@ -312,6 +314,7 @@ impl Tool for ReadFile {
             Err(e) => {
                 let size = e.as_bytes().len();
                 return Ok(ToolOutcome {
+                    artifact: None,
                     images: Vec::new(),
                     output_for_model: format!(
                         "[binary file: {display} ({size} bytes) — this tool returns text only]"
@@ -333,6 +336,7 @@ impl Tool for ReadFile {
         }
         meta["total_lines"] = serde_json::json!(total_lines);
         Ok(ToolOutcome {
+            artifact: None,
             images: Vec::new(),
             output_for_model: truncate(page.join("\n")),
             ui_summary: None,
@@ -368,6 +372,7 @@ impl Tool for WriteFile {
         write_bytes(&path, content.as_bytes()).await?;
         let n = content.len();
         Ok(ToolOutcome {
+            artifact: None,
             images: Vec::new(),
             output_for_model: format!("wrote {n} bytes to {}", path.display()),
             ui_summary: Some(format!("write {}", path.display())),
@@ -430,6 +435,7 @@ impl Tool for EditFile {
                 let updated = content.replacen(old, new, 1);
                 write_bytes(&path, updated.as_bytes()).await?;
                 Ok(ToolOutcome {
+            artifact: None,
             images: Vec::new(),
                     output_for_model: format!("edited {}", path.display()),
                     ui_summary: Some(format!("edit {}", path.display())),

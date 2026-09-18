@@ -265,6 +265,7 @@ impl Integration for Github {
                         "total_count": body["total_count"].as_u64().unwrap_or(hits.len() as u64),
                     });
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: Some(meta),
                     })
@@ -296,6 +297,7 @@ impl Integration for Github {
                         content = "No issues.".to_string();
                     }
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: None,
                     })
@@ -327,6 +329,7 @@ impl Integration for Github {
                         content = "No pull requests.".to_string();
                     }
                     Ok(ToolOutcome {
+                        artifact: None,
                         content,
                         meta: None,
                     })
@@ -363,6 +366,7 @@ impl Integration for Github {
                         "file": entry["path"].as_str().unwrap_or(path),
                     });
                     Ok(ToolOutcome {
+                        artifact: None,
                         content: text,
                         meta: Some(meta),
                     })
@@ -405,6 +409,7 @@ impl Integration for Github {
                     let number = body["number"].as_u64().unwrap_or(0);
                     let url = body["html_url"].as_str().unwrap_or("");
                     Ok(ToolOutcome {
+                        artifact: None,
                         content: format!("Created issue #{number}: {url}"),
                         meta: Some(serde_json::json!({ "number": number, "url": url })),
                     })

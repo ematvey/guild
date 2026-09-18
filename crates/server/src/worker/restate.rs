@@ -2150,6 +2150,10 @@ impl ChatRunner {
                             .map(|info| info.spec.kind)
                     })
                 };
+                // Tool-carried artifacts and oversized results spill inside
+                // server_tool_step; the spilled descriptor rides to the
+                // event's artifact_id and claims the meta card.
+                let mut spilled: Option<crate::worker::spill::SpilledArtifact> = None;
                 let (content, is_error, meta, tool_images) = if is_client_tool {
                     let payload = client_tool_step(
                         &ctx,
@@ -2173,7 +2177,7 @@ impl ChatRunner {
                         payload.images,
                     )
                 } else {
-                    let (content3, is_error3, meta3) = server_tool_step(
+                    let (content3, is_error3, meta3, spilled3) = server_tool_step(
                         &ctx,
                         &state,
                         &tx,
@@ -2188,6 +2192,14 @@ impl ChatRunner {
                         Some(mcp_caller_email.as_str()),
                     )
                     .await?;
+                    // Spilled results claim the meta card for the download
+                    // card (exact keys: card/id/filename/content_type/
+                    // size_bytes/path); tool-owned meta keys ride along.
+                    let meta3 = match &spilled3 {
+                        Some(s) => Some(crate::worker::spill::artifact_meta(meta3, s)),
+                        None => meta3,
+                    };
+                    spilled = spilled3;
                     (content3, is_error3, meta3, Vec::new())
                 };
 
@@ -2223,6 +2235,7 @@ impl ChatRunner {
                             meta: meta2.clone(),
                             images: persisted_images,
                             kind: tool_kind,
+                            artifact_id: spilled.as_ref().map(|s| s.artifact_id),
                         };
                         store
                             .thread()
@@ -3215,7 +3228,14 @@ async fn server_tool_step(
     plugin_turns: &[integrations::PluginTurn],
     caller_role: &str,
     acting_as: Option<&str>,
-) -> HandlerResult<(String, bool, Option<Value>)> {
+) -> HandlerResult<
+    (
+        String,
+        bool,
+        Option<Value>,
+        Option<crate::worker::spill::SpilledArtifact>,
+    ),
+> {
     // Resolve the tool once: target (turn + info) drives everything below —
     // the spec kind on the started frame, the approval gate, the policy
     // check, and execution. Auto-tools (list_tools/guide) have no target and
@@ -3263,7 +3283,7 @@ async fn server_tool_step(
         )
         .await?
         {
-            return Ok((denial.content, denial.is_error, denial.meta));
+            return Ok((denial.content, denial.is_error, denial.meta, None));
         }
     }
     // Journaled: notify attached clients.
@@ -3303,7 +3323,8 @@ async fn server_tool_step(
     let role = caller_role.to_string();
     let acting = acting_as.map(str::to_string);
     let org = org_id;
-    let (content, is_error, meta) = ctx
+    let chat = chat_id;
+    let (content, is_error, meta, spilled) = ctx
         .run(move || {
             let call = call2.clone();
             let state = st.clone();
@@ -3317,6 +3338,7 @@ async fn server_tool_step(
                                 .unwrap_or_else(|_| "[]".to_string()),
                             false,
                             None,
+                            None,
                         ),
                         integrations::AutoTool::Guide => match &turn.guide_object_key {
                             Some(key) => (
@@ -3325,10 +3347,12 @@ async fn server_tool_step(
                                     .unwrap_or_else(|| "guide not available".to_string()),
                                 false,
                                 None,
+                                None,
                             ),
                             None => (
                                 format!("integration {} has no guide", turn.slug),
                                 false,
+                                None,
                                 None,
                             ),
                         },
@@ -3350,6 +3374,7 @@ async fn server_tool_step(
                             "not permitted by integration policy".to_string(),
                             true,
                             None,
+                            None,
                         )));
                     }
                     let raw = integrations::unnamespaced_tool(&mcp[i].slug, &call.name)
@@ -3364,13 +3389,83 @@ async fn server_tool_step(
                     )
                     .await;
                     return Ok(Json(match out {
-                        Ok(outcome) => (outcome.content, false, outcome.meta),
-                        Err(e) => (format!("web tool failed: {e}"), true, None),
+                        Ok(outcome) => {
+                            // Spill choke point (tool artifacts design): a
+                            // tool-carried artifact payload spills always, a
+                            // serialized result above the threshold spills
+                            // too; both replace `content` with the pointer
+                            // text naming the materialized path. The spill
+                            // rides this journaled run — a replay restores
+                            // the recorded result instead of re-uploading —
+                            // and spill_artifact is additionally idempotent
+                            // (deterministic uuid v5 + ON CONFLICT DO
+                            // NOTHING), so a re-executed run reuses the row.
+                            let spilled = match outcome.artifact {
+                                Some(artifact) => {
+                                    match crate::worker::spill::spill_tool_artifact(
+                                        &state, org, chat, &call.id, raw, &artifact,
+                                    )
+                                    .await
+                                    {
+                                        Ok((spilled, pointer)) => Some((spilled, pointer)),
+                                        Err(e) => {
+                                            return Ok(Json((
+                                                format!("artifact spill failed: {e}"),
+                                                true,
+                                                outcome.meta,
+                                                None,
+                                            )));
+                                        }
+                                    }
+                                }
+                                None if crate::worker::spill::should_spill(&outcome.content) => {
+                                    match crate::worker::spill::spill_artifact(
+                                        &state,
+                                        org,
+                                        chat,
+                                        &call.id,
+                                        raw,
+                                        &format!("{raw}_result.txt"),
+                                        "text/plain; charset=utf-8",
+                                        outcome.content.as_bytes(),
+                                    )
+                                    .await
+                                    {
+                                        // Spill failure must not lose the
+                                        // result: fall back to the inline
+                                        // content.
+                                        Ok(spilled) => {
+                                            let pointer = crate::worker::spill::pointer_text(
+                                                raw,
+                                                &spilled,
+                                                "text/plain; charset=utf-8",
+                                                Some(&outcome.content),
+                                            );
+                                            Some((spilled, pointer))
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                tool = raw,
+                                                "oversized result spill failed, keeping inline: {e:?}"
+                                            );
+                                            None
+                                        }
+                                    }
+                                }
+                                None => None,
+                            };
+                            match spilled {
+                                Some((s, pointer)) => (pointer, false, outcome.meta, Some(s)),
+                                None => (outcome.content, false, outcome.meta, None),
+                            }
+                        }
+                        Err(e) => (format!("web tool failed: {e}"), true, None, None),
                     }));
                 }
                 Ok(Json((
                     format!("unknown server tool {}", call.name),
                     true,
+                    None,
                     None,
                 )))
             }
@@ -3446,7 +3541,7 @@ async fn server_tool_step(
     })
     .await?;
     let _ = tx;
-    Ok((content, is_error, meta))
+    Ok((content, is_error, meta, spilled))
 }
 
 /// Register this worker's endpoint with the Restate admin API (retry until
@@ -4004,6 +4099,7 @@ mod tests {
             meta: None,
             images: Vec::new(),
             kind: None,
+            artifact_id: None,
         }
     }
 
@@ -4213,6 +4309,7 @@ mod tests {
                 meta: None,
                 images: Vec::new(),
                 kind: None,
+                artifact_id: None,
             },
         ];
         let msgs = build_model_history(&events, &Default::default(), &[]);
@@ -4293,6 +4390,7 @@ mod tests {
                 meta: None,
                 images: Vec::new(),
                 kind: None,
+                artifact_id: None,
             },
         ];
         assert_eq!(latest_assistant_model(&events).as_deref(), Some("model-b"));

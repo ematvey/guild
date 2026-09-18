@@ -246,6 +246,7 @@ async fn search(
         "results": results,
     });
     Ok(ToolOutcome {
+        artifact: None,
         content,
         meta: Some(meta),
     })
@@ -290,6 +291,7 @@ async fn update_deal(
         "fields": fields,
     });
     Ok(ToolOutcome {
+        artifact: None,
         content: format!("Deal {updated_id} updated ({}).", fields.join(", ")),
         meta: Some(meta),
     })

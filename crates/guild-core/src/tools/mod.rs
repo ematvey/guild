@@ -36,6 +36,21 @@ pub struct ToolOutcome {
     /// Image parts (data URIs) attached to the tool result for vision-capable
     /// models — e.g. read_file on an image attaches it for direct viewing.
     pub images: Vec<String>,
+    /// Binary payload the tool hands the model as a spilled artifact (tool
+    /// artifacts design): the worker stores the bytes in object storage and
+    /// replaces the tool result text with a pointer to the materialized
+    /// file. Carrying a payload always spills, regardless of size.
+    pub artifact: Option<ToolArtifact>,
+}
+
+/// Binary payload a tool returns for spill-through: the worker persists it
+/// as a `tool_artifacts` row + object-storage bytes and gives the model a
+/// pointer path instead of the raw content.
+#[derive(Debug, Clone)]
+pub struct ToolArtifact {
+    pub filename: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, thiserror::Error)]

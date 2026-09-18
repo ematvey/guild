@@ -56,6 +56,7 @@ fn derivation_builds_model_history_with_reasoning_replay() {
             meta: None,
             images: Vec::new(),
             kind: None,
+            artifact_id: None,
         },
         assistant(
             1,
@@ -137,6 +138,7 @@ fn turn_numbering_continues_from_events() {
             is_error: false,
             meta: None,
             kind: None,
+            artifact_id: None,
             images: Vec::new(),
         },
         assistant(3, 2, vec![Block::Text { text: "a2".into() }]),
