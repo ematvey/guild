@@ -268,6 +268,7 @@ impl Integration for Slack {
                         "response_metadata": body["response_metadata"]["next_cursor"],
                     });
                     Ok(ToolOutcome {
+                        artifact: None,
                         content: json_text(&serde_json::json!({ "channels": channels })),
                         meta: Some(meta),
                     })
@@ -333,6 +334,7 @@ impl Integration for Slack {
                         "response_metadata": body["response_metadata"]["next_cursor"],
                     });
                     Ok(ToolOutcome {
+                        artifact: None,
                         content: json_text(&serde_json::json!({ "messages": messages })),
                         meta: Some(meta),
                     })
@@ -363,6 +365,7 @@ impl Integration for Slack {
                         "response_metadata": body["response_metadata"]["next_cursor"],
                     });
                     Ok(ToolOutcome {
+                        artifact: None,
                         content: json_text(&serde_json::json!({ "users": users })),
                         meta: Some(meta),
                     })
@@ -381,6 +384,7 @@ impl Integration for Slack {
                     )
                     .await?;
                     Ok(ToolOutcome {
+                        artifact: None,
                         content: json_text(&serde_json::json!({
                             "channel": body["channel"],
                             "ts": body["ts"],

@@ -16,6 +16,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
 use base64::Engine;
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
+use guild_core::tools::ToolArtifact;
 use protocol::api::ToolSpec;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -33,6 +34,10 @@ const JWT_TTL_SECS: u64 = 3600;
 /// A cached access token refreshes this long before its own expiry.
 const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 const MAX_BODY_CHARS: usize = 8000;
+/// Ceiling for the generic `api` tool's response text (tool artifacts
+/// design): oversized results spill into artifacts, so the cap only bounds
+/// storage, not history.
+const API_MAX_CHARS: usize = 1024 * 1024;
 
 pub struct GoogleWorkspace {
     /// Access tokens keyed by `token_url|client_email|subject` — one cache
@@ -246,11 +251,15 @@ fn max_results(args: &serde_json::Value, default: u64, cap: u64) -> u64 {
         .clamp(1, cap)
 }
 
+/// Decodes a Gmail base64url body part to raw bytes.
+fn decode_body_part_bytes(data: &str) -> Option<Vec<u8>> {
+    let cleaned = data.trim_end_matches('=');
+    B64_URL.decode(cleaned).ok()
+}
+
 /// Decodes a Gmail base64url body part to text.
 fn decode_body_part(data: &str) -> Option<String> {
-    let cleaned = data.trim_end_matches('=');
-    let bytes = B64_URL.decode(cleaned).ok()?;
-    String::from_utf8(bytes).ok()
+    decode_body_part_bytes(data).and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
 /// Depth-first search of the MIME tree for a readable text body: text/plain
@@ -335,6 +344,7 @@ async fn gmail_search(
     let messages = body["messages"].as_array().cloned().unwrap_or_default();
     if messages.is_empty() {
         return Ok(ToolOutcome {
+            artifact: None,
             content: "No messages match the search.".to_string(),
             meta: None,
         });
@@ -357,9 +367,43 @@ async fn gmail_search(
         out.push_str("(more results available — narrow the query)\n");
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
     })
+}
+
+/// Attachment parts of a message: (filename, mime, attachment id).
+fn attachment_parts(payload: &serde_json::Value) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    collect_attachment_parts(payload, &mut out);
+    out
+}
+
+fn collect_attachment_parts(
+    payload: &serde_json::Value,
+    out: &mut Vec<(String, String, String)>,
+) {
+    // Body parts of the message text carry an empty attachment id; a part
+    // with a real id is an attachment (filename may sit on the part or in
+    // its headers).
+    if let Some(id) = payload["body"]["attachmentId"].as_str() {
+        if !id.is_empty() {
+            let filename = payload["filename"]
+                .as_str()
+                .or_else(|| header_value(payload, "filename"))
+                .unwrap_or("(unnamed)")
+                .to_string();
+            let mime = payload["mimeType"]
+                .as_str()
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            out.push((filename, mime, id.to_string()));
+        }
+    }
+    for part in payload["parts"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        collect_attachment_parts(part, out);
+    }
 }
 
 async fn gmail_get_message(
@@ -391,9 +435,79 @@ async fn gmail_get_message(
             body["snippet"].as_str().unwrap_or("none")
         )),
     }
+    // Attachment parts are listed (not fetched) so the model can pull one
+    // with gmail_get_attachment.
+    let parts = attachment_parts(payload);
+    if !parts.is_empty() {
+        out.push_str("\nAttachments:\n");
+        for (filename, mime, id) in &parts {
+            out.push_str(&format!("- {filename} ({mime}; attachment id {id})\n"));
+        }
+    }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
+    })
+}
+
+/// Fetches one Gmail attachment as raw bytes via the tool-artifact channel:
+/// filename/mime come from the message part carrying the attachment id
+/// (args can override the filename); the base64url body decodes to bytes
+/// that the worker spills into a downloadable artifact.
+async fn gmail_get_attachment(
+    config: &serde_json::Value,
+    args: &serde_json::Value,
+    token: &str,
+) -> Result<ToolOutcome, String> {
+    let message_id = args["message_id"]
+        .as_str()
+        .ok_or("gmail_get_attachment requires message_id")?;
+    let attachment_id = args["attachment_id"]
+        .as_str()
+        .ok_or("gmail_get_attachment requires attachment_id")?;
+    // The attachment endpoint returns only size + base64url data; the part
+    // metadata (filename, mime) comes from the message itself.
+    let url = format!(
+        "{}/gmail/v1/users/me/messages/{}",
+        api_base(config),
+        urlencoding_lite(message_id)
+    );
+    let message = get_json(&url, token, "gmail").await?;
+    let (part_filename, part_mime) = attachment_parts(&message["payload"])
+        .into_iter()
+        .find(|(_, _, id)| id == attachment_id)
+        .map(|(f, m, _)| (Some(f), Some(m)))
+        .unwrap_or((None, None));
+    let filename = args["filename"]
+        .as_str()
+        .map(str::to_string)
+        .or(part_filename)
+        .unwrap_or_else(|| format!("gmail_{attachment_id}.bin"));
+    let content_type = part_mime.unwrap_or_else(|| "application/octet-stream".to_string());
+    let url = format!(
+        "{}/gmail/v1/users/me/messages/{}/attachments/{}",
+        api_base(config),
+        urlencoding_lite(message_id),
+        urlencoding_lite(attachment_id)
+    );
+    let body = get_json(&url, token, "gmail").await?;
+    let data = body["data"]
+        .as_str()
+        .ok_or("gmail attachment response missing data")?;
+    let bytes =
+        decode_body_part_bytes(data).ok_or("gmail attachment data is not valid base64url")?;
+    Ok(ToolOutcome {
+        content: format!(
+            "attachment {filename} ({} bytes, {content_type})",
+            bytes.len()
+        ),
+        meta: None,
+        artifact: Some(ToolArtifact {
+            filename,
+            content_type,
+            bytes,
+        }),
     })
 }
 
@@ -417,6 +531,7 @@ async fn calendar_list_events(
     let items = body["items"].as_array().cloned().unwrap_or_default();
     if items.is_empty() {
         return Ok(ToolOutcome {
+            artifact: None,
             content: "No events in the requested window.".to_string(),
             meta: None,
         });
@@ -434,6 +549,7 @@ async fn calendar_list_events(
         ));
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
     })
@@ -455,6 +571,7 @@ async fn drive_search(
     let files = body["files"].as_array().cloned().unwrap_or_default();
     if files.is_empty() {
         return Ok(ToolOutcome {
+            artifact: None,
             content: format!("No Drive files matching \"{}\".", name),
             meta: None,
         });
@@ -469,6 +586,7 @@ async fn drive_search(
         ));
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
     })
@@ -503,6 +621,7 @@ async fn directory_users(
     let users = body["users"].as_array().cloned().unwrap_or_default();
     if users.is_empty() {
         return Ok(ToolOutcome {
+            artifact: None,
             content: format!("No directory users in domain \"{}\".", domain),
             meta: None,
         });
@@ -516,6 +635,7 @@ async fn directory_users(
         ));
     }
     Ok(ToolOutcome {
+        artifact: None,
         content: out,
         meta: None,
     })
@@ -554,6 +674,7 @@ impl Integration for GoogleWorkspace {
             &[
                 ("gmail_search", "read"),
                 ("gmail_get_message", "read"),
+                ("gmail_get_attachment", "read"),
                 ("calendar_list_events", "read"),
                 ("drive_search", "read"),
                 ("directory_users", "read"),
@@ -609,13 +730,31 @@ impl Integration for GoogleWorkspace {
             },
             ToolSpec {
                 name: "gmail_get_message".into(),
-                description: "Fetch one Gmail message and return its headers and text body.".into(),
+                description: "Fetch one Gmail message: headers, text body, and the list of \
+                              attachment parts (filename, mime, attachment id)."
+                    .into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
                         "message_id": { "type": "string" }
                     },
                     "required": ["message_id"]
+                }),
+                kind: Default::default(),
+            },
+            ToolSpec {
+                name: "gmail_get_attachment".into(),
+                description: "Fetch one Gmail attachment as a downloadable file artifact. \
+                              Get the attachment id from gmail_get_message's attachment list."
+                    .into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message_id": { "type": "string" },
+                        "attachment_id": { "type": "string" },
+                        "filename": { "type": "string", "description": "Override the materialized filename (optional)" }
+                    },
+                    "required": ["message_id", "attachment_id"]
                 }),
                 kind: Default::default(),
             },
@@ -680,7 +819,8 @@ impl Integration for GoogleWorkspace {
                     .as_str()
                     .unwrap_or(DEFAULT_API_BASE)
                     .trim_end_matches('/');
-                return call_vendor_api(base, &ApiAuth::Bearer(token), &args, 12_000, &[]).await;
+                return call_vendor_api(base, &ApiAuth::Bearer(token), &args, API_MAX_CHARS, &[])
+                    .await;
             }
             match tool {
                 "gmail_search" => {
@@ -690,6 +830,10 @@ impl Integration for GoogleWorkspace {
                 "gmail_get_message" => {
                     let token = access_token_for(self, config, secrets, acting_as).await?;
                     gmail_get_message(config, &args, &token).await
+                }
+                "gmail_get_attachment" => {
+                    let token = access_token_for(self, config, secrets, acting_as).await?;
+                    gmail_get_attachment(config, &args, &token).await
                 }
                 "calendar_list_events" => {
                     let token = access_token_for(self, config, secrets, acting_as).await?;
@@ -721,5 +865,77 @@ impl Integration for GoogleWorkspace {
                 .await
                 .map(|_| ())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_body_part_bytes_handles_binary_base64url() {
+        // JPEG magic bytes, url-safe alphabet, no padding.
+        assert_eq!(
+            decode_body_part_bytes("_9j_4A").unwrap(),
+            vec![0xFF, 0xD8, 0xFF, 0xE0]
+        );
+        // Text payload survives both variants.
+        assert_eq!(
+            decode_body_part_bytes("SGVsbG8sIHdvcmxkIQ").unwrap(),
+            b"Hello, world!".to_vec()
+        );
+        assert_eq!(
+            decode_body_part("SGVsbG8sIHdvcmxkIQ").as_deref(),
+            Some("Hello, world!")
+        );
+        // Non-UTF8 data stays bytes-only: the string variant rejects it.
+        assert!(decode_body_part("_9j_4A").is_none());
+        assert!(decode_body_part_bytes("!!!").is_none());
+    }
+
+    #[test]
+    fn attachment_parts_walk_the_mime_tree() {
+        let message = serde_json::json!({
+            "payload": {
+                "mimeType": "multipart/mixed",
+                "parts": [
+                    {
+                        "mimeType": "text/plain",
+                        "body": { "data": "aGk", "attachmentId": "" }
+                    },
+                    {
+                        "filename": "report.xlsx",
+                        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "body": { "attachmentId": "ANG4a" }
+                    },
+                    {
+                        "mimeType": "multipart/alternative",
+                        "parts": [
+                            {
+                                "filename": "sheet2.csv",
+                                "mimeType": "text/csv",
+                                "body": { "attachmentId": "ANG7b" }
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        let parts = attachment_parts(&message["payload"]);
+        assert_eq!(
+            parts,
+            vec![
+                (
+                    "report.xlsx".to_string(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_string(),
+                    "ANG4a".to_string()
+                ),
+                (
+                    "sheet2.csv".to_string(),
+                    "text/csv".to_string(),
+                    "ANG7b".to_string()
+                ),
+            ]
+        );
     }
 }
