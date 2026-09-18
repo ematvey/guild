@@ -12,22 +12,24 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::http::error::ApiError;
-use crate::http::gateway::{
-    clear_pending_tool, enforce_quota, ensure_generation, note_pending_tool,
+use crate::worker::funnel::{
+    clear_pending_tool, dispatch_pending_tool, note_pending_tool,
+    restore_dispatch_connection, spawn_machine_watcher, spawn_stop_approval_watcher, suspend,
+    Executor, APPROVAL_TIMEOUT,
 };
 use crate::integrations;
 use crate::state::AppState;
-use crate::worker::exec_policy_gate;
 use crate::worker::executor::{tool_registry, Completion, RoutineConfig, RoutineExecutor};
 use crate::worker::overflow::is_context_overflow;
 use crate::worker::run::MAX_STEPS;
+use crate::worker::turn::{build_turn_text, enforce_quota, load_media_map, media_parts, MediaMap};
 use futures::StreamExt;
 use guild_core::agent::policy::ApprovalPolicy;
 use guild_core::provider::{ModelProvider, ProviderChunk, ProviderRequest};
 use guild_core::tools::Approval;
 use guild_core::usage::UsageEvent;
 use protocol::api::{
-    Block, Message, MessageAttachment, MessageAudio, StreamEvent, ThreadEvent, ToolCall,
+    Block, Message, StreamEvent, ThreadEvent, ToolCall,
     ToolExecutor, ToolKind, ToolSpec, UsagePayload,
 };
 use restate_sdk::errors::HandlerError;
@@ -323,7 +325,7 @@ struct CompletionOut {
     stopped: bool,
 }
 
-fn api_err(e: ApiError) -> anyhow::Error {
+pub(crate) fn api_err(e: ApiError) -> anyhow::Error {
     anyhow::anyhow!(e.message)
 }
 
@@ -345,7 +347,7 @@ fn api_terminal(e: ApiError) -> HandlerError {
 /// turn never runs, so the chat's generation lock must be released here or
 /// the chat stays "generation_in_progress" until a restart.
 fn api_terminal_free_chat(state: &AppState, chat_id: Uuid, e: ApiError) -> HandlerError {
-    state.generations.lock().unwrap().remove(&chat_id);
+    state.generations.remove(chat_id);
     api_terminal(e)
 }
 
@@ -357,15 +359,15 @@ pub struct ChatRunner {
 
 /// Client-side tool result as delivered back through the awakeable.
 #[derive(Serialize, Deserialize, Clone)]
-struct ToolResultPayload {
-    content: String,
-    is_error: bool,
+pub(crate) struct ToolResultPayload {
+    pub(crate) content: String,
+    pub(crate) is_error: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    meta: Option<Value>,
+    pub(crate) meta: Option<Value>,
     /// Image parts (data URIs) the executing client attached — persisted on
     /// the tool_result event and sent to vision-capable models.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    images: Vec<String>,
+    pub(crate) images: Vec<String>,
 }
 
 /// Body of the `complete_tool` handler.
@@ -499,16 +501,11 @@ fn approval_on_decision(
     })
 }
 
-/// How long the loop waits for a client to execute a client-side tool.
-pub(crate) const CLIENT_TOOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
-/// How long the approval gate waits for a user decision before auto-denying.
-pub(crate) const APPROVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
-
 fn client_tool_names() -> &'static [&'static str] {
     &["read_file", "execute", "edit_file", "write_file"]
 }
 
-fn state_key(call_id: &str) -> String {
+pub(crate) fn state_key(call_id: &str) -> String {
     format!("pending_tool:{call_id}")
 }
 
@@ -802,280 +799,6 @@ pub(crate) fn has_queued_user_turn(events: &[ThreadEvent]) -> bool {
 /// Multiple compactions compose — each applies at its position to the
 /// segment accumulated since the previous one. Events after the last
 /// compaction flow exactly as in the uncompacted derivation.
-/// Loaded attachment bytes for the current turn, wire-ready: base64 plus
-/// the content type (data URIs and audio parts are derived at use time,
-/// gated by the resolved route's modalities). Values are journaled (the
-/// run result carries the base64), so map loads must happen inside `run`.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct MediaRef {
-    pub mime: String,
-    pub b64: String,
-}
-
-impl MediaRef {
-    pub fn decoded(&self) -> Vec<u8> {
-        use base64::Engine as _;
-        base64::engine::general_purpose::STANDARD
-            .decode(&self.b64)
-            .unwrap_or_default()
-    }
-}
-
-pub type MediaMap = std::collections::HashMap<Uuid, MediaRef>;
-
-/// Attachment modality class from the content type.
-pub fn modality_of(content_type: &str) -> &'static str {
-    let ct = content_type.to_ascii_lowercase();
-    if ct.starts_with("image/") {
-        "image"
-    } else if ct.starts_with("audio/") {
-        "audio"
-    } else if ct.starts_with("video/") {
-        "video"
-    } else {
-        "document"
-    }
-}
-
-/// OpenAI `input_audio` accepts wav/mp3 only.
-fn audio_format(mime: &str) -> Option<&'static str> {
-    match mime {
-        "audio/wav" | "audio/x-wav" | "audio/wave" => Some("wav"),
-        "audio/mpeg" | "audio/mp3" => Some("mp3"),
-        _ => None,
-    }
-}
-
-/// Model-facing image/audio parts for a turn's attachments, gated by the
-/// route's native modalities. Unsupported media stays in the log and in
-/// object storage (later: code-execution tooling), never silently deleted —
-/// it just does not reach this model.
-pub fn media_parts(
-    media: &MediaMap,
-    atts: &[MessageAttachment],
-    modalities: &[String],
-) -> (Vec<String>, Vec<MessageAudio>) {
-    let mut images = Vec::new();
-    let mut audio = Vec::new();
-    for a in atts {
-        let Some(m) = media.get(&a.id) else { continue };
-        let supported = modalities.iter().any(|x| x == &a.modality);
-        match a.modality.as_str() {
-            "image" if supported => {
-                images.push(format!("data:{};base64,{}", m.mime, m.b64));
-            }
-            "audio" if supported => {
-                if let Some(f) = audio_format(&m.mime) {
-                    audio.push(MessageAudio {
-                        data: m.b64.clone(),
-                        format: f.to_string(),
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-    (images, audio)
-}
-
-/// Inline cap for one document attachment's textual content (chars) — a
-/// single huge file must not blow the context window by itself.
-const ATTACHMENT_INLINE_LIMIT: usize = 80_000;
-
-/// Whether a document attachment's content is textual and can be inlined.
-fn attachment_is_textual(content_type: &str, filename: &str) -> bool {
-    let ct = content_type.to_ascii_lowercase();
-    if ct.starts_with("text/") {
-        return true;
-    }
-    if matches!(
-        ct.as_str(),
-        "application/json"
-            | "application/xml"
-            | "application/yaml"
-            | "application/x-yaml"
-            | "application/javascript"
-            | "application/toml"
-            | "application/sql"
-            | "application/x-sh"
-    ) {
-        return true;
-    }
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    matches!(
-        ext.as_str(),
-        "md" | "txt"
-            | "json"
-            | "rs"
-            | "py"
-            | "js"
-            | "ts"
-            | "tsx"
-            | "jsx"
-            | "toml"
-            | "yaml"
-            | "yml"
-            | "csv"
-            | "tsv"
-            | "log"
-            | "sh"
-            | "bash"
-            | "sql"
-            | "html"
-            | "htm"
-            | "css"
-            | "xml"
-            | "ini"
-            | "conf"
-            | "env"
-            | "c"
-            | "h"
-            | "cpp"
-            | "hpp"
-            | "go"
-            | "java"
-            | "rb"
-            | "php"
-            | "swift"
-            | "kt"
-            | "proto"
-            | "gradle"
-            | "lock"
-            | "gitignore"
-            | "dockerfile"
-            | "makefile"
-            | "patch"
-            | "diff"
-    )
-}
-
-/// Builds the arrival-turn user event from the requested attachment ids
-/// (in the chat's attachment order): chip metadata plus the text appended
-/// to the typed message (inlined document text, or a note for media).
-/// The marker `"\n\n[Attachment: "` is the UI's strip boundary — clients
-/// render the typed text plus chips, not the wire text.
-pub fn build_turn_text(
-    requested: &[Uuid],
-    media: &MediaMap,
-    rows: &[(Uuid, String, String, i64)], // (id, filename, content_type, size)
-    modalities: &[String],
-) -> (Vec<MessageAttachment>, String) {
-    let mut chips = Vec::new();
-    let mut blocks = Vec::new();
-    for (id, filename, content_type, size) in rows {
-        if !requested.contains(id) {
-            continue;
-        }
-        let modality = modality_of(content_type);
-        chips.push(MessageAttachment {
-            id: *id,
-            filename: filename.clone(),
-            content_type: content_type.clone(),
-            size_bytes: *size,
-            modality: modality.to_string(),
-        });
-        match modality {
-            "document" => {
-                let mut text = media
-                    .get(id)
-                    .map(|m| String::from_utf8_lossy(&m.decoded()).into_owned())
-                    .unwrap_or_default();
-                if text.chars().count() > ATTACHMENT_INLINE_LIMIT {
-                    text = text.chars().take(ATTACHMENT_INLINE_LIMIT).collect();
-                    text.push_str("\n…[truncated]");
-                }
-                if attachment_is_textual(content_type, filename) && !text.is_empty() {
-                    blocks.push(format!(
-                        "[Attachment: {} ({}, {} bytes)]\n{}",
-                        filename, content_type, size, text
-                    ));
-                } else {
-                    blocks.push(format!(
-                        "[Attachment: {} ({}, {} bytes) — content not inlined]",
-                        filename, content_type, size
-                    ));
-                }
-            }
-            m => {
-                let supported = modalities.iter().any(|x| *x == m);
-                let note = if supported {
-                    match m {
-                        "image" => "shown to the model as an image",
-                        "audio" => "provided to the model as audio",
-                        _ => "no native modality on this route",
-                    }
-                } else {
-                    "stored; this model does not accept this modality"
-                };
-                blocks.push(format!(
-                    "[Attachment: {} ({}, {} bytes) — {}]",
-                    filename, content_type, size, note
-                ));
-            }
-        }
-    }
-    let text = if blocks.is_empty() {
-        String::new()
-    } else {
-        blocks.join("\n\n")
-    };
-    (chips, text)
-}
-
-/// Journaled-loadable attachment bytes for one chat: every image/audio
-/// attachment referenced by `events` (derivation replays them as parts on
-/// every subsequent turn) plus every id in `extra_ids` (the arrival turn;
-/// documents need their bytes for inlining). Bytes are immutable once
-/// uploaded, so the read is replay-deterministic.
-pub async fn load_media_map(
-    state: &AppState,
-    org_id: Uuid,
-    chat_id: Uuid,
-    events: &[ThreadEvent],
-    extra_ids: &[Uuid],
-) -> Result<MediaMap, ApiError> {
-    let mut ids: Vec<Uuid> = Vec::new();
-    for ev in events {
-        if let ThreadEvent::UserMessage { attachments, .. } = ev {
-            for a in attachments {
-                if a.modality == "image" || a.modality == "audio" {
-                    ids.push(a.id);
-                }
-            }
-        }
-    }
-    ids.extend(extra_ids.iter().copied());
-    if ids.is_empty() {
-        return Ok(MediaMap::new());
-    }
-    let store = state.store().await?;
-    let rows = store.attachments().list(org_id, chat_id).await?;
-    let objects = state.objects().await?;
-    let mut map = MediaMap::new();
-    for row in rows {
-        if !ids.contains(&row.id) {
-            continue;
-        }
-        let key = crate::store::attachments::object_key(org_id, row.id, &row.filename);
-        let Ok(bytes) = objects.get(&key).await else {
-            continue;
-        };
-        use base64::Engine as _;
-        map.insert(
-            row.id,
-            MediaRef {
-                mime: row.content_type.clone(),
-                b64: base64::engine::general_purpose::STANDARD.encode(&bytes),
-            },
-        );
-    }
-    Ok(map)
-}
-
 /// Builds the model-facing history from the event log. `media` carries the
 /// bytes of image/audio attachments referenced by the events (loaded
 /// journaled by the caller); `modalities` gates which parts actually ride
@@ -1538,7 +1261,7 @@ impl ChatRunner {
         let queued_flush = req.user_message.is_empty() && req.attachment_ids.is_empty();
         if queued_flush && !has_queued_user_turn(&prior_events) {
             clear_chatgen_kv!(ctx, state, req.chat_id);
-            state.generations.lock().unwrap().remove(&req.chat_id);
+            state.generations.remove(req.chat_id);
             set_generating_step!(ctx, state, req, false);
             return Ok(());
         }
@@ -1777,17 +1500,14 @@ impl ChatRunner {
             );
         }
 
-        let (tx, text_buf, thinking_buf) = ensure_generation(&state, req.chat_id);
+        let generation = state.generations.attach(req.chat_id);
+        let tx = generation.tx;
+        let text_buf = generation.text;
+        let thinking_buf = generation.thinking;
         // Stop requests land on this flag (the stop endpoint and steered
         // sends); every cancel decision below reads it inside a journaled
         // step, so the turn's shape replays deterministically.
-        let cancel = state
-            .generations
-            .lock()
-            .unwrap()
-            .get(&req.chat_id)
-            .map(|g| g.cancel.clone())
-            .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let cancel = generation.cancel;
 
         // Journaled: the chat is generating from here until the turn exits
         // (final answer, uniform failure, or step limit — each clears it).
@@ -1925,7 +1645,7 @@ impl ChatRunner {
                             // Remove the broadcast entry or the chat keeps a
                             // zombie generation: attach streams would hang
                             // forever with the caret blinking on a dead thread.
-                            state.generations.lock().unwrap().remove(&chat_id);
+                            state.generations.remove(chat_id);
                             HandlerError::from(TerminalError::new(format!("provider error: {e}")))
                         })?;
                         // The model call is about to stream: only now is
@@ -2020,7 +1740,7 @@ impl ChatRunner {
                                         message: e.to_string(),
                                     });
                                     // same zombie-generation cleanup as above
-                                    state.generations.lock().unwrap().remove(&chat_id);
+                                    state.generations.remove(chat_id);
                                     return Err(TerminalError::new(format!("provider error: {e}"))
                                         .into());
                                 }
@@ -2130,7 +1850,7 @@ impl ChatRunner {
                             model: model_name,
                             interrupted: None,
                         };
-                        let row = crate::http::gateway::persist_assistant_step(&state, chat_id, &event)
+                        let row = crate::state::persist_assistant_step(&state, chat_id, &event)
                             .await.map_err(api_err)?;
                         Ok(Json(row.id))
                     }
@@ -2206,7 +1926,16 @@ impl ChatRunner {
                         // the server itself runs the tool in the org
                         // workspace — same dispatch shape, no hub.
                         let dir = crate::http::agents::workspace_dir(&state, req.org_id, &ws_name);
-                        server_local_tool_step(&ctx, &state, &tx, call, req.org_id, req.chat_id, dir)
+                        server_local_tool_step(
+                            &ctx,
+                            &state,
+                            &tx,
+                            req.org_id,
+                            &req.model,
+                            req.chat_id,
+                            call,
+                            dir,
+                        )
                             .await?
                     } else {
                         client_tool_step(
@@ -2347,7 +2076,7 @@ impl ChatRunner {
                             model: req.model.clone(),
                             interrupted: Some(true),
                         };
-                        let _ = crate::http::gateway::persist_assistant_step(
+                        let _ = crate::state::persist_assistant_step(
                             &state,
                             req.chat_id,
                             &event,
@@ -2355,7 +2084,7 @@ impl ChatRunner {
                         .await;
                     }
                 }
-                state.generations.lock().unwrap().remove(&req.chat_id);
+                state.generations.remove(req.chat_id);
                 if let Ok(store) = state.store().await {
                     let _ = store
                         .kv()
@@ -2397,7 +2126,7 @@ impl ChatRunner {
                         let state = st.clone();
                         let event = event.clone();
                         async move {
-                            let row = crate::http::gateway::persist_assistant_step(
+                            let row = crate::state::persist_assistant_step(
                                 &state,
                                 chat_id,
                                 &event,
@@ -2425,7 +2154,7 @@ impl ChatRunner {
         // Common exit: free the chat first — a send arriving from here on
         // takes the normal start path, while anything committed before the
         // queued-flush check below is picked up by this turn's epilogue.
-        state.generations.lock().unwrap().remove(&req.chat_id);
+        state.generations.remove(req.chat_id);
         clear_chatgen_kv!(ctx, state, req.chat_id);
 
         // Queued-turn flush: the last turn-bearing event is a user message
@@ -2610,7 +2339,7 @@ impl ChatRunner {
 
         // (a) A generation in flight must finish first — compacting a
         // half-written thread would summarize a turn in progress.
-        if state.generations.lock().unwrap().contains_key(&req.chat_id) {
+        if state.generations.is_generating(req.chat_id) {
             return Err(TerminalError::new("cannot compact while a generation is running").into());
         }
 
@@ -2771,7 +2500,7 @@ async fn approval_policy_verdict(
     Ok(approved)
 }
 
-async fn approval_gate(
+pub(crate) async fn approval_gate(
     ctx: &ObjectContext<'_>,
     state: &AppState,
     tx: &broadcast::Sender<StreamEvent>,
@@ -2933,7 +2662,7 @@ async fn approval_gate(
             // it as denied so the turn resumes and ends at the next
             // journaled cancel check. Spawned outside journaled sections on
             // purpose: a replay re-spawns the watcher.
-            crate::http::gateway::spawn_stop_approval_watcher(state, chat_id, call.id.clone());
+            spawn_stop_approval_watcher(state, chat_id, call.id.clone());
 
             let decision: ApprovalResolution = match promise.await {
                 Ok(Json(d)) => d,
@@ -3006,10 +2735,9 @@ async fn approval_gate(
 }
 
 /// Phase 5b: the sandbox executor for web chats with no desktop present —
-/// the same tool runs on the server against a per-chat sandbox dir
-/// (`data_dir/sandbox/{chat_id}`), behind the same static exec-policy and
-/// interactive approval gates as client tools. The sandbox is private to
-/// the chat; shell tools additionally require the server allowlist flag.
+/// the same tool runs on the server against a per-chat sandbox dir, behind
+/// the same static exec-policy and interactive approval gates as client
+/// tools. Everything below the gates is the funnel's.
 async fn sandbox_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
@@ -3019,165 +2747,44 @@ async fn sandbox_tool_step(
     chat_id: Uuid,
     call: &ToolCall,
 ) -> HandlerResult<ToolResultPayload> {
-    // Static exec policy first (codex model): a `forbidden` rule is a hard
-    // deny; `prompt` rules and unmatched commands fall through to the
-    // chat's interactive approval flow — the web client answers it like any
-    // other executor's.
-    let static_decision = exec_policy_gate::evaluate_execute(&call.arguments);
-    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) = &static_decision {
-        return Ok(ToolResultPayload {
-            content: format!("denied by exec policy: {reason}"),
-            is_error: true,
-            meta: None,
-            images: Vec::new(),
-        });
-    }
-    if !matches!(static_decision, exec_policy_gate::ExecPolicyDecision::Allow) {
-        if let Some(denial) =
-            approval_gate(ctx, state, tx, org_id, model, chat_id, call, Approval::Ask, false)
-                .await?
-        {
-            return Ok(denial);
-        }
-    } // static allow skips the interactive gate entirely
-    let dir = std::path::Path::new(&state.config.data_dir)
-        .join("sandbox")
-        .join(chat_id.to_string());
-    server_local_tool_step(ctx, state, tx, call, org_id, chat_id, dir).await
+    suspend(
+        ctx,
+        state,
+        tx,
+        org_id,
+        model,
+        chat_id,
+        call,
+        Executor::Sandbox,
+    )
+    .await
 }
 
-/// One server-local tool call (spec 2026-09-18 unification §4 phases 4+5b):
-/// the server executes the client-tool in-process against the given
-/// workspace dir — journaled side effect (the result replays without
-/// re-running), then notifies attached clients exactly like the machine
-/// dispatch does. No interactive approvals here: the batch contract is
-/// "trusted workspace, pre-approved" and the sandbox caller runs its gates
-/// before dispatching; `execute` still passes the static exec-policy gate,
-/// and shell tools require the server allowlist flag.
+/// One server-local tool call (spec 2026-09-18 unification §4 phase 4): the
+/// batch backend — the server executes the client-tool in-process against
+/// the org workspace dir, pre-approved by contract. Everything below the
+/// contract is the funnel's.
 async fn server_local_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
     tx: &broadcast::Sender<StreamEvent>,
+    org_id: Uuid,
+    model: &str,
+    chat_id: Uuid,
     call: &ToolCall,
-    _org_id: Uuid,
-    _chat_id: Uuid,
     dir: std::path::PathBuf,
 ) -> HandlerResult<ToolResultPayload> {
-    let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
-    // Journaled: notify attached clients that this call runs server-side.
-    let tx2 = tx.clone();
-    let call_id = call.id.clone();
-    let name = call.name.clone();
-    let args2 = args_json.clone();
-    ctx.run(move || {
-        let tx = tx2.clone();
-        let call_id = call_id.clone();
-        let name = name.clone();
-        let args = args2.clone();
-        async move {
-            let _ = tx.send(StreamEvent::ToolStarted {
-                call_id,
-                name,
-                arguments: args,
-                executor: ToolExecutor::Server,
-                kind: None,
-            });
-            Ok(Json(()))
-        }
-    })
-    .await?;
-
-    let shell_allowed = state.config.allow_shell_tools;
-    let name = call.name.clone();
-    let args = call.arguments.clone();
-    let payload: ToolResultPayload = ctx
-        .run(move || {
-            let dir = dir.clone();
-            let name = name.clone();
-            let args = args.clone();
-            async move {
-                if name == "execute" && !shell_allowed {
-                    return Ok(Json(ToolResultPayload {
-                        content: "denied: shell tools are disabled on this server".into(),
-                        is_error: true,
-                        meta: None,
-                        images: Vec::new(),
-                    }));
-                }
-                if name == "execute" {
-                    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) =
-                        exec_policy_gate::evaluate_execute(&args)
-                    {
-                        return Ok(Json(ToolResultPayload {
-                            content: format!("denied by exec policy: {reason}"),
-                            is_error: true,
-                            meta: None,
-                            images: Vec::new(),
-                        }));
-                    }
-                }
-                tokio::fs::create_dir_all(&dir)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("workspace dir: {e}"))?;
-                let mut registry = guild_core::tools::ToolRegistry::new();
-                registry.add(Arc::new(guild_core::tools::fs::ReadFile::default()));
-                registry.add(Arc::new(guild_core::tools::fs::WriteFile));
-                registry.add(Arc::new(guild_core::tools::fs::EditFile));
-                if shell_allowed {
-                    registry.add(Arc::new(guild_core::tools::shell::RunCommand));
-                }
-                let payload = match registry.get(&name) {
-                    Some(tool) => match tool.run(std::path::Path::new(&dir), args).await {
-                        Ok(out) => ToolResultPayload {
-                            content: out.output_for_model,
-                            is_error: false,
-                            meta: out.meta,
-                            images: out.images,
-                        },
-                        Err(e) => ToolResultPayload {
-                            content: e.to_string(),
-                            is_error: true,
-                            meta: None,
-                            images: Vec::new(),
-                        },
-                    },
-                    None => ToolResultPayload {
-                        content: format!("unknown tool {name}"),
-                        is_error: true,
-                        meta: None,
-                        images: Vec::new(),
-                    },
-                };
-                Ok(Json(payload))
-            }
-        })
-        .await?
-        .into_inner();
-
-    // Journaled: report completion.
-    let tx2 = tx.clone();
-    let call_id = call.id.clone();
-    let name2 = call.name.clone();
-    let content2 = payload.content.clone();
-    let is_error = payload.is_error;
-    ctx.run(move || {
-        let tx = tx2.clone();
-        let call_id = call_id.clone();
-        let name = name2.clone();
-        let content = content2.clone();
-        async move {
-            let _ = tx.send(StreamEvent::ToolCompleted {
-                call_id,
-                name,
-                content,
-                is_error,
-            });
-            Ok(Json(()))
-        }
-    })
-    .await?;
-
-    Ok(payload)
+    suspend(
+        ctx,
+        state,
+        tx,
+        org_id,
+        model,
+        chat_id,
+        call,
+        Executor::ServerLocal { dir },
+    )
+    .await
 }
 
 /// Phase 5a: one machine-mediated read_file for the bound project's
@@ -3255,7 +2862,7 @@ async fn fetch_agents_md_via_machine(
             let call_id = dispatch_call.clone();
             async move {
                 Ok(Json(
-                    crate::http::gateway::dispatch_pending_tool(
+                    dispatch_pending_tool(
                         &state,
                         chat_id,
                         &call_id,
@@ -3268,7 +2875,7 @@ async fn fetch_agents_md_via_machine(
         })
         .await?
         .into_inner();
-    crate::http::gateway::restore_dispatch_connection(
+    restore_dispatch_connection(
         state,
         chat_id,
         &call_id,
@@ -3278,7 +2885,7 @@ async fn fetch_agents_md_via_machine(
     // window (same watcher as client tools). No stop watcher: the internal
     // fetch resolves on its own within the timeout, and the turn's stop
     // checks resume right after.
-    crate::http::gateway::spawn_machine_watcher(
+    spawn_machine_watcher(
         state,
         chat_id,
         call_id.clone(),
@@ -3308,7 +2915,7 @@ async fn fetch_agents_md_via_machine(
         },
     };
     ctx.clear(&state_key(&call_id));
-    crate::http::gateway::clear_pending_tool(state, chat_id, &call_id);
+    clear_pending_tool(state, chat_id, &call_id);
     if payload.is_error {
         return Ok(None);
     }
@@ -3420,172 +3027,22 @@ async fn client_tool_step(
         });
     }
 
-    // ---- Static exec policy (codex model): Starlark prefix rules decide
-    // before the interactive gate. An `allow` rule runs the command with no
-    // gate at all; a `forbidden` rule is a hard deny whose text is the rule's
-    // justification (the model recovers by trying a materially different
-    // command, never by escalating); `prompt` rules and unmatched commands
-    // fall through to the chat's approval flow below. Pure function of the
-    // compiled-in rules and the command string — replay-stable.
-    let static_decision = exec_policy_gate::evaluate_execute(&call.arguments);
-    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) = &static_decision {
-        return Ok(ToolResultPayload {
-            content: format!("denied by exec policy: {reason}"),
-            is_error: true,
-            meta: None,
-            images: Vec::new(),
-        });
-    }
-    if !matches!(static_decision, exec_policy_gate::ExecPolicyDecision::Allow) {
-        // ---- Approval gate (phase 2, design §C). Journaled request/decision
-        // flow; denial is a normal tool_result payload the caller persists.
-        if let Some(denial) = approval_gate(
-            ctx,
-            state,
-            tx,
-            org_id,
-            model,
-            chat_id,
-            call,
-            Approval::Ask,
-            false,
-        )
-        .await?
-        {
-            return Ok(denial);
-        }
-    } // static allow skips the interactive gate entirely
-
-    // Journaled awakeable: stable id across replays.
-    let (awakeable_id, promise) = ctx.awakeable::<Json<ToolResultPayload>>();
-    ctx.set(&state_key(&call.id), awakeable_id.clone());
-    // Journaled: notify attached clients that this call must run client-side.
-    let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
-    let done = note_pending_tool(
+    // Gates, dispatch, watchers and resolution are the funnel's.
+    suspend(
+        ctx,
         state,
+        tx,
+        org_id,
+        model,
         chat_id,
-        &call.id,
-        &call.name,
-        &args_json,
-        Some(&mid),
-        workdir.as_deref(),
-    );
-    let tx2 = tx.clone();
-    let call_id = call.id.clone();
-    let name = call.name.clone();
-    let args2 = args_json.clone();
-    let dispatch_state = state.clone();
-    let dispatch_id = awakeable_id.clone();
-    let dispatched_connection = ctx
-        .run(move || {
-            let state = dispatch_state.clone();
-            let dispatch_id = dispatch_id.clone();
-            let tx = tx2.clone();
-            let call_id = call_id.clone();
-            let name = name.clone();
-            let args = args2.clone();
-            async move {
-                let connection = crate::http::gateway::dispatch_pending_tool(
-                    &state,
-                    chat_id,
-                    &call_id,
-                    &dispatch_id,
-                )
-                .await
-                .map_err(api_err)?;
-                let _ = tx.send(StreamEvent::ToolStarted {
-                    call_id,
-                    name,
-                    arguments: args,
-                    executor: ToolExecutor::Client,
-                    kind: None,
-                });
-                Ok(Json(connection))
-            }
-        })
-        .await?
-        .into_inner();
-    crate::http::gateway::restore_dispatch_connection(
-        state,
-        chat_id,
-        &call.id,
-        dispatched_connection,
-    );
-
-    // Termination detection: if the bound machine disappears (executor
-    // connection gone, app-lifetime — not per-thread streams), resolve the
-    // tool with an error after a grace window instead of dead-airing for
-    // the full timeout. Spawned outside the journaled sections on purpose:
-    // a worker restart replays this handler and re-spawns the watcher.
-    crate::http::gateway::spawn_machine_watcher(
-        state,
-        chat_id,
-        call.id.clone(),
-        call.name.clone(),
-        mid,
-        mlabel,
-        done.clone(),
-    );
-    // Stop responsiveness: a stop while the tool is suspended resolves it
-    // immediately (same durable funnel), so the turn ends at the next
-    // journaled cancel check instead of waiting out the executor.
-    crate::http::gateway::spawn_stop_watcher(state, chat_id, call.id.clone(), done);
-    // Durable timeout: schedule a journaled delayed completion instead of
-    // racing futures — a dropped ctx.sleep blocks replay until the timer
-    // fires, while send_after lives in Restate's timer service and never
-    // gates this workflow's journal. The delayed complete_tool targets the
-    // shared handler, so it runs while `generate` is suspended; when the
-    // client result arrived first, complete_tool is a no-op (state cleared).
-    ctx.object_client::<ChatRunnerClient>(&chat_id.to_string())
-        .complete_tool(Json(ToolResultReq {
-            call_id: call.id.clone(),
-            content: format!(
-                "client tool {} ({}) timed out after 5 minutes: no client result arrived",
-                call.name, call.id
-            ),
-            is_error: true,
-            meta: None,
-            images: Vec::new(),
-        }))
-        .send_after(CLIENT_TOOL_TIMEOUT);
-
-    let payload: ToolResultPayload = match promise.await {
-        Ok(Json(p)) => p,
-        Err(t) => ToolResultPayload {
-            content: format!("client tool failed: {t}"),
-            is_error: true,
-            meta: None,
-            images: Vec::new(),
+        call,
+        Executor::Desktop {
+            machine_id: mid,
+            machine_label: mlabel,
+            workdir,
         },
-    };
-
-    ctx.clear(&state_key(&call.id));
-    clear_pending_tool(state, chat_id, &call.id);
-
-    // Journaled: report completion to attached clients.
-    let tx2 = tx.clone();
-    let call_id = call.id.clone();
-    let name = call.name.clone();
-    let content2 = payload.content.clone();
-    let is_error = payload.is_error;
-    ctx.run(move || {
-        let tx = tx2.clone();
-        let call_id = call_id.clone();
-        let name = name.clone();
-        let content = content2.clone();
-        async move {
-            let _ = tx.send(StreamEvent::ToolCompleted {
-                call_id,
-                name,
-                content,
-                is_error,
-            });
-            Ok(Json(()))
-        }
-    })
-    .await?;
-
-    Ok(payload)
+    )
+    .await
 }
 
 /// One server-side tool call: notify clients, execute the integration plugin

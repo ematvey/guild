@@ -1,6 +1,6 @@
 use crate::http::auth::AuthUser;
 use crate::http::ws::SocketSink;
-use crate::state::AppState;
+use crate::state::{AppState, CaptureView};
 use crate::store::Store;
 use protocol::api::StreamEvent;
 use protocol::ws::WsServerMsg;
@@ -99,14 +99,9 @@ impl Feed {
         if self.slow_tick == 0 {
             self.refresh_bindings().await;
         }
-        let active = {
-            let generations = self.state.generations.lock().unwrap();
-            generations
-                .iter()
-                .filter(|(chat, _)| self.chats.contains_key(chat))
-                .map(|(chat, generation)| (*chat, generation.id, generation.tx.clone()))
-                .collect::<Vec<_>>()
-        };
+        let active = self.state.generations.active_streams(
+            &self.chats.keys().copied().collect::<Vec<_>>(),
+        );
         // A replaced generation has already emitted its terminal event.
         // Drain that receiver before replacing it with the new generation.
         self.drain_events().await;
@@ -180,12 +175,7 @@ impl Feed {
 
     async fn publish_views(&mut self) {
         for chat_id in self.chats.keys().copied().collect::<Vec<_>>() {
-            let active = self
-                .state
-                .generations
-                .lock()
-                .unwrap()
-                .contains_key(&chat_id);
+            let active = self.state.generations.is_generating(chat_id);
             if !active
                 && self
                     .views
@@ -196,13 +186,7 @@ impl Feed {
             }
             // Cheap pre-capture check: deltas only append, so equal buffer
             // lengths mean the next capture would equal the last view.
-            let buffers = self
-                .state
-                .generations
-                .lock()
-                .unwrap()
-                .get(&chat_id)
-                .map(|g| (g.text.clone(), g.thinking.clone()));
+            let buffers = self.state.generations.buffers(chat_id);
             let signature = match buffers {
                 Some((text, thinking)) => {
                     Some((text.read().await.len(), thinking.read().await.len()))
@@ -551,31 +535,21 @@ async fn capture_thread(
     chat_id: Uuid,
     user: Option<&AuthUser>,
 ) -> Result<WsServerMsg, crate::http::error::ApiError> {
-    let _capture = state.thread_sync.lock().await;
     let store = state.store().await?;
     if let Some(user) = user {
         store.chats().get_chat(org, chat_id, &user.0).await?;
     }
-    let buffers = {
-        let generations = state.generations.lock().unwrap();
-        generations
-            .get(&chat_id)
-            .map(|g| (g.text.clone(), g.thinking.clone()))
-    };
-    let (text, thinking, events) = if let Some((text, thinking)) = buffers {
-        let text = text.read().await;
-        let thinking = thinking.read().await;
-        let events = store.thread().list_events(org, chat_id).await?;
-        (text.clone(), thinking.clone(), events)
-    } else {
-        (
-            String::new(),
-            String::new(),
-            store.thread().list_events(org, chat_id).await?,
-        )
-    };
-    let generating = state.generations.lock().unwrap().contains_key(&chat_id);
-    let seq = store.thread().watermark().await?;
+    let view = state
+        .generations
+        .take_buffers_for_capture(state, org, chat_id)
+        .await?;
+    let CaptureView {
+        text,
+        thinking,
+        generating,
+        events,
+        seq,
+    } = view;
     // The chat's project, for the sidebar's grouping (None = folderless).
     let (project_id, project_name, project_machine_label) = match
         store.chats().project_of(org, chat_id).await?
@@ -603,7 +577,6 @@ async fn capture_thread(
 mod tests {
     use super::*;
     use crate::http::auth::AuthUser;
-    use crate::http::gateway::ensure_generation;
     use crate::http::hub::Member;
     use crate::http::ws::{socket_channel, SocketGate, SocketOutput};
     use crate::test_support::{
@@ -681,7 +654,8 @@ mod tests {
             .await
             .unwrap();
 
-        let (_, text, _) = ensure_generation(&ts.state, chat.id);
+        let gen = ts.state.generations.attach(chat.id);
+        let (text, _thinking) = (gen.text.clone(), gen.thinking.clone());
         *text.write().await = "partial".into();
         note_client_tool(&ts.state, chat.id, "call-1", "read_file", "{}", "m1");
 
@@ -716,7 +690,8 @@ mod tests {
     #[tokio::test]
     async fn token_during_sync_has_a_newer_authoritative_watermark() {
         let (ts, user, chat, _) = setup().await;
-        let (_, text, _) = ensure_generation(&ts.state, chat.id);
+        let gen = ts.state.generations.attach(chat.id);
+        let (text, _thinking) = (gen.text.clone(), gen.thinking.clone());
         *text.write().await = "before".into();
         let before = capture_thread(&ts.state, user.0.org_id, chat.id, Some(&user))
             .await
@@ -749,7 +724,8 @@ mod tests {
     #[tokio::test]
     async fn reconnect_while_awaiting_approval_does_not_replay_persisted_text() {
         let (ts, user, chat, _) = setup().await;
-        let (_, text, thinking) = ensure_generation(&ts.state, chat.id);
+        let gen = ts.state.generations.attach(chat.id);
+        let (text, thinking) = (gen.text.clone(), gen.thinking.clone());
         *text.write().await = "proposal".into();
         *thinking.write().await = "reason".into();
         let event = serde_json::from_value::<ThreadEvent>(
@@ -757,7 +733,7 @@ mod tests {
             "blocks":[{"type":"text", "text":"proposal"}], "usage":{}, "model":"test"}),
         )
         .unwrap();
-        crate::http::gateway::persist_assistant_step(&ts.state, chat.id, &event)
+        crate::state::persist_assistant_step(&ts.state, chat.id, &event)
             .await
             .unwrap();
         ts.store()
@@ -800,7 +776,7 @@ mod tests {
             .set_machine(user.0.org_id, chat.id, Some("m1"), Some("Desk"))
             .await
             .unwrap();
-        let generation_tx = ensure_generation(&ts.state, chat.id).0;
+        let generation_tx = ts.state.generations.attach(chat.id).tx;
         let (broadcast, _) = tokio::sync::broadcast::channel(16);
         let mut feed = Feed::new(
             ts.state.clone(),
@@ -959,7 +935,7 @@ mod tests {
     #[tokio::test]
     async fn dispatch_to_offline_machine_fails_fast_without_a_feed() {
         let (ts, _user, chat, ingress) = setup().await;
-        ensure_generation(&ts.state, chat.id);
+        ts.state.generations.attach(chat.id);
         note_client_tool(&ts.state, chat.id, "call-1", "execute", "{}", "offline");
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
