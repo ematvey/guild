@@ -1891,7 +1891,7 @@ export default function WebChat({
   const projectCreated = (project: Project) => {
     void refreshProjects();
     if (createProjectFromRef.current !== "picker") return;
-    pickProject({ id: project.id, name: project.name, machine_label: project.machine_label });
+    pickProject({ id: project.id, name: project.name, machine_label: project.machine_label, folder: project.folder });
     setProjectPickerOpen(false);
   };
 
@@ -2050,6 +2050,13 @@ export default function WebChat({
     pushRoute({ chatId: null, projectId: null, overlay: null });
     setOpen(false);
     ta.current?.focus();
+  };
+
+  /** Sidebar: new chat inside a project (the project row's hover "+").
+   * Pre-picks the project so the composer binds the chat to it on send. */
+  const newChatInProject = (project: PickedProject) => {
+    pickProject(project);
+    newChat();
   };
 
   const autoGrow = () => {
@@ -2298,13 +2305,22 @@ export default function WebChat({
       // Skill slash commands: expand `/name` mentions with the full
       // SKILL.md body and carry the skills index (app-process RPC; browser
       // mode has no local skills and sends the prompt through untouched).
+      // AGENTS.md (Codex semantics): the bound project's local folder feeds
+      // the instruction chain — global config-dir file + git-root→folder
+      // docs — riding the additive `agents_md` request field.
       let turnText = text;
       let turnSkillsIndex: string | undefined;
+      let turnAgentsMd: string | undefined;
       if (isTauri) {
         try {
-          const prep = await prepareTurn(text);
+          const projectFolder =
+            currentProject &&
+            (currentProject.folder ??
+              projects?.find((p) => p.id === currentProject.id)?.folder);
+          const prep = await prepareTurn(text, projectFolder || undefined);
           turnText = prep.prompt;
           if (prep.index) turnSkillsIndex = prep.index;
+          if (prep.instructions) turnAgentsMd = prep.instructions;
         } catch {
           /* expansion is sugar — send the typed text */
         }
@@ -2318,6 +2334,7 @@ export default function WebChat({
         sentKey,
         generating ? (mode === "steer" ? "steer" : "queue") : undefined,
         turnSkillsIndex,
+        turnAgentsMd,
       );
       // Submission is not persistence. Only the committed socket echo settles the marker.
       // The member socket delivers every effect. Busy ends on done/error or
@@ -2373,6 +2390,7 @@ export default function WebChat({
       displayName={displayName}
       avatarUrl={avatarUrl}
       onNewChat={newChat}
+      onNewChatInProject={newChatInProject}
       onOpenChat={openChat}
       onNewProject={() => openCreateProject("sidebar")}
       onSignOut={onSignOut}
@@ -3337,6 +3355,7 @@ function ProjectHeader({
   onToggle,
   onRename,
   onArchive,
+  onNewChat,
 }: {
   name: string;
   folder: string;
@@ -3344,6 +3363,7 @@ function ProjectHeader({
   onToggle: () => void;
   onRename: (name: string) => void;
   onArchive: () => void;
+  onNewChat?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   if (editing) {
@@ -3370,6 +3390,27 @@ function ProjectHeader({
         className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
       />
       <FadeTitle text={name} />
+      {onNewChat && (
+        <span
+          role="button"
+          tabIndex={0}
+          title="New chat in this project"
+          onClick={(e) => {
+            e.stopPropagation();
+            onNewChat();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation();
+              e.preventDefault();
+              onNewChat();
+            }
+          }}
+          className="absolute right-7 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
+        >
+          <Plus className="size-4" />
+        </span>
+      )}
       <RowActions onRename={() => setEditing(true)} onArchive={onArchive} />
     </button>
   );
@@ -3384,6 +3425,7 @@ function SidebarContent({
   displayName,
   avatarUrl,
   onNewChat,
+  onNewChatInProject,
   onOpenChat,
   onNewProject,
   onSignOut,
@@ -3404,6 +3446,8 @@ function SidebarContent({
   displayName?: string | null;
   avatarUrl?: string | null;
   onNewChat: () => void;
+  /** New chat with this project pre-picked (project row's hover "+"). */
+  onNewChatInProject: (project: PickedProject) => void;
   onOpenChat: (id: string) => void;
   onNewProject: () => void;
   onSignOut: () => void;
@@ -3496,6 +3540,11 @@ function SidebarContent({
                     onToggle={() => setExpanded((e) => ({ ...e, [p.id]: !open }))}
                     onRename={(name) => onRenameProject?.(p.id, name)}
                     onArchive={() => onArchiveProject?.(p.id)}
+                    onNewChat={
+                      onNewChatInProject
+                        ? () => onNewChatInProject({ id: p.id, name: p.name, machine_label: p.machine_label })
+                        : undefined
+                    }
                   />
                   {open && (
                     <div className="ml-4 space-y-0.5 border-l border-border/60 py-0.5 pl-2">
