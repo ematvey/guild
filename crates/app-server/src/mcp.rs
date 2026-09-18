@@ -184,6 +184,7 @@ impl Tool for McpTool {
             ui_summary: Some(format!("mcp::{}", self.spec.name)),
             diff: None,
             meta: None,
+            artifact: None,
         })
     }
 }
