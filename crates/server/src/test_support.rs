@@ -202,7 +202,7 @@ pub fn note_client_tool(
     machine_id: &str,
 ) {
     use protocol::api::{StreamEvent, ToolExecutor};
-    crate::http::gateway::note_pending_tool(
+    crate::worker::funnel::note_pending_tool(
         state,
         chat_id,
         call_id,
@@ -214,7 +214,7 @@ pub fn note_client_tool(
     let dispatch_state = state.clone();
     let dispatch_call = call_id.to_string();
     tokio::spawn(async move {
-        crate::http::gateway::dispatch_pending_tool(
+        crate::worker::funnel::dispatch_pending_tool(
             &dispatch_state,
             chat_id,
             &dispatch_call,
@@ -245,7 +245,7 @@ pub fn overload_machine_writer(state: &AppState, machine: &str) {
 
 /// Installs the production liveness watcher for a suspended test call.
 pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machine: &str) {
-    let done = crate::http::gateway::note_pending_tool(
+    let done = crate::worker::funnel::note_pending_tool(
         state,
         chat,
         call,
@@ -257,7 +257,7 @@ pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machin
     let dispatch_state = state.clone();
     let dispatch_call = call.to_string();
     tokio::spawn(async move {
-        crate::http::gateway::dispatch_pending_tool(
+        crate::worker::funnel::dispatch_pending_tool(
             &dispatch_state,
             chat,
             &dispatch_call,
@@ -266,7 +266,7 @@ pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machin
         .await
         .unwrap();
     });
-    crate::http::gateway::spawn_machine_watcher(
+    crate::worker::funnel::spawn_machine_watcher(
         state,
         chat,
         call.into(),

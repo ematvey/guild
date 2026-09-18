@@ -12,7 +12,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::http::error::ApiError;
-use crate::http::gateway::{clear_pending_tool, enforce_quota, note_pending_tool};
+use crate::http::gateway::enforce_quota;
+use crate::worker::funnel::{
+    clear_pending_tool, dispatch_pending_tool, note_pending_tool,
+    restore_dispatch_connection, spawn_machine_watcher, spawn_stop_approval_watcher,
+    spawn_stop_watcher,
+};
 use crate::integrations;
 use crate::state::AppState;
 use crate::worker::exec_policy_gate;
@@ -2928,7 +2933,7 @@ async fn approval_gate(
             // it as denied so the turn resumes and ends at the next
             // journaled cancel check. Spawned outside journaled sections on
             // purpose: a replay re-spawns the watcher.
-            crate::http::gateway::spawn_stop_approval_watcher(state, chat_id, call.id.clone());
+            spawn_stop_approval_watcher(state, chat_id, call.id.clone());
 
             let decision: ApprovalResolution = match promise.await {
                 Ok(Json(d)) => d,
@@ -3250,7 +3255,7 @@ async fn fetch_agents_md_via_machine(
             let call_id = dispatch_call.clone();
             async move {
                 Ok(Json(
-                    crate::http::gateway::dispatch_pending_tool(
+                    dispatch_pending_tool(
                         &state,
                         chat_id,
                         &call_id,
@@ -3263,7 +3268,7 @@ async fn fetch_agents_md_via_machine(
         })
         .await?
         .into_inner();
-    crate::http::gateway::restore_dispatch_connection(
+    restore_dispatch_connection(
         state,
         chat_id,
         &call_id,
@@ -3273,7 +3278,7 @@ async fn fetch_agents_md_via_machine(
     // window (same watcher as client tools). No stop watcher: the internal
     // fetch resolves on its own within the timeout, and the turn's stop
     // checks resume right after.
-    crate::http::gateway::spawn_machine_watcher(
+    spawn_machine_watcher(
         state,
         chat_id,
         call_id.clone(),
@@ -3303,7 +3308,7 @@ async fn fetch_agents_md_via_machine(
         },
     };
     ctx.clear(&state_key(&call_id));
-    crate::http::gateway::clear_pending_tool(state, chat_id, &call_id);
+    clear_pending_tool(state, chat_id, &call_id);
     if payload.is_error {
         return Ok(None);
     }
@@ -3480,7 +3485,7 @@ async fn client_tool_step(
             let name = name.clone();
             let args = args2.clone();
             async move {
-                let connection = crate::http::gateway::dispatch_pending_tool(
+                let connection = dispatch_pending_tool(
                     &state,
                     chat_id,
                     &call_id,
@@ -3500,7 +3505,7 @@ async fn client_tool_step(
         })
         .await?
         .into_inner();
-    crate::http::gateway::restore_dispatch_connection(
+    restore_dispatch_connection(
         state,
         chat_id,
         &call.id,
@@ -3512,7 +3517,7 @@ async fn client_tool_step(
     // tool with an error after a grace window instead of dead-airing for
     // the full timeout. Spawned outside the journaled sections on purpose:
     // a worker restart replays this handler and re-spawns the watcher.
-    crate::http::gateway::spawn_machine_watcher(
+    spawn_machine_watcher(
         state,
         chat_id,
         call.id.clone(),
@@ -3524,7 +3529,7 @@ async fn client_tool_step(
     // Stop responsiveness: a stop while the tool is suspended resolves it
     // immediately (same durable funnel), so the turn ends at the next
     // journaled cancel check instead of waiting out the executor.
-    crate::http::gateway::spawn_stop_watcher(state, chat_id, call.id.clone(), done);
+    spawn_stop_watcher(state, chat_id, call.id.clone(), done);
     // Durable timeout: schedule a journaled delayed completion instead of
     // racing futures — a dropped ctx.sleep blocks replay until the timer
     // fires, while send_after lives in Restate's timer service and never
