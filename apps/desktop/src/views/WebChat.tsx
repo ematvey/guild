@@ -81,7 +81,6 @@ import {
   setMachineIdentity,
   stopChat,
   uploadAttachment,
-  type StreamFrame,
 } from "../transport";
 import {
   createChat,
@@ -110,8 +109,37 @@ import {
   type Project,
   type Release,
   type ThreadContext,
-  type ThreadEventRow,
 } from "../transport";
+import {
+  artifactCardOf,
+  createThreadReducer,
+  type ApprovalBlock,
+  type ArtifactCard,
+  type Block,
+  type CompactionBlock,
+  type ThreadReducer,
+  type ToolBlock,
+} from "../lib/thread-reducer";
+// The block layer (types + derivation + merge rules) lives in
+// lib/thread-reducer; these names stay importable from the view.
+export {
+  artifactCardOf,
+  eventsToBlocks,
+  reconcilePendingSend,
+  replayFrom,
+  resolveApproval,
+  threadStateBlocks,
+  upsertApproval,
+} from "../lib/thread-reducer";
+export type {
+  ApprovalBlock,
+  ArtifactCard,
+  Block,
+  CompactionBlock,
+  PendingSend,
+  ToolBlock,
+  ToolMeta,
+} from "../lib/thread-reducer";
 
 
 export function statusFromThreads(chats: ChatSummary[]) {
@@ -134,26 +162,6 @@ export function offlineMachine(
   return { label: row.machine_label ?? row.machine_id };
 }
 
-export function threadStateBlocks(state: ThreadState): Block[] {
-  let blocks = eventsToBlocks(state.events);
-  if (state.thinking)
-    blocks = upsertThinking(blocks, state.thinking, true, `live-thinking-${state.chat_id}`);
-  if (state.text) blocks.push({ kind: "text", text: state.text, key: `unpersisted-${state.chat_id}` });
-  return blocks;
-}
-
-interface ToolBlock {
-  callId: string;
-  name: string;
-  args: string;
-  executor: "client" | "server";
-  status: "running" | "done" | "error";
-  content?: string;
-  meta?: ToolMeta;
-  /// Coarse category from the server (web_search | web_browse | generic):
-  /// drives the native label/icon regardless of the providing integration.
-  kind?: string;
-}
 
 /// URL-driven navigation: the pathname is the single source of truth for
 /// where the user is. Routes:
@@ -230,143 +238,6 @@ export const chatRoutePath = (
     }`;
   return base || "/";
 };
-
-/// One durable approval gate (design spec section F): a client tool waiting
-/// for (or having received) the user's allow/deny decision. `expired` marks
-/// an orphaned call: its turn ended before the card was answered, so the
-/// call can never execute — the card stays visible, non-actionable.
-interface ApprovalBlock {
-  callId: string;
-  name: string;
-  args: string;
-  status: "pending" | "approved" | "denied" | "expired";
-  reason?: string;
-}
-
-/// One durable compaction event (compaction spec section E): the model's
-/// summary of everything before this point in the thread.
-interface CompactionBlock {
-  summary: string;
-  model?: string | null;
-  keepLast?: number | null;
-}
-
-/// Widget payload persisted on tool/result events (spec C.2). Loose: the
-/// server owns the shape, unknown fields are ignored by the widgets.
-interface ToolMeta {
-  card?: string | ArtifactCard;
-  kind?: string;
-  sources?: { url: string; title?: string; snippet?: string }[];
-  truncated?: boolean;
-  url?: string;
-  status_code?: number;
-  title?: string;
-  output?: string;
-  exit_code?: number;
-  path?: string;
-  offset?: number;
-  total_lines?: number;
-  lang?: string;
-}
-
-/// Download card on a spilled tool_result (the server puts it in
-/// meta.card): filename, size and the artifact id to fetch bytes from.
-/// `path` is the model-facing materialized path — shown for context, not
-/// clickable.
-export interface ArtifactCard {
-  card: "artifact";
-  id: string;
-  filename: string;
-  content_type: string;
-  size_bytes: number;
-  path: string;
-}
-
-/** Narrows meta.card to a well-formed artifact card; every other card
- * shape (string card kinds, malformed objects) renders as its old widget.
- * The discriminator is `card` or `kind` == "artifact" on the card object. */
-export function artifactCardOf(t: { meta?: unknown | null }): ArtifactCard | null {
-  const c = (t.meta as { card?: unknown } | null | undefined)?.card;
-  if (!c || typeof c !== "object") return null;
-  const a = c as Partial<ArtifactCard> & { kind?: unknown };
-  if (a.card !== "artifact" && a.kind !== "artifact") return null;
-  if (typeof a.id !== "string" || !a.id) return null;
-  if (typeof a.filename !== "string" || !a.filename) return null;
-  if (typeof a.size_bytes !== "number" || !(a.size_bytes >= 0)) return null;
-  return {
-    card: "artifact",
-    id: a.id,
-    filename: a.filename,
-    content_type: typeof a.content_type === "string" && a.content_type ? a.content_type : "application/octet-stream",
-    size_bytes: a.size_bytes,
-    path: typeof a.path === "string" ? a.path : "",
-  };
-}
-
-export interface Block {
-  kind: "user" | "text" | "error" | "reasoning" | "tool" | "approval" | "compaction";
-  text: string;
-  /// Stable React key. Derived blocks use the source event's seq (plus an
-  /// in-event index); streaming-built blocks use a live counter.
-  key: string;
-  /// kind === "user": context attachment chips (metadata only; images may
-  /// carry a local preview URL for optimistic rendering).
-  attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
-  /// An optimistic user command not yet present in the durable history.
-  pending?: boolean;
-  /// kind === "reasoning": the accumulated thinking text.
-  reasoningText?: string;
-  /// kind === "text": the turn was stopped mid-stream; the text is the
-  /// delivered prefix.
-  interrupted?: boolean;
-  tool?: ToolBlock;
-  approval?: ApprovalBlock;
-  compaction?: CompactionBlock;
-}
-
-export interface PendingSend {
-  chatId: string;
-  text: string;
-  key: string;
-  sentAt: number;
-  attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
-}
-
-/** Keeps a pending command visible while a sync races its HTTP request. */
-export function reconcilePendingSend(
-  rows: ThreadEventRow[],
-  blocks: Block[],
-  pending: PendingSend | null,
-): Block[] {
-  if (!pending) return blocks;
-  const durable = rows.some(row => row.event.type === "user_message" && row.id === pending.key);
-  if (durable) return blocks;
-  if (blocks.some((block) => block.key === pending.key)) return blocks;
-  return [
-    ...blocks,
-    {
-      kind: "user",
-      text: pending.text,
-      key: pending.key,
-      attachments: pending.attachments,
-      pending: true,
-    },
-  ];
-}
-
-let liveKeyCounter = 0;
-/// Key for blocks the stream builds (no source event seq to derive from).
-function liveKey(): string {
-  return `live-${++liveKeyCounter}`;
-}
-
-/// Tools the desktop executor runs locally (mirrors protocol `client_tool_specs`).
-const CLIENT_TOOL_NAMES = [
-  "read_file",
-  "execute",
-  "edit_file",
-  "write_file",
-];
 
 function modalityOf(contentType: string): string {
   if (contentType.startsWith("image/")) return "image";
@@ -518,208 +389,6 @@ function AttachmentFileChip({
       {body}
     </button>
   );
-}
-
-/// Rebuilds the thread view from the persisted thread event log (spec C.3).
-/// Tool calls, reasoning and text are all resident thread parts — nothing
-/// disappears on refresh: every assistant block is replayed in stream order
-/// and tool results fill their matching frames.
-export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
-  const sorted = [...rows].sort((a, b) => a.seq - b.seq);
-  const blocks: Block[] = [];
-  const byCallId = new Map<string, ToolBlock>();
-  const byApprovalId = new Map<string, ApprovalBlock>();
-  for (const row of sorted) {
-    const ev = row.event;
-    const seqKey = (n: number) => `${row.seq}:${n}`;
-    let inEvent = 0;
-    switch (ev.type) {
-      case "user_message": {
-        // Event content is the model-facing turn: typed text plus inlined
-        // "[Attachment: …]" blocks, plus the skill-invocation block the
-        // client expanded for `/name` mentions. Show the typed text; the
-        // model-facing payloads stay in the event.
-        const at = ev.content.indexOf("\n\n[Attachment: ");
-        const inv = ev.content.indexOf("\n\n---\nInvoked skills");
-        const cut = [at, inv].filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1;
-        blocks.push({
-          kind: "user",
-          text: cut >= 0 ? ev.content.slice(0, cut) : ev.content,
-          attachments: ev.attachments,
-          key: seqKey(inEvent++),
-        });
-        break;
-      }
-      case "system_message":
-        break; // server-owned prompt, log-only
-      case "assistant_message": {
-        const start = blocks.length;
-        for (const b of ev.blocks) {
-          if (b.type === "reasoning") {
-            blocks.push({ kind: "reasoning", text: "", reasoningText: b.text, key: seqKey(inEvent++) });
-          } else if (b.type === "text") {
-            blocks.push({ kind: "text", text: b.text, key: seqKey(inEvent++) });
-          } else {
-            const tb: ToolBlock = {
-              callId: b.id,
-              name: b.name,
-              args: b.arguments,
-              executor: CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server",
-              status: "done", // filled by the matching tool_result below
-            };
-            byCallId.set(b.id, tb);
-            blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(inEvent++) });
-          }
-        }
-        if (ev.interrupted) {
-          for (let j = blocks.length - 1; j >= start; j--) {
-            if (blocks[j].kind === "text") {
-              blocks[j].interrupted = true;
-              break;
-            }
-          }
-        }
-        break;
-      }
-      case "tool_result": {
-        const meta = (ev.meta ?? undefined) as ToolMeta | undefined;
-        const kind = (ev as { kind?: string | null }).kind ?? undefined;
-        const tb = byCallId.get(ev.call_id);
-        if (tb) {
-          tb.content = ev.content;
-          tb.status = ev.is_error ? "error" : "done";
-          tb.meta = meta;
-          tb.kind = kind;
-        } else {
-          // Orphan result (call block missing): render it anyway rather than drop it.
-          blocks.push({
-            kind: "tool",
-            text: "",
-            tool: {
-              callId: ev.call_id,
-              name: ev.name || "tool",
-              args: "",
-              executor: "server",
-              status: ev.is_error ? "error" : "done",
-              content: ev.content,
-              meta,
-              kind,
-            },
-            key: seqKey(inEvent++),
-          });
-        }
-        break;
-      }
-      case "approval_request": {
-        const a: ApprovalBlock = {
-          callId: ev.call_id,
-          name: ev.name,
-          args: ev.arguments,
-          status: "pending", // flipped by the matching decision below
-        };
-        byApprovalId.set(ev.call_id, a);
-        blocks.push({ kind: "approval", text: "", approval: a, key: seqKey(inEvent++) });
-        break;
-      }
-      case "approval_decision": {
-        const a = byApprovalId.get(ev.call_id);
-        if (a) {
-          a.status = ev.expired ? "expired" : ev.approved ? "approved" : "denied";
-          a.reason = ev.reason ?? undefined;
-        }
-        break; // orphan decision: the request block carries the story
-      }
-      case "compaction":
-        // Stream-positioned: pushed at its event position, in order with the
-        // messages around it.
-        blocks.push({
-          kind: "compaction",
-          text: "",
-          key: seqKey(inEvent++),
-          compaction: {
-            summary: ev.summary,
-            model: ev.model ?? undefined,
-            keepLast: ev.keep_last ?? null,
-          },
-        });
-        break;
-    }
-  }
-  // Resolved approvals are decisions, not conversation content: a card whose
-  // decision event arrived is dropped, so history renders only approvals
-  // still waiting for an answer. Expired cards stay: no tool result tells
-  // their story — the card itself is the record that the call never ran.
-  return blocks.filter(
-    (b) =>
-      !(
-        b.kind === "approval" &&
-        b.approval &&
-        (b.approval.status === "approved" || b.approval.status === "denied")
-      ),
-  );
-}
-
-/// ApprovalRequested inserts a pending card into the current blocks;
-/// re-attach replays may fire it again for a card we already render, so
-/// this is an upsert, not a blind append.
-export function upsertApproval(blocks: Block[], a: ApprovalBlock): Block[] {
-  const i = blocks.findIndex((x) => x.kind === "approval" && x.approval?.callId === a.callId);
-  if (i < 0) return [...blocks, { kind: "approval", text: "", approval: a, key: `approval-${a.callId}` }];
-  return blocks.map((x, j) => (j === i ? { ...x, approval: { ...a } } : x));
-}
-
-/// Desktop switch-back replay: the fan-out mirror holds every frame since
-/// the turn started, while the thread reload already restored the persisted
-/// steps. Everything up to the last completed tool call is durable (results
-/// persist before the completion broadcasts), so the replay keeps only the
-/// in-flight step — the frames after the last tool_completed. Before the
-/// turn's first tool completes that is the whole frame list: the reload has
-/// none of the turn's text yet.
-export function replayFrom(frames: StreamFrame[]): StreamFrame[] {
-  for (let i = frames.length - 1; i >= 0; i--) {
-    if (frames[i].type === "tool_completed") return frames.slice(i + 1);
-  }
-  return frames;
-}
-
-/// ApprovalResolved removes the matching card — a decided approval is not
-/// conversation content (no-op when it is absent, e.g. the stream resolved
-/// before we rendered the request).
-export function resolveApproval(
-  blocks: Block[],
-  callId: string,
-  _approved: boolean,
-  _reason?: string,
-): Block[] {
-  return blocks.filter((x) => !(x.kind === "approval" && x.approval?.callId === callId));
-}
-
-/// Thinking deltas accumulate into the trailing reasoning block. A seed
-/// frame carries the FULL in-flight reasoning buffer (spec B.5) right after
-/// the durable reload — the in-flight step has no block yet, so the seed
-/// starts one; later deltas append to the trailing reasoning block.
-function upsertThinking(
-  blocks: Block[],
-  content: string,
-  seed: boolean,
-  seedKey?: string,
-): Block[] {
-  const last = blocks[blocks.length - 1];
-  // A stable key keeps the Frame instance (and its open/collapsed state)
-  // alive across views: seed views carry the full buffer, live views
-  // append — either way the trailing reasoning block persists. The seed
-  // key must be caller-chosen and deterministic: the state feed rebuilds
-  // blocks from events every publish (~100ms while thinking streams), and
-  // a per-call liveKey() would remount the frame each time, snapping an
-  // expanded block shut mid-click.
-  if (last?.kind === "reasoning") {
-    const text = seed ? content : last.reasoningText + content;
-    return [...blocks.slice(0, -1), { ...last, reasoningText: text }];
-  }
-  return [
-    ...blocks,
-    { kind: "reasoning", text: "", reasoningText: content, key: seedKey ?? liveKey() },
-  ];
 }
 
 /// Client-side tools need the desktop runtime (local files, shell); in a plain
@@ -1711,15 +1380,10 @@ export default function WebChat({
   // Manual /compact in flight: the optimistic "Compacting thread…" line at
   // the end of the feed until the durable compaction event lands (or the
   // busy flag clears — a failed compaction appends nothing to the log).
-  const [compacting, setCompacting] = useState<string | null>(null);
-  const compactingRef = useRef<string | null>(null);
-  compactingRef.current = compacting;
-  // Compaction block keys present when /compact was sent: a sync that adds
-  // a new one means the compaction landed. sawBusy tracks the server's
-  // generating flag — busy→false while pending means the compaction exited
-  // without appending an event.
-  const compactKeysRef = useRef<string[]>([]);
-  const sawCompactBusyRef = useRef(false);
+  // Data the reducer returns (its armed target vs the open chat), not a
+  // chatId comparison here — a null-vs-null comparison once held and the
+  // line flashed on every first send.
+  const [compacting, setCompacting] = useState(false);
   const [prompt, setPrompt] = useState("");
   // ---- skill mentions: / opens the autocomplete (skills design §3) ----
   const [skills, setSkills] = useState<ComposerSkill[] | null>(null);
@@ -1797,6 +1461,9 @@ export default function WebChat({
     ]);
   };
   const [blocks, setBlocks] = useState<Block[]>([]);
+  // The thread reducer: per-chat views (blocks + watermark + pending send +
+  // compaction keys) advanced incrementally by the transitions below.
+  const reducerRef = useRef<ThreadReducer>(createThreadReducer());
   const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
   // Per-chat approval mode (the composer's selector): "default" = the
   // account-level policy from Settings applies. Loaded on chat open,
@@ -1848,13 +1515,6 @@ export default function WebChat({
       toast.error("Could not save approval mode");
     });
   };
-  // Per-chat rendered-block cache: reopening a thread shows its last
-  // rendered content immediately while the fresh thread rows load in place,
-  // so switching chats never flashes a skeleton over known content.
-  const threadCacheRef = useRef<Map<string, Block[]>>(new Map());
-  const blocksRef = useRef(blocks);
-  blocksRef.current = blocks;
-  const pendingSendRef = useRef<Map<string, PendingSend>>(new Map());
   const [busy, setBusy] = useState(false);
   // Latest busy/attaching/threadLoading values for stable-ref consumers (the
   // deploy-freshness poll below must not read stale closure state).
@@ -2045,12 +1705,13 @@ export default function WebChat({
   openChatIdRef.current = chatId;
   const socketRef = useRef<{ resync: () => void; stop: () => void } | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
-  const lastSeqRef = useRef(new Map<string, number>());
 
   const applyHistory = (state: ThreadState) => {
     const cid = state.chat_id;
-    if (state.seq <= (lastSeqRef.current.get(cid) ?? -1)) return;
-    lastSeqRef.current.set(cid, state.seq);
+    // The reducer owns the watermark and the view: a sequenced state applies
+    // only its new events (a stale one changes nothing anywhere).
+    const applied = reducerRef.current.applyState(state);
+    if (applied.stale) return;
     setChatStatus(prev => ({ ...prev, [cid]: {
       generating: state.generating,
       unread: cid === openChatIdRef.current ? false :
@@ -2073,29 +1734,11 @@ export default function WebChat({
     );
     if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
-    const events = state.events;
     setBusy(state.generating);
     setAttaching(false);
-    const pending = pendingSendRef.current.get(cid) ?? null;
-    const rendered = reconcilePendingSend(events, threadStateBlocks(state), pending);
-    if (pending && !rendered.some((block) => block.key === pending.key)) {
-      pendingSendRef.current.delete(cid);
-    }
-    threadCacheRef.current.set(cid, rendered);
     setCtx(null);
-    setBlocks(rendered);
-    // Pending /compact reconciliation: a newly appeared compaction event is
-    // the success signal; the server's busy flag dropping back to false
-    // without one means the compaction failed (nothing was appended).
-    if (compactingRef.current === cid) {
-      if (rendered.some((b) => b.kind === "compaction" && !compactKeysRef.current.includes(b.key))) {
-        setCompacting(null);
-      } else if (state.generating) {
-        sawCompactBusyRef.current = true;
-      } else if (sawCompactBusyRef.current) {
-        setCompacting(null);
-      }
-    }
+    setBlocks(applied.blocks);
+    setCompacting(applied.compacting);
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
       void markChatRead(cid);
       setChatStatus((prev) =>
@@ -2114,29 +1757,26 @@ export default function WebChat({
   const prevLoadedChatRef = useRef<string | null>(chatId);
   useEffect(() => {
     setPickedProject(null);
-    const prev = prevLoadedChatRef.current;
     prevLoadedChatRef.current = chatId;
-    if (prev !== null && prev !== chatId && blocksRef.current.length > 0) {
-      if (threadCacheRef.current.size >= 20) {
-        const oldest = threadCacheRef.current.keys().next().value;
-        if (oldest !== undefined) threadCacheRef.current.delete(oldest);
-      }
-      threadCacheRef.current.set(prev, blocksRef.current);
-    }
     loadSeq.current++;
     setBusy(false);
     stick.current = true;
     if (!chatId) {
-      setBlocks([]);
+      const opened = reducerRef.current.open(null);
+      setBlocks(opened.blocks);
       setCtx(null);
       setThreadLoading(false);
     } else if (skipLoadRef.current === chatId) {
-      // Keep the optimistic first-send block, but still reconcile the new chat.
+      // Keep the optimistic first-send block: the created chat adopts the
+      // scratch view; the socket still reconciles the new chat.
       skipLoadRef.current = null;
+      setBlocks(reducerRef.current.adopt(chatId).blocks);
     } else {
-      const cached = threadCacheRef.current.get(chatId) ?? null;
-      setThreadLoading(cached === null);
-      setBlocks(cached ?? []);
+      // The reducer's per-chat cache: a switch-back renders its last content
+      // immediately, so switching never flashes a skeleton over known blocks.
+      const opened = reducerRef.current.open(chatId);
+      setThreadLoading(!opened.restored);
+      setBlocks(opened.blocks);
       setCtx(null);
     }
     socketRef.current?.resync();
@@ -2197,7 +1837,8 @@ export default function WebChat({
     const connection = startSocket({
       onConnect: () => {
         syncingChatsRef.current.clear();
-        lastSeqRef.current.clear();
+        // The reconnect sync's state re-derives each open view in full.
+        reducerRef.current.invalidate();
         setAttaching(false);
         setBusy(false);
       },
@@ -2268,15 +1909,11 @@ export default function WebChat({
         return;
       }
       setPrompt("");
-      compactKeysRef.current = blocksRef.current
-        .filter((b) => b.kind === "compaction")
-        .map((b) => b.key);
-      sawCompactBusyRef.current = false;
-      setCompacting(chatId);
+      setCompacting(reducerRef.current.setCompacting(chatId).compacting);
       try {
         await compactChat(chatId);
       } catch (e) {
-        setCompacting(null);
+        setCompacting(reducerRef.current.setCompacting(null).compacting);
         toast.error(e instanceof Error ? e.message : String(e));
       }
       return;
@@ -2294,23 +1931,22 @@ export default function WebChat({
     // body and override a synchronous focus().
     requestAnimationFrame(() => ta.current?.focus());
     const sentKey = crypto.randomUUID();
-    setBlocks((b) => [
-      ...b,
-      {
-        kind: "user",
-        text,
-        pending: true,
-        key: sentKey,
-        attachments: pendingRef.current.map((a) => ({
-          id: `pending-${a.id}`,
-          filename: a.filename,
-          content_type: a.content_type,
-          size_bytes: a.size_bytes,
-          modality: a.modality,
-          previewUrl: a.previewUrl,
-        })),
-      },
-    ]);
+    const sentAttachments = pendingRef.current.map((a) => ({
+      id: `pending-${a.id}`,
+      filename: a.filename,
+      content_type: a.content_type,
+      size_bytes: a.size_bytes,
+      modality: a.modality,
+      previewUrl: a.previewUrl,
+    }));
+    // Optimistic: the block rides the current view; a first send's marker
+    // binds to the chat once createChat returns (bindPending below). The
+    // durable socket echo settles it — submission is not persistence.
+    setBlocks(
+      reducerRef.current
+        .optimisticSend({ chatId, text, key: sentKey, sentAt, attachments: sentAttachments })
+        .blocks,
+    );
     let cid = chatId;
     if (!cid) {
       cid = await createChat(text.slice(0, 48), pickedProjectRef.current?.id ?? null);
@@ -2332,25 +1968,12 @@ export default function WebChat({
     }
     if (!cid) {
       if (loadSeq.current === mySeq) {
-        setBlocks((b) => [...b, { kind: "error", text: "chat create failed", key: liveKey() }]);
+        setBlocks(reducerRef.current.appendError("chat create failed").blocks);
         setBusy(false);
       }
       return;
     }
-    pendingSendRef.current.set(cid, {
-      chatId: cid,
-      text,
-      key: sentKey,
-      sentAt,
-      attachments: pendingRef.current.map((a) => ({
-        id: `pending-${a.id}`,
-        filename: a.filename,
-        content_type: a.content_type,
-        size_bytes: a.size_bytes,
-        modality: a.modality,
-        previewUrl: a.previewUrl,
-      })),
-    });
+    reducerRef.current.bindPending(cid, sentKey);
     // Optimistic sidebar spinner: the server's generating flag lands via
     // the chat-status channel within a second; this makes it instant.
     setChatStatus((prev) => ({ ...prev, [cid]: { ...(prev[cid] ?? { unread: false }), generating: true } }));
@@ -2364,42 +1987,17 @@ export default function WebChat({
         try {
           const meta = await uploadAttachment(cid, a.file);
           attachmentIds.push(meta.id);
-          setBlocks((b) =>
-            b.map((bl) =>
-              bl.key === sentKey && bl.kind === "user"
-                ? {
-                    ...bl,
-                    attachments: bl.attachments?.map((att) =>
-                      att.id === `pending-${a.id}`
-                        ? { ...att, id: meta.id, previewUrl: undefined }
-                        : att,
-                    ),
-                  }
-                : bl,
-            ),
-          );
+          setBlocks(reducerRef.current.settleAttachment(sentKey, `pending-${a.id}`, meta.id).blocks);
         } catch (e) {
           if (loadSeq.current === mySeq) {
-            setBlocks((b) =>
-              b.map((bl) =>
-                bl.key === sentKey && bl.kind === "user"
-                  ? {
-                      ...bl,
-                      attachments: bl.attachments?.map((att) =>
-                        att.id === `pending-${a.id}` ? { ...att, previewUrl: undefined } : att,
-                      ),
-                    }
-                  : bl,
-              ),
+            setBlocks(reducerRef.current.settleAttachment(sentKey, `pending-${a.id}`).blocks);
+            setBlocks(
+              reducerRef.current
+                .appendError(
+                  `attachment upload failed (${a.filename}): ${e instanceof Error ? e.message : String(e)}`,
+                )
+                .blocks,
             );
-            setBlocks((b) => [
-              ...b,
-              {
-                kind: "error",
-                key: liveKey(),
-                text: `attachment upload failed (${a.filename}): ${e instanceof Error ? e.message : String(e)}`,
-              },
-            ]);
           }
         }
       }
@@ -2450,16 +2048,13 @@ export default function WebChat({
       // when a state sync observes that the server is no longer generating.
       keepBusyThroughFinally = true;
     } catch (e) {
-      if (pendingSendRef.current.get(cid)?.key === sentKey) pendingSendRef.current.delete(cid);
-      threadCacheRef.current.set(
-        cid,
-        (threadCacheRef.current.get(cid) ?? []).filter((block) => block.key !== sentKey),
-      );
+      // The optimistic block goes, an error block takes its place, and the
+      // pending marker is released (in the chat's own view — a switch keeps
+      // the outcome there).
+      const failed = reducerRef.current
+        .failSend(cid, sentKey, e instanceof Error ? e.message : String(e));
       if (loadSeq.current === mySeq) {
-        setBlocks((b) => [
-          ...b.filter((block) => block.key !== sentKey),
-          { kind: "error", text: e instanceof Error ? e.message : String(e), key: liveKey() },
-        ]);
+        setBlocks(failed.blocks);
         if (mode === "normal") setBusy(false);
       }
     } finally {
@@ -2716,11 +2311,10 @@ export default function WebChat({
                 ),
               )}
               {/* in-progress /compact line: replaced by the durable
-                  "Context compacted" card when the event lands. The explicit
-                  non-null check matters: with chatId still null (the chat is
-                  being created by the first send) `null === null` would hold
-                  and the line would flash on every initial message. */}
-              {compacting !== null && compacting === chatId && (
+                  "Context compacted" card when the event lands. The reducer
+                  computes the guard (its armed target vs the open chat) —
+                  with chatId still null during a first send it never holds. */}
+              {compacting && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-3.5 animate-spin" />
                   <span>Compacting thread…</span>
