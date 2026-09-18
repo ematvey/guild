@@ -2535,8 +2535,11 @@ export default function WebChat({
                 ),
               )}
               {/* in-progress /compact line: replaced by the durable
-                  "Context compacted" card when the event lands */}
-              {compacting === chatId && (
+                  "Context compacted" card when the event lands. The explicit
+                  non-null check matters: with chatId still null (the chat is
+                  being created by the first send) `null === null` would hold
+                  and the line would flash on every initial message. */}
+              {compacting !== null && compacting === chatId && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-3.5 animate-spin" />
                   <span>Compacting thread…</span>
