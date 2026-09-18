@@ -12,9 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::http::error::ApiError;
-use crate::http::gateway::{
-    clear_pending_tool, enforce_quota, ensure_generation, note_pending_tool,
-};
+use crate::http::gateway::{clear_pending_tool, enforce_quota, note_pending_tool};
 use crate::integrations;
 use crate::state::AppState;
 use crate::worker::exec_policy_gate;
@@ -345,7 +343,7 @@ fn api_terminal(e: ApiError) -> HandlerError {
 /// turn never runs, so the chat's generation lock must be released here or
 /// the chat stays "generation_in_progress" until a restart.
 fn api_terminal_free_chat(state: &AppState, chat_id: Uuid, e: ApiError) -> HandlerError {
-    state.generations.lock().unwrap().remove(&chat_id);
+    state.generations.remove(chat_id);
     api_terminal(e)
 }
 
@@ -1538,7 +1536,7 @@ impl ChatRunner {
         let queued_flush = req.user_message.is_empty() && req.attachment_ids.is_empty();
         if queued_flush && !has_queued_user_turn(&prior_events) {
             clear_chatgen_kv!(ctx, state, req.chat_id);
-            state.generations.lock().unwrap().remove(&req.chat_id);
+            state.generations.remove(req.chat_id);
             set_generating_step!(ctx, state, req, false);
             return Ok(());
         }
@@ -1777,17 +1775,14 @@ impl ChatRunner {
             );
         }
 
-        let (tx, text_buf, thinking_buf) = ensure_generation(&state, req.chat_id);
+        let generation = state.generations.attach(req.chat_id);
+        let tx = generation.tx;
+        let text_buf = generation.text;
+        let thinking_buf = generation.thinking;
         // Stop requests land on this flag (the stop endpoint and steered
         // sends); every cancel decision below reads it inside a journaled
         // step, so the turn's shape replays deterministically.
-        let cancel = state
-            .generations
-            .lock()
-            .unwrap()
-            .get(&req.chat_id)
-            .map(|g| g.cancel.clone())
-            .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let cancel = generation.cancel;
 
         // Journaled: the chat is generating from here until the turn exits
         // (final answer, uniform failure, or step limit — each clears it).
@@ -1925,7 +1920,7 @@ impl ChatRunner {
                             // Remove the broadcast entry or the chat keeps a
                             // zombie generation: attach streams would hang
                             // forever with the caret blinking on a dead thread.
-                            state.generations.lock().unwrap().remove(&chat_id);
+                            state.generations.remove(chat_id);
                             HandlerError::from(TerminalError::new(format!("provider error: {e}")))
                         })?;
                         // The model call is about to stream: only now is
@@ -2020,7 +2015,7 @@ impl ChatRunner {
                                         message: e.to_string(),
                                     });
                                     // same zombie-generation cleanup as above
-                                    state.generations.lock().unwrap().remove(&chat_id);
+                                    state.generations.remove(chat_id);
                                     return Err(TerminalError::new(format!("provider error: {e}"))
                                         .into());
                                 }
@@ -2355,7 +2350,7 @@ impl ChatRunner {
                         .await;
                     }
                 }
-                state.generations.lock().unwrap().remove(&req.chat_id);
+                state.generations.remove(req.chat_id);
                 if let Ok(store) = state.store().await {
                     let _ = store
                         .kv()
@@ -2425,7 +2420,7 @@ impl ChatRunner {
         // Common exit: free the chat first — a send arriving from here on
         // takes the normal start path, while anything committed before the
         // queued-flush check below is picked up by this turn's epilogue.
-        state.generations.lock().unwrap().remove(&req.chat_id);
+        state.generations.remove(req.chat_id);
         clear_chatgen_kv!(ctx, state, req.chat_id);
 
         // Queued-turn flush: the last turn-bearing event is a user message
@@ -2610,7 +2605,7 @@ impl ChatRunner {
 
         // (a) A generation in flight must finish first — compacting a
         // half-written thread would summarize a turn in progress.
-        if state.generations.lock().unwrap().contains_key(&req.chat_id) {
+        if state.generations.is_generating(req.chat_id) {
             return Err(TerminalError::new("cannot compact while a generation is running").into());
         }
 
