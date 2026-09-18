@@ -5,10 +5,12 @@
 //! `agent.policy.set`, `agent.policy.get`. Streaming arrives as events.
 
 use crate::agent_session::{AgentRun, PendingApprovals};
+use crate::artifacts::{registry_hooks, spawn_thread_sync_prefetch};
 use crate::cloud::{collect_turn, CloudClient, CloudError};
 use crate::session_store::{save, StoredSession};
 use anyhow::Context as _;
 use guild_core::agent::policy::ApprovalPolicy;
+use guild_core::tools::artifacts::ArtifactIndex;
 use guild_core::tools::{Approval, ToolRegistry};
 use protocol::api::Message;
 use protocol::rpc::{Event, Request, Response, RpcError, PROTOCOL_VERSION};
@@ -50,6 +52,9 @@ pub struct Shared {
     /// Agent runs owned by the daemon (outlive any single client).
     /// tokio Mutex because we hold the guard across `.await` while draining.
     pub agents: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
+    /// Path→artifact-id index shared by every run of this engine process
+    /// (tool artifacts: touch-time lookups hit what prefetch learned).
+    pub artifacts: Arc<ArtifactIndex>,
     /// Set true by `daemon.shutdown`; the daemon's accept loop watches it.
     pub shutdown: Arc<tokio::sync::watch::Sender<bool>>,
 }
@@ -62,6 +67,7 @@ impl Shared {
             session: Arc::new(Mutex::new(session)),
             events,
             agents: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
+            artifacts: Arc::new(ArtifactIndex::new()),
             shutdown: Arc::new(shutdown),
         }
     }
@@ -370,6 +376,13 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
                         .cloned()
                         .unwrap_or(serde_json::json!({}));
                     let registry = guild_core::tools::ToolRegistry::builtins();
+                    // Artifact touch: logged-in sessions materialize spilled
+                    // tool-result files before the tool runs.
+                    let registry = match shared_run.session.lock().unwrap().cloud.clone() {
+                        Some(cloud) => registry
+                            .with_artifacts(registry_hooks(cloud, shared_run.artifacts.clone())),
+                        None => registry,
+                    };
                     let tool = registry
                         .get(&name)
                         .with_context(|| format!("unknown tool {name}"))?;
@@ -715,11 +728,15 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         .unwrap(),
     );
 
+    // Rebuild the artifact path→id index from the thread log and prefetch
+    // every artifact missing on disk, in the background.
+    spawn_thread_sync_prefetch(cloud.clone(), shared.artifacts.clone(), project_dir.clone(), chat_id);
+
     // run the agent loop; events broadcast to every connected client
     let run = AgentRun {
         cloud: cloud.clone(),
         chat_id,
-        project_dir,
+        project_dir: project_dir.clone(),
         model,
         system: None, // the system prompt stays server-owned; skills ride skills_index
         skills_index,
@@ -727,8 +744,15 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         policy,
         events: shared.events.clone(),
         pending,
+        artifacts: Some(crate::agent_session::TurnArtifacts {
+            cloud: cloud.clone(),
+            workdir: project_dir,
+            index: shared.artifacts.clone(),
+        }),
     };
-    let updated = match run.spawn(ToolRegistry::builtins_with_read_roots(skill_roots)).await {
+    let registry = ToolRegistry::builtins_with_read_roots(skill_roots)
+        .with_artifacts(registry_hooks(cloud, shared.artifacts.clone()));
+    let updated = match run.spawn(registry).await {
         Ok(v) => Some(v),
         // A panicked or cancelled run must not wipe the session history
         // (the join default would assign an empty vec); keep what we had.
