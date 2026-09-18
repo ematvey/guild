@@ -10,6 +10,13 @@
 
 use crate::http::internal::restate_send_one_way;
 use crate::state::{AppState, PendingTool};
+use crate::worker::exec_policy_gate;
+use crate::worker::restate::{
+    api_err, approval_gate, state_key, ChatRunnerClient, ToolResultPayload, ToolResultReq,
+};
+use guild_core::tools::Approval;
+use protocol::api::{StreamEvent, ToolCall, ToolExecutor};
+use restate_sdk::prelude::*;
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -283,6 +290,380 @@ pub(crate) async fn reconcile_machine_tools(state: &AppState, machine: &str, con
 /// Removes a suspended client tool call (completed or timed out).
 pub(crate) fn clear_pending_tool(state: &AppState, chat_id: Uuid, call_id: &str) {
     state.generations.clear_pending_tool(chat_id, call_id);
+}
+
+
+/// Which executor runs the call — the taxonomy the spec promised (2026-09-18
+/// unification §2.1), now a type. Adding an executor is a dispatch-shape
+/// change here, never a loop change.
+pub(crate) enum Executor {
+    /// The chat's bound desktop machine, via the machine WS.
+    Desktop {
+        machine_id: String,
+        machine_label: String,
+        /// Workspace folder the tool runs in (from the chat's project).
+        workdir: Option<String>,
+    },
+    /// The per-chat server sandbox: the same gates as client tools, no hub
+    /// round trip.
+    Sandbox,
+    /// The server itself runs the tool in the given workspace dir (the
+    /// batch backend — trusted workspace, pre-approved by contract).
+    ServerLocal { dir: std::path::PathBuf },
+}
+
+/// The per-chat sandbox dir (phase 5b): private to the chat, under the
+/// server's data dir.
+pub(crate) fn sandbox_dir(state: &AppState, chat_id: Uuid) -> std::path::PathBuf {
+    std::path::Path::new(&state.config.data_dir)
+        .join("sandbox")
+        .join(chat_id.to_string())
+}
+
+/// Worker port of the funnel: everything between the resolved executor and
+/// the journaled resolution — exec-policy gate, approval gate, then either
+/// the awakeable + KV dispatch claim + watchers + durable timeout (machine
+/// executor) or the journaled inline run (server-side executors). Returns
+/// the payload the caller persists on the tool_result event.
+pub(crate) async fn suspend(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    tx: &tokio::sync::broadcast::Sender<StreamEvent>,
+    org_id: Uuid,
+    model: &str,
+    chat_id: Uuid,
+    call: &ToolCall,
+    executor: Executor,
+) -> HandlerResult<ToolResultPayload> {
+    match executor {
+        Executor::ServerLocal { dir } => run_server_tool(ctx, state, tx, call, dir).await,
+        Executor::Sandbox => {
+            if let Some(denial) =
+                exec_and_approval_gate(ctx, state, tx, org_id, model, chat_id, call).await?
+            {
+                return Ok(denial);
+            }
+            run_server_tool(ctx, state, tx, call, sandbox_dir(state, chat_id)).await
+        }
+        Executor::Desktop {
+            machine_id,
+            machine_label,
+            workdir,
+        } => {
+            // ---- Static exec policy (codex model): Starlark prefix rules
+            // decide before the interactive gate. An `allow` rule runs the
+            // command with no gate at all; a `forbidden` rule is a hard deny
+            // whose text is the rule's justification (the model recovers by
+            // trying a materially different command, never by escalating);
+            // `prompt` rules and unmatched commands fall through to the
+            // chat's approval flow below. Pure function of the compiled-in
+            // rules and the command string — replay-stable.
+            if let Some(denial) =
+                exec_and_approval_gate(ctx, state, tx, org_id, model, chat_id, call).await?
+            {
+                return Ok(denial);
+            }
+
+            // Journaled awakeable: stable id across replays.
+            let (awakeable_id, promise) = ctx.awakeable::<Json<ToolResultPayload>>();
+            ctx.set(&state_key(&call.id), awakeable_id.clone());
+            // Journaled: notify attached clients that this call must run
+            // client-side.
+            let args_json =
+                serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
+            let done = note_pending_tool(
+                state,
+                chat_id,
+                &call.id,
+                &call.name,
+                &args_json,
+                Some(&machine_id),
+                workdir.as_deref(),
+            );
+            let tx2 = tx.clone();
+            let call_id = call.id.clone();
+            let name = call.name.clone();
+            let args2 = args_json.clone();
+            let dispatch_state = state.clone();
+            let dispatch_id = awakeable_id.clone();
+            let dispatched_connection = ctx
+                .run(move || {
+                    let state = dispatch_state.clone();
+                    let dispatch_id = dispatch_id.clone();
+                    let tx = tx2.clone();
+                    let call_id = call_id.clone();
+                    let name = name.clone();
+                    let args = args2.clone();
+                    async move {
+                        let connection = dispatch_pending_tool(
+                            &state,
+                            chat_id,
+                            &call_id,
+                            &dispatch_id,
+                        )
+                        .await
+                        .map_err(api_err)?;
+                        let _ = tx.send(StreamEvent::ToolStarted {
+                            call_id,
+                            name,
+                            arguments: args,
+                            executor: ToolExecutor::Client,
+                            kind: None,
+                        });
+                        Ok(Json(connection))
+                    }
+                })
+                .await?
+                .into_inner();
+            restore_dispatch_connection(state, chat_id, &call.id, dispatched_connection);
+
+            // Termination detection: if the bound machine disappears
+            // (executor connection gone, app-lifetime — not per-thread
+            // streams), resolve the tool with an error after a grace window
+            // instead of dead-airing for the full timeout. Spawned outside
+            // the journaled sections on purpose: a worker restart replays
+            // this handler and re-spawns the watcher.
+            spawn_machine_watcher(
+                state,
+                chat_id,
+                call.id.clone(),
+                call.name.clone(),
+                machine_id,
+                machine_label,
+                done.clone(),
+            );
+            // Stop responsiveness: a stop while the tool is suspended
+            // resolves it immediately (same durable funnel), so the turn
+            // ends at the next journaled cancel check instead of waiting out
+            // the executor.
+            spawn_stop_watcher(state, chat_id, call.id.clone(), done);
+            // Durable timeout: schedule a journaled delayed completion
+            // instead of racing futures — a dropped ctx.sleep blocks replay
+            // until the timer fires, while send_after lives in Restate's
+            // timer service and never gates this workflow's journal. The
+            // delayed complete_tool targets the shared handler, so it runs
+            // while `generate` is suspended; when the client result arrived
+            // first, complete_tool is a no-op (state cleared).
+            ctx.object_client::<ChatRunnerClient>(&chat_id.to_string())
+                .complete_tool(Json(ToolResultReq {
+                    call_id: call.id.clone(),
+                    content: format!(
+                        "client tool {} ({}) timed out after 5 minutes: no client result arrived",
+                        call.name, call.id
+                    ),
+                    is_error: true,
+                    meta: None,
+                    images: Vec::new(),
+                }))
+                .send_after(CLIENT_TOOL_TIMEOUT);
+
+            let payload: ToolResultPayload = match promise.await {
+                Ok(Json(p)) => p,
+                Err(t) => ToolResultPayload {
+                    content: format!("client tool failed: {t}"),
+                    is_error: true,
+                    meta: None,
+                    images: Vec::new(),
+                },
+            };
+
+            ctx.clear(&state_key(&call.id));
+            clear_pending_tool(state, chat_id, &call.id);
+
+            // Journaled: report completion to attached clients.
+            let tx2 = tx.clone();
+            let call_id = call.id.clone();
+            let name = call.name.clone();
+            let content2 = payload.content.clone();
+            let is_error = payload.is_error;
+            ctx.run(move || {
+                let tx = tx2.clone();
+                let call_id = call_id.clone();
+                let name = name.clone();
+                let content = content2.clone();
+                async move {
+                    let _ = tx.send(StreamEvent::ToolCompleted {
+                        call_id,
+                        name,
+                        content,
+                        is_error,
+                    });
+                    Ok(Json(()))
+                }
+            })
+            .await?;
+
+            Ok(payload)
+        }
+    }
+}
+
+/// Static exec-policy gate plus the interactive approval gate behind it: a
+/// `forbidden` rule is a hard deny (its text is the rule's justification);
+/// `prompt` rules and unmatched commands fall through to the chat's
+/// approval flow — the client answers it like any other executor's. A
+/// static allow skips the interactive gate entirely.
+async fn exec_and_approval_gate(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    tx: &tokio::sync::broadcast::Sender<StreamEvent>,
+    org_id: Uuid,
+    model: &str,
+    chat_id: Uuid,
+    call: &ToolCall,
+) -> HandlerResult<Option<ToolResultPayload>> {
+    let static_decision = exec_policy_gate::evaluate_execute(&call.arguments);
+    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) = &static_decision {
+        return Ok(Some(ToolResultPayload {
+            content: format!("denied by exec policy: {reason}"),
+            is_error: true,
+            meta: None,
+            images: Vec::new(),
+        }));
+    }
+    if !matches!(static_decision, exec_policy_gate::ExecPolicyDecision::Allow) {
+        // ---- Approval gate (phase 2, design §C). Journaled
+        // request/decision flow; denial is a normal tool_result payload the
+        // caller persists.
+        if let Some(denial) =
+            approval_gate(ctx, state, tx, org_id, model, chat_id, call, Approval::Ask, false)
+                .await?
+        {
+            return Ok(Some(denial));
+        }
+    }
+    Ok(None)
+}
+
+/// One server-side tool call: the server executes the client-tool in-process
+/// against the given workspace dir — journaled side effect (the result
+/// replays without re-running), then notifies attached clients exactly like
+/// the machine dispatch does. No interactive approvals here (the batch
+/// contract is "trusted workspace, pre-approved"; the sandbox caller runs
+/// its gates before dispatching); `execute` still passes the static
+/// exec-policy gate, and shell tools require the server allowlist flag.
+async fn run_server_tool(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    tx: &tokio::sync::broadcast::Sender<StreamEvent>,
+    call: &ToolCall,
+    dir: std::path::PathBuf,
+) -> HandlerResult<ToolResultPayload> {
+    let args_json = serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".to_string());
+    // Journaled: notify attached clients that this call runs server-side.
+    let tx2 = tx.clone();
+    let call_id = call.id.clone();
+    let name = call.name.clone();
+    let args2 = args_json.clone();
+    ctx.run(move || {
+        let tx = tx2.clone();
+        let call_id = call_id.clone();
+        let name = name.clone();
+        let args = args2.clone();
+        async move {
+            let _ = tx.send(StreamEvent::ToolStarted {
+                call_id,
+                name,
+                arguments: args,
+                executor: ToolExecutor::Server,
+                kind: None,
+            });
+            Ok(Json(()))
+        }
+    })
+    .await?;
+
+    let shell_allowed = state.config.allow_shell_tools;
+    let name = call.name.clone();
+    let args = call.arguments.clone();
+    let payload: ToolResultPayload = ctx
+        .run(move || {
+            let dir = dir.clone();
+            let name = name.clone();
+            let args = args.clone();
+            async move {
+                if name == "execute" && !shell_allowed {
+                    return Ok(Json(ToolResultPayload {
+                        content: "denied: shell tools are disabled on this server".into(),
+                        is_error: true,
+                        meta: None,
+                        images: Vec::new(),
+                    }));
+                }
+                if name == "execute" {
+                    if let exec_policy_gate::ExecPolicyDecision::Deny(reason) =
+                        exec_policy_gate::evaluate_execute(&args)
+                    {
+                        return Ok(Json(ToolResultPayload {
+                            content: format!("denied by exec policy: {reason}"),
+                            is_error: true,
+                            meta: None,
+                            images: Vec::new(),
+                        }));
+                    }
+                }
+                tokio::fs::create_dir_all(&dir)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("workspace dir: {e}"))?;
+                let mut registry = guild_core::tools::ToolRegistry::new();
+                registry.add(Arc::new(guild_core::tools::fs::ReadFile::default()));
+                registry.add(Arc::new(guild_core::tools::fs::WriteFile));
+                registry.add(Arc::new(guild_core::tools::fs::EditFile));
+                if shell_allowed {
+                    registry.add(Arc::new(guild_core::tools::shell::RunCommand));
+                }
+                let payload = match registry.get(&name) {
+                    Some(tool) => match tool.run(std::path::Path::new(&dir), args).await {
+                        Ok(out) => ToolResultPayload {
+                            content: out.output_for_model,
+                            is_error: false,
+                            meta: out.meta,
+                            images: out.images,
+                        },
+                        Err(e) => ToolResultPayload {
+                            content: e.to_string(),
+                            is_error: true,
+                            meta: None,
+                            images: Vec::new(),
+                        },
+                    },
+                    None => ToolResultPayload {
+                        content: format!("unknown tool {name}"),
+                        is_error: true,
+                        meta: None,
+                        images: Vec::new(),
+                    },
+                };
+                Ok(Json(payload))
+            }
+        })
+        .await?
+        .into_inner();
+
+    // Journaled: report completion.
+    let tx2 = tx.clone();
+    let call_id = call.id.clone();
+    let name2 = call.name.clone();
+    let content2 = payload.content.clone();
+    let is_error = payload.is_error;
+    ctx.run(move || {
+        let tx = tx2.clone();
+        let call_id = call_id.clone();
+        let name = name2.clone();
+        let content = content2.clone();
+        async move {
+            let _ = tx.send(StreamEvent::ToolCompleted {
+                call_id,
+                name,
+                content,
+                is_error,
+            });
+            Ok(Json(()))
+        }
+    })
+    .await?;
+
+    Ok(payload)
 }
 
 #[cfg(all(test, feature = "test-support"))]
