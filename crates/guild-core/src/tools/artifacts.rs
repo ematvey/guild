@@ -9,7 +9,7 @@ use super::ToolFailure;
 use async_trait::async_trait;
 use protocol::api::ThreadEvent;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
