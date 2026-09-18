@@ -41,4 +41,20 @@ attachment_ids: Array<string>,
  * system prompt. Additive and server-capped: the client never overrides
  * persona or tool instructions, it may only append this bounded block.
  */
-skills_index?: string, };
+skills_index?: string, 
+/**
+ * Client-discovered AGENTS.md instructions (Codex semantics: the global
+ * config-dir file plus the project chain from the git root down to the
+ * working folder). Additive like skills_index — the server renders it
+ * into the system prompt with the `# AGENTS.md instructions` markers
+ * and a hard cap; the client may not override persona or tools.
+ */
+agents_md?: string, 
+/**
+ * What to do when a turn is already generating in this chat:
+ * `"queue"` (default) commits the message to the thread and the running
+ * turn flushes it at its exit; `"steer"` also interrupts the in-flight
+ * turn (delivered prefix stays in history) so the message runs now.
+ * Ignored when no turn is running.
+ */
+send_mode?: string, };
