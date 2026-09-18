@@ -18,6 +18,7 @@ pub mod releases;
 pub mod routines;
 pub mod teams;
 pub mod thread;
+pub mod tool_artifacts;
 
 #[cfg(feature = "test-support")]
 pub use test_db::TestDb;
@@ -197,6 +198,10 @@ impl Store {
 
     pub fn attachments(&self) -> attachments::AttachmentStore<'_> {
         attachments::AttachmentStore { pool: &self.pool }
+    }
+
+    pub fn tool_artifacts(&self) -> tool_artifacts::ToolArtifactStore<'_> {
+        tool_artifacts::ToolArtifactStore { pool: &self.pool }
     }
 
     pub fn oidc(&self) -> oidc::OidcStore<'_> {
@@ -401,7 +406,7 @@ pub static MIGRATIONS_UPTO_0046: [(&str, &str); 46] = [
     ),
 ];
 
-pub static MIGRATIONS_FROM_0047: [(&str, &str); 5] = [
+pub static MIGRATIONS_FROM_0047: [(&str, &str); 6] = [
     (
         "0047_projects",
         include_str!("../../migrations/0047_projects.sql"),
@@ -421,6 +426,10 @@ pub static MIGRATIONS_FROM_0047: [(&str, &str); 5] = [
     (
         "0051_archive",
         include_str!("../../migrations/0051_archive.sql"),
+    ),
+    (
+        "0052_tool_artifacts",
+        include_str!("../../migrations/0052_tool_artifacts.sql"),
     ),
 ];
 

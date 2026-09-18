@@ -195,10 +195,11 @@ fn registered_with_impersonated_auth_manifest_and_read_tools() {
     let fields = &manifest.settings.as_ref().expect("settings").fields;
     assert!(fields.iter().any(|f| f.name == "admin_email" && f.required));
     let tools = manifest.tools.expect("tools manifest");
-    assert_eq!(tools.classes.len(), 6);
+    assert_eq!(tools.classes.len(), 7);
     for name in [
         "gmail_search",
         "gmail_get_message",
+        "gmail_get_attachment",
         "calendar_list_events",
         "drive_search",
         "directory_users",

@@ -2,6 +2,7 @@ pub mod admin;
 pub mod agents;
 pub mod api_keys;
 pub mod attachments;
+pub mod tool_artifacts;
 pub mod auth;
 pub mod chats;
 pub mod error;
@@ -62,6 +63,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(admin::routes())
         .merge(agents::routes())
         .merge(attachments::routes())
+        .merge(tool_artifacts::routes())
         .merge(events::routes())
         .merge(oidc::routes())
         .merge(api_keys::routes())

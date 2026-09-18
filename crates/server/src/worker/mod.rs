@@ -7,3 +7,4 @@ pub mod mcp_pool;
 pub mod overflow;
 pub mod restate;
 pub mod run;
+pub mod spill;
