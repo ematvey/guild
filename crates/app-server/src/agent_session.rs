@@ -8,6 +8,7 @@ use guild_core::agent::{
     policy::ApprovalPolicy, AgentConfig, AgentHooks, ApprovalDecision, ModelTurn,
 };
 use guild_core::provider::{ProviderChunk, ProviderError};
+use guild_core::tools::artifacts::ArtifactIndex;
 use protocol::api::{Message, StreamEvent, ToolCall, ToolSpec};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -20,6 +21,16 @@ const APPROVAL_WAIT: std::time::Duration = std::time::Duration::from_secs(5 * 60
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+/// Prefetch context for spilled tool results: as server tool results with
+/// artifact pointers arrive on the live stream, their files materialize in
+/// the background under the project workdir.
+#[derive(Clone)]
+pub struct TurnArtifacts {
+    pub cloud: CloudClient,
+    pub workdir: PathBuf,
+    pub index: Arc<ArtifactIndex>,
+}
+
 /// Model turns through the org gateway (the only model path for clients).
 pub struct GatewayTurn {
     pub cloud: CloudClient,
@@ -30,6 +41,9 @@ pub struct GatewayTurn {
     /// Client-discovered skills index; appended to the server-owned system
     /// prompt (additive channel — the client never sends a system prompt).
     pub skills_index: Option<String>,
+    /// Artifact prefetch hooks; absent → the stream is consumed without
+    /// materialization side effects.
+    pub artifacts: Option<TurnArtifacts>,
 }
 
 #[async_trait]
@@ -67,7 +81,11 @@ impl ModelTurn for GatewayTurn {
             })
             .await
             .map_err(map_cloud)?;
-        let stream = events.filter_map(|ev| async move {
+        // Arc + per-item clone: the 'static stream cannot borrow locals.
+        let artifacts = self.artifacts.clone().map(Arc::new);
+        let stream = events.filter_map(move |ev| {
+            let artifacts = artifacts.clone();
+            async move {
             match ev {
                 Ok(StreamEvent::Delta { content }) => {
                     Some(Ok(ProviderChunk::Text(guild_core::provider::ChatChunk {
@@ -101,7 +119,20 @@ impl ModelTurn for GatewayTurn {
                 Ok(StreamEvent::Done { .. }) => None,
                 // Tool lifecycle notifications are for interactive clients.
                 Ok(StreamEvent::ToolStarted { .. }) => None,
-                Ok(StreamEvent::ToolCompleted { .. }) => None,
+                Ok(StreamEvent::ToolCompleted { ref content, .. }) => {
+                    // A server-side tool finished: its pointer text names the
+                    // spilled artifact path. Materialize in the background so
+                    // the model's read finds the file already local.
+                    if let Some(ta) = artifacts.as_deref() {
+                        crate::artifacts::spawn_prefetch_on_content(
+                            ta.cloud.clone(),
+                            ta.index.clone(),
+                            ta.workdir.clone(),
+                            content,
+                        );
+                    }
+                    None
+                }
                 // attach-endpoint only; never on the completion stream
                 Ok(StreamEvent::Idle) => None,
                 // Approval lifecycle frames are for interactive clients.
@@ -111,6 +142,7 @@ impl ModelTurn for GatewayTurn {
                     Some(Err(ProviderError::Upstream(format!("[{code}] {message}"))))
                 }
                 Err(e) => Some(Err(ProviderError::Stream(e.to_string()))),
+            }
             }
         });
         Ok(stream.boxed())
@@ -243,6 +275,8 @@ pub struct AgentRun {
     pub policy: ApprovalPolicy,
     pub events: tokio::sync::broadcast::Sender<Value>,
     pub pending: PendingApprovals,
+    /// Live-stream artifact prefetch hooks (tool artifacts).
+    pub artifacts: Option<TurnArtifacts>,
 }
 
 impl AgentRun {
@@ -260,6 +294,7 @@ impl AgentRun {
                 system: self.system,
                 project_dir: Some(self.project_dir.to_string_lossy().into_owned()),
                 skills_index: self.skills_index,
+                artifacts: self.artifacts,
             };
             let hooks = SessionHooks {
                 events: self.events.clone(),

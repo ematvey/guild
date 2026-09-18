@@ -338,6 +338,7 @@ impl CloudClient {
             meta,
             images: Vec::new(),
             kind: None,
+            artifact_id: None,
         };
         let url = format!(
             "{}/api/v1/chats/{chat_id}/thread",
@@ -350,6 +351,52 @@ impl CloudClient {
             .await?;
         Self::check(resp).await?;
         Ok(())
+    }
+
+    /// Downloads one spilled tool-result artifact's bytes
+    /// (GET /api/v1/tool_artifacts/{id} — the artifact download endpoint,
+    /// symmetric to attachments). Member-auth, org-scoped server-side.
+    pub async fn fetch_tool_artifact(&self, artifact_id: Uuid) -> Result<Vec<u8>, CloudError> {
+        let url = format!(
+            "{}/api/v1/tool_artifacts/{artifact_id}",
+            self.base_url.trim_end_matches('/')
+        );
+        let resp = Self::timed(self.http().get(&url))
+            .bearer_auth(&self.token)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        Ok(bytes.to_vec())
+    }
+
+    /// The chat's thread event log (GET /api/v1/chats/{id}/thread): the
+    /// source the artifact path→id index rebuilds from. Unparseable rows
+    /// are skipped, never fatal.
+    pub async fn thread_events(&self, chat_id: Uuid) -> Result<Vec<ThreadEvent>, CloudError> {
+        let url = format!(
+            "{}/api/v1/chats/{chat_id}/thread",
+            self.base_url.trim_end_matches('/')
+        );
+        let resp = Self::timed(self.http().get(&url))
+            .bearer_auth(&self.token)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        let mut events = Vec::new();
+        for row in body["events"].as_array().map(Vec::as_slice).unwrap_or(&[]) {
+            if let Ok(ev) = serde_json::from_value::<ThreadEvent>(row["event"].clone()) {
+                events.push(ev);
+            }
+        }
+        Ok(events)
     }
 
     /// Public for the registry client (same base/token).
@@ -501,5 +548,90 @@ mod pairing_tests {
         ] {
             assert!(parse_pairing_code(bad).is_err(), "should reject: {bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod artifact_endpoints_tests {
+    use super::*;
+    use protocol::api::ThreadEvent;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    const CHAT: Uuid = uuid::uuid!("00000000-0000-0000-0000-000000000001");
+    const ART: Uuid = uuid::uuid!("00000000-0000-0000-0000-00000000aaaa");
+
+    #[tokio::test]
+    async fn fetch_tool_artifact_downloads_bytes() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(format!(
+                "/api/v1/tool_artifacts/{ART}"
+            )))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(b"xlsx-bytes"))
+            .mount(&server)
+            .await;
+        let cloud = CloudClient {
+            base_url: server.uri(),
+            token: "t".into(),
+        };
+        let bytes = cloud.fetch_tool_artifact(ART).await.unwrap();
+        assert_eq!(bytes, b"xlsx-bytes");
+    }
+
+    #[tokio::test]
+    async fn fetch_tool_artifact_maps_404_to_not_found() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let cloud = CloudClient {
+            base_url: server.uri(),
+            token: "t".into(),
+        };
+        assert!(matches!(
+            cloud.fetch_tool_artifact(ART).await,
+            Err(CloudError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn thread_events_parses_rows_and_skips_malformed() {
+        let card = json!({ "card": {
+            "card": "artifact", "id": ART, "filename": "report.xlsx",
+            "content_type": "application/x", "size_bytes": 8,
+            "path": format!(".guild/artifacts/{CHAT}/report.xlsx"),
+        }});
+        let body = json!({
+            "events": [
+                { "id": Uuid::now_v7(), "chat_id": CHAT, "seq": 1, "created_at": "2026-09-18T00:00:00Z",
+                  "event": { "type": "tool_result", "turn": 1, "step": 1, "call_id": "c1",
+                             "name": "api", "content": "ptr", "artifact_id": ART, "meta": card } },
+                { "id": Uuid::now_v7(), "chat_id": CHAT, "seq": 2, "created_at": "2026-09-18T00:00:01Z",
+                  "event": { "type": "user_message", "content": "hi" } },
+                // malformed row: skipped, not fatal
+                { "id": Uuid::now_v7(), "chat_id": CHAT, "seq": 3, "created_at": "2026-09-18T00:00:02Z",
+                  "event": { "type": "tool_result" } },
+            ],
+            "context": { "tokens": 10, "max": 128000, "model": null },
+        });
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(format!("/api/v1/chats/{CHAT}/thread")))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        let cloud = CloudClient {
+            base_url: server.uri(),
+            token: "t".into(),
+        };
+        let events = cloud.thread_events(CHAT).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            ThreadEvent::ToolResult { artifact_id: Some(id), .. } if *id == ART
+        ));
+        assert!(matches!(events[1], ThreadEvent::UserMessage { .. }));
     }
 }
