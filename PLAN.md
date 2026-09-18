@@ -4,6 +4,18 @@ Updated 2026-09-18 (projects + WSL milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Sidebar rows: hover kebab menu — rename + archive; 0.5.12 server — 2026-09-18
+
+maintainer: a hover-only button on every sidebar row (chat rows in Recents and
+project fold-outs, and project rows) opening Rename/Archive; hover-only via
+opacity (absolutely positioned, zero layout shift); rename edits inline
+(Enter/blur saves, Esc cancels). Archive is a soft-hide per his choice:
+`archived_at` on chats and projects (migration 0051), lists exclude archived
+rows, direct links still resolve, unarchive stays API-only. New
+`PATCH /api/v1/chats/{id}` ({title, archived}); `PUT /api/v1/projects/{id}`
+gained `archived`. Store tests cover rename/archive/filtering + foreign-member
+404. Server rebuilt; frontend lives on :18080.
+
 ## Sidebar truncation fades, count badge removed; 0.5.11 clients — 2026-09-18
 
 maintainer: remove the red project-count badge in the Projects sidebar, and

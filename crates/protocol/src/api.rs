@@ -128,6 +128,22 @@ pub struct UpdateProjectRequest {
     pub folder: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub machine_id: Option<String>,
+    /// Soft-hide: archived projects drop out of every list; `false`
+    /// unarchives. Absent = unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+}
+
+/// PATCH /api/v1/chats/{id} — rename and/or archive. Only present fields
+/// change.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct UpdateChatRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

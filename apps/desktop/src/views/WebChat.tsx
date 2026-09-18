@@ -33,6 +33,9 @@ import {
   SquareTerminal,
   TriangleAlert,
   Wrench,
+  Archive,
+  EllipsisVertical,
+  Pencil,
   type LucideIcon,
 } from "lucide-react";
 
@@ -85,6 +88,8 @@ import {
   listModels,
   listProjects,
   markChatRead,
+  updateChat,
+  updateProject,
   createPairingToken,
   downloadRelease,
   listReleases,
@@ -1880,6 +1885,41 @@ export default function WebChat({
     pickProject({ id: project.id, name: project.name, machine_label: project.machine_label });
   };
 
+  // ---- sidebar row menu: rename + archive (row drop-out = list refresh) ----
+  const renameChat = useCallback(async (id: string, title: string) => {
+    try {
+      await updateChat(id, { title });
+      void refreshChats();
+    } catch {
+      toast.error("Could not rename the chat");
+    }
+  }, [refreshChats]);
+  const archiveChat = useCallback(async (id: string) => {
+    try {
+      await updateChat(id, { archived: true });
+      void refreshChats();
+    } catch {
+      toast.error("Could not archive the chat");
+    }
+  }, [refreshChats]);
+  const renameProject = useCallback(async (id: string, name: string) => {
+    try {
+      await updateProject(id, { name });
+      // The chat list carries the project name on every row — refresh both.
+      await Promise.all([refreshProjects(), refreshChats()]);
+    } catch {
+      toast.error("Could not rename the project");
+    }
+  }, [refreshChats, refreshProjects]);
+  const archiveProject = useCallback(async (id: string) => {
+    try {
+      await updateProject(id, { archived: true });
+      await Promise.all([refreshProjects(), refreshChats()]);
+    } catch {
+      toast.error("Could not archive the project");
+    }
+  }, [refreshChats, refreshProjects]);
+
   // The member socket owns thread reconciliation in both browser and Tauri
   // webview mode. The desktop app process keeps the separate machine socket.
   const openChatIdRef = useRef<string | null>(chatId);
@@ -2329,6 +2369,10 @@ export default function WebChat({
       onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
       onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
       onCollapse={isMobile ? undefined : () => setCollapsed(true)}
+      onRenameChat={(id, title) => void renameChat(id, title)}
+      onArchiveChat={(id) => void archiveChat(id)}
+      onRenameProject={(id, name) => void renameProject(id, name)}
+      onArchiveProject={(id) => void archiveProject(id)}
     />
   );
 
@@ -3141,21 +3185,119 @@ function FadeTitle({ text }: { text: string }) {
   );
 }
 
+/// Inline rename field: Enter or blur commits, Esc cancels; `onDone(null)`
+/// means "no change".
+function RenameInput({
+  initial,
+  onDone,
+}: {
+  initial: string;
+  onDone: (value: string | null) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const settled = useRef(false);
+  const finish = (commit: boolean) => {
+    if (settled.current) return;
+    settled.current = true;
+    const v = ref.current?.value.trim();
+    onDone(commit && v && v !== initial ? v : null);
+  };
+  return (
+    <input
+      ref={ref}
+      autoFocus
+      defaultValue={initial}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => finish(true)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") finish(true);
+        else if (e.key === "Escape") {
+          e.preventDefault();
+          finish(false);
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+      className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-sm outline-none"
+    />
+  );
+}
+
+/// Hover-revealed row menu (Rename / Archive). The trigger is absolutely
+/// positioned and shown via opacity, so the row's layout never shifts;
+/// stays visible while the menu is open.
+function RowActions({
+  onRename,
+  onArchive,
+}: {
+  onRename?: () => void;
+  onArchive?: () => void;
+}) {
+  if (!onRename && !onArchive) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <span
+          role="button"
+          tabIndex={0}
+          title="Row actions"
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-1 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
+        >
+          <EllipsisVertical className="size-4" />
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-32">
+        {onRename && (
+          <DropdownMenuItem onSelect={() => onRename()}>
+            <Pencil className="size-3.5" />
+            Rename
+          </DropdownMenuItem>
+        )}
+        {onArchive && (
+          <DropdownMenuItem onSelect={() => onArchive()}>
+            <Archive className="size-3.5" />
+            Archive
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function ChatListItem({
   title,
   active,
   status,
   onClick,
+  onRename,
+  onArchive,
 }: {
   title: string;
   active: boolean;
   status: { generating: boolean; unread: boolean };
   onClick: () => void;
+  onRename?: (title: string) => void;
+  onArchive?: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return (
+      <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5">
+        <RenameInput
+          initial={title}
+          onDone={(v) => {
+            setEditing(false);
+            if (v) onRename?.(v);
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
+      className={`group/row relative flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -3168,6 +3310,57 @@ function ChatListItem({
       ) : status.unread ? (
         <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
       ) : null}
+      <RowActions
+        onRename={onRename ? () => setEditing(true) : undefined}
+        onArchive={onArchive}
+      />
+    </button>
+  );
+}
+
+/// Project row header: fold-out toggle + shaded title + row menu. While
+/// renaming, the whole header is a plain div hosting the inline input.
+function ProjectHeader({
+  name,
+  folder,
+  open,
+  onToggle,
+  onRename,
+  onArchive,
+}: {
+  name: string;
+  folder: string;
+  open: boolean;
+  onToggle: () => void;
+  onRename: (name: string) => void;
+  onArchive: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return (
+      <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm">
+        <RenameInput
+          initial={name}
+          onDone={(v) => {
+            setEditing(false);
+            if (v) onRename(v);
+          }}
+        />
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="group/row relative flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+      title={folder}
+    >
+      <ChevronRight
+        className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+      />
+      <FadeTitle text={name} />
+      <RowActions onRename={() => setEditing(true)} onArchive={onArchive} />
     </button>
   );
 }
@@ -3187,6 +3380,10 @@ function SidebarContent({
   onOpenSettings,
   onOpenDevice,
   onCollapse,
+  onRenameChat,
+  onArchiveChat,
+  onRenameProject,
+  onArchiveProject,
 }: {
   grouping: ReturnType<typeof sidebarGrouping>;
   projects: Project[] | null;
@@ -3204,6 +3401,11 @@ function SidebarContent({
   onOpenDevice: () => void;
   /** Desktop only: collapse the sidebar from within its own header. */
   onCollapse?: () => void;
+  /** Row-menu actions; the implementations live with the list refresh. */
+  onRenameChat?: (id: string, title: string) => void;
+  onArchiveChat?: (id: string) => void;
+  onRenameProject?: (id: string, name: string) => void;
+  onArchiveProject?: (id: string) => void;
 }) {
   const [projectsOpen, setProjectsOpen] = useState(true);
   /** Which project fold-outs are expanded (per-session, all collapsed). */
@@ -3277,17 +3479,14 @@ function SidebarContent({
               const limit = limits[p.id] ?? PROJECT_PAGE_INITIAL;
               return (
                 <div key={p.id}>
-                  <button
-                    type="button"
-                    onClick={() => setExpanded((e) => ({ ...e, [p.id]: !open }))}
-                    className="flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                    title={p.folder}
-                  >
-                    <ChevronRight
-                      className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
-                    />
-                    <FadeTitle text={p.name} />
-                  </button>
+                  <ProjectHeader
+                    name={p.name}
+                    folder={p.folder}
+                    open={open}
+                    onToggle={() => setExpanded((e) => ({ ...e, [p.id]: !open }))}
+                    onRename={(name) => onRenameProject?.(p.id, name)}
+                    onArchive={() => onArchiveProject?.(p.id)}
+                  />
                   {open && (
                     <div className="ml-4 space-y-0.5 border-l border-border/60 py-0.5 pl-2">
                       {chats.slice(0, limit).map((c) => (
@@ -3297,6 +3496,8 @@ function SidebarContent({
                           active={c.id === chatId}
                           status={{ generating: !!c.generating, unread: !!c.unread }}
                           onClick={() => onOpenChat(c.id)}
+                          onRename={(title) => onRenameChat?.(c.id, title)}
+                          onArchive={() => onArchiveChat?.(c.id)}
                         />
                       ))}
                       {chats.length === 0 && (
@@ -3340,6 +3541,8 @@ function SidebarContent({
               active={c.id === chatId}
               status={{ generating: !!c.generating, unread: !!c.unread }}
               onClick={() => onOpenChat(c.id)}
+              onRename={(title) => onRenameChat?.(c.id, title)}
+              onArchive={() => onArchiveChat?.(c.id)}
             />
           ))}
           {!loadingChats && projects !== null && grouping.visible.length === 0 && (
