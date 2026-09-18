@@ -14,6 +14,11 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
+// The HTTP quota callers (workspace agents, openai-compatible endpoint)
+// keep the gateway path; the implementation lives with the turn
+// derivations in worker::turn.
+pub use crate::worker::turn::enforce_quota;
+
 /// Queued send while a turn generates: commit the user turn to the thread
 /// log right away (the open feed republishes on the commit notification),
 /// so the running turn flushes it at its exit. Document attachments inline
@@ -37,9 +42,9 @@ async fn queue_user_turn(
         .into_iter()
         .map(|r| (r.id, r.filename, r.content_type, r.size_bytes))
         .collect();
-    let media = crate::worker::restate::load_media_map(state, org_id, chat_id, &[], attachment_ids)
+    let media = crate::worker::turn::load_media_map(state, org_id, chat_id, &[], attachment_ids)
         .await?;
-    let (chips, inline) = crate::worker::restate::build_turn_text(
+    let (chips, inline) = crate::worker::turn::build_turn_text(
         attachment_ids,
         &media,
         &rows,
@@ -170,29 +175,6 @@ const PROTOCOLS: [&str; 2] = ["openai", "anthropic"];
 /// Why an orphaned approval call never executed: its turn ended before the
 /// card was answered (server restart, crash, or a turn that died mid-wait).
 const APPROVAL_EXPIRED_REASON: &str = "expired — no turn was waiting for this approval";
-
-/// One-way forward of an approval decision to the ChatRunner's
-/// `complete_approval` awakeable resolver.
-async fn forward_approval_decision(
-    state: &AppState,
-    chat_id: Uuid,
-    call_id: &str,
-    approved: bool,
-    reason: Option<String>,
-) -> Result<String, ApiError> {
-    crate::http::internal::restate_send_one_way(
-        state,
-        "ChatRunner",
-        &format!("{chat_id}/complete_approval"),
-        serde_json::to_value(crate::worker::restate::ApprovalReq {
-            call_id: call_id.to_string(),
-            approved,
-            reason,
-        })
-        .expect("approval request serializes"),
-    )
-    .await
-}
 
 /// Derives the stable slug routes reference from a provider's display name.
 fn provider_slug(name: &str) -> String {
@@ -422,33 +404,6 @@ async fn set_route(
     Ok(Json(serde_json::json!({})))
 }
 
-/// Route quota enforcement (spec §4.5): reject when month-to-date spend for
-/// (org, model) has reached the route's monthly cap.
-pub async fn enforce_quota(
-    state: &AppState,
-    org_id: Uuid,
-    model: &str,
-    route: &crate::store::gateway::RouteRow,
-) -> Result<(), ApiError> {
-    let Some(quota) = route.quota_monthly_usd else {
-        return Ok(());
-    };
-    let spent = state
-        .usage()
-        .await?
-        .month_spend(org_id, model)
-        .await
-        .map_err(|e| ApiError::internal(format!("quota check failed: {e}")))?;
-    if spent >= quota {
-        return Err(ApiError::new(
-            axum::http::StatusCode::TOO_MANY_REQUESTS,
-            "quota_exceeded",
-            format!("monthly quota for this model reached ({spent:.2} >= {quota:.2} USD)"),
-        ));
-    }
-    Ok(())
-}
-
 pub fn provider_err_to_api(e: ProviderError) -> ApiError {
     match e {
         ProviderError::Auth => ApiError::new(
@@ -467,28 +422,6 @@ pub fn provider_err_to_api(e: ProviderError) -> ApiError {
             e.to_string(),
         ),
     }
-}
-
-/// Commits an assistant step and retires its replay buffers as one view change.
-pub(crate) async fn persist_assistant_step(
-    state: &AppState,
-    chat: Uuid,
-    event: &ThreadEvent,
-) -> Result<crate::store::thread::ThreadEventRow, ApiError> {
-    let gen = state.generations.attach(chat);
-    let text = gen.text;
-    let thinking = gen.thinking;
-    let mut text = text.write().await;
-    let mut thinking = thinking.write().await;
-    let row = state
-        .store()
-        .await?
-        .thread()
-        .append_event(chat, event)
-        .await?;
-    text.clear();
-    thinking.clear();
-    Ok(row)
 }
 
 async fn chat(
@@ -791,7 +724,7 @@ async fn approval_decision(
     if state.generations.is_generating(chat_id) {
         // Live turn: the waiting gate journals the decision and broadcasts
         // the resolved frame; the card settles through the stream.
-        forward_approval_decision(&state, chat_id, &call_id, approved, reason).await?;
+        crate::worker::funnel::forward_approval_decision(&state, chat_id, &call_id, approved, reason).await?;
         return Ok(Json(json!({ "ok": true, "settled": false })));
     }
     // Orphaned call: the turn is gone, the decision can never execute.
@@ -810,7 +743,7 @@ async fn approval_decision(
             },
         )
         .await?;
-    let _ = forward_approval_decision(
+    let _ = crate::worker::funnel::forward_approval_decision(
         &state,
         chat_id,
         &call_id,

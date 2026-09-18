@@ -733,7 +733,7 @@ mod tests {
             "blocks":[{"type":"text", "text":"proposal"}], "usage":{}, "model":"test"}),
         )
         .unwrap();
-        crate::http::gateway::persist_assistant_step(&ts.state, chat.id, &event)
+        crate::state::persist_assistant_step(&ts.state, chat.id, &event)
             .await
             .unwrap();
         ts.store()

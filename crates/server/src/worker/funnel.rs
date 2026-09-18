@@ -666,6 +666,32 @@ async fn run_server_tool(
     Ok(payload)
 }
 
+
+/// One-way forward of an approval decision to the ChatRunner's
+/// `complete_approval` awakeable resolver (the resolve side of the approval
+/// gate: user decisions from any client, the auto-deny timer, and the
+/// orphaned-call expiry marker all ride this).
+pub(crate) async fn forward_approval_decision(
+    state: &AppState,
+    chat_id: Uuid,
+    call_id: &str,
+    approved: bool,
+    reason: Option<String>,
+) -> Result<String, crate::http::error::ApiError> {
+    restate_send_one_way(
+        state,
+        "ChatRunner",
+        &format!("{chat_id}/complete_approval"),
+        serde_json::to_value(crate::worker::restate::ApprovalReq {
+            call_id: call_id.to_string(),
+            approved,
+            reason,
+        })
+        .expect("approval request serializes"),
+    )
+    .await
+}
+
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;
