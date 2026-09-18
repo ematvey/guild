@@ -1,6 +1,7 @@
 pub mod agent_session;
 pub mod agent_start;
 pub mod artifacts;
+pub mod auth_state;
 pub mod cli;
 pub mod cloud;
 pub mod daemon;
