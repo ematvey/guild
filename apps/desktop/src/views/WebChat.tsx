@@ -31,6 +31,7 @@ import {
   Square,
   X as XIcon,
   SquareTerminal,
+  FileDown,
   TriangleAlert,
   Wrench,
   Archive,
@@ -69,6 +70,7 @@ import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
 import { chatProjectOf, outgoingProjectId, projectChipLabel, PROJECT_PAGE_INITIAL, PROJECT_PAGE_STEP, sidebarGrouping, type PickedProject } from "./projects/projects";
 import {
   attachmentBlobUrl,
+  toolArtifactBlobUrl,
   rpcCall,
   machineId,
   postApproval,
@@ -251,7 +253,7 @@ interface CompactionBlock {
 /// Widget payload persisted on tool/result events (spec C.2). Loose: the
 /// server owns the shape, unknown fields are ignored by the widgets.
 interface ToolMeta {
-  card?: string;
+  card?: string | ArtifactCard;
   kind?: string;
   sources?: { url: string; title?: string; snippet?: string }[];
   truncated?: boolean;
@@ -264,6 +266,40 @@ interface ToolMeta {
   offset?: number;
   total_lines?: number;
   lang?: string;
+}
+
+/// Download card on a spilled tool_result (the server puts it in
+/// meta.card): filename, size and the artifact id to fetch bytes from.
+/// `path` is the model-facing materialized path — shown for context, not
+/// clickable.
+export interface ArtifactCard {
+  card: "artifact";
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  path: string;
+}
+
+/** Narrows meta.card to a well-formed artifact card; every other card
+ * shape (string card kinds, malformed objects) renders as its old widget.
+ * The discriminator is `card` or `kind` == "artifact" on the card object. */
+export function artifactCardOf(t: { meta?: unknown | null }): ArtifactCard | null {
+  const c = (t.meta as { card?: unknown } | null | undefined)?.card;
+  if (!c || typeof c !== "object") return null;
+  const a = c as Partial<ArtifactCard> & { kind?: unknown };
+  if (a.card !== "artifact" && a.kind !== "artifact") return null;
+  if (typeof a.id !== "string" || !a.id) return null;
+  if (typeof a.filename !== "string" || !a.filename) return null;
+  if (typeof a.size_bytes !== "number" || !(a.size_bytes >= 0)) return null;
+  return {
+    card: "artifact",
+    id: a.id,
+    filename: a.filename,
+    content_type: typeof a.content_type === "string" && a.content_type ? a.content_type : "application/octet-stream",
+    size_bytes: a.size_bytes,
+    path: typeof a.path === "string" ? a.path : "",
+  };
 }
 
 export interface Block {
@@ -899,8 +935,9 @@ function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
 function toolKind(t: ToolBlock): string {
   if (t.kind === "web_search") return "search";
   if (t.kind === "web_browse") return "fetch";
+  if (artifactCardOf(t)) return "artifact";
   if (t.meta?.kind) return t.meta.kind;
-  if (t.meta?.card) return t.meta.card;
+  if (typeof t.meta?.card === "string") return t.meta.card;
   const n = t.name.toLowerCase();
   if (n.includes("search")) return "search";
   if (n.includes("fetch")) return "fetch";
@@ -1030,6 +1067,8 @@ function toolPreview(t: ToolBlock): string | undefined {
     case "read":
     case "diff":
       return m?.path || argOf(t, ["path", "file_path", "file"]);
+    case "artifact":
+      return artifactCardOf(t)?.filename;
     default:
       return m?.title || undefined;
   }
@@ -1071,6 +1110,8 @@ function ToolKindIcon({ kind }: { kind: string }) {
       return <SquareTerminal className={cls} />;
     case "read":
       return <FileText className={cls} />;
+    case "artifact":
+      return <FileDown className={cls} />;
     case "diff":
       return <FileDiff className={cls} />;
     default:
@@ -1180,9 +1221,73 @@ function safeUrl(raw: string | undefined | null): string | null {
   }
 }
 
+/// Download chip for a spilled tool_result, mirroring the user-attachment
+/// chip family: type icon, filename, human size, download button. Bytes
+/// fetch authed from /api/v1/tool_artifacts/{id} and save through the
+/// browser/app download path. Failed fetches re-enable the button for a
+/// retry.
+function ArtifactDownloadCard({ card }: { card: ArtifactCard }) {
+  const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
+  const download = async () => {
+    setState("busy");
+    try {
+      const u = await toolArtifactBlobUrl(card.id);
+      if (!u) throw new Error("artifact fetch failed");
+      const a = document.createElement("a");
+      a.href = u;
+      a.download = card.filename;
+      a.click();
+      URL.revokeObjectURL(u);
+      setState("idle");
+    } catch {
+      setState("failed");
+    }
+  };
+  return (
+    <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-border bg-secondary px-2 py-1">
+      <FileDown className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="max-w-56 truncate font-medium" title={card.filename}>
+        {card.filename}
+      </span>
+      <span className="shrink-0 text-muted-foreground">{fmtBytes(card.size_bytes)}</span>
+      {card.content_type !== "application/octet-stream" && (
+        <span className="hidden shrink-0 text-muted-foreground/70 sm:inline">{card.content_type}</span>
+      )}
+      {card.path && (
+        <span
+          className="hidden w-full truncate font-mono text-[10px] text-muted-foreground/60 sm:block"
+          title={card.path}
+        >
+          {card.path}
+        </span>
+      )}
+      <button
+        type="button"
+        title={state === "failed" ? "Download failed — retry" : "Download"}
+        className="ml-auto flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
+        disabled={state === "busy"}
+        onClick={() => void download()}
+      >
+        {state === "busy" ? (
+          <Loader2 className="size-3 animate-spin" />
+        ) : (
+          <Download className="size-3" />
+        )}
+        {state === "failed" ? "Retry" : "Download"}
+      </button>
+    </div>
+  );
+}
+
 function ToolBody({ t }: { t: ToolBlock }) {
   const m = t.meta;
   const kind = toolKind(t);
+  if (kind === "artifact") {
+    const card = artifactCardOf(t);
+    // The card replaces the raw content — the model-facing pointer text
+    // (path + head excerpt) is not useful to show verbatim.
+    if (card) return <ArtifactDownloadCard card={card} />;
+  }
   if (kind === "search") {
     const sources = m?.sources?.length
       ? m.sources
