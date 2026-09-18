@@ -4,6 +4,21 @@ Updated 2026-09-18 (tool artifacts milestone). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
 
+## Phase 1b landed: agent.start is a gateway shim — 2026-09-18
+
+Loop B1 is dead (7dd203c): the daemon's `agent.start` drives the durable
+gateway workflow and maps StreamEvents → agent.* events
+(`agent_start.rs`); approvals ride the journal via the approvals endpoint
+(agent.approve → HTTP POST). Machine-bound projects are find-or-created
+by the shim; tools dispatch to the daemon's own machine link. Found +
+fixed a real reconnect deadlock in the link's shutdown tail (Close sent,
+sender never dropped → writer.await hung → no reconnect after any
+healthy-socket break; machine "offline" while the daemon looked alive).
+Live E2E: identify → agent.start → tool dispatched → daemon executed →
+result + done. Engine users now have integrations, exec policy,
+durability, journal history. No server changes — ships with the next
+desktop client release.
+
 ## Phase 1a landed: the daemon owns the machine link — 2026-09-18
 
 maintainer approved the unification spec
