@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  artifactCardOf,
   chatRoutePath,
   compareVersions,
   eventsToBlocks,
@@ -177,6 +178,65 @@ describe("eventsToBlocks", () => {
     expect(toolDisplayName("atlassian_jira_search")).toBe("atlassian jira search");
     // no namespace: bare name stands alone
     expect(toolDisplayName("api")).toBe("api");
+  });
+
+  const artifactMeta = {
+    card: {
+      card: "artifact",
+      id: "11111111-1111-1111-1111-111111111111",
+      filename: "report.xlsx",
+      content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      size_bytes: 14821,
+      path: ".guild/artifacts/chat-1/report.xlsx",
+    },
+  } as const;
+
+  it("narrows well-formed artifact cards and rejects other card shapes", () => {
+    const ok = artifactCardOf({ meta: artifactMeta });
+    expect(ok).toEqual({
+      card: "artifact",
+      id: "11111111-1111-1111-1111-111111111111",
+      filename: "report.xlsx",
+      content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      size_bytes: 14821,
+      path: ".guild/artifacts/chat-1/report.xlsx",
+    });
+    // the task wire shape spells the discriminator `card`; `kind` also counts
+    expect(artifactCardOf({ meta: { card: { kind: "artifact", id: "a", filename: "f", size_bytes: 1 } } })).not.toBeNull();
+    // string cards (search/fetch/…) and malformed objects are not artifacts
+    expect(artifactCardOf({ meta: { card: "web" } })).toBeNull();
+    expect(artifactCardOf({ meta: { card: { card: "artifact", filename: "no-id" } } })).toBeNull();
+    expect(artifactCardOf({ meta: { card: { card: "artifact", id: "a", filename: "", size_bytes: -1 } } })).toBeNull();
+    expect(artifactCardOf({})).toBeNull();
+  });
+
+  it("propagates artifact card meta onto the tool block", () => {
+    const blocks = eventsToBlocks([
+      row(1, {
+        type: "assistant_message",
+        turn: 1,
+        step: 1,
+        model: "m",
+        usage,
+        blocks: [{ type: "tool_call", id: "c9", name: "api", arguments: "{}" }],
+      }),
+      row(2, {
+        type: "tool_result",
+        turn: 1,
+        step: 1,
+        call_id: "c9",
+        name: "api",
+        content: "full result at .guild/artifacts/chat-1/report.xlsx",
+        is_error: false,
+        artifact_id: "11111111-1111-1111-1111-111111111111",
+        meta: artifactMeta,
+      } as ThreadEvent),
+    ]);
+    const tool = blocks[0].tool!;
+    expect(tool.meta).toEqual(artifactMeta);
+    const card = artifactCardOf(tool);
+    expect(card?.filename).toBe("report.xlsx");
+    expect(card?.size_bytes).toBe(14821);
   });
 
   it("renders an orphan tool_result instead of dropping it", () => {
