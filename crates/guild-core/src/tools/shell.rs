@@ -27,6 +27,7 @@ const MAX_TIMEOUT_MS: u64 = 300_000;
 /// (magic `MZ`, interpreter `/init`, preserve-argv0 + fix-binary flags).
 /// Proven sufficient on WSL 2.7.x: with this entry present, login-shell
 /// sessions bootstrap again and the MZ failure disappears.
+#[cfg(any(windows, test))]
 const WSL_INTEROP_SPEC: &str = ":WSLInterop:M::MZ::/init:PF";
 
 /// Heal rate limit: at most one interop heal per this interval, so a
