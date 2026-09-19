@@ -280,8 +280,9 @@ pub struct ChatRunPayload {
     /// Human-readable label of the bound machine.
     #[serde(default)]
     pub machine_label: Option<String>,
-    /// The originating desktop app's machine, for auto-binding chats that
-    /// were sent from a desktop without an explicit binding.
+    /// The originating desktop app's machine, audit metadata only ("sent
+    /// from WORKSTATION") — it never influences executor selection: a chat is
+    /// project-bound (its machine) or unbound (sandbox), nothing else.
     #[serde(default)]
     pub origin_machine_id: Option<String>,
     /// The user turn content. Persisted as a `user_message` thread event by
@@ -1949,7 +1950,6 @@ impl ChatRunner {
                             format!("{step}.{idx}"),
                             req.machine_id.clone(),
                             req.machine_label.clone(),
-                            req.origin_machine_id.clone(),
                             workspace.as_ref().map(|w| w.folder.clone()),
                         )
                         .await?
@@ -2927,11 +2927,11 @@ async fn fetch_agents_md_via_machine(
     Ok(Some(payload.content))
 }
 
-/// One machine-tool call: resolve the bound executor machine (fail fast when
-/// unbound/offline), notify attached clients, durably wait for the machine's
-/// result (bounded), report completion. Returns the tool result payload for
-/// the model-facing history and the tool_result event (content, is_error,
-/// meta).
+/// One machine-tool call: resolve the bound executor machine (the chat's
+/// project names it — machine binding is project-derived), notify attached
+/// clients, durably wait for the machine's result (bounded), report
+/// completion. Returns the tool result payload for the model-facing history
+/// and the tool_result event (content, is_error, meta).
 #[allow(clippy::too_many_arguments)]
 async fn client_tool_step(
     ctx: &ObjectContext<'_>,
@@ -2944,41 +2944,25 @@ async fn client_tool_step(
     _seq: String,
     machine_id: Option<String>,
     machine_label: Option<String>,
-    origin_machine_id: Option<String>,
     workdir: Option<String>,
 ) -> HandlerResult<ToolResultPayload> {
     // Resolve the executor machine. Journaled ctx.run snapshots: the result
     // replays deterministically even if the in-memory registry changes
     // between execution and replay (e.g. worker restart).
-    let sandbox_fallback = machine_id.is_none() && origin_machine_id.is_none();
     let bound: Option<(String, String)> = ctx
         .run({
             let state = state.clone();
             move || {
                 let state = state.clone();
                 async move {
-                    if let Some(mid) = machine_id {
-                        let label = machine_label.unwrap_or_else(|| {
-                            state.machine_label(&mid).unwrap_or_else(|| mid.clone())
-                        });
-                        Ok(Json(Some((mid, label))))
-                    } else if let Some(omid) = origin_machine_id {
-                        // Auto-bind chats sent from a desktop to that
-                        // desktop's machine (idempotent persist).
-                        if state.hub.machine_online(&omid) {
-                            let label = state.machine_label(&omid).unwrap_or_else(|| omid.clone());
-                            if let Ok(store) = state.store().await {
-                                let _ = store
-                                    .chats()
-                                    .set_machine(org_id, chat_id, Some(&omid), Some(&label))
-                                    .await;
-                            }
-                            Ok(Json(Some((omid, label))))
-                        } else {
-                            Ok(Json(None))
+                    match machine_id {
+                        Some(mid) => {
+                            let label = machine_label.unwrap_or_else(|| {
+                                state.machine_label(&mid).unwrap_or_else(|| mid.clone())
+                            });
+                            Ok(Json(Some((mid, label))))
                         }
-                    } else {
-                        Ok(Json(None))
+                        None => Ok(Json(None)),
                     }
                 }
             }
@@ -2986,22 +2970,13 @@ async fn client_tool_step(
         .await?
         .into_inner();
     let Some((mid, mlabel)) = bound else {
-        // Phase 5b (spec 2026-09-18 unification): a web chat with no desktop
-        // present — nothing was ever bound, so the tools run on the server in
-        // a per-chat sandbox (same specs, same policy/approval gates, no hub
-        // round trip). A bound-but-offline desktop keeps its explicit
-        // message: the user's workspace is on that machine, not the sandbox.
-        if sandbox_fallback {
-            return sandbox_tool_step(&ctx, state, tx, org_id, model, chat_id, call).await;
-        }
-        return Ok(ToolResultPayload {
-            content:
-                "client tool not executed: this chat is not bound to a machine — bind it in the chat settings, or send the message from the Guild desktop app on the target machine"
-                    .to_string(),
-            is_error: false,
-            meta: None,
-            images: Vec::new(),
-        });
+        // No machine binding (no project): the tools run on the server in a
+        // per-chat sandbox (same specs, same policy/approval gates, no hub
+        // round trip) — a desktop with no project is just a GUI for unbound
+        // chats and never receives its sender's tools. A bound-but-offline
+        // desktop keeps its explicit message below: the user's workspace is
+        // on that machine, not the sandbox.
+        return sandbox_tool_step(&ctx, state, tx, org_id, model, chat_id, call).await;
     };
     // Fail fast when the bound machine is offline (journaled snapshot).
     let online: bool = ctx
