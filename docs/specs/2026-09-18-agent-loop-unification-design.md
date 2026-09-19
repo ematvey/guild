@@ -109,7 +109,7 @@ never runs agent semantics; Rust never talks to the model.**
 
 | Executor | Dispatch path | Notes |
 |---|---|---|
-| `desktop` | machine WS → Tauri host → `ToolRegistry` | today's `client_tool_step`; unchanged |
+| `desktop` | machine WS → Tauri host → `ToolRegistry` | reachable only through a project binding (see §7 amendment) |
 | `sandbox` (future) | direct in-workflow execution against a server-side sandbox | same `ToolSpec`s, same policy/approval gates, no hub round trip; makes web chats fully agentic |
 | `server-local` (today's B2) | in-process `ToolRegistry` on the server disk | keep as headless batch backend, re-scoped (§4.4) |
 
@@ -213,7 +213,39 @@ machine channel at turn start for web chats (cached per project + mtime);
 ## 6. Non-goals
 
 - No protocol redesign: the WS protocol and the additive request fields
-  (`skills_index`, `agents_md`) are already the right seams.
+  (`skills_index`, `agents_md`) are already the right seams. (The
+  2026-09-19 amendment below removes one request field — `machine_id` on
+  chat create; that is a deletion, not a redesign.)
+
+## 7. Amendment — 2026-09-19: machine binding is project-derived
+
+Owner decision (maintainer): the middle state "machine-bound, no project"
+should not exist. A chat is either **project-bound** (the project names the
+machine and the folder; the folder is the tools' workdir) or **fully
+unbound** — there is no third state.
+
+- A chat sent from a desktop with no project stays fully unbound; the
+  desktop acts as just a GUI for unbound chats. Its tool calls run in the
+  `sandbox` executor (server-side per-chat dir) like any web chat — never
+  auto-dispatched to the sending desktop.
+- The desktop-origin auto-bind paths die: create-time `machine_id` on
+  `POST /api/v1/chats` (the field leaves `CreateChatRequest`), the per-chat
+  machine bind/unbind endpoint, and the workflow's origin-machine auto-bind
+  branch. `origin_machine_id` may stay on the payload as audit metadata
+  ("sent from WORKSTATION") with no binding behavior.
+- The sandbox-fallback condition becomes "no project bound" — not "no
+  machine and no origin".
+- UI: the machine pill and the offline banner appear only on
+  project-bound chats. Unbound chats show no machine affordance at all.
+- Existing chats that are machine-bound without a project are migrated to
+  unbound (binding columns cleared); project unlink also clears the
+  machine binding.
+
+Rationale: machine-without-project had no workdir (tools ran wherever the
+daemon happened to sit) and no policy story distinct from the sandbox; the
+GUI-for-unbound-chats reading makes the desktop a view, which is what §2's
+invariant already wanted. Executors remain a taxonomy: a desktop gains
+executor work by being named by a project, never by being the sender.
 - No local-model support in this doc: if offline model turns ever matter,
   that is an executor-side provider, not a reason to resurrect loop B1.
 - No UI changes.
