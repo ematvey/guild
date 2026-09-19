@@ -1,8 +1,29 @@
 # Guild — current state of work
 
-Updated 2026-09-19 (binding-model amendment). Read this before touching
-the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
-in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+Updated 2026-09-19 (PRD/SRS + binding model). Read this before touching
+the codebase; the requirements live in `docs/PRD.md` (product) and
+`docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
+hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Specs folded into PRD + SRS; binding model implemented — 2026-09-19
+
+maintainer: all change-set specs are consolidated into one PRD + SRS set with
+no historical trajectory (git history is the record); `docs/specs/` is
+deleted, lane reports retired. `docs/PRD.md` carries 28 numbered product
+requirements; `docs/SRS.md` carries 55 numbered system contracts verified
+against the code (SRS-10…13 are the binding model). The binding-model
+decision is now code: `CreateChatRequest` lost `machine_id` (serde ignores
+the field for old clients — no breakage), the create-time auto-bind and the
+per-chat machine endpoint are gone, the workflow's sandbox fallback is
+`machine_id.is_none()` (desktop-origin projectless chats sandbox-execute;
+`origin_machine_id` is audit metadata only), migration 0053 clears machine
+bindings on unbound chats, project unlink clears the binding, and the
+desktop pill/offline banner render only on project-bound chats. Two docs
+follow code where old specs lied: project names are not unique (migration
+0050 dropped the constraint), and integration adapters are the unified
+PluginTurn/MCP-pool shape (no ToolAdapter trait exists). Full suite green
+(guild-server 335, protocol 9, guild-app-server 50, desktop 121 + tsc);
+redeployed.
 
 ## Decision: machine binding is project-derived — the "machine-bound, no project" state dies — 2026-09-19
 
