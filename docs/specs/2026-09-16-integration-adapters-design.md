@@ -1,7 +1,9 @@
 # Integration adapters — uniform internal interface, MCP as a wrapped special case
 
 Date: 2026-09-16
-Status: approved design (in discussion), pending implementation plan
+Status: implemented in phases (PLAN.md 2026-09-15 onward: per-tool admin
+curation §5/§6 phases 3–4; MCP wrapped via `worker/mcp_pool.rs`;
+adapters under `crates/server/src/integrations/`)
 Supersedes parts of: `2026-09-12-integration-plugins-design.md` (§ executor
 model), `2026-09-12-milestone-10-unified-plugins.md` (in-code manifests)
 

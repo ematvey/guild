@@ -5,6 +5,10 @@ spec is the contract for milestone 9. Builds on the guild design doc
 (§4.4 registry, §4.6 integrations) and the existing code: compiled-in
 `Integration` trait plugins (searxng, superproxy), Restate routines,
 registry bundles, org API keys.
+> **Partial supersession 2026-09-16:** the executor model and in-code
+> manifests were superseded by `2026-09-16-integration-adapters-design.md`
+> (uniform adapter interface, MCP as a wrapped special case); the secrets,
+> curation, and audit halves below still stand.
 
 ## 1. Problem
 

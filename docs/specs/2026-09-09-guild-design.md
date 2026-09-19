@@ -1,7 +1,16 @@
-# Guild — Design Spec
+# Guild — Design Spec (v1)
 
 Date: 2026-09-09
-Status: draft for review
+Status: historical — the v1 design draft. Kept as the record of the
+original architecture; it does not describe today's system. The current
+architecture contract is the newer spec chain — especially
+`2026-09-18-agent-loop-unification-design.md` (one agent loop, thin desktop
+backend, executor taxonomy) — plus `PLAN.md` for decisions as they landed.
+Known divergences since: history lives in `thread_events` (not a
+`messages` table); the durable Restate workflow replaced the in-process
+agent loop; the machine registry + WS executor channel (2026-09-16)
+replaced the original presence sketch; skills/context assembly moved
+client-side (2026-09-18); machine binding is project-derived (2026-09-19).
 
 ## 1. Overview
 
