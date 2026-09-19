@@ -147,7 +147,8 @@ export function statusFromThreads(chats: ChatSummary[]) {
 }
 
 /** The open chat's remote bound machine when its socket is down — the
- * offline warning banner's subject. Null when unbound, bound to this
+ * offline warning banner's subject. Machine binding is project-derived, so
+ * only project-bound chats can have one. Null when unbound, bound to this
  * machine (desktop executes its own tools), online, or presence unknown. */
 export function offlineMachine(
   chats: ChatSummary[] | null,
@@ -156,7 +157,7 @@ export function offlineMachine(
   localMachineId: string | undefined,
 ): { label: string } | null {
   const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-  if (!row?.machine_id) return null;
+  if (!row?.machine_id || !row.project_id) return null;
   if (isTauri && row.machine_id === localMachineId) return null;
   if (row.machine_online !== false) return null;
   return { label: row.machine_label ?? row.machine_id };
@@ -2471,8 +2472,13 @@ export default function WebChat({
                 </Button>
                 {(() => {
                   const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
+                  // Machine binding is project-derived: only project-bound
+                  // chats show the pill, and on desktop the local machine
+                  // executes its own tools so the pill is noise there.
                   const remoteMachine =
-                    row?.machine_id && (!isTauri || row.machine_id !== machineId());
+                    row?.machine_id &&
+                    row.project_id &&
+                    (!isTauri || row.machine_id !== machineId());
                   return (
                     <>
                       {remoteMachine && row!.machine_id && (
@@ -2675,9 +2681,6 @@ export default function WebChat({
         role={role}
         displayName={displayName}
         avatarUrl={avatarUrl}
-        chatId={chatId}
-        currentMachineId={chats?.find((c) => c.id === chatId)?.machine_id ?? null}
-        onMachineChanged={() => void refreshChats()}
         onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
         onSignOut={onSignOut}
       />

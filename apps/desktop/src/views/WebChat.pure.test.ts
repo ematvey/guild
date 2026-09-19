@@ -418,23 +418,28 @@ describe("authoritative socket state", () => {
 
 describe("offlineMachine (offline bound-machine banner)", () => {
   const base = { id: "chat-1", title: "t", created_at: "x" } as any;
-  const bound = (machine_id: string, machine_online: boolean | undefined, machine_label?: string) =>
-    ({ ...base, machine_id, machine_online, machine_label } as any);
+  const bound = (
+    machine_id: string,
+    machine_online: boolean | undefined,
+    machine_label?: string,
+    project_id: string | null = "p1",
+  ) => ({ ...base, machine_id, machine_online, machine_label, project_id } as any);
 
-  it("shows the label when the open chat's remote machine is offline", () => {
+  it("shows the label when the open chat's project-bound machine is offline", () => {
     expect(offlineMachine([bound("m1", false, "WORKSTATION")], "chat-1", true, "local")).toEqual({ label: "WORKSTATION" });
     // no label: fall back to the raw machine id
     expect(offlineMachine([bound("m1", false)], "chat-1", true, "local")).toEqual({ label: "m1" });
   });
 
-  it("stays hidden for unbound chats and when the machine is online or unknown", () => {
+  it("stays hidden for unbound chats, machine-bound-without-project rows, and online/unknown machines", () => {
     expect(offlineMachine([base], "chat-1", true, "local")).toBeNull();
+    expect(offlineMachine([bound("m1", false, "WORKSTATION", null)], "chat-1", true, "local")).toBeNull();
     expect(offlineMachine([bound("m1", true, "WORKSTATION")], "chat-1", true, "local")).toBeNull();
     expect(offlineMachine([bound("m1", undefined, "WORKSTATION")], "chat-1", true, "local")).toBeNull();
     expect(offlineMachine([bound("m1", false, "WORKSTATION")], null, true, "local")).toBeNull();
   });
 
-  it("skips the local machine on desktop, but banners every binding on web", () => {
+  it("skips the local machine on desktop, but banners every project binding on web", () => {
     expect(offlineMachine([bound("local", false, "SELF")], "chat-1", true, "local")).toBeNull();
     expect(offlineMachine([bound("local", false, "SELF")], "chat-1", false, undefined)).toEqual({ label: "SELF" });
   });
