@@ -673,3 +673,8 @@ pub fn workflow_schema_version() -> String {
 pub async fn purge_stale_chat_generations(state: &AppState) {
     crate::worker::restate::purge_stale_chat_generations(state).await;
 }
+
+/// Test seam: runs the paused-invocation kill sweep on demand.
+pub async fn kill_stuck_chat_invocations(state: &AppState) {
+    crate::worker::restate::kill_stuck_chat_invocations(state).await;
+}

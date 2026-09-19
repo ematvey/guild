@@ -74,7 +74,9 @@ async fn queue_user_turn(
 /// journaled steps: the streaming model call truncates, the delivered prefix
 /// persists as an interrupted assistant event, and the turn ends — no
 /// continuation unless user turns were queued meanwhile. Org-scoped: 404 for
-/// foreign chats, 409 when nothing is generating.
+/// foreign chats. Always reports `stopped` — with no registry entry it falls
+/// back to killing the recorded invocation (and clears a stale generating
+/// flag, self-healing the spinner).
 async fn stop_chat(
     State(state): State<AppState>,
     user: AuthUser,
@@ -85,15 +87,23 @@ async fn stop_chat(
         .chats()
         .get_chat(user.0.org_id, chat_id, &user.0)
         .await?;
-    let Some(cancel) = generation_cancel(&state, chat_id) else {
-        return Err(ApiError::new(
-            axum::http::StatusCode::CONFLICT,
-            "not_generating",
-            "no generation is running for this chat",
-        ));
-    };
-    cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    abort_generation(&state, chat_id).await;
     Ok(Json(json!({ "stopped": true })))
+}
+
+/// Ends a chat's in-flight generation: the graceful cancel flag when the
+/// in-memory registry still tracks the turn (the ChatRunner observes it
+/// inside journaled steps and the epilogue settles the turn normally), a
+/// hard kill of the recorded Restate invocation otherwise — registry entry
+/// lost (worker restart, replay pending) or a stale spinner with nothing
+/// running. Stop and archive both go through here: both must be
+/// guaranteed to end the run.
+pub(crate) async fn abort_generation(state: &AppState, chat_id: Uuid) {
+    if let Some(cancel) = generation_cancel(state, chat_id) {
+        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+        return;
+    }
+    crate::worker::restate::kill_recorded_chat_generation(state, chat_id).await;
 }
 
 /// The cancel flag of a chat's active generation, if one is running. The

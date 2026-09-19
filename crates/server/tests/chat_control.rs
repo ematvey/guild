@@ -115,17 +115,15 @@ async fn steered_send_sets_the_cancel_flag() {
     assert_eq!(events[0].1, "do this instead");
 }
 
-/// The stop endpoint sets the cancel flag on a running turn and conflicts
-/// when the chat is idle.
+/// The stop endpoint sets the cancel flag on a running turn; when no
+/// registry entry exists it falls back to killing the recorded invocation
+/// (a no-op here) and still reports `stopped` — stop must be a guaranteed
+/// escape hatch, never a 409.
 #[tokio::test]
 async fn stop_sets_the_flag_and_conflicts_when_idle() {
     let fs = full_state().await;
     let app = guild_server::build_router(fs.state.clone());
     let uri = format!("/api/v1/gateway/chat/{}/stop", fs.chat_id);
-
-    // Idle: nothing to stop.
-    let res = app.clone().oneshot(req("POST", uri.clone(), &fs.token, None)).await.unwrap();
-    assert_eq!(res.status(), StatusCode::CONFLICT);
 
     // Generating: the flag flips and the endpoint confirms.
     note_generation(&fs.state, fs.chat_id);
@@ -138,7 +136,57 @@ async fn stop_sets_the_flag_and_conflicts_when_idle() {
     assert_eq!(body_json(res).await["stopped"], json!(true));
     assert!(generation_cancel(&fs.state, fs.chat_id).unwrap().load(SeqCst));
 
+    // Idle (no registry entry): still 200 — the kill fallback clears any
+    // stale generating flag instead of erroring.
     fs.state.generations.remove(fs.chat_id);
     let res = app.oneshot(req("POST", uri, &fs.token, None)).await.unwrap();
-    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(body_json(res).await["stopped"], json!(true));
+}
+
+/// Archiving a chat with a generation in flight must also end the run —
+/// the sidebar drops archived chats, so a still-spinning archived chat
+/// would be unreachable. The archive endpoint flips the same cancel flag
+/// the stop endpoint uses.
+#[tokio::test]
+async fn archiving_ends_the_in_flight_generation() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    note_generation(&fs.state, fs.chat_id);
+
+    let res = app
+        .oneshot(req(
+            "PATCH",
+            format!("/api/v1/chats/{}", fs.chat_id),
+            &fs.token,
+            Some(json!({ "archived": true })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(
+        generation_cancel(&fs.state, fs.chat_id).unwrap().load(SeqCst),
+        "archive must interrupt the in-flight turn"
+    );
+}
+
+/// Archiving a chat with no registry entry (worker restarted, replay
+/// pending) falls through to the recorded-invocation kill — still must not
+/// error, and clears a stale generating flag.
+#[tokio::test]
+async fn archiving_without_a_registry_entry_clears_the_stale_flag() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+
+    let res = app
+        .oneshot(req(
+            "PATCH",
+            format!("/api/v1/chats/{}", fs.chat_id),
+            &fs.token,
+            Some(json!({ "archived": true })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(generation_cancel(&fs.state, fs.chat_id).is_none());
 }

@@ -50,6 +50,12 @@ async fn update_chat(
         .chats()
         .update_chat(user.0.org_id, chat_id, &user.0, title, req.archived)
         .await?;
+    if req.archived == Some(true) {
+        // Archiving is an escape hatch: it must also end any in-flight
+        // generation, or an archived chat keeps spinning where the user can
+        // no longer reach it (the sidebar never lists archived chats).
+        crate::http::gateway::abort_generation(&state, chat_id).await;
+    }
     Ok(Json(Chat::from(row)))
 }
 
@@ -236,11 +242,23 @@ async fn create(
 async fn list(
     State(state): State<AppState>,
     user: AuthUser,
+    axum::extract::Query(q): axum::extract::Query<ListChatsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Same hub-aware rows as the socket's thread list: the connection dot
-    // must not flip gray on an HTTP refresh.
-    let chats = crate::http::feed::thread_list(&state, user.0.org_id, user.0.id).await?;
+    // must not flip gray on an HTTP refresh. `?archived=1` lists the
+    // archived chats instead (the sidebar's Archived section).
+    let chats = if matches!(q.archived.as_deref(), Some("1" | "true")) {
+        crate::http::feed::thread_list_archived(&state, user.0.org_id, user.0.id).await?
+    } else {
+        crate::http::feed::thread_list(&state, user.0.org_id, user.0.id).await?
+    };
     Ok(Json(serde_json::json!({ "chats": chats })))
+}
+
+#[derive(serde::Deserialize)]
+struct ListChatsQuery {
+    /// `1`/`true` — list archived chats instead of the active sidebar.
+    archived: Option<String>,
 }
 
 /// Sets (or clears, with null) the chat's project. Owner-scoped; the

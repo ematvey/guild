@@ -36,6 +36,7 @@ import {
   TriangleAlert,
   Wrench,
   Archive,
+  ArchiveRestore,
   EllipsisVertical,
   Pencil,
   type LucideIcon,
@@ -85,6 +86,7 @@ import {
 import {
   createChat,
   getChatApproval,
+  listArchivedChats,
   listChats,
   listMachines,
   listModels,
@@ -1622,6 +1624,16 @@ export default function WebChat({
     setChats(c);
   };
 
+  // ---- archived chats (the sidebar's Archived section) ----
+  const [archivedChats, setArchivedChats] = useState<ChatSummary[] | null>(null);
+  const refreshArchivedChats = useCallback(async () => {
+    const c = await listArchivedChats();
+    if (c !== null) setArchivedChats(c);
+  }, []);
+  useEffect(() => {
+    void refreshArchivedChats();
+  }, [refreshArchivedChats]);
+
   // ---- projects (sidebar grouping + the composer's project binding) ----
 
   const [projects, setProjects] = useState<Project[] | null>(null);
@@ -1677,11 +1689,19 @@ export default function WebChat({
   const archiveChat = useCallback(async (id: string) => {
     try {
       await updateChat(id, { archived: true });
-      void refreshChats();
+      await Promise.all([refreshChats(), refreshArchivedChats()]);
     } catch {
       toast.error("Could not archive the chat");
     }
-  }, [refreshChats]);
+  }, [refreshChats, refreshArchivedChats]);
+  const unarchiveChat = useCallback(async (id: string) => {
+    try {
+      await updateChat(id, { archived: false });
+      await Promise.all([refreshChats(), refreshArchivedChats()]);
+    } catch {
+      toast.error("Could not unarchive the chat");
+    }
+  }, [refreshChats, refreshArchivedChats]);
   const renameProject = useCallback(async (id: string, name: string) => {
     try {
       await updateProject(id, { name });
@@ -2104,6 +2124,8 @@ export default function WebChat({
       onCollapse={isMobile ? undefined : () => setCollapsed(true)}
       onRenameChat={(id, title) => void renameChat(id, title)}
       onArchiveChat={(id) => void archiveChat(id)}
+      onUnarchiveChat={(id) => void unarchiveChat(id)}
+      archivedChats={archivedChats}
       onRenameProject={(id, name) => void renameProject(id, name)}
       onArchiveProject={(id) => void archiveProject(id)}
     />
@@ -2963,9 +2985,11 @@ function RenameInput({
 function RowActions({
   onRename,
   onArchive,
+  archiveLabel,
 }: {
   onRename?: () => void;
   onArchive?: () => void;
+  archiveLabel?: string;
 }) {
   if (!onRename && !onArchive) return null;
   return (
@@ -2990,8 +3014,12 @@ function RowActions({
         )}
         {onArchive && (
           <DropdownMenuItem onSelect={() => onArchive()}>
-            <Archive className="size-3.5" />
-            Archive
+            {archiveLabel === "Unarchive" ? (
+              <ArchiveRestore className="size-3.5" />
+            ) : (
+              <Archive className="size-3.5" />
+            )}
+            {archiveLabel ?? "Archive"}
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
@@ -3006,6 +3034,7 @@ function ChatListItem({
   onClick,
   onRename,
   onArchive,
+  archiveLabel,
 }: {
   title: string;
   active: boolean;
@@ -3013,6 +3042,9 @@ function ChatListItem({
   onClick: () => void;
   onRename?: (title: string) => void;
   onArchive?: () => void;
+  /** Row-menu label for the archive action ("Unarchive" in the Archived
+   * section); defaults to "Archive". */
+  archiveLabel?: string;
 }) {
   const [editing, setEditing] = useState(false);
   if (editing) {
@@ -3047,6 +3079,7 @@ function ChatListItem({
       <RowActions
         onRename={onRename ? () => setEditing(true) : undefined}
         onArchive={onArchive}
+        archiveLabel={archiveLabel}
       />
     </button>
   );
@@ -3140,6 +3173,8 @@ function SidebarContent({
   onCollapse,
   onRenameChat,
   onArchiveChat,
+  onUnarchiveChat,
+  archivedChats,
   onRenameProject,
   onArchiveProject,
 }: {
@@ -3164,10 +3199,14 @@ function SidebarContent({
   /** Row-menu actions; the implementations live with the list refresh. */
   onRenameChat?: (id: string, title: string) => void;
   onArchiveChat?: (id: string) => void;
+  /** Archived section: the rows and their restore action. */
+  onUnarchiveChat?: (id: string) => void;
+  archivedChats?: ChatSummary[] | null;
   onRenameProject?: (id: string, name: string) => void;
   onArchiveProject?: (id: string) => void;
 }) {
   const [projectsOpen, setProjectsOpen] = useState(true);
+  const [archivedOpen, setArchivedOpen] = useState(false);
   /** Which project fold-outs are expanded (per-session, all collapsed). */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   /** How many chats each expanded fold-out shows; starts at
@@ -3314,6 +3353,39 @@ function SidebarContent({
             <p className="px-2 py-1.5 text-muted-foreground">No conversations yet.</p>
           )}
         </div>
+        {/* Archived: collapsed by default; rows open by direct link (the
+            thread always resolves) and their menu offers Unarchive. */}
+        {archivedChats != null && archivedChats.length > 0 && (
+          <div className="pb-2">
+            <button
+              type="button"
+              onClick={() => setArchivedOpen((o) => !o)}
+              className="flex w-full items-center justify-between px-1 pb-1 pt-4 font-medium text-muted-foreground outline-none hover:text-foreground"
+            >
+              <span>Archived</span>
+              {archivedOpen ? (
+                <ChevronUp className="size-3.5" />
+              ) : (
+                <ChevronDown className="size-3.5" />
+              )}
+            </button>
+            {archivedOpen && (
+              <div className="space-y-0.5">
+                {archivedChats.map((c) => (
+                  <ChatListItem
+                    key={c.id}
+                    title={c.title || "Untitled"}
+                    active={c.id === chatId}
+                    status={{ generating: !!c.generating, unread: false }}
+                    onClick={() => onOpenChat(c.id)}
+                    archiveLabel="Unarchive"
+                    onArchive={onUnarchiveChat ? () => onUnarchiveChat(c.id) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <Separator />
       <div className="p-2">

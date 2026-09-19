@@ -161,13 +161,26 @@ impl ModelProvider for OpenAiProvider {
         req: ProviderRequest<'_>,
     ) -> Result<BoxStream<'static, Result<ProviderChunk, ProviderError>>, ProviderError> {
         let url = format!("{}/v1/chat/completions", req.base_url.trim_end_matches('/'));
-        let resp = reqwest::Client::new()
-            .post(&url)
-            .bearer_auth(req.api_key)
-            .json(&Self::body(&req))
-            .send()
-            .await
-            .map_err(|e| ProviderError::Stream(e.to_string()))?;
+        // Every phase bounded: TCP connect (15 s), response headers (60 s),
+        // per-read idle (120 s — applies to the streamed body too). Without
+        // these a provider that accepts the connection and then stalls pins
+        // the caller's turn forever: the consumption loop can only observe
+        // cancellation once it holds a stream, and nothing else watches.
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .read_timeout(std::time::Duration::from_secs(120))
+                .build()
+                .map_err(|e| ProviderError::Stream(e.to_string()))?
+                .post(&url)
+                .bearer_auth(req.api_key)
+                .json(&Self::body(&req))
+                .send(),
+        )
+        .await
+        .map_err(|_| ProviderError::Stream("provider did not respond within 60s".into()))?
+        .map_err(|e| ProviderError::Stream(e.to_string()))?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();

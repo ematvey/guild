@@ -470,8 +470,31 @@ pub(crate) async fn thread_list(
     org_id: Uuid,
     user_id: Uuid,
 ) -> Result<Vec<Value>, crate::http::error::ApiError> {
+    thread_list_filtered(state, org_id, user_id, false).await
+}
+
+/// The archived counterpart — same payload shape, `archived_at IS NOT NULL`
+/// rows (the sidebar's Archived section).
+pub(crate) async fn thread_list_archived(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<Vec<Value>, crate::http::error::ApiError> {
+    thread_list_filtered(state, org_id, user_id, true).await
+}
+
+async fn thread_list_filtered(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+    archived: bool,
+) -> Result<Vec<Value>, crate::http::error::ApiError> {
     let store = state.store().await?;
-    let chats = store.chats().list_chats(org_id, user_id).await?;
+    let chats = if archived {
+        store.chats().list_archived_chats(org_id, user_id).await?
+    } else {
+        store.chats().list_chats(org_id, user_id).await?
+    };
     Ok(chats
         .into_iter()
         .map(|chat| {
