@@ -517,20 +517,6 @@ export async function listMachines(): Promise<MachineInfo[] | null> {
   return v?.machines ?? [];
 }
 
-/** Binds (machineId given) or unbinds (machineId null) a chat's machine. */
-export async function bindChat(
-  chatId: string,
-  machineIdArg: string | null,
-): Promise<ChatSummary | null> {
-  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/machine`), {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
-    body: JSON.stringify(machineIdArg ? { machine_id: machineIdArg } : { machine_id: "" }),
-  });
-  if (!res.ok) return null;
-  return res.json().catch(() => null);
-}
-
 export interface ChatMessage {
   role: string;
   content: string;
@@ -688,11 +674,7 @@ export async function createChat(title: string, projectId?: string | null): Prom
   const res = await fetch(apiUrl("/api/v1/chats"), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify(
-      IS_TAURI
-        ? { title, machine_id: machineId(), ...(projectId ? { project_id: projectId } : {}) }
-        : { title, ...(projectId ? { project_id: projectId } : {}) },
-    ),
+    body: JSON.stringify({ title, ...(projectId ? { project_id: projectId } : {}) }),
   });
   if (!res.ok) return null;
   const v = await res.json().catch(() => ({}));
