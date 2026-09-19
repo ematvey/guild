@@ -2,11 +2,6 @@
 
 export type CreateChatRequest = { title?: string, 
 /**
- * Optional machine binding at creation (desktop apps bind their own
- * machine so machine tools work from the first turn).
- */
-machine_id?: string, 
-/**
  * Optional project binding at creation (the composer chip).
  */
 project_id?: string, };
