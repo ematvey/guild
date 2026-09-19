@@ -4,6 +4,20 @@
 (developers.openai.com/codex/skills) + codex-cli 0.154.0 binary strings, and
 the Guild codebase.
 
+> **Amendment 2026-09-19 — ownership moved to the client.** This spec's
+> Rust-side implementation (app-server `skills.rs` / `agents_md.rs`, the
+> `skills.list` / `skills.prepare_turn` daemon verbs, discovery wired into
+> `agent.start`) was deleted by unification spec §4 phase 2: discovery,
+> index assembly, and AGENTS.md chaining now live in TS
+> (`apps/desktop/src/lib/context.ts`) over the allowlisted `fs.*` bridge.
+> The behavioral contract below (frontmatter format, first-match-wins
+> `/name`, index budget, scope precedence user-beats-project or as coded)
+> survives as the TS module's contract and the additive
+> `skills_index` / `agents_md` request fields; the server never owns the
+> system prompt. Browser (no local files) stays global-less by nature;
+> web parity comes from unification §4 phase 5, not from this spec's
+> Rust plumbing.
+
 ## 0. Bottom line
 
 Guild's skill plumbing exists but is dead: `app-server/src/skills.rs` has

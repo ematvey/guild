@@ -5,6 +5,19 @@ worked but the server said "bound machine offline", because the presence
 connection lived in the webview (which lost its SSE 2ms after boot and never
 retried) while execution lived in the daemon.
 
+> **Amendment 2026-09-19 — partially superseded by the unification spec
+> (§1–§3, phases 1a/3).** What survived and hardened: one process owns the
+> server connection and execution (never the webview); the webview is a
+> pure UI — now even more so, since it also owns context assembly (phase 2).
+> What changed: the engine loop described below is gone (`run_agent`
+> deleted; `agent.start` is a shim over the durable gateway workflow); the
+> process is the merged daemon + Tauri host backend, and the daemon's
+> detach-and-survive lifecycle was deliberately retained — the machine link
+> outlives the GUI (phase 1a), retreating from this spec's "no headless
+> daemon"; presence/execution ride the machine WS singleton
+> (machine-registry spec), not the SSE stream; machine binding is
+> project-derived (unification §7).
+
 ## Decision
 
 1. **One process.** No headless daemon. The GUI process hosts the engine
