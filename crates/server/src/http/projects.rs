@@ -1,6 +1,6 @@
 //! Project routes (spec §2): CRUD over the caller's named workspace folders.
-//! Owner-scoped with admin bypass; names are display labels derived from
-//! the folder when omitted — duplicates are allowed.
+//! Strictly owner-scoped (admins included); names are display labels derived
+//! from the folder when omitted — duplicates are allowed.
 
 use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
@@ -76,16 +76,13 @@ fn folder_basename(folder: &str) -> String {
     base.to_string()
 }
 
-/// Lists the caller's projects (admin: the whole org's).
+/// Lists the caller's projects — owner-only, admins included.
 async fn list(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
-    let rows = store
-        .projects()
-        .list(user.0.org_id, user.0.id, &user.0)
-        .await?;
+    let rows = store.projects().list(user.0.org_id, user.0.id).await?;
     Ok(Json(serde_json::json!({
         "projects": rows.into_iter().map(Project::from).collect::<Vec<_>>()
     })))
@@ -115,7 +112,7 @@ async fn update(
         .update(
             user.0.org_id,
             project_id,
-            &user.0,
+            user.0.id,
             name,
             folder,
             req.machine_id.as_deref(),
@@ -135,7 +132,7 @@ async fn delete(
     let store = state.store().await?;
     store
         .projects()
-        .delete(user.0.org_id, project_id, &user.0)
+        .delete(user.0.org_id, project_id, user.0.id)
         .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
