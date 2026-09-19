@@ -246,7 +246,7 @@ async fn machines_lists_registry_rows_connected_first() {
 /// caller's user or org; unknown or foreign machines are rejected.
 /// Unbinding stays open.
 #[tokio::test]
-async fn machine_binding_requires_a_registered_machine() {
+async fn machine_binding_is_project_derived() {
     let ts = test_state_with_db().await;
     let store = ts.store();
     let user = store
@@ -288,95 +288,97 @@ async fn machine_binding_requires_a_registered_machine() {
     // The hub slot from register_test_machine is live.
     assert_eq!(machines["machines"][0]["connected"], true);
 
-    // bind at creation
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/chats")
-                .header("authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"title": "bound", "machine_id": "desk-1"}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let chat: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    // Create with a project: the project's machine is the authority.
+    let (status, project) = post_chat_json(
+        &app,
+        &token,
+        "POST",
+        "/api/v1/projects",
+        json!({"name": "repo", "folder": r"C:\code\repo", "machine_id": "desk-1"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{project}");
+    let project_id = project["id"].as_str().unwrap();
+    let (status, chat) = post_chat_json(
+        &app,
+        &token,
+        "POST",
+        "/api/v1/chats",
+        json!({"title": "bound", "project_id": project_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{chat}");
     assert_eq!(chat["machine_id"], "desk-1");
     assert_eq!(chat["machine_label"], "Desk");
     let chat_id = chat["id"].as_str().unwrap().to_string();
 
-    // unknown machine → rejected, at creation and on bind
-    for uri in [
-        "/api/v1/chats".to_string(),
-        format!("/api/v1/chats/{chat_id}/machine"),
-    ] {
-        let res = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(&uri)
-                    .header("authorization", format!("Bearer {token}"))
-                    .header("content-type", "application/json")
-                    .body(Body::from(json!({"machine_id": "never-seen"}).to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{uri}");
-    }
+    // A legacy create still carrying machine_id (old installed clients):
+    // the field is gone from the API and is ignored — a chat with no project
+    // stays fully unbound; there is no machine-bound, no-project state.
+    let (status, legacy) = post_chat_json(
+        &app,
+        &token,
+        "POST",
+        "/api/v1/chats",
+        json!({"title": "legacy", "machine_id": "desk-1"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{legacy}");
+    assert_eq!(legacy["machine_id"], serde_json::Value::Null);
+    assert_eq!(legacy["project_id"], serde_json::Value::Null);
 
-    // a machine registered under another org is foreign
-    let other_org = uuid::Uuid::now_v7();
-    sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'other')")
-        .bind(other_org)
-        .execute(store.pool())
-        .await
-        .unwrap();
-    let outsider = store
-        .identity()
-        .create_user(other_org, "o@b.c", "hunter226", "member")
-        .await
-        .unwrap();
-    let (_osid, _otok) = store.identity().create_session(outsider.id).await.unwrap();
-    register_test_machine(&ts.state, "foreign-1", outsider.id, other_org, Some("F")).await;
+    // The per-chat machine endpoint is gone.
+    let (status, _) = post_chat_json(
+        &app,
+        &token,
+        "POST",
+        &format!("/api/v1/chats/{chat_id}/machine"),
+        json!({"machine_id": "desk-1"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Unbinding the project clears the machine binding with it.
+    let (status, unbound) = post_chat_json(
+        &app,
+        &token,
+        "POST",
+        &format!("/api/v1/chats/{chat_id}/project"),
+        json!({"project_id": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unbound}");
+    assert_eq!(unbound["project_id"], serde_json::Value::Null);
+    assert_eq!(unbound["machine_id"], serde_json::Value::Null);
+}
+
+/// Helper: an authenticated JSON POST against the app router.
+async fn post_chat_json(
+    app: &axum::Router,
+    token: &str,
+    method: &str,
+    uri: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
     let res = app
         .clone()
         .oneshot(
             Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/chats/{chat_id}/machine"))
+                .method(method)
+                .uri(uri)
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"machine_id": "foreign-1"}).to_string()))
+                .body(Body::from(body.to_string()))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-
-    // unbind still works
-    let res = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/chats/{chat_id}/machine"))
-                .header("authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(json!({"machine_id": ""}).to_string()))
-                .unwrap(),
-        )
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, value)
 }
 
 /// Thread-list status over the API: the list carries generating/unread, a
@@ -656,4 +658,69 @@ async fn chat_approval_mode_roundtrip() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(v["default"].is_null());
+}
+
+/// A desktop-origin send on a projectless chat stays fully unbound: the
+/// ChatRunner payload carries no machine binding (the origin machine id is
+/// audit metadata only), so the workflow's tool dispatch falls into the
+/// sandbox executor — never auto-dispatched to the sending desktop.
+#[tokio::test]
+async fn desktop_origin_send_with_no_project_stays_unbound() {
+    let (ts, ingress) = guild_server::test_support::test_state_with_mock_ingress().await;
+    let store = ts.store();
+    let user_id = store
+        .identity()
+        .ensure_bootstrap_admin("unbound@b.c", "hunter226")
+        .await
+        .unwrap();
+    let (_sid, token) = store.identity().create_session(user_id).await.unwrap();
+    let user = store.identity().validate_session(&token).await.unwrap();
+    let chat = store
+        .chats()
+        .create_chat(user.org_id, user.id, Some("gui-only"), None)
+        .await
+        .unwrap();
+    let app = guild_server::build_router(ts.state.clone());
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/gateway/chat")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                // The desktop origin rides the header, as every desktop send does.
+                .header("x-guild-machine-id", "sender-desktop")
+                .body(Body::from(
+                    json!({
+                        "chat_id": chat.id,
+                        "model": "gsm",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "client_tools": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let generate = ingress
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(path, _)| path.contains("ChatRunner") && path.contains("/generate"))
+        .map(|(_, body)| body.clone())
+        .expect("ChatRunner generate invocation recorded");
+    assert_eq!(generate["machine_id"], serde_json::Value::Null);
+    assert_eq!(generate["machine_label"], serde_json::Value::Null);
+    assert_eq!(generate["project_id"], serde_json::Value::Null);
+    // Audit metadata only — recorded, never binding.
+    assert_eq!(generate["origin_machine_id"], "sender-desktop");
+    // Unbound payload ⇒ the workflow's executor resolution has no machine to
+    // dispatch to: client_tool_step's sandbox arm (machine_id.is_none()) is
+    // the only path. No machine socket is registered in this test, so a
+    // machine dispatch is impossible by construction.
 }

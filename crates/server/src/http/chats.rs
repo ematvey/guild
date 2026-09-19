@@ -24,10 +24,6 @@ pub fn routes() -> Router<AppState> {
             axum::routing::post(set_project),
         )
         .route(
-            "/api/v1/chats/{id}/machine",
-            axum::routing::post(set_machine),
-        )
-        .route(
             "/api/v1/chats/{id}/approval",
             axum::routing::get(get_chat_approval).post(set_chat_approval),
         )
@@ -151,48 +147,6 @@ async fn mark_chat_read(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Binds (or with empty machine_id, unbinds) a chat to an executor machine.
-/// The chat must belong to the caller (admin bypass), and the machine must
-/// be registered to the caller or their org — an arbitrary machine_id string
-/// would let a chat dispatch tools on someone else's desktop.
-async fn set_machine(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(chat_id): Path<Uuid>,
-    Json(req): Json<Value>,
-) -> Result<Json<Chat>, ApiError> {
-    let machine_id = req["machine_id"].as_str().filter(|s| !s.is_empty());
-    if let Some(mid) = machine_id {
-        if !state.machine_bindable(mid, user.0.id, user.0.org_id).await {
-            return Err(ApiError::bad_request("unknown machine"));
-        }
-    }
-    let label = req["machine_label"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    // Trust the label only for a machine this user currently has connected;
-    // otherwise keep whatever label is already stored.
-    let label = machine_id.map(|mid| {
-        state
-            .machine_label(mid)
-            .unwrap_or_else(|| label.unwrap_or_else(|| mid.to_string()))
-    });
-    let _chat = state
-        .store()
-        .await?
-        .chats()
-        .get_chat(user.0.org_id, chat_id, &user.0)
-        .await?;
-    let chat = state
-        .store()
-        .await?
-        .chats()
-        .set_machine(user.0.org_id, chat_id, machine_id, label.as_deref())
-        .await?;
-    Ok(Json(chat.into()))
-}
-
 /// Per-user approval policy lives at /api/v1/me/approval (auth.rs) — see
 /// migration 0026: tool trust is user-scoped, not per-chat.
 impl From<crate::store::chats::ChatRow> for Chat {
@@ -252,10 +206,11 @@ async fn create(
         ),
         None => None,
     };
-    // Bind-time machine inheritance: the chat runs where its project's
-    // folder lives, so a bound project's machine is the authority (the
-    // project's label comes from the machines registry); a per-chat rebind
-    // is a later override. INSERT sets project and machine atomically.
+    // Machine binding is project-derived: the chat runs where its project's
+    // folder lives, so the bound project's machine is the only authority (the
+    // project's label comes from the machines registry). A chat with no
+    // project stays fully unbound — its tools run in the sandbox executor.
+    // INSERT sets project and machine atomically.
     let machine = project.as_ref().map(|p| {
         (
             p.machine_id.clone(),
@@ -275,23 +230,6 @@ async fn create(
             machine.as_ref().map(|(_, label)| label.as_str()),
         )
         .await?;
-    // Desktop apps auto-bind their own machine at creation when no project
-    // chose the machine, so machine tools work from the first turn; the
-    // machine must be registered to this user or org, same as the bind
-    // endpoint.
-    let chat = match (req.machine_id.as_deref(), project) {
-        (Some(mid), None) if !mid.is_empty() => {
-            if !state.machine_bindable(mid, user.0.id, user.0.org_id).await {
-                return Err(ApiError::bad_request("unknown machine"));
-            }
-            let label = state.machine_label(mid).unwrap_or_else(|| mid.to_string());
-            store
-                .chats()
-                .set_machine(user.0.org_id, chat.id, Some(mid), Some(&label))
-                .await?
-        }
-        _ => chat,
-    };
     Ok(Json(chat.into()))
 }
 
@@ -325,17 +263,20 @@ async fn set_project(
         _ => None,
     };
     let project_id = project.as_ref().map(|p| p.id);
-    // Bind-time machine inheritance: the chat's machine follows the
+    // Machine binding is project-derived: the chat's machine follows the
     // project's (the project's label comes from the machines registry) in
-    // the same UPDATE as the binding; unbinding keeps the current machine.
-    let machine = project.as_ref().map(|p| {
-        (
-            p.machine_id.clone(),
-            p.machine_label
-                .clone()
-                .unwrap_or_else(|| p.machine_id.clone()),
-        )
-    });
+    // the same UPDATE as the binding; unbinding the project clears it — a
+    // machine-bound chat with no project is not a valid state.
+    let machine = project
+        .as_ref()
+        .map(|p| {
+            (
+                p.machine_id.clone(),
+                p.machine_label
+                    .clone()
+                    .unwrap_or_else(|| p.machine_id.clone()),
+            )
+        });
     let chat = store
         .chats()
         .set_project(
@@ -343,9 +284,7 @@ async fn set_project(
             chat_id,
             &user.0,
             project_id,
-            machine
-                .as_ref()
-                .map(|(id, label)| (id.as_str(), Some(label.as_str()))),
+            machine.as_ref().map(|(id, label)| (id.as_str(), label.as_str())),
         )
         .await?;
     // Every device renders the project grouping: push a fresh thread list to

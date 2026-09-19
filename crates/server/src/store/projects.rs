@@ -144,6 +144,8 @@ impl<'a> ProjectStore<'a> {
 
     /// Deletes the project in one transaction with the unlink: referencing
     /// chats keep their history and become folderless (project_id = NULL).
+    /// The machine binding is project-derived, so the unlink clears it too —
+    /// a machine-bound chat with no project is not a valid state.
     pub async fn delete(
         &self,
         org_id: Uuid,
@@ -166,7 +168,10 @@ impl<'a> ProjectStore<'a> {
         if n == 0 {
             return Err(ApiError::not_found("no such project"));
         }
-        sqlx::query("UPDATE chats SET project_id = NULL WHERE project_id = $1")
+        sqlx::query(
+            "UPDATE chats SET project_id = NULL, machine_id = NULL, machine_label = NULL \
+             WHERE project_id = $1",
+        )
             .bind(project_id)
             .execute(&mut *tx)
             .await?;
@@ -266,8 +271,9 @@ mod tests {
         );
     }
 
-    /// Deleting a project unlinks its chats (project_id → NULL) in one
-    /// transaction; the chat survives.
+    /// Deleting a project unlinks its chats (project_id → NULL) and clears
+    /// the project-derived machine binding in one transaction; the chat
+    /// survives, fully unbound.
     #[tokio::test]
     async fn project_delete_unlinks_referencing_chats() {
         let (db, org, user) = fixture().await;
@@ -279,7 +285,14 @@ mod tests {
             .unwrap();
         let chat = store
             .chats()
-            .create_chat(org, user.id, Some("t"), Some(project.id))
+            .create_chat_with_machine(
+                org,
+                user.id,
+                Some("t"),
+                Some(project.id),
+                Some("machine-1"),
+                Some("machine-1"),
+            )
             .await
             .unwrap();
         store
@@ -289,6 +302,8 @@ mod tests {
             .unwrap();
         let chat = store.chats().get_chat(org, chat.id, &user).await.unwrap();
         assert_eq!(chat.project_id, None);
+        assert_eq!(chat.machine_id, None);
+        assert_eq!(chat.machine_label, None);
         assert!(store.projects().list(org, user.id, &user).await.unwrap().is_empty());
     }
 

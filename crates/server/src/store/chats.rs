@@ -174,7 +174,9 @@ impl<'a> ChatStore<'a> {
         .ok_or_else(|| ApiError::not_found("no such chat"))
     }
 
-    /// Binds (or unbinds, with `None`s) a chat to an executor machine.
+    /// Sets (or clears) the chat's machine binding. Called only from the
+    /// project-alignment path: the machine is project-derived, so callers
+    /// pass the project's machine, never a per-chat choice.
     pub async fn set_machine(
         &self,
         org_id: Uuid,
@@ -197,33 +199,31 @@ impl<'a> ChatStore<'a> {
     }
 
     /// Sets (or clears, with `None`) the chat's project. Owner-scoped: the
-    /// composer chip binds the chat to a named workspace folder. When a
-    /// project is bound, its machine rides along in the same UPDATE (bind-time
-    /// machine inheritance — the project's machine wins, a per-chat rebind is
-    /// a later override); unbinding keeps the current machine.
+    /// composer chip binds the chat to a named workspace folder. The machine
+    /// binding is project-derived — it rides the same UPDATE (a chat runs
+    /// where its project's folder lives) and clearing the project clears the
+    /// machine; a machine-bound chat with no project is not a valid state.
     pub async fn set_project(
         &self,
         org_id: Uuid,
         chat_id: Uuid,
         caller: &UserRow,
         project_id: Option<Uuid>,
-        machine: Option<(&str, Option<&str>)>,
+        machine: Option<(&str, &str)>,
     ) -> Result<ChatRow, ApiError> {
         let is_admin = caller.role == "admin";
         sqlx::query_as(
-            "UPDATE chats SET project_id = $3, \
-             machine_id = COALESCE($6, machine_id), \
-             machine_label = COALESCE($7, machine_label) \
-             WHERE org_id = $1 AND id = $2 AND (user_id = $4 OR $5) \
+            "UPDATE chats SET project_id = $7, machine_id = $5, machine_label = $6 \
+             WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4) \
              RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
         )
         .bind(org_id)
         .bind(chat_id)
-        .bind(project_id)
         .bind(caller.id)
         .bind(is_admin)
         .bind(machine.map(|(id, _)| id))
-        .bind(machine.and_then(|(_, label)| label))
+        .bind(machine.map(|(_, label)| label))
+        .bind(project_id)
         .fetch_optional(self.pool)
         .await?
         .ok_or_else(|| ApiError::not_found("no such chat"))
