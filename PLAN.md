@@ -1,8 +1,25 @@
 # Guild — current state of work
 
-Updated 2026-09-19 (architecture deepening round). Read this before touching
+Updated 2026-09-19 (binding-model amendment). Read this before touching
 the codebase; detailed milestone plans live in `docs/plans/`, deploy nuances
 in `docs/deploy-nuances.md`, hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Decision: machine binding is project-derived — the "machine-bound, no project" state dies — 2026-09-19
+
+maintainer: a chat is either project-bound (project → machine + folder, the
+folder is the workdir) or fully unbound; no third state. Desktop-origin
+chats with no project stay unbound — the desktop is just a GUI for unbound
+chats, and their tools run in the server-side sandbox executor, never
+auto-dispatched to the sending desktop. Recorded as §7 in the unification
+spec, with amendments in the machine-registry and projects-wsl specs.
+Implementation scope when picked up: delete `CreateChatRequest.machine_id`
++ the per-chat machine endpoint (protocol change → bindings regen), delete
+the create-time auto-bind (http/chats.rs) and the workflow's
+origin-machine auto-bind branch (restate.rs — sandbox-fallback condition
+becomes "no project"), drop `machine_id`/`machine_label` from unbound chats
+(migration + project-unlink clears the binding), pill/offline-banner only
+on project-bound chats (WebChat), update the auto-bind tests (chats.rs,
+projects_api.rs, funnel dispatch tests' workdir fixtures).
 
 ## Architecture deepening round: executor funnel + GenerationTable, thread-reducer, rider cleanups — 2026-09-19
 

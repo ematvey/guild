@@ -138,11 +138,18 @@ in-memory socket state; the DB row is the durable record.
 - Thread bindings never change on their own: no auto-unbind, no successor
   hints. A thread bound to a dead registration shows "offline" until the
   user unbinds manually.
+- Amendment 2026-09-19 (unification spec §7): a chat's machine binding is
+  project-derived only. Chats cannot bind a machine directly — no
+  create-time `machine_id`, no per-chat machine bind/unbind endpoint, no
+  desktop-origin auto-bind. Unbound chats are sandbox-executed and show no
+  machine affordance.
 
 ## 3. Thread UX
 
 - The machine pill (e.g. `WORKSTATION`) reflects live state: normal when online,
   gray + "offline" when the bound machine has no socket. State rides the
+  (Amendment 2026-09-19: the pill and the offline banner exist only on
+  project-bound chats — unbound chats have no machine to show.)
   state-sync and presence-change broadcasts.
 - Offline bound machine: one-line banner — "WORKSTATION is offline — tools won't
   run until it reconnects." Sending messages stays allowed (the agent can

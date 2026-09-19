@@ -70,8 +70,10 @@ org settings, account-level approval policies.
 - `DELETE /api/v1/projects/{id}` — refuses while chats reference it? No:
   sets `chats.project_id = NULL` in one transaction (chat survives,
   folderless).
-- Chat create/PUT gains optional `project_id`; the per-chat machine override
-  endpoint (`POST /api/v1/chats/{id}/machine`) stays.
+- Chat create/PUT gains optional `project_id`. (Amendment 2026-09-19, per
+  unification spec §7: the per-chat machine override endpoint
+  (`POST /api/v1/chats/{id}/machine`) is retired, and chat-create's
+  `machine_id` auto-bind with it — machine comes from the project only.)
 - `POST /api/v1/chats/{id}/dir` **removed**; `chats.project_dir` column is
   gone.
 
