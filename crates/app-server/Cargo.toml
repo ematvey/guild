@@ -38,3 +38,4 @@ wiremock = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Pipes", "Win32_Foundation"] }
+winreg = "0.55"
