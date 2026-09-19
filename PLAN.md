@@ -28,11 +28,18 @@ detects the signature (exit 127 + `MZ` in stderr), re-registers the entry
 via `wsl -u root --exec sh -c` (non-login — the transport that still works
 while broken), and retries the command once (the failed attempt never ran
 the command, so no double-execution risk); heal is rate-limited to one per
-30s and the outcome lands in `meta.wsl_interop_healed`. Ships with the
-next desktop client release. (2) Machine-side, installed on WORKSTATION now:
-`wsl-interop-heal.timer` (5s) + `/usr/local/sbin/wsl-interop-heal.sh`
-re-register the entry whenever missing; execute verified working again via
-an API-driven probe (PROBE_CATCH/FINAL_VERIFY_OK).
+30s and the outcome lands in `meta.wsl_interop_healed`. (2) Machine-side,
+installed on WORKSTATION now: `wsl-interop-heal.timer` (5s) +
+`/usr/local/sbin/wsl-interop-heal.sh` re-register the entry whenever
+missing; execute verified working again via an API-driven probe
+(PROBE_CATCH/FINAL_VERIFY_OK). Shipped to all machines as **0.5.12**
+(release-clients.sh, all four platforms published; the WORKSTATION updater
+picks it up on its 15-min re-check). The release build exposed two
+post-0.5.11 breakages in the rewritten history, both fixed: `winreg` was
+left in the desktop crate when machine_link.rs moved into the daemon
+(guild-app-server never compiled for windows since), and the desktop
+crate was never recompiled after the auth-state refactor (Session.cloud
+→ Session.auth.cloud).
 
 ## Specs folded into PRD + SRS; binding model implemented — 2026-09-19
 
