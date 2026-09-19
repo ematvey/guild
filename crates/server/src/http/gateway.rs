@@ -482,7 +482,7 @@ pub(crate) async fn submit_turn(
     let mut machine_label = chat.machine_label.clone();
     let project_id = match req.project_id {
         Some(pid) => {
-            let project = store.projects().get(user.org_id, pid, user).await?;
+            let project = store.projects().get(user.org_id, pid, user.id).await?;
             let label = project
                 .machine_label
                 .clone()

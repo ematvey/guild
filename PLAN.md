@@ -1,9 +1,21 @@
 # Guild — current state of work
 
-Updated 2026-09-20 (WSL interop self-heal). Read this before touching
+Updated 2026-09-20 (project scoping: strictly owner-only). Read this before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Projects are strictly owner-scoped, admin bypass removed — 2026-09-20
+
+maintainer saw Ramil's projects (DESKTOP-TEST) in his own project picker:
+`ProjectStore` filtered on `user_id = $2 OR is_admin`, so an admin's list
+returned the whole org. Projects are now strictly owner-scoped across
+`list`/`get`/`update`/`delete` — even an admin sees and touches only his own
+projects (store signatures take `user_id: Uuid` instead of `&UserRow`).
+Side effect by design: an admin can no longer bind his chat to another
+user's project (chats.rs / gateway.rs project fetches are owner-scoped too).
+Store test asserts admin isolation explicitly. Note chats themselves keep
+their own admin-bypass shape — only projects changed.
 
 ## WSL execute failures on systemd distros: interop self-heal — 2026-09-20
 

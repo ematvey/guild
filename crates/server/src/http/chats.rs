@@ -195,13 +195,13 @@ async fn create(
     Json(req): Json<CreateChatRequest>,
 ) -> Result<Json<Chat>, ApiError> {
     let store = state.store().await?;
-    // The project must exist and belong to the caller (admin bypass) — an
-    // arbitrary id would bind a chat to someone else's workspace.
+    // The project must exist and belong to the caller — an arbitrary id would
+    // bind a chat to someone else's workspace.
     let project = match req.project_id {
         Some(project_id) => Some(
             store
                 .projects()
-                .get(user.0.org_id, project_id, &user.0)
+                .get(user.0.org_id, project_id, user.0.id)
                 .await?,
         ),
         None => None,
@@ -258,7 +258,7 @@ async fn set_project(
             let id: Uuid = s
                 .parse()
                 .map_err(|_| ApiError::bad_request("bad project_id"))?;
-            Some(store.projects().get(user.0.org_id, id, &user.0).await?)
+            Some(store.projects().get(user.0.org_id, id, user.0.id).await?)
         }
         _ => None,
     };

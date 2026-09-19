@@ -1,10 +1,10 @@
 //! Org-scoped projects (spec §1): a named folder bound to a machine. Chats
 //! attach to a project (`chats.project_id`) and the ChatRunner resolves the
-//! workspace folder from it. Owner-scoped access with admin bypass, the same
-//! shape as chats.
+//! workspace folder from it. Strictly owner-scoped: every operation filters
+//! on `user_id`, with no admin bypass — a user, including an admin, sees and
+//! touches only their own projects.
 
 use crate::http::error::ApiError;
-use crate::store::identity::UserRow;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -61,43 +61,38 @@ impl<'a> ProjectStore<'a> {
         self.fetch_by_id(id).await
     }
 
-    /// Lists the caller's projects; admins see every project in the org.
+    /// Lists the caller's projects — owner-only, admins included.
     pub async fn list(
         &self,
         org_id: Uuid,
         user_id: Uuid,
-        caller: &UserRow,
     ) -> Result<Vec<ProjectRow>, ApiError> {
-        let is_admin = caller.role == "admin";
         sqlx::query_as(&format!(
             "SELECT {ROW_COLUMNS} FROM {ROW_FROM} \
-             WHERE p.org_id = $1 AND (p.user_id = $2 OR $3) AND p.archived_at IS NULL \
+             WHERE p.org_id = $1 AND p.user_id = $2 AND p.archived_at IS NULL \
              ORDER BY p.created_at DESC"
         ))
         .bind(org_id)
         .bind(user_id)
-        .bind(is_admin)
         .fetch_all(self.pool)
         .await
         .map_err(Into::into)
     }
 
-    /// Fetches one project the caller owns; admins pass (mirror get_chat).
+    /// Fetches one project the caller owns — owner-only, admins included.
     pub async fn get(
         &self,
         org_id: Uuid,
         project_id: Uuid,
-        caller: &UserRow,
+        user_id: Uuid,
     ) -> Result<ProjectRow, ApiError> {
-        let is_admin = caller.role == "admin";
         sqlx::query_as(&format!(
             "SELECT {ROW_COLUMNS} FROM {ROW_FROM} \
-             WHERE p.org_id = $1 AND p.id = $2 AND (p.user_id = $3 OR $4)"
+             WHERE p.org_id = $1 AND p.id = $2 AND p.user_id = $3"
         ))
         .bind(org_id)
         .bind(project_id)
-        .bind(caller.id)
-        .bind(is_admin)
+        .bind(user_id)
         .fetch_optional(self.pool)
         .await?
         .ok_or_else(|| ApiError::not_found("no such project"))
@@ -110,7 +105,7 @@ impl<'a> ProjectStore<'a> {
         &self,
         org_id: Uuid,
         project_id: Uuid,
-        caller: &UserRow,
+        user_id: Uuid,
         name: Option<&str>,
         folder: Option<&str>,
         machine_id: Option<&str>,
@@ -122,10 +117,10 @@ impl<'a> ProjectStore<'a> {
              folder = COALESCE($4, folder), \
              machine_id = COALESCE($5, machine_id), \
              archived_at = CASE \
-               WHEN $8::bool IS NULL THEN archived_at \
-               WHEN $8::bool THEN now() \
+               WHEN $6::bool IS NULL THEN archived_at \
+               WHEN $6::bool THEN now() \
                ELSE NULL END \
-             WHERE org_id = $1 AND id = $2 AND (user_id = $6 OR $7) \
+             WHERE org_id = $1 AND id = $2 AND user_id = $7 \
              RETURNING id",
         )
         .bind(org_id)
@@ -133,9 +128,8 @@ impl<'a> ProjectStore<'a> {
         .bind(name)
         .bind(folder)
         .bind(machine_id)
-        .bind(caller.id)
-        .bind(caller.role == "admin")
         .bind(archived)
+        .bind(user_id)
         .fetch_optional(self.pool)
         .await?
         .ok_or_else(|| ApiError::not_found("no such project"))?;
@@ -150,18 +144,16 @@ impl<'a> ProjectStore<'a> {
         &self,
         org_id: Uuid,
         project_id: Uuid,
-        caller: &UserRow,
+        user_id: Uuid,
     ) -> Result<(), ApiError> {
-        let is_admin = caller.role == "admin";
         let mut tx = self.pool.begin().await?;
         let n = sqlx::query(
             "DELETE FROM projects \
-             WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4)",
+             WHERE org_id = $1 AND id = $2 AND user_id = $3",
         )
         .bind(org_id)
         .bind(project_id)
-        .bind(caller.id)
-        .bind(is_admin)
+        .bind(user_id)
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -244,7 +236,7 @@ mod tests {
             .await
             .unwrap();
 
-        let listed = projects.list(org, user.id, &user).await.unwrap();
+        let listed = projects.list(org, user.id).await.unwrap();
         assert_eq!(listed.len(), 2);
         assert!(listed.iter().any(|p| p.id == created.id));
 
@@ -252,7 +244,7 @@ mod tests {
             .update(
                 org,
                 created.id,
-                &user,
+                user.id,
                 Some("web2"),
                 Some(r"C:\code\web2"),
                 None,
@@ -264,9 +256,22 @@ mod tests {
         assert_eq!(updated.folder, r"C:\code\web2");
 
         // A member cannot update or see another member's project.
-        let foreign = projects.get(org, created.id, &other).await;
+        let foreign = projects.get(org, created.id, other.id).await;
         assert_eq!(
             foreign.unwrap_err().status,
+            axum::http::StatusCode::NOT_FOUND
+        );
+
+        // An admin is scoped the same way: no visibility into others' projects.
+        let admin = store
+            .identity()
+            .create_user(org, "proj-admin@example.org", "hunter226", "admin")
+            .await
+            .unwrap();
+        assert!(projects.list(org, admin.id).await.unwrap().is_empty());
+        let admin_get = projects.get(org, created.id, admin.id).await;
+        assert_eq!(
+            admin_get.unwrap_err().status,
             axum::http::StatusCode::NOT_FOUND
         );
     }
@@ -297,14 +302,14 @@ mod tests {
             .unwrap();
         store
             .projects()
-            .delete(org, project.id, &user)
+            .delete(org, project.id, user.id)
             .await
             .unwrap();
         let chat = store.chats().get_chat(org, chat.id, &user).await.unwrap();
         assert_eq!(chat.project_id, None);
         assert_eq!(chat.machine_id, None);
         assert_eq!(chat.machine_label, None);
-        assert!(store.projects().list(org, user.id, &user).await.unwrap().is_empty());
+        assert!(store.projects().list(org, user.id).await.unwrap().is_empty());
     }
 
     /// Archiving soft-hides: archived projects drop out of `list` but a
@@ -321,23 +326,28 @@ mod tests {
 
         store
             .projects()
-            .update(org, project.id, &user, None, None, None, Some(true))
+            .update(org, project.id, user.id, None, None, None, Some(true))
             .await
             .unwrap();
-        assert!(store.projects().list(org, user.id, &user).await.unwrap().is_empty());
+        assert!(store.projects().list(org, user.id).await.unwrap().is_empty());
         // Direct fetch still resolves — direct links keep working.
         assert_eq!(
-            store.projects().get(org, project.id, &user).await.unwrap().id,
+            store
+                .projects()
+                .get(org, project.id, user.id)
+                .await
+                .unwrap()
+                .id,
             project.id
         );
 
         store
             .projects()
-            .update(org, project.id, &user, None, None, None, Some(false))
+            .update(org, project.id, user.id, None, None, None, Some(false))
             .await
             .unwrap();
         assert_eq!(
-            store.projects().list(org, user.id, &user).await.unwrap()[0].id,
+            store.projects().list(org, user.id).await.unwrap()[0].id,
             project.id
         );
     }
