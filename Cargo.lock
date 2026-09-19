@@ -3104,7 +3104,7 @@ dependencies = [
 
 [[package]]
 name = "guild-app-server"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3131,12 +3131,13 @@ dependencies = [
  "url",
  "uuid",
  "windows-sys 0.61.2",
+ "winreg",
  "wiremock",
 ]
 
 [[package]]
 name = "guild-core"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3194,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "guild-server"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -5671,7 +5672,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "chrono",
  "serde",
