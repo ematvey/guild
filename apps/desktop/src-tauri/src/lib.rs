@@ -239,7 +239,7 @@ impl GuildState {
     fn link_config(&self) -> Option<(String, String)> {
         let shared = self.shared()?;
         let s = shared.session.lock().unwrap();
-        let cloud = s.cloud.as_ref()?;
+        let cloud = s.auth.cloud()?;
         Some((cloud.base_url.clone(), cloud.token.clone()))
     }
 
@@ -536,7 +536,7 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
                     LinkAction::Remint => {
                         let cloud = state
                             .shared()
-                            .and_then(|s| s.session.lock().unwrap().cloud.clone());
+                            .and_then(|s| s.session.lock().unwrap().auth.cloud().cloned());
                         if let Some(cloud) = cloud {
                             match cloud.refresh_session().await {
                                 Err(guild_app_server::cloud::CloudError::Unauthorized) => {
@@ -599,7 +599,7 @@ async fn ws_session(
 ) -> Result<(), LinkError> {
     let cloud = state
         .shared()
-        .and_then(|shared| shared.session.lock().unwrap().cloud.clone())
+        .and_then(|shared| shared.session.lock().unwrap().auth.cloud().cloned())
         .ok_or_else(|| LinkError::Failed("session disappeared".into()))?;
     let ticket_url = format!("{}/api/v1/ws/ticket", base.trim_end_matches('/'));
     let ticket_response = cloud
