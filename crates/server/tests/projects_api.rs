@@ -253,8 +253,8 @@ async fn projects_crud_roundtrip_with_delete_unlink() {
 
 /// Bind-time machine inheritance: a chat bound to a project runs where the
 /// project's folder lives — the project's machine is set at bind time (chat
-/// create and POST /chats/{id}/project), and a per-chat rebind is a later
-/// override, never a stale mismatch.
+/// create and POST /chats/{id}/project) and cleared when the project
+/// unbinds. Machine binding is project-derived; there is no per-chat choice.
 #[tokio::test]
 async fn project_binding_inherits_the_projects_machine() {
     let fs = full_state().await;
@@ -287,9 +287,9 @@ async fn project_binding_inherits_the_projects_machine() {
     assert_eq!(chat["machine_id"], "machine-2");
     assert_eq!(chat["machine_label"], "NODE2");
 
-    // A create that carries both fields takes the project's machine — the
-    // production path (the desktop always sends its auto-bind alongside the
-    // picked project).
+    // A legacy create that still carries machine_id (old installed client):
+    // the field left the API and is ignored — the project's machine wins and
+    // a projectless create stays unbound either way.
     let (status, both) = post_json(
         &app,
         &fs,
@@ -301,18 +301,18 @@ async fn project_binding_inherits_the_projects_machine() {
     assert_eq!(status, StatusCode::OK, "{both}");
     assert_eq!(both["machine_id"], "machine-2");
 
-    // An existing chat bound to machine-1 re-aligns to machine-2 when the
-    // project is bound afterwards.
+    // An existing unbound chat aligns to machine-2 when the project is
+    // bound afterwards.
     let (status, chat2) = post_json(
         &app,
         &fs,
         "POST",
         "/api/v1/chats",
-        json!({"title": "c2", "machine_id": "machine-1"}),
+        json!({"title": "c2"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{chat2}");
-    assert_eq!(chat2["machine_id"], "machine-1");
+    assert_eq!(chat2["machine_id"], Value::Null);
     let chat2_id = chat2["id"].as_str().unwrap();
     let (status, bound) = post_json(
         &app,
@@ -327,20 +327,8 @@ async fn project_binding_inherits_the_projects_machine() {
     assert_eq!(bound["machine_id"], "machine-2");
     assert_eq!(bound["machine_label"], "NODE2");
 
-    // The per-chat machine bind stays an override AFTER a bind.
-    let (status, rebound) = post_json(
-        &app,
-        &fs,
-        "POST",
-        &format!("/api/v1/chats/{chat2_id}/machine"),
-        json!({"machine_id": "machine-1"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{rebound}");
-    assert_eq!(rebound["machine_id"], "machine-1");
-    assert_eq!(rebound["project_id"], project_id.to_string());
-
-    // Unbinding the project keeps the current machine.
+    // Unbinding the project clears the machine binding with it — a
+    // machine-bound chat with no project is not a valid state.
     let (status, unbound) = post_json(
         &app,
         &fs,
@@ -351,5 +339,5 @@ async fn project_binding_inherits_the_projects_machine() {
     .await;
     assert_eq!(status, StatusCode::OK, "{unbound}");
     assert_eq!(unbound["project_id"], Value::Null);
-    assert_eq!(unbound["machine_id"], "machine-1");
+    assert_eq!(unbound["machine_id"], Value::Null);
 }
