@@ -1638,17 +1638,50 @@ impl ChatRunner {
                             tools: Some(&specs),
                             max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
                         };
-                        let stream = provider.chat_stream(preq).await.map_err(|e| {
-                            let _ = tx.send(StreamEvent::Error {
-                                code: "provider".into(),
-                                message: e.to_string(),
-                            });
-                            // Remove the broadcast entry or the chat keeps a
-                            // zombie generation: attach streams would hang
-                            // forever with the caret blinking on a dead thread.
-                            state.generations.remove(chat_id);
-                            HandlerError::from(TerminalError::new(format!("provider error: {e}")))
-                        })?;
+                        // Stop responsiveness while the connection is being
+                        // established: the stream loop below can only observe
+                        // the cancel flag once it holds a stream, so the
+                        // connect phase polls it on the same 250 ms cadence.
+                        // The future is pinned once — recreating it per tick
+                        // would abort and restart the handshake forever.
+                        let mut connect = Box::pin(provider.chat_stream(preq));
+                        let stream = loop {
+                            tokio::select! {
+                                s = connect.as_mut() => {
+                                    break s.map_err(|e| {
+                                        let _ = tx.send(StreamEvent::Error {
+                                            code: "provider".into(),
+                                            message: e.to_string(),
+                                        });
+                                        // Remove the broadcast entry or the chat
+                                        // keeps a zombie generation: attach
+                                        // streams would hang forever with the
+                                        // caret blinking on a dead thread.
+                                        state.generations.remove(chat_id);
+                                        HandlerError::from(TerminalError::new(format!(
+                                            "provider error: {e}"
+                                        )))
+                                    })?;
+                                }
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                                    if cancel_loop.load(std::sync::atomic::Ordering::SeqCst) {
+                                        // Stop during connect: nothing partial is
+                                        // buffered, so the completion carries an
+                                        // empty payload and the stopped flag — the
+                                        // epilogue settles the turn as interrupted
+                                        // with no new event.
+                                        return Ok(Json(CompletionOut {
+                                            text: String::new(),
+                                            tool_calls: Vec::new(),
+                                            tokens_in: 0,
+                                            tokens_out: 0,
+                                            reasoning: String::new(),
+                                            stopped: true,
+                                        }));
+                                    }
+                                }
+                            }
+                        };
                         // The model call is about to stream: only now is
                         // the previous step's persist treated as "not this
                         // step's" — from here on a failure delivers a
@@ -3426,6 +3459,44 @@ fn classify_chatgen_entry(current_version: &str, value: &str) -> StaleChatgenEnt
     }
 }
 
+/// Hard-stops one chat's recorded generation invocation and clears its
+/// generating state. The fallback for callers that cannot reach the
+/// in-memory cancel flag (stop with no registry entry — worker restarted,
+/// replay pending — and the archive escape hatch): without it a suspended
+/// invocation would keep the chat's spinner alive with nothing observing
+/// the request to end.
+pub(crate) async fn kill_recorded_chat_generation(state: &AppState, chat_id: Uuid) {
+    let Ok(store) = state.store().await else {
+        return;
+    };
+    let key = format!("chatgen_inv:{chat_id}");
+    if let Ok(Some(value)) = store.kv().get(&key).await {
+        let inv = value.rsplit(':').next().unwrap_or_default();
+        if !inv.is_empty() {
+            let url = format!(
+                "{}/invocations/{}?mode=kill",
+                state.config.restate_admin_url.trim_end_matches('/'),
+                inv
+            );
+            match reqwest::Client::new().delete(&url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::info!(
+                        "killed chat generation {inv} (hard stop): {}",
+                        resp.status()
+                    );
+                }
+                Ok(resp) => {
+                    tracing::warn!("kill of chat generation {inv} got {}", resp.status())
+                }
+                Err(e) => tracing::warn!("kill of chat generation {inv} failed: {e}"),
+            }
+        }
+        let _ = store.kv().delete(&key).await;
+    }
+    let _ = store.chats().clear_generating(chat_id).await;
+    state.generations.remove(chat_id);
+}
+
 /// Purges in-flight chat generations dispatched by a different workflow
 /// version. They cannot replay after the deploy and would jam their chat
 /// (virtual objects serialize per key) until the inactivity timeout.
@@ -3496,6 +3567,84 @@ pub(crate) async fn purge_stale_chat_generations(state: &AppState) {
     }
 }
 
+/// Kills every paused or failed ChatRunner `generate` invocation and clears
+/// its chat's generating flag. Restate pauses invocations it cannot make
+/// progress on (journal mismatch after a deploy, undeliverable
+/// completions) — a paused `generate` never ends and never clears its
+/// chat's flag, so the sidebar keeps a forever-spinner that neither stop
+/// nor archive can reach (no registry entry, no kv record to fall back
+/// on). Enumerating them through the admin's SQL query endpoint is the
+/// only net that catches the record-less cases. Runs at worker startup and
+/// hourly, next to the prune loop; a failed kill leaves the invocation
+/// paused, so the next run retries it.
+pub(crate) async fn kill_stuck_chat_invocations(state: &AppState) {
+    let admin = state.config.restate_admin_url.trim_end_matches('/');
+    let query_url = format!("{admin}/query");
+    let body = serde_json::json!({
+        "query": "SELECT id, target FROM sys_invocation \
+                  WHERE target_service_name = 'ChatRunner' \
+                    AND target_handler_name = 'generate' \
+                    AND status IN ('paused', 'failed')"
+    });
+    let resp = match reqwest::Client::new()
+        .post(&query_url)
+        .header("accept", "application/json")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::warn!("stuck-invocation query failed: {e}");
+            return;
+        }
+    };
+    if !resp.status().is_success() {
+        tracing::warn!("stuck-invocation query got {}", resp.status());
+        return;
+    }
+    let Ok(value) = resp.json::<serde_json::Value>().await else {
+        tracing::warn!("stuck-invocation query returned a non-JSON body");
+        return;
+    };
+    let Some(rows) = value["rows"].as_array() else {
+        return;
+    };
+    let Ok(store) = state.store().await else {
+        return;
+    };
+    for row in rows {
+        let Some(inv) = row["id"].as_str().map(str::to_string) else {
+            continue;
+        };
+        // target = "ChatRunner/{chat_id}/generate" — the middle segment keys
+        // the flag and the registry entry.
+        let chat_id = row["target"]
+            .as_str()
+            .and_then(|t| t.strip_prefix("ChatRunner/"))
+            .and_then(|rest| rest.split('/').next())
+            .and_then(|s| s.parse::<Uuid>().ok());
+        let kill_url = format!("{admin}/invocations/{inv}/kill");
+        match reqwest::Client::new().patch(&kill_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!("killed stuck chat invocation {inv}");
+            }
+            Ok(resp) => {
+                tracing::warn!("kill of stuck chat invocation {inv} got {}", resp.status());
+            }
+            Err(e) => {
+                tracing::warn!("kill of stuck chat invocation {inv} failed: {e}");
+            }
+        }
+        if let Some(chat_id) = chat_id {
+            let _ = store.chats().clear_generating(chat_id).await;
+            // Also drop the in-memory entry: the killed handler's exit path
+            // never runs, so the entry would stay as a zombie generation.
+            state.generations.remove(chat_id);
+        }
+    }
+}
+
 /// Spawn the Restate endpoint server for the worker role.
 pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
     if state.config.internal_token.is_none() {
@@ -3511,6 +3660,9 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
     // In-flight turns dispatched by an older workflow version cannot replay
     // after this deploy and would jam their chats — purge them first.
     purge_stale_chat_generations(&state).await;
+    // Paused/failed ChatRunner invocations jam their chats (forever-spinner
+    // no client call can reach) — kill them at startup.
+    kill_stuck_chat_invocations(&state).await;
     // Hourly prune of expired sessions and dead pairing tokens (startup +
     // interval; unpruned they accumulate forever).
     let prune_state = state.clone();
@@ -3525,6 +3677,9 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
                     );
                 }
             }
+            // A paused ChatRunner invocation can appear at any deploy or
+            // crash — the same hourly pass keeps the self-heal running.
+            kill_stuck_chat_invocations(&prune_state).await;
             tokio::time::sleep(Duration::from_secs(3600)).await;
         }
     });

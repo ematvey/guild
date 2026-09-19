@@ -1,9 +1,56 @@
 # Guild — current state of work
 
-Updated 2026-09-20 (project scoping: strictly owner-only). Read this before touching
+Updated 2026-09-20 (stuck-generation sweep: paused Restate invocations,
+provider connection timeouts). Read this before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Stuck-generation sweep: paused Restate invocations + unbounded provider connections — 2026-09-20
+
+maintainer (user report, DESKTOP-TEST): an agent turn hung forever — script
+crashed (normal, returned to the model), but the chat spun on; stop did
+nothing; the user archived the chat and lost all access to it while it kept
+spinning; the state survived desktop restart and PC reboot (the turn is a
+Restate virtual-object workflow — the desktop is only the GUI). Live
+inspection found the true state: the `generate` invocation was **paused** —
+Restate parks invocations it cannot make progress on (journal-mismatch
+family); a paused `generate` never ends, never clears its chat's flag, and
+nothing in Guild could reach it: the startup sweep only kills *stale-version*
+invocations (a current-version one is assumed to replay) and its
+`chatgen_inv` record was already consumed, so stop/archive had no registry
+entry (graceful flag) and no record (kill fallback) — dead end.
+
+Fixes, four layers. (1) **Provider connections are bounded**
+(`guild-core/src/provider/{openai,anthropic}.rs`): connect 15 s, response
+headers 60 s (tokio timeout around `send()`), per-read idle 120 s
+(`read_timeout` — also covers the streamed body). Previously the reqwest
+client had no timeout at all: a provider that accepts the connection and
+stalls pins the journaled model-call step forever, and the streaming loop's
+250 ms cancel tick only starts once a stream exists — stop could never land.
+(2) **Stop responsiveness while connecting** (restate.rs turn loop): the
+connect phase polls the cancel flag on the same 250 ms cadence (future
+pinned once — recreating it per tick would abort the handshake forever); a
+stop during connect yields an empty `stopped` completion the epilogue
+settles as interrupted. (3) **Stop/archive are guaranteed escape hatches**:
+both endpoints route through `gateway::abort_generation` — graceful cancel
+flag when the registry tracks the turn, hard kill of the recorded invocation
+otherwise (old 409-when-idle contract retired; killing also clears a stale
+flag, self-healing the spinner); archiving a generating chat ends its run
+(the sidebar drops archived chats — a still-spinning one was unreachable).
+(4) **The sweep catches paused/failed invocations**
+(`kill_stuck_chat_invocations`, worker startup + hourly next to the prune
+loop): the admin SQL endpoint (`/query`, `accept: application/json`)
+enumerates paused/failed ChatRunner `generate` invocations regardless of
+record state; each is killed (`PATCH /invocations/{id}/kill` — this
+Restate's current endpoint; the DELETE `?mode=kill` the record sweep uses is
+deprecated-but-supported) and its flag/registry entry cleared. Archived
+chats are now visible: `GET /api/v1/chats?archived=1` + a collapsed
+"Archived" sidebar section whose rows open by direct link and offer
+Unarchive. Remediated the live stuck chat (kill + flag clear) before the
+deploy. Full suite green (475, -j 12 — 48-way parallelism on the shared
+host flakes the 30 s frame-wait tests, passes at lower concurrency), tsc +
+vitest 121 clean; redeployed twice (sweep landed after the first).
 
 ## Projects are strictly owner-scoped, admin bypass removed — 2026-09-20
 

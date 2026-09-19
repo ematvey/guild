@@ -116,6 +116,30 @@ impl<'a> ChatStore<'a> {
         .map_err(Into::into)
     }
 
+    /// Lists the caller's archived chats (the sidebar's Archived section);
+    /// the mirror image of `list_chats`' `archived_at IS NULL` filter.
+    pub async fn list_archived_chats(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Vec<ChatListRow>, ApiError> {
+        sqlx::query_as(
+            "SELECT c.id, c.org_id, c.user_id, c.title, c.created_at, c.machine_id, c.machine_label, \
+                    c.generating, c.project_id, pr.name AS project_name, m.label AS project_machine_label, \
+                    false AS unread \
+             FROM chats c \
+             LEFT JOIN projects pr ON pr.id = c.project_id \
+             LEFT JOIN machines m ON m.machine_id = pr.machine_id \
+             WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NOT NULL \
+             ORDER BY c.created_at DESC",
+        )
+        .bind(org_id)
+        .bind(user_id)
+        .fetch_all(self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
     /// Fetches one chat the caller owns. Admins may access any chat in the
     /// org; everyone else only their own — org scoping alone would let a
     /// member read another member's thread, forge its events, rebind its

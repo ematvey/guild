@@ -116,3 +116,76 @@ async fn sweep_kills_stale_records_only_after_a_successful_kill() {
         .iter()
         .any(|u| u.contains("/invocations/inv-retryok")));
 }
+
+/// The paused-invocation kill sweep: paused ChatRunner generate invocations
+/// found through the admin's query endpoint are killed and their chats'
+/// generating flags cleared — this is the only net that catches stuck
+/// invocations with no `chatgen_inv` record (the shape the forever-spinner
+/// bug took: Restate paused the turn, the record was long gone).
+#[tokio::test]
+async fn paused_invocations_are_killed_and_flags_cleared() {
+    use guild_server::test_support::kill_stuck_chat_invocations;
+
+    let db = guild_server::store::Store::connect_test()
+        .await
+        .expect("postgres");
+    let chat_row = guild_server::test_support::insert_org_with_chat(&db.store).await;
+    let killed: Arc<Mutex<Vec<String>>> = Default::default();
+    let killed_clone = killed.clone();
+
+    // Mock admin: the query returns one paused generate invocation; the
+    // kill endpoint answers 200 and records the call.
+    let app = axum::Router::new()
+        .route(
+            "/query",
+            axum::routing::post(move || async move {
+                axum::Json(serde_json::json!({ "rows": [
+                    {
+                        "id": "inv-paused-generate",
+                        "target": format!("ChatRunner/{chat_row}/generate"),
+                    },
+                ]}))
+            }),
+        )
+        .fallback(move |method: axum::http::Method, uri: axum::http::Uri| {
+            let killed = killed_clone.clone();
+            async move {
+                if method == axum::http::Method::PATCH {
+                    killed.lock().unwrap().push(uri.to_string());
+                }
+                axum::http::StatusCode::OK
+            }
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let mut config = guild_server::config::Config::test_config();
+    config.restate_admin_url = format!("http://{addr}");
+    let state = guild_server::state::AppState::with_store(Arc::new(db.store.clone()), config);
+    let org_id: uuid::Uuid = sqlx::query_scalar("SELECT org_id FROM chats WHERE id = $1")
+        .bind(chat_row)
+        .fetch_one(db.store.pool())
+        .await
+        .unwrap();
+    db.store
+        .chats()
+        .set_generating(org_id, chat_row, true)
+        .await
+        .unwrap();
+
+    kill_stuck_chat_invocations(&state).await;
+
+    let killed = killed.lock().unwrap().clone();
+    assert_eq!(killed.len(), 1, "{killed:?}");
+    assert!(killed[0].contains("/invocations/inv-paused-generate/kill"));
+
+    // The killed invocation's chat flag is cleared: the sweep resolved the
+    // target's chat id and ran the trusted clear.
+    let generating: bool = sqlx::query_scalar("SELECT generating FROM chats WHERE id = $1")
+        .bind(chat_row)
+        .fetch_one(db.store.pool())
+        .await
+        .unwrap();
+    assert!(!generating);
+}
