@@ -75,9 +75,6 @@ export function SettingsWindow({
   role,
   displayName,
   avatarUrl,
-  chatId,
-  currentMachineId,
-  onMachineChanged,
   onOpenDevice,
   onSignOut,
   section,
@@ -91,9 +88,6 @@ export function SettingsWindow({
   role: string;
   displayName?: string | null;
   avatarUrl?: string | null;
-  chatId: string | null;
-  currentMachineId: string | null;
-  onMachineChanged: () => void;
   /** Opens the device-setup dialog (replaces this overlay). */
   onOpenDevice: () => void;
   onSignOut: () => void;
@@ -246,9 +240,6 @@ export function SettingsWindow({
             <SectionPane
               def={activeDef}
               email={email}
-              chatId={chatId}
-              currentMachineId={currentMachineId}
-              onMachineChanged={onMachineChanged}
               detail={detail}
               onDetailChange={onDetailChange}
             />
@@ -262,17 +253,11 @@ export function SettingsWindow({
 function SectionPane({
   def,
   email,
-  chatId,
-  currentMachineId,
-  onMachineChanged,
   detail,
   onDetailChange,
 }: {
   def: SectionDef;
   email: string;
-  chatId: string | null;
-  currentMachineId: string | null;
-  onMachineChanged: () => void;
   detail: string | null;
   onDetailChange: (detail: string | null) => void;
 }) {
@@ -281,9 +266,6 @@ function SectionPane({
       <SectionBody
         id={def.id}
         email={email}
-        chatId={chatId}
-        currentMachineId={currentMachineId}
-        onMachineChanged={onMachineChanged}
         detail={detail}
         onDetailChange={onDetailChange}
       />
@@ -294,17 +276,11 @@ function SectionPane({
 function SectionBody({
   id,
   email,
-  chatId,
-  currentMachineId,
-  onMachineChanged,
   detail,
   onDetailChange,
 }: {
   id: SectionId;
   email: string;
-  chatId: string | null;
-  currentMachineId: string | null;
-  onMachineChanged: () => void;
   detail: string | null;
   onDetailChange: (detail: string | null) => void;
 }) {
@@ -314,13 +290,7 @@ function SectionBody({
     case "appearance":
       return <AppearanceSection />;
     case "machine":
-      return (
-        <MachineSection
-          chatId={chatId}
-          currentMachineId={currentMachineId}
-          onMachineChanged={onMachineChanged}
-        />
-      );
+      return <MachineSection />;
     case "approvals":
       return <ApprovalsSection />;
     case "skills":
