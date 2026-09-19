@@ -1,9 +1,38 @@
 # Guild — current state of work
 
-Updated 2026-09-19 (PRD/SRS + binding model). Read this before touching
+Updated 2026-09-20 (WSL interop self-heal). Read this before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## WSL execute failures on systemd distros: interop self-heal — 2026-09-20
+
+maintainer: WORKSTATION (Windows 25H2 + WSL 2.7.10, archlinux distro, systemd=true)
+failed every `execute` with `exit 127 — /mnt/c/.../WindowsApps/wsl.exe: 1:
+MZ: not found` — intermittently for days (fails 09-17/09-19, working
+windows between). Root-caused live against the machine: WSL's interop
+binfmt entry (`/proc/sys/fs/binfmt_misc/WSLInterop`) goes missing on
+systemd distros (microsoft/WSL#8843 family: wiped by systemd's early
+binfmt_misc mount dance, not re-registered — systemd-binfmt.service's
+conditions are unmet so nothing restores it — and reaped again by WSL's
+session lifecycle; manual re-registrations vanished within minutes while
+the VM stayed up). With the entry absent, the login-shell session
+(`wsl.exe --exec bash -lc`) bootstrap execs `wsl.exe` through the broken
+interop, a POSIX shell falls back to reading the PE image as a script and
+dies on the `MZ` magic — exit 127 before the command runs. Non-login
+direct execs (`--exec base64`, the fs-tool transport) keep working, which
+is why read_file survived while execute died in the same minute.
+
+Fix, two layers. (1) `guild-core/src/tools/shell.rs`: the WSL branch now
+detects the signature (exit 127 + `MZ` in stderr), re-registers the entry
+via `wsl -u root --exec sh -c` (non-login — the transport that still works
+while broken), and retries the command once (the failed attempt never ran
+the command, so no double-execution risk); heal is rate-limited to one per
+30s and the outcome lands in `meta.wsl_interop_healed`. Ships with the
+next desktop client release. (2) Machine-side, installed on WORKSTATION now:
+`wsl-interop-heal.timer` (5s) + `/usr/local/sbin/wsl-interop-heal.sh`
+re-register the entry whenever missing; execute verified working again via
+an API-driven probe (PROBE_CATCH/FINAL_VERIFY_OK).
 
 ## Specs folded into PRD + SRS; binding model implemented — 2026-09-19
 
