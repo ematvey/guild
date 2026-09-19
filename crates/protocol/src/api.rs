@@ -85,10 +85,6 @@ pub struct PairingTokenInfo {
 pub struct CreateChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Optional machine binding at creation (desktop apps bind their own
-    /// machine so machine tools work from the first turn).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub machine_id: Option<String>,
     /// Optional project binding at creation (the composer chip).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<Uuid>,

@@ -498,7 +498,7 @@ pub(crate) async fn submit_turn(
                         req.chat_id,
                         user,
                         Some(pid),
-                        Some((&project.machine_id, Some(&label))),
+                        Some((&project.machine_id, label.as_str())),
                     )
                     .await?;
                 machine_id = aligned.machine_id;
@@ -895,11 +895,6 @@ mod tests {
         let chat_row = store
             .chats()
             .create_chat(user.org_id, user.id, Some("t"), None)
-            .await
-            .unwrap();
-        store
-            .chats()
-            .set_machine(user.org_id, chat_row.id, Some("mA"), Some("Machine A"))
             .await
             .unwrap();
         let req = ChatCompletionRequest {
