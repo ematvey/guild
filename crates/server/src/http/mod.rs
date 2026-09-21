@@ -1,9 +1,11 @@
 pub mod admin;
 pub mod agents;
+pub mod anthropic;
 pub mod api_keys;
 pub mod attachments;
 pub mod tool_artifacts;
 pub mod auth;
+pub mod llm_proxy;
 pub mod chats;
 pub mod error;
 pub mod events;
@@ -68,6 +70,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(oidc::routes())
         .merge(api_keys::routes())
         .merge(openai::routes())
+        .merge(anthropic::routes())
         .merge(integration_tools::routes())
         .merge(releases::routes())
         .merge(internal::routines_routes())

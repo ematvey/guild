@@ -406,7 +406,7 @@ pub static MIGRATIONS_UPTO_0046: [(&str, &str); 46] = [
     ),
 ];
 
-pub static MIGRATIONS_FROM_0047: [(&str, &str); 7] = [
+pub static MIGRATIONS_FROM_0047: [(&str, &str); 8] = [
     (
         "0047_projects",
         include_str!("../../migrations/0047_projects.sql"),
@@ -434,6 +434,10 @@ pub static MIGRATIONS_FROM_0047: [(&str, &str); 7] = [
     (
         "0053_unbound_chats_have_no_machine",
         include_str!("../../migrations/0053_unbound_chats_have_no_machine.sql"),
+    ),
+    (
+        "0054_api_key_owner",
+        include_str!("../../migrations/0054_api_key_owner.sql"),
     ),
 ];
 

@@ -3,13 +3,14 @@
 //! persistence; usage is attributed to the key's org/user.
 
 use crate::http::api_keys::ApiKeyUser;
+use crate::http::llm_proxy::{accumulate, dispatch, usage_event};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::{Json, Router};
 use futures::{Stream, StreamExt};
-use guild_core::provider::{ModelProvider, ProviderChunk, ProviderRequest};
+use guild_core::provider::ProviderChunk;
 use guild_core::usage::UsageEvent;
 use protocol::api::{Message, ToolCall, ToolSpec};
 use serde::Deserialize;
@@ -19,10 +20,44 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route(
-        "/openai/v1/chat/completions",
-        axum::routing::post(chat_completions),
-    )
+    Router::new()
+        .route(
+            "/openai/v1/chat/completions",
+            axum::routing::post(chat_completions),
+        )
+        .route("/openai/v1/models", axum::routing::get(models))
+}
+
+async fn models(
+    State(state): State<AppState>,
+    key: ApiKeyUser,
+) -> Result<axum::response::Response, axum::response::Response> {
+    let store = state.store().await.map_err(|e| {
+        openai_error(
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            e.message.clone(),
+        )
+    })?;
+    let models = store
+        .gateway()
+        .list_models(key.0.org_id)
+        .await
+        .map_err(|e| {
+            openai_error(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                e.to_string(),
+            )
+        })?;
+    Ok(Json(json!({
+        "object": "list",
+        "data": models
+            .into_iter()
+            .map(|m| json!({"id": m, "object": "model", "owned_by": "organization_owner"}))
+            .collect::<Vec<_>>(),
+    }))
+    .into_response())
 }
 
 #[derive(Deserialize)]
@@ -163,85 +198,32 @@ async fn chat_completions(
     Json(req): Json<OpenAiChatRequest>,
 ) -> Result<axum::response::Response, axum::response::Response> {
     let org_id = key.0.org_id;
-    let user_id = key.0.created_by;
+    // Usage belongs to the key's owner when user-minted, else to the admin
+    // who created the org key.
+    let user_id = key.0.user_id.unwrap_or(key.0.created_by);
     let session_id = key.0.id;
 
-    let store = state.store().await.map_err(|e| {
-        openai_error(
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            e.message.clone(),
-        )
-    })?;
-    let master = state.config.master_key().map_err(|e| {
-        openai_error(
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            e.to_string(),
-        )
-    })?;
-    let route = store
-        .gateway()
-        .resolve_route(org_id, &req.model, &master)
-        .await
-        .map_err(|e| {
-            let status = if e.message.contains("no route") {
-                axum::http::StatusCode::NOT_FOUND
-            } else {
-                axum::http::StatusCode::BAD_GATEWAY
-            };
-            openai_error(status, "invalid_request_error", e.message.clone())
-        })?;
-
-    crate::http::gateway::enforce_quota(&state, org_id, &req.model, &route)
-        .await
-        .map_err(|e| {
-            let status = if e.code == "quota_exceeded" {
-                axum::http::StatusCode::TOO_MANY_REQUESTS
-            } else {
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR
-            };
-            openai_error(status, "quota_exceeded", e.message.clone())
-        })?;
-
     let (system, messages) = to_internal_messages(&req.messages);
-    let provider: Arc<dyn ModelProvider> = guild_core::provider::for_protocol(&route.protocol)
-        .ok_or_else(|| {
-            openai_error(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                format!("unknown protocol {}", route.protocol),
-            )
-        })?;
-    let preq = ProviderRequest {
-        model: &req.model,
-        system: system.as_deref(),
-        messages: &messages,
-        api_key: &route.api_key,
-        base_url: &route.base_url,
-        tools: req.tools.as_deref(),
-        max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
-    };
-    let prov_stream = provider.chat_stream(preq).await.map_err(|e| {
-        openai_error(
-            axum::http::StatusCode::BAD_GATEWAY,
-            "provider_error",
-            e.to_string(),
-        )
-    })?;
+    let call = dispatch(
+        &state,
+        org_id,
+        &req.model,
+        system,
+        messages,
+        req.tools.clone(),
+        None,
+    )
+        .await
+        .map_err(|e| openai_error(e.status(), e.openai_type(), e.0.message.clone()))?;
 
+    let usage = call.usage.clone();
     let completion_id = format!("chatcmpl-{}", Uuid::now_v7());
-    let model = req.model.clone();
-    let provider_name = route.provider.clone();
-    let price_in = route.price_in;
-    let price_out = route.price_out;
-    let usage = state.usage().await.map_err(|e| {
-        openai_error(
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            e.message.clone(),
-        )
-    })?;
+    let model = call.model.clone();
+    let provider_name = call.provider.clone();
+    let price_in = call.price_in;
+    let price_out = call.price_out;
+    let prov_stream = call.stream;
+    let call_meta = (model.clone(), provider_name.clone(), price_in, price_out);
 
     if req.stream {
         let out = stream_chunks(
@@ -260,25 +242,28 @@ async fn chat_completions(
             .keep_alive(KeepAlive::default())
             .into_response())
     } else {
-        let (text, calls, tokens_in, tokens_out, _cost) = accumulate(
-            prov_stream,
-            usage,
-            org_id,
-            user_id,
-            session_id,
-            model.clone(),
-            provider_name,
-            price_in,
-            price_out,
-        )
-        .await
-        .map_err(|e| {
-            openai_error(
-                axum::http::StatusCode::BAD_GATEWAY,
-                "provider_error",
-                e.to_string(),
-            )
-        })?;
+        let (text, calls, tokens_in, tokens_out) = accumulate(prov_stream)
+            .await
+            .map_err(|e| {
+                openai_error(
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    "provider_error",
+                    e.to_string(),
+                )
+            })?;
+        usage
+            .record(usage_event(
+                org_id,
+                user_id,
+                session_id,
+                &call_meta.0,
+                &call_meta.1,
+                call_meta.2,
+                call_meta.3,
+                tokens_in,
+                tokens_out,
+            ))
+            .await;
         let finish_reason = if calls.is_empty() {
             "stop"
         } else {
@@ -391,62 +376,4 @@ fn stream_chunks(
     }
 }
 
-type Accumulated = (String, Vec<ToolCall>, u32, u32, f64);
 
-#[allow(clippy::too_many_arguments)]
-async fn accumulate(
-    prov_stream: futures::stream::BoxStream<
-        'static,
-        Result<ProviderChunk, guild_core::provider::ProviderError>,
-    >,
-    usage: Arc<crate::usage::UsageSink>,
-    org_id: Uuid,
-    user_id: Uuid,
-    session_id: Uuid,
-    model: String,
-    provider_name: String,
-    price_in: f64,
-    price_out: f64,
-) -> anyhow::Result<Accumulated> {
-    let mut text = String::new();
-    let mut calls = Vec::new();
-    let mut tokens_in = 0u32;
-    let mut tokens_out = 0u32;
-    let mut pinned = Box::pin(prov_stream);
-    while let Some(item) = pinned.next().await {
-        match item? {
-            ProviderChunk::Text(t) => {
-                text.push_str(&t.text_delta);
-                if let Some(n) = t.tokens_in {
-                    tokens_in = n;
-                }
-                if let Some(n) = t.tokens_out {
-                    tokens_out = n;
-                }
-            }
-            ProviderChunk::ToolCallDelta { .. } => {}
-            ProviderChunk::Thinking(_) => {
-                // accumulate() feeds non-interactive consumers; reasoning is
-                // display-only here
-            }
-            ProviderChunk::ToolCallDone { call } => calls.push(call),
-        }
-    }
-    let cost = UsageEvent::cost_usd(tokens_in, tokens_out, price_in, price_out);
-    usage
-        .record(UsageEvent {
-            ts: chrono::Utc::now(),
-            org_id,
-            user_id,
-            team_id: None,
-            session_id,
-            model,
-            provider: provider_name,
-            tokens_in,
-            tokens_out,
-            cost_usd: cost,
-            request_id: Uuid::now_v7(),
-        })
-        .await;
-    Ok((text, calls, tokens_in, tokens_out, cost))
-}
