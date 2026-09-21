@@ -38,6 +38,7 @@ import {
   storedSidebarWidth,
 } from "../../lib/sidebar-width";
 import { MachineSection } from "./sections/MachineSection";
+import { ApiKeysSection } from "./sections/ApiKeysSection";
 import { AboutSection } from "./sections/AboutSection";
 import { ApprovalsSection } from "./sections/ApprovalsSection";
 import { AssistantSection } from "./sections/AssistantSection";
@@ -46,6 +47,7 @@ type SectionId =
   | "account"
   | "appearance"
   | "machine"
+  | "apikeys"
   | "approvals"
   | "usage"
   | "assistant"
@@ -105,6 +107,8 @@ export function SettingsWindow({
     { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
     { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
     { id: "machine", label: "Machine", icon: <Cpu className="size-4" />, group: "user" },
+    { id: "apikeys", label: "API Keys", icon: <KeyRound className="size-4" />, group: "user" },
+    { id: "apikeys", label: "API Keys", icon: <KeyRound className="size-4" />, group: "user" },
     { id: "skills", label: "Skills", icon: <Puzzle className="size-4" />, group: "user" },
     {
       id: "approvals",
@@ -291,6 +295,10 @@ function SectionBody({
       return <AppearanceSection />;
     case "machine":
       return <MachineSection />;
+    case "apikeys":
+      return <ApiKeysSection />;
+    case "apikeys":
+      return <ApiKeysSection />;
     case "approvals":
       return <ApprovalsSection />;
     case "skills":

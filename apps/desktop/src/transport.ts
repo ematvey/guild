@@ -459,6 +459,49 @@ export async function listModels(): Promise<string[] | null> {
   return v.models ?? [];
 }
 
+export interface ApiKeyInfo {
+  id: string;
+  name: string;
+  /** Key prefix (`gk_XXXXXX…`) — the only non-secret fragment on file. */
+  prefix: string;
+  created_at: string;
+  revoked_at?: string | null;
+}
+
+/** This user's gateway API keys (Settings → API Keys). */
+export async function listMyApiKeys(): Promise<ApiKeyInfo[] | null> {
+  const res = await fetch(apiUrl("/api/v1/api-keys"), {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) return null;
+  const v = await res.json().catch(() => ({}));
+  return v?.keys ?? [];
+}
+
+/** Mints a key; the plaintext is shown exactly once, in the response. */
+export async function createMyApiKey(
+  name: string,
+): Promise<{ key: ApiKeyInfo; plaintext: string } | null> {
+  const res = await fetch(apiUrl("/api/v1/api-keys"), {
+    method: "POST",
+    headers: { authorization: `Bearer ${getToken()}`, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) return null;
+  const v = await res.json().catch(() => ({}));
+  if (!v?.plaintext || !v?.key) return null;
+  return { key: v.key, plaintext: v.plaintext };
+}
+
+/** Revokes one of this user's keys. */
+export async function revokeMyApiKey(id: string): Promise<boolean> {
+  const res = await fetch(apiUrl(`/api/v1/api-keys/${encodeURIComponent(id)}`), {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  return res.ok;
+}
+
 export interface ChatSummary {
   id: string;
   title: string;

@@ -10,6 +10,7 @@ import { Bot } from "lucide-react";
 import { IS_TAURI, apiLogin, apiMe, clearToken, machineId, rpcCall, setToken } from "./transport";
 import { clearApiCache } from "./views/settings/use-cached-api";
 import { clearMachinesCache } from "./views/settings/sections/MachineSection";
+import { clearApiKeysCache } from "./views/settings/sections/ApiKeysSection";
 import { ThemeProvider, useTheme } from "./theme";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 
@@ -327,6 +328,7 @@ function DesktopApp() {
     clearToken();
     clearApiCache();
     clearMachinesCache();
+    clearApiKeysCache();
     setUser(null);
     window.location.reload();
   };
@@ -480,6 +482,7 @@ function AppInner() {
       clearToken();
       clearApiCache();
       clearMachinesCache();
+      clearApiKeysCache();
       setEmail(null);
     };
     const onLoggedIn = (profile: Profile) => {

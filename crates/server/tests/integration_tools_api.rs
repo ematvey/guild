@@ -218,7 +218,7 @@ async fn setup() -> Setup {
     let (_, member_token) = store.identity().create_session(member.id).await.unwrap();
     let key = store
         .api_keys()
-        .create(org, admin_id, "scripts")
+        .create(org, admin_id, "scripts", None)
         .await
         .unwrap();
     Setup {
