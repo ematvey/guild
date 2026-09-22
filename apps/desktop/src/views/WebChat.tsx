@@ -1850,7 +1850,7 @@ export default function WebChat({
     if (!chatId) {
       const opened = reducerRef.current.open(null);
       setBlocks(opened.blocks);
-        setThreadLoading(false);
+      setThreadLoading(false);
     } else if (skipLoadRef.current === chatId) {
       // Keep the optimistic first-send block: the created chat adopts the
       // scratch view; the socket still reconciles the new chat.
@@ -1862,7 +1862,7 @@ export default function WebChat({
       const opened = reducerRef.current.open(chatId);
       setThreadLoading(!opened.restored);
       setBlocks(opened.blocks);
-      }
+    }
     socketRef.current?.resync();
   }, [chatId]);
 
