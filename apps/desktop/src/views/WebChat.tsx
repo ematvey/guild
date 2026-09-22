@@ -172,6 +172,19 @@ export function offlineMachine(
   return { label: row.machine_label ?? row.machine_id };
 }
 
+/** Whether the open chat shows busy after a thread-list push: while a
+ * send's HTTP round trip is in flight the pushed list predates the
+ * server's generating flag, so its false must not clear the optimistic
+ * busy (a second send could race the first). */
+export function busyAfterThreadPush(
+  chats: ChatSummary[],
+  openChatId: string | null,
+  sendInFlight: boolean,
+): boolean {
+  if (sendInFlight) return true;
+  return !!chats.find((c) => c.id === openChatId)?.generating;
+}
+
 
 /// URL-driven navigation: the pathname is the single source of truth for
 /// where the user is. Routes:
@@ -1918,12 +1931,11 @@ export default function WebChat({
       onThreadList: (nextChats) => {
         setChats(nextChats);
         setChatStatus(statusFromThreads(nextChats));
-        // A send's HTTP round trip is still in flight: the server's
-        // generating flag is not set yet, so a list push here must not
-        // clear the optimistic busy — a second send could race the first.
-        if (!sendingRef.current) {
-          setBusy(!!nextChats.find(chat => chat.id === openChatIdRef.current)?.generating);
-        }
+        // busyAfterThreadPush keeps the optimistic busy while a send's
+        // HTTP round trip is in flight (the push predates the server's
+        // generating flag — clearing busy here would let a second send
+        // race the first).
+        setBusy(busyAfterThreadPush(nextChats, openChatIdRef.current, sendingRef.current));
       },
       // Sequenced ThreadState owns busy state; older status notifications cannot override it.
       onChatStatus: () => {},
