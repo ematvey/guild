@@ -4,29 +4,39 @@ How the Guild client is built, packaged, published, and verified. Everything
 below runs on a Linux build host — no Windows or macOS machine is required
 (with documented caveats for Apple signing).
 
-## 1. Architecture: one binary, three modes
+## 1. Architecture: one binary, one process
 
 The client is a **single executable** (`guild-desktop` crate → shipped as
-`Guild`/`Guild.exe`/`guild`):
+`Guild`/`Guild.exe`/`guild`) running the **single-process design**
+(docs/specs/2026-09-13-single-process-desktop.md): the GUI process hosts the
+engine itself. There is no headless daemon in the product flow and no
+automatic daemon spawn — a CLI verb without a running app fails with
+"Guild app is not running" instead of forking a headless engine.
 
 | Invocation | Behaviour |
 |---|---|
-| `Guild` (no args) | GUI (Tauri window); hosts the daemon **in-process** — the same engine, socket, and machine link live in the GUI process itself; no separate daemon process is spawned or attached to |
-| `Guild daemon` | the per-user daemon: shared engine, survives client exit, the only session-token route to the server |
+| `Guild` (no args) | GUI: hosts everything in-process — the engine (session, JSON-RPC dispatch), the per-user CLI socket (Unix socket on Linux/macOS, named pipe on Windows), and the member WebSocket link all live in this one process; no separate daemon process is spawned or attached to |
+| `Guild daemon` | the same engine headless on the local socket; nothing spawns it automatically — manual fallback for debugging, or the unit's ExecStart on headless hosts |
 | `Guild daemon install [--linger]` | Linux headless hosts: install/upgrade the daemon as a systemd **user unit** (`guild-daemon.service`, `Restart=always` + `RestartSec=5s`, enabled at login); refuses while a Guild app is running (the GUI hosts its daemon in-process — install is headless-only for now, see PLAN.md); verifies the retired daemon's socket actually released before `enable --now` and that the unit's daemon is reachable after; `--linger` best-effort enables `loginctl enable-linger` |
 | `Guild daemon status` / `uninstall` | unit state / stop + remove the unit |
-| `Guild login --url U --email E --password P` | CLI verb via the daemon; the daemon validates and persists the session to `~/.config/guild/token.json` |
-| `Guild chat --model M "text"` | CLI verb via the daemon (streams the reply through it) |
-| `Guild publish --kind K --dir D --version V` | CLI verb via the daemon |
-| `Guild install --slug S [--project P]` | CLI verb via the daemon (`--project` defaults to `.`) |
-| `Guild verify --file F --sig SIG --key KEY` | offline ed25519 verification of a downloaded release artifact (no daemon, no network) |
+| `Guild login --url U --email E --password P` (or `--token CODE`) | CLI verb via the running app's local socket (the GUI, or the unit daemon on headless hosts — no spawn fallback); login validates and persists the session to `~/.config/guild/token.json` |
+| `Guild chat --model M "text"` | CLI verb via the running app's local socket (streams the reply through it) |
+| `Guild publish --kind K --dir D --version V` | CLI verb via the running app's local socket |
+| `Guild install --slug S [--project P]` | CLI verb via the running app's local socket (`--project` defaults to `.`) |
+| `Guild verify --file F --sig SIG --key KEY` | offline ed25519 verification of a downloaded release artifact (no socket, no network) |
 
 The engine loop is the library code in `guild-app-server::jsonrpc_loop`
-(the desktop crate links the app-server library). The GUI has no agent
-logic; it attaches to the daemon over a per-user local socket (Unix socket
-on Linux/macOS, named pipe on Windows) and bridges the same line-delimited
-JSON-RPC. The daemon binary path can be overridden for development with
-`GUILD_DAEMON_BIN`, and the socket/pipe path with `GUILD_DAEMON_SOCKET`.
+(the desktop crate links the app-server library). The webview is a pure UI:
+HTTP request/response plus per-turn replay over in-process std pipes — the
+same dispatch surface the CLI socket serves, backed by the same `Shared`
+(session, machine-link watch channel). The GUI holds three server routes by
+design: the in-process engine dispatch, the member WebSocket (presence,
+client-tool dispatch, fan-out), and the updater's direct fetch of the public
+`/api/v1/updates/latest.json` + release artifacts — that endpoint is public
+and unauthenticated, installs are gated by the baked-in minisign pubkey, and
+no session token travels from the GUI (the documented exception to the
+one-cloud-route rule). The session token lives only in the process
+(`~/.config/guild/token.json`), never in the webview.
 
 Daemon lifecycle: the GUI hosts the daemon in-process (single-process
 model — no spawn fallback); on Linux a headless host runs it as the
@@ -41,6 +51,9 @@ Documented exception to the one-cloud-route rule: the Tauri updater plugin
 in the GUI fetches `/api/v1/updates/latest.json` + release artifacts
 directly — that endpoint is public and unauthenticated, and the plugin
 requires in-GUI binary handling. No session token travels from the GUI.
+
+The socket/pipe path can be overridden for development with
+`GUILD_DAEMON_SOCKET`.
 
 ## 2. Web mode + admin console (product flow)
 

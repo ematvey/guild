@@ -1,7 +1,9 @@
 //! Single Guild client binary:
-//! - no args  → GUI (Tauri window)
-//! - `daemon` → the per-user daemon (shared engine, survives client exit;
-//!   the GUI re-executes itself with this argument on first attach)
+//! - no args  → GUI (Tauri window); hosts the engine, the CLI socket, and
+//!   the member WS link in-process (single-process design — nothing spawns
+//!   a daemon automatically)
+//! - `daemon` → the same engine headless on the local socket (manual
+//!   fallback for debugging; CLI verbs require the GUI instead)
 //! - `daemon install [--linger]` / `status` / `uninstall` → manage the
 //!   daemon as a systemd user unit (Linux; headless hosts)
 //! - `login` / `chat` / `publish` / `install` / `verify` → headless CLI
@@ -32,10 +34,10 @@ fn main() -> anyhow::Result<()> {
             guild_desktop::run();
             Ok(())
         }
-        // The GUI spawns itself with this argument; the JSON-RPC stdio loop
-        // is the same one guild-app-server exposes. The install/status/
-        // uninstall sub-verbs must dispatch here: this is the binary release
-        // builds ship as `Guild`, and headless hosts run it too.
+        // Headless host of the local socket (manual fallback): the same
+        // engine and dispatch surface the GUI process serves in-process.
+        // The install/status/uninstall sub-verbs dispatch here: this is the
+        // binary release builds ship as `Guild`, and headless hosts run it too.
         Some("daemon") => match args.get(1).map(String::as_str) {
             Some("install") => guild_app_server::daemon_install::install(
                 args.iter().any(|a| a == "--linger"),
