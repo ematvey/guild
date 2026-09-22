@@ -111,7 +111,6 @@ import {
   type MessageAttachmentMeta,
   type Project,
   type Release,
-  type ThreadContext,
 } from "../transport";
 import {
   canPersistDraft,
@@ -828,60 +827,6 @@ function statusPillCls(ok: boolean): string {
     : "border-destructive/40 bg-destructive/10 text-destructive";
 }
 
-/// Formats a token count as k with one decimal, trimming a trailing ".0"
-/// (12300 → "12.3k", 128000 → "128k").
-function fmtK(n: number): string {
-  const k = n / 1000;
-  const s = k.toFixed(1);
-  return (s.endsWith(".0") ? Math.round(k).toString() : s) + "k";
-}
-
-/// Slim context-usage bar next to the model selector: fills as the
-/// thread's context grows; amber past 80% of the window, red past 90%.
-/// Compaction is automatic server-side — the gauge is read-only. Hidden
-/// entirely when the server reports no context data.
-function ContextGauge({ ctx }: { ctx: ThreadContext }) {
-  const ratio = ctx.max > 0 ? Math.min(1, Math.max(0, ctx.tokens / ctx.max)) : 0;
-  const stroke =
-    ratio > 0.9 ? "stroke-destructive" : ratio >= 0.8 ? "stroke-amber-500" : "stroke-foreground";
-  // Radial gauge: a circle that fills clockwise as the context grows.
-  const size = 18;
-  const r = 7;
-  const c = 2 * Math.PI * r;
-  return (
-    <span className="flex shrink-0 items-center" title={`~${fmtK(ctx.tokens)} / ${fmtK(ctx.max)} context tokens`}>
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        className="-rotate-90"
-      >
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          className="stroke-muted"
-          strokeWidth="2.5"
-          fill="none"
-        />
-        {ratio > 0 && (
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={r}
-            className={`${stroke} transition-[stroke-dashoffset] duration-500`}
-            strokeWidth="2.5"
-            fill="none"
-            strokeLinecap="round"
-            strokeDasharray={c}
-            strokeDashoffset={c * (1 - ratio)}
-          />
-        )}
-      </svg>
-    </span>
-  );
-}
-
 function TruncatedBadge() {
   return (
     <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
@@ -1542,7 +1487,6 @@ export default function WebChat({
   // The thread reducer: per-chat views (blocks + watermark + pending send +
   // compaction keys) advanced incrementally by the transitions below.
   const reducerRef = useRef<ThreadReducer>(createThreadReducer());
-  const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
   // Per-chat approval mode (the composer's selector): "default" = the
   // account-level policy from Settings applies. Loaded on chat open,
   // written optimistically on pick.
@@ -1598,10 +1542,9 @@ export default function WebChat({
   // this and keeps the optimistic busy instead of lowering it from a list
   // push that predates the server's generating flag.
   const sendingRef = useRef(false);
-  // Latest busy/attaching/threadLoading values for stable-ref consumers (the
+  // Latest busy/threadLoading values for stable-ref consumers (the
   // deploy-freshness poll below must not read stale closure state).
-  const loadStateRef = useRef({ busy: false, attaching: false, threadLoading: false });
-  const [attaching, setAttaching] = useState(false); // receiving a server-side generation
+  const loadStateRef = useRef({ busy: false, threadLoading: false });
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -1626,7 +1569,7 @@ export default function WebChat({
   const loadSeq = useRef(0); // guards against stale chat switches landing last
   const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
 
-  loadStateRef.current = { busy, attaching, threadLoading };
+  loadStateRef.current = { busy, threadLoading };
 
   // Reload the page once the served bundle hash differs from the running
   // one — never while a turn is streaming or a thread is loading.
@@ -1648,7 +1591,7 @@ export default function WebChat({
         const mine = currentBundle();
         if (served && mine && served !== mine) {
           const s = loadStateRef.current;
-          if (!s.busy && !s.attaching && !s.threadLoading && !stopped) window.location.reload();
+          if (!s.busy && !s.threadLoading && !stopped) window.location.reload();
         }
       } catch {
         /* offline: nothing to compare this tick */
@@ -1659,7 +1602,7 @@ export default function WebChat({
       stopped = true;
       window.clearInterval(id);
     };
-    // busyRef/attachingRef/threadLoadingRef are stable refs; see below.
+    // busyRef/threadLoadingRef are stable refs; see below.
   }, []);
 
   useEffect(() => {
@@ -1854,8 +1797,6 @@ export default function WebChat({
     if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
     setBusy(state.generating);
-    setAttaching(false);
-    setCtx(null);
     setBlocks(applied.blocks);
     setCompacting(applied.compacting);
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
@@ -1896,8 +1837,7 @@ export default function WebChat({
     if (!chatId) {
       const opened = reducerRef.current.open(null);
       setBlocks(opened.blocks);
-      setCtx(null);
-      setThreadLoading(false);
+        setThreadLoading(false);
     } else if (skipLoadRef.current === chatId) {
       // Keep the optimistic first-send block: the created chat adopts the
       // scratch view; the socket still reconciles the new chat.
@@ -1909,8 +1849,7 @@ export default function WebChat({
       const opened = reducerRef.current.open(chatId);
       setThreadLoading(!opened.restored);
       setBlocks(opened.blocks);
-      setCtx(null);
-    }
+      }
     socketRef.current?.resync();
   }, [chatId]);
 
@@ -1974,7 +1913,6 @@ export default function WebChat({
         syncingChatsRef.current.clear();
         // The reconnect sync's state re-derives each open view in full.
         reducerRef.current.invalidate();
-        setAttaching(false);
         setBusy(false);
       },
       onThreadList: (nextChats) => {
@@ -1986,7 +1924,6 @@ export default function WebChat({
         if (!sendingRef.current) {
           setBusy(!!nextChats.find(chat => chat.id === openChatIdRef.current)?.generating);
         }
-        setAttaching(false);
       },
       // Sequenced ThreadState owns busy state; older status notifications cannot override it.
       onChatStatus: () => {},
@@ -2004,7 +1941,6 @@ export default function WebChat({
           setThreadLoading(true);
         } else if (!syncingChatsRef.current.has(cid)) {
           setThreadLoading(false);
-          setAttaching(false);
         }
       },
       // Content is replaced only by sequenced ThreadState, never by raw deltas.
@@ -2241,7 +2177,7 @@ export default function WebChat({
 
   const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
-  const streaming = busy || attaching || openGenerating;
+  const streaming = busy || openGenerating;
 
   const grouping = useMemo(
     () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) }))),
@@ -2757,7 +2693,6 @@ export default function WebChat({
             )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {chatId && ctx && <ContextGauge ctx={ctx} />}
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
                     <SelectTrigger className="h-7 w-auto min-w-0 max-w-40 gap-1 border-none bg-secondary px-2 shadow-none">
