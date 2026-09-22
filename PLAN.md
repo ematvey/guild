@@ -1,10 +1,46 @@
 # Guild — current state of work
 
-Updated 2026-09-22 (0.5.16: one Shared for webview + CLI daemon). Read this
+Updated 2026-09-22 (0.5.17: machine link liveness watchdog). Read this
 before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Machine link liveness watchdog + anti-parking — 2026-09-22 (0.5.17)
+
+Incident: devbox's executor link died mid-session (~23:56 +04) and stayed
+offline ~13 h until the daemon was restarted. The daemon process never went
+down and never reconnected. Root cause: the link is a plain WS with no
+client-side liveness check — the server pings every ~15 s and frees the
+slot when its pong deadline lapses (that's how the machine went offline
+server-side), but on a half-open route (suspend, NAT expiry, Wi-Fi blip)
+the server's close frames never reach the client, so the client's
+`stream.next()` hung forever and the reconnect loop never ran. A clean
+death (server restart → RST) DOES recover, which masked the bug until now.
+Fix, all client-side in `machine_link.rs`: (1) idle watchdog — ping every
+15 s, break the session when no inbound frame arrives for 45 s (env-tunable
+for tests); (2) the shutdown-tail writer drain gets a 2 s timeout so a
+wedged TCP write can't park the reconnect; (3) `AuthRequired` and
+`Displaced` no longer park forever waiting for a config change that may
+never come — they retry on a 60 s / 300 s backoff (sign-out still parks via
+the `None` config). Regression test `tests/machine_link_idle.rs` (own
+binary so the env knobs don't race the reconnect test; the silent server
+must NOT read the socket — tungstenite only flushes auto-pongs on
+read/write, so a reading loopback server looks alive).
+
+## Project "+" pre-pick survives the chatId switch — 2026-09-22
+
+Bug: the project row's hover "+" created a chat that came out projectless on
+the first try; clicking "+" a second time bound it. Root cause: `newChatInProject`
+set `pickedProject`, then navigated to the scratch view — and the `[chatId]`
+effect's per-chat reset (`setPickedProject(null)`, "a pending pick never carries
+over") ran after that same navigation and wiped it. From an open chat, chatId
+changed → wipe → first send called `createChat` with `project_id: null`. A second
+click found chatId already `null`, the effect didn't re-run, and the pick stuck.
+Fix: `scratchPickRef` carries the pick INTO the switch it is part of; the effect
+applies it only when the destination is the scratch view (`pickAfterChatSwitch`
+in `projects.ts` — entering an existing chat still drops any pending pick).
+Frontend-only; tests in `projects.test.ts`.
 
 ## 0.5.16: the GUI's CLI socket host shares the webview's Shared — 2026-09-22
 
