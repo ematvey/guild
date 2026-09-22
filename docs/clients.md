@@ -17,7 +17,7 @@ automatic daemon spawn — a CLI verb without a running app fails with
 |---|---|
 | `Guild` (no args) | GUI: hosts everything in-process — the engine (session, JSON-RPC dispatch), the per-user CLI socket (Unix socket on Linux/macOS, named pipe on Windows), and the member WebSocket link all live in this one process; no separate daemon process is spawned or attached to |
 | `Guild daemon` | the same engine headless on the local socket; nothing spawns it automatically — manual fallback for debugging, or the unit's ExecStart on headless hosts |
-| `Guild daemon install [--linger]` | Linux headless hosts: install/upgrade the daemon as a systemd **user unit** (`guild-daemon.service`, `Restart=always` + `RestartSec=5s`, enabled at login); refuses while a Guild app is running (the GUI hosts its daemon in-process — install is headless-only for now, see PLAN.md); verifies the retired daemon's socket actually released before `enable --now` and that the unit's daemon is reachable after; `--linger` best-effort enables `loginctl enable-linger` |
+| `Guild daemon install [--linger]` | Linux: install/upgrade the daemon as a systemd **user unit** (`guild-daemon.service`, `Restart=always` + `RestartSec=5s`, enabled at login); works while a Guild app is running — the app's in-process socket host is retired via `daemon.shutdown` (the handshake verifies the owner is a Guild daemon) and defers to the unit, reclaiming the socket when the unit stops; verifies the retired host's socket actually released before `enable --now` and that the unit's daemon is reachable after; `--linger` best-effort enables `loginctl enable-linger` |
 | `Guild daemon status` / `uninstall` | unit state / stop + remove the unit |
 | `Guild login --url U --email E --password P` (or `--token CODE`) | CLI verb via the running app's local socket (the GUI, or the unit daemon on headless hosts — no spawn fallback); login validates and persists the session to `~/.config/guild/token.json` |
 | `Guild chat --model M "text"` | CLI verb via the running app's local socket (streams the reply through it) |
@@ -39,8 +39,14 @@ one-cloud-route rule). The session token lives only in the process
 (`~/.config/guild/token.json`), never in the webview.
 
 Daemon lifecycle: the GUI hosts the daemon in-process (single-process
-model — no spawn fallback); on Linux a headless host runs it as the
-`guild-daemon.service` user unit instead (`Guild daemon install`). Either
+model — no spawn fallback); on Linux a host can instead run it as the
+`guild-daemon.service` user unit (`Guild daemon install`). The two
+coexist: the process hosting the CLI socket runs the machine link, the
+unit owns the executor while it is active, the GUI defers (its host task
+parks, no second link) and reclaims the socket when the unit stops;
+whoever hosts, auth stays propagated — the daemon re-seeds its link
+config from token.json changes, so a pair or sign-out in the GUI reaches
+the link whichever process owns it. Either
 way one engine owns the session and all agent runs, is shared by every
 client connection, and exits on `daemon.shutdown` — which a
 version-mismatched client invokes on attach (handshake on `daemon.hello`

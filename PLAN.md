@@ -30,12 +30,13 @@ engine_stdio and the guild-server integration suites).
   marker; the GUI reclaims the CLI socket after a stale daemon retires and
   always spawns its machine link; the member link backs off on Displaced
   instead of parking.
-- **Daemon install unit:** refuses to run while a Guild app is up (headless
-  only — auth RPCs still do not propagate to a unit daemon from a GUI
-  process, TODO in PLAN.md's install entry), verifies the retired daemon's
-  socket released and the unit's daemon reachable, `Restart=always` +
-  `RestartSec=5s`, and the shipped `Guild` binary dispatches
-  `daemon install|status|uninstall`.
+- **Daemon install unit:** coexists with a running Guild app — the unit owns
+  the executor + machine link while active, the GUI's socket host retires via
+  `daemon.shutdown` and parks (reclaiming when the unit stops), and auth
+  propagates through a token.json watcher in whichever process hosts the
+  link; verifies the retired host's socket released and the unit's daemon
+  reachable, `Restart=always` + `RestartSec=5s`, and the shipped `Guild`
+  binary dispatches `daemon install|status|uninstall`.
 - **Server hardening:** machine slots require owner match before
   displacement/adoption; routine completions enforce the route quota,
   `http_call` refuses loopback/link-local/private/metadata targets
@@ -248,20 +249,32 @@ the canonical binary path is pinned. `daemon.shutdown` delivery moved into
 `daemon::shutdown_running()` (send + bounded socket-release poll, never
 blocks on a hung daemon).
 
-**TODO — auth propagation to the unit daemon (install is headless-only
-until this exists).** With the unit owning the socket, the GUI no longer
-hosts one: `run_daemon_shared` early-returns, the GUI spawns no machine
-link, and pair/login/identify persist + publish the link config on the
-GUI's in-process watch channel only — the unit daemon never learns of a
-fresh pair or a sign-out (it retries a revoked token forever; registration
-never happens until a unit restart). `daemon install` therefore refuses
-while a daemon is reachable (the GUI must be quit first). Deeper fix, pick
-one: (a) route auth RPCs (`pair`/`login`/`machine.identify`/
-`session.clear`) from the GUI across the socket to the owning daemon, or
-(b) have the daemon watch token.json changes (an mtime poll suffices — the
-file changes exactly on auth transitions) and re-seed/re-publish the link
-config. Also open: the Tauri updater replaces the binary without touching
-the unit; a pinned-path ExecStart keeps serving the old build until
+**Auth propagation + GUI coexistence — implemented.** Link ownership is
+tied to socket hosting: the process that hosts the CLI socket runs the
+machine link, nobody else. The GUI's host task (`run_daemon_shared_reclaiming`)
+loops for the process lifetime: while `guild-daemon.service` is
+active/activating it parks with no bind and no link (the unit owns the
+executor); while another daemon owns the socket it waits; otherwise it
+binds, spawns the link + token.json watcher, and hosts until
+`daemon.shutdown` retires it — a reclaim grace of 3 s keeps the GUI from
+winning the bind race against a unit the installer is bringing up, and
+retirement unlatches the shared shutdown flag so a later unit stop
+(uninstall or daemon death) wakes the park and the GUI reclaims +
+relinks. `daemon install` verifies the reachable socket owner is a Guild
+daemon (the hello handshake), retires it, and brings the unit up. Auth
+performed by another process (a GUI pair/login/sign-out while the unit
+owns the link, or a CLI verb) lands only in token.json: the daemon's
+machine-link loop polls the store's mtime every 1 s (`watch_token_store`),
+reloads it on change, and republishes the implied config — or `None` for
+a sign-out, which brings the link down — onto the watch channel, deduped
+against the config it already holds. The link task itself is
+shutdown-aware end to end (park, backoff, and reconnect all exit on a
+retired host), so a socket host's death never leaves a link running.
+`GUILD_TOKEN_PATH` overrides the watched store path (tests, custom
+locations); `daemon_install::set_unit_active_override` pins the
+unit-active probe for tests.
+Also open: the Tauri updater replaces the binary without touching the
+unit; a pinned-path ExecStart keeps serving the old build until
 `Restart=always` re-spawns it (in-place replacement) or `daemon install`
 re-runs (new path).
 
