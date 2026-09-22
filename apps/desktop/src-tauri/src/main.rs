@@ -2,6 +2,8 @@
 //! - no args  → GUI (Tauri window)
 //! - `daemon` → the per-user daemon (shared engine, survives client exit;
 //!   the GUI re-executes itself with this argument on first attach)
+//! - `daemon install [--linger]` / `status` / `uninstall` → manage the
+//!   daemon as a systemd user unit (Linux; headless hosts)
 //! - `login` / `chat` / `publish` / `install` / `verify` → headless CLI
 //!   (cloud-touching verbs go through the daemon); `login` takes either
 //!   `--url/--email/--password` or `--token <pairing-code>`
@@ -31,25 +33,34 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         // The GUI spawns itself with this argument; the JSON-RPC stdio loop
-        // is the same one guild-app-server exposes.
-        Some("daemon") => {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()?;
-            rt.block_on(guild_app_server::daemon::run_daemon())?;
-            // Shutdown is unconditional: exit now instead of waiting for open
-            // client connections (a client holding its socket would deadlock
-            // the runtime teardown).
-            std::process::exit(0);
-        }
+        // is the same one guild-app-server exposes. The install/status/
+        // uninstall sub-verbs must dispatch here: this is the binary release
+        // builds ship as `Guild`, and headless hosts run it too.
+        Some("daemon") => match args.get(1).map(String::as_str) {
+            Some("install") => guild_app_server::daemon_install::install(
+                args.iter().any(|a| a == "--linger"),
+            ),
+            Some("status") => guild_app_server::daemon_install::status(),
+            Some("uninstall") => guild_app_server::daemon_install::uninstall(),
+            _ => {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()?;
+                rt.block_on(guild_app_server::daemon::run_daemon())?;
+                // Shutdown is unconditional: exit now instead of waiting for
+                // open client connections (a client holding its socket would
+                // deadlock the runtime teardown).
+                std::process::exit(0);
+            }
+        },
         Some("login") => guild_app_server::cli::cmd_login(&args[1..]),
         Some("chat") => guild_app_server::cli::cmd_chat(&args[1..]),
         Some("publish") => guild_app_server::cli::cmd_publish(&args[1..]),
         Some("install") => guild_app_server::cli::cmd_install(&args[1..]),
         Some("verify") => guild_app_server::cli::cmd_verify(&args[1..]),
         Some(other) => anyhow::bail!(
-            "unknown subcommand {other:?}; expected none (GUI), daemon, login [--token CODE | --url U --email E --password P], chat, publish, install, or verify"
+            "unknown subcommand {other:?}; expected none (GUI), daemon [install|status|uninstall], login [--token CODE | --url U --email E --password P], chat, publish, install, or verify"
         ),
     }
 }
