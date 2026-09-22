@@ -1,7 +1,9 @@
 //! Single Guild client binary:
-//! - no args  → GUI (Tauri window)
-//! - `daemon` → the per-user daemon (shared engine, survives client exit;
-//!   the GUI re-executes itself with this argument on first attach)
+//! - no args  → GUI (Tauri window); hosts the engine, the CLI socket, and
+//!   the member WS link in-process (single-process design — nothing spawns
+//!   a daemon automatically)
+//! - `daemon` → the same engine headless on the local socket (manual
+//!   fallback for debugging; CLI verbs require the GUI instead)
 //! - `login` / `chat` / `publish` / `install` / `verify` → headless CLI
 //!   (cloud-touching verbs go through the daemon); `login` takes either
 //!   `--url/--email/--password` or `--token <pairing-code>`
@@ -30,8 +32,8 @@ fn main() -> anyhow::Result<()> {
             guild_desktop::run();
             Ok(())
         }
-        // The GUI spawns itself with this argument; the JSON-RPC stdio loop
-        // is the same one guild-app-server exposes.
+        // Headless host of the local socket (manual fallback): the same
+        // engine and dispatch surface the GUI process serves in-process.
         Some("daemon") => {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
