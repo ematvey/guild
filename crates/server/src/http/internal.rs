@@ -57,6 +57,15 @@ pub fn internal_routes() -> Router<AppState> {
 
 // ---------- user-facing routine CRUD ----------
 
+async fn require_admin(user: &AuthUser) -> Result<(), ApiError> {
+    // Enabled routines mint provider spend on the org's routes: only an
+    // admin may create or re-enable one (disabled creation stays member-level).
+    if user.0.role != "admin" {
+        return Err(ApiError::forbidden());
+    }
+    Ok(())
+}
+
 async fn create(
     State(state): State<AppState>,
     user: AuthUser,
@@ -90,6 +99,9 @@ async fn create(
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing model"))?;
     let enabled = body["enabled"].as_bool().unwrap_or(true);
+    if enabled {
+        require_admin(&user).await?;
+    }
     let allowed_tools = if body["allowed_tools"].is_null() {
         json!(["http_call", "storage_put"])
     } else {
@@ -171,6 +183,10 @@ async fn update(
             Some(body["trigger_config"].clone())
         },
     };
+    // Re-enabling is the same spend channel as enabled creation: admin only.
+    if patch.enabled == Some(true) {
+        require_admin(&user).await?;
+    }
     let store = state.store().await?;
     let routine = store.routines().update(user.0.org_id, id, &patch).await?;
     // re-enabling an interval routine restarts its tick loop
@@ -395,6 +411,9 @@ async fn internal_completion(
         .gateway()
         .resolve_route(req.org_id, &req.model, &master)
         .await?;
+    // The routine completion path is a spend path like any other: the
+    // route's monthly quota gates it before the provider stream starts.
+    crate::worker::turn::enforce_quota(&state, req.org_id, &req.model, &route).await?;
 
     let provider: Arc<dyn ModelProvider> = guild_core::provider::for_protocol(&route.protocol)
         .ok_or_else(|| ApiError::internal(format!("unknown protocol {}", route.protocol)))?;
@@ -493,6 +512,18 @@ async fn internal_storage(
     let key = q
         .get("key")
         .ok_or_else(|| ApiError::bad_request("missing key"))?;
+    // The internal caller writes only inside its org's runs/ prefix: the
+    // key charset is pinned so no foreign object key (attachments,
+    // registry bundles) can be addressed, and `..` segments are refused.
+    if key.is_empty()
+        || key.len() > 512
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '.' | '-'))
+        || key.split('/').any(|seg| seg == ".." || seg.is_empty())
+    {
+        return Err(ApiError::bad_request("bad key"));
+    }
     let objects = state.objects().await?;
     objects
         .put(&format!("runs/{org_id}/{key}"), body.to_vec())
