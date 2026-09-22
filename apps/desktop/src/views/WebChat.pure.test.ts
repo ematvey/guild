@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   artifactCardOf,
+  busyAfterThreadPush,
   chatRoutePath,
   compareVersions,
   eventsToBlocks,
@@ -413,6 +414,24 @@ describe("authoritative socket state", () => {
   });
   it("replaces a stale generating overlay from the server list", () => {
     expect(statusFromThreads([{ id: "chat-1", generating: false, unread: false } as any])).toEqual({ "chat-1": { generating: false, unread: false } });
+  });
+});
+
+describe("busyAfterThreadPush (a list push cannot un-busy an in-flight send)", () => {
+  const row = (generating: boolean) => ({ id: "chat-1", title: "t", created_at: "x", generating }) as any;
+
+  it("keeps busy while the send's HTTP round trip is in flight", () => {
+    // Regression: a thread_list pushed in that window shows generating=false
+    // (the flag is not set yet), which cleared the optimistic busy and let a
+    // second send race the first.
+    expect(busyAfterThreadPush([row(false)], "chat-1", true)).toBe(true);
+    expect(busyAfterThreadPush([], "chat-1", true)).toBe(true);
+  });
+
+  it("follows the server's generating flag otherwise", () => {
+    expect(busyAfterThreadPush([row(true)], "chat-1", false)).toBe(true);
+    expect(busyAfterThreadPush([row(false)], "chat-1", false)).toBe(false);
+    expect(busyAfterThreadPush([row(false)], null, false)).toBe(false);
   });
 });
 

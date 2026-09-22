@@ -111,8 +111,14 @@ import {
   type MessageAttachmentMeta,
   type Project,
   type Release,
-  type ThreadContext,
 } from "../transport";
+import {
+  canPersistDraft,
+  clearDrafts,
+  gcDrafts,
+  readDraft,
+  writeDraft,
+} from "../lib/drafts";
 import {
   artifactCardOf,
   createThreadReducer,
@@ -164,6 +170,19 @@ export function offlineMachine(
   if (isTauri && row.machine_id === localMachineId) return null;
   if (row.machine_online !== false) return null;
   return { label: row.machine_label ?? row.machine_id };
+}
+
+/** Whether the open chat shows busy after a thread-list push: while a
+ * send's HTTP round trip is in flight the pushed list predates the
+ * server's generating flag, so its false must not clear the optimistic
+ * busy (a second send could race the first). */
+export function busyAfterThreadPush(
+  chats: ChatSummary[],
+  openChatId: string | null,
+  sendInFlight: boolean,
+): boolean {
+  if (sendInFlight) return true;
+  return !!chats.find((c) => c.id === openChatId)?.generating;
 }
 
 
@@ -218,11 +237,6 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
   }
   return { chatId, projectId, overlay: null };
 };
-
-/// Per-chat composer drafts: the composer text is saved under the open
-/// chat's key (the scratch view shares "new"), so navigating between chats
-/// swaps drafts instead of carrying one text across.
-export const draftKey = (chatId: string | null) => `guild:draft:${chatId ?? "new"}`;
 
 export const chatRoutePath = (
   chatId: string | null,
@@ -826,60 +840,6 @@ function statusPillCls(ok: boolean): string {
     : "border-destructive/40 bg-destructive/10 text-destructive";
 }
 
-/// Formats a token count as k with one decimal, trimming a trailing ".0"
-/// (12300 → "12.3k", 128000 → "128k").
-function fmtK(n: number): string {
-  const k = n / 1000;
-  const s = k.toFixed(1);
-  return (s.endsWith(".0") ? Math.round(k).toString() : s) + "k";
-}
-
-/// Slim context-usage bar next to the model selector: fills as the
-/// thread's context grows; amber past 80% of the window, red past 90%.
-/// Compaction is automatic server-side — the gauge is read-only. Hidden
-/// entirely when the server reports no context data.
-function ContextGauge({ ctx }: { ctx: ThreadContext }) {
-  const ratio = ctx.max > 0 ? Math.min(1, Math.max(0, ctx.tokens / ctx.max)) : 0;
-  const stroke =
-    ratio > 0.9 ? "stroke-destructive" : ratio >= 0.8 ? "stroke-amber-500" : "stroke-foreground";
-  // Radial gauge: a circle that fills clockwise as the context grows.
-  const size = 18;
-  const r = 7;
-  const c = 2 * Math.PI * r;
-  return (
-    <span className="flex shrink-0 items-center" title={`~${fmtK(ctx.tokens)} / ${fmtK(ctx.max)} context tokens`}>
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        className="-rotate-90"
-      >
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          className="stroke-muted"
-          strokeWidth="2.5"
-          fill="none"
-        />
-        {ratio > 0 && (
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={r}
-            className={`${stroke} transition-[stroke-dashoffset] duration-500`}
-            strokeWidth="2.5"
-            fill="none"
-            strokeLinecap="round"
-            strokeDasharray={c}
-            strokeDashoffset={c * (1 - ratio)}
-          />
-        )}
-      </svg>
-    </span>
-  );
-}
-
 function TruncatedBadge() {
   return (
     <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
@@ -1406,6 +1366,13 @@ export default function WebChat({
   onSignOut: () => void;
 }) {
   const [models, setModels] = useState<string[] | null>(null);
+  // Sign-out hygiene: drafts can hold sensitive composer text, so they are
+  // cleared with the session — a shared browser's next account must not
+  // inherit them. Every sign-out path in this view goes through here.
+  const signOut = useCallback(() => {
+    clearDrafts(localStorage);
+    onSignOut();
+  }, [onSignOut]);
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
   // Live sidebar status overlay (thread-list spinner/dot): frames from the
@@ -1439,22 +1406,20 @@ export default function WebChat({
   // line flashed on every first send.
   const [compacting, setCompacting] = useState(false);
   const [prompt, setPrompt] = useState("");
-  // Set by the chatId effect's first draft restore; until then the persist
-  // effect must not write (see its comment).
-  const draftsReadyRef = useRef(false);
+  // The chat the chatId effect last restored a draft for (undefined = no
+  // restore ran yet): the persist effect below writes only for this chat.
+  const restoredForRef = useRef<string | null | undefined>(undefined);
   // Composer text persists per chat (localStorage, draftKey): every edit
   // writes the open chat's draft; the chatId effect swaps it on navigation
   // and sending overwrites it with "".
   useEffect(() => {
-    // Mount order: this persist effect runs before the chatId effect's
-    // first restore, so it stays inert until that restore ran — otherwise
-    // it would wipe the saved draft of the deep-linked chat with "".
-    if (!draftsReadyRef.current) return;
-    try {
-      localStorage.setItem(draftKey(chatId), prompt);
-    } catch {
-      /* storage unavailable — drafts are best-effort */
-    }
+    // The gate: persist only after the chatId effect restored THIS chat's
+    // draft. On a switch this effect runs first with the new chatId while
+    // prompt still holds the previous chat's text — writing then would
+    // clobber the destination chat's saved draft before its restore reads
+    // it.
+    if (!canPersistDraft(restoredForRef.current, chatId)) return;
+    writeDraft(localStorage, chatId, prompt);
   }, [prompt, chatId]);
   // ---- skill mentions: / opens the autocomplete (skills design §3) ----
   const [skills, setSkills] = useState<ComposerSkill[] | null>(null);
@@ -1535,7 +1500,6 @@ export default function WebChat({
   // The thread reducer: per-chat views (blocks + watermark + pending send +
   // compaction keys) advanced incrementally by the transitions below.
   const reducerRef = useRef<ThreadReducer>(createThreadReducer());
-  const [ctx, setCtx] = useState<ThreadContext | null>(null); // server-reported context usage (G1); null = hide the gauge
   // Per-chat approval mode (the composer's selector): "default" = the
   // account-level policy from Settings applies. Loaded on chat open,
   // written optimistically on pick.
@@ -1587,10 +1551,13 @@ export default function WebChat({
     });
   };
   const [busy, setBusy] = useState(false);
-  // Latest busy/attaching/threadLoading values for stable-ref consumers (the
+  // A "normal" send's HTTP round trip is in flight: onThreadList consults
+  // this and keeps the optimistic busy instead of lowering it from a list
+  // push that predates the server's generating flag.
+  const sendingRef = useRef(false);
+  // Latest busy/threadLoading values for stable-ref consumers (the
   // deploy-freshness poll below must not read stale closure state).
-  const loadStateRef = useRef({ busy: false, attaching: false, threadLoading: false });
-  const [attaching, setAttaching] = useState(false); // receiving a server-side generation
+  const loadStateRef = useRef({ busy: false, threadLoading: false });
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop sidebar
@@ -1615,7 +1582,7 @@ export default function WebChat({
   const loadSeq = useRef(0); // guards against stale chat switches landing last
   const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
 
-  loadStateRef.current = { busy, attaching, threadLoading };
+  loadStateRef.current = { busy, threadLoading };
 
   // Reload the page once the served bundle hash differs from the running
   // one — never while a turn is streaming or a thread is loading.
@@ -1637,7 +1604,7 @@ export default function WebChat({
         const mine = currentBundle();
         if (served && mine && served !== mine) {
           const s = loadStateRef.current;
-          if (!s.busy && !s.attaching && !s.threadLoading && !stopped) window.location.reload();
+          if (!s.busy && !s.threadLoading && !stopped) window.location.reload();
         }
       } catch {
         /* offline: nothing to compare this tick */
@@ -1648,7 +1615,7 @@ export default function WebChat({
       stopped = true;
       window.clearInterval(id);
     };
-    // busyRef/attachingRef/threadLoadingRef are stable refs; see below.
+    // busyRef/threadLoadingRef are stable refs; see below.
   }, []);
 
   useEffect(() => {
@@ -1800,6 +1767,17 @@ export default function WebChat({
   // webview mode. The desktop app process keeps the separate machine socket.
   const openChatIdRef = useRef<string | null>(chatId);
   openChatIdRef.current = chatId;
+  // Draft GC: per-chat draft keys would otherwise accumulate forever and
+  // outlive their chats. Drop the keys whose chat left the sidebar lists
+  // (archived or deleted); the scratch draft ("new") and the open chat's
+  // key always stay, and unloaded lists prune nothing.
+  useEffect(() => {
+    if (!chats) return;
+    const keep = new Set<string>(chats.map((c) => c.id));
+    for (const c of archivedChats ?? []) keep.add(c.id);
+    if (openChatIdRef.current) keep.add(openChatIdRef.current);
+    gcDrafts(localStorage, keep);
+  }, [chats, archivedChats]);
   const socketRef = useRef<{ resync: () => void; stop: () => void } | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
 
@@ -1832,8 +1810,6 @@ export default function WebChat({
     if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
     setBusy(state.generating);
-    setAttaching(false);
-    setCtx(null);
     setBlocks(applied.blocks);
     setCompacting(applied.compacting);
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
@@ -1859,16 +1835,13 @@ export default function WebChat({
     scratchPickRef.current = null;
     setPickedProject(pickAfterChatSwitch(chatId, intendedPick));
     // Per-chat draft: load the destination chat's saved composer text
-    // instead of keeping the previous chat's text in the input.
-    let restored = "";
-    try {
-      restored = localStorage.getItem(draftKey(chatId)) ?? "";
-    } catch {
-      /* storage unavailable — drafts are best-effort */
-    }
+    // instead of keeping the previous chat's text in the input. This
+    // restore also marks the chat the persist effect may write for — from
+    // here every prompt change belongs to this chatId.
+    const restored = readDraft(localStorage, chatId);
     setPrompt(restored);
     setCaret(restored.length);
-    draftsReadyRef.current = true;
+    restoredForRef.current = chatId;
     if (restored) requestAnimationFrame(autoGrow);
     prevLoadedChatRef.current = chatId;
     loadSeq.current++;
@@ -1877,7 +1850,6 @@ export default function WebChat({
     if (!chatId) {
       const opened = reducerRef.current.open(null);
       setBlocks(opened.blocks);
-      setCtx(null);
       setThreadLoading(false);
     } else if (skipLoadRef.current === chatId) {
       // Keep the optimistic first-send block: the created chat adopts the
@@ -1890,7 +1862,6 @@ export default function WebChat({
       const opened = reducerRef.current.open(chatId);
       setThreadLoading(!opened.restored);
       setBlocks(opened.blocks);
-      setCtx(null);
     }
     socketRef.current?.resync();
   }, [chatId]);
@@ -1941,7 +1912,7 @@ export default function WebChat({
     void watchMachinePresence(presence => {
       if (disposed) return;
       setMachineTakenOver(!!presence.displaced);
-      if (presence.auth_required) onSignOut();
+      if (presence.auth_required) signOut();
     }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
     return () => { disposed = true; stop?.(); };
   }, []);
@@ -1955,14 +1926,16 @@ export default function WebChat({
         syncingChatsRef.current.clear();
         // The reconnect sync's state re-derives each open view in full.
         reducerRef.current.invalidate();
-        setAttaching(false);
         setBusy(false);
       },
       onThreadList: (nextChats) => {
         setChats(nextChats);
         setChatStatus(statusFromThreads(nextChats));
-        setBusy(!!nextChats.find(chat => chat.id === openChatIdRef.current)?.generating);
-        setAttaching(false);
+        // busyAfterThreadPush keeps the optimistic busy while a send's
+        // HTTP round trip is in flight (the push predates the server's
+        // generating flag — clearing busy here would let a second send
+        // race the first).
+        setBusy(busyAfterThreadPush(nextChats, openChatIdRef.current, sendingRef.current));
       },
       // Sequenced ThreadState owns busy state; older status notifications cannot override it.
       onChatStatus: () => {},
@@ -1980,7 +1953,6 @@ export default function WebChat({
           setThreadLoading(true);
         } else if (!syncingChatsRef.current.has(cid)) {
           setThreadLoading(false);
-          setAttaching(false);
         }
       },
       // Content is replaced only by sequenced ThreadState, never by raw deltas.
@@ -1998,7 +1970,7 @@ export default function WebChat({
         }
       },
       onDisplaced: () => toast.error("This chat connection was replaced"),
-      onAuthRequired: () => onSignOut(),
+      onAuthRequired: () => signOut(),
       getOpenChatId: () => openChatIdRef.current,
     });
     socketRef.current = connection;
@@ -2038,7 +2010,10 @@ export default function WebChat({
     if (mode === "normal" && generating) return;
     const mySeq = loadSeq.current; // ignores results after a chat switch
     const sentAt = Date.now();
-    if (mode === "normal") setBusy(true); // queue/steer: the spinner is already on
+    if (mode === "normal") {
+      setBusy(true); // queue/steer: the spinner is already on
+      sendingRef.current = true;
+    }
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
     // Focus stays in the composer after send. Scheduled after the pending
@@ -2064,8 +2039,17 @@ export default function WebChat({
         .blocks,
     );
     let cid = chatId;
+    let createError: unknown = null;
     if (!cid) {
-      cid = await createChat(text.slice(0, 48), pickedProjectRef.current?.id ?? null);
+      try {
+        cid = await createChat(text.slice(0, 48), pickedProjectRef.current?.id ?? null);
+      } catch (e) {
+        // A fetch rejection (offline, TLS, server down) takes the same path
+        // as an HTTP failure below — the rejection must not escape send():
+        // its void callers would leave the composer busy forever with an
+        // unresolved optimistic block.
+        createError = e;
+      }
       if (cid && loadSeq.current === mySeq) {
         // Move the URL to the new thread without losing the optimistic
         // pending marker; the chatId effect still requests socket reconcile.
@@ -2084,9 +2068,18 @@ export default function WebChat({
     }
     if (!cid) {
       if (loadSeq.current === mySeq) {
-        setBlocks(reducerRef.current.appendError("chat create failed").blocks);
+        setBlocks(
+          reducerRef.current
+            .appendError(
+              createError instanceof Error
+                ? `chat create failed: ${createError.message}`
+                : "chat create failed",
+            )
+            .blocks,
+        );
         setBusy(false);
       }
+      if (mode === "normal") sendingRef.current = false;
       return;
     }
     reducerRef.current.bindPending(cid, sentKey);
@@ -2175,7 +2168,10 @@ export default function WebChat({
       }
     } finally {
       // Queue/steer never own the busy flag — the running turn does.
-      if (!keepBusyThroughFinally && mode === "normal") setBusy(false);
+      if (mode === "normal") {
+        sendingRef.current = false; // the round trip settled; list pushes may lower busy from the server's flag again
+        if (!keepBusyThroughFinally) setBusy(false);
+      }
     }
   };
 
@@ -2193,7 +2189,7 @@ export default function WebChat({
 
   const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
-  const streaming = busy || attaching || openGenerating;
+  const streaming = busy || openGenerating;
 
   const grouping = useMemo(
     () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) }))),
@@ -2213,7 +2209,7 @@ export default function WebChat({
       onNewChatInProject={newChatInProject}
       onOpenChat={openChat}
       onNewProject={() => openCreateProject("sidebar")}
-      onSignOut={onSignOut}
+      onSignOut={signOut}
       onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
       onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
       onCollapse={isMobile ? undefined : () => setCollapsed(true)}
@@ -2709,7 +2705,6 @@ export default function WebChat({
             )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {chatId && ctx && <ContextGauge ctx={ctx} />}
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
                     <SelectTrigger className="h-7 w-auto min-w-0 max-w-40 gap-1 border-none bg-secondary px-2 shadow-none">
@@ -2808,7 +2803,7 @@ export default function WebChat({
         displayName={displayName}
         avatarUrl={avatarUrl}
         onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
-        onSignOut={onSignOut}
+        onSignOut={signOut}
       />
     </div>
   );
@@ -3165,27 +3160,37 @@ function ChatListItem({
     );
   }
   return (
-    <button
-      onClick={onClick}
-      className={`group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
+    // A div row hosting two siblings — the open button and the (absolutely
+    // positioned) Radix menu trigger — instead of a button containing the
+    // trigger: an interactive control nested in a button is non-conforming
+    // HTML and screen readers announce the menu trigger as part of the
+    // row's name. The background/hover classes stay on the row so hovering
+    // the trigger highlights it too.
+    <div
+      className={`group/row relative z-0 flex w-full items-center overflow-hidden rounded-md transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
       }`}
-      title={title}
     >
-      <FadeTitle text={title} />
-      {status.generating ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-      ) : status.unread ? (
-        <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
-      ) : null}
+      <button
+        onClick={onClick}
+        title={title}
+        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left outline-none"
+      >
+        <FadeTitle text={title} />
+        {status.generating ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        ) : status.unread ? (
+          <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
+        ) : null}
+      </button>
       <RowActions
         onRename={onRename ? () => setEditing(true) : undefined}
         onArchive={onArchive}
         archiveLabel={archiveLabel}
       />
-    </button>
+    </div>
   );
 }
 
