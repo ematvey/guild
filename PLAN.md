@@ -6,6 +6,156 @@ the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
 
+## TODO — thread list + thread messages: keyset pagination + scroll loading — 2026-09-22
+
+Requirement: both the sidebar thread list and the individual thread
+messages must paginate, with a loading indicator whenever the user
+scrolls far enough (infinite scroll). Today both are load-and-render-in-full:
+`list_events`/`list_chats` have no LIMIT, the WS `ThreadState` sync ships the
+whole event log, `ThreadList` pushes ship the whole chat list on every
+connect/presence flip, and the client renders every block/row
+(`WebChat.tsx` `blocks.map`, Recents `grouping.visible`).
+
+Design (agreed with the user):
+
+- **Server keyset pagination** (offset is unsafe for append-only data):
+  - `thread.rs`: `list_events_page(org, chat, limit, before_seq)` — newest
+    page older than `before_seq`, returned ascending, `(rows, has_more)`
+    via the limit+1 trick. DONE (in working tree).
+  - `chats.rs`: `list_chats_page` / `list_archived_chats_page` keyed on
+    `(created_at, id)` DESC with the same unread projection as
+    `list_chats` (extracted to `LIST_SELECT`); all chat lists get an
+    `, c.id DESC` tiebreak. DONE (in working tree).
+  - `protocol/src/ws.rs`: `ThreadState.has_more_events: bool`
+    (`#[serde(default)]`). DONE (in working tree).
+  - REMAINING: HTTP params on `GET /api/v1/chats` (`limit`, `before`,
+    `before_id`, `archived` — response `{chats, has_more}`; unpaged =
+    full list, unchanged contract) and `GET /api/v1/chats/{id}/thread`
+    (`limit`, `before_seq` — `{events, has_more, context}`); clamp limit
+    1..=500. Cap WS pushes: new `feed.rs` helper (`thread_list_page`,
+    cap 100) used by the three `ThreadList` push sites (ws.rs connect,
+    feed.rs presence broadcast, chats.rs set_project broadcast);
+    `refresh_bindings` keeps the FULL list (subscription bookkeeping).
+    Cap the user sync: `run_sync_started` trims the captured `ThreadState`
+    to the newest 200 events and sets `has_more_events` (capture_thread
+    stays full-fidelity — feed.rs's own tests and the machine view at
+    feed.rs:201 depend on it). Regenerate TS bindings: `cargo test -p
+    protocol --features ts` (exports to `crates/protocol/bindings/` —
+    AGENTS.md's `TS_RS_EXPORT_DIR=ts` is stale, export_to paths are
+    relative to the package root).
+
+- **Client messages (WebChat + thread-reducer)**:
+  - Reducer: `ChatView` gains `rows: ThreadEventRow[]` +
+    `olderAvailable: bool`; `applyState` seeds/merges rows and sets
+    `olderAvailable` from `has_more_events` on first-state (incremental
+    states keep the old value); new `applyOlderEvents(chatId, rows,
+    hasMore)` prepends (merge-by-seq) and re-derives blocks while
+    PRESERVING non-seq-keyed tail blocks (`unpersisted-*`,
+    `live-thinking-*`, pending-send keys, `live-*` errors — detect via
+    `!/^\d+:\d+$/.test(key)`); `ApplyResult` gains `olderAvailable` and a
+    `prepended` flag; accessor `olderBounds(chatId)` →
+    `{available, oldestSeq}` for the fetch cursor. `invalidate()` (socket
+    reconnect) re-derives from the newest page only — loaded older pages
+    are re-fetched on scroll; acceptable, document it.
+  - transport: `ThreadState.has_more_events?`; `getThread(chatId, signal,
+    {limit, beforeSeq})` → `{events, hasMore?}` (route is currently
+    unused — becomes the scroll-up loader).
+  - WebChat: `older` state `{available, loading}` synced from ApplyResult
+    per open chat; onScroll (existing pane handler): `scrollTop < 400` →
+    load; top spinner row; `useLayoutEffect([blocks])` scroll-anchor
+    (capture `pane.scrollHeight` before dispatch, restore delta after —
+    must not trigger the stick logic); auto-fill when the first page
+    doesn't fill the viewport; in-flight guard keyed by chat id
+    (loadingOlderRef).
+
+- **Client sidebar (WebChat + projects.ts)**:
+  - `mergeChatList(prev, page)` in projects.ts: update-or-insert every
+    pushed/fetched row in `(created_at, id)` order (Date.parse compare —
+    never string-compare RFC3339), then drop rows that fall strictly
+    inside the pushed window (≥ oldest pushed row) but are absent from
+    it (archive/delete removal); rows older than the window survive.
+    Tests in projects.test.ts.
+  - transport: `listChatsPage({limit, before?, beforeId?, archived?})` →
+    `{chats, hasMore}`; `CHATS_PAGE = 50`.
+  - WebChat: `chatsHasMore`/`loadingMoreChats`; `refreshChats` becomes a
+    merge-into-existing page fetch (first load = replace); `loadMoreChats`
+    keyedset cursor from the last row; `archiveChat` must remove the row
+    explicitly (merge never shrinks); `onThreadList` uses mergeChatList
+    and only sets busy from the push when the open chat is present (capped
+    push may not contain an old open chat); SidebarContent: onScroll
+    near-bottom on its scroll container → `onLoadMoreChats`, spinner row
+    at the end of Recents. Project fold-outs keep their client-side
+    "Show more" paging over the loaded window.
+
+- Suggested constants: events sync page 200, older-page fetch 150, chats
+  page 50, push cap 100, scroll triggers: messages top < 400px, sidebar
+  bottom < 200px.
+
+- Tests: server `thread_pagination.rs` (store pages walk to exhaustion,
+  HTTP route params, archived pages, org scoping; harness pattern:
+  `test_state_with_db` + `build_router` + oneshot, auth like
+  thread_events.rs); reducer tests (prepend merge, tail preservation,
+  dedupe, hasMore flag); projects.test.ts merge cases. Then the §2
+  compose rebuild + live-bundle check.
+
+- Working-tree state: the three files above carry the DONE parts, mixed
+  with any other session's edits — keep them, build on top. The feed.rs/
+  chats.rs route/protocol-binding/client work is untouched so far.
+
+## TODO — machine link still flaps after the 0.5.17 watchdog; gateway KV-cache verification unfinished — 2026-09-22
+
+**Bug (executor link recycles on devbox even on 0.5.17).** Symptom: link comes
+up, serves one tool call, dies within ~1 min, repeats — in-flight calls fail
+with "Machine connection changed", idle windows fail with "bound machine is
+offline"; no self-recovery gap longer than ~1 cycle. Evidence gathered:
+daemon journal silent through every drop; compose-server logs carry no
+machine-link lifecycle lines at all; `/tmp/guild-daemon-trace.log` stops at
+20:10 UTC because the restarted daemon (systemd unit) runs without
+`GUILD_DAEMON_TRACE=1`. Working hypothesis: the client's 45 s idle watchdog
+(`machine_link.rs`, `idle_secs()`) fires every cycle, i.e. the server's
+challenge-pong liveness in `crates/server/src/http/ws.rs` (~line 354
+challenge enqueue, ~375 liveness timestamp) either never pings MACHINE
+sockets or its pong-deadline frees the machine slot each cycle while the
+daemon keeps the socket open — verify which side kills it, then fix server
+pinging of machine sockets (or make the daemon's ping/pong satisfy the
+challenge) and add dtrace lines for `Displaced`/`Closed`/`AuthRequired`
+link ends (currently silent), then capture one flap cycle with
+`GUILD_DAEMON_TRACE=1` before/after the fix. Repro cadence observed
+20:31–20:38 UTC: OK 20:31:29 → dead 20:31:31 → OK 20:33:01 → dead → OK
+20:33:59/20:34:23 → dead 20:34:30ish. Also pending: kill the 6-day-old hung
+`cargo test -p protocol -p guild-app-server` (pid 2489388 — its
+machine_link_idle fixture logs "machine-idle" connects into the shared
+trace file).
+
+**Task (verify Guild keeps a stable thread prefix and hits the gateway's KV
+caches).** Setup: llm-proxy (:8610) → single live sglang `glm-5.3-flash`
+(:8649, `--enable-cache-report --enable-metrics`, UnifiedRadixCache);
+proxy logs per-message SHA-256 (text+thinking+tool_calls) + system-block
+breakdown to `~/llm/gateway/data/requests.jsonl` since 09-10 (97.9k reqs) —
+built exactly for this diagnosis (see `STABLE-CACHING.md`). Analyzers ready
+and already run: `/tmp/prefix_analysis.py` (raw per-user stability) and
+`/tmp/prefix2.py` (classifies first/newthread/abort/REAL + Guild-tool
+marker; outputs `/tmp/prefix2_out.txt`). Results: engine-wide
+`cache_hit_rate` 92.6%; consecutive-pair prefix stability — maintainer 97.8%
+(243 "real" misses are all same-second parallel 2-msg single-shots,
+classifier artifact), member A 97.2% (58 real), Denis
+member/Alexey member/member member ~96%, cascade 0 real; internal project
+32% real-miss (clustered on Sep-10 + parallel single-shots — recheck
+current behavior); member B 63% real-miss (her client re-serializes
+history with changing mid-list system prompts, 217 tools — not Guild).
+Open items: (a) zero requests in the whole log carry Guild's integration
+tool names (`atlassian_*`, `firecrawl_*`, …) although this very session's
+tool calls appear in `requests-responses.jsonl` — find where Guild
+desktop's LLM calls actually terminate (suspect the guild-server provider
+route → `http://192.0.2.10:8648` "Acme LLMs" bypassing this
+gateway; identify what listens on 8648) and run the same prefix-stability
+pass on that path; (b) check `proxy.js` `logBodyEntry` covers
+`/v1/messages` + `/anthropic/*` (Guild may speak Anthropic wire); (c)
+per-request `cached_tokens` cross-check for Guild sessions (ndjson lacks
+it; sglang metrics/logs have it); (d) code-review the thread prompt
+assembly (guild-core/app-server) for stability by construction — thinking
+blocks preserved vs stripped, dynamic system content.
+
 ## Machine link liveness watchdog + anti-parking — 2026-09-22 (0.5.17)
 
 Incident: devbox's executor link died mid-session (~23:56 +04) and stayed

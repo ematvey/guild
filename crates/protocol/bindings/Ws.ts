@@ -20,7 +20,7 @@ export type WsServerMsg =
   | { "type": "displaced", }
   | { "type": "auth_required", }
   | { "type": "tool_dispatch", chat_id: string, call_id: string, name: string, arguments: string, workdir?: string }
-  | { "type": "thread_state", chat_id: string, seq: number, events: JsonValue[], text: string, thinking: string, generating: boolean, project_id?: string, project_name?: string, project_machine_label?: string }
+  | { "type": "thread_state", chat_id: string, seq: number, events: JsonValue[], text: string, thinking: string, generating: boolean, project_id?: string, project_name?: string, project_machine_label?: string, has_more_events?: boolean }
   | { "type": "error", message: string, }
   | { "type": "machine_request", request_id: string, op: string, payload: JsonValue }
   | { "type": "thread_list", chats: JsonValue[], }

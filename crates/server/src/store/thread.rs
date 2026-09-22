@@ -123,6 +123,42 @@ impl<'a> ThreadStore<'a> {
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
+    /// Newest page of the chat's event log, keyset-paginated on `seq`
+    /// (write order): rows strictly older than `before_seq`, newest first,
+    /// returned in ascending order so callers prepend as-is. The extra
+    /// limit+1th row becomes `has_more` instead of a payload. `before_seq`
+    /// None = start from the newest event (the first page).
+    pub async fn list_events_page(
+        &self,
+        org_id: Uuid,
+        chat_id: Uuid,
+        limit: i64,
+        before_seq: Option<i64>,
+    ) -> Result<(Vec<ThreadEventRow>, bool), ApiError> {
+        let mut rows: Vec<EventRowDb> = sqlx::query_as(
+            "SELECT e.id, e.chat_id, e.seq, e.payload, e.created_at \
+             FROM thread_events e JOIN chats c ON c.id = e.chat_id \
+             WHERE c.org_id = $1 AND e.chat_id = $2 \
+               AND ($3::bigint IS NULL OR e.seq < $3) \
+             ORDER BY e.seq DESC LIMIT $4",
+        )
+        .bind(org_id)
+        .bind(chat_id)
+        .bind(before_seq)
+        .bind(limit + 1)
+        .fetch_all(self.pool)
+        .await
+        .map_err(ApiError::from)?;
+        let has_more = rows.len() as i64 > limit;
+        rows.truncate(limit as usize);
+        rows.reverse(); // page order: ascending seq, the caller's display order
+        let events = rows
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<ThreadEventRow>, ApiError>>()?;
+        Ok((events, has_more))
+    }
+
     /// Highest `turn` value in the chat's log (0 when the log is empty).
     /// Used to place engine-side appends into the latest turn.
     pub async fn latest_turn(&self, chat_id: Uuid) -> Result<u32, ApiError> {

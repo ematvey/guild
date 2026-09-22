@@ -589,6 +589,9 @@ async fn capture_thread(
         project_id,
         project_name,
         project_machine_label,
+        // Full-fidelity capture (the sync path trims to the newest page and
+        // sets this flag; machine views and tests consume the whole log).
+        has_more_events: false,
         events: events
             .into_iter()
             .map(|row| serde_json::to_value(row).expect("thread row serializes"))

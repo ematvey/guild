@@ -97,6 +97,12 @@ pub enum WsServerMsg {
         project_name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project_machine_label: Option<String>,
+        /// True when `events` is only the NEWEST page of the durable log
+        /// (the sync payload is capped for long threads): older events load
+        /// on scroll-up via `GET /api/v1/chats/{id}/thread?before_seq=`.
+        /// Absent/false = the payload is the whole log.
+        #[serde(default)]
+        has_more_events: bool,
     },
     SyncDone {
         chat_id: Uuid,

@@ -90,13 +90,11 @@ impl<'a> ChatStore<'a> {
         .map_err(Into::into)
     }
 
-    pub async fn list_chats(
-        &self,
-        org_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<Vec<ChatListRow>, ApiError> {
-        sqlx::query_as(
-            "SELECT c.id, c.org_id, c.user_id, c.title, c.created_at, c.machine_id, c.machine_label, \
+    /// Shared SELECT/JOIN for the active-chat lists (full and paged): the
+    /// unread projection reads the caller's read watermark, the project and
+    /// machine joins feed the sidebar's grouping.
+    const LIST_SELECT: &'static str =
+        "SELECT c.id, c.org_id, c.user_id, c.title, c.created_at, c.machine_id, c.machine_label, \
                     c.generating, c.project_id, pr.name AS project_name, m.label AS project_machine_label, \
                     c.generating = false AND EXISTS ( \
                       SELECT 1 FROM thread_events e \
@@ -105,15 +103,60 @@ impl<'a> ChatStore<'a> {
              FROM chats c \
              LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2 \
              LEFT JOIN projects pr ON pr.id = c.project_id \
-             LEFT JOIN machines m ON m.machine_id = pr.machine_id \
-             WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL \
-             ORDER BY c.created_at DESC",
-        )
+             LEFT JOIN machines m ON m.machine_id = pr.machine_id";
+
+    pub async fn list_chats(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Vec<ChatListRow>, ApiError> {
+        sqlx::query_as(&format!(
+            "{} WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL \
+             ORDER BY c.created_at DESC, c.id DESC",
+            Self::LIST_SELECT
+        ))
         .bind(org_id)
         .bind(user_id)
         .fetch_all(self.pool)
         .await
         .map_err(Into::into)
+    }
+
+    /// Newest page of the caller's active chats, keyset-paginated on
+    /// `(created_at, id)` — the same `(ORDER BY … DESC)` pair, so a page
+    /// boundary is a pure cursor, not an offset (rows shift as chats are
+    /// created). Same unread projection as `list_chats` (the sidebar's dot
+    /// must be right on the first page too). The extra limit+1th row
+    /// becomes `has_more`. The `before` cursor pair comes from the
+    /// previous page's last row.
+    pub async fn list_chats_page(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+        limit: i64,
+        before: Option<(DateTime<Utc>, Uuid)>,
+    ) -> Result<(Vec<ChatListRow>, bool), ApiError> {
+        let (before_created_at, before_id) = match before {
+            Some((ts, id)) => (Some(ts), Some(id)),
+            None => (None, None),
+        };
+        let mut rows: Vec<ChatListRow> = sqlx::query_as(&format!(
+            "{} WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL \
+               AND ($3::timestamptz IS NULL OR (c.created_at, c.id) < ($3::timestamptz, $4::uuid)) \
+             ORDER BY c.created_at DESC, c.id DESC LIMIT $5",
+            Self::LIST_SELECT
+        ))
+        .bind(org_id)
+        .bind(user_id)
+        .bind(before_created_at)
+        .bind(before_id)
+        .bind(limit + 1)
+        .fetch_all(self.pool)
+        .await
+        .map_err(ApiError::from)?;
+        let has_more = rows.len() as i64 > limit;
+        rows.truncate(limit as usize);
+        Ok((rows, has_more))
     }
 
     /// Lists the caller's archived chats (the sidebar's Archived section);
@@ -131,13 +174,50 @@ impl<'a> ChatStore<'a> {
              LEFT JOIN projects pr ON pr.id = c.project_id \
              LEFT JOIN machines m ON m.machine_id = pr.machine_id \
              WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NOT NULL \
-             ORDER BY c.created_at DESC",
+             ORDER BY c.created_at DESC, c.id DESC",
         )
         .bind(org_id)
         .bind(user_id)
         .fetch_all(self.pool)
         .await
         .map_err(Into::into)
+    }
+
+    /// Newest page of the caller's archived chats — same keyset contract as
+    /// `list_chats_page`, `archived_at IS NOT NULL`.
+    pub async fn list_archived_chats_page(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+        limit: i64,
+        before: Option<(DateTime<Utc>, Uuid)>,
+    ) -> Result<(Vec<ChatListRow>, bool), ApiError> {
+        let (before_created_at, before_id) = match before {
+            Some((ts, id)) => (Some(ts), Some(id)),
+            None => (None, None),
+        };
+        let mut rows: Vec<ChatListRow> = sqlx::query_as(
+            "SELECT c.id, c.org_id, c.user_id, c.title, c.created_at, c.machine_id, c.machine_label, \
+                    c.generating, c.project_id, pr.name AS project_name, m.label AS project_machine_label, \
+                    false AS unread \
+             FROM chats c \
+             LEFT JOIN projects pr ON pr.id = c.project_id \
+             LEFT JOIN machines m ON m.machine_id = pr.machine_id \
+             WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NOT NULL \
+               AND ($3::timestamptz IS NULL OR (c.created_at, c.id) < ($3::timestamptz, $4::uuid)) \
+             ORDER BY c.created_at DESC, c.id DESC LIMIT $5",
+        )
+        .bind(org_id)
+        .bind(user_id)
+        .bind(before_created_at)
+        .bind(before_id)
+        .bind(limit + 1)
+        .fetch_all(self.pool)
+        .await
+        .map_err(ApiError::from)?;
+        let has_more = rows.len() as i64 > limit;
+        rows.truncate(limit as usize);
+        Ok((rows, has_more))
     }
 
     /// Fetches one chat the caller owns. Admins may access any chat in the
