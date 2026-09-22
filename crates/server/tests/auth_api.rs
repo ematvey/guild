@@ -83,3 +83,30 @@ async fn bootstrap_login_me_flow() {
     .await;
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// The bootstrap credential cannot be shorter than the admin-account
+/// minimum (8 chars) — it is often the org's only admin.
+#[tokio::test]
+async fn bootstrap_rejects_a_short_password() {
+    let ts = guild_server::test_support::test_state_with_db().await;
+    let app = guild_server::build_router(ts.state.clone());
+
+    let res = post(
+        app.clone(),
+        "/api/v1/auth/bootstrap",
+        None,
+        json!({"email": "short@b.c", "password": "hunter2"}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // nothing was created: a proper bootstrap still succeeds afterwards
+    let res = post(
+        app,
+        "/api/v1/auth/bootstrap",
+        None,
+        json!({"email": "short@b.c", "password": "hunter226"}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+}
