@@ -5,7 +5,9 @@
 //! - `daemon` → the same engine headless on the local socket (manual
 //!   fallback for debugging; CLI verbs require the GUI instead)
 //! - `daemon install [--linger]` / `status` / `uninstall` → manage the
-//!   daemon as a systemd user unit (Linux; headless hosts)
+//!   daemon as a systemd user unit (Linux); the unit owns the executor
+//!   while active and the GUI defers to it, so install works while the
+//!   GUI is up
 //! - `login` / `chat` / `publish` / `install` / `verify` → headless CLI
 //!   (cloud-touching verbs go through the daemon); `login` takes either
 //!   `--url/--email/--password` or `--token <pairing-code>`
