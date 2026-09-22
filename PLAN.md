@@ -1,10 +1,33 @@
 # Guild — current state of work
 
-Updated 2026-09-22 (0.5.13 released: pairing-code login verb). Read this
+Updated 2026-09-22 (0.5.14 released: remote machine folder browse). Read this
 before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## 0.5.14 released: remote machine folder browse — 2026-09-22
+
+The create-project dialog's remote machines were dead rows ("browse coming
+later"); devbox (a headless Linux box running only the daemon) could not
+receive projects at all. Remote machines are now browsable like WSL distros:
+new `MachineRequest`/`MachineResponse` control-plane frames over the machine's
+executor socket (`protocol::ws`), a hub request/waiter map (`machine_request`
+— 10 s timeout, offline/send/timeout/rejected errors), the owner-scoped
+`POST /api/v1/machines/{id}/fs` endpoint (ops `fs_list`/`fs_home`, read-only,
+the daemon answers straight from `tokio::fs` in machine_link), and a
+`RemotePathSpecifier` reusing the WSL browse state machine on plain Linux
+paths. Remote rows now show the live/offline dot. The pairing-code login verb
+shipped in 0.5.13; the web-issued code's embedded URL is the REAL server URL
+now (commit 4112483) — codes minted from inside a desktop webview still carry
+`tauri.localhost` and are unusable on other machines.
+
+Incident worth knowing: mid-release, the developer's real
+`~/.config/guild/token.json` vanished (dir mtime 13:32, exactly when the full
+test suite ran). Every test file checked uses isolated XDG_CONFIG_HOME or
+temp paths — culprit unidentified. Symptom: the devbox machine link dropped
+and did not reconnect (restored session empty). Re-paired; if a dev machine
+mysteriously drops its pairing after running `cargo test`, this is why.
 
 ## 0.5.13 released: `login --token` (pairing-code CLI verb) — 2026-09-22
 
