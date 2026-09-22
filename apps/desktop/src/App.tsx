@@ -11,7 +11,7 @@ import { IS_TAURI, apiLogin, apiMe, clearToken, machineId, rpcCall, setToken } f
 import { toast } from "sonner";
 import { clearApiCache } from "./views/settings/use-cached-api";
 import { clearMachinesCache } from "./views/settings/sections/MachineSection";
-import { clearApiKeysCache } from "./views/settings/sections/ApiKeysSection";
+import { clearGatewayCache } from "./views/settings/sections/GatewaySection";
 import { ThemeProvider, useTheme } from "./theme";
 import { ThemedToaster } from "@guild/ui/components/toaster";
 
@@ -334,7 +334,7 @@ function DesktopApp() {
     clearToken();
     clearApiCache();
     clearMachinesCache();
-    clearApiKeysCache();
+    clearGatewayCache();
     setUser(null);
     window.location.reload();
   };
@@ -488,7 +488,7 @@ function AppInner() {
       clearToken();
       clearApiCache();
       clearMachinesCache();
-      clearApiKeysCache();
+      clearGatewayCache();
       setEmail(null);
     };
     const onLoggedIn = (profile: Profile) => {
