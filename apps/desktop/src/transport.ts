@@ -36,6 +36,13 @@ export function apiUrl(path: string): string {
   return `${serverBase()}${path}`;
 }
 
+/** The real server origin ("https://guild.example"). Web: the page origin.
+ * Tauri: the paired server URL — the webview origin (tauri.localhost) is not
+ * a routable address, so codes built from it would be unusable. */
+export function serverUrl(): string {
+  return serverBase() || window.location.origin;
+}
+
 export const TOKEN_KEY = "guild_token";
 const CLIENT_ID_KEY = "guild_client_id";
 const MACHINE_ID_KEY = "guild_machine_id";
