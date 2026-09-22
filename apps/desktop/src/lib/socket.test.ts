@@ -48,9 +48,9 @@ describe("routeMessage", () => {
     routeMessage({ type: "thread_list", chats: [chat] }, handlers);
     routeMessage({ type: "chat_status", chat_id: "chat-1", generating: true }, handlers);
     routeMessage({ type: "sync_begin", chat_id: "chat-1" }, handlers);
-    routeMessage({ type: "thread_state", chat_id: "chat-1", seq: 1, events: [], text: "hello", thinking: "", generating: true }, handlers);
+    routeMessage({ type: "thread_state", chat_id: "chat-1", seq: 1, events: [], text: "hello", thinking: "", generating: true, has_more_events: false }, handlers);
     routeMessage({ type: "sync_done", chat_id: "chat-1" }, handlers);
-    routeMessage({ type: "live_frame", chat_id: "chat-1", generation_id: "generation-1", seq: 2, machine_id: null, event: delta }, handlers);
+    routeMessage({ type: "live_frame", chat_id: "chat-1", generation_id: "generation-1", seq: 2, machine_id: undefined, event: delta }, handlers);
     routeMessage({ type: "displaced" }, handlers);
     routeMessage({ type: "auth_required" }, handlers);
 
