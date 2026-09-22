@@ -98,6 +98,7 @@ import {
   downloadRelease,
   listReleases,
   pairingCode,
+  serverUrl,
   setChatApproval,
   startSocket,
   watchMachinePresence,
@@ -2787,7 +2788,7 @@ function DeviceSetupDialog({
   const generatePairing = () => {
     setPairBusy(true);
     createPairingToken(30)
-      .then((t) => setPairCode(pairingCode(window.location.origin, t.secret)))
+      .then((t) => setPairCode(pairingCode(serverUrl(), t.secret)))
       .finally(() => setPairBusy(false));
   };
 
