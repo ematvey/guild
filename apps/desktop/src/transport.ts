@@ -456,15 +456,22 @@ export async function apiMe(): Promise<{
 }
 
 export async function listModels(): Promise<string[] | null> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/gateway/models"), {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  // null = request failed (distinguishable from a legitimately empty list)
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
-  return v.models ?? [];
+  try {
+    const token = getToken();
+    const res = await fetch(apiUrl("/api/v1/gateway/models"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // null = request failed (distinguishable from a legitimately empty list)
+    if (!res.ok) return null;
+    const v = await res.json().catch(() => ({}));
+    return v.models ?? [];
+    } catch {
+    // A rejected fetch (offline, TLS, server down) is a failure like any
+    // other: the null contract covers it, so call sites only handle null.
+    return null;
+  }
 }
+
 
 export interface ApiKeyInfo {
   id: string;
@@ -558,14 +565,21 @@ export interface MachineInfo {
 
 /** Connected machine executors for this account. */
 export async function listMachines(): Promise<MachineInfo[] | null> {
-  const res = await fetch(apiUrl("/api/v1/machines"), {
-    headers: { authorization: `Bearer ${getToken()}` },
-  });
-  // null = request failed (distinguishable from a legitimately empty list)
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
-  return v?.machines ?? [];
+  try {
+    const res = await fetch(apiUrl("/api/v1/machines"), {
+      headers: { authorization: `Bearer ${getToken()}` },
+    });
+    // null = request failed (distinguishable from a legitimately empty list)
+    if (!res.ok) return null;
+    const v = await res.json().catch(() => ({}));
+    return v?.machines ?? [];
+    } catch {
+    // A rejected fetch (offline, TLS, server down) is a failure like any
+    // other: the null contract covers it, so call sites only handle null.
+    return null;
+  }
 }
+
 
 export interface ChatMessage {
   role: string;
@@ -577,27 +591,41 @@ export interface ChatMessage {
 }
 
 export async function listChats(): Promise<ChatSummary[] | null> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/chats"), {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  // null = request failed (distinguishable from a legitimately empty list)
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
-  return v.chats ?? [];
+  try {
+    const token = getToken();
+    const res = await fetch(apiUrl("/api/v1/chats"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // null = request failed (distinguishable from a legitimately empty list)
+    if (!res.ok) return null;
+    const v = await res.json().catch(() => ({}));
+    return v.chats ?? [];
+    } catch {
+    // A rejected fetch (offline, TLS, server down) is a failure like any
+    // other: the null contract covers it, so call sites only handle null.
+    return null;
+  }
 }
+
 
 /// Lists the archived chats (the sidebar's Archived section). Null on
 /// failure, same contract as `listChats`.
 export async function listArchivedChats(): Promise<ChatSummary[] | null> {
-  const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/chats?archived=1"), {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
-  return v.chats ?? [];
+  try {
+    const token = getToken();
+    const res = await fetch(apiUrl("/api/v1/chats?archived=1"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const v = await res.json().catch(() => ({}));
+    return v.chats ?? [];
+    } catch {
+    // A rejected fetch (offline, TLS, server down) is a failure like any
+    // other: the null contract covers it, so call sites only handle null.
+    return null;
+  }
 }
+
 
 /// Renames and/or archives a chat. Archived chats drop out of `listChats`
 /// but direct links still resolve; `archived: false` unarchives.
@@ -919,14 +947,21 @@ export type { Project, CreateProjectRequest };
 
 /** The signed-in user's projects (admin: all org projects). */
 export async function listProjects(): Promise<Project[] | null> {
-  const res = await fetch(apiUrl("/api/v1/projects"), {
-    headers: { authorization: `Bearer ${getToken()}` },
-  });
-  // null = request failed (distinguishable from a legitimately empty list)
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
-  return v.projects ?? [];
+  try {
+    const res = await fetch(apiUrl("/api/v1/projects"), {
+      headers: { authorization: `Bearer ${getToken()}` },
+    });
+    // null = request failed (distinguishable from a legitimately empty list)
+    if (!res.ok) return null;
+    const v = await res.json().catch(() => ({}));
+    return v.projects ?? [];
+    } catch {
+    // A rejected fetch (offline, TLS, server down) is a failure like any
+    // other: the null contract covers it, so call sites only handle null.
+    return null;
+  }
 }
+
 
 /** Creates a project; throws with the API message (409 = name taken). */
 export async function createProject(req: CreateProjectRequest): Promise<Project> {
@@ -1120,15 +1155,22 @@ export async function setApprovalPolicyPrompt(prompt: string): Promise<void> {
 }
 
 export async function getChatApproval(chatId: string): Promise<ChatApprovalMode | null> {
-  const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/approval`), {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
-  const d = v?.default;
-  return d === "ask" || d === "approve_for_me" || d === "full_access" ? d : null;
+  try {
+    const token = getToken();
+    const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/approval`), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const v = await res.json().catch(() => ({}));
+    const d = v?.default;
+    return d === "ask" || d === "approve_for_me" || d === "full_access" ? d : null;
+    } catch {
+    // A rejected fetch (offline, TLS, server down) is a failure like any
+    // other: the null contract covers it, so call sites only handle null.
+    return null;
+  }
 }
+
 
 export async function setChatApproval(
   chatId: string,
