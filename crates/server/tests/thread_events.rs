@@ -351,3 +351,72 @@ async fn thread_endpoint_context_snapshot_and_fallback() {
     assert_eq!(v["context"]["max"], 128000);
     assert_eq!(v["context"]["model"], "unrouted-model");
 }
+
+/// The event enum is a closed schema over a durable log: a row written by a
+/// NEWER server (unknown event type) must not fail the chat's whole
+/// history — the store drops it with a warning and returns the rest.
+#[tokio::test]
+async fn list_events_tolerates_unknown_event_payloads() {
+    let ts = test_state_with_db().await;
+    let store = ts.store();
+    let user_id = store
+        .identity()
+        .ensure_bootstrap_admin("unknown-ev@a.b", "hunter226")
+        .await
+        .unwrap();
+    let (_sid, _token) = store.identity().create_session(user_id).await.unwrap();
+    let user = store.identity().validate_session(&_token).await.unwrap();
+    let chat = store
+        .chats()
+        .create_chat(user.org_id, user.id, Some("unknown events"), None)
+        .await
+        .unwrap();
+
+    store
+        .thread()
+        .append_event(
+            chat.id,
+            &ThreadEvent::UserMessage {
+                content: "before".into(),
+                attachments: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    // A "newer schema" row: valid JSON, unknown internal tag.
+    sqlx::query("INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, 'future_event', $3)")
+        .bind(uuid::Uuid::now_v7())
+        .bind(chat.id)
+        .bind(serde_json::json!({"type": "future_event", "data": 1}))
+        .execute(store.pool())
+        .await
+        .unwrap();
+    store
+        .thread()
+        .append_event(
+            chat.id,
+            &ThreadEvent::UserMessage {
+                content: "after".into(),
+                attachments: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let events = store.thread().list_events(user.org_id, chat.id).await.unwrap();
+    let contents: Vec<&str> = events
+        .iter()
+        .filter_map(|row| match &row.event {
+            ThreadEvent::UserMessage { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(contents, vec!["before", "after"]);
+
+    let (page, _) = store
+        .thread()
+        .list_events_page(user.org_id, chat.id, 50, None)
+        .await
+        .unwrap();
+    assert_eq!(page.len(), 2, "unknown rows are dropped, not fatal");
+}
