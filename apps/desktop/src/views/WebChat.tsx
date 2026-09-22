@@ -3148,27 +3148,37 @@ function ChatListItem({
     );
   }
   return (
-    <button
-      onClick={onClick}
-      className={`group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
+    // A div row hosting two siblings — the open button and the (absolutely
+    // positioned) Radix menu trigger — instead of a button containing the
+    // trigger: an interactive control nested in a button is non-conforming
+    // HTML and screen readers announce the menu trigger as part of the
+    // row's name. The background/hover classes stay on the row so hovering
+    // the trigger highlights it too.
+    <div
+      className={`group/row relative z-0 flex w-full items-center overflow-hidden rounded-md transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
       }`}
-      title={title}
     >
-      <FadeTitle text={title} />
-      {status.generating ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-      ) : status.unread ? (
-        <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
-      ) : null}
+      <button
+        onClick={onClick}
+        title={title}
+        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left outline-none"
+      >
+        <FadeTitle text={title} />
+        {status.generating ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        ) : status.unread ? (
+          <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
+        ) : null}
+      </button>
       <RowActions
         onRename={onRename ? () => setEditing(true) : undefined}
         onArchive={onArchive}
         archiveLabel={archiveLabel}
       />
-    </button>
+    </div>
   );
 }
 
