@@ -181,8 +181,8 @@ read/write, so a reading loopback server looks alive).
 ## `guild daemon install` — supervised boot persistence (Linux) — 2026-09-22
 
 The "powered on ⇒ executor online" guarantee rested on a hand-rolled
-systemd unit on one machine; everywhere else the GUI spawns an
-unsupervised daemon that dies at reboot and stays dead after a crash.
+systemd unit on one machine; everywhere else the GUI spawned an
+unsupervised daemon that died at reboot and stayed dead after a crash.
 New verbs on the same binary: `daemon install [--linger]` (writes
 `~/.config/systemd/user/guild-daemon.service` → `daemon-reload` →
 `restart` if active / retire-unsupervised + `enable --now` if not),
@@ -192,6 +192,23 @@ binary, so symlink-repoint upgrades follow without reinstalling; otherwise
 the canonical binary path is pinned. `daemon.shutdown` delivery moved into
 `daemon::shutdown_running()` (send + bounded socket-release poll, never
 blocks on a hung daemon).
+
+**TODO — auth propagation to the unit daemon (install is headless-only
+until this exists).** With the unit owning the socket, the GUI no longer
+hosts one: `run_daemon_shared` early-returns, the GUI spawns no machine
+link, and pair/login/identify persist + publish the link config on the
+GUI's in-process watch channel only — the unit daemon never learns of a
+fresh pair or a sign-out (it retries a revoked token forever; registration
+never happens until a unit restart). `daemon install` therefore refuses
+while a daemon is reachable (the GUI must be quit first). Deeper fix, pick
+one: (a) route auth RPCs (`pair`/`login`/`machine.identify`/
+`session.clear`) from the GUI across the socket to the owning daemon, or
+(b) have the daemon watch token.json changes (an mtime poll suffices — the
+file changes exactly on auth transitions) and re-seed/re-publish the link
+config. Also open: the Tauri updater replaces the binary without touching
+the unit; a pinned-path ExecStart keeps serving the old build until
+`Restart=always` re-spawns it (in-place replacement) or `daemon install`
+re-runs (new path).
 
 ## Project "+" pre-pick survives the chatId switch — 2026-09-22
 
