@@ -69,7 +69,7 @@ import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsWindow } from "./settings/SettingsWindow";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
 import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
-import { chatProjectOf, outgoingProjectId, projectChipLabel, PROJECT_PAGE_INITIAL, PROJECT_PAGE_STEP, sidebarGrouping, type PickedProject } from "./projects/projects";
+import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, PROJECT_PAGE_INITIAL, PROJECT_PAGE_STEP, sidebarGrouping, type PickedProject } from "./projects/projects";
 import {
   attachmentBlobUrl,
   toolArtifactBlobUrl,
@@ -218,6 +218,11 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
   }
   return { chatId, projectId, overlay: null };
 };
+
+/// Per-chat composer drafts: the composer text is saved under the open
+/// chat's key (the scratch view shares "new"), so navigating between chats
+/// swaps drafts instead of carrying one text across.
+export const draftKey = (chatId: string | null) => `guild:draft:${chatId ?? "new"}`;
 
 export const chatRoutePath = (
   chatId: string | null,
@@ -1434,6 +1439,23 @@ export default function WebChat({
   // line flashed on every first send.
   const [compacting, setCompacting] = useState(false);
   const [prompt, setPrompt] = useState("");
+  // Set by the chatId effect's first draft restore; until then the persist
+  // effect must not write (see its comment).
+  const draftsReadyRef = useRef(false);
+  // Composer text persists per chat (localStorage, draftKey): every edit
+  // writes the open chat's draft; the chatId effect swaps it on navigation
+  // and sending overwrites it with "".
+  useEffect(() => {
+    // Mount order: this persist effect runs before the chatId effect's
+    // first restore, so it stays inert until that restore ran — otherwise
+    // it would wipe the saved draft of the deep-linked chat with "".
+    if (!draftsReadyRef.current) return;
+    try {
+      localStorage.setItem(draftKey(chatId), prompt);
+    } catch {
+      /* storage unavailable — drafts are best-effort */
+    }
+  }, [prompt, chatId]);
   // ---- skill mentions: / opens the autocomplete (skills design §3) ----
   const [skills, setSkills] = useState<ComposerSkill[] | null>(null);
   const [caret, setCaret] = useState(0);
@@ -1705,6 +1727,10 @@ export default function WebChat({
   const [pickedProject, setPickedProject] = useState<PickedProject | null>(null);
   const pickedProjectRef = useRef<PickedProject | null>(pickedProject);
   pickedProjectRef.current = pickedProject;
+  /** A pick made for the scratch view the navigation is entering (the
+   * project row's "+"): the chatId switch consumes it, so the per-chat
+   * reset applies to every other transition. */
+  const scratchPickRef = useRef<PickedProject | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   /** Where the create-project dialog was opened from: only the composer's
@@ -1824,10 +1850,26 @@ export default function WebChat({
   // Chat switches keep cached content visible until the socket's History
   // frame overwrites it, then request a fresh sync for the new chat. The
   // project pick is per-chat: a pending pick (pre-first-send) or an old
-  // chat's pick never carries over.
+  // chat's pick never carries over — except one carried in explicitly for
+  // the destination (scratchPickRef: the project row's "+" enters the
+  // scratch view with its project pre-picked).
   const prevLoadedChatRef = useRef<string | null>(chatId);
   useEffect(() => {
-    setPickedProject(null);
+    const intendedPick = scratchPickRef.current;
+    scratchPickRef.current = null;
+    setPickedProject(pickAfterChatSwitch(chatId, intendedPick));
+    // Per-chat draft: load the destination chat's saved composer text
+    // instead of keeping the previous chat's text in the input.
+    let restored = "";
+    try {
+      restored = localStorage.getItem(draftKey(chatId)) ?? "";
+    } catch {
+      /* storage unavailable — drafts are best-effort */
+    }
+    setPrompt(restored);
+    setCaret(restored.length);
+    draftsReadyRef.current = true;
+    if (restored) requestAnimationFrame(autoGrow);
     prevLoadedChatRef.current = chatId;
     loadSeq.current++;
     setBusy(false);
@@ -1873,8 +1915,11 @@ export default function WebChat({
   };
 
   /** Sidebar: new chat inside a project (the project row's hover "+").
-   * Pre-picks the project so the composer binds the chat to it on send. */
+   * Pre-picks the project so the composer binds the chat to it on send. The
+   * chatId switch this triggers resets the pick per-chat — scratchPickRef
+   * carries this pick through that same switch. */
   const newChatInProject = (project: PickedProject) => {
+    scratchPickRef.current = project;
     pickProject(project);
     newChat();
   };
@@ -2486,6 +2531,15 @@ export default function WebChat({
                 autoGrow();
               }}
               onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+              onPaste={(e) => {
+                // Clipboard files (screenshot copies, image copies) attach
+                // like drag-and-drop instead of doing nothing.
+                const files = Array.from(e.clipboardData?.files ?? []);
+                if (files.length > 0) {
+                  e.preventDefault();
+                  addFiles(files);
+                }
+              }}
               onKeyDown={(e) => {
                 if (mentionMatches.length > 0) {
                   if (e.key === "ArrowDown") {
@@ -3050,7 +3104,7 @@ function RowActions({
           tabIndex={0}
           title="Row actions"
           onClick={(e) => e.stopPropagation()}
-          className="absolute right-1 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md bg-foreground/10 text-muted-foreground opacity-0 outline-none transition-all hover:bg-foreground/20 hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
+          className="absolute right-1 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-sidebar text-muted-foreground shadow-sm opacity-0 outline-none transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
         >
           <EllipsisVertical className="size-4" />
         </span>
@@ -3113,7 +3167,7 @@ function ChatListItem({
   return (
     <button
       onClick={onClick}
-      className={`group/row relative flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
+      className={`group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -3157,7 +3211,7 @@ function ProjectHeader({
   const [editing, setEditing] = useState(false);
   if (editing) {
     return (
-      <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm">
+      <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5">
         <RenameInput
           initial={name}
           onDone={(v) => {
@@ -3172,7 +3226,7 @@ function ProjectHeader({
     <button
       type="button"
       onClick={onToggle}
-      className="group/row relative flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+      className="group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:z-10 has-[[data-state=open]]:z-10 hover:bg-accent hover:text-accent-foreground"
       title={folder}
     >
       <ChevronRight
@@ -3195,7 +3249,8 @@ function ProjectHeader({
               onNewChat();
             }
           }}
-          className="absolute right-7 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md bg-foreground/10 text-muted-foreground opacity-0 outline-none transition-all hover:bg-foreground/20 hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
+          // right-1 + size-6 + 2px gap → the two hover buttons sit 2px apart
+          className="absolute right-[30px] top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-sidebar text-muted-foreground shadow-sm opacity-0 outline-none transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
         >
           <Plus className="size-4" />
         </span>
