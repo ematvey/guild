@@ -8,6 +8,7 @@ import type { StreamEvent } from "./StreamEvent";
  */
 export type WsClientMsg =
   | { "type": "sync", chat_id: string | null, }
+  | { "type": "machine_response", request_id: string, ok: boolean, payload?: JsonValue, error?: string }
   | { "type": "tool_result", chat_id: string, call_id: string, content: string, is_error: boolean, meta: JsonValue | null, };
 
 /**
@@ -21,6 +22,7 @@ export type WsServerMsg =
   | { "type": "tool_dispatch", chat_id: string, call_id: string, name: string, arguments: string, workdir?: string }
   | { "type": "thread_state", chat_id: string, seq: number, events: JsonValue[], text: string, thinking: string, generating: boolean, project_id?: string, project_name?: string, project_machine_label?: string }
   | { "type": "error", message: string, }
+  | { "type": "machine_request", request_id: string, op: string, payload: JsonValue }
   | { "type": "thread_list", chats: JsonValue[], }
   | { "type": "chat_status", chat_id: string, generating: boolean, }
   | { "type": "sync_begin", chat_id: string, }

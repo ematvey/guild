@@ -242,6 +242,22 @@ async fn ws_session(
                 let Some(msg) = incoming else { break LinkEnd::Closed };
                 match msg {
                     Ok(WsMessage::Text(text)) => match serde_json::from_str::<WsServerMsg>(&text) {
+                        Ok(WsServerMsg::MachineRequest { request_id, op, payload }) => {
+                            let result = machine_request_result(&op, &payload).await;
+                            let (ok, resp_payload, error) = match result {
+                                Ok(v) => (true, Some(v), None),
+                                Err(e) => (false, None, Some(e)),
+                            };
+                            let msg = WsClientMsg::MachineResponse {
+                                request_id,
+                                ok,
+                                payload: resp_payload,
+                                error,
+                            };
+                            let _ = outbound_tx.send(WsMessage::Text(
+                                serde_json::to_string(&msg).expect("client message serializes").into(),
+                            ));
+                        }
                         Ok(WsServerMsg::ToolDispatch { chat_id, call_id, name, arguments, workdir }) => {
                             let result = execute_client_tool(&name, &arguments, workdir.as_deref()).await;
                             let msg = WsClientMsg::ToolResult {
@@ -280,6 +296,50 @@ async fn ws_session(
     drop(outbound_tx);
     let _ = writer.await;
     end
+}
+
+/// Control-plane ops the server sends over the executor socket (read-only
+/// filesystem access for the desktop's remote folder browse).
+async fn machine_request_result(
+    op: &str,
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match op {
+        "fs_home" => Ok(serde_json::json!({
+            "home": std::env::var("HOME").unwrap_or_default()
+        })),
+        "fs_list" => {
+            let path = payload["path"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or("missing path")?;
+            let mut reader = tokio::fs::read_dir(path)
+                .await
+                .map_err(|e| format!("{path}: {e}"))?;
+            let mut dirs: Vec<serde_json::Value> = Vec::new();
+            let mut files: Vec<serde_json::Value> = Vec::new();
+            while let Some(entry) = reader
+                .next_entry()
+                .await
+                .map_err(|e| format!("{path}: {e}"))?
+            {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let is_dir = entry
+                    .file_type()
+                    .await
+                    .map(|t| t.is_dir())
+                    .unwrap_or(false);
+                let item = serde_json::json!({ "name": name, "is_dir": is_dir });
+                if is_dir { dirs.push(item) } else { files.push(item) }
+            }
+            dirs.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+            files.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+            dirs.extend(files);
+            Ok(serde_json::json!({ "entries": dirs }))
+        }
+        other => Err(format!("unknown op {other:?}")),
+    }
 }
 
 /// The executor: one builtin tool call in the dispatch's workspace folder —

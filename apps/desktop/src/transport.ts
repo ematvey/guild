@@ -1020,6 +1020,35 @@ export async function listDir(path: string): Promise<DirEntry[]> {
   return invoke<DirEntry[]>("list_dir", { path });
 }
 
+/** A filesystem op on a REMOTE machine's executor socket, relayed by the
+ * server (owner-scoped). `fs_list` → DirEntry[], `fs_home` → home path. */
+export async function machineFsRequest(
+  machineId: string,
+  op: "fs_list" | "fs_home",
+  payload: Record<string, unknown> = {},
+): Promise<unknown> {
+  const res = await fetch(apiUrl(`/api/v1/machines/${machineId}/fs`), {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({ op, payload }),
+  });
+  const v = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(v?.error?.message ?? `machine request failed (${res.status})`);
+  return (v as { result: unknown }).result;
+}
+
+/** Directory listing on a remote machine (dirs first, dotfiles included). */
+export async function listRemoteDir(machineId: string, path: string): Promise<DirEntry[]> {
+  const v = (await machineFsRequest(machineId, "fs_list", { path })) as { entries: DirEntry[] };
+  return v.entries;
+}
+
+/** The remote machine's $HOME (LINUX path); null when unknown. */
+export async function remoteHome(machineId: string): Promise<string | null> {
+  const v = (await machineFsRequest(machineId, "fs_home")) as { home?: string };
+  return v.home || null;
+}
+
 /// Hands the app process the machine identity (stable per install; keys the
 /// chat bindings). Starts presence + tool dispatch.
 export async function setMachineIdentity(machineId: string): Promise<void> {

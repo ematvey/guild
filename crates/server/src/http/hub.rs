@@ -5,7 +5,7 @@
 use super::ws::SocketSink;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use uuid::Uuid;
 
 pub const MAX_SOCKETS_PER_USER: usize = 32;
@@ -40,6 +40,16 @@ struct MachineSlot {
     shutdown: watch::Sender<bool>,
 }
 
+/// A machine control-plane request waiting for its `MachineResponse`.
+#[derive(Debug)]
+pub enum MachineRequestError {
+    Offline,
+    SendFailed,
+    TimedOut,
+    /// The machine answered with ok=false (error text inside).
+    Rejected(String),
+}
+
 #[derive(Default)]
 pub struct Hub {
     inner: Mutex<HubInner>,
@@ -52,6 +62,7 @@ struct HubInner {
     /// reclaim the slot after losing its terminal notice.
     owners: HashMap<String, Uuid>,
     members: HashMap<Uuid, HashMap<Uuid, Member>>,
+    machine_requests: HashMap<String, oneshot::Sender<Result<serde_json::Value, String>>>,
 }
 
 impl Hub {
@@ -195,6 +206,78 @@ impl Hub {
             .machines
             .get(machine_id)
             .map(|slot| slot.holder.clone())
+    }
+
+    /// Sends a control-plane request to the machine's executor socket and
+    /// awaits its `MachineResponse`. Offline/send/timeout are clean errors;
+    /// the machine's own refusal arrives as `Rejected`.
+    pub async fn machine_request(
+        &self,
+        machine_id: &str,
+        op: &str,
+        payload: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value, MachineRequestError> {
+        let holder = self
+            .machine_holder(machine_id)
+            .ok_or(MachineRequestError::Offline)?;
+        let request_id = Uuid::now_v7().to_string();
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut guard = self.inner.lock().unwrap();
+            guard
+                .machine_requests
+                .insert(request_id.clone(), tx);
+        }
+        let sent = holder
+            .sink
+            .try_send(protocol::ws::WsServerMsg::MachineRequest {
+            request_id: request_id.clone(),
+            op: op.to_owned(),
+            payload,
+        });
+        if sent.is_err() {
+            self.inner.lock().unwrap().machine_requests.remove(&request_id);
+            return Err(MachineRequestError::SendFailed);
+        }
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(Ok(payload))) => Ok(payload),
+            Ok(Ok(Err(error))) => Err(MachineRequestError::Rejected(error)),
+            // Responder dropped without a send: the machine disconnected
+            // while the request was in flight.
+            Ok(Err(_)) => Err(MachineRequestError::Offline),
+            Err(_) => {
+                // Elapsed timer: drop the pending entry so the late response
+                // (if the machine still answers) finds no waiter.
+                self.inner.lock().unwrap().machine_requests.remove(&request_id);
+                Err(MachineRequestError::TimedOut)
+            }
+        }
+    }
+
+    /// Routes a machine's `MachineResponse` to its waiter (from the socket
+    /// inbound path). Unknown request ids are dropped silently — a request
+    /// whose timer already fired.
+    pub fn resolve_machine_response(
+        &self,
+        request_id: &str,
+        ok: bool,
+        payload: Option<serde_json::Value>,
+        error: Option<String>,
+    ) {
+        let waiter = self
+            .inner
+            .lock()
+            .unwrap()
+            .machine_requests
+            .remove(request_id);
+        if let Some(tx) = waiter {
+            let _ = tx.send(if ok {
+                Ok(payload.unwrap_or(serde_json::Value::Null))
+            } else {
+                Err(error.unwrap_or_else(|| "machine refused".into()))
+            });
+        }
     }
 
     pub fn machine_connection(&self, machine_id: &str) -> Option<Uuid> {

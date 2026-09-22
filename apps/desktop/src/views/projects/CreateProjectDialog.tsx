@@ -1,7 +1,8 @@
 // Create-project dialog (spec §5): name + "Add a folder on <machine>".
 // Folder sources for the local machine: a native folder dialog, or a WSL
 // distro browsed in-app (the path specifier). Folders on other machines are
-// listed but disabled — remote browsing is a follow-up.
+// browsed in-app too: the listing relays through the server to the
+// machine's executor socket (read-only ops).
 
 import { useEffect, useState } from "react";
 import { HardDrive, Monitor, X as XIcon } from "lucide-react";
@@ -25,8 +26,12 @@ import {
   type Project,
 } from "../../transport";
 import { PathSpecifier } from "./PathSpecifier";
+import { RemotePathSpecifier } from "./RemotePathSpecifier";
 
-type View = { kind: "sources" } | { kind: "browse"; distro: string };
+type View =
+  | { kind: "sources" }
+  | { kind: "browse"; distro: string }
+  | { kind: "machine"; machine: MachineInfo };
 
 export function CreateProjectDialog({
   open,
@@ -96,10 +101,16 @@ export function CreateProjectDialog({
         p.folder.replace(/\\+$/, "").toLowerCase() === folder.replace(/\\+$/, "").toLowerCase(),
     ) ?? null;
 
+  /** Remote variant: the binding carries the machine's id, and Linux paths
+   * compare case-sensitively. */
+  const existingForMachine = (machineId: string) => (folder: string): Project | null =>
+    (projects ?? []).find((p) => p.machine_id === machineId && p.folder === folder) ?? null;
+
   /** Choosing a folder commits immediately: an existing project opens, a
    * new one is created with the folder's basename as its name. */
-  const commitFolder = async (folder: string) => {
-    const existing = existingFor(folder);
+  const commitFolder = async (folder: string, machineId: string = localMachineId) => {
+    const existing =
+      machineId === localMachineId ? existingFor(folder) : existingForMachine(machineId)(folder);
     if (existing) {
       onCreated(existing);
       onOpenChange(false);
@@ -107,7 +118,7 @@ export function CreateProjectDialog({
     }
     setBusy(true);
     try {
-      const project = await createProject({ folder, machine_id: localMachineId });
+      const project = await createProject({ folder, machine_id: machineId });
       onCreated(project);
       onOpenChange(false);
     } catch (e) {
@@ -132,7 +143,29 @@ export function CreateProjectDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-          {view.kind === "browse" ? (
+          {view.kind === "machine" ? (
+            <div className="flex min-h-40 min-w-0 flex-1 flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium">
+                  Folder on <span className="font-mono">{view.machine.name}</span>
+                </p>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 text-muted-foreground"
+                  onClick={() => setView({ kind: "sources" })}
+                  title="Back to sources"
+                >
+                  <XIcon />
+                </Button>
+              </div>
+              <RemotePathSpecifier
+                machineId={view.machine.machine_id}
+                existingFor={existingForMachine(view.machine.machine_id)}
+                onConfirm={(f) => void commitFolder(f, view.kind === "machine" ? view.machine.machine_id : localMachineId)}
+              />
+            </div>
+          ) : view.kind === "browse" ? (
             <div className="flex min-h-40 min-w-0 flex-1 flex-col gap-2">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium">
@@ -216,17 +249,28 @@ export function CreateProjectDialog({
                   </p>
                 )}
                 {otherMachines.map((m) => (
-                  <div
+                  <button
                     key={m.machine_id}
-                    className="flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left opacity-50"
-                    title="Browse coming later"
+                    type="button"
+                    disabled={!m.connected}
+                    onClick={() => setView({ kind: "machine", machine: m })}
+                    className={`flex w-full items-center gap-2.5 rounded-md border border-border px-2.5 py-2 text-left hover:bg-accent ${
+                      m.connected ? "" : "opacity-50"
+                    }`}
+                    title={m.connected ? "Browse folders on this machine" : "Machine is offline"}
                   >
+                    <span
+                      className={`size-2 shrink-0 rounded-full ${m.connected ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+                      title={m.connected ? "online" : "offline"}
+                    />
                     <HardDrive className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium">{m.name}</span>
-                      <span className="block text-xs text-muted-foreground">browse coming later</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {m.connected ? "Browse folders on this machine" : "Offline — start Guild on it"}
+                      </span>
                     </span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
