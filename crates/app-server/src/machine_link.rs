@@ -17,8 +17,9 @@ use crate::session_store;
 use futures::{SinkExt, StreamExt};
 use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde::Deserialize;
+use std::sync::Arc;
 use uuid::Uuid;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -544,9 +545,11 @@ pub fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-/// The link task: owns the machine's executor connection for the daemon's
-/// lifetime. Spawned once by the daemon; config changes arrive on the watch
-/// channel (login, pair, identify, sign-out).
+/// The link task: owns the machine's executor connection while this process
+/// hosts the CLI socket. Config changes arrive on the watch channel (login,
+/// pair, identify, sign-out — in-process transitions and the token.json
+/// watcher alike); the task exits when the daemon shuts down, so a retired
+/// socket host never leaves a link running.
 pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkConfig>>) {
     ensure_crypto_provider();
     let meta = machine_meta();
@@ -554,6 +557,9 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
     let mut current: Option<MachineLinkConfig> = None;
     let mut shutdown_rx = shared.shutdown.subscribe();
     loop {
+        if *shutdown_rx.borrow_and_update() {
+            return; // socket host retired: this process runs no link
+        }
         // Block until a config exists.
         let cfg = loop {
             if let Some(c) = cfg_rx.borrow_and_update().clone() {
@@ -563,8 +569,15 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 }
                 break c;
             }
-            if cfg_rx.changed().await.is_err() {
-                return; // channel closed — daemon shutting down
+            tokio::select! {
+                r = cfg_rx.changed() => {
+                    if r.is_err() {
+                        return; // channel closed — daemon shutting down
+                    }
+                }
+                _ = shutdown_rx.changed() => {
+                    return; // watch moved at all — this host cycle is over
+                }
             }
         };
         crate::dtrace::dtrace(&format!("machine-link connecting as {}", cfg.machine_id));
@@ -585,25 +598,50 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 // retry after a long backoff instead. A genuinely competing
                 // instance just re-displaces us; the slow cadence keeps
                 // that fight visible without leaving the machine dead.
-                wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 300).await;
+                if wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 300, &mut shutdown_rx)
+                    .await
+                {
+                    return;
+                }
             }
             LinkEnd::AuthRequired => {
                 // The session token was rejected — could be a transient
                 // 401 during a server deploy just as well as a revoked
                 // token. Retry on a slow cadence; a real sign-out republishes
                 // `None` and the outer loop parks anyway.
-                wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 60).await;
+                if wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 60, &mut shutdown_rx)
+                    .await
+                {
+                    return;
+                }
             }
             LinkEnd::Closed => {
-                // Clean close — config change (handled at loop top) or the
-                // server dropped us: brief backoff, then reconnect.
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                // Clean close — config change (handled at loop top), the
+                // server dropping us, or daemon shutdown: brief backoff,
+                // then reconnect unless the host was retired.
+                if shutdown_backoff(&mut shutdown_rx, 1).await {
+                    return;
+                }
             }
             LinkEnd::Failed(reason) => {
                 crate::dtrace::dtrace(&format!("machine link: {reason}"));
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                if shutdown_backoff(&mut shutdown_rx, 3).await {
+                    return;
+                }
             }
         }
+    }
+}
+
+/// Shutdown-aware sleep: true when the daemon's host cycle ended — the
+/// shutdown watch moved at all (retirement flips it true; a reclaiming host
+/// relatches it false afterwards) or its sender went away. The caller must
+/// stop relinking: a link that outlives its host cycle would double-link
+/// against the next cycle's.
+async fn shutdown_backoff(shutdown_rx: &mut watch::Receiver<bool>, secs: u64) -> bool {
+    tokio::select! {
+        _ = tokio::time::sleep(Duration::from_secs(secs)) => false,
+        _ = shutdown_rx.changed() => true,
     }
 }
 
@@ -611,24 +649,89 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
 /// `backoff_secs`: a stale config still retries once the backoff elapses,
 /// so neither displacement nor a transient auth failure can park the
 /// executor link permanently. A sign-out (`None`) breaks out immediately
-/// and the outer loop parks.
+/// and the outer loop parks. Returns true when the daemon shut down — the
+/// link must not relink behind a retired socket host.
 async fn wait_for_config_change_or_backoff(
     cfg_rx: &mut watch::Receiver<Option<MachineLinkConfig>>,
     current: &MachineLinkConfig,
     backoff_secs: u64,
-) {
+    shutdown_rx: &mut watch::Receiver<bool>,
+) -> bool {
     cfg_rx.borrow_and_update();
-    let changed = tokio::select! {
+    let end = tokio::select! {
         _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => false,
-        r = cfg_rx.changed() => r.is_ok(),
+        r = cfg_rx.changed() => r.is_err(), // channel closed — daemon gone
+        _ = shutdown_rx.changed() => true,  // host cycle over (true or relatched)
     };
-    if !changed {
-        return; // backoff elapsed: retry the same config
+    if end {
+        return true;
+    }
+    if *shutdown_rx.borrow() {
+        return true;
     }
     let published = cfg_rx.borrow().clone();
     match published {
-        Some(c) if c != *current => {} // new config: outer loop reconnects with it
-        _ => tokio::time::sleep(Duration::from_secs(1)).await, // same config or signed out
+        Some(c) if c != *current => false, // new config: outer loop reconnects with it
+        // Same config or signed out: park briefly, then let the outer loop
+        // decide (it re-checks shutdown before relinking).
+        _ => !shutdown_backoff(shutdown_rx, 1).await,
+    }
+}
+
+/// The link config the persisted session implies, if any: a store carrying
+/// the machine identity (machine_id + client_id — the identify step persists
+/// both) yields a config; a store without identity parks the link, and a
+/// missing store is a signed-out session.
+pub fn config_from_store(path: &Path) -> Option<MachineLinkConfig> {
+    let stored = session_store::load(path)?;
+    Some(MachineLinkConfig {
+        base_url: stored.base_url,
+        token: stored.token,
+        machine_id: stored.machine_id?,
+        client_id: stored.client_id?,
+        machine_name: stored.machine_name.unwrap_or_else(hostname_label),
+    })
+}
+
+/// Store-change signature: existence + mtime + length. token.json changes
+/// only on auth transitions, so polling this every second is cheap.
+fn store_sig(path: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+/// Watches token.json for auth transitions performed by ANOTHER process
+/// (the GUI while a unit daemon owns the link, or a CLI verb): on every
+/// change the store is reloaded and the implied config — or `None` for a
+/// sign-out — is published onto the link's watch channel, unless it already
+/// holds that exact config (in-process transitions publish it themselves).
+/// Runs in the daemon process, so both GUI-hosted and unit-hosted daemons
+/// self-heal regardless of who performed the auth action. Exits on daemon
+/// shutdown.
+pub async fn watch_token_store(
+    path: PathBuf,
+    link: Arc<watch::Sender<Option<MachineLinkConfig>>>,
+    mut shutdown_rx: watch::Receiver<bool>,
+    poll: Duration,
+) {
+    // Outer None = first poll pending (the task body starts lazily, so the
+    // store may already exist when the first poll runs — it must still be
+    // reloaded and deduped against the channel).
+    let mut last_sig: Option<Option<(std::time::SystemTime, u64)>> = None;
+    loop {
+        tokio::time::sleep(poll).await;
+        if *shutdown_rx.borrow_and_update() {
+            return;
+        }
+        let sig = Some(store_sig(&path));
+        if sig == last_sig {
+            continue;
+        }
+        last_sig = sig;
+        let cfg = config_from_store(&path);
+        if *link.borrow() != cfg {
+            let _ = link.send(cfg);
+        }
     }
 }
 
@@ -856,5 +959,93 @@ mod tests {
             }
             _ => panic!("tool_dispatch must classify"),
         }
+    }
+
+    /// The persisted session implies a link config only when it carries the
+    /// machine identity; a missing store is a signed-out session.
+    #[test]
+    fn config_from_store_needs_the_machine_identity() {
+        let dir = std::env::temp_dir().join(format!("guild-link-store-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("token.json");
+        assert_eq!(config_from_store(&path), None, "no store = signed out");
+        session_store::save(
+            &path,
+            &session_store::StoredSession {
+                base_url: "http://x".into(),
+                token: "t".into(),
+                email: None,
+                machine_id: None,
+                client_id: None,
+                machine_name: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(config_from_store(&path), None, "no identity = parked link");
+        let mut stored = session_store::load(&path).unwrap();
+        stored.machine_id = Some("m-1".into());
+        stored.client_id = Some("c-1".into());
+        session_store::save(&path, &stored).unwrap();
+        let cfg = config_from_store(&path).expect("identity present");
+        assert_eq!(cfg.machine_id, "m-1");
+        assert_eq!(cfg.client_id, "c-1");
+        assert_eq!(cfg.token, "t");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Auth transitions performed by another process land only in
+    /// token.json: the watcher must republish a fresh pair, a re-login, and
+    /// a sign-out (removal → None) onto the link's channel, and dedup
+    /// against the config it already holds.
+    #[tokio::test]
+    async fn token_store_watcher_publishes_pair_relogin_and_signout() {
+        let dir = std::env::temp_dir().join(format!("guild-link-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("token.json");
+        let (tx, _) = watch::channel(None);
+        let link = Arc::new(tx);
+        let mut rx = link.subscribe();
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        tokio::spawn(watch_token_store(
+            path.clone(),
+            link.clone(),
+            shutdown_rx,
+            Duration::from_millis(20),
+        ));
+        let next = async |rx: &mut watch::Receiver<Option<MachineLinkConfig>>| {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                rx.changed().await.ok()?;
+                rx.borrow().clone()
+            })
+            .await
+            .expect("watcher published in time")
+        };
+        let store = |token: &str| session_store::StoredSession {
+            base_url: "http://x".into(),
+            token: token.into(),
+            email: None,
+            machine_id: Some("m-1".into()),
+            client_id: Some("c-1".into()),
+            machine_name: Some("box".into()),
+        };
+        // Fresh pair (file appears): the link comes up with the new token.
+        session_store::save(&path, &store("t1")).unwrap();
+        assert_eq!(next(&mut rx).await.unwrap().token, "t1");
+        // Re-login (token rotates): the link follows.
+        session_store::save(&path, &store("t2")).unwrap();
+        assert_eq!(next(&mut rx).await.unwrap().token, "t2");
+        // A store change that resolves to the config already held dedups:
+        // no publish, the channel stays quiet (mtime re-save of the same
+        // session).
+        session_store::save(&path, &store("t2")).unwrap();
+        let quiet = tokio::time::timeout(Duration::from_millis(300), rx.changed()).await;
+        assert!(quiet.is_err(), "no publish for an unchanged config");
+        // Sign-out (file removed): the link comes down.
+        session_store::clear(&path).unwrap();
+        assert_eq!(next(&mut rx).await, None);
+        shutdown_tx.send(true).ok();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
