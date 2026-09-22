@@ -25,6 +25,13 @@ fn temp_socket() -> PathBuf {
 /// `cargo test` runs tests as threads of one process.
 static ATTACH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Point the spawned daemon's token.json watcher at a path that never
+/// exists, so it stays inert (every host-spawning test does this; any
+/// concurrent value is equally inert, so the parallel env writes are safe).
+fn inert_token_store(dir: &std::path::Path) {
+    std::env::set_var("GUILD_TOKEN_PATH", dir.join("token.json"));
+}
+
 fn temp_socket_attach() -> PathBuf {
     std::env::temp_dir().join(format!(
         "guild-daemon-attach-test-{}.sock",
@@ -61,6 +68,7 @@ fn attach_uses_the_app_hosted_socket() {
     let path = temp_socket_attach();
     let _ = std::fs::remove_file(&path);
     std::env::set_var("GUILD_DAEMON_SOCKET", &path);
+    inert_token_store(&path.parent().unwrap().to_path_buf());
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -149,6 +157,7 @@ impl Client {
 async fn daemon_binds_shares_survives_and_shuts_down() {
     let path = temp_socket();
     let _ = std::fs::remove_file(&path);
+    inert_token_store(&path.parent().unwrap().to_path_buf());
 
     let dpath = path.clone();
     let daemon = tokio::spawn(async move { run_daemon_shared(dpath, Shared::new(Session::default())).await });
@@ -197,12 +206,14 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// Regression (review 2026-09-22 desktop.md #11): the GUI's daemon host
-/// must reclaim the endpoint once a stale daemon is retired. The old
-/// early-return left the CLI socket unhosted (and, before the link spawn
-/// moved up front, the machine link unspawned) until the app restarted.
+/// Regression (review round 1 auth-propagation gap): the GUI host owns the
+/// CLI socket and the machine link exactly while it hosts. It must wait
+/// (no bind, no link) while another daemon owns the endpoint, take over
+/// when that owner retires, PARK (no rebind, no link) while the systemd
+/// unit is active — install's retirement hands the socket to the unit —
+/// and reclaim + relink when the unit stops.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn reclaiming_host_takes_over_after_the_owner_exits() {
+async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stops() {
     let dir = std::env::temp_dir().join(format!(
         "guild-daemon-reclaim-{}",
         std::process::id()
@@ -210,6 +221,8 @@ async fn reclaiming_host_takes_over_after_the_owner_exits() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("reclaim.sock");
     let _ = std::fs::remove_file(&path);
+    inert_token_store(&dir);
+    guild_app_server::daemon_install::set_unit_active_override(Some(false));
 
     // First daemon owns the endpoint.
     let dpath = path.clone();
@@ -235,40 +248,83 @@ async fn reclaiming_host_takes_over_after_the_owner_exits() {
     });
     tokio::time::sleep(Duration::from_millis(1200)).await;
     assert!(
-        a.call("daemon.hello", json!({}))["result"]["version"].is_string(),
+        a.call("daemon.hello", serde_json::json!({}))["result"]["version"]
+            .is_string(),
         "the owner must keep serving while the waiter waits"
     );
 
     // Retire the first daemon: the waiter must bind and take over.
-    a.call("daemon.shutdown", json!({}));
+    a.call("daemon.shutdown", serde_json::json!({}));
     tokio::time::timeout(Duration::from_secs(5), first)
         .await
         .expect("first daemon ends after shutdown")
         .expect("first daemon task")
         .expect("first daemon result");
 
-    let mut b = None;
+    let mut b = wait_for_host(&path).await.expect("the reclaiming host must take over");
+
+    // The unit comes up and install retires the GUI's host: it must park —
+    // no rebind while the unit is active, even past the reclaim grace.
+    guild_app_server::daemon_install::set_unit_active_override(Some(true));
+    b.call("daemon.shutdown", serde_json::json!({}));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while path.exists() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("host releases the socket on shutdown");
+    tokio::time::sleep(Duration::from_millis(4500)).await;
+    assert!(
+        try_connect_at(&path).is_err(),
+        "the GUI host must not rebind while the unit is active"
+    );
+
+    // The unit stops (uninstall or daemon death): the GUI host reclaims
+    // the socket and hosts again.
+    guild_app_server::daemon_install::set_unit_active_override(Some(false));
+    let mut c = tokio::time::timeout(Duration::from_secs(15), wait_for_host(&path))
+        .await
+        .expect("reclaim after the unit stop")
+        .expect("reclaimed host reachable");
+    assert!(
+        c.call("daemon.hello", serde_json::json!({}))["result"]["protocol"]
+            .as_u64()
+            == Some(1),
+        "the reclaimed host is a full daemon"
+    );
+
+    // Retire once more for cleanup: the host parks again (unit "active"),
+    // and dies with the test runtime — it never exits on shutdown.
+    guild_app_server::daemon_install::set_unit_active_override(Some(true));
+    c.call("daemon.shutdown", serde_json::json!({}));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while path.exists() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("host releases the socket on shutdown");
+    guild_app_server::daemon_install::set_unit_active_override(None);
+    // GUILD_TOKEN_PATH stays set (inert) for the process lifetime — other
+    // host-spawning tests in this binary rely on any value being safe.
+    let _ = std::fs::remove_dir_all(&dir);
+    drop(second);
+}
+
+/// Polls until a daemon answers hello on `path`.
+async fn wait_for_host(path: &PathBuf) -> Option<Client> {
     for _ in 0..200 {
-        if try_connect_at(&path).is_ok() {
-            let mut c = Client::connect(&path);
-            let hello = c.call("daemon.hello", json!({}));
+        if try_connect_at(path).is_ok() {
+            let mut c = Client::connect(path);
+            let hello = c.call("daemon.hello", serde_json::json!({}));
             if hello["result"]["protocol"].as_u64() == Some(1) {
-                b = Some(c);
-                break;
+                return Some(c);
             }
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let mut b = b.expect("the reclaiming host must take over the endpoint");
-
-    // The new host is a full daemon: shutdown via RPC works.
-    b.call("daemon.shutdown", json!({}));
-    tokio::time::timeout(Duration::from_secs(5), second)
-        .await
-        .expect("reclaiming host ends after shutdown")
-        .expect("reclaiming host task")
-        .expect("reclaiming host result");
-    let _ = std::fs::remove_dir_all(&dir);
+    None
 }
 
 /// Regression: the daemon broadcasts events to all connections, so a fresh
