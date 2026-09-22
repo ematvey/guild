@@ -3,8 +3,8 @@
 //! hello handshake, client-issued shutdown.
 
 #![cfg(unix)]
-use guild_app_server::daemon::{run_daemon_on, try_connect_at, Pair};
-use guild_app_server::jsonrpc_loop::Session;
+use guild_app_server::daemon::{run_daemon_shared, try_connect_at, Pair};
+use guild_app_server::jsonrpc_loop::{Session, Shared};
 use protocol::rpc::Request;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
@@ -66,7 +66,7 @@ fn attach_uses_the_app_hosted_socket() {
         .build()
         .unwrap();
     let dpath = path.clone();
-    rt.spawn(async move { run_daemon_on(dpath, Session::default()).await });
+    rt.spawn(async move { run_daemon_shared(dpath, Shared::new(Session::default())).await });
     for _ in 0..100 {
         if try_connect_at(&path).is_ok() {
             break;
@@ -149,7 +149,7 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     let _ = std::fs::remove_file(&path);
 
     let dpath = path.clone();
-    let daemon = tokio::spawn(async move { run_daemon_on(dpath, Session::default()).await });
+    let daemon = tokio::spawn(async move { run_daemon_shared(dpath, Shared::new(Session::default())).await });
 
     // wait for the endpoint to accept
     let mut a = None;
@@ -182,7 +182,7 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     assert!(got.get("error").is_none());
 
     // 4. a second bind on the same endpoint exits quietly (single instance)
-    let r = run_daemon_on(path.clone(), Session::default()).await;
+    let r = run_daemon_shared(path.clone(), Shared::new(Session::default())).await;
     assert!(r.is_ok(), "second daemon must exit Ok, not bind");
 
     // 5. shutdown: client-issued, daemon task ends
