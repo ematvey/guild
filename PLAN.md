@@ -1,10 +1,26 @@
 # Guild — current state of work
 
-Updated 2026-09-22 (0.5.14 released: remote machine folder browse). Read this
+Updated 2026-09-22 (pair carries machine id). Read this
 before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Pair/login carry the machine id — 2026-09-22
+
+Incident: a fresh-install user (k.tyurin) paired at 14:07:42, created a
+project at 14:08 — three 400 "unknown machine" from `POST /api/v1/projects`.
+Root cause: pairing creates only a session; the machine row is inserted when
+the daemon's executor (machine) link connects, which needs the webview's
+`machine.identify` rpc — a second step that failed silently (`afterAuth`
+swallowed the error), so the link never came up and the registry never saw
+the machine. Fix: the `pair` and `login` daemon rpcs now accept the webview's
+stable machine id and bring the executor link up atomically with login
+(`adopt_login_with_identity`); older shells without the field keep the
+identify fallback. The webview no longer swallows identify failures — a
+toast tells the user the machine didn't register and to restart the app.
+Desktop daemons need a client release to pick up the daemon half; the
+webview half ships with the server frontend.
 
 ## 0.5.14 released: remote machine folder browse — 2026-09-22
 

@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/c
 import { Input } from "@guild/ui/components/input";
 import { Bot } from "lucide-react";
 import { IS_TAURI, apiLogin, apiMe, clearToken, machineId, rpcCall, setToken } from "./transport";
+import { toast } from "sonner";
 import { clearApiCache } from "./views/settings/use-cached-api";
 import { clearMachinesCache } from "./views/settings/sections/MachineSection";
 import { clearApiKeysCache } from "./views/settings/sections/ApiKeysSection";
@@ -248,13 +249,18 @@ function DesktopApp() {
     // Machine identity: the daemon's executor link (machine WS + tool
     // execution) keys on the webview's stable per-install id — report it
     // after every auth so the link connects. Desktop only (browsers have
-    // no daemon socket); non-fatal: without it the machine stays offline
-    // (same as an unreported id ever did).
+    // no daemon socket). Pair/login already carried the id, so this is the
+    // restore/refresh path — but a failure here means the machine never
+    // registers and project creation fails with "unknown machine", so it
+    // must be visible, never swallowed.
     if (IS_TAURI) {
       try {
         await rpcCall("machine.identify", { machine_id: machineId() }, 10_000);
       } catch {
-        /* the link parks until the next identify */
+        toast.warning(
+          "This computer didn't register with the server — creating projects here will fail until it does. Quit every Guild process (incl. background ones) and reopen the app.",
+          { duration: 10_000 },
+        );
       }
     }
     // Resolve the server profile before entering the shell: the splash holds
@@ -287,7 +293,7 @@ function DesktopApp() {
     try {
       await bounded(invoke("start_engine"), 30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
-      const res = await rpcCall("pair", { code: code.trim() }, 45_000);
+      const res = await rpcCall("pair", { code: code.trim(), machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "pairing failed");
       await afterAuth(res.result?.user?.email ?? "");
     } catch (e) {
@@ -303,7 +309,7 @@ function DesktopApp() {
     try {
       await bounded(invoke("start_engine"), 30_000,
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
-      const res = await rpcCall("login", { base_url: url, email, password }, 45_000);
+      const res = await rpcCall("login", { base_url: url, email, password, machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "login failed");
       await afterAuth(res.result?.user?.email ?? email);
     } catch (e) {

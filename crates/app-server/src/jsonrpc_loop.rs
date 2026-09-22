@@ -427,6 +427,15 @@ fn param<'a>(req: &'a Request, key: &'a str) -> anyhow::Result<&'a str> {
     req.params[key].as_str().context(format!("missing {key}"))
 }
 
+/// Optional string param — absent/empty collapses to None.
+fn optional_param(req: &Request, key: &str) -> Option<String> {
+    req.params
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 /// Applies one auth transition to the session's auth state, persisting to
 /// the default token.json path. The injectable-store variant is for tests.
 fn auth_change(shared: &Shared, change: AuthChange) -> anyhow::Result<()> {
@@ -477,20 +486,32 @@ async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSend
 
 /// `login` / `pair` land here once the credential exchange produced a
 /// token: thin over `AuthState::transition` (mutate ⇒ persist ⇒ publish).
-fn adopt_login(
+/// The webview sends its stable per-install `machine_id` along (when it has
+/// one), so the executor link comes up in the same step as the login — no
+/// gap in which a project create can race the not-yet-registered machine
+/// and fail with "unknown machine". Shells that omit the field keep working
+/// via the follow-up `machine.identify` rpc.
+fn adopt_login_with_identity(
     shared: &Shared,
     base_url: String,
     token: String,
     email: String,
+    machine_id: Option<String>,
+    store: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    auth_change(
+    auth_change_with_store(
         shared,
         AuthChange::Login {
             base_url,
             token,
             email,
         },
-    )
+        store.clone(),
+    )?;
+    if let Some(machine_id) = machine_id.filter(|id| !id.is_empty()) {
+        auth_change_with_store(shared, AuthChange::Identify { machine_id }, store)?;
+    }
+    Ok(())
 }
 
 async fn login_task(
@@ -503,7 +524,14 @@ async fn login_task(
         let email = param(&req, "email")?.to_string();
         let password = param(&req, "password")?.to_string();
         let (token, user) = CloudClient::login(&base_url, &email, &password).await?;
-        adopt_login(&shared, base_url, token, user.email.clone())?;
+        adopt_login_with_identity(
+            &shared,
+            base_url,
+            token,
+            user.email.clone(),
+            optional_param(&req, "machine_id"),
+            crate::session_store::default_path().ok(),
+        )?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
     }
     .await;
@@ -520,7 +548,14 @@ async fn pair_task(
     let result = async {
         let code = param(&req, "code")?.to_string();
         let (base_url, token, user) = CloudClient::pair(&code).await?;
-        adopt_login(&shared, base_url, token, user.email.clone())?;
+        adopt_login_with_identity(
+            &shared,
+            base_url,
+            token,
+            user.email.clone(),
+            optional_param(&req, "machine_id"),
+            crate::session_store::default_path().ok(),
+        )?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
     }
     .await;
@@ -974,6 +1009,63 @@ mod machine_link_tests {
         assert_eq!(cfg.token, "tok");
         assert!(!cfg.client_id.is_empty());
         assert!(!cfg.machine_name.is_empty());
+    }
+
+    #[tokio::test]
+    async fn login_with_machine_id_brings_the_link_up_in_one_step() {
+        let shared = logged_in_shared();
+        let mut link_rx = shared.machine_link.subscribe();
+
+        adopt_login_with_identity(
+            &shared,
+            "http://srv".into(),
+            "tok".into(),
+            "a@b".into(),
+            Some("machine-9".into()),
+            None,
+        )
+        .unwrap();
+
+        let cfg = link_rx.borrow_and_update().clone().expect("link published");
+        assert_eq!(cfg.machine_id, "machine-9");
+        assert_eq!(cfg.base_url, "http://srv");
+        assert_eq!(cfg.token, "tok");
+    }
+
+    #[tokio::test]
+    async fn login_without_machine_id_leaves_the_link_parked() {
+        let shared = logged_in_shared();
+        let mut link_rx = shared.machine_link.subscribe();
+
+        adopt_login_with_identity(
+            &shared,
+            "http://srv".into(),
+            "tok".into(),
+            "a@b".into(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(link_rx.borrow_and_update().is_none());
+    }
+
+    #[tokio::test]
+    async fn login_with_blank_machine_id_leaves_the_link_parked() {
+        let shared = logged_in_shared();
+        let mut link_rx = shared.machine_link.subscribe();
+
+        adopt_login_with_identity(
+            &shared,
+            "http://srv".into(),
+            "tok".into(),
+            "a@b".into(),
+            Some("".into()),
+            None,
+        )
+        .unwrap();
+
+        assert!(link_rx.borrow_and_update().is_none());
     }
 
     #[tokio::test]
