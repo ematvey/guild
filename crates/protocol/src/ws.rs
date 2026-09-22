@@ -8,12 +8,21 @@ use uuid::Uuid;
 /// Client → server. `Sync` declares the currently open chat (None = none
 /// open); the server answers with the state-sync sequence. `ToolResult`
 /// delivers a machine-tool outcome (the WS replacement for the HTTP
-/// tool-result endpoint).
+/// tool-result endpoint). `MachineResponse` answers a `MachineRequest` the
+/// server sent over this socket (control-plane ops: folder browse).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsClientMsg {
     Sync {
         chat_id: Option<Uuid>,
+    },
+    MachineResponse {
+        request_id: String,
+        ok: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        payload: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     ToolResult {
         chat_id: Uuid,
@@ -48,6 +57,14 @@ pub enum WsServerMsg {
     },
     Error {
         message: String,
+    },
+    /// Control-plane request to a machine connection (executor socket):
+    /// read-only ops the desktop UI drives directly, answered by
+    /// `MachineResponse` with the same `request_id`.
+    MachineRequest {
+        request_id: String,
+        op: String,
+        payload: serde_json::Value,
     },
     ThreadList {
         chats: Vec<serde_json::Value>,

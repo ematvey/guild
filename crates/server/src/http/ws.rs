@@ -737,6 +737,14 @@ async fn handle_client_msg(
             chat_id: Some(chat_id),
         } => feed::run_sync_started(state, user, chat_id, &member.sink).await,
         WsClientMsg::Sync { chat_id: None } => {}
+        WsClientMsg::MachineResponse {
+            request_id,
+            ok,
+            payload,
+            error,
+        } => state
+            .hub
+            .resolve_machine_response(&request_id, ok, payload, error),
         WsClientMsg::ToolResult {
             chat_id,
             call_id,

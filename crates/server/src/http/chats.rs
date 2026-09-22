@@ -33,6 +33,54 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/v1/chats/{id}", axum::routing::patch(update_chat))
         .route("/api/v1/machines", axum::routing::get(machines))
+        .route(
+            "/api/v1/machines/{id}/fs",
+            axum::routing::post(machine_fs_request),
+        )
+}
+
+/// Control-plane request to a machine's executor socket, owner-scoped:
+/// read-only filesystem ops the desktop UI drives directly (folder browse
+/// for remote projects). `op`: `fs_list` (payload `{path}`), `fs_home`.
+async fn machine_fs_request(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(machine_id): Path<Uuid>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let store = state.store().await?;
+    let owned = store
+        .machines()
+        .list_for_user(user.0.org_id, user.0.id)
+        .await?
+        .iter()
+        .any(|m| m.machine_id == machine_id.to_string());
+    if !owned {
+        return Err(ApiError::not_found("no such machine"));
+    }
+    let op = req["op"].as_str().unwrap_or_default().to_owned();
+    let payload = req.get("payload").cloned().unwrap_or(Value::Null);
+    if !matches!(op.as_str(), "fs_list" | "fs_home") {
+        return Err(ApiError::bad_request("unknown op"));
+    }
+    let result = state
+        .hub
+        .machine_request(
+            &machine_id.to_string(),
+            &op,
+            payload,
+            std::time::Duration::from_secs(10),
+        )
+        .await;
+    match result {
+        Ok(payload) => Ok(Json(json!({ "ok": true, "result": payload }))),
+        Err(e) => Err(ApiError::internal(match e {
+            crate::http::hub::MachineRequestError::Offline => "machine offline".to_owned(),
+            crate::http::hub::MachineRequestError::SendFailed => "machine unreachable".to_owned(),
+            crate::http::hub::MachineRequestError::TimedOut => "machine did not answer".to_owned(),
+            crate::http::hub::MachineRequestError::Rejected(error) => error,
+        })),
+    }
 }
 
 /// Renames and/or archives the chat. Only present fields change; archived
