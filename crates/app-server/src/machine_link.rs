@@ -18,9 +18,31 @@ use futures::{SinkExt, StreamExt};
 use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde::Deserialize;
 use std::path::Path;
+use std::time::Duration;
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use url::Url;
+
+/// Heartbeat cadence and the dead-link verdict: the server pings every
+/// socket ~15 s (challenge-pong in ws.rs), so a link with no inbound frame
+/// for IDLE_SECS is a half-open route (suspend, NAT expiry, Wi-Fi blip) —
+/// no TCP error will ever arrive on it, and without this watchdog the
+/// session sat "connected" forever while the server had long freed the
+/// slot (machine offline until the daemon restarted). Env-overridable for
+/// tests.
+fn heartbeat_secs() -> u64 {
+    std::env::var("GUILD_LINK_HEARTBEAT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15)
+}
+
+fn idle_secs() -> u64 {
+    std::env::var("GUILD_LINK_IDLE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(45)
+}
 
 /// What the link needs right now; `None` = disconnected (no session or no
 /// machine identity yet).
@@ -227,8 +249,19 @@ async fn ws_session(
         }
     });
 
+    let mut last_inbound = tokio::time::Instant::now();
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(heartbeat_secs()));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let end = loop {
         tokio::select! {
+            // Liveness: any inbound frame proves the route; silence past the
+            // idle deadline means the link is half-open — drop and reconnect.
+            _ = heartbeat.tick() => {
+                if last_inbound.elapsed() >= Duration::from_secs(idle_secs()) {
+                    break LinkEnd::Closed;
+                }
+                let _ = outbound_tx.send(WsMessage::Ping(Vec::new().into()));
+            }
             // Config changed while connected: drop and reconnect.
             _ = cfg_rx.changed() => {
                 break LinkEnd::Closed;
@@ -240,6 +273,7 @@ async fn ws_session(
             }
             incoming = stream.next() => {
                 let Some(msg) = incoming else { break LinkEnd::Closed };
+                last_inbound = tokio::time::Instant::now();
                 match msg {
                     Ok(WsMessage::Text(text)) => match serde_json::from_str::<WsServerMsg>(&text) {
                         Ok(WsServerMsg::MachineRequest { request_id, op, payload }) => {
@@ -294,7 +328,9 @@ async fn ws_session(
     // change, shutdown) and the link never reconnects.
     let _ = outbound_tx.send(WsMessage::Close(None));
     drop(outbound_tx);
-    let _ = writer.await;
+    // The drain writes into a socket that may already be dead: bound it, or
+    // a wedged TCP write hangs the reconnect here forever.
+    let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
     end
 }
 
@@ -424,21 +460,21 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
         )
         .await
         {
-            LinkEnd::Displaced | LinkEnd::AuthRequired => {
-                // A newer connection took the slot, or the session expired:
-                // wait for the config to actually change (re-login /
-                // re-identify) before retrying.
-                loop {
-                    cfg_rx.borrow_and_update();
-                    if cfg_rx.changed().await.is_err() {
-                        return;
-                    }
-                    match cfg_rx.borrow().clone() {
-                        Some(c) if c != cfg => break,
-                        Some(_) => {} // same config re-published — keep waiting
-                        None => break, // signed out: outer loop parks
-                    }
-                }
+            LinkEnd::Displaced => {
+                // A newer connection took the slot — often the same
+                // install's GUI-embedded daemon. Parking here stranded the
+                // machine forever once that displacer closed (GUI quit):
+                // retry after a long backoff instead. A genuinely competing
+                // instance just re-displaces us; the slow cadence keeps
+                // that fight visible without leaving the machine dead.
+                wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 300).await;
+            }
+            LinkEnd::AuthRequired => {
+                // The session token was rejected — could be a transient
+                // 401 during a server deploy just as well as a revoked
+                // token. Retry on a slow cadence; a real sign-out republishes
+                // `None` and the outer loop parks anyway.
+                wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 60).await;
             }
             LinkEnd::Closed => {
                 // Clean close — config change (handled at loop top) or the
@@ -450,6 +486,31 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
         }
+    }
+}
+
+/// Waits for the link config to actually change, but no longer than
+/// `backoff_secs`: a stale config still retries once the backoff elapses,
+/// so neither displacement nor a transient auth failure can park the
+/// executor link permanently. A sign-out (`None`) breaks out immediately
+/// and the outer loop parks.
+async fn wait_for_config_change_or_backoff(
+    cfg_rx: &mut watch::Receiver<Option<MachineLinkConfig>>,
+    current: &MachineLinkConfig,
+    backoff_secs: u64,
+) {
+    cfg_rx.borrow_and_update();
+    let changed = tokio::select! {
+        _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => false,
+        r = cfg_rx.changed() => r.is_ok(),
+    };
+    if !changed {
+        return; // backoff elapsed: retry the same config
+    }
+    let published = cfg_rx.borrow().clone();
+    match published {
+        Some(c) if c != *current => {} // new config: outer loop reconnects with it
+        _ => tokio::time::sleep(Duration::from_secs(1)).await, // same config or signed out
     }
 }
 
