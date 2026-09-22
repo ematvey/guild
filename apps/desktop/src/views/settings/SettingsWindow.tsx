@@ -108,7 +108,6 @@ export function SettingsWindow({
     { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
     { id: "machine", label: "Machine", icon: <Cpu className="size-4" />, group: "user" },
     { id: "apikeys", label: "API Keys", icon: <KeyRound className="size-4" />, group: "user" },
-    { id: "apikeys", label: "API Keys", icon: <KeyRound className="size-4" />, group: "user" },
     { id: "skills", label: "Skills", icon: <Puzzle className="size-4" />, group: "user" },
     {
       id: "approvals",
