@@ -102,9 +102,61 @@ async fn routine_crud_hook_auth_and_internal_completion() {
         .await
         .unwrap();
 
+    // a member cannot create an enabled routine (default enabled): provider
+    // spend is an admin-gated channel
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/routines")
+                .header("authorization", format!("Bearer {member_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "slug": "nightly-digest",
+                        "name": "Nightly digest",
+                        "trigger_kind": "webhook",
+                        "prompt": "Summarize the news.",
+                        "model": "gpt-test",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // a member CAN create a disabled routine, but re-enabling it is admin-only
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/routines")
+                .header("authorization", format!("Bearer {member_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "slug": "member-disabled",
+                        "name": "Member disabled",
+                        "trigger_kind": "webhook",
+                        "prompt": "p",
+                        "model": "gpt-test",
+                        "enabled": false
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
     let routine = create_routine(
         &app,
-        &member_token,
+        &fs.token, // enabled routines are admin-gated
         json!({
             "slug": "nightly-digest",
             "name": "Nightly digest",
@@ -140,6 +192,48 @@ async fn routine_crud_hook_auth_and_internal_completion() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // member re-enable of a routine → 403 (same spend gate as creation)
+    let member_routine_id: Uuid = {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/routines")
+                    .header("authorization", format!("Bearer {member_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        v["routines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["slug"] == "member-disabled")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/routines/{member_routine_id}"))
+                .header("authorization", format!("Bearer {member_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"enabled": true}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
     // hook with wrong token → 401
     let res = app
@@ -293,9 +387,10 @@ async fn routine_crud_hook_auth_and_internal_completion() {
     assert_eq!(v["runs"][0]["status"], "running");
 
     // re-enable of an interval routine forwards a tick
+    // interval routines default to enabled: admin-gated, like any creation
     let interval_routine = create_routine(
         &app,
-        &member_token,
+        &fs.token,
         json!({
             "slug": "periodic",
             "trigger_kind": "interval",
@@ -311,7 +406,7 @@ async fn routine_crud_hook_auth_and_internal_completion() {
             Request::builder()
                 .method("PATCH")
                 .uri(format!("/api/v1/routines/{interval_id}"))
-                .header("authorization", format!("Bearer {member_token}"))
+                .header("authorization", format!("Bearer {}", fs.token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({"enabled": true}).to_string()))
                 .unwrap(),

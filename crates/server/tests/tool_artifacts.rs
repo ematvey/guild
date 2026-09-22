@@ -327,3 +327,65 @@ async fn endpoints_download_and_list_round_trip() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+/// The download is chat-owner scoped like the attachments download: an org
+/// member who is neither the owning chat's owner nor an admin is refused,
+/// even though the org scoping alone would let them through.
+#[tokio::test]
+async fn download_refuses_a_member_who_is_not_the_chat_owner() {
+    let fs = full_state().await;
+    let org = fs.org_id;
+    let chat = fs.chat_id;
+    let id = Uuid::now_v7();
+    let key = guild_server::store::tool_artifacts::object_key(org, id, "out.bin");
+    fs.state
+        .objects()
+        .await
+        .unwrap()
+        .put(&key, b"secret".to_vec())
+        .await
+        .unwrap();
+    fs.db
+        .tool_artifacts()
+        .create(
+            id,
+            org,
+            chat,
+            "out.bin",
+            "application/octet-stream",
+            6,
+            &key,
+            "api",
+            "call-8",
+        )
+        .await
+        .unwrap();
+
+    let outsider = fs
+        .db
+        .identity()
+        .create_user(org, "not-owner@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let (_sid, outsider_token) = fs
+        .db
+        .identity()
+        .create_session(outsider.id)
+        .await
+        .unwrap();
+
+    let app = axum::Router::new()
+        .merge(guild_server::http::tool_artifacts::routes())
+        .with_state(fs.state.clone());
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/tool_artifacts/{id}"))
+                .header("authorization", format!("Bearer {outsider_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}

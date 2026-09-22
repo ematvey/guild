@@ -114,6 +114,7 @@ async fn routine_run_completes_with_tool_use_and_records_run() {
         api_base: served.base_url.clone(),
         internal_token: "test-internal".into(),
         allow_http_tool: true, // the external mock is http://
+        http_tool_allow_hosts: vec!["127.0.0.1".into()], // the wiremock stands on loopback
     };
     let summary = run_routine(&exec, routine.id, "webhook", json!({}))
         .await
@@ -218,6 +219,7 @@ async fn routine_run_records_failure_when_tool_fails_repeatedly() {
         api_base: served.base_url.clone(),
         internal_token: "test-internal".into(),
         allow_http_tool: false,
+        http_tool_allow_hosts: Vec::new(),
     };
     let err = run_routine(&exec, routine.id, "manual", json!({}))
         .await

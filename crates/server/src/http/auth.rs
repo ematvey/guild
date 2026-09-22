@@ -90,6 +90,13 @@ async fn bootstrap(
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing password"))?
         .to_string();
+    // The bootstrap credential is often the org's only admin: the same
+    // minimum length as admin-created accounts applies.
+    if password.chars().count() < 8 {
+        return Err(ApiError::bad_request(
+            "password must be at least 8 characters",
+        ));
+    }
     let store = state.store().await?;
     if store.identity().any_users().await? {
         return Err(ApiError::conflict(
