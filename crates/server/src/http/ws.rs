@@ -531,23 +531,54 @@ pub(crate) async fn drive_socket(
     };
 
     let machine_shutdown = match machine_id.as_deref() {
-        Some(machine_id) => match state
-            .hub
-            .register_machine_instance(member.clone(), machine_id, instance_id, resume)
-            .await
-        {
-            Ok(registration) => {
-                register_machine_record(
-                    &state,
-                    &user.0,
-                    machine_id,
-                    &machine_meta,
-                    peer_ip,
+        Some(machine_id) => {
+            // Ownership gate before any hub slot is claimed: a registered
+            // machine connects only as its owning user (the registry row is
+            // the durable identity; the hub enforces the same rule for a
+            // live slot). No row yet = a new pairing, allowed.
+            if !machine_slot_owned(&state, &user.0, machine_id).await {
+                let _ = tokio::time::timeout(
+                    TERMINAL_WRITE_TIMEOUT,
+                    ws_tx.send(axum::extract::ws::Message::text(
+                        serde_json::to_string(&WsServerMsg::Error {
+                            message: "machine belongs to another user".into(),
+                        })
+                        .unwrap(),
+                    )),
                 )
                 .await;
-                Some(registration.shutdown)
+                return;
             }
-            Err(crate::http::hub::MachineRejected::Displaced) => {
+            match state
+                .hub
+                .register_machine_instance(member.clone(), machine_id, instance_id, resume)
+                .await
+            {
+                Ok(registration) => {
+                    register_machine_record(
+                        &state,
+                        &user.0,
+                        machine_id,
+                        &machine_meta,
+                        peer_ip,
+                    )
+                    .await;
+                    Some(registration.shutdown)
+                }
+                Err(crate::http::hub::MachineRejected::ForeignOwner) => {
+                    let _ = tokio::time::timeout(
+                        TERMINAL_WRITE_TIMEOUT,
+                        ws_tx.send(axum::extract::ws::Message::text(
+                            serde_json::to_string(&WsServerMsg::Error {
+                                message: "machine belongs to another user".into(),
+                            })
+                            .unwrap(),
+                        )),
+                    )
+                    .await;
+                    return;
+                }
+                Err(crate::http::hub::MachineRejected::Displaced) => {
                 let _ = tokio::time::timeout(
                     TERMINAL_WRITE_TIMEOUT,
                     ws_tx.send(axum::extract::ws::Message::text(
@@ -557,20 +588,21 @@ pub(crate) async fn drive_socket(
                 .await;
                 return;
             }
-            Err(crate::http::hub::MachineRejected::Cap) => {
-                let _ = tokio::time::timeout(
-                    TERMINAL_WRITE_TIMEOUT,
-                    ws_tx.send(axum::extract::ws::Message::text(
-                        serde_json::to_string(&WsServerMsg::Error {
-                            message: "too many connections".into(),
-                        })
-                        .unwrap(),
-                    )),
-                )
-                .await;
-                return;
+                Err(crate::http::hub::MachineRejected::Cap) => {
+                    let _ = tokio::time::timeout(
+                        TERMINAL_WRITE_TIMEOUT,
+                        ws_tx.send(axum::extract::ws::Message::text(
+                            serde_json::to_string(&WsServerMsg::Error {
+                                message: "too many connections".into(),
+                            })
+                            .unwrap(),
+                        )),
+                    )
+                    .await;
+                    return;
+                }
             }
-        },
+        }
         None => {
             if state.hub.register_member(member.clone()).is_err() {
                 let _ = tokio::time::timeout(
@@ -674,6 +706,27 @@ pub(crate) async fn drive_socket(
     match machine_id.as_deref() {
         Some(machine_id) => state.hub.unregister_machine(machine_id, conn_id),
         None => state.hub.unregister_member(user.0.id, member.conn_id),
+    }
+}
+
+/// Connect-path ownership gate: a registered machine's hub slot is claimed
+/// only by its owning user (the registry row is the durable identity; the
+/// hub enforces the same rule against a live slot). An unregistered id is a
+/// new pairing and passes. Registry unavailability fails closed.
+async fn machine_slot_owned(state: &AppState, user: &crate::store::identity::UserRow, machine_id: &str) -> bool {
+    let Ok(store) = state.store().await else {
+        // Registry unavailable: fail closed — no slot is claimed without an
+        // ownership answer.
+        tracing::warn!(%machine_id, "machine ownership gate unavailable: no store");
+        return false;
+    };
+    match store.machines().owner_of(machine_id).await {
+        Ok(None) => true, // unregistered id: a new pairing for this user
+        Ok(Some((owner_id, _org_id))) => owner_id == user.id,
+        Err(error) => {
+            tracing::warn!(%machine_id, ?error, "machine ownership gate failed");
+            false
+        }
     }
 }
 

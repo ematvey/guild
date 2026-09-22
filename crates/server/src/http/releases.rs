@@ -220,19 +220,19 @@ async fn signing_key(
 /// artifact for the newest desktop version are listed.
 async fn updater_manifest(State(state): State<AppState>) -> Result<Response, ApiError> {
     let rows = state.store().await?.releases().list().await?;
-    let mut latest: Option<String> = None;
+    let mut latest: Option<(String, chrono::DateTime<chrono::Utc>)> = None;
     for r in &rows {
         if r.kind != "desktop" || r.updater_signature.is_empty() {
             continue;
         }
         if latest
-            .as_deref()
-            .is_none_or(|cur| version_gt(&r.version, cur))
+            .as_ref()
+            .is_none_or(|(cur, _)| version_gt(&r.version, cur))
         {
-            latest = Some(r.version.clone());
+            latest = Some((r.version.clone(), r.created_at));
         }
     }
-    let Some(version) = latest else {
+    let Some((version, pub_date)) = latest else {
         return Ok(axum::http::StatusCode::NO_CONTENT.into_response());
     };
     let exp = chrono::Utc::now().timestamp() + 86_400;
@@ -275,7 +275,7 @@ async fn updater_manifest(State(state): State<AppState>) -> Result<Response, Api
     Ok(Json(json!({
         "version": version,
         "notes": notes,
-        "pub_date": rows[0].created_at.to_rfc3339(),
+        "pub_date": pub_date.to_rfc3339(),
         "platforms": platforms,
     }))
     .into_response())
@@ -291,14 +291,21 @@ fn updater_artifact(target: &str, filename: &str) -> bool {
     }
 }
 
-/// Semver-ish ordering: compare dot-separated numeric components, then the raw string.
+/// Semver ordering (semver.org §11): major/minor/patch numerically; a
+/// prerelease ranks BELOW its release; prerelease identifiers compare
+/// numerically when numeric, ASCII lexically otherwise, numeric <
+/// alphanumeric, and a longer identifier set outranks a prefix; build
+/// metadata is ignored. `gt(a, b)` = a > b strictly.
 fn version_gt(a: &str, b: &str) -> bool {
-    let nums = |v: &str| -> Vec<u64> {
-        v.split(['.', '-', '_'])
+    let (core_a, pre_a) = split_prerelease(a);
+    let (core_b, pre_b) = split_prerelease(b);
+    let nums = |core: &str| -> Vec<u64> {
+        core
+            .split('.')
             .map(|p| p.parse::<u64>().unwrap_or(0))
             .collect()
     };
-    let (na, nb) = (nums(a), nums(b));
+    let (na, nb) = (nums(&core_a), nums(&core_b));
     for i in 0..na.len().max(nb.len()) {
         match na.get(i).unwrap_or(&0).cmp(nb.get(i).unwrap_or(&0)) {
             std::cmp::Ordering::Greater => return true,
@@ -306,7 +313,48 @@ fn version_gt(a: &str, b: &str) -> bool {
             std::cmp::Ordering::Equal => {}
         }
     }
-    a != b && a > b
+    match (pre_a, pre_b) {
+        (None, None) => false,
+        // a release outranks any prerelease of the same core version.
+        (None, Some(_)) => true,
+        (Some(_), None) => false,
+        (Some(pa), Some(pb)) => {
+            let ids: Vec<Vec<&str>> =
+                [pa, pb].iter().map(|p| p.split('.').collect()).collect();
+            for i in 0..ids[0].len().max(ids[1].len()) {
+                match (ids[0].get(i), ids[1].get(i)) {
+                    (Some(x), Some(y)) => {
+                        let ord = match (x.parse::<u64>(), y.parse::<u64>()) {
+                            (Ok(nx), Ok(ny)) => nx.cmp(&ny),
+                            (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                            (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                            (Err(_), Err(_)) => x.cmp(y),
+                        };
+                        match ord {
+                            std::cmp::Ordering::Greater => return true,
+                            std::cmp::Ordering::Less => return false,
+                            std::cmp::Ordering::Equal => {}
+                        }
+                    }
+                    // All shared identifiers equal: the longer set outranks.
+                    (Some(_), None) => return true,
+                    (None, Some(_)) => return false,
+                    (None, None) => return false,
+                }
+            }
+            false
+        }
+    }
+}
+
+/// Splits `major.minor.patch[-prerelease][+build]`; build metadata is
+/// dropped, the prerelease (if any) is returned separately.
+fn split_prerelease(v: &str) -> (String, Option<&str>) {
+    let no_build = v.split('+').next().unwrap_or(v);
+    match no_build.split_once('-') {
+        Some((core, pre)) => (core.to_string(), Some(pre)),
+        None => (no_build.to_string(), None),
+    }
 }
 
 /// Hands out a short-lived signed URL usable from plain <a href> links.
@@ -371,4 +419,37 @@ async fn download(
         ],
         bytes,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_gt;
+
+    #[test]
+    fn version_gt_orders_numerically_and_ignores_build_metadata() {
+        assert!(version_gt("1.0.1", "1.0.0"));
+        assert!(version_gt("2.0.0", "1.9.9"));
+        assert!(version_gt("1.10.0", "1.9.0"), "numeric, not lexical");
+        assert!(!version_gt("1.0.0", "1.0.0"));
+        assert!(!version_gt("1.0.0", "1.0.1"));
+        // build metadata is ignored: equal precedence either way
+        assert!(!version_gt("1.0.0+build.9", "1.0.0"));
+        assert!(!version_gt("1.0.0", "1.0.0+build.9"));
+    }
+
+    #[test]
+    fn version_gt_ranks_a_prerelease_below_its_release() {
+        assert!(!version_gt("1.0.0-beta", "1.0.0"));
+        assert!(version_gt("1.0.0", "1.0.0-beta"));
+        // Prerelease identifiers: numeric < alphanumeric, numeric numeric.
+        assert!(version_gt("1.0.0-beta.2", "1.0.0-beta.1"));
+        assert!(!version_gt("1.0.0-alpha", "1.0.0-beta"), "alpha < beta lexically");
+        // numeric identifiers rank BELOW alphanumeric ones
+        assert!(!version_gt("1.0.0-1", "1.0.0-alpha"));
+        assert!(version_gt("1.0.0-alpha", "1.0.0-1"));
+        assert!(version_gt("1.0.0-beta.2.1", "1.0.0-beta.2"), "longer set wins");
+        // Prereleases of different cores still follow the core.
+        assert!(version_gt("1.1.0-beta", "1.0.0"));
+        assert!(!version_gt("1.0.0-beta", "1.1.0-alpha"));
+    }
 }

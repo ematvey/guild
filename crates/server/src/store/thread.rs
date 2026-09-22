@@ -44,6 +44,33 @@ impl TryFrom<EventRowDb> for ThreadEventRow {
     }
 }
 
+impl EventRowDb {
+    /// Lenient read for log listings: the enum is a closed schema over a
+    /// durable log, so an event written by a NEWER server (unknown type)
+    /// must not fail the whole chat history. Unparseable payloads are
+    /// dropped here with a warning; callers derive everything from the
+    /// parseable prefix.
+    fn into_event_row_lenient(self) -> Option<ThreadEventRow> {
+        match serde_json::from_value::<ThreadEvent>(self.payload.clone()) {
+            Ok(event) => Some(ThreadEventRow {
+                id: self.id,
+                chat_id: self.chat_id,
+                seq: self.seq,
+                event,
+                created_at: self.created_at,
+            }),
+            Err(e) => {
+                tracing::warn!(
+                    chat = %self.chat_id,
+                    seq = self.seq,
+                    "dropping unparsable thread event from the log: {e}"
+                );
+                None
+            }
+        }
+    }
+}
+
 pub struct ThreadStore<'a> {
     pub(crate) pool: &'a sqlx::PgPool,
 }
@@ -120,7 +147,7 @@ impl<'a> ThreadStore<'a> {
         .fetch_all(self.pool)
         .await
         .map_err(ApiError::from)?;
-        rows.into_iter().map(TryInto::try_into).collect()
+        Ok(rows.into_iter().filter_map(|row| row.into_event_row_lenient()).collect())
     }
 
     /// Newest page of the chat's event log, keyset-paginated on `seq`
@@ -154,8 +181,8 @@ impl<'a> ThreadStore<'a> {
         rows.reverse(); // page order: ascending seq, the caller's display order
         let events = rows
             .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<ThreadEventRow>, ApiError>>()?;
+            .filter_map(|row| row.into_event_row_lenient())
+            .collect::<Vec<ThreadEventRow>>();
         Ok((events, has_more))
     }
 

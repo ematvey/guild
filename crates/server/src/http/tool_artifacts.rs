@@ -46,6 +46,13 @@ async fn download(
     let store = state.store().await?;
     // Org-scoped: a foreign org's artifact 404s here.
     let row = store.tool_artifacts().get(user.0.org_id, id).await?;
+    // The artifact rides a chat, so the chat's owner predicate applies:
+    // org scoping alone would let a member pull another member's spilled
+    // tool results (same check as the attachments download).
+    store
+        .chats()
+        .get_chat(user.0.org_id, row.chat_id, &user.0)
+        .await?;
     let key = crate::store::tool_artifacts::object_key(row.org_id, row.id, &row.filename);
     let bytes = state
         .objects()

@@ -17,6 +17,10 @@ pub struct CapRejected;
 pub enum MachineRejected {
     Cap,
     Displaced,
+    /// The machine slot is held by a different user: a machine socket is
+    /// claimed only by its owner (newest-wins displacement applies within
+    /// one user's own reconnections).
+    ForeignOwner,
 }
 
 pub struct MachineRegistration {
@@ -95,7 +99,9 @@ impl Hub {
     }
 
     /// Registers the only socket allowed for a machine. A newer connection
-    /// replaces the old holder and tells it to close before its sink drops.
+    /// replaces the old holder and tells it to close before its sink drops —
+    /// but never a holder of a different user: a machine slot is owned, so
+    /// a foreign claim is refused instead of displacing the real executor.
     pub async fn register_machine(
         &self,
         m: Member,
@@ -128,6 +134,15 @@ impl Hub {
                 .machines
                 .get(machine_id)
                 .map(|slot| slot.holder.clone());
+            if old
+                .as_ref()
+                .is_some_and(|holder| holder.user_id != m.user_id)
+            {
+                // Ownership gate: the current holder is a different user, so
+                // the claim never displaces it (a machine slot belongs to
+                // its user — newest-wins applies within one user only).
+                return Err(MachineRejected::ForeignOwner);
+            }
             let replacing_existing_machine = old
                 .as_ref()
                 .is_some_and(|holder| holder.user_id == m.user_id);
@@ -425,6 +440,7 @@ mod tests {
 
         let mut new = member();
         new.label = Some("Desk".into());
+        new.user_id = user_id; // same owner: newest-wins displacement applies
         let new_user_id = new.user_id;
         assert!(hub.register_machine(new, "m1").await.unwrap().displaced);
         assert!(hub.machine_online("m1"));
@@ -437,7 +453,9 @@ mod tests {
             SocketOutput::Message(WsServerMsg::Displaced)
         ));
         assert!(old_rx.try_recv().is_err());
-        assert!(hub.sinks_of_user(user_id).is_empty());
+        // The displaced holder's sink is gone; only the replacement remains
+        // (both sockets belong to the same owner in this test).
+        assert_eq!(hub.sinks_of_user(user_id).len(), 1);
     }
 
     #[tokio::test]
@@ -591,9 +609,11 @@ mod tests {
             sink: old_sink,
             label: None,
         };
+        let old_user_id = old.user_id;
         let registration = hub.register_machine(old, "full-queue").await.unwrap();
         let mut shutdown = registration.shutdown;
-        let new = member();
+        let mut new = member();
+        new.user_id = old_user_id; // same owner: displacement is same-user
         assert!(
             hub.register_machine(new, "full-queue")
                 .await

@@ -342,10 +342,10 @@ fn collect_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> anyhow::Resul
     Ok(())
 }
 
-/// Extracts a bundle into `dest` (created if needed). Rejects path traversal
-/// (no `..`, no absolute entries) and returns the manifest.
 /// Reads one file from a packed bundle without touching the filesystem.
-/// Returns None when the bundle has no such entry.
+/// Returns None when the bundle has no such entry. The matched entry is
+/// bounded: a header-declared size past the cap (or a read that runs past
+/// it) is rejected before the content is buffered.
 pub fn read_bundle_file(bundle: &[u8], path: &str) -> anyhow::Result<Option<Vec<u8>>> {
     let gz = flate2::read::GzDecoder::new(bundle);
     let mut tar = tar::Archive::new(gz);
@@ -353,8 +353,22 @@ pub fn read_bundle_file(bundle: &[u8], path: &str) -> anyhow::Result<Option<Vec<
         let mut entry = entry?;
         let entry_path = entry.path()?.to_path_buf();
         if entry_path == std::path::Path::new(path) {
+            anyhow::ensure!(
+                entry.size() <= MAX_BUNDLE_FILE,
+                "bundle entry '{}' exceeds the {}-byte read cap",
+                path,
+                MAX_BUNDLE_FILE
+            );
             let mut buf = Vec::new();
-            std::io::Read::read_to_end(&mut entry, &mut buf)?;
+            (&mut entry)
+                .take(MAX_BUNDLE_FILE)
+                .read_to_end(&mut buf)?;
+            anyhow::ensure!(
+                buf.len() as u64 <= MAX_BUNDLE_FILE,
+                "bundle entry '{}' exceeds the {}-byte read cap",
+                path,
+                MAX_BUNDLE_FILE
+            );
             return Ok(Some(buf));
         }
     }
@@ -365,6 +379,12 @@ pub fn read_bundle_file(bundle: &[u8], path: &str) -> anyhow::Result<Option<Vec<
 /// exceed this total size (bundle-bomb guard).
 const MAX_BUNDLE_TOTAL: u64 = 256 * 1024 * 1024;
 
+/// Single-entry cap for reads out of a network-delivered bundle (a hostile
+/// `manifest.json`/`SKILL.md` entry must not balloon the server's memory).
+const MAX_BUNDLE_FILE: u64 = 16 * 1024 * 1024;
+
+/// Extracts a bundle into `dest` (created if needed). Rejects path traversal
+/// (no `..`, no absolute entries) and returns the manifest.
 pub fn extract(bundle: &[u8], dest: &Path) -> anyhow::Result<BundleManifest> {
     extract_with_cap(bundle, dest, MAX_BUNDLE_TOTAL)
 }
@@ -710,5 +730,53 @@ mod tests {
         extract_with_cap(&bytes, &dest, MAX_BUNDLE_TOTAL).unwrap();
         fs::remove_dir_all(&dest).unwrap();
         fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod bundle_read_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    /// Builds a raw tar.gz bundle with one entry of the given size (filled
+    /// with a repeating byte) — no pack() pipeline, so the entry size is
+    /// fully controlled.
+    fn bundle_with_entry(name: &str, size: usize) -> Vec<u8> {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut tar = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(size as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        let body = vec![b'x'; size];
+        tar.append_data(&mut header, name, body.as_slice()).unwrap();
+        tar.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn read_bundle_file_reads_an_entry_within_the_cap() {
+        let bundle = bundle_with_entry("SKILL.md", 1024);
+        let got = read_bundle_file(&bundle, "SKILL.md").unwrap().unwrap();
+        assert_eq!(got.len(), 1024);
+        assert!(read_bundle_file(&bundle, "missing.txt").unwrap().is_none());
+    }
+
+    #[test]
+    fn read_bundle_file_refuses_an_entry_over_the_read_cap() {
+        let bundle = bundle_with_entry("manifest.json", 17 * 1024 * 1024);
+        let err = read_bundle_file(&bundle, "manifest.json")
+            .expect_err("oversized entry must be rejected, not buffered");
+        assert!(
+            err.to_string().contains("read cap"),
+            "refusal names the cap: {err}"
+        );
+    }
+
+    #[test]
+    fn read_bundle_file_rejects_an_oversize_header_before_decompression() {
+        // A hostile header claiming far more than the cap: rejected on the
+        // declared size alone.
+        let bundle = bundle_with_entry("bomb.bin", 16 * 1024 * 1024 + 1);
+        assert!(read_bundle_file(&bundle, "bomb.bin").is_err());
     }
 }
