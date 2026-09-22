@@ -17,6 +17,7 @@ use crate::session_store;
 use futures::{SinkExt, StreamExt};
 use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde::Deserialize;
+use uuid::Uuid;
 use std::path::Path;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -207,6 +208,76 @@ fn websocket_url(
     url
 }
 
+/// The executor-relevant subset of `WsServerMsg`, extracted by tag-peeking
+/// the raw JSON first: the link's liveness must not depend on the display
+/// event vocabulary (`StreamEvent` gains variants regularly, and machine
+/// sockets receive the same live feed as browser sockets). Only the frames
+/// this socket acts on are parsed strictly; everything else — display
+/// frames, unknown variants, unparseable text — is ignored.
+enum ServerFrame {
+    ToolDispatch {
+        chat_id: Uuid,
+        call_id: String,
+        name: String,
+        arguments: String,
+        workdir: Option<String>,
+    },
+    MachineRequest {
+        request_id: String,
+        op: String,
+        payload: serde_json::Value,
+    },
+    Displaced,
+    AuthRequired,
+    Error { message: String },
+    /// Anything the executor does not act on: display/state frames, frames
+    /// with an unknown `type` tag, non-JSON text. All ignored, never fatal.
+    Other,
+}
+
+fn classify_server_frame(text: &str) -> ServerFrame {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return ServerFrame::Other;
+    };
+    let tag = value
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default();
+    match tag {
+        "tool_dispatch" | "machine_request" | "error" => {
+            match serde_json::from_value::<WsServerMsg>(value) {
+                Ok(WsServerMsg::ToolDispatch {
+                    chat_id,
+                    call_id,
+                    name,
+                    arguments,
+                    workdir,
+                }) => ServerFrame::ToolDispatch {
+                    chat_id,
+                    call_id,
+                    name,
+                    arguments,
+                    workdir,
+                },
+                Ok(WsServerMsg::MachineRequest {
+                    request_id,
+                    op,
+                    payload,
+                }) => ServerFrame::MachineRequest {
+                    request_id,
+                    op,
+                    payload,
+                },
+                Ok(WsServerMsg::Error { message }) => ServerFrame::Error { message },
+                _ => ServerFrame::Other,
+            }
+        }
+        "displaced" => ServerFrame::Displaced,
+        "auth_required" => ServerFrame::AuthRequired,
+        _ => ServerFrame::Other,
+    }
+}
+
 /// Runs one WS session until it drops; returns why.
 #[derive(Debug)]
 enum LinkEnd {
@@ -241,7 +312,7 @@ async fn ws_session(
     let (mut sink, mut stream) = ws.split();
     let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
 
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         while let Some(msg) = outbound_rx.recv().await {
             if sink.send(msg).await.is_err() {
                 break;
@@ -275,43 +346,60 @@ async fn ws_session(
                 let Some(msg) = incoming else { break LinkEnd::Closed };
                 last_inbound = tokio::time::Instant::now();
                 match msg {
-                    Ok(WsMessage::Text(text)) => match serde_json::from_str::<WsServerMsg>(&text) {
-                        Ok(WsServerMsg::MachineRequest { request_id, op, payload }) => {
-                            let result = machine_request_result(&op, &payload).await;
-                            let (ok, resp_payload, error) = match result {
-                                Ok(v) => (true, Some(v), None),
-                                Err(e) => (false, None, Some(e)),
-                            };
-                            let msg = WsClientMsg::MachineResponse {
-                                request_id,
-                                ok,
-                                payload: resp_payload,
-                                error,
-                            };
-                            let _ = outbound_tx.send(WsMessage::Text(
-                                serde_json::to_string(&msg).expect("client message serializes").into(),
-                            ));
+                    Ok(WsMessage::Text(text)) => match classify_server_frame(&text) {
+                        ServerFrame::ToolDispatch { chat_id, call_id, name, arguments, workdir } => {
+                            // Execution rides a task: the reader must keep
+                            // reading (and ponging) while a dispatch runs — a
+                            // tool slower than the server's 10 s pong deadline
+                            // used to tear the link down mid-command and lose
+                            // the result. Responses are matched by call_id/
+                            // request_id on the server, so completion order is
+                            // free to interleave.
+                            let outbound = outbound_tx.clone();
+                            tokio::spawn(async move {
+                                let result =
+                                    execute_client_tool(&name, &arguments, workdir.as_deref()).await;
+                                let msg = WsClientMsg::ToolResult {
+                                    chat_id,
+                                    call_id,
+                                    content: result.content,
+                                    is_error: result.is_error,
+                                    meta: result.meta,
+                                };
+                                let _ = outbound.send(WsMessage::Text(
+                                    serde_json::to_string(&msg)
+                                        .expect("client message serializes")
+                                        .into(),
+                                ));
+                            });
                         }
-                        Ok(WsServerMsg::ToolDispatch { chat_id, call_id, name, arguments, workdir }) => {
-                            let result = execute_client_tool(&name, &arguments, workdir.as_deref()).await;
-                            let msg = WsClientMsg::ToolResult {
-                                chat_id,
-                                call_id,
-                                content: result.content,
-                                is_error: result.is_error,
-                                meta: result.meta,
-                            };
-                            let _ = outbound_tx.send(WsMessage::Text(
-                                serde_json::to_string(&msg).expect("client message serializes").into(),
-                            ));
+                        ServerFrame::MachineRequest { request_id, op, payload } => {
+                            let outbound = outbound_tx.clone();
+                            tokio::spawn(async move {
+                                let result = machine_request_result(&op, &payload).await;
+                                let (ok, resp_payload, error) = match result {
+                                    Ok(v) => (true, Some(v), None),
+                                    Err(e) => (false, None, Some(e)),
+                                };
+                                let msg = WsClientMsg::MachineResponse {
+                                    request_id,
+                                    ok,
+                                    payload: resp_payload,
+                                    error,
+                                };
+                                let _ = outbound.send(WsMessage::Text(
+                                    serde_json::to_string(&msg)
+                                        .expect("client message serializes")
+                                        .into(),
+                                ));
+                            });
                         }
-                        Ok(WsServerMsg::Displaced) => break LinkEnd::Displaced,
-                        Ok(WsServerMsg::AuthRequired) => break LinkEnd::AuthRequired,
-                        Ok(WsServerMsg::Error { message }) => {
+                        ServerFrame::Displaced => break LinkEnd::Displaced,
+                        ServerFrame::AuthRequired => break LinkEnd::AuthRequired,
+                        ServerFrame::Error { message } => {
                             break LinkEnd::Failed(format!("server error: {message}"));
                         }
-                        Ok(_) => {} // display frames belong to the GUI's member socket
-                        Err(e) => break LinkEnd::Failed(format!("bad server frame: {e}")),
+                        ServerFrame::Other => {} // display frames and unknown variants: not ours
                     },
                     Ok(WsMessage::Ping(payload)) => {
                         let _ = outbound_tx.send(WsMessage::Pong(payload));
@@ -329,8 +417,15 @@ async fn ws_session(
     let _ = outbound_tx.send(WsMessage::Close(None));
     drop(outbound_tx);
     // The drain writes into a socket that may already be dead: bound it, or
-    // a wedged TCP write hangs the reconnect here forever.
-    let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
+    // a wedged TCP write hangs the reconnect here forever. In-flight
+    // dispatches hold sender clones, so the drain also carries results that
+    // landed between the loop break and the close.
+    let _ = tokio::time::timeout(Duration::from_secs(2), &mut writer).await;
+    // A drain that timed out leaves the writer parked in sink.send on a
+    // wedged route — abort it (dropping the sink closes the socket), or
+    // every reconnect on such a route leaks one blocked task. Abort on an
+    // already-finished writer is a no-op.
+    writer.abort();
     end
 }
 
@@ -637,5 +732,53 @@ mod tests {
         ));
         assert!(out.is_error);
         assert!(out.content.contains("unknown tool"));
+    }
+
+    /// The tag-peek classifier parses only the executor-relevant variants;
+    /// display frames, unknown variants, and non-JSON text are all Other —
+    /// server protocol evolution cannot end the executor session.
+    #[test]
+    fn classifier_ignores_display_unknown_and_malformed_frames() {
+        let live = serde_json::json!({
+            "type": "live_frame",
+            "chat_id": uuid::Uuid::nil(),
+            "generation_id": uuid::Uuid::nil(),
+            "seq": 1,
+            "event": {"type": "brand_new_stream_variant"}
+        });
+        for text in [
+            live.to_string(),
+            r#"{"type":"thread_list","chats":[]}"#.to_string(),
+            "not json at all".to_string(),
+            r#"{"no_type_tag": true}"#.to_string(),
+            // A tool_dispatch that fails its typed parse is not fatal either.
+            r#"{"type":"tool_dispatch","chat_id":42}"#.to_string(),
+        ] {
+            assert!(
+                matches!(classify_server_frame(&text), ServerFrame::Other),
+                "frame must be ignored, not fatal: {text}"
+            );
+        }
+        assert!(matches!(
+            classify_server_frame(r#"{"type":"displaced"}"#),
+            ServerFrame::Displaced
+        ));
+        assert!(matches!(
+            classify_server_frame(r#"{"type":"auth_required"}"#),
+            ServerFrame::AuthRequired
+        ));
+        let dispatch = serde_json::json!({
+            "type": "tool_dispatch",
+            "chat_id": uuid::Uuid::nil(),
+            "call_id": "c1",
+            "name": "execute",
+            "arguments": "{}"
+        });
+        match classify_server_frame(&dispatch.to_string()) {
+            ServerFrame::ToolDispatch { call_id, name, .. } => {
+                assert_eq!((call_id.as_str(), name.as_str()), ("c1", "execute"));
+            }
+            _ => panic!("tool_dispatch must classify"),
+        }
     }
 }
