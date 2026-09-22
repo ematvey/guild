@@ -429,6 +429,12 @@ async fn ws_session(
     end
 }
 
+/// Cap on `fs_list` entries: the folder browse is a user-driven paginated
+/// view, never a bulk export — an uncapped directory (node_modules,
+/// /usr/lib) shipped its entire listing as one giant frame. Mirrors
+/// read_file's truncation marker.
+const FS_LIST_MAX_ENTRIES: usize = 1000;
+
 /// Control-plane ops the server sends over the executor socket (read-only
 /// filesystem access for the desktop's remote folder browse).
 async fn machine_request_result(
@@ -450,11 +456,16 @@ async fn machine_request_result(
                 .map_err(|e| format!("{path}: {e}"))?;
             let mut dirs: Vec<serde_json::Value> = Vec::new();
             let mut files: Vec<serde_json::Value> = Vec::new();
+            let mut truncated = false;
             while let Some(entry) = reader
                 .next_entry()
                 .await
                 .map_err(|e| format!("{path}: {e}"))?
             {
+                if dirs.len() + files.len() >= FS_LIST_MAX_ENTRIES {
+                    truncated = true;
+                    break;
+                }
                 let name = entry.file_name().to_string_lossy().into_owned();
                 let is_dir = entry
                     .file_type()
@@ -467,10 +478,22 @@ async fn machine_request_result(
             dirs.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
             files.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
             dirs.extend(files);
-            Ok(serde_json::json!({ "entries": dirs }))
+            let mut result = serde_json::json!({ "entries": dirs });
+            if truncated {
+                result["truncated"] = serde_json::json!(true);
+            }
+            Ok(result)
         }
         other => Err(format!("unknown op {other:?}")),
     }
+}
+
+/// The builtin tool registry is immutable once built; building it per
+/// dispatch re-allocated the whole map on every tool call.
+fn builtin_registry() -> &'static guild_core::tools::ToolRegistry {
+    static REGISTRY: std::sync::OnceLock<guild_core::tools::ToolRegistry> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(guild_core::tools::ToolRegistry::builtins)
 }
 
 /// The executor: one builtin tool call in the dispatch's workspace folder —
@@ -486,7 +509,7 @@ async fn execute_client_tool(name: &str, arguments: &str, workdir: Option<&str>)
     let outcome: Result<ExecOutcome, String> = match workdir {
         None => Err("no workspace folder is set for this chat — pick a project with 'Choose project' in the composer".to_string()),
         Some(dir) => {
-            let registry = guild_core::tools::ToolRegistry::builtins();
+            let registry = builtin_registry();
             match registry.get(name) {
                 Some(tool) => match tool.run(Path::new(dir), args).await {
                     Ok(out) => Ok(ExecOutcome {
@@ -732,6 +755,59 @@ mod tests {
         ));
         assert!(out.is_error);
         assert!(out.content.contains("unknown tool"));
+    }
+
+    fn temp_scoped_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("guild-fs-list-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn fs_list_lists_dirs_first_and_reports_no_truncation_below_the_cap() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = temp_scoped_dir("small");
+        std::fs::create_dir(dir.join("b-dir")).unwrap();
+        std::fs::create_dir(dir.join("a-dir")).unwrap();
+        std::fs::write(dir.join("b-file"), "x").unwrap();
+        std::fs::write(dir.join("a-file"), "x").unwrap();
+        let result = rt
+            .block_on(machine_request_result(
+                "fs_list",
+                &serde_json::json!({ "path": dir.to_string_lossy() }),
+            ))
+            .unwrap();
+        assert_eq!(result["truncated"], serde_json::Value::Null);
+        let entries = result["entries"].as_array().unwrap();
+        let names: Vec<&str> = entries
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["a-dir", "b-dir", "a-file", "b-file"]);
+        assert!(entries.iter().all(|e| e["is_dir"].is_boolean()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fs_list_caps_entries_and_marks_truncation() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = temp_scoped_dir("big");
+        for i in 0..(FS_LIST_MAX_ENTRIES + 5) {
+            std::fs::write(dir.join(format!("f{i:05}")), "x").unwrap();
+        }
+        let result = rt
+            .block_on(machine_request_result(
+                "fs_list",
+                &serde_json::json!({ "path": dir.to_string_lossy() }),
+            ))
+            .unwrap();
+        assert_eq!(result["truncated"], serde_json::json!(true));
+        assert_eq!(
+            result["entries"].as_array().unwrap().len(),
+            FS_LIST_MAX_ENTRIES
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The tag-peek classifier parses only the executor-relevant variants;
