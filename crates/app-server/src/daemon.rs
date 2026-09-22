@@ -217,22 +217,25 @@ pub fn attach_with(bin: &Path, expected_build: Option<&str>) -> anyhow::Result<P
 /// Daemon main: binds `socket_path()`, restores the persisted session, and
 /// accepts until `daemon.shutdown`.
 pub async fn run_daemon() -> anyhow::Result<()> {
-    run_daemon_on(
+    run_daemon_shared(
         socket_path()?,
-        crate::jsonrpc_loop::restored_session().await?,
+        Shared::new(crate::jsonrpc_loop::restored_session().await?),
     )
     .await
 }
 
-/// Daemon accept loop over an explicit endpoint (test seam). If another
-/// daemon already owns the endpoint, returns Ok immediately (single
-/// instance). Runs until `daemon.shutdown` flips the watch.
-pub async fn run_daemon_on(path: PathBuf, session: Session) -> anyhow::Result<()> {
+/// Daemon accept loop over an explicit endpoint and a caller-built Shared.
+/// The GUI hosts this with the SAME Shared its webview engine dispatches on:
+/// login/pair/identify arrive on the webview surface and must reach the
+/// machine link's watch channel in the same process — a second Shared here
+/// would park the link until the next app start (the boot-time seed).
+/// If another daemon already owns the endpoint, returns Ok immediately
+/// (single instance). Runs until `daemon.shutdown` flips the watch.
+pub async fn run_daemon_shared(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
     if try_connect_at(&path).is_ok() {
         return Ok(()); // another daemon owns the endpoint
     }
 
-    let shared = Shared::new(session);
     let shutdown_rx = shared.shutdown.subscribe();
 
     // The machine link: the daemon's executor connection. Seeded from the

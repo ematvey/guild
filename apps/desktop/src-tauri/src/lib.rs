@@ -1385,23 +1385,20 @@ pub fn run() {
                 *guild.shared.lock().unwrap() = Some(shared.clone());
             }
 
-            // CLI verbs: the socket is hosted by this process, backed by its
-            // own restored session (login/pair through the webview writes the
-            // same token store, so both surfaces stay authed). If an old
-            // background daemon still owns the endpoint, this returns Ok and
-            // the stale one serves CLI until it is shut down.
+            // CLI verbs: the socket is hosted by this process, backed by
+            // the SAME Shared the webview engine dispatches on — pair/login
+            // from the webview must reach the machine link's watch channel
+            // in the same step, not on the next app start. If an old
+            // background daemon still owns the endpoint, this returns Ok
+            // and the stale one serves CLI until it is shut down.
             {
+                let daemon_shared = shared.clone();
                 tauri::async_runtime::spawn(async move {
-                    match guild_app_server::jsonrpc_loop::restored_session().await {
-                        Ok(cli_session) => {
-                            let _ = guild_app_server::daemon::run_daemon_on(
-                                guild_app_server::daemon::socket_path().expect("socket path"),
-                                cli_session,
-                            )
-                            .await;
-                        }
-                        Err(e) => eprintln!("cli socket host: session restore failed: {e}"),
-                    }
+                    let _ = guild_app_server::daemon::run_daemon_shared(
+                        guild_app_server::daemon::socket_path().expect("socket path"),
+                        daemon_shared,
+                    )
+                    .await;
                 });
             }
 
