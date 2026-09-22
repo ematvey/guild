@@ -254,7 +254,7 @@ export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): vo
       handlers.onSync(message.chat_id, "begin");
       return;
     case "live_frame":
-      handlers.onFrame({ chat_id: message.chat_id, machine_id: message.machine_id, event: message.event as StreamFrame });
+      handlers.onFrame({ chat_id: message.chat_id, machine_id: message.machine_id ?? null, event: message.event as StreamFrame });
       return;
     case "sync_done":
       handlers.onSync(message.chat_id, "done");
