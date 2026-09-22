@@ -1,10 +1,12 @@
 //! Linux: manage the per-user daemon as a systemd **user unit** —
 //! `guild daemon install` / `status` / `uninstall`. The GUI hosts its
-//! daemon in-process (gone when the app exits); a headless Linux host gets
+//! daemon in-process and defers to the unit while it is active (its socket
+//! host parks; it reclaims when the unit stops); a headless Linux host gets
 //! supervised boot persistence (`Restart=always`, starts at login) without
-//! a package. Install refuses while a daemon is reachable — see the
-//! single-process note in [`install`]. Idempotent: reinstalling rewrites
-//! the unit and restarts the service under the current binary.
+//! a package. Install retires any running daemon host — GUI or unsupervised
+//! — and verifies the socket released before `enable --now`. Idempotent:
+//! reinstalling rewrites the unit and restarts the service under the
+//! current binary.
 
 use anyhow::Context as _;
 use std::path::{Path, PathBuf};
@@ -98,6 +100,43 @@ fn systemctl_ok(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+/// Test seam for [`unit_active`]: -1 = probe systemctl, 0/1 = forced answer
+/// (CI hosts have no systemd user session).
+static UNIT_ACTIVE_OVERRIDE: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(-1);
+
+/// Forces [`unit_active`]'s answer (tests); `None` restores the probe.
+pub fn set_unit_active_override(active: Option<bool>) {
+    use std::sync::atomic::Ordering;
+    UNIT_ACTIVE_OVERRIDE.store(active.map(i8::from).unwrap_or(-1), Ordering::SeqCst);
+}
+
+/// Whether the unit daemon owns (or is about to own) the daemon socket and
+/// the machine link: `active`/`activating` both count — a unit that is
+/// starting is about to bind, and rebinding under it would make its daemon
+/// exit-and-restart against this process forever. Everything else (inactive,
+/// failed, no systemd on the host) means the socket is up for grabs.
+pub fn unit_active() -> bool {
+    use std::sync::atomic::Ordering;
+    match UNIT_ACTIVE_OVERRIDE.load(Ordering::SeqCst) {
+        0 => return false,
+        1 => return true,
+        _ => {}
+    }
+    if std::env::consts::OS != "linux" {
+        return false;
+    }
+    let state = match Command::new("systemctl")
+        .arg("--user")
+        .arg("is-active")
+        .arg(UNIT_NAME)
+        .output()
+    {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Err(_) => return false,
+    };
+    matches!(state.as_str(), "active" | "activating" | "reloading")
+}
+
 fn ensure_linux() -> anyhow::Result<()> {
     if std::env::consts::OS != "linux" {
         anyhow::bail!(
@@ -123,46 +162,48 @@ fn poll_socket_state(want_reachable: bool, polls: u32, delay: std::time::Duratio
     crate::daemon::try_connect().is_ok() == want_reachable
 }
 
+/// Confirms the socket's current owner speaks the daemon wire protocol —
+/// the hello handshake is the identity check. A foreign process squatting
+/// the endpoint is not retired.
+fn verify_guild_daemon() -> anyhow::Result<()> {
+    let pair = crate::daemon::try_connect()?;
+    crate::daemon::handshake(pair).map(|_| ())
+}
+
 /// Installs (or upgrades) the unit and brings the daemon up under it.
 pub fn install(linger: bool) -> anyhow::Result<()> {
     ensure_linux()?;
-    // The GUI hosts the daemon in-process (single-process model): with a
-    // unit daemon owning the socket, a fresh pair from the webview would
-    // publish the link config on the GUI's in-process watch channel only —
-    // the unit daemon never learns of it and pairing silently stops
-    // registering the machine. Refuse while a daemon is reachable; install
-    // stays headless-only until auth RPCs route to the owning daemon (see
-    // PLAN.md).
-    if crate::daemon::try_connect().is_ok() {
-        anyhow::bail!(
-            "a Guild app is already running and hosts the daemon in-process; \
-             quit it (close the window or `pkill -x Guild`), then rerun \
-             `Guild daemon install`. Installing while a GUI is running would \
-             break pair → machine-link propagation; install is headless-only \
-             for now"
-        );
-    }
     let bin = unit_bin()?;
     let unit_path = systemd_user_dir()?.join(UNIT_NAME);
     std::fs::create_dir_all(unit_path.parent().context("unit dir")?)?;
     std::fs::write(&unit_path, unit_contents(&bin))?;
     systemctl(&["daemon-reload"])?;
-    if systemctl_ok(&["is-active", UNIT_NAME]) {
+    if unit_active() {
         systemctl(&["restart", UNIT_NAME])?;
         println!(
             "restarted {UNIT_NAME} under the rewritten unit (ExecStart {})",
             bin.display()
         );
     } else {
-        // An unsupervised (hand-launched) daemon may have taken the socket in
-        // a race with the check above; retire it, and require the socket to
-        // actually stop accepting before enable --now — a hung daemon would
-        // otherwise leave the unit's daemon unable to bind (it exits cleanly
-        // on a taken endpoint) with nothing running while install reports
-        // success.
-        if crate::daemon::shutdown_running() {
-            println!("retired the unsupervised daemon");
+        // A GUI app (in-process host) or an unsupervised hand-launched
+        // daemon may own the socket: the handshake verifies the owner is a
+        // Guild daemon, then daemon.shutdown retires its socket host. The
+        // GUI's host task defers to the unit from now on (it parks and
+        // reclaims when the unit stops); auth stays propagated either way —
+        // the daemon watches token.json, so a fresh pair or sign-out in the
+        // GUI reaches the link whoever owns it.
+        if crate::daemon::try_connect().is_ok() {
+            verify_guild_daemon()?;
+            if crate::daemon::shutdown_running() {
+                println!(
+                    "retired the running daemon (its host defers to {UNIT_NAME} while the unit is active)"
+                );
+            }
         }
+        // Require the socket to actually stop accepting before enable --now
+        // — a hung daemon would otherwise leave the unit's daemon unable to
+        // bind (it exits cleanly on a taken endpoint) with nothing running
+        // while install reports success.
         if !poll_socket_state(false, 20, std::time::Duration::from_millis(100)) {
             crate::daemon::shutdown_running();
             if !poll_socket_state(false, 20, std::time::Duration::from_millis(100)) {
@@ -317,5 +358,74 @@ mod tests {
         let picked = unit_bin_with(None, &real).unwrap();
         assert_eq!(picked, real);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The unit-active probe's test seam: a forced answer short-circuits
+    /// the systemctl call (CI hosts have no systemd user session).
+    #[test]
+    fn unit_active_override_short_circuits_the_probe() {
+        set_unit_active_override(Some(true));
+        assert!(unit_active());
+        set_unit_active_override(Some(false));
+        assert!(!unit_active());
+        set_unit_active_override(None);
+        // Back to probing: on this host (likely no systemd user session, or
+        // no unit installed) the answer is well-defined but not asserted —
+        // the override is what tests pin.
+        let _ = unit_active();
+    }
+
+    /// Install's precondition: the socket owner must be a Guild daemon —
+    /// the hello handshake is the identity check; a silent squatter is
+    /// refused (and not retired).
+    #[cfg(unix)]
+    #[test]
+    fn verify_guild_daemon_accepts_a_handshaking_owner_and_refuses_a_silent_one() {
+        use std::io::{BufRead, BufReader, Write};
+        let dir = std::env::temp_dir().join(format!("guild-dinst-verify-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("verify.sock");
+        let _guard = SOCKET_LOCK.lock().unwrap();
+        std::env::set_var("GUILD_DAEMON_SOCKET", &path);
+
+        let server = |listener: std::os::unix::net::UnixListener, speak_hello: bool| {
+            std::thread::spawn(move || {
+                let (conn, _) = listener.accept().unwrap();
+                let mut rd = BufReader::new(conn.try_clone().unwrap());
+                let mut w = conn;
+                let mut line = String::new();
+                rd.read_line(&mut line).unwrap();
+                if speak_hello {
+                    let resp = protocol::rpc::Response::ok(
+                        0,
+                        serde_json::json!({
+                            "protocol": protocol::rpc::PROTOCOL_VERSION,
+                            "version": "t",
+                            "build": "t"
+                        }),
+                    );
+                    writeln!(w, "{}", serde_json::to_string(&resp).unwrap()).unwrap();
+                }
+                // hold the connection open until the client gives up reading
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            })
+        };
+
+        // A daemon speaking the current protocol verifies.
+        let l1 = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let h = server(l1, true);
+        assert!(verify_guild_daemon().is_ok());
+        h.join().unwrap();
+
+        // A silent squatter (never answers hello) does not.
+        let _ = std::fs::remove_file(&path); // the closed listener leaves the socket file
+        let l2 = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let h = server(l2, false);
+        assert!(verify_guild_daemon().is_err());
+        h.join().unwrap();
+
+        let _ = std::fs::remove_file(&path);
+        std::env::remove_var("GUILD_DAEMON_SOCKET");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
