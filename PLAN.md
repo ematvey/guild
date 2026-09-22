@@ -1,10 +1,65 @@
 # Guild — current state of work
 
-Updated 2026-09-22 (0.5.17: machine link liveness watchdog). Read this
-before touching
+Updated 2026-09-23 (review round 1: exec-policy surface closed, machine-link
+flakiness fixes, server hardening). Read this before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## Full-codebase review round 1 — 2026-09-23
+
+Six review lanes (`docs/reviews/2026-09-22-full/`, SUMMARY.md is the index)
+followed by six fix lanes plus one follow-up lane, all merged to master with
+the full workspace suite green (`GUILD_TEST_PG_URL` required for
+engine_stdio and the guild-server integration suites).
+
+- **Exec policy (the review's one critical):** the repo no longer ships
+  `exec_policy_local.rules` — the build treats the local layer as an optional
+  deployment artifact, a build lint rejects allow rules that are
+  shell-interpreter prefixes or bare `docker`/`ssh`/`systemd-run`/`sudo`/
+  `curl`, and the gate demotes to Prompt on command substitution, glued
+  redirects/operators, and newline-separated second commands (each vector has
+  a regression test).
+- **Executor flakiness (the user's top observed issue):** tool dispatch no
+  longer runs inline in the machine-link reader loop (a slow tool can no
+  longer starve pongs and tear the link down); the link ignores unknown
+  server frames and frames with drifted `StreamEvent` variants instead of
+  failing; the member (GUI) socket got the same tag-peek tolerance; the
+  bounded drain aborts a wedged writer; WSL file transports are bounded;
+  `fs_list` caps at 1000 entries; `read_file` caps at 8 MB with a truncation
+  marker; the GUI reclaims the CLI socket after a stale daemon retires and
+  always spawns its machine link; the member link backs off on Displaced
+  instead of parking.
+- **Daemon install unit:** refuses to run while a Guild app is up (headless
+  only — auth RPCs still do not propagate to a unit daemon from a GUI
+  process, TODO in PLAN.md's install entry), verifies the retired daemon's
+  socket released and the unit's daemon reachable, `Restart=always` +
+  `RestartSec=5s`, and the shipped `Guild` binary dispatches
+  `daemon install|status|uninstall`.
+- **Server hardening:** machine slots require owner match before
+  displacement/adoption; routine completions enforce the route quota,
+  `http_call` refuses loopback/link-local/private/metadata targets
+  (`GUILD_HTTP_TOOL_ALLOW_HOSTS` overrides), enabled-routine creation is
+  admin-gated; the 5-minute approval auto-deny is a durable timer raced via
+  `select!` (the reviewed `claim_approval` sketch would have deadlocked — a
+  virtual object awaiting an awakeable holds the instance lock); overflow
+  retry no longer detaches the stream channel; unknown thread-event payloads
+  are skipped with a warning instead of failing the chat's history.
+- **Desktop:** Windows CLI pipe gets a user+SYSTEM-only DACL; `list_dir` is
+  allowlisted to home + `\\wsl.localhost\\`; the engine-recovery panic is
+  fixed (handle assigned at setup); `token.json` saves are atomic;
+  `guild-rpc.log` moved to a per-user 0600 cache path with a size cap;
+  update checks debounced to one per 60 s.
+- **Webchat:** the draft persist/restore effect pair no longer clobbers the
+  destination chat's draft on switch (draft logic extracted to
+  `lib/drafts.ts`, tested); first-send network failures land in the error
+  path; the dead context gauge chain was deleted (server `thread.context`
+  remains; re-wire it when the scroll-up loader lands); transports honor
+  null-on-any-failure; drafts are GC'd and cleared on sign-out; sidebar rows
+  are a div with a dedicated open button.
+- **Protocol:** `Ws.ts` is generated from `WsClientMsg`/`WsServerMsg` now —
+  the hand mirror is gone and the bindings freshness check covers the WS
+  envelopes.
 
 ## TODO — thread list + thread messages: keyset pagination + scroll loading — 2026-09-22
 
