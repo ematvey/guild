@@ -34,6 +34,18 @@ pub fn default_path() -> anyhow::Result<PathBuf> {
     Ok(dir.join("token.json"))
 }
 
+/// The path the daemon's token.json watcher polls. `GUILD_TOKEN_PATH`
+/// overrides it (tests, custom store locations) — the default path is the
+/// config-dir token.json every auth transition persists to.
+pub fn store_watch_path() -> anyhow::Result<PathBuf> {
+    if let Ok(p) = std::env::var("GUILD_TOKEN_PATH") {
+        if !p.is_empty() {
+            return Ok(PathBuf::from(p));
+        }
+    }
+    default_path()
+}
+
 pub fn save(path: &Path, session: &StoredSession) -> anyhow::Result<()> {
     let json = serde_json::to_string(session)?;
     use std::io::Write;

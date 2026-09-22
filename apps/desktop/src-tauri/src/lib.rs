@@ -1616,8 +1616,12 @@ pub fn run() {
             // from the webview must reach the machine link's watch channel
             // in the same step, not on the next app start. If an old
             // background daemon still owns the endpoint, this waits and
-            // hosts the moment the stale one is retired — the machine link
-            // and the CLI socket must not depend on who won the first bind.
+            // hosts the moment the stale one is retired. While the systemd
+            // unit daemon is active (after `daemon install`) the host task
+            // parks: no socket, no machine link — the unit owns the
+            // executor, and the GUI reclaims both when the unit stops.
+            // Whoever hosts the socket, auth stays propagated: the daemon
+            // re-seeds its link config from token.json changes.
             {
                 let daemon_shared = shared.clone();
                 tauri::async_runtime::spawn(async move {
