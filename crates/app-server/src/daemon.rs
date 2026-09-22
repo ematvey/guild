@@ -6,7 +6,7 @@
 //! and all agent runs, exits only on `daemon.shutdown` — which a
 //! version-mismatched client invokes on attach.
 
-use crate::jsonrpc_loop::{run_connection, Session, Shared};
+use crate::jsonrpc_loop::{run_connection, Shared};
 use anyhow::Context as _;
 use sha2::Digest as _;
 use std::io::Write as _;
@@ -260,23 +260,52 @@ pub async fn run_daemon() -> anyhow::Result<()> {
 /// If another daemon already owns the endpoint, returns Ok immediately
 /// (single instance). Runs until `daemon.shutdown` flips the watch.
 pub async fn run_daemon_shared(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
+    spawn_machine_link(&shared);
     if try_connect_at(&path).is_ok() {
         return Ok(()); // another daemon owns the endpoint
     }
+    host_shared_socket(path, shared).await
+}
 
-    let shutdown_rx = shared.shutdown.subscribe();
-
-    // The machine link: the daemon's executor connection. Seeded from the
-    // restored session (persisted identity) and re-published on every
-    // login/pair/identify/sign-out via the watch channel.
-    {
-        let link_shared = shared.clone();
-        let link_rx = shared.machine_link.subscribe();
-        tokio::spawn(crate::machine_link::run(link_shared, link_rx));
-        shared.publish_machine_link();
+/// Like [`run_daemon_shared`], but never gives the endpoint up: while
+/// another daemon owns the socket it waits (polling, shutdown-aware) and
+/// hosts the moment it frees. The GUI uses this — a stale daemon that gets
+/// retired mid-session must leave a live host behind, not a stranded CLI
+/// socket. The machine link spawns up front either way.
+pub async fn run_daemon_shared_reclaiming(
+    path: PathBuf,
+    shared: Shared,
+) -> anyhow::Result<()> {
+    spawn_machine_link(&shared);
+    let mut shutdown_rx = shared.shutdown.subscribe();
+    while try_connect_at(&path).is_ok() {
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow_and_update() {
+                    return Ok(());
+                }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+        }
     }
+    host_shared_socket(path, shared).await
+}
 
-    // Reap finished agent runs so the JoinSet doesn't grow unbounded.
+/// Spawns the machine-link task and seeds it from the session's persisted
+/// identity. One call per daemon process: run_daemon_shared (headless) and
+/// run_daemon_shared_reclaiming (GUI) both route through here, so the link
+/// exists even when this process does not (yet) own the CLI socket.
+fn spawn_machine_link(shared: &Shared) {
+    let link_shared = shared.clone();
+    let link_rx = shared.machine_link.subscribe();
+    tokio::spawn(crate::machine_link::run(link_shared, link_rx));
+    shared.publish_machine_link();
+}
+
+/// Reaps finished agent runs so the JoinSet doesn't grow unbounded, then
+/// runs the accept loop for this platform until shutdown.
+async fn host_shared_socket(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
+    let shutdown_rx = shared.shutdown.subscribe();
     {
         let agents = shared.agents.clone();
         tokio::spawn(async move {
