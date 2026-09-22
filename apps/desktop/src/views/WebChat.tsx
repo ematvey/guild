@@ -114,6 +114,13 @@ import {
   type ThreadContext,
 } from "../transport";
 import {
+  canPersistDraft,
+  clearDrafts,
+  gcDrafts,
+  readDraft,
+  writeDraft,
+} from "../lib/drafts";
+import {
   artifactCardOf,
   createThreadReducer,
   type ApprovalBlock,
@@ -218,11 +225,6 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
   }
   return { chatId, projectId, overlay: null };
 };
-
-/// Per-chat composer drafts: the composer text is saved under the open
-/// chat's key (the scratch view shares "new"), so navigating between chats
-/// swaps drafts instead of carrying one text across.
-export const draftKey = (chatId: string | null) => `guild:draft:${chatId ?? "new"}`;
 
 export const chatRoutePath = (
   chatId: string | null,
@@ -1406,6 +1408,13 @@ export default function WebChat({
   onSignOut: () => void;
 }) {
   const [models, setModels] = useState<string[] | null>(null);
+  // Sign-out hygiene: drafts can hold sensitive composer text, so they are
+  // cleared with the session — a shared browser's next account must not
+  // inherit them. Every sign-out path in this view goes through here.
+  const signOut = useCallback(() => {
+    clearDrafts(localStorage);
+    onSignOut();
+  }, [onSignOut]);
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
   // Live sidebar status overlay (thread-list spinner/dot): frames from the
@@ -1439,22 +1448,20 @@ export default function WebChat({
   // line flashed on every first send.
   const [compacting, setCompacting] = useState(false);
   const [prompt, setPrompt] = useState("");
-  // Set by the chatId effect's first draft restore; until then the persist
-  // effect must not write (see its comment).
-  const draftsReadyRef = useRef(false);
+  // The chat the chatId effect last restored a draft for (undefined = no
+  // restore ran yet): the persist effect below writes only for this chat.
+  const restoredForRef = useRef<string | null | undefined>(undefined);
   // Composer text persists per chat (localStorage, draftKey): every edit
   // writes the open chat's draft; the chatId effect swaps it on navigation
   // and sending overwrites it with "".
   useEffect(() => {
-    // Mount order: this persist effect runs before the chatId effect's
-    // first restore, so it stays inert until that restore ran — otherwise
-    // it would wipe the saved draft of the deep-linked chat with "".
-    if (!draftsReadyRef.current) return;
-    try {
-      localStorage.setItem(draftKey(chatId), prompt);
-    } catch {
-      /* storage unavailable — drafts are best-effort */
-    }
+    // The gate: persist only after the chatId effect restored THIS chat's
+    // draft. On a switch this effect runs first with the new chatId while
+    // prompt still holds the previous chat's text — writing then would
+    // clobber the destination chat's saved draft before its restore reads
+    // it.
+    if (!canPersistDraft(restoredForRef.current, chatId)) return;
+    writeDraft(localStorage, chatId, prompt);
   }, [prompt, chatId]);
   // ---- skill mentions: / opens the autocomplete (skills design §3) ----
   const [skills, setSkills] = useState<ComposerSkill[] | null>(null);
@@ -1800,6 +1807,17 @@ export default function WebChat({
   // webview mode. The desktop app process keeps the separate machine socket.
   const openChatIdRef = useRef<string | null>(chatId);
   openChatIdRef.current = chatId;
+  // Draft GC: per-chat draft keys would otherwise accumulate forever and
+  // outlive their chats. Drop the keys whose chat left the sidebar lists
+  // (archived or deleted); the scratch draft ("new") and the open chat's
+  // key always stay, and unloaded lists prune nothing.
+  useEffect(() => {
+    if (!chats) return;
+    const keep = new Set<string>(chats.map((c) => c.id));
+    for (const c of archivedChats ?? []) keep.add(c.id);
+    if (openChatIdRef.current) keep.add(openChatIdRef.current);
+    gcDrafts(localStorage, keep);
+  }, [chats, archivedChats]);
   const socketRef = useRef<{ resync: () => void; stop: () => void } | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
 
@@ -1859,16 +1877,13 @@ export default function WebChat({
     scratchPickRef.current = null;
     setPickedProject(pickAfterChatSwitch(chatId, intendedPick));
     // Per-chat draft: load the destination chat's saved composer text
-    // instead of keeping the previous chat's text in the input.
-    let restored = "";
-    try {
-      restored = localStorage.getItem(draftKey(chatId)) ?? "";
-    } catch {
-      /* storage unavailable — drafts are best-effort */
-    }
+    // instead of keeping the previous chat's text in the input. This
+    // restore also marks the chat the persist effect may write for — from
+    // here every prompt change belongs to this chatId.
+    const restored = readDraft(localStorage, chatId);
     setPrompt(restored);
     setCaret(restored.length);
-    draftsReadyRef.current = true;
+    restoredForRef.current = chatId;
     if (restored) requestAnimationFrame(autoGrow);
     prevLoadedChatRef.current = chatId;
     loadSeq.current++;
@@ -1941,7 +1956,7 @@ export default function WebChat({
     void watchMachinePresence(presence => {
       if (disposed) return;
       setMachineTakenOver(!!presence.displaced);
-      if (presence.auth_required) onSignOut();
+      if (presence.auth_required) signOut();
     }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
     return () => { disposed = true; stop?.(); };
   }, []);
@@ -1998,7 +2013,7 @@ export default function WebChat({
         }
       },
       onDisplaced: () => toast.error("This chat connection was replaced"),
-      onAuthRequired: () => onSignOut(),
+      onAuthRequired: () => signOut(),
       getOpenChatId: () => openChatIdRef.current,
     });
     socketRef.current = connection;
@@ -2213,7 +2228,7 @@ export default function WebChat({
       onNewChatInProject={newChatInProject}
       onOpenChat={openChat}
       onNewProject={() => openCreateProject("sidebar")}
-      onSignOut={onSignOut}
+      onSignOut={signOut}
       onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
       onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
       onCollapse={isMobile ? undefined : () => setCollapsed(true)}
@@ -2808,7 +2823,7 @@ export default function WebChat({
         displayName={displayName}
         avatarUrl={avatarUrl}
         onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
-        onSignOut={onSignOut}
+        onSignOut={signOut}
       />
     </div>
   );
