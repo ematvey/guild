@@ -568,12 +568,19 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
     }
 }
 
+/// Bounded like the machine link's `wait_for_config_change_or_backoff`:
+/// a displacer that dies must not park the member link forever — once the
+/// backoff elapses the same config reconnects (a genuinely competing
+/// instance just re-displaces us, visibly, at the slow cadence).
+const DISPLACED_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
+
 async fn wait_for_link_change(
     state: &GuildState,
     epoch: u64,
     base: &str,
     token: &str,
 ) {
+    let deadline = tokio::time::Instant::now() + DISPLACED_BACKOFF;
     loop {
         if state.link_epoch.load(Ordering::SeqCst) != epoch {
             return;
@@ -582,6 +589,9 @@ async fn wait_for_link_change(
             .link_config()
             .is_some_and(|(b, t)| b == base && t == token);
         if !unchanged {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1389,12 +1399,13 @@ pub fn run() {
             // the SAME Shared the webview engine dispatches on — pair/login
             // from the webview must reach the machine link's watch channel
             // in the same step, not on the next app start. If an old
-            // background daemon still owns the endpoint, this returns Ok
-            // and the stale one serves CLI until it is shut down.
+            // background daemon still owns the endpoint, this waits and
+            // hosts the moment the stale one is retired — the machine link
+            // and the CLI socket must not depend on who won the first bind.
             {
                 let daemon_shared = shared.clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = guild_app_server::daemon::run_daemon_shared(
+                    let _ = guild_app_server::daemon::run_daemon_shared_reclaiming(
                         guild_app_server::daemon::socket_path().expect("socket path"),
                         daemon_shared,
                     )
