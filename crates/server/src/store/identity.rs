@@ -99,6 +99,13 @@ impl<'a> IdentityStore<'a> {
             .fetch_one(&mut *tx)
             .await?;
         anyhow::ensure!(any == 0, "org already has users");
+        // Defense in depth beyond the HTTP handler: a bootstrap credential
+        // never hashes below the admin-account minimum (the existing-user
+        // early return above leaves reconnect flows untouched).
+        anyhow::ensure!(
+            password.chars().count() >= 8,
+            "password must be at least 8 characters"
+        );
         let org_id = Uuid::now_v7();
         let user_id = Uuid::now_v7();
         let hash = hash_password(password)?;
