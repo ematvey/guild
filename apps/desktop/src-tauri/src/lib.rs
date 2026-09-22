@@ -870,12 +870,10 @@ pub mod commands {
             .ok_or_else(|| "engine not initialized".to_string())?;
         let (engine, rd_out) = build_engine(&shared).map_err(|e| e.to_string())?;
         let engine = Arc::new(engine);
-        let handle = state
-            .handle
-            .lock()
-            .unwrap()
-            .clone()
-            .expect("app handle set at setup");
+        let handle = state.handle.lock().unwrap().clone();
+        let Some(handle) = handle else {
+            return Err("engine not initialized".to_string());
+        };
         start_engine_reader(handle, engine.clone(), rd_out);
         let mut guard = state.cell.lock().unwrap();
         if guard.is_none() {
@@ -1379,6 +1377,10 @@ pub fn run() {
             {
                 let state: State<EngineState> = app.state();
                 *state.shared.lock().unwrap() = Some(shared.clone());
+                // The engine-recovery path (start_engine) rebuilds the engine
+                // after a write failure dropped it; it needs the app handle
+                // for the event reader.
+                *state.handle.lock().unwrap() = Some(handle.clone());
             }
             {
                 let guild: State<Arc<GuildState>> = app.state();
