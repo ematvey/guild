@@ -7,6 +7,7 @@ use base64::Engine as _;
 use protocol::api::ToolSpec;
 use serde_json::Value;
 use std::path::Path;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt as _;
 
 /// Read-only file access scoped to the project dir plus explicit extra
@@ -15,12 +16,16 @@ use tokio::io::AsyncWriteExt as _;
 /// must be able to read them).
 pub struct ReadFile {
     pub extra_read_roots: Vec<std::path::PathBuf>,
+    /// Byte cap on the model-facing text read (tests shrink it; production
+    /// callers use the MAX_READ_BYTES default via Default).
+    pub max_read_bytes: usize,
 }
 
 impl Default for ReadFile {
     fn default() -> Self {
         Self {
             extra_read_roots: Vec::new(),
+            max_read_bytes: MAX_READ_BYTES,
         }
     }
 }
@@ -41,6 +46,18 @@ fn image_mime(ext: &str) -> Option<&'static str> {
 /// over 5 MB; leave headroom for the request as a whole.
 const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
+/// Cap on a single read_file read: only the file's first MAX_READ_BYTES
+/// bytes are loaded (the WSL transport reads just that prefix, `head -c`
+/// style); a larger file is reported truncated instead of becoming a
+/// multi-GB allocation for a paginated 64 KB output. Stays above
+/// MAX_IMAGE_BYTES so image reads are never cut.
+const MAX_READ_BYTES: usize = 8 * 1024 * 1024;
+
+/// Wall-clock bound for every wsl.exe transport call. The shell tool bounds
+/// its children to 300 s and the interop heal to 10 s; an unbounded wsl.exe
+/// (distro cold start, hung session init) stalls its caller with no escape.
+const WSL_TOOL_TIMEOUT: Duration = Duration::from_secs(300);
+
 // --- WSL transport (spec §4) ---------------------------------------------
 //
 // A `\\wsl.localhost\<d>\…` (or legacy `\\wsl$\…`) path is served by
@@ -53,14 +70,35 @@ const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 /// File bytes: WSL transport for distro paths, direct fs for everything
 /// else (native paths, and extra read roots on the host such as skill dirs).
 async fn read_bytes(path: &Path) -> Result<Vec<u8>, ToolFailure> {
+    read_bytes_capped(path, usize::MAX).await
+}
+
+/// [`read_bytes`] capped at `cap` bytes: only the first `cap` bytes of the
+/// file are transported (WSL reads a `head -c` prefix instead of piping the
+/// whole file). usize::MAX reads everything, as read_bytes always did.
+async fn read_bytes_capped(path: &Path, cap: usize) -> Result<Vec<u8>, ToolFailure> {
     match workspace::classify(path) {
         WorkspaceKind::Wsl { distro } => {
             let inner = wsl_inner(path, "read")?;
-            wsl_read_bytes(&distro, &inner).await
+            if cap == usize::MAX {
+                wsl_read_bytes(&distro, &inner).await
+            } else {
+                wsl_read_bytes_capped(&distro, &inner, cap).await
+            }
         }
-        _ => tokio::fs::read(path)
-            .await
-            .map_err(|e| ToolFailure::Execution(format!("read {}: {e}", path.display()))),
+        _ => {
+            use tokio::io::AsyncReadExt as _;
+            let mut file = tokio::fs::File::open(path)
+                .await
+                .map_err(|e| ToolFailure::Execution(format!("read {}: {e}", path.display())))?;
+            let mut buf = Vec::new();
+            (&mut file)
+                .take(cap as u64)
+                .read_to_end(&mut buf)
+                .await
+                .map_err(|e| ToolFailure::Execution(format!("read {}: {e}", path.display())))?;
+            Ok(buf)
+        }
     }
 }
 
@@ -129,15 +167,38 @@ async fn wsl_run_collecting(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| ToolFailure::Execution(format!("wsl.exe spawn failed: {e}")))?;
-    child
-        .wait_with_output()
+    // kill_on_drop reaps the child when the timeout drops the wait future.
+    tokio::time::timeout(WSL_TOOL_TIMEOUT, child.wait_with_output())
         .await
+        .map_err(|_| {
+            ToolFailure::Execution(format!(
+                "wsl.exe timed out after {}s: {}",
+                WSL_TOOL_TIMEOUT.as_secs(),
+                argv.join(" ")
+            ))
+        })?
         .map_err(|e| ToolFailure::Execution(format!("wsl.exe wait failed: {e}")))
 }
 
 async fn wsl_read_bytes(distro: &str, inner: &str) -> Result<Vec<u8>, ToolFailure> {
     let argv = wsl_read_argv(distro, inner);
     let out = wsl_run_collecting(&argv, std::process::Stdio::null()).await?;
+    decode_wsl_base64(&out, inner, distro)
+}
+
+async fn wsl_read_bytes_capped(distro: &str, inner: &str, cap: usize) -> Result<Vec<u8>, ToolFailure> {
+    let argv = wsl_read_prefix_argv(distro, inner, cap);
+    let out = wsl_run_collecting(&argv, std::process::Stdio::null()).await?;
+    decode_wsl_base64(&out, inner, distro)
+}
+
+/// Shared decode for the two WSL read transports: status check plus the
+/// whitespace-stripped base64 decode.
+fn decode_wsl_base64(
+    out: &std::process::Output,
+    inner: &str,
+    distro: &str,
+) -> Result<Vec<u8>, ToolFailure> {
     if !out.status.success() {
         return Err(ToolFailure::Execution(format!(
             "read {inner} (distro {distro}): {}",
@@ -165,24 +226,35 @@ async fn wsl_write_bytes(distro: &str, inner: &str, content: &[u8]) -> Result<()
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| ToolFailure::Execution(format!("wsl.exe spawn failed: {e}")))?;
-    {
-        let mut stdin = child.stdin.take().ok_or_else(|| {
-            ToolFailure::Execution("wsl.exe stdin unavailable".to_string())
-        })?;
-        stdin
-            .write_all(content)
+    // kill_on_drop reaps the child when the timeout drops the write+wait
+    // future mid-flight.
+    let out = tokio::time::timeout(WSL_TOOL_TIMEOUT, async {
+        {
+            let mut stdin = child.stdin.take().ok_or_else(|| {
+                ToolFailure::Execution("wsl.exe stdin unavailable".to_string())
+            })?;
+            stdin
+                .write_all(content)
+                .await
+                .map_err(|e| ToolFailure::Execution(format!("wsl.exe stdin write failed: {e}")))?;
+            stdin
+                .shutdown()
+                .await
+                .map_err(|e| ToolFailure::Execution(format!("wsl.exe stdin close failed: {e}")))?;
+            // Dropping the handle delivers EOF so `cat` can finish.
+        }
+        child
+            .wait_with_output()
             .await
-            .map_err(|e| ToolFailure::Execution(format!("wsl.exe stdin write failed: {e}")))?;
-        stdin
-            .shutdown()
-            .await
-            .map_err(|e| ToolFailure::Execution(format!("wsl.exe stdin close failed: {e}")))?;
-        // Dropping the handle delivers EOF so `cat` can finish.
-    }
-    let out = child
-        .wait_with_output()
-        .await
-        .map_err(|e| ToolFailure::Execution(format!("wsl.exe wait failed: {e}")))?;
+            .map_err(|e| ToolFailure::Execution(format!("wsl.exe wait failed: {e}")))
+    })
+    .await
+    .map_err(|_| {
+        ToolFailure::Execution(format!(
+            "wsl.exe write timed out after {}s: {inner} (distro {distro})",
+            WSL_TOOL_TIMEOUT.as_secs()
+        ))
+    })??;
     if !out.status.success() {
         return Err(ToolFailure::Execution(format!(
             "write {inner} (distro {distro}): {}",
@@ -213,6 +285,21 @@ fn wsl_read_argv(distro: &str, inner: &str) -> Vec<String> {
         "--exec".to_string(),
         "base64".to_string(),
         inner.to_string(),
+    ]
+}
+
+/// WSL capped-read argv: only the first `cap` bytes are piped —
+/// `wsl.exe -d <d> --exec sh -c 'head -c <cap> <path> | base64'`. A
+/// multi-GB file must not ride the base64 transport for a paginated read.
+fn wsl_read_prefix_argv(distro: &str, inner: &str, cap: usize) -> Vec<String> {
+    vec![
+        "wsl.exe".to_string(),
+        "-d".to_string(),
+        distro.to_string(),
+        "--exec".to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        format!("head -c {cap} {} | base64", single_quote(inner)),
     ]
 }
 
@@ -268,7 +355,6 @@ impl Tool for ReadFile {
         )?;
         let display = path.display().to_string();
         let mut meta = serde_json::json!({ "card": "read", "path": display });
-
         // Image file: attach as a data URI (provider serialization turns it
         // into the right content block; the turn drops it when the route has
         // no image modality).
@@ -277,11 +363,21 @@ impl Tool for ReadFile {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        let bytes = read_bytes(&path).await?;
+        // Images and edits read the whole file; the model-facing text read
+        // is capped — only the file's head reaches memory and the wire.
+        let cap = self.max_read_bytes;
+        let bytes = read_bytes_capped(&path, cap).await?;
+        let truncated = bytes.len() >= cap;
+        if truncated {
+            meta["truncated"] = serde_json::json!(true);
+        }
         if let Some(mime) = image_mime(&ext) {
             let kb = bytes.len() / 1024;
             meta["size_kb"] = serde_json::json!(kb);
-            if bytes.len() > MAX_IMAGE_BYTES {
+            // The read cap must stay above the image limit; if a custom cap
+            // ever cut an image, reporting it too-large beats attaching a
+            // half image.
+            if truncated || bytes.len() > MAX_IMAGE_BYTES {
                 return Ok(ToolOutcome {
                     artifact: None,
                     images: Vec::new(),
@@ -335,10 +431,17 @@ impl Tool for ReadFile {
             meta["lang"] = serde_json::json!(ext);
         }
         meta["total_lines"] = serde_json::json!(total_lines);
+        let mut body = page.join("\n");
+        if truncated {
+            body.push_str(&format!(
+                "\n[truncated: only the first {} MB of this file were read — the rest exists but is not shown]",
+                cap / (1024 * 1024)
+            ));
+        }
         Ok(ToolOutcome {
             artifact: None,
             images: Vec::new(),
-            output_for_model: truncate(page.join("\n")),
+            output_for_model: truncate(body),
             ui_summary: None,
             diff: None,
             meta: Some(meta),
@@ -506,6 +609,64 @@ mod tests {
         );
         assert_eq!(single_quote("plain"), "'plain'");
         assert_eq!(single_quote("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn wsl_read_prefix_argv_shapes() {
+        assert_eq!(
+            wsl_read_prefix_argv("Ubuntu", "/home/me/big.bin", 4096),
+            vec![
+                "wsl.exe",
+                "-d",
+                "Ubuntu",
+                "--exec",
+                "sh",
+                "-c",
+                "head -c 4096 '/home/me/big.bin' | base64"
+            ]
+        );
+        assert_eq!(
+            wsl_read_prefix_argv("Ubuntu", "/home/a'b/f.txt", 8)[6],
+            "head -c 8 '/home/a'\\''b/f.txt' | base64"
+        );
+    }
+
+    #[test]
+    fn capped_read_returns_only_the_prefix_and_run_reports_truncation() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("guild-read-cap-{}", std::process::id()));
+            tokio::fs::create_dir_all(&dir).await.unwrap();
+            let path = dir.join("big.txt");
+            let line = "x".repeat(99) + "\n";
+            let full = line.repeat(300); // 30_000 bytes, cap 10_000
+            tokio::fs::write(&path, &full).await.unwrap();
+
+            let prefix = read_bytes_capped(&path, 10_000).await.unwrap();
+            assert_eq!(prefix.len(), 10_000);
+            assert_eq!(String::from_utf8_lossy(&prefix[..100]), &full[..100]);
+            // Uncapped read is unchanged.
+            assert_eq!(read_bytes(&path).await.unwrap(), full.as_bytes());
+
+            // The tool surfaces the truncation to the model and in meta.
+            let out = ReadFile {
+                extra_read_roots: Vec::new(),
+                max_read_bytes: 10_000,
+            }
+            .run(&dir, serde_json::json!({"path": "big.txt", "limit": 5}))
+            .await
+            .unwrap();
+            assert!(out.meta.as_ref().unwrap()["truncated"].as_bool().unwrap());
+            assert!(out.output_for_model.contains("[truncated:"));
+            // Small files are not flagged.
+            tokio::fs::write(dir.join("small.txt"), &b"tiny\n"[..]).await.unwrap();
+            let out = ReadFile::default()
+                .run(&dir, serde_json::json!({"path": "small.txt"}))
+                .await
+                .unwrap();
+            assert!(out.meta.as_ref().unwrap().get("truncated").is_none());
+            tokio::fs::remove_dir_all(&dir).await.ok();
+        });
     }
 
     #[test]
