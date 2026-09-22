@@ -11,9 +11,9 @@ The client is a **single executable** (`guild-desktop` crate → shipped as
 
 | Invocation | Behaviour |
 |---|---|
-| `Guild` (no args) | GUI (Tauri window); attaches to the per-user daemon (spawns it detached if missing) |
+| `Guild` (no args) | GUI (Tauri window); hosts the daemon **in-process** — the same engine, socket, and machine link live in the GUI process itself; no separate daemon process is spawned or attached to |
 | `Guild daemon` | the per-user daemon: shared engine, survives client exit, the only session-token route to the server |
-| `Guild daemon install [--linger]` | Linux: install/upgrade the daemon as a systemd **user unit** (`guild-daemon.service`, `Restart=on-failure`, enabled at login); retires an unsupervised daemon first; `--linger` best-effort enables `loginctl enable-linger` for headless hosts |
+| `Guild daemon install [--linger]` | Linux headless hosts: install/upgrade the daemon as a systemd **user unit** (`guild-daemon.service`, `Restart=always` + `RestartSec=5s`, enabled at login); refuses while a Guild app is running (the GUI hosts its daemon in-process — install is headless-only for now, see PLAN.md); verifies the retired daemon's socket actually released before `enable --now` and that the unit's daemon is reachable after; `--linger` best-effort enables `loginctl enable-linger` |
 | `Guild daemon status` / `uninstall` | unit state / stop + remove the unit |
 | `Guild login --url U --email E --password P` | CLI verb via the daemon; the daemon validates and persists the session to `~/.config/guild/token.json` |
 | `Guild chat --model M "text"` | CLI verb via the daemon (streams the reply through it) |
@@ -28,11 +28,14 @@ on Linux/macOS, named pipe on Windows) and bridges the same line-delimited
 JSON-RPC. The daemon binary path can be overridden for development with
 `GUILD_DAEMON_BIN`, and the socket/pipe path with `GUILD_DAEMON_SOCKET`.
 
-Daemon lifecycle: spawned detached on first client attach (own process
-group, survives GUI closure), owns the session and all agent runs, shared
-by every client window and CLI verb, exits only on `daemon.shutdown` —
-which a version-mismatched client invokes on attach (handshake on
-`daemon.hello` carries the daemon's build version).
+Daemon lifecycle: the GUI hosts the daemon in-process (single-process
+model — no spawn fallback); on Linux a headless host runs it as the
+`guild-daemon.service` user unit instead (`Guild daemon install`). Either
+way one engine owns the session and all agent runs, is shared by every
+client connection, and exits on `daemon.shutdown` — which a
+version-mismatched client invokes on attach (handshake on `daemon.hello`
+carries the daemon's build version; under the unit, `Restart=always`
+re-spawns the daemon 5 s later).
 
 Documented exception to the one-cloud-route rule: the Tauri updater plugin
 in the GUI fetches `/api/v1/updates/latest.json` + release artifacts
