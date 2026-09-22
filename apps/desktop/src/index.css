@@ -12,6 +12,22 @@ body,
 
 body {
   overscroll-behavior: none;
+  /* double-tap zoom off (pinch is blocked in index.html for Safari) */
+  touch-action: manipulation;
   background-color: var(--background);
   color: var(--foreground);
+}
+
+/* Nothing in the shell may widen the document: a long unbroken token in a
+   message or a wide pill row must never turn into a horizontal page scroll. */
+html {
+  overflow-x: clip;
+}
+
+/* Touch devices: iOS Safari auto-zooms onto any focused input whose font
+   is under 16px — force the floor without touching desktop sizing. */
+@media (pointer: coarse) {
+  input, textarea, select {
+    font-size: max(16px, 1em) !important;
+  }
 }

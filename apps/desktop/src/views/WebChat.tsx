@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { applyMention, detectMention } from "../lib/skill-mention";
 import { daemonFs, listSkills } from "../lib/context";
 import Markdown, { Components } from "react-markdown";
@@ -502,7 +502,13 @@ function ThreadSkeleton() {
 
 /// Markdown body class shared by text blocks and tool-card excerpts.
 const MD_CLASS =
+  "[overflow-wrap:anywhere] " +
   "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc";
+// Long unbreakable tokens (inline code, URLs) must wrap inside the message
+// column, never widen it into a horizontal page scroll. overflow-wrap
+// inherits, so the one declaration at the top of MD_CLASS covers every
+// child; non-markdown blocks carry WRAP_ANYWHERE explicitly.
+const WRAP_ANYWHERE = "[overflow-wrap:anywhere]";
 
 /// GFM tables: block-level so wide tables scroll horizontally inside the
 /// chat column instead of squishing; cell padding keeps adjacent columns
@@ -598,7 +604,7 @@ function ReasoningFrame({ text, live }: { text: string; live: boolean }) {
     >
       {/* Full height in the page flow: the conversation pane owns
           scrolling, the block itself never clips or inner-scrolls. */}
-      <div className="whitespace-pre-wrap leading-relaxed text-muted-foreground">
+      <div className={`whitespace-pre-wrap leading-relaxed text-muted-foreground ${WRAP_ANYWHERE}`}>
         {text || "…"}
       </div>
     </Frame>
@@ -1340,6 +1346,45 @@ function ApprovalCard({ a, chatId }: { a: ApprovalBlock; chatId: string | null }
   );
 }
 
+/// iOS Safari does not shrink the layout viewport when the keyboard opens —
+/// it overlays it and pans the page to reveal the focused input, dragging
+/// the fixed app shell (header included) off-screen. Pin the shell to the
+/// visual viewport while that state lasts: same top offset, same visible
+/// height, tracked live on every viewport resize/scroll. Android browsers
+/// either resize the layout viewport natively (interactive-widget=
+/// resizes-content) or report a shrunk visual viewport — both land here
+/// correctly; when no keyboard is detected the shell falls back to plain
+/// `fixed inset-0` (empty inline styles), so normal browsing is untouched.
+function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const el = ref.current;
+    if (!vv || !el) return;
+    const apply = () => {
+      const layoutH = document.documentElement.clientHeight;
+      const pinned = vv.height < layoutH - 60 || vv.offsetTop > 0;
+      if (!pinned) {
+        el.style.top = "";
+        el.style.height = "";
+        return;
+      }
+      el.style.top = `${Math.max(0, vv.offsetTop)}px`;
+      el.style.height = `${vv.height}px`;
+    };
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    window.addEventListener("orientationchange", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+      window.removeEventListener("orientationchange", apply);
+      el.style.top = "";
+      el.style.height = "";
+    };
+  }, [ref]);
+}
+
 /// Chat view backed by the org gateway. Browser and Tauri webview members
 /// render frames; the Tauri app process separately executes local tools.
 export default function WebChat({
@@ -1541,6 +1586,10 @@ export default function WebChat({
   const pane = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const ta = useRef<HTMLTextAreaElement>(null);
+  // The app shell root: pinned to the visual viewport while the on-screen
+  // keyboard is up (see useVisualViewportPin) so the header stays visible.
+  const shell = useRef<HTMLDivElement>(null);
+  useVisualViewportPin(shell);
   const loadSeq = useRef(0); // guards against stale chat switches landing last
   const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
 
@@ -2161,7 +2210,7 @@ export default function WebChat({
   );
 
   return (
-    <div className="fixed inset-0 flex bg-background text-foreground">
+    <div ref={shell} className="fixed inset-0 flex bg-background text-foreground">
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>
@@ -2272,7 +2321,7 @@ export default function WebChat({
         ) : (
           <div
             ref={pane}
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain"
             onScroll={() => {
               const el = pane.current;
               if (!el) return;
@@ -2285,7 +2334,7 @@ export default function WebChat({
                 b.kind === "user" ? (
                   <div
                     key={b.key}
-                    className="ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5"
+                    className={`ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 ${WRAP_ANYWHERE}`}
                   >
                     {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
                     {b.attachments && b.attachments.length > 0 && (
@@ -2481,8 +2530,8 @@ export default function WebChat({
               disabled={models !== null && !model}
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none"
             />
-            <div className="flex items-center justify-between gap-2 px-1 pt-1">
-              <div className="flex items-center gap-1">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-1 pt-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
                 <Button
                   size="icon"
                   variant="ghost"
@@ -2605,11 +2654,11 @@ export default function WebChat({
               <span className="text-muted-foreground">no models</span>
             )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 {chatId && ctx && <ContextGauge ctx={ctx} />}
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
-                    <SelectTrigger className="h-7 w-auto gap-1 border-none bg-secondary px-2 shadow-none">
+                    <SelectTrigger className="h-7 w-auto min-w-0 max-w-40 gap-1 border-none bg-secondary px-2 shadow-none">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

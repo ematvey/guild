@@ -9,8 +9,15 @@
         document.documentElement.classList.toggle("dark", dark);
       } catch (e) { document.documentElement.classList.add("dark"); }
     </script>
+    <script>
+      // iOS Safari ignores user-scalable=no: block its page-zoom pinch
+      // gestures directly, or a pinch leaves the page zoomed and pannable
+      // horizontally (gesturestart/change are Safari-specific events).
+      document.addEventListener("gesturestart", function (e) { e.preventDefault(); });
+      document.addEventListener("gesturechange", function (e) { e.preventDefault(); });
+    </script>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Guild</title>
       <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#0a0a0a" />
