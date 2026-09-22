@@ -59,6 +59,15 @@ impl RoutineRunner {
             allow_http_tool: std::env::var("GUILD_WORKER_ALLOW_HTTP")
                 .map(|v| v == "1" || v == "true")
                 .unwrap_or(false),
+            http_tool_allow_hosts: std::env::var("GUILD_HTTP_TOOL_ALLOW_HOSTS")
+                .map(|v| {
+                    v.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }
@@ -480,26 +489,6 @@ struct ApprovalResolution {
     approved: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
-}
-
-/// Pure dedupe core of `complete_approval`: a present state key (the
-/// awakeable id) yields resolve+clear; an absent key (first answer already
-/// won, timed out, or nobody waiting) is a no-op. The handler performs the
-/// clear itself — virtual-object serialization makes read+clear atomic
-/// against other decision deliveries.
-fn approval_on_decision(
-    pending: Option<String>,
-    req: ApprovalReq,
-) -> Option<(String, ApprovalResolution)> {
-    pending.map(|awakeable_id| {
-        (
-            awakeable_id,
-            ApprovalResolution {
-                approved: req.approved,
-                reason: req.reason,
-            },
-        )
-    })
 }
 
 fn client_tool_names() -> &'static [&'static str] {
@@ -1595,7 +1584,6 @@ impl ChatRunner {
                 let model2 = req.model.clone();
                 let specs = tool_specs.clone();
                 let system2 = system.clone();
-                let chat_id = req.chat_id;
                 let tx_loop = tx.clone();
                 let buf_loop = text_buf.clone();
                 let think_loop = thinking_buf.clone();
@@ -1653,11 +1641,12 @@ impl ChatRunner {
                                             code: "provider".into(),
                                             message: e.to_string(),
                                         });
-                                        // Remove the broadcast entry or the chat
-                                        // keeps a zombie generation: attach
-                                        // streams would hang forever with the
-                                        // caret blinking on a dead thread.
-                                        state.generations.remove(chat_id);
+                                        // The generation registry entry stays: the
+                                        // uniform failure path below removes it on a
+                                        // terminal error, and an overflow retry streams
+                                        // through this same entry (removing here would
+                                        // detach the retried call's channel from every
+                                        // subscriber).
                                         HandlerError::from(TerminalError::new(format!(
                                             "provider error: {e}"
                                         )))
@@ -1773,8 +1762,10 @@ impl ChatRunner {
                                         code: "provider".into(),
                                         message: e.to_string(),
                                     });
-                                    // same zombie-generation cleanup as above
-                                    state.generations.remove(chat_id);
+                                    // The generation registry entry stays: the
+                                    // failure epilogue removes it on a terminal error,
+                                    // and an overflow retry keeps streaming through
+                                    // this same entry.
                                     return Err(TerminalError::new(format!("provider error: {e}"))
                                         .into());
                                 }
@@ -2125,9 +2116,11 @@ impl ChatRunner {
                         .await;
                 }
                 // Journaled: the turn failed — clear the spinner before the
-                // workflow ends (terminal error, no further steps run).
+                // workflow ends. The returned error is made terminal: the
+                // epilogue ran journaled ops after the failure point, so a
+                // handler-level retry must never replay past them.
                 set_generating_step!(ctx, state, req, false);
-                return Err(e);
+                return Err(TerminalError::new(format!("turn failed: {e:?}")).into());
         }
         // Every Ok ending already delivered its Done frame: a final answer
         // sent it inline, a stop lands in the stop epilogue below.
@@ -2292,7 +2285,10 @@ impl ChatRunner {
     /// when it resumes. The resolution must stay in this SHARED handler — a
     /// virtual object handler awaiting an awakeable holds the instance lock,
     /// so an exclusive wake handler would inbox behind the waiting turn
-    /// forever (the claim_approval deadlock, reverted).
+    /// forever (the claim_approval deadlock, PLAN.md 2026-09-14). The
+    /// 5-minute auto-deny is not a resolver invocation at all: the waiting
+    /// turn races the awakeable against its own durable timer (approval
+    /// gate), so user-vs-timer is decided journal-side, exactly once.
     #[handler]
     async fn complete_approval(
         &self,
@@ -2322,35 +2318,6 @@ impl ChatRunner {
                 reason: req.reason,
             }),
         );
-        Ok(())
-    }
-
-    /// Write-side claim of an approval decision: serialized against every
-    /// other invocation on this chat object, so read+clear here is the
-    /// whole critical section for the user-vs-timer decision race.
-    #[handler]
-    async fn claim_approval(
-        &self,
-        ctx: ObjectContext<'_>,
-        req: Json<ApprovalReq>,
-    ) -> HandlerResult<()> {
-        let req = req.into_inner();
-        let key = approval_state_key(&req.call_id);
-        tracing::warn!("approval-flow: claim_approval entered call={}", req.call_id);
-        let pending: Option<String> = ctx
-            .get(key.as_str())
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let Some((awakeable_id, resolution)) = approval_on_decision(pending, req) else {
-            tracing::warn!("approval-flow: claim_approval no-op (pending absent)");
-            return Ok(()); // first answer already won, or nobody waiting
-        };
-        tracing::warn!(
-            "approval-flow: claim_approval resolving awakeable {}",
-            awakeable_id
-        );
-        ctx.clear(&key);
-        ctx.resolve_awakeable(&awakeable_id, Json(resolution));
         Ok(())
     }
 
@@ -2677,31 +2644,36 @@ pub(crate) async fn approval_gate(
             })
             .await?;
 
-            // Journaled awakeable + durable timeout: the first decision (a
-            // user, or the auto-deny timer) claims the state key atomically
-            // in complete_approval and resolves the promise; the loser sees
-            // no key and no-ops. Resolution replays from the journal like
-            // the client-tool result.
+            // Journaled awakeable + durable timeout: the decision is a
+            // two-way durable race inside this waiter — the user's shared
+            // resolver (complete_approval) completes the awakeable, the
+            // 5-minute auto-deny is a durable timer the waiter itself
+            // selects on. Exactly one resolution reaches the turn, decided
+            // by journal order; when both land, the awakeable (user
+            // decision) wins. The timer is NOT a delayed resolver invocation:
+            // an exclusive claim handler on this object inboxes behind the
+            // waiting turn forever (the instance lock is held across the
+            // awakeable await — see complete_approval), so no decision path
+            // may claim through one.
             let (awakeable_id, promise) = ctx.awakeable::<Json<ApprovalResolution>>();
             ctx.set(&approval_state_key(&call.id), awakeable_id.clone());
-            ctx.object_client::<ChatRunnerClient>(&chat_id.to_string())
-                .complete_approval(Json(ApprovalReq {
-                    call_id: call.id.clone(),
-                    approved: false,
-                    reason: Some("timed out awaiting approval".to_string()),
-                }))
-                .send_after(APPROVAL_TIMEOUT);
             // Stop responsiveness: a stop while the gate is pending resolves
             // it as denied so the turn resumes and ends at the next
             // journaled cancel check. Spawned outside journaled sections on
             // purpose: a replay re-spawns the watcher.
             spawn_stop_approval_watcher(state, chat_id, call.id.clone());
 
-            let decision: ApprovalResolution = match promise.await {
-                Ok(Json(d)) => d,
-                Err(t) => ApprovalResolution {
+            let decision: ApprovalResolution = restate_sdk::select! {
+                resolved = promise => match resolved {
+                    Ok(Json(d)) => d,
+                    Err(t) => ApprovalResolution {
+                        approved: false,
+                        reason: Some(format!("approval failed: {t}")),
+                    },
+                },
+                _ = ctx.sleep(APPROVAL_TIMEOUT) => ApprovalResolution {
                     approved: false,
-                    reason: Some(format!("approval failed: {t}")),
+                    reason: Some("timed out awaiting approval".to_string()),
                 },
             };
             ctx.clear(&approval_state_key(&call.id));
@@ -4293,31 +4265,6 @@ mod tests {
         assert_eq!(msgs[5].role, "tool");
         assert_eq!(msgs[5].tool_call_id.as_deref(), Some("c1"));
         assert_eq!(msgs[5].content, "fn main() {}");
-    }
-
-    #[test]
-    fn complete_approval_dedupe_first_answer_wins() {
-        // Absent key (already decided / timed out / not waiting): no-op.
-        let req = ApprovalReq {
-            call_id: "c".into(),
-            approved: true,
-            reason: None,
-        };
-        assert!(approval_on_decision(None, req.clone()).is_none());
-        // Present key: the awakeable resolves with the decision.
-        let (id, decision) = approval_on_decision(Some("awakeable-1".into()), req.clone()).unwrap();
-        assert_eq!(id, "awakeable-1");
-        assert!(decision.approved);
-        assert_eq!(decision.reason, None);
-        // A denied decision carries its reason through.
-        let denied = ApprovalReq {
-            call_id: "c".into(),
-            approved: false,
-            reason: Some("no".into()),
-        };
-        let (_, decision) = approval_on_decision(Some("awakeable-2".into()), denied).unwrap();
-        assert!(!decision.approved);
-        assert_eq!(decision.reason.as_deref(), Some("no"));
     }
 
     // ---- compaction pure parts (phase 3, design §C) ----
