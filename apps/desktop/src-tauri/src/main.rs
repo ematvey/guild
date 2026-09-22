@@ -3,7 +3,8 @@
 //! - `daemon` → the per-user daemon (shared engine, survives client exit;
 //!   the GUI re-executes itself with this argument on first attach)
 //! - `login` / `chat` / `publish` / `install` / `verify` → headless CLI
-//!   (cloud-touching verbs go through the daemon)
+//!   (cloud-touching verbs go through the daemon); `login` takes either
+//!   `--url/--email/--password` or `--token <pairing-code>`
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(all(windows, not(debug_assertions)))]
@@ -48,7 +49,7 @@ fn main() -> anyhow::Result<()> {
         Some("install") => guild_app_server::cli::cmd_install(&args[1..]),
         Some("verify") => guild_app_server::cli::cmd_verify(&args[1..]),
         Some(other) => anyhow::bail!(
-            "unknown subcommand {other:?}; expected none (GUI), daemon, login, chat, publish, install, or verify"
+            "unknown subcommand {other:?}; expected none (GUI), daemon, login [--token CODE | --url U --email E --password P], chat, publish, install, or verify"
         ),
     }
 }

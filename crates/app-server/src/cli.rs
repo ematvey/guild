@@ -23,15 +23,22 @@ fn this_bin() -> anyhow::Result<PathBuf> {
 }
 
 pub fn cmd_login(args: &[String]) -> anyhow::Result<()> {
-    let url = flag(args, "--url")?;
-    let email = flag(args, "--email")?;
-    let password = flag(args, "--password")?;
     let mut client = DaemonClient::attach(&this_bin()?)?;
+    let res = match flag(args, "--token").or_else(|_| flag(args, "--code")) {
+        // Pairing code (web-issued `g1|<url>|<secret>`): the code carries the
+        // server URL itself, so --url is not needed.
+        Ok(code) => client.call("pair", json!({"code": code}))?,
+        Err(_) => {
+            let url = flag(args, "--url")?;
+            let email = flag(args, "--email")?;
+            let password = flag(args, "--password")?;
+            client.call(
+                "login",
+                json!({"base_url": url, "email": email, "password": password}),
+            )?
+        }
+    };
     // the daemon validates, stores the session and keeps it in memory
-    let res = client.call(
-        "login",
-        json!({"base_url": url, "email": email, "password": password}),
-    )?;
     println!(
         "logged in as {}",
         res["user"]["email"].as_str().unwrap_or("?")
