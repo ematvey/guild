@@ -3166,6 +3166,7 @@ version = "0.5.16"
 dependencies = [
  "anyhow",
  "axum",
+ "dirs",
  "ed25519-dalek",
  "futures",
  "guild-app-server",
