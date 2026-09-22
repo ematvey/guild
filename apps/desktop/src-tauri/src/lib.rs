@@ -719,42 +719,37 @@ async fn ws_session(
             }
             incoming = receive_ws_message(&mut socket_rx, &outbound) => {
                 match incoming {
-                    Ok(message) => match message {
-                            WsServerMsg::LiveFrame { chat_id, machine_id: frame_machine_id, event, .. } => {
+                    Ok(text) => match classify_member_frame(&text) {
+                            MemberFrame::LiveFrame { chat_id, machine_id: frame_machine_id, event } => {
                                 let data = websocket_frame_data(chat_id, frame_machine_id, event, None);
                                 if let Err(error) = handle_app_frame(state, app, &data).await {
                                     ipc_trace("link", &format!("frame error: {error}"));
                                 }
                             }
-                            WsServerMsg::ChatStatus { chat_id, generating } => {
+                            MemberFrame::ChatStatus { chat_id, generating } => {
                                 let _ = app.emit("chat-status", serde_json::json!({
                                     "chat_id": chat_id,
                                     "generating": generating,
                                 }));
                             }
-                            // Members never receive dispatches (the executor
-                            // role is the daemon's machine link); the arm
-                            // keeps the match exhaustive.
-                            WsServerMsg::ToolDispatch { .. } => {}
-                            WsServerMsg::OrgEvent { event } => {
+                            MemberFrame::OrgEvent { event } => {
                                 let _ = app.emit("org-event", event);
                             }
-                            WsServerMsg::Displaced => break Err(LinkError::Displaced),
-                            WsServerMsg::AuthRequired => break Err(LinkError::AuthRequired),
-                            WsServerMsg::Error { message } => {
-                                ipc_trace("link", &format!("server error: {message}"));
-                            }
-                            WsServerMsg::Hello => {
+                            MemberFrame::Hello => {
                                 *connected = true;
                                 publish_presence(state, app, serde_json::json!({ "connected": true }));
                             }
-                            WsServerMsg::ThreadList { .. } => { bootstrapped = true; }
-                            WsServerMsg::ThreadState { .. }
-                            | WsServerMsg::SyncBegin { .. }
-                            | WsServerMsg::SyncDone { .. } => {}
-                            // Control-plane requests go to the daemon's
-                            // executor link, never to the GUI's member socket.
-                            WsServerMsg::MachineRequest { .. } => {}
+                            MemberFrame::ThreadList => { bootstrapped = true; }
+                            MemberFrame::Error { message } => {
+                                ipc_trace("link", &format!("server error: {message}"));
+                            }
+                            MemberFrame::Displaced => break Err(LinkError::Displaced),
+                            MemberFrame::AuthRequired => break Err(LinkError::AuthRequired),
+                            // State/display frames, dispatches (the executor
+                            // role is the daemon's machine link), unknown
+                            // variants, and unparseable text: ignored, the
+                            // link survives server protocol drift.
+                            MemberFrame::Other => {}
                     },
                     Err(error) => break Err(error),
                 }
@@ -768,10 +763,85 @@ async fn ws_session(
     result
 }
 
+/// The member-relevant subset of `WsServerMsg`, extracted by tag-peeking
+/// the raw JSON first: the member link's liveness must not depend on the
+/// display event vocabulary (`StreamEvent` gains variants regularly, and
+/// member sockets receive the same live feed as machine sockets). Only the
+/// frames the member acts on are parsed typed; everything else — state
+/// frames, dispatches, unknown variants, unparseable text — is ignored.
+enum MemberFrame {
+    LiveFrame {
+        chat_id: uuid::Uuid,
+        machine_id: Option<String>,
+        event: protocol::api::StreamEvent,
+    },
+    ChatStatus {
+        chat_id: uuid::Uuid,
+        generating: bool,
+    },
+    OrgEvent {
+        event: Value,
+    },
+    Hello,
+    ThreadList,
+    Error {
+        message: String,
+    },
+    Displaced,
+    AuthRequired,
+    /// Anything the member does not act on: state/sync frames, tool
+    /// dispatches, machine requests, frames with an unknown `type` tag,
+    /// frames whose typed parse fails (a display frame carrying a newer
+    /// server's `StreamEvent` variant), and non-JSON text. All ignored.
+    Other,
+}
+
+fn classify_member_frame(text: &str) -> MemberFrame {
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return MemberFrame::Other;
+    };
+    let tag = value
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default()
+        .to_string();
+    match tag.as_str() {
+        "live_frame" | "chat_status" | "org_event" | "hello" | "thread_list" | "error" => {
+            match serde_json::from_value::<WsServerMsg>(value) {
+                Ok(WsServerMsg::LiveFrame { chat_id, machine_id, event, .. }) => {
+                    MemberFrame::LiveFrame { chat_id, machine_id, event }
+                }
+                Ok(WsServerMsg::ChatStatus { chat_id, generating }) => {
+                    MemberFrame::ChatStatus { chat_id, generating }
+                }
+                Ok(WsServerMsg::OrgEvent { event }) => MemberFrame::OrgEvent { event },
+                Ok(WsServerMsg::Hello) => MemberFrame::Hello,
+                Ok(WsServerMsg::ThreadList { .. }) => MemberFrame::ThreadList,
+                Ok(WsServerMsg::Error { message }) => MemberFrame::Error { message },
+                // A tag the member recognizes but a variant it does not act
+                // on (or drift inside it): ignore, the link survives.
+                Ok(_) => MemberFrame::Other,
+                // Tag matched but the payload did not: a display frame from a
+                // newer server (unknown `StreamEvent` variant) or drifted
+                // shape — log and keep the link, the member just skips it.
+                Err(_) => {
+                    ipc_trace("link", &format!("unparsed member frame: {tag}"));
+                    MemberFrame::Other
+                }
+            }
+        }
+        "displaced" => MemberFrame::Displaced,
+        "auth_required" => MemberFrame::AuthRequired,
+        // Known-ignored frames (thread_state, sync_begin, sync_done,
+        // tool_dispatch, machine_request) and unknown tags land here.
+        _ => MemberFrame::Other,
+    }
+}
+
 async fn receive_ws_message<S>(
     socket_rx: &mut S,
     outbound: &OutboundQueue,
-) -> Result<WsServerMsg, LinkError>
+) -> Result<String, LinkError>
 where
     S: futures::Stream<
             Item = Result<
@@ -786,8 +856,10 @@ where
             .map_err(|_| LinkError::Failed("socket read silence deadline".into()))?
         {
             Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                return serde_json::from_str(&text)
-                    .map_err(|error| LinkError::Failed(format!("server message: {error}")));
+                // Raw text: classification (and typed parsing of only the
+                // frames the member acts on) happens in the session loop, so
+                // an unknown server variant cannot tear the link down.
+                return Ok(text.to_string());
             }
             Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(payload))) => {
                 outbound.try_send_priority(WsMessage::Pong(payload))?;
@@ -1811,8 +1883,11 @@ mod tests {
             priority_tx,
             overflow: tokio::sync::watch::channel(false).0,
         };
-        let message = receive_ws_message(&mut stale, &outbound).await.unwrap();
-        assert!(matches!(message, WsServerMsg::Displaced));
+        let text = receive_ws_message(&mut stale, &outbound).await.unwrap();
+        assert!(matches!(
+            classify_member_frame(&text),
+            MemberFrame::Displaced
+        ));
         assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
         assert_eq!(fixture.state.hub.machine_connection("machine"), holder);
         server.abort();
@@ -1982,6 +2057,56 @@ mod tests {
         );
         let value: Value = serde_json::from_str(&data).unwrap();
         assert_eq!(value["workdir"], "\\\\wsl.localhost\\arch\\home\\me");
+    }
+
+    /// The tag-peek classifier parses only the member-relevant variants;
+    /// state frames, dispatches, unknown variants, and non-JSON text are all
+    /// Other — server protocol evolution cannot end the member session.
+    #[test]
+    fn member_classifier_ignores_state_unknown_and_malformed_frames() {
+        // A live frame carrying a `StreamEvent` variant this build does not
+        // know: a display frame, ignored — not a link teardown.
+        let future_live = serde_json::json!({
+            "type": "live_frame",
+            "chat_id": uuid::Uuid::nil(),
+            "generation_id": uuid::Uuid::nil(),
+            "seq": 1,
+            "event": {"type": "brand_new_stream_variant"}
+        });
+        for text in [
+            future_live.to_string(),
+            r#"{"type":"thread_state","chat_id":"00000000-0000-0000-0000-000000000000","seq":1,"events":[],"text":"","thinking":"","generating":false,"new_field":true}"#.to_string(),
+            r#"{"type":"tool_dispatch","chat_id":42}"#.to_string(),
+            r#"{"type":"machine_request","request_id":"r1","op":"fs_list","payload":{}}"#.to_string(),
+            "not json at all".to_string(),
+            r#"{"no_type_tag": true}"#.to_string(),
+        ] {
+            assert!(
+                matches!(classify_member_frame(&text), MemberFrame::Other),
+                "frame must be ignored, not fatal: {text}"
+            );
+        }
+        assert!(matches!(
+            classify_member_frame(r#"{"type":"displaced"}"#),
+            MemberFrame::Displaced
+        ));
+        assert!(matches!(
+            classify_member_frame(r#"{"type":"auth_required"}"#),
+            MemberFrame::AuthRequired
+        ));
+        let hello = classify_member_frame(r#"{"type":"hello"}"#);
+        assert!(matches!(hello, MemberFrame::Hello));
+        let status = classify_member_frame(
+            r#"{"type":"chat_status","chat_id":"00000000-0000-0000-0000-000000000000","generating":true}"#,
+        );
+        assert!(matches!(
+            status,
+            MemberFrame::ChatStatus { generating: true, .. }
+        ));
+        let live = classify_member_frame(
+            r#"{"type":"live_frame","chat_id":"00000000-0000-0000-0000-000000000000","generation_id":"00000000-0000-0000-0000-000000000000","seq":1,"event":{"type":"delta","content":"hi"}}"#,
+        );
+        assert!(matches!(live, MemberFrame::LiveFrame { .. }));
     }
 
     #[test]
