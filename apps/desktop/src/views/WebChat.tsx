@@ -1594,6 +1594,10 @@ export default function WebChat({
     });
   };
   const [busy, setBusy] = useState(false);
+  // A "normal" send's HTTP round trip is in flight: onThreadList consults
+  // this and keeps the optimistic busy instead of lowering it from a list
+  // push that predates the server's generating flag.
+  const sendingRef = useRef(false);
   // Latest busy/attaching/threadLoading values for stable-ref consumers (the
   // deploy-freshness poll below must not read stale closure state).
   const loadStateRef = useRef({ busy: false, attaching: false, threadLoading: false });
@@ -1976,7 +1980,12 @@ export default function WebChat({
       onThreadList: (nextChats) => {
         setChats(nextChats);
         setChatStatus(statusFromThreads(nextChats));
-        setBusy(!!nextChats.find(chat => chat.id === openChatIdRef.current)?.generating);
+        // A send's HTTP round trip is still in flight: the server's
+        // generating flag is not set yet, so a list push here must not
+        // clear the optimistic busy — a second send could race the first.
+        if (!sendingRef.current) {
+          setBusy(!!nextChats.find(chat => chat.id === openChatIdRef.current)?.generating);
+        }
         setAttaching(false);
       },
       // Sequenced ThreadState owns busy state; older status notifications cannot override it.
@@ -2053,7 +2062,10 @@ export default function WebChat({
     if (mode === "normal" && generating) return;
     const mySeq = loadSeq.current; // ignores results after a chat switch
     const sentAt = Date.now();
-    if (mode === "normal") setBusy(true); // queue/steer: the spinner is already on
+    if (mode === "normal") {
+      setBusy(true); // queue/steer: the spinner is already on
+      sendingRef.current = true;
+    }
     setPrompt("");
     if (ta.current) ta.current.style.height = "auto";
     // Focus stays in the composer after send. Scheduled after the pending
@@ -2079,8 +2091,17 @@ export default function WebChat({
         .blocks,
     );
     let cid = chatId;
+    let createError: unknown = null;
     if (!cid) {
-      cid = await createChat(text.slice(0, 48), pickedProjectRef.current?.id ?? null);
+      try {
+        cid = await createChat(text.slice(0, 48), pickedProjectRef.current?.id ?? null);
+      } catch (e) {
+        // A fetch rejection (offline, TLS, server down) takes the same path
+        // as an HTTP failure below — the rejection must not escape send():
+        // its void callers would leave the composer busy forever with an
+        // unresolved optimistic block.
+        createError = e;
+      }
       if (cid && loadSeq.current === mySeq) {
         // Move the URL to the new thread without losing the optimistic
         // pending marker; the chatId effect still requests socket reconcile.
@@ -2099,9 +2120,18 @@ export default function WebChat({
     }
     if (!cid) {
       if (loadSeq.current === mySeq) {
-        setBlocks(reducerRef.current.appendError("chat create failed").blocks);
+        setBlocks(
+          reducerRef.current
+            .appendError(
+              createError instanceof Error
+                ? `chat create failed: ${createError.message}`
+                : "chat create failed",
+            )
+            .blocks,
+        );
         setBusy(false);
       }
+      if (mode === "normal") sendingRef.current = false;
       return;
     }
     reducerRef.current.bindPending(cid, sentKey);
@@ -2190,7 +2220,10 @@ export default function WebChat({
       }
     } finally {
       // Queue/steer never own the busy flag — the running turn does.
-      if (!keepBusyThroughFinally && mode === "normal") setBusy(false);
+      if (mode === "normal") {
+        sendingRef.current = false; // the round trip settled; list pushes may lower busy from the server's flag again
+        if (!keepBusyThroughFinally) setBusy(false);
+      }
     }
   };
 
