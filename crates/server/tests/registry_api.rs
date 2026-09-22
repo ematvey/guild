@@ -14,8 +14,9 @@ fn demo_bundle(slug: &str, version: &str) -> Vec<u8> {
 /// republish vector: identical manifest.json, swapped bundle content.
 fn demo_bundle_marker(slug: &str, version: &str, marker: &str) -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!(
-        "guild-reg-api-{slug}-{version}-{}",
-        std::process::id()
+        "guild-reg-api-{slug}-{version}-{}-{}",
+        std::process::id(),
+        Uuid::now_v7().simple(),
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join(slug)).unwrap();
