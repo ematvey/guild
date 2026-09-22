@@ -703,6 +703,9 @@ async fn ws_session(
                             WsServerMsg::ThreadState { .. }
                             | WsServerMsg::SyncBegin { .. }
                             | WsServerMsg::SyncDone { .. } => {}
+                            // Control-plane requests go to the daemon's
+                            // executor link, never to the GUI's member socket.
+                            WsServerMsg::MachineRequest { .. } => {}
                     },
                     Err(error) => break Err(error),
                 }
