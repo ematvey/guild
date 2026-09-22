@@ -374,13 +374,10 @@ async fn windows_accept_loop(
     shared: Shared,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    use tokio::net::windows::named_pipe::ServerOptions;
     // Named pipes need one pre-created server instance per pending client:
     // create instance N, await its connect, create instance N+1, serve N.
     let pipe_name = path.to_string_lossy().into_owned();
-    let mut server = ServerOptions::new()
-        .first_pipe_instance(true)
-        .create(&pipe_name)?;
+    let mut server = create_pipe_server_instance(&pipe_name, true)?;
     loop {
         crate::dtrace::dtrace("accept: waiting for client (listening instance ready)");
         tokio::select! {
@@ -394,7 +391,7 @@ async fn windows_accept_loop(
                 connected.context("daemon pipe connect")?;
                 crate::dtrace::dtrace("accept: client connected to instance");
                 let client = server;
-                match ServerOptions::new().create(&pipe_name) {
+                match create_pipe_server_instance(&pipe_name, false) {
                     Ok(s) => {
                         crate::dtrace::dtrace("accept: next listening instance created");
                         server = s;
@@ -418,6 +415,135 @@ async fn windows_accept_loop(
                 });
             }
         }
+    }
+}
+
+/// One listening pipe instance, created with an explicit DACL limiting
+/// access to the current user + SYSTEM. The default pipe DACL grants
+/// Everyone read access, which on multi-user hosts turns the event stream
+/// (deltas, tool output) into a cross-user eavesdrop channel for any local
+/// account — the pipe name is derivable from the username. Tokio's
+/// ServerOptions cannot carry a security descriptor, so the raw
+/// CreateNamedPipeW call mirrors its defaults (duplex byte mode, overlapped,
+/// unlimited instances, 64 KiB buffers, remote clients rejected) and the
+/// handle is adopted as a tokio server. `first` sets
+/// FILE_FLAG_FIRST_PIPE_INSTANCE so the first instance cannot lose the pipe
+/// name to a squatter.
+#[cfg(windows)]
+fn create_pipe_server_instance(
+    pipe_name: &str,
+    first: bool,
+) -> anyhow::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+    use tokio::net::windows::named_pipe::NamedPipeServer;
+    use windows_sys::Win32::Foundation::{LocalFree, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+    use windows_sys::Win32::Security::{
+        PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
+    };
+    use windows_sys::Win32::System::Pipes::{
+        CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
+        PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    };
+
+    // P = protected DACL (no inherited ACEs); GA = generic all, for the
+    // creating user's SID and for SYSTEM only.
+    let sddl = format!("D:P(A;;GA;;;{})(A;;GA;;;SY)", current_user_sid()?);
+    let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut psd: PSID = std::ptr::null_mut();
+    let ok = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl_wide.as_ptr(),
+            windows_sys::Win32::Security::Authorization::SDDL_REVISION_1,
+            &mut psd,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 || psd.is_null() {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: psd as *mut SECURITY_DESCRIPTOR as *mut core::ffi::c_void,
+        bInheritHandle: 0,
+    };
+    let name_wide: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut open_mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | PIPE_REJECT_REMOTE_CLIENTS;
+    if first {
+        open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
+    }
+    let handle = unsafe {
+        CreateNamedPipeW(
+            name_wide.as_ptr(),
+            open_mode,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_UNLIMITED_INSTANCES,
+            65536,
+            65536,
+            0,
+            &sa,
+        )
+    };
+    unsafe { LocalFree(psd as *mut _) };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(unsafe { NamedPipeServer::from_raw_handle(handle) }?)
+}
+
+/// The current process token's user SID in SDDL string form — the DACL's
+/// grantee. Fails closed: no SID means no pipe instance is created.
+#[cfg(windows)]
+fn current_user_sid() -> anyhow::Result<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, PSID, TokenUser, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let result: anyhow::Result<String> = (|| {
+            // First call with no buffer returns the required size.
+            let mut len: u32 = 0;
+            let _ = GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+            if len == 0 {
+                anyhow::bail!("token user info: no size returned");
+            }
+            let mut buf = vec![0u8; len as usize];
+            if GetTokenInformation(
+                token,
+                TokenUser,
+                buf.as_mut_ptr() as *mut core::ffi::c_void,
+                len,
+                &mut len,
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            let tu = &*(buf.as_ptr() as *const TOKEN_USER);
+            let mut sid_str: *mut u16 = std::ptr::null_mut();
+            if ConvertSidToStringSidW(tu.User.Sid as PSID, &mut sid_str) == 0 || sid_str.is_null()
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            let mut out = String::new();
+            let mut i = 0usize;
+            while *sid_str.add(i) != 0 {
+                out.push(char::from_u32(u32::from(*sid_str.add(i))).unwrap_or('\u{FFFD}'));
+                i += 1;
+            }
+            LocalFree(sid_str as *mut _);
+            Ok(out)
+        })();
+        CloseHandle(token);
+        result
     }
 }
 

@@ -16,34 +16,73 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// Client-side IPC trace: one line per rpc step into %TEMP%, so a wedge can
-/// be diagnosed from the log without interactive debugging (the GUI's own
-/// console is not visible to us).
+/// Client-side IPC trace: one line per rpc step into the per-user cache dir
+/// (`dirs::cache_dir()/guild/`, owner-only, size-capped), so a wedge can be
+/// diagnosed from the log without interactive debugging (the GUI's own
+/// console is not visible to us). A fixed name in the shared temp dir would
+/// be world-readable and would grow without bound for a tray-resident app.
 pub fn ipc_trace(event: &str, detail: &str) {
+    let Some(dir) = dirs::cache_dir().map(|d| d.join("guild")) else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    ipc_trace_to(&dir.join("guild-rpc.log"), IPC_TRACE_MAX_BYTES, event, detail);
+}
+
+/// Size cap for the IPC trace: past it the file is truncated and restarted.
+const IPC_TRACE_MAX_BYTES: u64 = 1 << 20;
+
+fn ipc_trace_to(path: &std::path::Path, cap: u64, event: &str, detail: &str) {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let path = std::env::temp_dir().join("guild-rpc.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+    let truncate = std::fs::metadata(path)
+        .map(|m| m.len() > cap)
+        .unwrap_or(false);
+    let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
-        .append(true)
-        .open(&path)
+        .append(!truncate)
+        .truncate(truncate)
+        .write(true)
+        .open(path)
+    else {
+        return;
+    };
+    // Owner-only: the trace names rpc methods and traffic sizes of the
+    // logged-in user's session.
+    #[cfg(unix)]
     {
-        let _ = writeln!(f, "{ts} {event} {detail}");
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = f.metadata() {
+            let mut perms = meta.permissions();
+            if perms.mode() & 0o777 != 0o600 {
+                perms.set_mode(0o600);
+                let _ = f.set_permissions(perms);
+            }
+        }
     }
+    let _ = writeln!(f, "{ts} {event} {detail}");
 }
 
 /// Pending downloaded update, waiting for the user to restart.
 #[derive(Default)]
 pub struct UpdateState {
     pending: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
+    /// Last update-check start time. The webview invokes check_update_now on
+    /// every page load, so a reload storm must not hammer the update endpoint
+    /// or hold duplicate in-flight downloads — a check inside the interval is
+    /// a no-op (the 15-minute loop checks independently).
+    last_check: Mutex<Option<std::time::Instant>>,
 }
 
 /// Everything the webview rpc surface needs: the in-process engine
@@ -880,12 +919,10 @@ pub mod commands {
             .ok_or_else(|| "engine not initialized".to_string())?;
         let (engine, rd_out) = build_engine(&shared).map_err(|e| e.to_string())?;
         let engine = Arc::new(engine);
-        let handle = state
-            .handle
-            .lock()
-            .unwrap()
-            .clone()
-            .expect("app handle set at setup");
+        let handle = state.handle.lock().unwrap().clone();
+        let Some(handle) = handle else {
+            return Err("engine not initialized".to_string());
+        };
         start_engine_reader(handle, engine.clone(), rd_out);
         let mut guard = state.cell.lock().unwrap();
         if guard.is_none() {
@@ -1005,9 +1042,23 @@ pub mod commands {
     /// Directory listing for the path specifier: unfiltered (dotfiles
     /// included), dirs first, then files, each alphabetically. Works over
     /// `\\wsl.localhost\<distro>\…` UNC paths on Windows and plain paths
-    /// elsewhere.
+    /// elsewhere. Allowlisted: home dir and WSL distro roots only — an
+    /// unrestricted webview path would enumerate the whole host and, on
+    /// Windows, any crafted UNC path makes this process open an outbound
+    /// SMB connection (NTLM credential leak).
     #[tauri::command]
     pub async fn list_dir(path: String) -> Result<Vec<ListEntry>, String> {
+        let home = dirs::home_dir().ok_or_else(|| "no home directory".to_string())?;
+        list_dir_allowed(&path, &home)?;
+        if !path.starts_with("\\\\") {
+            // Plain-path branch: resolve the root through symlinks so a link
+            // under home cannot point the listing outside it. The WSL branch
+            // is governed by its prefix rule alone.
+            let canon = std::fs::canonicalize(&path).map_err(|e| format!("{path}: {e}"))?;
+            if !canon.starts_with(&home) {
+                return Err(format!("not browsable (outside home): {path}"));
+            }
+        }
         let (mut dirs, mut files): (Vec<ListEntry>, Vec<ListEntry>) = (Vec::new(), Vec::new());
         for entry in std::fs::read_dir(&path).map_err(|e| format!("{path}: {e}"))? {
             let Ok(entry) = entry else { continue };
@@ -1027,6 +1078,77 @@ pub mod commands {
         files.sort_by(|a, b| key(a).cmp(&key(b)));
         dirs.extend(files);
         Ok(dirs)
+    }
+
+    /// Pure allowlist for `list_dir`: the WSL distro roots
+    /// (`\\wsl.localhost\<distro>\…`) and the user's home directory. All
+    /// other UNC paths are rejected outright, plain paths must be absolute
+    /// and lexically inside home (a canonicalized re-check against symlinks
+    /// happens in `list_dir` itself). Configured project roots are not part
+    /// of this rule — the Rust process has no project store; the only
+    /// caller (the path specifier) browses WSL roots and home.
+    pub fn list_dir_allowed(path: &str, home: &Path) -> Result<(), String> {
+        if path.is_empty() {
+            return Err("empty path".to_string());
+        }
+        // UNC branch: only the WSL 9P shares are legitimate browse roots;
+        // any other UNC (e.g. \\host\share) is an NTLM-leak vector.
+        const WSL_PREFIX: &str = r"\\wsl.localhost\";
+        if path.starts_with(r"\\") {
+            if !path.starts_with(WSL_PREFIX) {
+                return Err(format!(
+                    "only \\\\wsl.localhost\\<distro>\\ paths may be browsed: {path}"
+                ));
+            }
+            let distro = path[WSL_PREFIX.len()..]
+                .split(['\\', '/'])
+                .next()
+                .unwrap_or("");
+            if distro.is_empty() {
+                return Err(format!("missing WSL distro in path: {path}"));
+            }
+            return Ok(());
+        }
+        // Drive-relative forms ("C:foo") and plain relatives are absolute-
+        // check bait: reject anything Path does not consider absolute.
+        let p = Path::new(path);
+        if !p.is_absolute() {
+            return Err(format!("path must be absolute: {path}"));
+        }
+        let norm = normalize_lexical(p);
+        // Case-insensitive comparison on Windows only: its paths are, its
+        // separators vary; elsewhere the filesystem is case-sensitive.
+        let (norm_str, home_str) = (norm.to_string_lossy(), home.to_string_lossy());
+        #[cfg(windows)]
+        let under = norm_str.len() >= home_str.len()
+            && norm_str[..home_str.len()].eq_ignore_ascii_case(&home_str)
+            && (norm_str.len() == home_str.len()
+                || norm_str[home_str.len()..].starts_with(['/', '\\']));
+        #[cfg(not(windows))]
+        let under = norm_str.starts_with(&*home_str)
+            && (norm_str.len() == home_str.len()
+                || norm_str[home_str.len()..].starts_with('/'));
+        if !under {
+            return Err(format!("not browsable (outside home): {path}"));
+        }
+        Ok(())
+    }
+
+    /// Lexical path cleanup: `.` dropped, `..` popped (root-relative pops at
+    /// the root are no-ops). No filesystem access — the symlink-resolving
+    /// canonicalize happens in the command.
+    fn normalize_lexical(path: &Path) -> PathBuf {
+        let mut out = PathBuf::new();
+        for comp in path.components() {
+            match comp {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    out.pop();
+                }
+                comp => out.push(comp.as_os_str()),
+            }
+        }
+        out
     }
 
     /// In-flight mirror catch-up for a webview opening (or reloading) a chat
@@ -1289,9 +1411,21 @@ async fn check_and_prepare_update(app: &AppHandle) {
 }
 
 /// On-demand update check: the webview invokes this on every page load
-/// (F5, navigation) so a fresh refresh always asks the server immediately.
+/// (F5, navigation) so a fresh refresh asks the server promptly — debounced
+/// to one check per interval so a reload storm cannot hammer the endpoint.
 #[tauri::command]
 async fn check_update_now(app: AppHandle) {
+    const MIN_INTERVAL: Duration = Duration::from_secs(60);
+    {
+        let state: State<UpdateState> = app.state();
+        let mut last = state.last_check.lock().unwrap();
+        if let Some(t) = *last {
+            if t.elapsed() < MIN_INTERVAL {
+                return;
+            }
+        }
+        *last = Some(std::time::Instant::now());
+    }
     check_and_prepare_update(&app).await;
 }
 
@@ -1309,6 +1443,12 @@ pub fn start_update_checker(app: AppHandle) {
             .expect("updater runtime");
         rt.block_on(async move {
             loop {
+                // The loop shares the debounce clock so a webview reload right
+                // after a scheduled check does not re-download immediately.
+                {
+                    let state: State<UpdateState> = app.state();
+                    *state.last_check.lock().unwrap() = Some(std::time::Instant::now());
+                }
                 check_and_prepare_update(&app).await;
                 // re-check every 15 minutes while the app is open
                 tokio::time::sleep(std::time::Duration::from_secs(15 * 60)).await;
@@ -1389,6 +1529,10 @@ pub fn run() {
             {
                 let state: State<EngineState> = app.state();
                 *state.shared.lock().unwrap() = Some(shared.clone());
+                // The engine-recovery path (start_engine) rebuilds the engine
+                // after a write failure dropped it; it needs the app handle
+                // for the event reader.
+                *state.handle.lock().unwrap() = Some(handle.clone());
             }
             {
                 let guild: State<Arc<GuildState>> = app.state();
@@ -1477,6 +1621,59 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_dir_allows_wsl_and_home_rejects_the_rest() {
+        let home = Path::new("/home/me");
+        // WSL distro roots (the path specifier's browse target).
+        assert!(commands::list_dir_allowed(r"\\wsl.localhost\Ubuntu\home\me\proj", home).is_ok());
+        assert!(commands::list_dir_allowed(r"\\wsl.localhost\Debian\", home).is_ok());
+        // Other UNC paths are rejected outright.
+        assert!(commands::list_dir_allowed(r"\\attacker-host\share", home).is_err());
+        assert!(commands::list_dir_allowed(r"\\wsl$\Ubuntu\tmp", home).is_err());
+        // Distro-less WSL prefix is malformed.
+        assert!(commands::list_dir_allowed(r"\\wsl.localhost\", home).is_err());
+        // Home subtree ok; everything else outside rejected.
+        assert!(commands::list_dir_allowed("/home/me/projects/x", home).is_ok());
+        assert!(commands::list_dir_allowed("/home/me", home).is_ok());
+        assert!(commands::list_dir_allowed("/etc", home).is_err());
+        assert!(commands::list_dir_allowed("/home/meet", home).is_err());
+        // Traversal is resolved lexically before the home check.
+        assert!(commands::list_dir_allowed("/home/me/../../etc", home).is_err());
+        assert!(commands::list_dir_allowed("/home/me/sub/../proj", home).is_ok());
+        // Relative and drive-relative forms rejected.
+        assert!(commands::list_dir_allowed("relative/dir", home).is_err());
+        assert!(commands::list_dir_allowed("C:Users\\me", home).is_err());
+        assert!(commands::list_dir_allowed("", home).is_err());
+    }
+
+    #[test]
+    fn ipc_trace_appends_then_truncates_at_cap() {
+        let dir = std::env::temp_dir().join(format!("guild-trace-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("trace.log");
+        ipc_trace_to(&path, 1000, "e1", "d1");
+        ipc_trace_to(&path, 1000, "e2", "d2");
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(body.lines().count(), 2);
+        assert!(body.contains("e1") && body.contains("e2"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // Past the cap the NEXT call truncates and restarts the file.
+        let big = "x".repeat(1200);
+        ipc_trace_to(&path, 1000, "big", &big);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
+        ipc_trace_to(&path, 1000, "fresh", "after-cap");
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(body.lines().count(), 1);
+        assert!(body.contains("fresh"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn parse_line_kinds() {
