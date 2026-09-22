@@ -1,10 +1,29 @@
 # Guild — current state of work
 
-Updated 2026-09-22 (pair carries machine id). Read this
+Updated 2026-09-22 (0.5.16: one Shared for webview + CLI daemon). Read this
 before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## 0.5.16: the GUI's CLI socket host shares the webview's Shared — 2026-09-22
+
+The "unknown machine" on fresh pairs persisted through 0.5.15. Root cause
+(proven by restart-test + pipe-probe on devbox/workstation): the GUI setup built
+ONE Shared for the webview's in-process engine, but hosted the CLI socket
+via `run_daemon_on(path, session)`, which built a SECOND Shared and spawned
+the machine-link task on THAT one's watch channel. Webview pair/login/identify
+published the link config where nobody listened; the link only came up from
+the daemon-loop's boot-time seed (restored token.json) — i.e. on the NEXT app
+start. Fresh pair + immediate project create = "unknown machine"; every
+registration lagged one restart (why devbox/HQ with old persisted sessions
+looked fine). Fix: `run_daemon_shared(path, shared)` — the GUI passes its own
+Shared; the comment's "one session, one dispatch surface" is now true in
+code. Verified end-to-end on devbox: wipe → install 0.5.16 → pair over the
+daemon pipe → machine link connected 0.8 s after pair, WORKSTATION registered
+(0.5.16), project create returned 200. Released 0.5.16 clients (all four
+platforms). The pair/login-carry-machine-id change (previous entry) stays:
+it makes the link atomic even for a real standalone daemon.
 
 ## Pair/login carry the machine id — 2026-09-22
 
