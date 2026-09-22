@@ -39,6 +39,11 @@ pub struct RoutineExecutor {
     pub api_base: String,
     pub internal_token: String,
     pub allow_http_tool: bool,
+    /// Hosts http_call may reach even when they resolve into denied
+    /// (loopback/link-local/private/metadata) ranges. From
+    /// GUILD_HTTP_TOOL_ALLOW_HOSTS (comma-separated); empty denies all such
+    /// targets.
+    pub http_tool_allow_hosts: Vec<String>,
 }
 
 impl RoutineExecutor {
@@ -205,9 +210,13 @@ impl RoutineExecutor {
         body: Option<String>,
     ) -> anyhow::Result<(u16, String)> {
         let parsed: reqwest::Url = url.parse().context("bad url")?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            anyhow::bail!("only http(s) URLs allowed in routines");
+        }
         if !self.allow_http_tool && parsed.scheme() != "https" {
             anyhow::bail!("only https URLs allowed in routines");
         }
+        check_target(&parsed, &self.http_tool_allow_hosts).await?;
         let method = reqwest::Method::from_bytes(method.as_bytes()).context("bad method")?;
         let mut req = self.http().request(method, parsed);
         if let Some(b) = body {
@@ -264,6 +273,69 @@ impl RoutineExecutor {
 
 /// Memory cap on an http_call response body.
 const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
+
+/// SSRF guard for the routine http_call tool: the server container reaches
+/// Restate ingress, Postgres/ClickHouse and cloud metadata endpoints, so a
+/// target whose host is an IP in a denied range — loopback, link-local
+/// (169.254/16, fe80::/10; the cloud metadata address is link-local),
+/// private (RFC1918), unique-local (fc00::/7) or unspecified — or a hostname
+/// resolving only into those ranges is refused, unless the host is
+/// explicitly allow-listed in the executor config.
+async fn check_target(url: &reqwest::Url, allow_hosts: &[String]) -> anyhow::Result<()> {
+    let Some(host) = url.host_str() else {
+        anyhow::bail!("http_call target has no host");
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let port = url.port_or_known_default().unwrap_or(80);
+    if allow_hosts
+        .iter()
+        .any(|allowed| allowed.trim().to_ascii_lowercase() == host)
+    {
+        return Ok(());
+    }
+    // Literal IPs are checked directly; hostnames after resolving (a name
+    // that resolves anywhere public passes, loopback-only names are denied).
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if ip_is_denied(&ip) {
+            anyhow::bail!("http_call target '{host}' is in a denied range");
+        }
+        return Ok(());
+    }
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .context("http_call target does not resolve")?
+        .collect();
+    anyhow::ensure!(!addrs.is_empty(), "http_call target does not resolve");
+    if let Some(addr) = addrs.iter().find(|addr| ip_is_denied(&addr.ip())) {
+        anyhow::bail!(
+            "http_call target '{host}' resolves into a denied range ({})",
+            addr.ip()
+        );
+    }
+    Ok(())
+}
+
+/// The IP ranges a routine's http_call must never reach from the server.
+fn ip_is_denied(ip: &std::net::IpAddr) -> bool {
+    use std::net::IpAddr::*;
+    match ip {
+        V4(v4) => {
+            v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_private()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                // RFC 6598 shared address space (100.64/10).
+                || v4.octets()[0] == 100 && (v4.octets()[1] & 0b1100_0000) == 0b0100_0000
+        }
+        V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_unicast_link_local()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00 // unique local fc00::/7
+        }
+    }
+}
 
 fn urlencode(s: &str) -> String {
     let mut out = String::new();
@@ -428,5 +500,88 @@ mod tests {
     #[test]
     fn truncate_leaves_short_output_alone() {
         assert_eq!(truncate("hello"), "hello");
+    }
+}
+
+#[cfg(test)]
+mod ssrf_tests {
+    use super::{check_target, ip_is_denied, RoutineExecutor};
+    use std::net::IpAddr;
+
+    #[test]
+    fn denied_ranges_cover_loopback_link_local_private_and_metadata() {
+        for ip in [
+            "127.0.0.1", "127.8.8.8", "169.254.169.254", "169.254.0.1", "10.0.0.1",
+            "172.16.0.1", "192.168.1.1", "0.0.0.0", "100.64.0.1", "::1", "fe80::1",
+            "fc00::1", "fd12:3456::1",
+        ] {
+            assert!(
+                ip_is_denied(&ip.parse::<IpAddr>().unwrap()),
+                "{ip} must be denied"
+            );
+        }
+        for ip in ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"] {
+            assert!(
+                !ip_is_denied(&ip.parse::<IpAddr>().unwrap()),
+                "{ip} must be allowed"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn loopback_literal_is_refused_and_allow_list_rescues_it() {
+        let exec = RoutineExecutor {
+            api_base: "http://unused".into(),
+            internal_token: "t".into(),
+            allow_http_tool: true,
+            http_tool_allow_hosts: Vec::new(),
+        };
+        assert!(exec.http_call("http://127.0.0.1:9/x", "GET", None)
+            .await
+            .is_err(), "loopback target refused by default");
+
+        let allowed = RoutineExecutor {
+            api_base: "http://unused".into(),
+            internal_token: "t".into(),
+            allow_http_tool: true,
+            http_tool_allow_hosts: vec!["127.0.0.1".into()],
+        };
+        // The target passes the guard (the request itself fails to connect —
+        // nothing listens on port 9 — which proves the guard is not the blocker).
+        check_target(
+            &"http://127.0.0.1:9/x".parse().unwrap(),
+            &allowed.http_tool_allow_hosts,
+        )
+        .await
+        .expect("allow-listed host passes the guard");
+    }
+
+    #[tokio::test]
+    async fn localhost_hostname_resolving_to_loopback_is_refused() {
+        let exec = RoutineExecutor {
+            api_base: "http://unused".into(),
+            internal_token: "t".into(),
+            allow_http_tool: true,
+            http_tool_allow_hosts: Vec::new(),
+        };
+        let err = exec
+            .http_call("http://localhost:9/x", "GET", None)
+            .await
+            .expect_err("localhost resolves to loopback: denied");
+        assert!(
+            err.to_string().contains("denied range"),
+            "refusal names the denied range: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_http_scheme_is_refused_before_the_target_check() {
+        let exec = RoutineExecutor {
+            api_base: "http://unused".into(),
+            internal_token: "t".into(),
+            allow_http_tool: false,
+            http_tool_allow_hosts: Vec::new(),
+        };
+        assert!(exec.http_call("ftp://example.com/x", "GET", None).await.is_err());
     }
 }
