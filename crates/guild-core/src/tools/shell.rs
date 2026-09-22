@@ -41,10 +41,16 @@ static LAST_WSL_HEAL: std::sync::LazyLock<std::sync::Mutex<Option<std::time::Ins
 
 /// The failure signature of a login-shell session whose WSL interop binfmt
 /// is missing: exit 127 plus the shell's ENOEXEC fallback trying to run the
-/// `wsl.exe` PE image as a script (first token `MZ`).
+/// `wsl.exe` PE image as a script. Both real shapes name `wsl.exe` and put
+/// `MZ` in the command-not-found slot — dash: `…/wsl.exe: 1: MZ: not
+/// found`, bash: `…/wsl.exe: line 1: MZ: command not found`. A bare `MZ`
+/// mention is NOT enough: a command that genuinely ran, exited 127, and
+/// printed `MZ` must not trigger the retry (it would run twice).
 #[cfg(any(windows, test))]
 fn is_interop_enoexec(exit_code: Option<i32>, stderr: &str) -> bool {
-    exit_code == Some(127) && stderr.contains("MZ")
+    exit_code == Some(127)
+        && stderr.contains("wsl.exe")
+        && (stderr.contains("MZ: not found") || stderr.contains("MZ: command not found"))
 }
 
 /// Repair argv: `wsl.exe -d <d> -u root --exec sh -c '<script>'`. Deliberately
@@ -317,11 +323,20 @@ mod tests {
             Some(127),
             "/mnt/c/.../wsl.exe: line 1: MZ: command not found\n"
         ));
-        // Not the interop signature: wrong exit code, no MZ marker, or a
-        // plain command-not-found.
+        // Not the interop signature: wrong exit code, no wsl.exe/MZ pairing,
+        // a plain command-not-found, or a command that ran and merely
+        // printed MZ in its own output.
         assert!(!is_interop_enoexec(Some(0), "MZ"));
         assert!(!is_interop_enoexec(Some(2), "MZ missing"));
         assert!(!is_interop_enoexec(Some(127), "bash: foo: command not found"));
+        assert!(!is_interop_enoexec(
+            Some(127),
+            "MZ file header checked — tool exited 127 on its own"
+        ));
+        assert!(!is_interop_enoexec(
+            Some(127),
+            "wsl.exe: 1: mkfs: not found\nMZ somewhere else"
+        ));
     }
 
     #[test]
