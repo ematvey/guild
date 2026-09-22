@@ -12,6 +12,8 @@ use uuid::Uuid;
 /// server sent over this socket (control-plane ops: folder browse).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "Ws.ts", optional_fields))]
 pub enum WsClientMsg {
     Sync {
         chat_id: Option<Uuid>,
@@ -38,6 +40,8 @@ pub enum WsClientMsg {
 /// LiveFrame is a separate, non-replayable stream for command consumers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "Ws.ts", optional_fields))]
 pub enum WsServerMsg {
     Hello,
     /// This machine's singleton slot was taken by a newer connection.
@@ -84,6 +88,9 @@ pub enum WsServerMsg {
     /// replaces its view only when this watermark is newer than its last view.
     ThreadState {
         chat_id: Uuid,
+        /// JSON numbers, not TS bigint — the wire is JSON and the member
+        /// watermark comparison runs on `number`.
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         seq: i64,
         events: Vec<serde_json::Value>,
         text: String,
@@ -112,6 +119,7 @@ pub enum WsServerMsg {
     LiveFrame {
         chat_id: Uuid,
         generation_id: Uuid,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         seq: i64,
         machine_id: Option<String>,
         event: crate::api::StreamEvent,
