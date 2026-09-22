@@ -3,7 +3,9 @@
 //! hello handshake, client-issued shutdown.
 
 #![cfg(unix)]
-use guild_app_server::daemon::{run_daemon_shared, try_connect_at, Pair};
+use guild_app_server::daemon::{
+    run_daemon_shared, run_daemon_shared_reclaiming, try_connect_at, Pair,
+};
 use guild_app_server::jsonrpc_loop::{Session, Shared};
 use protocol::rpc::Request;
 use serde_json::{json, Value};
@@ -193,6 +195,80 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
         .expect("daemon task")
         .expect("daemon result");
     let _ = std::fs::remove_file(&path);
+}
+
+/// Regression (review 2026-09-22 desktop.md #11): the GUI's daemon host
+/// must reclaim the endpoint once a stale daemon is retired. The old
+/// early-return left the CLI socket unhosted (and, before the link spawn
+/// moved up front, the machine link unspawned) until the app restarted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reclaiming_host_takes_over_after_the_owner_exits() {
+    let dir = std::env::temp_dir().join(format!(
+        "guild-daemon-reclaim-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("reclaim.sock");
+    let _ = std::fs::remove_file(&path);
+
+    // First daemon owns the endpoint.
+    let dpath = path.clone();
+    let first = tokio::spawn(async move {
+        run_daemon_shared(dpath, Shared::new(Session::default())).await
+    });
+    let mut a = None;
+    for _ in 0..100 {
+        if try_connect_at(&path).is_ok() {
+            a = Some(Client::connect(&path));
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let mut a = a.expect("first daemon reachable");
+
+    // The second host (the GUI's) waits instead of giving up: while the
+    // endpoint is owned it must NOT bind, and the first daemon keeps
+    // serving.
+    let dpath2 = path.clone();
+    let second = tokio::spawn(async move {
+        run_daemon_shared_reclaiming(dpath2, Shared::new(Session::default())).await
+    });
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(
+        a.call("daemon.hello", json!({}))["result"]["version"].is_string(),
+        "the owner must keep serving while the waiter waits"
+    );
+
+    // Retire the first daemon: the waiter must bind and take over.
+    a.call("daemon.shutdown", json!({}));
+    tokio::time::timeout(Duration::from_secs(5), first)
+        .await
+        .expect("first daemon ends after shutdown")
+        .expect("first daemon task")
+        .expect("first daemon result");
+
+    let mut b = None;
+    for _ in 0..200 {
+        if try_connect_at(&path).is_ok() {
+            let mut c = Client::connect(&path);
+            let hello = c.call("daemon.hello", json!({}));
+            if hello["result"]["protocol"].as_u64() == Some(1) {
+                b = Some(c);
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let mut b = b.expect("the reclaiming host must take over the endpoint");
+
+    // The new host is a full daemon: shutdown via RPC works.
+    b.call("daemon.shutdown", json!({}));
+    tokio::time::timeout(Duration::from_secs(5), second)
+        .await
+        .expect("reclaiming host ends after shutdown")
+        .expect("reclaiming host task")
+        .expect("reclaiming host result");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Regression: the daemon broadcasts events to all connections, so a fresh

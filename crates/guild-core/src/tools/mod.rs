@@ -109,6 +109,7 @@ impl ToolRegistry {
         let mut r = Self::new();
         r.add(Arc::new(fs::ReadFile {
             extra_read_roots: roots,
+            ..Default::default()
         }));
         r.add(Arc::new(fs::WriteFile));
         r.add(Arc::new(fs::EditFile));
