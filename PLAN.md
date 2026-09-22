@@ -1,10 +1,22 @@
 # Guild — current state of work
 
-Updated 2026-09-20 (stuck-generation sweep: paused Restate invocations,
-provider connection timeouts). Read this before touching
+Updated 2026-09-22 (0.5.13 released: pairing-code login verb). Read this
+before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## 0.5.13 released: `login --token` (pairing-code CLI verb) — 2026-09-22
+
+The engine already redeemed web-issued pairing codes (`pair` JSON-RPC method,
+GUI pairing screen), but the CLI only exposed `login --url/--email/--password`.
+`cmd_login` now takes `--token <code>` (alias `--code`) instead: the code
+carries the server URL itself (`g1|<url>|<hex-secret>`), so no `--url` is
+needed; the email/password path is unchanged. This makes headless machines
+pairable without a GUI — the daemon service pairs from the shell. Version
+bump in workspace Cargo.toml, package.json, tauri.conf.json (+ desktop crate
+to 0.3.35); released via `scripts/release-clients.sh` with a directly-minted
+admin session row (revoked after).
 
 ## Stuck-generation sweep: paused Restate invocations + unbounded provider connections — 2026-09-20
 
