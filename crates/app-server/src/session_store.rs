@@ -4,6 +4,7 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StoredSession {
@@ -36,14 +37,25 @@ pub fn default_path() -> anyhow::Result<PathBuf> {
 pub fn save(path: &Path, session: &StoredSession) -> anyhow::Result<()> {
     let json = serde_json::to_string(session)?;
     use std::io::Write;
+    // Write a sibling tmp (owner-only) and rename over the target: an
+    // in-place write truncated by a crash or a full disk would fail to
+    // parse on the next boot and silently drop the session to the pairing
+    // screen. rename replaces an existing destination on every platform.
+    // Unique sibling tmp per save: parallel writers (tests, GUI + CLI in one
+    // process) must not collide on the tmp file; the rename itself is atomic.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let tmp = path.with_extension(format!(
+        "json.tmp.{}.{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(path)?;
-    f.write_all(json.as_bytes())?;
-    // Owner-only permissions — the file holds the bearer token. Set after
-    // the write so pre-existing world-readable files are tightened too.
+        .open(&tmp)?;
+    // Owner-only permissions — the file holds the bearer token. The rename
+    // also replaces any pre-existing world-readable file with a 0600 one.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -51,6 +63,9 @@ pub fn save(path: &Path, session: &StoredSession) -> anyhow::Result<()> {
         perms.set_mode(0o600);
         f.set_permissions(perms)?;
     }
+    f.write_all(json.as_bytes())?;
+    f.sync_all()?;
+    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -92,6 +107,18 @@ mod tests {
         }
         assert_eq!(load(&path).unwrap().token, "t");
         assert_eq!(load(&path).unwrap().machine_id.as_deref(), Some("m"));
+        // No tmp sidecar survives the rename; a re-save over an existing
+        // file works too.
+        let stem = format!("guild-test-{}", std::process::id());
+        let no_tmp = |n: &str| !n.starts_with(&stem) || !n.contains(".json.tmp");
+        assert!(std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .all(|e| no_tmp(&e.file_name().to_string_lossy())));
+        let mut s2 = s.clone();
+        s2.token = "t2".into();
+        save(&path, &s2).unwrap();
+        assert_eq!(load(&path).unwrap().token, "t2");
         // A pre-machine-id store (older build) still loads.
         std::fs::write(&path, r#"{"base_url":"http://x","token":"t"}"#).unwrap();
         let old = load(&path).unwrap();
