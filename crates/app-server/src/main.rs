@@ -4,6 +4,8 @@
 //!   uses the daemon).
 //! - `daemon`: the per-user daemon — shared engine, survives client exit,
 //!   the only session-token route to the cloud server.
+//! - `daemon install [--linger]` / `status` / `uninstall`: manage the
+//!   daemon as a systemd user unit (Linux) — supervised boot persistence.
 //! - `login --url U --email E --password P`: headless login via the daemon.
 //! - `chat --model M "text"`: headless chat round-trip via the daemon.
 
@@ -29,24 +31,31 @@ fn main() -> anyhow::Result<()> {
             let _ = session;
             Ok(())
         }
-        Some("daemon") => {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()?;
-            rt.block_on(guild_app_server::daemon::run_daemon())?;
-            // Shutdown is unconditional: exit now instead of waiting for open
-            // client connections (a client holding its socket would deadlock
-            // the runtime teardown).
-            std::process::exit(0);
-        }
+        Some("daemon") => match args.get(1).map(String::as_str) {
+            Some("install") => guild_app_server::daemon_install::install(
+                args.iter().any(|a| a == "--linger"),
+            ),
+            Some("status") => guild_app_server::daemon_install::status(),
+            Some("uninstall") => guild_app_server::daemon_install::uninstall(),
+            _ => {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()?;
+                rt.block_on(guild_app_server::daemon::run_daemon())?;
+                // Shutdown is unconditional: exit now instead of waiting for
+                // open client connections (a client holding its socket would
+                // deadlock the runtime teardown).
+                std::process::exit(0);
+            }
+        },
         Some("login") => cli::cmd_login(&args[1..]),
         Some("chat") => cli::cmd_chat(&args[1..]),
         Some("publish") => cli::cmd_publish(&args[1..]),
         Some("install") => cli::cmd_install(&args[1..]),
         Some("verify") => cli::cmd_verify(&args[1..]),
         Some(other) => anyhow::bail!(
-            "unknown subcommand {other}; expected none, daemon, login, chat, publish, install, or verify"
+            "unknown subcommand {other}; expected none, daemon [install|status|uninstall], login, chat, publish, install, or verify"
         ),
     }
 }
