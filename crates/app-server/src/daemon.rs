@@ -258,47 +258,91 @@ pub async fn run_daemon() -> anyhow::Result<()> {
 /// machine link's watch channel in the same process — a second Shared here
 /// would park the link until the next app start (the boot-time seed).
 /// If another daemon already owns the endpoint, returns Ok immediately
-/// (single instance). Runs until `daemon.shutdown` flips the watch.
+/// (single instance — that owner runs the machine link). Runs until
+/// `daemon.shutdown` flips the watch.
 pub async fn run_daemon_shared(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
-    spawn_machine_link(&shared);
     if try_connect_at(&path).is_ok() {
-        return Ok(()); // another daemon owns the endpoint
+        return Ok(()); // another daemon owns the endpoint (and the link)
     }
+    spawn_machine_link(&shared);
     host_shared_socket(path, shared).await
 }
 
-/// Like [`run_daemon_shared`], but never gives the endpoint up: while
-/// another daemon owns the socket it waits (polling, shutdown-aware) and
-/// hosts the moment it frees. The GUI uses this — a stale daemon that gets
-/// retired mid-session must leave a live host behind, not a stranded CLI
-/// socket. The machine link spawns up front either way.
+/// Poll cadence for the reclaim/park loops below.
+const RECLAIM_POLL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// How long a retired socket host holds off before attempting a reclaim:
+/// `daemon install` runs retire → poll-free → `enable --now` within about
+/// 3 s, and the grace keeps the GUI from winning the bind race against the
+/// unit it just deferred to (the unit's daemon would otherwise exit-and-
+/// restart against the GUI host forever).
+const RECLAIM_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The GUI's socket host, for the whole process lifetime: it owns the CLI
+/// socket and the machine link exactly while it hosts. Cycle:
+///
+/// 1. `guild-daemon.service` active/activating → park (no bind, no link —
+///    the unit owns the executor); a unit stop (uninstall, daemon death)
+///    ends the park.
+/// 2. Another daemon owns the socket → park until it releases it.
+/// 3. Bind, spawn the machine link, and host until `daemon.shutdown`
+///    retires the host (install, or a stale-build client) — the link is
+///    torn down with it. Then a short grace against the installer's
+///    retire→enable window, and the cycle repeats.
+///
+/// The shared shutdown flag latches on retirement; the engine lives on in
+/// this process (the webview keeps dispatching), so each new host cycle
+/// relatches it to false before hosting again.
 pub async fn run_daemon_shared_reclaiming(
     path: PathBuf,
     shared: Shared,
 ) -> anyhow::Result<()> {
-    spawn_machine_link(&shared);
-    let mut shutdown_rx = shared.shutdown.subscribe();
-    while try_connect_at(&path).is_ok() {
-        tokio::select! {
-            _ = shutdown_rx.changed() => {
-                if *shutdown_rx.borrow_and_update() {
-                    return Ok(());
-                }
+    loop {
+        while crate::daemon_install::unit_active() {
+            tokio::time::sleep(RECLAIM_POLL).await;
+        }
+        while try_connect_at(&path).is_ok() {
+            tokio::time::sleep(RECLAIM_POLL).await;
+        }
+        if shared.shutdown.borrow().clone() {
+            // This host was retired (shutdown latched): hold off through the
+            // installer's retire→enable window before reclaiming.
+            tokio::time::sleep(RECLAIM_GRACE).await;
+            if crate::daemon_install::unit_active() || try_connect_at(&path).is_ok() {
+                continue;
             }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+            let _ = shared.shutdown.send(false);
+        }
+        spawn_machine_link(&shared);
+        if let Err(e) = host_shared_socket(path.clone(), shared.clone()).await {
+            // A failed host cycle (a bind race, an accept error) leaves the
+            // endpoint to the winner; the loop re-polls and retries instead
+            // of ending — the CLI socket must not go permanently unhosted.
+            eprintln!("guild: daemon host cycle failed: {e}");
         }
     }
-    host_shared_socket(path, shared).await
 }
 
-/// Spawns the machine-link task and seeds it from the session's persisted
-/// identity. One call per daemon process: run_daemon_shared (headless) and
-/// run_daemon_shared_reclaiming (GUI) both route through here, so the link
-/// exists even when this process does not (yet) own the CLI socket.
+/// Spawns the machine-link task (seeded from the session's persisted
+/// identity) and the token.json watcher. One call per host cycle: the link
+/// and the watcher exist exactly while this process hosts the CLI socket —
+/// the socket owner runs the link, nobody else does.
 fn spawn_machine_link(shared: &Shared) {
     let link_shared = shared.clone();
     let link_rx = shared.machine_link.subscribe();
     tokio::spawn(crate::machine_link::run(link_shared, link_rx));
+    // Auth performed by another process (the GUI while a unit daemon owns
+    // the link, or a CLI verb) lands only in token.json: the watcher
+    // re-seeds the link config from it, sign-out included.
+    if let Ok(path) = crate::session_store::store_watch_path() {
+        let watcher_shared = shared.clone();
+        tokio::spawn(crate::machine_link::watch_token_store(
+            path,
+            watcher_shared.machine_link.clone(),
+            shared.shutdown.subscribe(),
+            std::time::Duration::from_secs(1),
+        ));
+    }
     shared.publish_machine_link();
 }
 
@@ -308,9 +352,19 @@ async fn host_shared_socket(path: PathBuf, shared: Shared) -> anyhow::Result<()>
     let shutdown_rx = shared.shutdown.subscribe();
     {
         let agents = shared.agents.clone();
+        let mut reaper_shutdown = shutdown_rx.clone();
         tokio::spawn(async move {
+            // Lives for this host cycle; a retired host's reaper must not
+            // linger (a reclaiming host spawns a fresh one).
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {}
+                    _ = reaper_shutdown.changed() => {
+                        if *reaper_shutdown.borrow_and_update() {
+                            return;
+                        }
+                    }
+                }
                 let mut guard = agents.lock().await;
                 while guard.try_join_next().is_some() {}
             }
