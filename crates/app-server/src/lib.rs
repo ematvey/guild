@@ -6,6 +6,7 @@ pub mod cli;
 pub mod cloud;
 pub mod daemon;
 pub mod daemon_client;
+pub mod daemon_install;
 pub mod fs_bridge;
 pub mod dtrace;
 pub use protocol;

@@ -13,6 +13,8 @@ The client is a **single executable** (`guild-desktop` crate → shipped as
 |---|---|
 | `Guild` (no args) | GUI (Tauri window); attaches to the per-user daemon (spawns it detached if missing) |
 | `Guild daemon` | the per-user daemon: shared engine, survives client exit, the only session-token route to the server |
+| `Guild daemon install [--linger]` | Linux: install/upgrade the daemon as a systemd **user unit** (`guild-daemon.service`, `Restart=on-failure`, enabled at login); retires an unsupervised daemon first; `--linger` best-effort enables `loginctl enable-linger` for headless hosts |
+| `Guild daemon status` / `uninstall` | unit state / stop + remove the unit |
 | `Guild login --url U --email E --password P` | CLI verb via the daemon; the daemon validates and persists the session to `~/.config/guild/token.json` |
 | `Guild chat --model M "text"` | CLI verb via the daemon (streams the reply through it) |
 | `Guild publish --kind K --dir D --version V` | CLI verb via the daemon |

@@ -28,6 +28,21 @@ binary so the env knobs don't race the reconnect test; the silent server
 must NOT read the socket — tungstenite only flushes auto-pongs on
 read/write, so a reading loopback server looks alive).
 
+## `guild daemon install` — supervised boot persistence (Linux) — 2026-09-22
+
+The "powered on ⇒ executor online" guarantee rested on a hand-rolled
+systemd unit on one machine; everywhere else the GUI spawns an
+unsupervised daemon that dies at reboot and stays dead after a crash.
+New verbs on the same binary: `daemon install [--linger]` (writes
+`~/.config/systemd/user/guild-daemon.service` → `daemon-reload` →
+`restart` if active / retire-unsupervised + `enable --now` if not),
+`daemon status`, `daemon uninstall`. The unit's ExecStart prefers the
+stable `~/.local/bin/<name>` launcher when it resolves to the running
+binary, so symlink-repoint upgrades follow without reinstalling; otherwise
+the canonical binary path is pinned. `daemon.shutdown` delivery moved into
+`daemon::shutdown_running()` (send + bounded socket-release poll, never
+blocks on a hung daemon).
+
 ## Project "+" pre-pick survives the chatId switch — 2026-09-22
 
 Bug: the project row's hover "+" created a chat that came out projectless on

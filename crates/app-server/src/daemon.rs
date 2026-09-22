@@ -91,6 +91,34 @@ pub fn try_connect() -> anyhow::Result<Pair> {
     try_connect_at(&socket_path()?)
 }
 
+/// Asks a running daemon (any build) to exit via `daemon.shutdown`.
+/// Returns true when a daemon was reachable and the request went out.
+/// Used by daemon install (Linux) to retire an unsupervised daemon before
+/// the systemd unit takes the socket.
+pub fn shutdown_running() -> bool {
+    use std::io::Write as _;
+    let Ok(pair) = try_connect() else {
+        return false;
+    };
+    let Pair(_, mut wr, _) = pair;
+    let req = protocol::rpc::Request::new(1, "daemon.shutdown", serde_json::json!({}));
+    if writeln!(wr, "{}", serde_json::to_string(&req).unwrap_or_default()).is_err() {
+        return false;
+    }
+    let _ = wr.flush();
+    drop(wr);
+    // Poll for the socket to release instead of draining the connection —
+    // a hung daemon must not hang the caller. The accept loop removes the
+    // socket file on shutdown, so a fresh bind is never blocked.
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if try_connect().is_err() {
+            break;
+        }
+    }
+    true
+}
+
 /// Spawn `bin daemon` fully detached: own process group, no inherited stdio,
 /// so it survives the parent's exit.
 pub fn spawn_detached(bin: &Path) -> anyhow::Result<()> {
