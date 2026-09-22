@@ -268,3 +268,76 @@ async fn offline_known_machine_is_bindable_and_foreign_is_not() {
         .machine_bindable("desk-1", Uuid::now_v7(), Uuid::now_v7())
         .await);
 }
+
+#[tokio::test]
+async fn cross_user_reconnect_of_a_known_machine_id_is_refused() {
+    let db = Store::connect_test().await.unwrap();
+    let (org, user_a) = org_user(&db).await;
+    let email = format!("b-{}@machines.test", org.simple());
+    let user_b = db
+        .identity()
+        .create_user(org, &email, "hunter226", "member")
+        .await
+        .unwrap()
+        .id;
+
+    db.machines()
+        .upsert_connected(org, user_a, "desk", Some("A"), None, None, None, None, None)
+        .await
+        .unwrap();
+
+    // Same org, different user: the row's owner may reconnect, nobody else.
+    let err = db
+        .machines()
+        .upsert_connected(
+            org, user_b, "desk", Some("B"), None, None, None, None, None,
+        )
+        .await
+        .map(|outcome| outcome.adopted_from)
+        .expect_err("cross-user reconnect must be refused");
+    assert_eq!(err.status, axum::http::StatusCode::FORBIDDEN);
+
+    let row = get_row(&db, "desk").await.unwrap().unwrap();
+    assert_eq!(row.user_id, user_a, "row ownership unchanged");
+    assert_eq!(row.label.as_deref(), Some("A"), "metadata untouched");
+
+    // The owner reconnecting is still fine.
+    let outcome = db
+        .machines()
+        .upsert_connected(org, user_a, "desk", Some("A2"), None, None, None, None, None)
+        .await
+        .unwrap();
+    assert!(outcome.adopted_from.is_none());
+    assert_eq!(outcome.row.label.as_deref(), Some("A2"));
+}
+
+#[tokio::test]
+async fn cross_user_fingerprint_is_never_adopted() {
+    let db = Store::connect_test().await.unwrap();
+    let (org, user_a) = org_user(&db).await;
+    let email = format!("b-{}@machines.test", org.simple());
+    let user_b = db
+        .identity()
+        .create_user(org, &email, "hunter226", "member")
+        .await
+        .unwrap()
+        .id;
+
+    db.machines()
+        .upsert_connected(org, user_a, "a-desk", None, Some("FP-X"), None, None, None, None)
+        .await
+        .unwrap();
+
+    // user_b presenting user_a's fingerprint (registry metadata any member
+    // can read) gets a fresh row, never the re-key of user_a's machine.
+    let outcome = db
+        .machines()
+        .upsert_connected(org, user_b, "b-rogue", None, Some("FP-X"), None, None, None, None)
+        .await
+        .unwrap();
+    assert!(outcome.adopted_from.is_none(), "no adoption across users");
+    assert_eq!(outcome.row.user_id, user_b);
+    let a_row = get_row(&db, "a-desk").await.unwrap().unwrap();
+    assert_eq!(a_row.user_id, user_a, "user_a's row untouched");
+    assert_eq!(a_row.machine_id, "a-desk", "no re-key happened");
+}

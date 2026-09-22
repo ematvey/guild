@@ -38,6 +38,22 @@ pub struct MachineStore<'a> {
     pub(crate) pool: &'a sqlx::PgPool,
 }
 
+impl MachineStore<'_> {
+    /// The (user_id, org_id) a machine row belongs to, or None when the id
+    /// is unregistered. The connect-path ownership gate reads this before
+    /// any hub slot is claimed: a registered machine connects only as its
+    /// owning user.
+    pub async fn owner_of(&self, machine_id: &str) -> Result<Option<(Uuid, Uuid)>, ApiError> {
+        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT user_id, org_id FROM machines WHERE machine_id = $1",
+        )
+        .bind(machine_id)
+        .fetch_optional(self.pool)
+        .await?;
+        Ok(row)
+    }
+}
+
 /// Empty query values are stored as NULL, never as '' (desktop 0.4.0 omits
 /// the metadata params entirely; Task 3 adds them).
 fn non_empty(value: Option<&str>) -> Option<&str> {
@@ -49,12 +65,15 @@ const ROW_COLUMNS: &str = "machine_id, org_id, user_id, label, hardware_fingerpr
      re_paired_at";
 
 impl<'a> MachineStore<'a> {
-    /// Registers a machine connect. A known machine_id of the same org is a
-    /// reconnect (metadata refresh only, never a re-key). An unknown
-    /// machine_id is a new registration: a fingerprint match on the same
-    /// org adopts the old row — its machine_id is re-keyed to the incoming
-    /// one (thread bindings keep working through the caller's id), and
-    /// re_paired_at is stamped. No match inserts a fresh row.
+    /// Registers a machine connect. A known machine_id of the same org AND
+    /// same user is a reconnect (metadata refresh only, never a re-key); a
+    /// known id owned by a different user is refused — client-issued ids
+    /// are untrusted within an org too, so only the row's owner reconnects.
+    /// An unknown machine_id is a new registration: a fingerprint match on
+    /// the same org and same user adopts the old row — its machine_id is
+    /// re-keyed to the incoming one (thread bindings keep working through
+    /// the caller's id), and re_paired_at is stamped. No match inserts a
+    /// fresh row.
     ///
     /// A machine_id already registered to a DIFFERENT org is left untouched
     /// (client-issued ids make cross-org claims untrustworthy until Task 2
@@ -96,6 +115,17 @@ impl<'a> MachineStore<'a> {
             });
         }
 
+        if existing
+            .as_ref()
+            .is_some_and(|row| row.user_id != user_id)
+        {
+            // Same-org machine id claimed by another user: refuse. The
+            // fingerprint is plaintext registry metadata any member can
+            // read, so the id alone proves nothing about who may connect.
+            tx.rollback().await?;
+            return Err(ApiError::forbidden());
+        }
+
         if existing.is_some() {
             // Reconnect of a known machine: refresh metadata and timestamps.
             // NULL metadata never erases what an earlier connect reported.
@@ -127,15 +157,18 @@ impl<'a> MachineStore<'a> {
             });
         }
 
-        // New registration: fingerprint adoption within the same org.
+        // New registration: fingerprint adoption within the same org AND
+        // same user (re-pair is same-user by definition; another member's
+        // fingerprint is never adopted).
         if let Some(fingerprint) = fingerprint {
             let old: Option<MachineRow> = sqlx::query_as(&format!(
                 "SELECT {ROW_COLUMNS} FROM machines \
-                 WHERE org_id = $1 AND hardware_fingerprint = $2 \
+                 WHERE org_id = $1 AND hardware_fingerprint = $2 AND user_id = $3 \
                  ORDER BY last_seen_at DESC LIMIT 1 FOR UPDATE"
             ))
             .bind(org_id)
             .bind(fingerprint)
+            .bind(user_id)
             .fetch_optional(&mut *tx)
             .await?;
             if let Some(old) = old {
