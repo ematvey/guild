@@ -38,8 +38,9 @@ server — thread_events stayed empty and no agent started. Diagnosis:
 - Composer chips merged into one: the standalone machine pill (dot +
   "devbox") is gone; the project chip now carries the online dot +
   machine-suffixed label ("guild · devbox"), identical structure in new
-  chats and existing chats (dot only when the bound machine's live state is
-  known, i.e. existing chats).
+  chats and existing chats. The dot renders only for a remote machine
+  whose live state is known — the chat row for existing chats, the
+  `machines` list snapshot for new ones (hidden while unknown).
 
 ## devbox executor outage diagnosis + daemon ops — 2026-09-23
 
