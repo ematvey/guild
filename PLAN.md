@@ -6,6 +6,68 @@ enabled). Read this before touching the codebase; the requirements live in
 nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
 
+## 0.5.19 released — 2026-09-23
+
+`scripts/release-clients.sh VERSION=0.5.19 BASE=:18080` with a directly
+minted admin session (revoked after): all four platforms published
+(AppImage, NSIS setup.exe, two DMGs + `.app.tar.gz` updater bundles),
+sha256 server-verified; `/api/v1/updates/latest.json` serves 0.5.19 with
+minisign signatures on all platforms. Ships the send-loss hardening, the
+merged composer chip, and the GUI link-task pileup fix; the Windows app was
+relaunched after publish so the auto-updater picks 0.5.19 up. Caveat: the
+client binaries were cut from a working tree that already carried part of
+the concurrent full-review remediation (uncommitted at build time) —
+compiled clean and its tests passed, but 0.5.19 is not a pristine-tag
+build.
+
+## Full review remediation — 2026-09-23
+
+The full-project review and its 37 concrete findings are preserved in
+`docs/reviews/2026-09-23-full/REVIEW.md`; implementation, validation and
+remaining limits live in `REMEDIATION.md` beside it. Work used at most two
+subagents concurrently and preserved the concurrent 0.5.19 changes.
+
+Chat submission now commits an immutable command and its user event in one
+PostgreSQL transaction (`0055_turn_commands`). The command ID also identifies
+the generation; a durable outbox delivers one queue head per chat with a stable
+Restate idempotency key. The worker claims/completes commands durably; model
+history uses execution order while the UI retains acceptance order. Retries
+cannot change a command's body or owner, and delayed acknowledgments cannot
+replace another turn's cancellation pointer. Cloud/CLI and WebSocket feed
+recovery use the same generation identity.
+
+Journal decisions, interrupted prefixes and event IDs are replay-stable.
+Canonical tool-call IDs include invocation, model step and index. Server writes
+have durable execution claims; interruption before result persistence reports
+an unknown outcome rather than repeating a side effect. Usage is recorded per
+model request (including compaction/judge), with stable request IDs deduplicated
+in reports/quota totals. Compaction keeps complete tool groups and only the
+latest synthetic summary.
+
+Security fixes cover public workspace injection, argument-sensitive exec policy,
+routine HTTP DNS/redirect boundaries, enabled-routine edits, MCP tenant/caller
+identity and reconnection, browser-bound OIDC, bearer release downloads, and
+serialized final-admin mutations. Engine fixes cover connection recovery,
+filesystem cycles, bounded process output/tree cleanup, image and artifact
+transport, headless identity, project identity, CLI paths and truncated provider
+streams. Frontend sends own immutable text/files/context and account-scoped
+prepared retries; newer drafts survive failures and navigation. Project skills
+use `.agents/skills` with increasing specificity; remote projects never inherit
+the sending desktop's local instructions.
+
+Restate is pinned to its deployed digest and uses a persistent journal volume.
+The 0.5.19 server/UI is live, with bundle `index-De5jrlDD.js`; 590 Rust and
+152 frontend tests passed (12 existing tests ignored). Journal backup/copy
+was verified and all 756 retained invocations survived cutover. The original
+Restate node name is retained through compose `.env` to keep recreation safe.
+Adopting the volume requires a stopped-container backup and byte-for-byte copy
+before recreation; never deploy the mount empty on an existing installation.
+The Docker Rust build defaults to four jobs to bound concurrent compiler memory
+on the shared host. Server/UI deployment does not publish or install client
+binaries. Routine timer initialization still needs an outbox for initial ingress
+failure; full remote skill discovery and immediate artifact prefetch remain
+follow-ups. See the remediation report for validation and release boundaries.
+
 ## Chat "Working" shimmer indicator — 2026-09-23
 
 While a turn is generating, the chat log itself had no in-flow indicator
