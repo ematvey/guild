@@ -6,6 +6,41 @@ enabled). Read this before touching the codebase; the requirements live in
 nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
 
+## Message-send loss diagnosis + composer hardening + chip merge — 2026-09-23
+
+A user send (desktop app, 17:55:41) created the chat and uploaded the
+attachment, but the turn POST (`/api/v1/gateway/chat`) never reached the
+server — thread_events stayed empty and no agent started. Diagnosis:
+
+- Server pipeline verified healthy end-to-end by a probe: minted a session
+  directly in postgres, POSTed `/api/v1/gateway/chat` through the public
+  URL (Cloudflare → cloudflared → :18080) — accepted in 0.7 s, ChatRunner
+  ran, assistant replied. WS upgrade also 101 both direct and public.
+- So the loss is client-side: between the attachment upload and the turn
+  POST the desktop path runs ONLY `prepareTurn` (context assembly over the
+  local-daemon RPC). Each fs call has a 15 s timeout, but the step makes
+  many calls (skills discovery, AGENTS.md chain), errors are swallowed, and
+  there was no overall deadline — a wedged local daemon stalls the send for
+  minutes with zero feedback, looking exactly like "sent, agent never
+  started". The sender app (DEVBOX-2, 0.5.14) was not inspectable.
+- Composer hardening shipped: `prepareTurn` races a 10 s deadline and falls
+  back to the typed text; the turn POST gets `AbortSignal.timeout(30 s)`
+  with a friendly "send timed out … press send to retry" error block; the
+  typed text is restored to the composer on a failed normal send.
+- **WORKSTATION machine-link 401 loop captured**: the 17:xx 401 storm
+  (814 hits, mint 200 → upgrade 401 several times/sec) starts 17:48:28 —
+  exactly when WORKSTATION connected (17:49:20), and WORKSTATION's last_seen froze at
+  connect (link down, mint→401 retry loop). The 06:xx storm (1447 hits,
+  right after the 06:56 redeploy) is the same signature — this is likely
+  the mechanism behind the "slow reconnect after a CLEAN server restart"
+  gap from the devbox outage entry. Needs a captured 401 body to confirm
+  which unauthorized branch fires.
+- Composer chips merged into one: the standalone machine pill (dot +
+  "devbox") is gone; the project chip now carries the online dot +
+  machine-suffixed label ("guild · devbox"), identical structure in new
+  chats and existing chats (dot only when the bound machine's live state is
+  known, i.e. existing chats).
+
 ## devbox executor outage diagnosis + daemon ops — 2026-09-23
 
 Devbox's machine link dropped ~23 min after the 10:41 (+04) server

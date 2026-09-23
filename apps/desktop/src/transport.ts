@@ -827,30 +827,42 @@ export async function sendChatNoStream(
   projectInstructions?: string,
 ): Promise<void> {
   const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/gateway/chat"), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      "x-guild-client-id": clientId(),
-      ...(IS_TAURI ? { "x-guild-machine-id": machineId() } : {}),
-    },
-    body: JSON.stringify({
-      chat_id: chatId,
-      user_message_id: messageId,
-      model,
-      messages: [{ role: "user", content: prompt }],
-      // Tools are declared for every client: desktop turns dispatch to the
-      // bound machine, browser turns fall back to the server-side per-chat
-      // sandbox (spec 2026-09-18 unification §4 phase 5b).
-      client_tools: true,
-      attachment_ids: attachmentIds,
-      project_id: projectId || undefined,
-      send_mode: sendMode,
-      skills_index: skillsIndex || undefined,
-      agents_md: projectInstructions || undefined,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(apiUrl("/api/v1/gateway/chat"), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+        "x-guild-client-id": clientId(),
+        ...(IS_TAURI ? { "x-guild-machine-id": machineId() } : {}),
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        user_message_id: messageId,
+        model,
+        messages: [{ role: "user", content: prompt }],
+        // Tools are declared for every client: desktop turns dispatch to the
+        // bound machine, browser turns fall back to the server-side per-chat
+        // sandbox (spec 2026-09-18 unification §4 phase 5b).
+        client_tools: true,
+        attachment_ids: attachmentIds,
+        project_id: projectId || undefined,
+        send_mode: sendMode,
+        skills_index: skillsIndex || undefined,
+        agents_md: projectInstructions || undefined,
+      }),
+      // A hung connection (proxy, tunnel, stalled body) must surface as an
+      // error block, not an optimistic bubble that spins forever — the
+      // server never saw the turn, so nothing will ever settle it.
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") {
+      throw new Error("send timed out — the server did not answer; check the connection and press send to retry");
+    }
+    throw e;
+  }
   if (!res.ok) {
     const v = await res.json().catch(() => ({}));
     throw new Error(v?.error?.message ?? res.statusText);
