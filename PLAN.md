@@ -1,10 +1,53 @@
 # Guild — current state of work
 
-Updated 2026-09-23 (0.5.18 released: all four platforms; executor flakiness
-and install/GUI coexistence shipped to clients). Read this before touching
-the codebase; the requirements live in `docs/PRD.md` (product) and
-`docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
-hang-patterns in `~/workspace/hanging-commands.md`.
+Updated 2026-09-23 (devbox executor restored on 0.5.18; daemon tracing
+enabled). Read this before touching the codebase; the requirements live in
+`docs/PRD.md` (product) and `docs/SRS.md` (system contracts); deploy
+nuances in `docs/deploy-nuances.md`, hang-patterns in
+`~/workspace/hanging-commands.md`.
+
+## devbox executor outage diagnosis + daemon ops — 2026-09-23
+
+Devbox's machine link dropped ~23 min after the 10:41 (+04) server
+redeploy (10:41→11:04 reconnect; DEVBOX-2 3 min, WORKSTATION 18 min —
+slow reconnect after a CLEAN server restart is systemic, not
+devbox-specific; mechanism still unidentified — daemon logged nothing).
+During diagnosis the link flapped once more (~11:10, quick self-recovery)
+and the old daemon's memory peak was 22.3 G over 11 h. Actions taken:
+
+- Killed the 6-day-old hung `cargo test -p protocol -p guild-app-server`
+  (pid 2489388; zero open sockets — inert, just the leak PLAN flagged).
+- Upgraded devbox's daemon 0.5.17 → 0.5.18: 0.5.18 AppImage pulled from
+  the releases API via a directly-minted admin session (revoked after),
+  sha256 matched the registered release, `guild verify` OK (ed25519 over
+  sha256, key from `/api/v1/releases/signing-key`), extracted to
+  `~/.local/opt/guild-0.5.18`, symlink repointed. The GUI/daemon link
+  coexistence fix now applies to devbox.
+- Enabled `GUILD_DAEMON_TRACE=1` on `guild-daemon.service` (dtrace lines
+  now flow to `/tmp/guild-daemon-trace.log`; the daemon has NO stdout
+  logging at all — the journal stays silent by design).
+- Re-paired the machine (same machine_id d20cff27): `~/.config/guild/
+  token.json` had been deleted at 03:12 (cause unknown — nothing wrote
+  to `~/.config/guild` since; the old daemon kept running on its
+  in-memory config, but any daemon restart would have parked the link
+  forever). Minted a pairing token via `POST /api/v1/auth/pairing-tokens`,
+  `guild login --token g1|https://guild.example.com|<secret>`.
+- **Bug found (headless pairing gap)**: the daemon's `pair` RPC only
+  applies machine identity when the caller passes `machine_id`
+  (`adopt_login_with_identity`, jsonrpc_loop.rs:494) — the CLI's
+  `login --token` never does, so a headless pair leaves token.json
+  without machine_id, `config_from_store` returns None, and the link
+  parks silently waiting for a config that never arrives. 0.5.13's
+  "headless machines pairable" claim only holds if something separately
+  sends `machine.identify`. Fix: have pair_task self-identify (generate
+  or reuse a machine id) when the caller didn't pass one. The manual
+  workaround used here: `machine.identify` RPC over
+  `/run/user/1000/guild/daemon.sock` with the pre-existing machine_id
+  (`{"jsonrpc":"2.0","id":1,"protocol":1,...}`).
+
+Open: the 23-min reconnect gap needs one captured flap cycle (trace is
+now on); monitor whether 0.5.18's coexistence fix stops the ~11:10-style
+flaps.
 
 ## 0.5.18 released — 2026-09-23
 
