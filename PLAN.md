@@ -1,10 +1,22 @@
 # Guild — current state of work
 
-Updated 2026-09-23 (review round 1: exec-policy surface closed, machine-link
-flakiness fixes, server hardening). Read this before touching
+Updated 2026-09-23 (0.5.18 released: all four platforms; executor flakiness
+and install/GUI coexistence shipped to clients). Read this before touching
 the codebase; the requirements live in `docs/PRD.md` (product) and
 `docs/SRS.md` (system contracts); deploy nuances in `docs/deploy-nuances.md`,
 hang-patterns in `~/workspace/hanging-commands.md`.
+
+## 0.5.18 released — 2026-09-23
+
+`scripts/release-clients.sh` VERSION=0.5.18, BASE=:18080, all four platforms
+published (AppImage, NSIS setup.exe, two DMGs + `.app.tar.gz` updater
+bundles), sha256 server-verified; updater manifest serves 0.5.18 with
+minisign signatures on all platforms. End-to-end check: AppImage downloaded
+via a short-lived signed URL and verified offline with `guild verify` (ed25519
+over the sha256). Admin session minted directly in the guild postgres for the
+run, revoked after. Ships everything from review round 1 + the install/GUI
+coexistence work (link ownership tied to socket hosting, token.json auth
+watcher).
 
 ## Full-codebase review round 1 — 2026-09-23
 
