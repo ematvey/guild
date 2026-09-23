@@ -297,6 +297,12 @@ pub async fn run_daemon_shared_reclaiming(
     path: PathBuf,
     shared: Shared,
 ) -> anyhow::Result<()> {
+    // One live link + watcher pair at a time: a failed host cycle aborts the
+    // previous cycle's tasks before the next spawn. Without this, a
+    // fast-failing bind piles up an unbounded family of machine-link retry
+    // loops (each minting tickets on its own cadence) — the allocation
+    // storm that starved the engine and ate the user's sends.
+    let mut link_cycle: Option<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)> = None;
     loop {
         while crate::daemon_install::unit_active() {
             tokio::time::sleep(RECLAIM_POLL).await;
@@ -313,12 +319,24 @@ pub async fn run_daemon_shared_reclaiming(
             }
             let _ = shared.shutdown.send(false);
         }
-        spawn_machine_link(&shared);
+        if let Some((link, watcher)) = link_cycle.take() {
+            link.abort();
+            watcher.abort();
+        }
+        link_cycle = Some(spawn_machine_link(&shared));
         if let Err(e) = host_shared_socket(path.clone(), shared.clone()).await {
             // A failed host cycle (a bind race, an accept error) leaves the
             // endpoint to the winner; the loop re-polls and retries instead
             // of ending — the CLI socket must not go permanently unhosted.
+            // The failure must not spin: a fast-failing bind respawns the
+            // link + watcher + reaper tasks every few milliseconds, and
+            // nothing cancels them — hundreds of concurrent machine-link
+            // loops each minting tickets were observed pegging the CPU and
+            // leaking gigabytes of commit per minute (Windows GUI,
+            // 2026-09-23). Sleep between cycles and trace the error.
+            crate::dtrace::dtrace(&format!("daemon host cycle failed: {e}"));
             eprintln!("guild: daemon host cycle failed: {e}");
+            tokio::time::sleep(RECLAIM_POLL).await;
         }
     }
 }
@@ -326,24 +344,35 @@ pub async fn run_daemon_shared_reclaiming(
 /// Spawns the machine-link task (seeded from the session's persisted
 /// identity) and the token.json watcher. One call per host cycle: the link
 /// and the watcher exist exactly while this process hosts the CLI socket —
-/// the socket owner runs the link, nobody else does.
-fn spawn_machine_link(shared: &Shared) {
+/// the socket owner runs the link, nobody else does. The caller must abort
+/// the returned handles before the next cycle's spawn: a failed host cycle
+/// otherwise leaks the pair, and the leaked link tasks retry forever.
+fn spawn_machine_link(
+    shared: &Shared,
+) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
     let link_shared = shared.clone();
     let link_rx = shared.machine_link.subscribe();
-    tokio::spawn(crate::machine_link::run(link_shared, link_rx));
+    let link = tokio::spawn(crate::machine_link::run(link_shared, link_rx));
     // Auth performed by another process (the GUI while a unit daemon owns
     // the link, or a CLI verb) lands only in token.json: the watcher
     // re-seeds the link config from it, sign-out included.
-    if let Ok(path) = crate::session_store::store_watch_path() {
-        let watcher_shared = shared.clone();
-        tokio::spawn(crate::machine_link::watch_token_store(
-            path,
-            watcher_shared.machine_link.clone(),
-            shared.shutdown.subscribe(),
-            std::time::Duration::from_secs(1),
-        ));
-    }
+    let watcher = match crate::session_store::store_watch_path() {
+        Ok(path) => {
+            let watcher_shared = shared.clone();
+            Some(tokio::spawn(crate::machine_link::watch_token_store(
+                path,
+                watcher_shared.machine_link.clone(),
+                shared.shutdown.subscribe(),
+                std::time::Duration::from_secs(1),
+            )))
+        }
+        Err(_) => None,
+    };
     shared.publish_machine_link();
+    (
+        link,
+        watcher.unwrap_or_else(|| tokio::spawn(std::future::pending())),
+    )
 }
 
 /// Reaps finished agent runs so the JoinSet doesn't grow unbounded, then
