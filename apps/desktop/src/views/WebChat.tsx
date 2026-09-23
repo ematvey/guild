@@ -60,7 +60,7 @@ import {
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { toast } from "sonner";
 import { UserBadge } from "../components/user-badge";
-import { Caret } from "@guild/ui/components/caret";
+import { WorkingIndicator } from "@guild/ui/components/working-indicator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Separator } from "@guild/ui/components/separator";
 import { Skeleton } from "@guild/ui/components/skeleton";
@@ -2448,13 +2448,21 @@ export default function WebChat({
                   <span>Compacting thread…</span>
                 </div>
               )}
-              {/* caret only while reply text is actually streaming; tool
-                  blocks have their own status, silence shows nothing */}
-              {streaming && blocks.length === 0 && (
-                <div className="max-w-none">
-                  <Caret />
-                </div>
-              )}
+              {/* Working shimmer: the turn is generating but the log's tail
+                  is not already animating — before the first token, after a
+                  finished tool frame, or on a silent gap. A live text tail
+                  rides its own ▍ caret and live thinking shows "Thinking…",
+                  so those tails get no second indicator. */}
+              {streaming &&
+                !(
+                  blocks.length > 0 &&
+                  (blocks[blocks.length - 1].kind === "text" ||
+                    blocks[blocks.length - 1].kind === "reasoning")
+                ) && (
+                  <div className="max-w-none py-1">
+                    <WorkingIndicator />
+                  </div>
+                )}
               <div ref={bottom} />
             </div>
           </div>
