@@ -853,13 +853,13 @@ export async function sendChatNoStream(
         agents_md: projectInstructions || undefined,
       }),
       // A hung connection (proxy, tunnel, stalled body) must surface as an
-      // error block, not an optimistic bubble that spins forever — the
-      // server never saw the turn, so nothing will ever settle it.
+      // error block. Delivery may already have committed; retries must reuse
+      // the same user_message_id and immutable payload.
       signal: AbortSignal.timeout(30_000),
     });
   } catch (e) {
     if (e instanceof DOMException && e.name === "TimeoutError") {
-      throw new Error("send timed out — the server did not answer; check the connection and press send to retry");
+      throw new Error("send timed out — delivery is unknown; retry this send to check or complete it");
     }
     throw e;
   }

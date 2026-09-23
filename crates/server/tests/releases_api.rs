@@ -62,6 +62,31 @@ async fn release_upload_list_signed_download_round_trip() {
     assert_eq!(v["size_bytes"], ARTIFACT.len() as i64);
     let release_id = v["id"].as_str().unwrap().to_string();
 
+    // Bearer downloads require no signature query; anonymous requests still fail.
+    for (auth, expected) in [
+        (Some(&token), StatusCode::OK),
+        (None, StatusCode::UNAUTHORIZED),
+    ] {
+        let mut req = Request::builder().uri(format!("/api/v1/releases/{release_id}/download"));
+        if let Some(token) = auth {
+            req = req.header("authorization", format!("Bearer {token}"));
+        }
+        let response = app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        if expected == StatusCode::OK {
+            assert_eq!(
+                &axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap()[..],
+                ARTIFACT
+            );
+        }
+    }
+
     // duplicate version/kind/platform → conflict
     let res = app
         .clone()

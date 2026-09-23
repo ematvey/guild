@@ -54,7 +54,8 @@ Two different "Guild" stacks exist on this host. **Don't confuse them.**
   because 8080 is already taken on this host. DB/CH/S3 URLs use
   `host.docker.internal:5432/8123/9950`.
 - Server state lives in the named volume `guild_data` (`/data` inside the
-  container). The fullstack fallback volumes (`pgdata`, `chdata`,
+  container). Restate journals live in `restate_data` mounted at
+  `/restate-data`. The fullstack fallback volumes (`pgdata`, `chdata`,
   `miniodata`) still hold the pre-cutover data — keep until confident.
   `docker compose down -v` destroys all of it.
 - Single-container mode: `GUILD_ROLE=all` (HTTP + worker roles in one
@@ -166,8 +167,23 @@ Notes:
   `clickhouse-server:24`; the host ClickHouse floats 26.5
   (`pull_policy: always`) — a host CH upgrade can change behavior.
 - Registry bundles live in rustfs bucket `guild` (host :9950).
-- Restate: `restate:latest` — **floating tag**; a rebuild can pull a new
-  Restate and change behavior. Pin if that bites.
+- Restate is pinned to the deployed image digest. Upgrade its image and
+  stored journal format deliberately, with a stopped-data backup.
+- Restate's node name is persistent identity, not a disposable container
+  hostname. Compose supplies `RESTATE_NODE_NAME` from
+  `GUILD_RESTATE_NODE_NAME` (`guild-restate` for a fresh installation).
+  On migration, set that variable in compose's ignored `.env` to the
+  **existing data's node name** before recreating the container. This host
+  retains `4ff015b84014`; changing it makes Restate refuse the existing data.
+- When adopting `restate_data` on an older installation with no mount,
+  **do not run compose up against an empty volume**. Stop server and
+  Restate, copy the stopped container's `/restate-data/.` to a private
+  backup, seed the named volume with those exact bytes, and only then
+  recreate Restate. Compare file hashes before starting and retain the
+  backup. Recheck outstanding invocations before workflow-code changes;
+  adding journal operations can make old in-flight invocations incompatible.
+  Wait for Restate's admin query endpoint as well as server health after
+  startup; server health alone does not establish workflow readiness.
 - Host port overrides: `GUILD_HTTP_PORT` (18080 here), `GUILD_RESTATE_ADMIN_PORT`
   (9070) in `config.env`.
 - Server-side agent sessions store under `GUILD_DATA_DIR=/data`;

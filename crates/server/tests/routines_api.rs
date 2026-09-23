@@ -169,6 +169,28 @@ async fn routine_crud_hook_auth_and_internal_completion() {
     let routine_id: Uuid = routine["id"].as_str().unwrap().parse().unwrap();
     let hook_token = routine["webhook_token"].as_str().unwrap().to_string();
 
+    // Omitting enabled must not let a member rewrite an admin-approved routine.
+    for body in [
+        json!({"prompt":"replacement"}),
+        json!({"model":"other"}),
+        json!({"trigger_config":{}}),
+    ] {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/v1/routines/{routine_id}"))
+                    .header("authorization", format!("Bearer {member_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+
     // interval routine with too-small interval → 400
     let res = app
         .clone()
@@ -207,7 +229,9 @@ async fn routine_crud_hook_auth_and_internal_completion() {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         v["routines"]
             .as_array()
@@ -386,7 +410,7 @@ async fn routine_crud_hook_auth_and_internal_completion() {
     assert_eq!(v["runs"][0]["id"], run_id.to_string());
     assert_eq!(v["runs"][0]["status"], "running");
 
-    // re-enable of an interval routine forwards a tick
+    // re-enable of an interval routine durably forwards its schedule starter
     // interval routines default to enabled: admin-gated, like any creation
     let interval_routine = create_routine(
         &app,
@@ -402,6 +426,7 @@ async fn routine_crud_hook_auth_and_internal_completion() {
     .await;
     let interval_id: Uuid = interval_routine["id"].as_str().unwrap().parse().unwrap();
     let res = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("PATCH")
@@ -415,8 +440,53 @@ async fn routine_crud_hook_auth_and_internal_completion() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let seen = restate.received_requests().await.unwrap();
-    assert!(seen.iter().any(|r| r
-        .url
-        .path()
-        .contains(&format!("RoutineRunner/{interval_id}/tick/send"))));
+    assert_eq!(
+        seen.iter()
+            .filter(|r| r
+                .url
+                .path()
+                .contains(&format!("RoutineRunner/{interval_id}/start_schedule/send")))
+            .count(),
+        1,
+        "repeated enabled:true must not fork the timer chain"
+    );
+    let old_generation = interval_routine["trigger_config"]["schedule_generation"].clone();
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/routines/{interval_id}"))
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"trigger_config":{"interval_secs":20,"schedule_generation":"injected"}})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let changed: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_ne!(
+        changed["trigger_config"]["schedule_generation"],
+        old_generation
+    );
+    assert_ne!(changed["trigger_config"]["schedule_generation"], "injected");
+    let seen = restate.received_requests().await.unwrap();
+    assert_eq!(
+        seen.iter()
+            .filter(|r| r
+                .url
+                .path()
+                .contains(&format!("RoutineRunner/{interval_id}/start_schedule/send")))
+            .count(),
+        2
+    );
 }

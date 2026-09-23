@@ -17,13 +17,13 @@ use crate::session_store;
 use futures::{SinkExt, StreamExt};
 use protocol::ws::{WsClientMsg, WsServerMsg};
 use serde::Deserialize;
-use std::sync::Arc;
-use uuid::Uuid;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use url::Url;
+use uuid::Uuid;
 
 /// Heartbeat cadence and the dead-link verdict: the server pings every
 /// socket ~15 s (challenge-pong in ws.rs), so a link with no inbound frame
@@ -130,7 +130,10 @@ fn machine_os_version() -> Option<String> {
             }
         }
     }
-    let kernel = std::process::Command::new("uname").arg("-r").output().ok()?;
+    let kernel = std::process::Command::new("uname")
+        .arg("-r")
+        .output()
+        .ok()?;
     non_empty(&String::from_utf8_lossy(&kernel.stdout))
 }
 
@@ -181,10 +184,7 @@ fn websocket_url(
         _ => "ws",
     })
     .expect("ws/wss are valid schemes");
-    url.set_path(&format!(
-        "{}/api/v1/ws",
-        url.path().trim_end_matches('/')
-    ));
+    url.set_path(&format!("{}/api/v1/ws", url.path().trim_end_matches('/')));
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("ticket", ticket);
@@ -230,7 +230,9 @@ enum ServerFrame {
     },
     Displaced,
     AuthRequired,
-    Error { message: String },
+    Error {
+        message: String,
+    },
     /// Anything the executor does not act on: display/state frames, frames
     /// with an unknown `type` tag, non-JSON text. All ignored, never fatal.
     Other,
@@ -289,7 +291,7 @@ enum LinkEnd {
 }
 
 async fn ws_session(
-    _shared: &Shared,
+    shared: &Shared,
     cfg: &MachineLinkConfig,
     meta: &MachineMeta,
     instance_id: uuid::Uuid,
@@ -300,15 +302,25 @@ async fn ws_session(
         base_url: cfg.base_url.clone(),
         token: cfg.token.clone(),
     };
-    let ticket = match cloud.ws_ticket().await {
+    let ticket = match tokio::select! {
+        result = cloud.ws_ticket() => result,
+        _ = cfg_rx.changed() => return LinkEnd::Closed,
+        _ = shutdown_rx.changed() => return LinkEnd::Closed,
+    } {
         Ok(t) => t,
         Err(CloudError::Unauthorized) => return LinkEnd::AuthRequired,
         Err(e) => return LinkEnd::Failed(format!("ticket mint failed: {e}")),
     };
     let url = websocket_url(cfg, meta, instance_id, &ticket);
-    let (ws, _) = match tokio_tungstenite::connect_async(url.as_str()).await {
-        Ok(pair) => pair,
-        Err(e) => return LinkEnd::Failed(format!("connect failed: {e}")),
+    let connected = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(30), tokio_tungstenite::connect_async(url.as_str())) => result,
+        _ = cfg_rx.changed() => return LinkEnd::Closed,
+        _ = shutdown_rx.changed() => return LinkEnd::Closed,
+    };
+    let (ws, _) = match connected {
+        Ok(Ok(pair)) => pair,
+        Ok(Err(e)) => return LinkEnd::Failed(format!("connect failed: {e}")),
+        Err(_) => return LinkEnd::Failed("connect timed out after 30s".into()),
     };
     let (mut sink, mut stream) = ws.split();
     let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
@@ -321,6 +333,7 @@ async fn ws_session(
         }
     });
 
+    let hooks = crate::artifacts::registry_hooks(cloud.clone(), shared.artifacts.clone());
     let mut last_inbound = tokio::time::Instant::now();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(heartbeat_secs()));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -357,15 +370,17 @@ async fn ws_session(
                             // request_id on the server, so completion order is
                             // free to interleave.
                             let outbound = outbound_tx.clone();
+                            let hooks = hooks.clone();
                             tokio::spawn(async move {
                                 let result =
-                                    execute_client_tool(&name, &arguments, workdir.as_deref()).await;
+                                    execute_client_tool(&name, &arguments, workdir.as_deref(), Some(hooks)).await;
                                 let msg = WsClientMsg::ToolResult {
                                     chat_id,
                                     call_id,
                                     content: result.content,
                                     is_error: result.is_error,
                                     meta: result.meta,
+                                    images: result.images,
                                 };
                                 let _ = outbound.send(WsMessage::Text(
                                     serde_json::to_string(&msg)
@@ -376,8 +391,11 @@ async fn ws_session(
                         }
                         ServerFrame::MachineRequest { request_id, op, payload } => {
                             let outbound = outbound_tx.clone();
+                            let hooks = hooks.clone();
                             tokio::spawn(async move {
-                                let result = machine_request_result(&op, &payload).await;
+                                let result = if op == "artifact.prefetch_v1" {
+                                    prefetch_artifact(&payload, &hooks).await
+                                } else { machine_request_result(&op, &payload).await };
                                 let (ok, resp_payload, error) = match result {
                                     Ok(v) => (true, Some(v), None),
                                     Err(e) => (false, None, Some(e)),
@@ -438,11 +456,63 @@ const FS_LIST_MAX_ENTRIES: usize = 1000;
 
 /// Control-plane ops the server sends over the executor socket (read-only
 /// filesystem access for the desktop's remote folder browse).
+async fn prefetch_artifact(
+    payload: &serde_json::Value,
+    hooks: &guild_core::tools::artifacts::ArtifactHooks,
+) -> Result<serde_json::Value, String> {
+    use guild_core::tools::artifacts::{materialize, ArtifactPath};
+    let workdir = Path::new(payload["workdir"].as_str().ok_or("missing workdir")?);
+    if !workdir.is_absolute() || !workdir.is_dir() {
+        return Err("invalid project directory".into());
+    }
+    let chat_id =
+        serde_json::from_value::<Uuid>(payload["chat_id"].clone()).map_err(|e| e.to_string())?;
+    let artifact_id = serde_json::from_value::<Uuid>(payload["artifact_id"].clone())
+        .map_err(|e| e.to_string())?;
+    let filename = payload["filename"].as_str().ok_or("missing filename")?;
+    if filename.is_empty()
+        || filename.len() > 1024
+        || filename.contains(['/', '\\'])
+        || matches!(filename, "." | "..")
+    {
+        return Err("invalid artifact filename".into());
+    }
+    hooks.index.record(chat_id, filename, artifact_id);
+    let artifact = ArtifactPath {
+        chat_id,
+        filename: filename.into(),
+    };
+    let path = materialize(workdir, &artifact, &hooks.index, hooks.fetcher.as_ref())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"path": path}))
+}
+
 async fn machine_request_result(
     op: &str,
     payload: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     match op {
+        "capabilities" => {
+            Ok(serde_json::json!({"operations": ["context.prepare_v1", "artifact.prefetch_v1"]}))
+        }
+        "context.prepare_v1" => {
+            let project = payload["project_dir"]
+                .as_str()
+                .ok_or("missing project_dir")?;
+            let prompt = payload["prompt"].as_str().unwrap_or_default();
+            if project.len() > 32768 || prompt.len() > 1024 * 1024 {
+                return Err("context request exceeds limit".into());
+            }
+            let project = std::path::PathBuf::from(project);
+            let prompt = prompt.to_string();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::remote_context::prepare(&project, &prompt)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
         "fs_home" => Ok(serde_json::json!({
             "home": std::env::var("HOME").unwrap_or_default()
         })),
@@ -468,13 +538,13 @@ async fn machine_request_result(
                     break;
                 }
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let is_dir = entry
-                    .file_type()
-                    .await
-                    .map(|t| t.is_dir())
-                    .unwrap_or(false);
+                let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
                 let item = serde_json::json!({ "name": name, "is_dir": is_dir });
-                if is_dir { dirs.push(item) } else { files.push(item) }
+                if is_dir {
+                    dirs.push(item)
+                } else {
+                    files.push(item)
+                }
             }
             dirs.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
             files.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
@@ -503,37 +573,43 @@ struct ExecOutcome {
     content: String,
     is_error: bool,
     meta: Option<serde_json::Value>,
+    images: Vec<String>,
 }
 
-async fn execute_client_tool(name: &str, arguments: &str, workdir: Option<&str>) -> ExecOutcome {
-    let args: serde_json::Value = serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
-    let outcome: Result<ExecOutcome, String> = match workdir {
-        None => Err("no workspace folder is set for this chat — pick a project with 'Choose project' in the composer".to_string()),
-        Some(dir) => {
-            let registry = builtin_registry();
-            match registry.get(name) {
-                Some(tool) => match tool.run(Path::new(dir), args).await {
-                    Ok(out) => Ok(ExecOutcome {
-                        content: out.output_for_model,
-                        is_error: false,
-                        meta: out.meta,
-                    }),
-                    Err(e) => Ok(ExecOutcome {
-                        content: e.to_string(),
-                        is_error: true,
-                        meta: None,
-                    }),
-                },
-                None => Err(format!("unknown tool {name}")),
-            }
-        }
-    };
-    match outcome {
-        Ok(o) => o,
-        Err(e) => ExecOutcome {
-            content: e,
+async fn execute_client_tool(
+    name: &str,
+    arguments: &str,
+    workdir: Option<&str>,
+    hooks: Option<Arc<guild_core::tools::artifacts::ArtifactHooks>>,
+) -> ExecOutcome {
+    let result = async {
+        let dir = workdir.ok_or_else(|| "no workspace folder is set for this chat — pick a project with 'Choose project' in the composer".to_string())?;
+        let args: serde_json::Value = serde_json::from_str(arguments).map_err(|e| format!("invalid tool arguments: {e}"))?;
+        let custom_registry;
+        let registry = if name == "read_file" {
+            let project = PathBuf::from(dir);
+            let roots = tokio::task::spawn_blocking(move || crate::remote_context::skill_read_roots(&project))
+                .await.map_err(|e| e.to_string())?;
+            custom_registry = guild_core::tools::ToolRegistry::builtins_with_read_roots(roots);
+            &custom_registry
+        } else { builtin_registry() };
+        // Artifact fetch uses the authenticated cloud session for this link,
+        // including results spilled earlier in this same turn.
+        registry.run_with_artifacts(name, Path::new(dir), args, hooks.as_deref())
+            .await.map_err(|e| e.to_string())
+    }.await;
+    match result {
+        Ok(out) => ExecOutcome {
+            content: out.output_for_model,
+            is_error: false,
+            meta: out.meta,
+            images: out.images,
+        },
+        Err(content) => ExecOutcome {
+            content,
             is_error: true,
             meta: None,
+            images: Vec::new(),
         },
     }
 }
@@ -598,8 +674,7 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 // retry after a long backoff instead. A genuinely competing
                 // instance just re-displaces us; the slow cadence keeps
                 // that fight visible without leaving the machine dead.
-                if wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 300, &mut shutdown_rx)
-                    .await
+                if wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 300, &mut shutdown_rx).await
                 {
                     return;
                 }
@@ -609,8 +684,7 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 // 401 during a server deploy just as well as a revoked
                 // token. Retry on a slow cadence; a real sign-out republishes
                 // `None` and the outer loop parks anyway.
-                if wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 60, &mut shutdown_rx)
-                    .await
+                if wait_for_config_change_or_backoff(&mut cfg_rx, &cfg, 60, &mut shutdown_rx).await
                 {
                     return;
                 }
@@ -674,7 +748,7 @@ async fn wait_for_config_change_or_backoff(
         Some(c) if c != *current => false, // new config: outer loop reconnects with it
         // Same config or signed out: park briefly, then let the outer loop
         // decide (it re-checks shutdown before relinking).
-        _ => !shutdown_backoff(shutdown_rx, 1).await,
+        _ => shutdown_backoff(shutdown_rx, 1).await,
     }
 }
 
@@ -775,6 +849,280 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn remote_context_and_prefetch_roundtrip_on_real_machine_socket() {
+        ensure_crypto_provider();
+        let fixture = guild_server::test_support::full_state().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let app = guild_server::build_router(fixture.state.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        let config = MachineLinkConfig {
+            base_url,
+            token: fixture.token.clone(),
+            machine_id: Uuid::now_v7().to_string(),
+            ..cfg()
+        };
+        let machine = config.machine_id.clone();
+        let (_config_tx, mut config_rx) = watch::channel(Some(config.clone()));
+        let (stop_tx, mut stop_rx) = watch::channel(false);
+        let session = tokio::spawn(async move {
+            ws_session(
+                &Shared::new(crate::jsonrpc_loop::Session::default()),
+                &config,
+                &MachineMeta::default(),
+                Uuid::now_v7(),
+                &mut config_rx,
+                &mut stop_rx,
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !fixture.state.hub.machine_online(&machine) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let temp = temp_scoped_dir("remote-context-socket");
+        let root = temp.join("bound");
+        let child = root.join("child");
+        std::fs::create_dir_all(child.join(".agents/skills/socket-demo")).unwrap();
+        std::fs::write(root.join(".git"), "gitdir: fixture").unwrap();
+        std::fs::write(root.join("AGENTS.md"), "SOCKET-ROOT").unwrap();
+        std::fs::write(child.join("AGENTS.override.md"), "SOCKET-CHILD").unwrap();
+        std::fs::write(
+            child.join(".agents/skills/socket-demo/SKILL.md"),
+            "---\nname: socket-demo\ndescription: remote\n---\nSOCKET-SKILL",
+        )
+        .unwrap();
+        std::fs::write(temp.join("AGENTS.md"), "OUTSIDE-PROJECT").unwrap();
+        let ancestor_skill = root.join(".agents/skills/ancestor/SKILL.md");
+        std::fs::create_dir_all(ancestor_skill.parent().unwrap()).unwrap();
+        std::fs::write(
+            &ancestor_skill,
+            "---\nname: ancestor\n---\nREAD-ONLY-ANCESTOR",
+        )
+        .unwrap();
+        let timeout = Duration::from_secs(5);
+        let caps = fixture
+            .state
+            .hub
+            .machine_request(
+                &machine,
+                fixture.org_id,
+                "capabilities",
+                serde_json::json!({}),
+                timeout,
+            )
+            .await
+            .unwrap();
+        assert!(caps["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "context.prepare_v1"));
+        let context = fixture
+            .state
+            .hub
+            .machine_request(
+                &machine,
+                fixture.org_id,
+                "context.prepare_v1",
+                serde_json::json!({"project_dir": child, "prompt":"/socket-demo"}),
+                timeout,
+            )
+            .await
+            .unwrap();
+        let context: protocol::ws::MachineContext = serde_json::from_value(context).unwrap();
+        let docs = context.instructions.unwrap();
+        assert!(docs.find("SOCKET-ROOT").unwrap() < docs.find("SOCKET-CHILD").unwrap());
+        assert!(!docs.contains("OUTSIDE-PROJECT"));
+        assert!(context.skill_expansions.contains("SOCKET-SKILL"));
+        assert!(context.skills_index.contains("socket-demo"));
+        let read = execute_client_tool(
+            "read_file",
+            &serde_json::json!({"path": ancestor_skill}).to_string(),
+            Some(&child.to_string_lossy()),
+            None,
+        )
+        .await;
+        assert!(!read.is_error);
+        assert!(read.content.contains("READ-ONLY-ANCESTOR"));
+        let write = execute_client_tool(
+            "write_file",
+            &serde_json::json!({"path": ancestor_skill, "content":"overwrite"}).to_string(),
+            Some(&child.to_string_lossy()),
+            None,
+        )
+        .await;
+        assert!(write.is_error);
+        let outside = execute_client_tool(
+            "read_file",
+            &serde_json::json!({"path": temp.join("AGENTS.md")}).to_string(),
+            Some(&child.to_string_lossy()),
+            None,
+        )
+        .await;
+        assert!(outside.is_error);
+        assert!(matches!(
+            fixture
+                .state
+                .hub
+                .machine_request(
+                    &machine,
+                    Uuid::now_v7(),
+                    "context.prepare_v1",
+                    serde_json::json!({"project_dir": child}),
+                    timeout
+                )
+                .await,
+            Err(guild_server::http::hub::MachineRequestError::Offline)
+        ));
+
+        let artifact = guild_server::worker::spill::spill_artifact(
+            &fixture.state,
+            fixture.org_id,
+            fixture.chat_id,
+            "prefetch-fixture",
+            "test",
+            "immediate.txt",
+            "text/plain",
+            b"prefetched before first touch",
+        )
+        .await
+        .unwrap();
+        guild_server::worker::spill::spawn_machine_prefetch(
+            &fixture.state,
+            fixture.org_id,
+            fixture.chat_id,
+            &machine,
+            &child.to_string_lossy(),
+            &artifact,
+        );
+        let artifact_path = child.join(&artifact.path);
+        tokio::time::timeout(timeout, async {
+            while !artifact_path.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&artifact_path).unwrap(),
+            "prefetched before first touch"
+        );
+        // Authenticated fetch and path guards remain active on prefetch.
+        let denied = fixture.state.hub.machine_request(&machine, fixture.org_id, "artifact.prefetch_v1", serde_json::json!({"workdir": child, "chat_id": fixture.chat_id, "artifact_id": artifact.artifact_id, "filename":"../escape"}), timeout).await;
+        assert!(matches!(
+            denied,
+            Err(guild_server::http::hub::MachineRequestError::Rejected(_))
+        ));
+        stop_tx.send(true).unwrap();
+        tokio::time::timeout(timeout, session)
+            .await
+            .unwrap()
+            .unwrap();
+        server.abort();
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn capability_discovery_is_versioned_and_unknown_operations_are_rejected() {
+        let caps = machine_request_result("capabilities", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            caps["operations"],
+            serde_json::json!(["context.prepare_v1", "artifact.prefetch_v1"])
+        );
+        assert!(
+            machine_request_result("context.prepare_v2", &serde_json::json!({}))
+                .await
+                .is_err()
+        );
+        assert!(machine_request_result(
+            "context.prepare_v1",
+            &serde_json::json!({"project_dir":"relative"})
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn config_change_cancels_a_stalled_upgrade() {
+        ensure_crypto_provider();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let notify = entered.clone();
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/ws/ticket",
+                axum::routing::post(|| async {
+                    axum::Json(serde_json::json!({"ticket":"fixture"}))
+                }),
+            )
+            .route(
+                "/api/v1/ws",
+                axum::routing::get(move || {
+                    let notify = notify.clone();
+                    async move {
+                        notify.notify_one();
+                        std::future::pending::<axum::http::StatusCode>().await
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let config = MachineLinkConfig { base_url, ..cfg() };
+        let (tx, mut rx) = watch::channel(Some(config.clone()));
+        let (_shutdown, mut stop) = watch::channel(false);
+        let session = tokio::spawn(async move {
+            ws_session(
+                &Shared::new(crate::jsonrpc_loop::Session::default()),
+                &config,
+                &MachineMeta::default(),
+                Uuid::now_v7(),
+                &mut rx,
+                &mut stop,
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(3), entered.notified())
+            .await
+            .unwrap();
+        tx.send(None).unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), session)
+                .await
+                .unwrap()
+                .unwrap(),
+            LinkEnd::Closed
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn backoff_retries_unchanged_config_and_signout_but_stops_on_shutdown() {
+        let config = cfg();
+        let (tx, mut rx) = watch::channel(Some(config.clone()));
+        let (shutdown, mut stop) = watch::channel(false);
+        assert!(!wait_for_config_change_or_backoff(&mut rx, &config, 0, &mut stop).await);
+        tx.send(None).unwrap();
+        assert!(!wait_for_config_change_or_backoff(&mut rx, &config, 0, &mut stop).await);
+        shutdown.send(true).unwrap();
+        assert!(wait_for_config_change_or_backoff(&mut rx, &config, 0, &mut stop).await);
+    }
+
     #[test]
     fn websocket_url_is_ws_with_encoded_query_and_meta() {
         let meta = MachineMeta {
@@ -843,7 +1191,7 @@ mod tests {
     #[test]
     fn execute_client_tool_requires_a_workdir() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let out = rt.block_on(execute_client_tool("read_file", "{}", None));
+        let out = rt.block_on(execute_client_tool("read_file", "{}", None, None));
         assert!(out.is_error);
         assert!(out.content.contains("no workspace folder"));
     }
@@ -855,13 +1203,65 @@ mod tests {
             "no_such_tool",
             "{}",
             Some(std::env::temp_dir().to_str().unwrap()),
+            None,
         ));
         assert!(out.is_error);
         assert!(out.content.contains("unknown tool"));
     }
 
+    #[tokio::test]
+    async fn executor_preserves_images_and_materializes_missing_artifacts() {
+        let dir = temp_scoped_dir("tool-media-artifact");
+        std::fs::write(dir.join("picture.png"), b"png-fixture").unwrap();
+        let image =
+            execute_client_tool("read_file", r#"{"path":"picture.png"}"#, dir.to_str(), None).await;
+        assert!(!image.is_error, "{}", image.content);
+        assert_eq!(image.images.len(), 1);
+        assert!(image.images[0].starts_with("data:image/png;base64,"));
+
+        let server = wiremock::MockServer::start().await;
+        let chat = Uuid::now_v7();
+        let artifact = Uuid::now_v7();
+        wiremock::Mock::given(wiremock::matchers::path(format!("/api/v1/chats/{chat}/thread")))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({"events":[{"event":{
+                "type":"tool_result", "turn":1,"step":1,"call_id":"call","name":"api","content":"pointer",
+                "artifact_id":artifact,"meta":{"card":{"card":"artifact","filename":"report.txt"}}
+            }}]}))).mount(&server).await;
+        wiremock::Mock::given(wiremock::matchers::path(format!(
+            "/api/v1/tool_artifacts/{artifact}"
+        )))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer fixture",
+        ))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("artifact body"))
+        .expect(1)
+        .mount(&server)
+        .await;
+        let hooks = crate::artifacts::registry_hooks(
+            CloudClient {
+                base_url: server.uri(),
+                token: "fixture".into(),
+            },
+            Arc::new(guild_core::tools::artifacts::ArtifactIndex::new()),
+        );
+        let path = format!(".guild/artifacts/{chat}/report.txt");
+        let args = serde_json::json!({"path":path}).to_string();
+        let read = execute_client_tool("read_file", &args, dir.to_str(), Some(hooks.clone())).await;
+        assert!(!read.is_error, "{}", read.content);
+        assert_eq!(read.content, "artifact body");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(&path)).unwrap(),
+            "artifact body"
+        );
+        let cached = execute_client_tool("read_file", &args, dir.to_str(), Some(hooks)).await;
+        assert!(!cached.is_error);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     fn temp_scoped_dir(label: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("guild-fs-list-{label}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("guild-fs-list-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

@@ -131,7 +131,7 @@ impl<'a> ThreadStore<'a> {
     }
 
     /// Lists a chat's events, org-scoped via the chats join, ordered by
-    /// `id` (uuid v7 = append order within a chat).
+    /// `seq` (write order, independent of event UUID generation).
     pub async fn list_events(
         &self,
         org_id: Uuid,
@@ -147,7 +147,27 @@ impl<'a> ThreadStore<'a> {
         .fetch_all(self.pool)
         .await
         .map_err(ApiError::from)?;
-        Ok(rows.into_iter().filter_map(|row| row.into_event_row_lenient()).collect())
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.into_event_row_lenient())
+            .collect())
+    }
+
+    /// Model history excludes accepted future commands and canceled sends.
+    /// The current command can be excluded while its payload is appended to
+    /// the derived model request explicitly.
+    pub async fn model_events(
+        &self,
+        org: Uuid,
+        chat: Uuid,
+        exclude: Option<Uuid>,
+    ) -> Result<Vec<ThreadEventRow>, ApiError> {
+        let rows: Vec<EventRowDb> = sqlx::query_as("SELECT e.id,e.chat_id,e.seq,e.payload,e.created_at FROM thread_events e JOIN chats c ON c.id=e.chat_id LEFT JOIN turn_commands t ON t.id=e.id WHERE c.org_id=$1 AND e.chat_id=$2 AND ($3::uuid IS NULL OR e.id<>$3) AND (t.id IS NULL OR t.status IN ('running','completed','failed')) ORDER BY coalesce(t.started_seq,e.seq),e.seq")
+            .bind(org).bind(chat).bind(exclude).fetch_all(self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.into_event_row_lenient())
+            .collect())
     }
 
     /// Newest page of the chat's event log, keyset-paginated on `seq`

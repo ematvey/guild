@@ -90,7 +90,11 @@ pub fn parse_artifact_path(workdir: &Path, candidate: &str) -> Option<ArtifactPa
 
 /// Characters that terminate an artifact pointer token inside free text.
 fn is_token_break(c: char) -> bool {
-    c.is_whitespace() || matches!(c, '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '<' | '>' | ',')
+    c.is_whitespace()
+        || matches!(
+            c,
+            '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '<' | '>' | ','
+        )
 }
 
 /// Scans free text (tool-result pointer text, shell command lines) for
@@ -101,15 +105,12 @@ pub fn scan_text(workdir: &Path, text: &str) -> Vec<ArtifactPath> {
     let mut rest = text;
     while let Some(i) = rest.find(ARTIFACTS_REL) {
         let after = &rest[i + ARTIFACTS_REL.len()..];
-        let token: String = after
-            .chars()
-            .take_while(|c| !is_token_break(*c))
-            .collect();
+        let token: String = after.chars().take_while(|c| !is_token_break(*c)).collect();
         // sentence punctuation clings to the token; real filenames never
         // end in it
         let token = token.trim_end_matches(['.', ',', ';', ':', '!', '?']);
         // Absolute spelling: the token itself is already a path under workdir.
-        if let Some(a) = parse_artifact_path(workdir, &token) {
+        if let Some(a) = parse_artifact_path(workdir, token) {
             out.push(a);
         }
         // Relative pointer: rebuild `.guild/artifacts/<tail>` from the token.
@@ -194,10 +195,7 @@ impl ArtifactIndex {
         {
             if let Some(filename) = artifact_card_filename(meta) {
                 self.record(chat_id, &filename, *id);
-                return Some(ArtifactPath {
-                    chat_id,
-                    filename,
-                });
+                return Some(ArtifactPath { chat_id, filename });
             }
         }
         None
@@ -226,18 +224,58 @@ pub trait ArtifactFetcher: Send + Sync {
     async fn thread_events(&self, chat_id: Uuid) -> Result<Vec<ThreadEvent>, String>;
 }
 
-/// Writes fetched artifact bytes to the model-facing path, creating the
-/// `.guild/artifacts/<chat_id>/` tree as needed.
+/// Removes a staging file on error or cancellation; the model-facing name
+/// is published only after the complete write is flushed and closed.
+struct StagedArtifact(PathBuf);
+impl Drop for StagedArtifact {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Writes complete bytes under a unique sibling before atomic publication.
+/// Concurrent prefetch and first-touch readers never observe a partial file.
 pub async fn write_bytes(
     workdir: &Path,
     artifact: &ArtifactPath,
     bytes: &[u8],
 ) -> std::io::Result<PathBuf> {
-    let path = model_path(workdir, artifact);
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+    use tokio::io::AsyncWriteExt;
+    let scoped = || {
+        super::resolve_scoped(workdir, &artifact.rel_path())
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    };
+    let path = scoped()?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("artifact has no parent"))?;
+    tokio::fs::create_dir_all(parent).await?;
+    if scoped()? != path {
+        return Err(std::io::Error::other("artifact path changed"));
     }
-    tokio::fs::write(&path, bytes).await?;
+    let staged = StagedArtifact(parent.join(format!(".guild-stage-{}", Uuid::now_v7())));
+    let mut file = tokio::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&staged.0)
+        .await?;
+    file.write_all(bytes).await?;
+    file.flush().await?;
+    drop(file);
+    if scoped()? != path {
+        return Err(std::io::Error::other("artifact path changed"));
+    }
+    match tokio::fs::rename(&staged.0, &path).await {
+        Ok(()) => {}
+        // Windows does not replace an existing destination. Another
+        // materializer may have published the same immutable artifact.
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+            ) && tokio::fs::try_exists(&path).await.unwrap_or(false) => {}
+        Err(error) => return Err(error),
+    }
     Ok(path)
 }
 
@@ -251,7 +289,7 @@ pub async fn materialize(
     index: &ArtifactIndex,
     fetcher: &dyn ArtifactFetcher,
 ) -> Result<PathBuf, String> {
-    let path = model_path(workdir, artifact);
+    let path = super::resolve_scoped(workdir, &artifact.rel_path()).map_err(|e| e.to_string())?;
     if tokio::fs::try_exists(&path).await.unwrap_or(false) {
         return Ok(path);
     }
@@ -267,12 +305,7 @@ pub async fn materialize(
             }
             index
                 .lookup(artifact.chat_id, &artifact.filename)
-                .ok_or_else(|| {
-                    format!(
-                        "no artifact record for {}",
-                        artifact.rel_path()
-                    )
-                })?
+                .ok_or_else(|| format!("no artifact record for {}", artifact.rel_path()))?
         }
     };
     let bytes = fetcher
@@ -374,6 +407,25 @@ mod tests {
         }})
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn materialized_artifact_cannot_escape_through_workspace_symlink() {
+        let dir = workdir("symlink-write");
+        let outside = workdir("symlink-outside");
+        let _ = std::fs::remove_dir_all(dir.join(".guild"));
+        std::os::unix::fs::symlink(&outside, dir.join(".guild")).unwrap();
+        let artifact = ArtifactPath {
+            chat_id: CHAT,
+            filename: "file.txt".into(),
+        };
+        assert!(write_bytes(&dir, &artifact, b"must stay scoped")
+            .await
+            .is_err());
+        assert!(!outside.join(format!("artifacts/{CHAT}/file.txt")).exists());
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+
     // --- path contract -----------------------------------------------------
 
     #[test]
@@ -405,11 +457,7 @@ mod tests {
             assert!(parse_artifact_path(&dir, bad).is_none(), "accepted: {bad}");
         }
         // escape through the artifacts dir itself
-        assert!(parse_artifact_path(
-            &dir,
-            &format!(".guild/artifacts/{CHAT}/../../x")
-        )
-        .is_none());
+        assert!(parse_artifact_path(&dir, &format!(".guild/artifacts/{CHAT}/../../x")).is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -442,9 +490,8 @@ mod tests {
     #[test]
     fn scan_text_stops_at_token_breaks() {
         let dir = workdir("scantext");
-        let text = format!(
-            "see .guild/artifacts/{CHAT}/rep.xlsx.\nand (.guild/artifacts/{CHAT}/two.bin)"
-        );
+        let text =
+            format!("see .guild/artifacts/{CHAT}/rep.xlsx.\nand (.guild/artifacts/{CHAT}/two.bin)");
         let found = scan_text(&dir, &text);
         let files: Vec<&str> = found.iter().map(|a| a.filename.as_str()).collect();
         // the trailing `.` and `)` must not leak into filenames
@@ -507,6 +554,50 @@ mod tests {
         }
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_prefetch_and_first_touch_publish_only_complete_files() {
+        let dir = workdir("atomic-prefetch");
+        let index = ArtifactIndex::new();
+        index.record(CHAT, "large.bin", ART);
+        let mut fetcher = FakeFetcher::new();
+        let bytes = vec![b'x'; 16 * 1024 * 1024];
+        fetcher.bytes.insert(ART, bytes.clone());
+        let artifact = ArtifactPath {
+            chat_id: CHAT,
+            filename: "large.bin".into(),
+        };
+        let path = model_path(&dir, &artifact);
+        let observe = async {
+            loop {
+                match tokio::fs::read(&path).await {
+                    Ok(observed) => {
+                        assert_eq!(observed, bytes);
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        tokio::task::yield_now().await
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            }
+        };
+        let args = serde_json::json!({"path": artifact.rel_path()});
+        let (prefetch, touch, ()) = tokio::join!(
+            materialize(&dir, &artifact, &index, &fetcher),
+            prepare_args(&index, &fetcher, &dir, &args),
+            observe,
+        );
+        prefetch.unwrap();
+        touch.unwrap();
+        let mut entries = tokio::fs::read_dir(path.parent().unwrap()).await.unwrap();
+        let mut names = Vec::new();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            names.push(entry.file_name());
+        }
+        assert_eq!(names, vec![std::ffi::OsString::from("large.bin")]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn materializes_on_touch_and_skips_existing() {
         let dir = workdir("mat");
@@ -514,14 +605,30 @@ mod tests {
         index.record(CHAT, "out.bin", ART);
         let mut f = FakeFetcher::new();
         f.bytes.insert(ART, b"artifact-bytes".to_vec());
-        let path = materialize(&dir, &ArtifactPath { chat_id: CHAT, filename: "out.bin".into() }, &index, &f)
-            .await
-            .unwrap();
+        let path = materialize(
+            &dir,
+            &ArtifactPath {
+                chat_id: CHAT,
+                filename: "out.bin".into(),
+            },
+            &index,
+            &f,
+        )
+        .await
+        .unwrap();
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"artifact-bytes");
         // second touch: already on disk, no refetch
-        materialize(&dir, &ArtifactPath { chat_id: CHAT, filename: "out.bin".into() }, &index, &f)
-            .await
-            .unwrap();
+        materialize(
+            &dir,
+            &ArtifactPath {
+                chat_id: CHAT,
+                filename: "out.bin".into(),
+            },
+            &index,
+            &f,
+        )
+        .await
+        .unwrap();
         assert_eq!(f.fetches.load(Ordering::SeqCst), 1);
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -534,11 +641,17 @@ mod tests {
         f.bytes.insert(ART, b"xlsx-bytes".to_vec());
         f.events.insert(
             CHAT,
-            vec![tool_result_event(Some(ART), Some(artifact_card("report.xlsx")))],
+            vec![tool_result_event(
+                Some(ART),
+                Some(artifact_card("report.xlsx")),
+            )],
         );
         let path = materialize(
             &dir,
-            &ArtifactPath { chat_id: CHAT, filename: "report.xlsx".into() },
+            &ArtifactPath {
+                chat_id: CHAT,
+                filename: "report.xlsx".into(),
+            },
             &index,
             &f,
         )
@@ -559,7 +672,10 @@ mod tests {
         let f = FakeFetcher::new(); // no bytes configured: fetch fails
         let err = materialize(
             &dir,
-            &ArtifactPath { chat_id: CHAT, filename: "gone.bin".into() },
+            &ArtifactPath {
+                chat_id: CHAT,
+                filename: "gone.bin".into(),
+            },
             &index,
             &f,
         )
@@ -567,7 +683,9 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("fetch failed"), "got: {err}");
         // nothing written
-        assert!(!dir.join(format!(".guild/artifacts/{CHAT}/gone.bin")).exists());
+        assert!(!dir
+            .join(format!(".guild/artifacts/{CHAT}/gone.bin"))
+            .exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -578,7 +696,10 @@ mod tests {
         let f = FakeFetcher::new(); // empty thread log, no bytes
         let err = materialize(
             &dir,
-            &ArtifactPath { chat_id: CHAT, filename: "ghost.bin".into() },
+            &ArtifactPath {
+                chat_id: CHAT,
+                filename: "ghost.bin".into(),
+            },
             &index,
             &f,
         )
@@ -668,17 +789,11 @@ mod tests {
     fn artifacts_subtree_is_inside_read_scope() {
         let dir = workdir("scope");
         std::fs::create_dir_all(dir.join(format!(".guild/artifacts/{CHAT}"))).unwrap();
-        std::fs::write(
-            dir.join(format!(".guild/artifacts/{CHAT}/f.bin")),
-            "bytes",
-        )
-        .unwrap();
+        std::fs::write(dir.join(format!(".guild/artifacts/{CHAT}/f.bin")), "bytes").unwrap();
         // existing artifact file: resolves through the normal scoped path
-        assert!(super::super::resolve_scoped(
-            &dir,
-            &format!(".guild/artifacts/{CHAT}/f.bin")
-        )
-        .is_ok());
+        assert!(
+            super::super::resolve_scoped(&dir, &format!(".guild/artifacts/{CHAT}/f.bin")).is_ok()
+        );
         // not-yet-materialized artifact: resolve_scoped's missing-tail
         // fallback canonicalizes the nearest ancestor and rejoins — the
         // path stays under the workdir, so reads pass the scope check

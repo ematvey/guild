@@ -178,7 +178,14 @@ async fn machines_lists_registry_rows_connected_first() {
 
     // One live machine (hub slot + registry row) and two offline rows:
     // only the registry record exists, the app has long exited.
-    register_test_machine(&ts.state, "live-1", user_row.id, user_row.org_id, Some("Live")).await;
+    register_test_machine(
+        &ts.state,
+        "live-1",
+        user_row.id,
+        user_row.org_id,
+        Some("Live"),
+    )
+    .await;
     store
         .machines()
         .upsert_connected(
@@ -196,13 +203,25 @@ async fn machines_lists_registry_rows_connected_first() {
         .unwrap();
     store
         .machines()
-        .upsert_connected(user_row.org_id, user_row.id, "off-recent", None, None, None, None, None, None)
+        .upsert_connected(
+            user_row.org_id,
+            user_row.id,
+            "off-recent",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
-    sqlx::query("UPDATE machines SET last_seen_at = now() - interval '2 days' WHERE machine_id = 'off-old'")
-        .execute(store.pool())
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE machines SET last_seen_at = now() - interval '2 days' WHERE machine_id = 'off-old'",
+    )
+    .execute(store.pool())
+    .await
+    .unwrap();
 
     let res = app
         .oneshot(

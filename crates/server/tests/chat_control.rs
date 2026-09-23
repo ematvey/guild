@@ -38,9 +38,7 @@ async fn user_events(fs: &guild_server::test_support::FullState) -> Vec<(String,
         .unwrap()
         .into_iter()
         .filter_map(|r| match r.event {
-            ThreadEvent::UserMessage { content, .. } => {
-                Some(("user".to_string(), content))
-            }
+            ThreadEvent::UserMessage { content, .. } => Some(("user".to_string(), content)),
             _ => None,
         })
         .collect()
@@ -107,7 +105,9 @@ async fn steered_send_sets_the_cancel_flag() {
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(body_json(res).await["queued"], json!(true));
     assert!(
-        generation_cancel(&fs.state, fs.chat_id).unwrap().load(SeqCst),
+        generation_cancel(&fs.state, fs.chat_id)
+            .unwrap()
+            .load(SeqCst),
         "steer must request the running turn's interruption"
     );
     let events = user_events(&fs).await;
@@ -134,12 +134,17 @@ async fn stop_sets_the_flag_and_conflicts_when_idle() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(body_json(res).await["stopped"], json!(true));
-    assert!(generation_cancel(&fs.state, fs.chat_id).unwrap().load(SeqCst));
+    assert!(generation_cancel(&fs.state, fs.chat_id)
+        .unwrap()
+        .load(SeqCst));
 
     // Idle (no registry entry): still 200 — the kill fallback clears any
     // stale generating flag instead of erroring.
     fs.state.generations.remove(fs.chat_id);
-    let res = app.oneshot(req("POST", uri, &fs.token, None)).await.unwrap();
+    let res = app
+        .oneshot(req("POST", uri, &fs.token, None))
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(body_json(res).await["stopped"], json!(true));
 }
@@ -165,7 +170,9 @@ async fn archiving_ends_the_in_flight_generation() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert!(
-        generation_cancel(&fs.state, fs.chat_id).unwrap().load(SeqCst),
+        generation_cancel(&fs.state, fs.chat_id)
+            .unwrap()
+            .load(SeqCst),
         "archive must interrupt the in-flight turn"
     );
 }
@@ -189,4 +196,21 @@ async fn archiving_without_a_registry_entry_clears_the_stale_flag() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert!(generation_cancel(&fs.state, fs.chat_id).is_none());
+}
+
+#[tokio::test]
+async fn public_chat_cannot_select_a_server_workspace() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    for workspace in ["/", "../other-org", "valid-name"] {
+        let response = app.clone().oneshot(req("POST", "/api/v1/gateway/chat".into(), &fs.token,
+            Some(json!({"chat_id":fs.chat_id,"model":fs.model,"messages":[{"role":"user","content":"read a file"}],"server_workspace":workspace}))
+        )).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(body_json(response).await["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("reserved"));
+    }
+    assert!(user_events(&fs).await.is_empty());
 }

@@ -4,7 +4,7 @@
 use crate::http::auth::AuthUser;
 use crate::http::error::ApiError;
 use crate::state::AppState;
-use crate::store::routines::{RoutineRow, UpdatePatch};
+use crate::store::routines::UpdatePatch;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
@@ -131,7 +131,7 @@ async fn create(
         .await?;
     // a newly created enabled interval routine starts its chain immediately
     if routine.enabled && routine.trigger_kind == "interval" {
-        forward_tick(&state, &routine).await?;
+        let _ = dispatch_routine_schedules(&state, Some(routine.id)).await;
     }
     let mut value = serde_json::to_value(&routine).expect("routine serializes");
     // The plaintext webhook token is shown once, at creation; only its hash
@@ -188,10 +188,13 @@ async fn update(
         require_admin(&user).await?;
     }
     let store = state.store().await?;
-    let routine = store.routines().update(user.0.org_id, id, &patch).await?;
+    let (routine, new_schedule) = store
+        .routines()
+        .update(user.0.org_id, id, &patch, user.0.role == "admin")
+        .await?;
     // re-enabling an interval routine restarts its tick loop
-    if patch.enabled == Some(true) && routine.trigger_kind == "interval" {
-        forward_tick(&state, &routine).await?;
+    if new_schedule {
+        let _ = dispatch_routine_schedules(&state, Some(routine.id)).await;
     }
     Ok(Json(
         serde_json::to_value(&routine).expect("routine serializes"),
@@ -253,17 +256,54 @@ pub(crate) async fn restate_send_one_way(
     Ok(invocation_id)
 }
 
-async fn forward_tick(state: &AppState, routine: &RoutineRow) -> Result<(), ApiError> {
-    let interval = routine.trigger_config["interval_secs"]
-        .as_u64()
-        .unwrap_or(60);
-    restate_send_one_way(
-        state,
-        "RoutineRunner",
-        &format!("{}/tick", routine.id),
-        json!(interval),
-    )
-    .await?;
+/// Deliver committed schedule starters. Ingress errors leave them pending;
+/// a successful starter claim survives both lost replies and key expiration.
+pub async fn dispatch_routine_schedules(
+    state: &AppState,
+    routine: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let store = state.store().await?;
+    for start in store.routines().pending_schedules(routine).await? {
+        let result: Result<(), ApiError> = async {
+            let response = reqwest::Client::new()
+                .post(format!(
+                    "{}/RoutineRunner/{}/start_schedule/send",
+                    state.config.restate_url.trim_end_matches('/'),
+                    start.routine_id
+                ))
+                .header(
+                    "Idempotency-Key",
+                    format!("routine-schedule:{}", start.generation),
+                )
+                .timeout(std::time::Duration::from_secs(5))
+                .json(&json!({"generation":start.generation}))
+                .send()
+                .await
+                .map_err(|error| {
+                    ApiError::internal(format!("schedule ingress unavailable: {error}"))
+                })?;
+            if !response.status().is_success() {
+                return Err(ApiError::internal("schedule delivery rejected by ingress"));
+            }
+            let ack: Value = response.json().await.map_err(|error| {
+                ApiError::internal(format!("invalid schedule acknowledgement: {error}"))
+            })?;
+            let invocation = ack["invocationId"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    ApiError::internal("schedule acknowledgement has no invocationId")
+                })?;
+            store
+                .routines()
+                .schedule_dispatched(start.generation, invocation)
+                .await
+        }
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(generation=%start.generation, "routine schedule delivery pending: {error:?}");
+        }
+    }
     Ok(())
 }
 

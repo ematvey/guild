@@ -12,14 +12,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::http::error::ApiError;
-use crate::worker::funnel::{
-    clear_pending_tool, dispatch_pending_tool, note_pending_tool,
-    restore_dispatch_connection, spawn_machine_watcher, spawn_stop_approval_watcher, suspend,
-    Executor, APPROVAL_TIMEOUT,
-};
 use crate::integrations;
 use crate::state::AppState;
 use crate::worker::executor::{tool_registry, Completion, RoutineConfig, RoutineExecutor};
+use crate::worker::funnel::{
+    clear_pending_tool, dispatch_pending_tool, note_pending_tool, restore_dispatch_connection,
+    spawn_machine_watcher, spawn_stop_approval_watcher, suspend, Executor, APPROVAL_TIMEOUT,
+};
 use crate::worker::overflow::is_context_overflow;
 use crate::worker::run::MAX_STEPS;
 use crate::worker::turn::{build_turn_text, enforce_quota, load_media_map, media_parts, MediaMap};
@@ -29,8 +28,8 @@ use guild_core::provider::{ModelProvider, ProviderChunk, ProviderRequest};
 use guild_core::tools::Approval;
 use guild_core::usage::UsageEvent;
 use protocol::api::{
-    Block, Message, StreamEvent, ThreadEvent, ToolCall,
-    ToolExecutor, ToolKind, ToolSpec, UsagePayload,
+    Block, Message, StreamEvent, ThreadEvent, ToolCall, ToolExecutor, ToolKind, ToolSpec,
+    UsagePayload,
 };
 use restate_sdk::errors::HandlerError;
 use restate_sdk::prelude::*;
@@ -80,7 +79,13 @@ macro_rules! journaled_load_config {
         $ctx.run(move || {
             let exec = exec2.clone();
             async move {
-                let cfg = exec.load_config($routine_id).await?;
+                let cfg = exec.load_config($routine_id).await.map_err(|error| {
+                    if error.is::<crate::worker::executor::RoutineMissing>() {
+                        HandlerError::from(TerminalError::new("routine deleted"))
+                    } else {
+                        HandlerError::from(error)
+                    }
+                })?;
                 if !cfg.enabled {
                     return Err(TerminalError::new("routine disabled").into());
                 }
@@ -241,16 +246,60 @@ impl RoutineRunner {
         journaled_run_body!(ctx, exec, cfg, "webhook", payload.into_inner())
     }
 
+    /// Start exactly one interval chain for a committed schedule generation.
+    #[handler]
+    async fn start_schedule(
+        &self,
+        ctx: ObjectContext<'_>,
+        schedule: Json<Value>,
+    ) -> HandlerResult<()> {
+        let routine_id: Uuid = ctx.key().parse().map_err(anyhow::Error::msg)?;
+        let generation: Uuid = schedule.0["generation"]
+            .as_str()
+            .and_then(|value| value.parse().ok())
+            .ok_or_else(|| TerminalError::new("invalid schedule generation"))?;
+        let state = self.state.clone();
+        let invocation = ctx.invocation_id().to_string();
+        let claimed = ctx
+            .run(move || {
+                let state = state.clone();
+                let invocation = invocation.clone();
+                async move {
+                    let claimed = state
+                        .store()
+                        .await
+                        .map_err(api_err)?
+                        .routines()
+                        .claim_schedule(routine_id, generation, &invocation)
+                        .await
+                        .map_err(api_err)?;
+                    Ok(Json(claimed))
+                }
+            })
+            .await?
+            .into_inner();
+        if claimed {
+            ctx.object_client::<RoutineRunnerClient>(ctx.key())
+                .tick(schedule)
+                .send();
+        }
+        Ok(())
+    }
+
     /// Interval trigger: check enabled, reschedule ourselves, then run.
     /// The enabled check happens first so a disabled routine ends its chain.
     #[handler]
-    async fn tick(&self, ctx: ObjectContext<'_>, interval_secs: Json<u64>) -> HandlerResult<()> {
-        let interval = interval_secs.into_inner().max(1);
+    async fn tick(&self, ctx: ObjectContext<'_>, schedule: Json<Value>) -> HandlerResult<()> {
         let routine_id: Uuid = ctx.key().parse().map_err(anyhow::Error::msg)?;
         let exec = self.executor();
-        let cfg = journaled_load_config!(ctx, exec, routine_id); // terminal when disabled → chain ends
+        let cfg = journaled_load_config!(ctx, exec, routine_id);
+        let Some(interval) =
+            crate::worker::executor::schedule_interval(&cfg.trigger_config, &schedule.0)
+        else {
+            return Ok(()); // superseded or invalid timer; never starts another chain
+        };
         ctx.object_client::<RoutineRunnerClient>(ctx.key())
-            .tick(Json(interval))
+            .tick(schedule)
             .send_after(Duration::from_secs(interval));
         journaled_run_body!(ctx, exec, cfg, "interval", json!({}))
     }
@@ -559,7 +608,11 @@ pub(crate) fn parse_wsl_unc(folder: &str) -> Option<(String, String)> {
     // Device-form UNC: treat it as the plain `//` form, case-insensitively.
     // Byte-wise so a multibyte character straddling the slice boundary
     // cannot panic.
-    if norm.as_bytes().get(..8).is_some_and(|p| p.eq_ignore_ascii_case(b"//?/unc/")) {
+    if norm
+        .as_bytes()
+        .get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case(b"//?/unc/"))
+    {
         norm = format!("//{}", &norm[8..]);
     }
     let low = norm.to_ascii_lowercase();
@@ -630,6 +683,8 @@ pub(crate) fn workspace_sentence(folder: &str, machine_label: Option<&str>) -> S
 /// which tool class spelled out. The persona sentence comes from the org's
 /// admin-configured prompt when set (via the admin API); the operational
 /// instructions below are always appended and are not admin-editable.
+// This orchestration boundary passes independently optional context without hiding identity.
+#[allow(clippy::too_many_arguments)]
 fn build_system_prompt(
     org_prompt: Option<&str>,
     client_tools: bool,
@@ -741,6 +796,13 @@ const AGENTS_MD_CAP: usize = 32 * 1024;
 
 /// Next turn number for a chat: max `turn` across persisted events + 1
 /// (spec §B.4 — turn = one client request, step = one model call).
+pub(crate) fn durable_event_id(invocation: &str, label: &str) -> Uuid {
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_OID,
+        format!("{invocation}:{label}").as_bytes(),
+    )
+}
+
 pub fn next_turn(events: &[ThreadEvent]) -> u32 {
     events
         .iter()
@@ -755,25 +817,6 @@ pub fn next_turn(events: &[ThreadEvent]) -> u32 {
         + 1
 }
 
-/// Whether user turns are queued for the next turn: true when the last
-/// turn-bearing event (user message, assistant message, tool result) is a
-/// user message — i.e. sends that committed while a turn ran and were never
-/// answered. The finishing turn's epilogue flushes them.
-pub(crate) fn has_queued_user_turn(events: &[ThreadEvent]) -> bool {
-    matches!(
-        events
-            .iter()
-            .rev()
-            .find(|e| matches!(
-                e,
-                ThreadEvent::UserMessage { .. }
-                    | ThreadEvent::AssistantMessage { .. }
-                    | ThreadEvent::ToolResult { .. }
-            )),
-        Some(ThreadEvent::UserMessage { .. })
-    )
-}
-
 /// Model-facing history derived from the thread event log (spec §A.4, §B of
 /// the compaction design): user → `role:user`; assistant blocks →
 /// `role:assistant` with concatenated text blocks, `tool_calls` from the
@@ -786,9 +829,8 @@ pub(crate) fn has_queued_user_turn(events: &[ThreadEvent]) -> bool {
 /// until a `Compaction` event, which replaces the buffer with a summary
 /// user message plus the verbatim tail of the last `keep_last.unwrap_or(4)`
 /// buffered messages (older ones are folded into the summary and dropped).
-/// Multiple compactions compose — each applies at its position to the
-/// segment accumulated since the previous one. Events after the last
-/// compaction flow exactly as in the uncompacted derivation.
+/// Each compaction replaces the entire effective prefix with its latest
+/// summary and a complete tool-call tail. Later events flow normally.
 /// Builds the model-facing history from the event log. `media` carries the
 /// bytes of image/audio attachments referenced by the events (loaded
 /// journaled by the caller); `modalities` gates which parts actually ride
@@ -798,9 +840,9 @@ pub fn build_model_history(
     media: &MediaMap,
     modalities: &[String],
 ) -> Vec<Message> {
-    let mut out = Vec::new();
     // Message-bearing Messages since the last compaction (or thread start).
     let mut buffer: Vec<Message> = Vec::new();
+    let mut has_summary = false;
     for ev in events {
         match ev {
             ThreadEvent::UserMessage {
@@ -824,13 +866,13 @@ pub fn build_model_history(
                 // verbatim tail (last keep_last buffered messages) is
                 // re-emitted after it; the rest of the buffer is dropped.
                 // tokens_before/model/usage are informational — ignored here.
-                out.push(Message::user(format!(
-                    "[Conversation summary so far]\n\n{summary}"
-                )));
                 let keep = usize::try_from(keep_last.unwrap_or(4)).unwrap_or(usize::MAX);
-                let tail_start = buffer.len().saturating_sub(keep);
-                out.extend(buffer.split_off(tail_start));
-                buffer.clear();
+                let tail = compaction_tail(&buffer[usize::from(has_summary)..], keep);
+                buffer = vec![Message::user(format!(
+                    "[Conversation summary so far]\n\n{summary}"
+                ))];
+                buffer.extend(tail);
+                has_summary = true;
             }
             ThreadEvent::AssistantMessage { blocks, .. } => {
                 let mut text = String::new();
@@ -886,9 +928,25 @@ pub fn build_model_history(
             }
         }
     }
-    // No further compaction: everything buffered flows as today.
-    out.extend(buffer);
-    out
+    buffer
+}
+
+/// Retained tool results carry the assistant call group that introduced them.
+fn compaction_tail(messages: &[Message], keep: usize) -> Vec<Message> {
+    let mut start = messages.len().saturating_sub(keep);
+    for message in &messages[start..] {
+        if let Some(id) = &message.tool_call_id {
+            if let Some(parent) = messages[..start].iter().rposition(|candidate| {
+                candidate
+                    .tool_calls
+                    .as_ref()
+                    .is_some_and(|calls| calls.iter().any(|c| &c.id == id))
+            }) {
+                start = start.min(parent);
+            }
+        }
+    }
+    messages[start..].to_vec()
 }
 
 /// Assistant blocks in stream order (spec §B.4): `[reasoning?, text?,
@@ -913,6 +971,38 @@ fn assistant_blocks(reasoning: &str, text: &str, tool_calls: &[ToolCall]) -> Vec
         });
     }
     blocks
+}
+
+/// Provider call IDs may repeat between requests. Every durable consumer
+/// uses this invocation/step/index identity, including model backreferences.
+fn canonicalize_tool_call_ids(completion: &mut CompletionOut, invocation: &str, step: usize) {
+    for (index, call) in completion.tool_calls.iter_mut().enumerate() {
+        call.id = format!(
+            "call_{}",
+            durable_event_id(invocation, &format!("call:{step}:{index}")).simple()
+        );
+    }
+}
+
+/// Derive the interrupted event only from a journaled model result. Stream
+/// buffers and their reset flags do not survive workflow replay.
+fn stopped_completion_event(
+    completion: &CompletionOut,
+    turn: u32,
+    step: u32,
+    model: &str,
+) -> Option<ThreadEvent> {
+    if !completion.stopped || (completion.text.is_empty() && completion.reasoning.is_empty()) {
+        return None;
+    }
+    Some(ThreadEvent::AssistantMessage {
+        turn,
+        step,
+        blocks: assistant_blocks(&completion.reasoning, &completion.text, &[]),
+        usage: UsagePayload::default(),
+        model: model.into(),
+        interrupted: Some(true),
+    })
 }
 
 /// Journaled step: flip the chat's generating flag (thread-list spinner).
@@ -943,9 +1033,9 @@ macro_rules! set_generating_step {
     }};
 }
 
-/// Journaled usage recording (called when a turn ends with usage numbers).
+/// Journaled usage recording for each completed model request.
 macro_rules! record_usage {
-    ($ctx:expr, $state:expr, $req:expr, $completion:expr, $route:expr) => {{
+    ($ctx:expr, $state:expr, $req:expr, $completion:expr, $route:expr, $request_id:expr) => {{
         let st = $state.clone();
         let org = $req.org_id;
         let user_id = $req.user_id;
@@ -954,13 +1044,20 @@ macro_rules! record_usage {
         let provider_name = $route.provider.clone();
         let (price_in, price_out) = ($route.price_in, $route.price_out);
         let c = $completion.clone();
+        let request_id = $request_id;
         $ctx.run(move || {
             let state = st.clone();
             let c = c.clone();
             let model = model.clone();
             let provider_name = provider_name.clone();
             async move {
-                let usage = state.usage().await.map_err(api_err)?;
+                let usage = match state.usage().await {
+                    Ok(usage) => usage,
+                    Err(error) => {
+                        tracing::warn!(?error, "model usage unavailable");
+                        return Ok(Json(()));
+                    }
+                };
                 usage
                     .record(UsageEvent {
                         ts: chrono::Utc::now(),
@@ -978,7 +1075,7 @@ macro_rules! record_usage {
                             price_in,
                             price_out,
                         ),
-                        request_id: Uuid::now_v7(),
+                        request_id,
                     })
                     .await;
                 Ok(Json(()))
@@ -1009,10 +1106,14 @@ macro_rules! clear_chatgen_kv {
 /// Journaled load of a chat's full thread event log (shared by the turn
 /// start, auto-compaction and the compact handler).
 macro_rules! journaled_load_events {
-    ($ctx:expr, $state:expr, $org:expr, $chat_id:expr) => {{
+    ($ctx:expr, $state:expr, $org:expr, $chat_id:expr) => {
+        journaled_load_events!($ctx, $state, $org, $chat_id, None)
+    };
+    ($ctx:expr, $state:expr, $org:expr, $chat_id:expr, $exclude:expr) => {{
         let st = ($state).clone();
         let org = ($org);
         let chat_id = ($chat_id);
+        let exclude = $exclude;
         ($ctx)
             .run(move || {
                 let state = st.clone();
@@ -1020,7 +1121,7 @@ macro_rules! journaled_load_events {
                     let store = state.store().await.map_err(api_err)?;
                     let rows = store
                         .thread()
-                        .list_events(org, chat_id)
+                        .model_events(org, chat_id, exclude)
                         .await
                         .map_err(api_err)?;
                     Ok(Json(rows.into_iter().map(|r| r.event).collect::<Vec<_>>()))
@@ -1163,10 +1264,22 @@ pub(crate) async fn compact_core(
     let st = state.clone();
     let model_name = model;
     let summary2 = summary;
+    let event_id = durable_event_id(ctx.invocation_id(), &format!("compaction:{}", events.len()));
     ctx.run(move || {
         let state = st.clone();
         async move {
             let store = state.store().await.map_err(api_err)?;
+            crate::usage::record_chat_request(
+                &state,
+                org_id,
+                chat_id,
+                &model_name,
+                &route,
+                tokens_in,
+                tokens_out,
+                Uuid::new_v5(&event_id, b"usage"),
+            )
+            .await;
             let event = ThreadEvent::Compaction {
                 summary: summary2,
                 tokens_before: Some(tokens_in),
@@ -1185,7 +1298,7 @@ pub(crate) async fn compact_core(
             };
             store
                 .thread()
-                .append_event(chat_id, &event)
+                .append_event_with_id(chat_id, &event, event_id)
                 .await
                 .map_err(api_err)?;
             Ok(Json(()))
@@ -1210,6 +1323,50 @@ impl ChatRunner {
     ) -> HandlerResult<()> {
         let req = req.into_inner();
         let state = self.state.clone();
+
+        let command = req.user_message_id;
+        let invocation = ctx.invocation_id().to_string();
+        let st = state.clone();
+        let inv = invocation.clone();
+        let command_chat = req.chat_id;
+        let claimed = ctx
+            .run(move || {
+                let state = st.clone();
+                async move {
+                    let claim = match command {
+                        Some(id) => state
+                            .store()
+                            .await
+                            .map_err(api_err)?
+                            .turn_commands()
+                            .begin(id, command_chat, &inv)
+                            .await
+                            .map_err(api_err)?,
+                        None => None,
+                    };
+                    if claim == Some(true) {
+                        state
+                            .store()
+                            .await
+                            .map_err(api_err)?
+                            .kv()
+                            .put(
+                                &format!("chatgen_inv:{command_chat}"),
+                                &format!("{}:{inv}", workflow_schema_version()),
+                            )
+                            .await
+                            .map_err(api_err)?;
+                    }
+                    Ok(Json(claim))
+                }
+            })
+            .await?
+            .into_inner();
+        if claimed == Some(false) {
+            return Ok(());
+        }
+        let tracked_command = claimed == Some(true);
+        let outcome: HandlerResult<()> = async {
 
         // Journaled: resolve the model route (and enforce quota).
         let st = state.clone();
@@ -1242,19 +1399,8 @@ impl ChatRunner {
 
         // Journaled: load the thread event log; the model-facing history and
         // the next turn number are derivations of it (spec §A.4, §B.4).
-        let prior_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id);
-        // Queued-turn flushes are invoked with an empty payload turn: the
-        // user event is already in the log (the gateway commits it at queue
-        // time). A flush with nothing queued to run is a duplicate (a queued
-        // send raced the finishing turn's own flush and both fired) — end
-        // quietly instead of generating an answer with no user turn.
-        let queued_flush = req.user_message.is_empty() && req.attachment_ids.is_empty();
-        if queued_flush && !has_queued_user_turn(&prior_events) {
-            clear_chatgen_kv!(ctx, state, req.chat_id);
-            state.generations.remove(req.chat_id);
-            set_generating_step!(ctx, state, req, false);
-            return Ok(());
-        }
+        let prior_events = journaled_load_events!(ctx, state, req.org_id, req.chat_id,
+            if tracked_command { req.user_message_id } else { None });
         let turn_no = next_turn(&prior_events);
         // Attachment media: a plain read of immutable object bytes (no
         // delete path exists, so replay re-reads identical data). Covers
@@ -1379,20 +1525,12 @@ impl ChatRunner {
         // the machine channel before the system prompt is built. Cached per
         // project folder (in-memory, TTL-bounded — the machine channel
         // exposes no mtime verb).
-        let agents_md: Option<String> =
-            if req.agents_md.is_some() || req.server_workspace.is_some() {
-                req.agents_md.clone()
-            } else {
-                fetch_agents_md_via_machine(
-                    &ctx,
-                    &state,
-                    req.chat_id,
-                    workspace.clone(),
-                    req.machine_id.clone(),
-                    turn_no,
-                )
-                .await?
-            };
+        let remote_context = if req.agents_md.is_none() && req.server_workspace.is_none() {
+            fetch_context_via_machine(&ctx, &state, req.org_id, req.chat_id, workspace.clone(),
+                req.machine_id.clone(), turn_no, &req.user_message).await?
+        } else { protocol::ws::MachineContext::default() };
+        let agents_md = req.agents_md.clone().or(remote_context.instructions.clone());
+        let skills_index = req.skills_index.as_deref().unwrap_or(&remote_context.skills_index);
         let system = {
             // Journaled: resolve the org's admin-configured assistant persona
             // prompt (falls back to the built-in default when unset).
@@ -1427,10 +1565,13 @@ impl ChatRunner {
                     .map(integrations::index_line)
                     .collect::<Vec<_>>()
                     .join("\n"),
-                req.skills_index.as_deref().unwrap_or(""),
+                skills_index,
                 agents_md.as_deref(),
             )
         };
+
+        let system = if remote_context.skill_expansions.is_empty() { system }
+            else { format!("{system}\n{}", remote_context.skill_expansions) };
 
         // The user event content is the model-facing turn: typed text plus
         // inlined attachment blocks (the marker is the UI's strip boundary).
@@ -1449,15 +1590,16 @@ impl ChatRunner {
         };
         let event_content = user_turn_content.clone();
         let ev_chips = att_chips.clone();
-        let has_user_event = !event_content.is_empty() || !ev_chips.is_empty();
-        let user_message_id = req.user_message_id;
+        let has_user_event = !tracked_command && (!event_content.is_empty() || !ev_chips.is_empty());
+        let user_message_id = req.user_message_id.unwrap_or_else(|| durable_event_id(ctx.invocation_id(), "user"));
+        let system_event_id = durable_event_id(ctx.invocation_id(), "system");
         ctx.run(move || {
             let state = st.clone();
             async move {
                 let store = state.store().await.map_err(api_err)?;
                 store
                     .thread()
-                    .append_event(chat_id, &system_ev)
+                    .append_event_with_id(chat_id, &system_ev, system_event_id)
                     .await
                     .map_err(api_err)?;
                 if has_user_event {
@@ -1469,7 +1611,7 @@ impl ChatRunner {
                                 content: event_content,
                                 attachments: ev_chips,
                             },
-                            user_message_id.unwrap_or_else(Uuid::now_v7),
+                            user_message_id,
                         )
                         .await
                         .map_err(api_err)?;
@@ -1490,7 +1632,7 @@ impl ChatRunner {
             );
         }
 
-        let generation = state.generations.attach(req.chat_id);
+        let generation = state.generations.attach_with_id(req.chat_id, if tracked_command { req.user_message_id } else { None });
         let tx = generation.tx;
         let text_buf = generation.text;
         let thinking_buf = generation.thinking;
@@ -1512,6 +1654,7 @@ impl ChatRunner {
         // persists the delivered prefix as an interrupted event and skips
         // usage recording. Set from journaled step outputs only.
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut stopped_completion: Option<CompletionOut> = None;
         // Id of the last persisted assistant event of this turn — the Done
         // frame's message id when a stop lands with nothing partial buffered.
         let last_event_id = std::sync::Arc::new(tokio::sync::Mutex::new(None::<Uuid>));
@@ -1578,7 +1721,7 @@ impl ChatRunner {
             // re-derive messages from the event log, retry the call once.
             let mut msgs = messages.clone();
             let mut retry_compacted = false;
-            let completion: CompletionOut = loop {
+            let mut completion: CompletionOut = loop {
                 let st = state.clone();
                 let org2 = req.org_id;
                 let model2 = req.model.clone();
@@ -1613,6 +1756,8 @@ impl ChatRunner {
                                     "route re-resolve failed: {e:?}"
                                 )))
                             })?;
+                        enforce_quota(&state, org, &model, &route).await
+                            .map_err(|e| HandlerError::from(TerminalError::new(format!("quota check failed: {e:?}"))))?;
                         let provider: Arc<dyn ModelProvider> =
                             guild_core::provider::for_protocol(&route.protocol).ok_or_else(|| {
                                 TerminalError::new(format!("unknown protocol {}", route.protocol))
@@ -1821,7 +1966,11 @@ impl ChatRunner {
                     };
                     break json.into_inner();
             };
+            canonicalize_tool_call_ids(&mut completion, ctx.invocation_id(), step);
+            record_usage!(ctx, state, req, completion, route,
+                durable_event_id(ctx.invocation_id(), &format!("usage:{step}")));
             if completion.stopped {
+                stopped_completion = Some(completion.clone());
                 // Journaled step output says the stream was truncated: end
                 // the turn with the delivered prefix (the epilogue persists
                 // it as an interrupted event).
@@ -1852,6 +2001,7 @@ impl ChatRunner {
             let model_name = req.model.clone();
             let turn2 = turn_no;
             let step2 = step as u32;
+            let assistant_event_id = durable_event_id(ctx.invocation_id(), &format!("assistant:{step}"));
             let event_id: Uuid = ctx
                 .run(move || {
                     let state = st.clone();
@@ -1875,7 +2025,7 @@ impl ChatRunner {
                             model: model_name,
                             interrupted: None,
                         };
-                        let row = crate::state::persist_assistant_step(&state, chat_id, &event)
+                        let row = crate::state::persist_assistant_step_with_id(&state, chat_id, &event, assistant_event_id)
                             .await.map_err(api_err)?;
                         Ok(Json(row.id))
                     }
@@ -1893,7 +2043,6 @@ impl ChatRunner {
             if is_final {
                 // Journaled: record usage, then finish. The chat-freeing and
                 // queued-flush epilogue runs after the turn block exits.
-                record_usage!(ctx, state, req, completion, route);
                 let _ = tx.send(StreamEvent::Done {
                     message_id: event_id,
                     cost_usd: UsageEvent::cost_usd(
@@ -1950,7 +2099,8 @@ impl ChatRunner {
                         // Server-local executor (batch workspace backend):
                         // the server itself runs the tool in the org
                         // workspace — same dispatch shape, no hub.
-                        let dir = crate::http::agents::workspace_dir(&state, req.org_id, &ws_name);
+                        let dir = crate::http::agents::workspace_dir(&state, req.org_id, &ws_name)
+                            .map_err(api_terminal)?;
                         server_local_tool_step(
                             &ctx,
                             &state,
@@ -2028,6 +2178,9 @@ impl ChatRunner {
                     Vec::new()
                 };
                 let persisted_images = event_images.clone();
+                let event_id = durable_event_id(ctx.invocation_id(), &format!("tool:{step}:{idx}"));
+                let prefetch_target = req.machine_id.clone().zip(workspace.as_ref().map(|w| w.folder.clone()));
+                let prefetch_org = req.org_id;
                 ctx.run(move || {
                     let state = st.clone();
                     let call = call2.clone();
@@ -2047,9 +2200,12 @@ impl ChatRunner {
                         };
                         store
                             .thread()
-                            .append_event(chat_id, &event)
+                            .append_event_with_id(chat_id, &event, event_id)
                             .await
                             .map_err(api_err)?;
+                        if let (Some(artifact), Some((machine, folder))) = (&spilled, &prefetch_target) {
+                            crate::worker::spill::spawn_machine_prefetch(&state, prefetch_org, chat_id, machine, folder, artifact);
+                        }
                         Ok(Json(()))
                     }
                 })
@@ -2100,10 +2256,11 @@ impl ChatRunner {
                             model: req.model.clone(),
                             interrupted: Some(true),
                         };
-                        let _ = crate::state::persist_assistant_step(
+                        let _ = crate::state::persist_assistant_step_with_id(
                             &state,
                             req.chat_id,
                             &event,
+                            durable_event_id(ctx.invocation_id(), "failed-prefix"),
                         )
                         .await;
                     }
@@ -2125,37 +2282,31 @@ impl ChatRunner {
         // Every Ok ending already delivered its Done frame: a final answer
         // sent it inline, a stop lands in the stop epilogue below.
 
-        // Stop epilogue: the delivered prefix persists as an interrupted
-        // assistant event (journaled — replay keeps it), then the turn ends
-        // with a Done frame. Same guards as the failure path: only when this
-        // step's assistant event is not persisted yet and something was
-        // delivered.
+        // The interrupted prefix comes from the journaled completion, so
+        // replay issues the same persistence command with identical content.
         if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
-            let partial_text = text_buf.read().await.clone();
-            let partial_reasoning = thinking_buf.read().await.clone();
             let mut interrupted_id: Option<Uuid> = None;
-            if !step_persisted.load(std::sync::atomic::Ordering::SeqCst)
-                && (!partial_text.is_empty() || !partial_reasoning.is_empty())
-            {
-                let event = ThreadEvent::AssistantMessage {
-                    turn: turn_no,
-                    step: steps_used.load(std::sync::atomic::Ordering::SeqCst),
-                    blocks: assistant_blocks(&partial_reasoning, &partial_text, &[]),
-                    usage: UsagePayload::default(),
-                    model: req.model.clone(),
-                    interrupted: Some(true),
-                };
+            if let Some(event) = stopped_completion.as_ref().and_then(|completion| {
+                stopped_completion_event(
+                    completion,
+                    turn_no,
+                    steps_used.load(std::sync::atomic::Ordering::SeqCst),
+                    &req.model,
+                )
+            }) {
                 let st = state.clone();
                 let chat_id = req.chat_id;
+                let interrupted_event_id = durable_event_id(ctx.invocation_id(), "interrupted-prefix");
                 interrupted_id = ctx
                     .run(move || {
                         let state = st.clone();
                         let event = event.clone();
                         async move {
-                            let row = crate::state::persist_assistant_step(
+                            let row = crate::state::persist_assistant_step_with_id(
                                 &state,
                                 chat_id,
                                 &event,
+                                interrupted_event_id,
                             )
                             .await
                             .map_err(api_err)?;
@@ -2177,76 +2328,41 @@ impl ChatRunner {
             });
         }
 
-        // Common exit: free the chat first — a send arriving from here on
-        // takes the normal start path, while anything committed before the
-        // queued-flush check below is picked up by this turn's epilogue.
+        // Release execution state before making the next queued command eligible.
         state.generations.remove(req.chat_id);
         clear_chatgen_kv!(ctx, state, req.chat_id);
 
-        // Queued-turn flush: the last turn-bearing event is a user message
-        // (a send that queued while this turn ran). Invoke a fresh turn —
-        // journaled background call, delivered when this handler exits —
-        // whose parameters come from the queueing send's kv record when one
-        // exists. The flag clears unconditionally here (a flush that fails
-        // before its own flag-set must not inherit it); the flush re-sets
-        // it, so at worst the sidebar spinner blinks across the boundary.
-        let has_queued: bool = {
-            let st = state.clone();
-            let chat_id = req.chat_id;
-            let org_id = req.org_id;
-            ctx.run(move || {
-                let state = st.clone();
-                async move {
-                    let store = state.store().await.map_err(api_err)?;
-                    let events = store
-                        .thread()
-                        .list_events(org_id, chat_id)
-                        .await
-                        .map_err(api_err)?;
-                    Ok(Json(has_queued_user_turn(
-                        &events.into_iter().map(|r| r.event).collect::<Vec<_>>(),
-                    )))
-                }
-            })
-            .await?
-            .into_inner()
-        };
-        // Journaled: turn over — the sidebar spinner clears and the (unread)
-        // dot takes over; a queued flush turns it back on within moments.
         set_generating_step!(ctx, state, req, false);
-        if !has_queued {
-            return Ok(());
+        Ok(())
+        }.await;
+        if outcome.is_err() {
+            state.generations.remove(req.chat_id);
+            clear_chatgen_kv!(ctx, state, req.chat_id);
+            set_generating_step!(ctx, state, req, false);
         }
-        let opts: Option<ChatRunPayload> = {
+        if tracked_command {
             let st = state.clone();
-            let chat_id = req.chat_id;
+            let id = command.expect("tracked command has ID");
+            let failed = outcome.is_err();
             ctx.run(move || {
                 let state = st.clone();
                 async move {
-                    let store = state.store().await.map_err(api_err)?;
-                    let raw = store
-                        .kv()
-                        .get(&format!("chat_queue:{chat_id}"))
+                    state
+                        .store()
+                        .await
+                        .map_err(api_err)?
+                        .turn_commands()
+                        .finish(id, &invocation, failed)
                         .await
                         .map_err(api_err)?;
-                    let parsed = raw.as_deref().and_then(|v| serde_json::from_str(v).ok());
-                    if raw.is_some() {
-                        let _ = store.kv().delete(&format!("chat_queue:{chat_id}")).await;
-                    }
-                    Ok(Json(parsed))
+                    Ok(Json(()))
                 }
             })
-            .await?
-            .into_inner()
-        };
-        let mut flush = opts.unwrap_or_else(|| req.clone());
-        flush.user_message_id = None;
-        flush.user_message = String::new();
-        flush.attachment_ids = Vec::new();
-        ctx.object_client::<ChatRunnerClient>(&req.chat_id.to_string())
-            .generate(Json(flush))
-            .send();
-        Ok(())
+            .await?;
+        }
+        outcome.map_err(|error| {
+            HandlerError::from(TerminalError::new(format!("turn failed: {error:?}")))
+        })
     }
 
     /// Delivers a client-side tool result to the waiting generate loop.
@@ -2384,6 +2500,7 @@ async fn approval_policy_verdict(
     state: &AppState,
     org: Uuid,
     model: &str,
+    chat_id: Uuid,
     call: &ToolCall,
 ) -> HandlerResult<bool> {
     let action = serde_json::json!({
@@ -2395,83 +2512,111 @@ async fn approval_policy_verdict(
     let org2 = org;
     let model2 = model.to_string();
     let action2 = action.clone();
+    let usage_id = durable_event_id(ctx.invocation_id(), &format!("judge-usage:{}", call.id));
     let run = ctx.run(move || {
         let state = st.clone();
         let org = org2;
         let model = model2.clone();
         let action = action2.clone();
         async move {
-            let store = state.store().await.map_err(api_err)?;
-            let prompt = store
-                .org_kv()
-                .get(org, APPROVAL_POLICY_PROMPT_KEY)
-                .await
-                .map_err(api_err)?
-                .filter(|p| !p.trim().is_empty())
-                .unwrap_or_else(|| DEFAULT_APPROVAL_POLICY_PROMPT.to_string());
-            let master = state.config.master_key()?;
-            let route = store
-                .gateway()
-                .resolve_route(org, &model, &master)
-                .await
-                .map_err(|e| {
-                    HandlerError::from(TerminalError::new(format!(
-                        "approval policy route resolve failed: {e:?}"
-                    )))
-                })?;
-            let provider: Arc<dyn ModelProvider> =
-                guild_core::provider::for_protocol(&route.protocol).ok_or_else(|| {
-                    TerminalError::new(format!("unknown protocol {}", route.protocol))
-                })?;
-            let preq = ProviderRequest {
-                model: &model,
-                system: Some(prompt.as_str()),
-                messages: &[Message {
-                    role: "user".to_string(),
-                    content: action,
-                    images: Vec::new(),
-                    audio: Vec::new(),
-                    tool_calls: None,
-                    tool_call_id: None,
-                    reasoning: None,
-                }],
-                api_key: &route.api_key,
-                base_url: &route.base_url,
-                tools: None,
-                max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
-            };
-            let stream = provider
-                .chat_stream(preq)
-                .await
-                .map_err(|e| TerminalError::new(format!("approval policy model error: {e}")))?;
-            let mut out = String::new();
-            let mut stream = stream;
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    Ok(ProviderChunk::Text(c)) => out.push_str(&c.text_delta),
-                    Ok(_) => {}
-                    Err(e) => {
-                        return Err(
-                            TerminalError::new(format!("approval policy model error: {e}")).into(),
-                        )
+            let attempt = async {
+                let store = state.store().await.map_err(api_err)?;
+                let prompt = store
+                    .org_kv()
+                    .get(org, APPROVAL_POLICY_PROMPT_KEY)
+                    .await
+                    .map_err(api_err)?
+                    .filter(|p| !p.trim().is_empty())
+                    .unwrap_or_else(|| DEFAULT_APPROVAL_POLICY_PROMPT.to_string());
+                let master = state.config.master_key()?;
+                let route = store
+                    .gateway()
+                    .resolve_route(org, &model, &master)
+                    .await
+                    .map_err(|e| {
+                        HandlerError::from(TerminalError::new(format!(
+                            "approval policy route resolve failed: {e:?}"
+                        )))
+                    })?;
+                enforce_quota(&state, org, &model, &route)
+                    .await
+                    .map_err(api_terminal)?;
+                let provider: Arc<dyn ModelProvider> =
+                    guild_core::provider::for_protocol(&route.protocol).ok_or_else(|| {
+                        TerminalError::new(format!("unknown protocol {}", route.protocol))
+                    })?;
+                let preq = ProviderRequest {
+                    model: &model,
+                    system: Some(prompt.as_str()),
+                    messages: &[Message {
+                        role: "user".to_string(),
+                        content: action,
+                        images: Vec::new(),
+                        audio: Vec::new(),
+                        tool_calls: None,
+                        tool_call_id: None,
+                        reasoning: None,
+                    }],
+                    api_key: &route.api_key,
+                    base_url: &route.base_url,
+                    tools: None,
+                    max_tokens: route.max_output_tokens.unwrap_or(0).max(0) as u32,
+                };
+                let stream = provider
+                    .chat_stream(preq)
+                    .await
+                    .map_err(|e| TerminalError::new(format!("approval policy model error: {e}")))?;
+                let mut out = String::new();
+                let (mut tokens_in, mut tokens_out) = (0, 0);
+                let mut stream = stream;
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        Ok(ProviderChunk::Text(c)) => {
+                            out.push_str(&c.text_delta);
+                            if let Some(n) = c.tokens_in {
+                                tokens_in = n;
+                            }
+                            if let Some(n) = c.tokens_out {
+                                tokens_out = n;
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(TerminalError::new(format!(
+                                "approval policy model error: {e}"
+                            ))
+                            .into())
+                        }
                     }
                 }
+                crate::usage::record_chat_request(
+                    &state,
+                    org,
+                    chat_id,
+                    &model,
+                    &route.meta(),
+                    tokens_in,
+                    tokens_out,
+                    usage_id,
+                )
+                .await;
+                Ok::<_, HandlerError>(Json(out))
+            };
+            match tokio::time::timeout(APPROVAL_POLICY_TIMEOUT, attempt).await {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::warn!("approval policy judge timed out, asking the user");
+                    Ok(Json(String::new()))
+                }
             }
-            Ok(Json(out))
         }
     });
     // The judge gets one short JSON verdict; a hung call must not stall the
     // turn — the timeout falls back to asking (empty text → no verdict).
-    let raw: String = match tokio::time::timeout(APPROVAL_POLICY_TIMEOUT, run).await {
-        Ok(res) => match res {
-            Ok(v) => v.into_inner(),
-            Err(e) => {
-                tracing::warn!("approval policy judge failed, asking the user: {e:?}");
-                String::new()
-            }
-        },
-        Err(_) => {
-            tracing::warn!("approval policy judge timed out, asking the user");
+    let raw: String = match run.await {
+        Ok(v) => v.into_inner(),
+        Err(e) => {
+            tracing::warn!("approval policy judge failed, asking the user: {e:?}");
             String::new()
         }
     };
@@ -2500,6 +2645,8 @@ async fn approval_policy_verdict(
     Ok(approved)
 }
 
+// This orchestration boundary passes independently optional context without hiding identity.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn approval_gate(
     ctx: &ObjectContext<'_>,
     state: &AppState,
@@ -2562,7 +2709,7 @@ pub(crate) async fn approval_gate(
                 // AI auto-approval policy (codex/claude-code style): a model
                 // judge decides whether this action is routine enough to run
                 // silently; anything it flags goes to the user as a card.
-                if approval_policy_verdict(ctx, state, org, model, call).await? {
+                if approval_policy_verdict(ctx, state, org, model, chat_id, call).await? {
                     Approval::Allow
                 } else {
                     Approval::Ask
@@ -2576,7 +2723,7 @@ pub(crate) async fn approval_gate(
             _ => match user_policy {
                 Some(_) => resolve_policy(user_policy).for_tool(&call.name, tool_default),
                 None => {
-                    if approval_policy_verdict(ctx, state, org, model, call).await? {
+                    if approval_policy_verdict(ctx, state, org, model, chat_id, call).await? {
                         Approval::Allow
                     } else {
                         Approval::Ask
@@ -2604,19 +2751,24 @@ pub(crate) async fn approval_gate(
             let call_id = call.id.clone();
             let name = call.name.clone();
             let args = args_json.clone();
+            let approval_event_id = durable_event_id(
+                ctx.invocation_id(),
+                &format!("approval-request:{}", call.id),
+            );
             ctx.run(move || {
                 let state = st.clone();
                 async move {
                     let store = state.store().await.map_err(api_err)?;
                     store
                         .thread()
-                        .append_event(
+                        .append_event_with_id(
                             chat_id,
                             &ThreadEvent::ApprovalRequest {
                                 call_id: call_id.clone(),
                                 name: name.clone(),
                                 arguments: args.clone(),
                             },
+                            approval_event_id,
                         )
                         .await
                         .map_err(api_err)?;
@@ -2684,13 +2836,17 @@ pub(crate) async fn approval_gate(
             let call_id = call.id.clone();
             let approved = decision.approved;
             let reason = decision.reason.clone();
+            let decision_event_id = durable_event_id(
+                ctx.invocation_id(),
+                &format!("approval-decision:{}", call.id),
+            );
             ctx.run(move || {
                 let state = st.clone();
                 async move {
                     let store = state.store().await.map_err(api_err)?;
                     store
                         .thread()
-                        .append_event(
+                        .append_event_with_id(
                             chat_id,
                             &ThreadEvent::ApprovalDecision {
                                 call_id: call_id.clone(),
@@ -2698,6 +2854,7 @@ pub(crate) async fn approval_gate(
                                 reason: reason.clone(),
                                 expired: false,
                             },
+                            decision_event_id,
                         )
                         .await
                         .map_err(api_err)?;
@@ -2769,6 +2926,8 @@ async fn sandbox_tool_step(
 /// batch backend — the server executes the client-tool in-process against
 /// the org workspace dir, pre-approved by contract. Everything below the
 /// contract is the funnel's.
+// This orchestration boundary passes independently optional context without hiding identity.
+#[allow(clippy::too_many_arguments)]
 async fn server_local_tool_step(
     ctx: &ObjectContext<'_>,
     state: &AppState,
@@ -2799,13 +2958,103 @@ async fn server_local_tool_step(
 /// user-visible, nothing journaled beyond the dispatch itself). An offline
 /// machine, an error result, or a timeout yields None: the turn proceeds
 /// without project instructions rather than failing.
-async fn fetch_agents_md_via_machine(
+// This orchestration boundary passes independently optional context without hiding identity.
+#[allow(clippy::too_many_arguments)]
+async fn fetch_context_via_machine(
     ctx: &ObjectContext<'_>,
     state: &AppState,
+    org_id: Uuid,
     chat_id: Uuid,
     workspace: Option<WorkspaceRef>,
     machine_id: Option<String>,
     turn_no: u32,
+    prompt: &str,
+) -> HandlerResult<protocol::ws::MachineContext> {
+    let (Some(ws), Some(mid)) = (&workspace, &machine_id) else {
+        return Ok(protocol::ws::MachineContext::default());
+    };
+    let st = state.clone();
+    let machine = mid.clone();
+    let folder = ws.folder.clone();
+    let prompt = prompt.to_owned();
+    let prepared: Option<protocol::ws::MachineContext> = ctx
+        .run(move || {
+            let state = st.clone();
+            let machine = machine.clone();
+            let folder = folder.clone();
+            let prompt = prompt.clone();
+            async move {
+                let result = async {
+                    let caps = state
+                        .hub
+                        .machine_request(
+                            &machine,
+                            org_id,
+                            "capabilities",
+                            json!({}),
+                            Duration::from_secs(3),
+                        )
+                        .await
+                        .ok()?;
+                    if !caps["operations"]
+                        .as_array()?
+                        .iter()
+                        .any(|v| v == "context.prepare_v1")
+                    {
+                        return None;
+                    }
+                    let value = state
+                        .hub
+                        .machine_request(
+                            &machine,
+                            org_id,
+                            "context.prepare_v1",
+                            json!({"project_dir": folder, "prompt": prompt}),
+                            Duration::from_secs(15),
+                        )
+                        .await
+                        .ok()?;
+                    let context: protocol::ws::MachineContext =
+                        serde_json::from_value(value).ok()?;
+                    if context
+                        .instructions
+                        .as_ref()
+                        .is_some_and(|s| s.len() > AGENTS_MD_CAP)
+                        || context.skills_index.len() > 8000
+                        || context.skill_expansions.len() > 64 * 1024
+                    {
+                        return None;
+                    }
+                    Some(context)
+                }
+                .await;
+                Ok(Json(result))
+            }
+        })
+        .await?
+        .into_inner();
+    if let Some(prepared) = prepared {
+        return Ok(prepared);
+    }
+    // Old executors understand only tool dispatch: retain the bounded,
+    // project-root AGENTS.md fallback without asking them to read new paths.
+    let instructions =
+        fetch_agents_md_via_machine(ctx, state, org_id, chat_id, workspace, machine_id, turn_no)
+            .await?;
+    Ok(protocol::ws::MachineContext {
+        instructions,
+        ..Default::default()
+    })
+}
+
+async fn fetch_agents_md_via_machine(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    org_id: Uuid,
+    chat_id: Uuid,
+    workspace: Option<WorkspaceRef>,
+    machine_id: Option<String>,
+    _turn_no: u32,
 ) -> HandlerResult<Option<String>> {
     const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
@@ -2815,13 +3064,24 @@ async fn fetch_agents_md_via_machine(
     let Some(mid) = machine_id else {
         return Ok(None);
     };
-    {
-        let cache = state.agents_md_cache.lock().unwrap();
-        if let Some((at, content)) = cache.get(&ws.folder) {
-            if at.elapsed() < CACHE_TTL {
-                return Ok(Some(content.clone()));
-            }
-        }
+    let cache_key = (org_id, mid.clone(), ws.folder.clone());
+    let st = state.clone();
+    let key = cache_key.clone();
+    let cached: Option<String> = ctx
+        .run(move || {
+            let cached = st
+                .agents_md_cache
+                .lock()
+                .unwrap()
+                .get(&key)
+                .filter(|(at, _)| at.elapsed() < CACHE_TTL)
+                .map(|(_, content)| content.clone());
+            async move { Ok(Json(cached)) }
+        })
+        .await?
+        .into_inner();
+    if cached.is_some() {
+        return Ok(cached);
     }
     // Journaled snapshot: dispatch only when the machine is reachable (a
     // replayed turn re-derives this from the hub state at its own time —
@@ -2843,7 +3103,7 @@ async fn fetch_agents_md_via_machine(
     }
     // Deterministic per-turn dispatch id (replay-stable, never collides
     // with real tool-call ids).
-    let call_id = format!("agents_md_fetch:{turn_no}");
+    let call_id = format!("agents_md_fetch:{}", ctx.invocation_id());
     let arguments = serde_json::json!({ "path": "AGENTS.md" }).to_string();
     let (awakeable_id, promise) = ctx.awakeable::<Json<ToolResultPayload>>();
     ctx.set(&state_key(&call_id), awakeable_id.clone());
@@ -2867,25 +3127,15 @@ async fn fetch_agents_md_via_machine(
             let call_id = dispatch_call.clone();
             async move {
                 Ok(Json(
-                    dispatch_pending_tool(
-                        &state,
-                        chat_id,
-                        &call_id,
-                        &dispatch_id,
-                    )
-                    .await
-                    .map_err(api_err)?,
+                    dispatch_pending_tool(&state, chat_id, &call_id, &dispatch_id)
+                        .await
+                        .map_err(api_err)?,
                 ))
             }
         })
         .await?
         .into_inner();
-    restore_dispatch_connection(
-        state,
-        chat_id,
-        &call_id,
-        dispatched_connection,
-    );
+    restore_dispatch_connection(state, chat_id, &call_id, dispatched_connection);
     // Executor disappearance mid-fetch resolves with an error after a grace
     // window (same watcher as client tools). No stop watcher: the internal
     // fetch resolves on its own within the timeout, and the turn's stop
@@ -2924,11 +3174,10 @@ async fn fetch_agents_md_via_machine(
     if payload.is_error {
         return Ok(None);
     }
-    state
-        .agents_md_cache
-        .lock()
-        .unwrap()
-        .insert(ws.folder, (std::time::Instant::now(), payload.content.clone()));
+    state.agents_md_cache.lock().unwrap().insert(
+        cache_key,
+        (std::time::Instant::now(), payload.content.clone()),
+    );
     Ok(Some(payload.content))
 }
 
@@ -2981,7 +3230,7 @@ async fn client_tool_step(
         // chats and never receives its sender's tools. A bound-but-offline
         // desktop keeps its explicit message below: the user's workspace is
         // on that machine, not the sandbox.
-        return sandbox_tool_step(&ctx, state, tx, org_id, model, chat_id, call).await;
+        return sandbox_tool_step(ctx, state, tx, org_id, model, chat_id, call).await;
     };
     // Fail fast when the bound machine is offline (journaled snapshot).
     let online: bool = ctx
@@ -3044,14 +3293,12 @@ async fn server_tool_step(
     plugin_turns: &[integrations::PluginTurn],
     caller_role: &str,
     acting_as: Option<&str>,
-) -> HandlerResult<
-    (
-        String,
-        bool,
-        Option<Value>,
-        Option<crate::worker::spill::SpilledArtifact>,
-    ),
-> {
+) -> HandlerResult<(
+    String,
+    bool,
+    Option<Value>,
+    Option<crate::worker::spill::SpilledArtifact>,
+)> {
     // Resolve the tool once: target (turn + info) drives everything below —
     // the spec kind on the started frame, the approval gate, the policy
     // check, and execution. Auto-tools (list_tools/guide) have no target and
@@ -3069,7 +3316,7 @@ async fn server_tool_step(
                 .unwrap_or(&info.spec.name);
             (
                 Some(info.spec.kind),
-                info.class == "write",
+                info.class != "read",
                 integrations::tool_curate(
                     &turn.row_config,
                     turn.executor == integrations::PluginExecutor::Mcp,
@@ -3140,11 +3387,24 @@ async fn server_tool_step(
     let acting = acting_as.map(str::to_string);
     let org = org_id;
     let chat = chat_id;
+    let effect_key = format!("plugin_effect:{}:{}", ctx.invocation_id(), _seq);
     let (content, is_error, meta, spilled) = ctx
         .run(move || {
             let call = call2.clone();
             let state = st.clone();
+            let effect_key = effect_key.clone();
             async move {
+                let store = state.store().await.map_err(api_err)?;
+                if write_class {
+                    match crate::worker::effects::claim(&store, &effect_key).await? {
+                        crate::worker::effects::Claim::Execute => {},
+                        crate::worker::effects::Claim::Completed(result) => return Ok(Json(result)),
+                        crate::worker::effects::Claim::Unknown => return Ok(Json((
+                            "Integration action outcome is unknown after interruption; check effects before retrying.".to_string(), true, None, None,
+                        ))),
+                    }
+                }
+                let execution = async {
                 // Guild-provided disclosure tools (never sent to the server).
                 if let Some((i, kind)) = integrations::parse_auto_tool(&mcp, &call.name) {
                     let turn = &mcp[i];
@@ -3201,6 +3461,8 @@ async fn server_tool_step(
                         raw,
                         call.arguments.clone(),
                         org,
+                        caller_id,
+                        Uuid::new_v5(&chat, call.id.as_bytes()),
                         acting.as_deref(),
                     )
                     .await;
@@ -3278,12 +3540,18 @@ async fn server_tool_step(
                         Err(e) => (format!("web tool failed: {e}"), true, None, None),
                     }));
                 }
-                Ok(Json((
+                Ok::<_, HandlerError>(Json((
                     format!("unknown server tool {}", call.name),
                     true,
                     None,
                     None,
                 )))
+                };
+                let result = execution.await?.into_inner();
+                if write_class {
+                    crate::worker::effects::complete(&store, &effect_key, &result).await?;
+                }
+                Ok(Json(result))
             }
         })
         .await?
@@ -3452,6 +3720,7 @@ pub(crate) async fn kill_recorded_chat_generation(state: &AppState, chat_id: Uui
             );
             match reqwest::Client::new().delete(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
+                    let _ = store.turn_commands().finish_invocation(inv).await;
                     tracing::info!(
                         "killed chat generation {inv} (hard stop): {}",
                         resp.status()
@@ -3495,9 +3764,8 @@ pub(crate) async fn purge_stale_chat_generations(state: &AppState) {
         }
         match classify_chatgen_entry(&current, &value) {
             StaleChatgenEntry::DropCurrent => {
-                // Current workflow version — it replays and clears its own
-                // flag at the exit; only the record goes.
-                let _ = store.kv().delete(&key).await;
+                // Keep the invocation address available for hard stop while
+                // this workflow replays; its terminal cleanup removes it.
             }
             StaleChatgenEntry::DropUnusable => {
                 let _ = store.kv().delete(&key).await;
@@ -3515,6 +3783,7 @@ pub(crate) async fn purge_stale_chat_generations(state: &AppState) {
                 // survives a failed kill so the next sweep retries.
                 match reqwest::Client::new().delete(&url).send().await {
                     Ok(resp) if resp.status().is_success() => {
+                        let _ = store.turn_commands().finish_invocation(&inv).await;
                         tracing::info!(
                             "killed stale chat generation {inv} (deploy changed): {}",
                             resp.status()
@@ -3599,6 +3868,7 @@ pub(crate) async fn kill_stuck_chat_invocations(state: &AppState) {
         let kill_url = format!("{admin}/invocations/{inv}/kill");
         match reqwest::Client::new().patch(&kill_url).send().await {
             Ok(resp) if resp.status().is_success() => {
+                let _ = store.turn_commands().finish_invocation(&inv).await;
                 tracing::info!("killed stuck chat invocation {inv}");
             }
             Ok(resp) => {
@@ -3657,6 +3927,8 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
     });
 
     // Listen first: Restate probes the advertised URI during registration.
+    let command_state = state.clone();
+    let routine_state = state.clone();
     let server = tokio::spawn(async move {
         // One journaled completion can legitimately run for minutes without
         // emitting a Restate command; the default inactivity timeout would
@@ -3680,6 +3952,26 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
         .await;
     });
     register_with_restate(&admin, &advertised).await?;
+    tokio::spawn(async move {
+        loop {
+            if let Err(error) =
+                crate::http::gateway::dispatch_turn_commands(&command_state, None).await
+            {
+                tracing::warn!("turn outbox delivery deferred: {error:?}");
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    });
+    tokio::spawn(async move {
+        loop {
+            if let Err(error) =
+                crate::http::internal::dispatch_routine_schedules(&routine_state, None).await
+            {
+                tracing::warn!("routine schedule outbox delivery deferred: {error:?}");
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    });
     server.await?;
     Ok(())
 }
@@ -3735,7 +4027,17 @@ mod tests {
             folder: "/w".into(),
             machine_label: None,
         };
-        let p = build_system_prompt(Some("You are GLaDOS."), true, false, true, None, Some(&ws), "", "", None);
+        let p = build_system_prompt(
+            Some("You are GLaDOS."),
+            true,
+            false,
+            true,
+            None,
+            Some(&ws),
+            "",
+            "",
+            None,
+        );
         assert!(p.starts_with("You are GLaDOS."));
         assert!(!p.contains("helpful assistant"));
         // Operational instructions are appended regardless of the persona.
@@ -3755,8 +4057,7 @@ mod tests {
 
     #[test]
     fn workspace_sentence_wsl_unc_names_distro_inner_path_and_machine() {
-        let (distro, inner) =
-            parse_wsl_unc(r"\\wsl.localhost\Ubuntu-22.04\home\u\repo").unwrap();
+        let (distro, inner) = parse_wsl_unc(r"\\wsl.localhost\Ubuntu-22.04\home\u\repo").unwrap();
         assert_eq!(distro, "Ubuntu-22.04");
         assert_eq!(inner, "/home/u/repo");
         let s = workspace_sentence(r"\\wsl.localhost\Ubuntu-22.04\home\u\repo", Some("devbox"));
@@ -3898,7 +4199,17 @@ mod tests {
             folder: "/home/u/repo".into(),
             machine_label: Some("box".into()),
         };
-        let p = build_system_prompt(None, false, false, false, None, Some(&ws), "", "", Some(&md));
+        let p = build_system_prompt(
+            None,
+            false,
+            false,
+            false,
+            None,
+            Some(&ws),
+            "",
+            "",
+            Some(&md),
+        );
         // Codex's user-instructions fragment format, with the directory label.
         assert!(p.contains("# AGENTS.md instructions for /home/u/repo"));
         assert!(p.contains("<INSTRUCTIONS>\nProject conventions here.\n</INSTRUCTIONS>"));
@@ -4026,42 +4337,69 @@ mod tests {
         }
     }
 
-    fn tool_result(turn: u32, call_id: &str) -> ThreadEvent {
-        ThreadEvent::ToolResult {
-            turn,
-            step: 0,
-            call_id: call_id.into(),
-            name: "execute".into(),
-            content: "ok".into(),
-            is_error: false,
-            meta: None,
-            images: Vec::new(),
-            kind: None,
-            artifact_id: None,
-        }
+    #[test]
+    fn repeated_provider_call_ids_have_distinct_durable_execution_ids() {
+        let provider_result = CompletionOut {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![ToolCall {
+                id: "call_0".into(),
+                name: "execute".into(),
+                arguments: json!({"command":"first"}),
+            }],
+            tokens_in: 0,
+            tokens_out: 0,
+            stopped: false,
+        };
+        let mut first = provider_result.clone();
+        canonicalize_tool_call_ids(&mut first, "invocation-one", 0);
+        let mut replay: CompletionOut =
+            serde_json::from_value(serde_json::to_value(&provider_result).unwrap()).unwrap();
+        canonicalize_tool_call_ids(&mut replay, "invocation-one", 0);
+        assert_eq!(first.tool_calls[0].id, replay.tool_calls[0].id);
+        let mut next_step = provider_result.clone();
+        canonicalize_tool_call_ids(&mut next_step, "invocation-one", 1);
+        assert_ne!(first.tool_calls[0].id, next_step.tool_calls[0].id);
+        let mut next_turn = provider_result.clone();
+        canonicalize_tool_call_ids(&mut next_turn, "invocation-two", 0);
+        assert_ne!(first.tool_calls[0].id, next_turn.tool_calls[0].id);
+        let mut batch = provider_result.clone();
+        batch.tool_calls.push(provider_result.tool_calls[0].clone());
+        canonicalize_tool_call_ids(&mut batch, "invocation-one", 0);
+        assert_ne!(batch.tool_calls[0].id, batch.tool_calls[1].id);
+        let assistant = assistant_blocks("", "", &first.tool_calls);
+        let result = Message::tool_result(&first.tool_calls[0].id, "result");
+        assert!(
+            matches!(&assistant[0], Block::ToolCall { id, .. } if Some(id) == result.tool_call_id.as_ref())
+        );
     }
 
     #[test]
-    fn queued_turn_detection_follows_the_last_turn_bearing_event() {
-        // Completed turn: not queued.
-        assert!(!has_queued_user_turn(&[user_ev("q"), text_assistant(1, 0, "a")]));
-        // Queued send after the completed turn: queued.
-        assert!(has_queued_user_turn(&[
-            user_ev("q"),
-            text_assistant(1, 0, "a"),
-            user_ev("second")
-        ]));
-        // Turn paused on tool results with a queued send behind: queued.
-        assert!(has_queued_user_turn(&[
-            user_ev("q"),
-            text_assistant(1, 0, "with tools"),
-            tool_result(1, "c1"),
-            user_ev("while you are at it")
-        ]));
-        // Interrupted turn without a queued send: not queued.
-        assert!(!has_queued_user_turn(&[user_ev("q"), text_assistant(1, 0, "partial")]));
-        // Empty log: not queued.
-        assert!(!has_queued_user_turn(&[]));
+    fn stopped_prefix_is_identical_after_journal_replay() {
+        let mut completion = CompletionOut {
+            text: "partial response".into(),
+            reasoning: "partial reasoning".into(),
+            tool_calls: Vec::new(),
+            tokens_in: 12,
+            tokens_out: 3,
+            stopped: true,
+        };
+        let original = stopped_completion_event(&completion, 4, 2, "model").unwrap();
+        let replayed: CompletionOut =
+            serde_json::from_value(serde_json::to_value(&completion).unwrap()).unwrap();
+        let replayed = stopped_completion_event(&replayed, 4, 2, "model").unwrap();
+        assert_eq!(
+            serde_json::to_value(original).unwrap(),
+            serde_json::to_value(replayed).unwrap()
+        );
+        completion.stopped = false;
+        assert!(stopped_completion_event(&completion, 4, 2, "model").is_none());
+        completion.stopped = true;
+        completion.text.clear();
+        completion.reasoning.clear();
+        assert!(stopped_completion_event(&completion, 4, 2, "model").is_none());
+        completion.reasoning = "reasoning only".into();
+        assert!(stopped_completion_event(&completion, 4, 2, "model").is_some());
     }
 
     #[test]
@@ -4166,6 +4504,50 @@ mod tests {
     }
 
     #[test]
+    fn retained_compaction_tail_keeps_tool_call_group() {
+        let calls: Vec<ToolCall> = (0..5)
+            .map(|i| ToolCall {
+                id: format!("call-{i}"),
+                name: "read_file".into(),
+                arguments: json!({"path":"x"}),
+            })
+            .collect();
+        let mut assistant = Message::user("");
+        assistant.role = "assistant".into();
+        assistant.tool_calls = Some(calls.clone());
+        let mut messages = vec![Message::user("before"), assistant];
+        messages.extend(calls.iter().map(|c| Message::tool_result(&c.id, "result")));
+        let tail = compaction_tail(&messages, 4);
+        assert_eq!(tail.len(), 6);
+        assert_eq!(tail[0].role, "assistant");
+        for result in &tail[1..] {
+            assert!(tail[0]
+                .tool_calls
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|c| Some(&c.id) == result.tool_call_id.as_ref()));
+        }
+        assert!(compaction_tail(&messages, 0).is_empty());
+    }
+
+    #[test]
+    fn compaction_never_retains_an_older_summary_in_a_short_tail() {
+        let events = vec![
+            user_ev("q1"),
+            compaction("S1", Some(4)),
+            user_ev("q2"),
+            compaction("S2", Some(4)),
+            compaction("S3", Some(4)),
+        ];
+        let messages = build_model_history(&events, &Default::default(), &[]);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].content, summarized("S3"));
+        assert_eq!(messages[1].content, "q1");
+        assert_eq!(messages[2].content, "q2");
+    }
+
+    #[test]
     fn two_compactions_compose() {
         let events = vec![
             user_ev("q1"),
@@ -4177,14 +4559,10 @@ mod tests {
             user_ev("q3"),
         ];
         let msgs = build_model_history(&events, &Default::default(), &[]);
-        // Each compaction applies at its position: S1 replaces q1/a1 keeping
-        // a1; S2 replaces the segment since S1 (q2/a2) keeping a2; q3 flows.
-        assert_eq!(msgs.len(), 5);
-        assert_eq!(msgs[0].content, summarized("S1"));
-        assert_eq!(msgs[1].content, "a1");
-        assert_eq!(msgs[2].content, summarized("S2"));
-        assert_eq!(msgs[3].content, "a2");
-        assert_eq!(msgs[4].content, "q3");
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].content, summarized("S2"));
+        assert_eq!(msgs[1].content, "a2");
+        assert_eq!(msgs[2].content, "q3");
     }
 
     #[test]

@@ -99,14 +99,19 @@ impl Feed {
         if self.slow_tick == 0 {
             self.refresh_bindings().await;
         }
-        let active = self.state.generations.active_streams(
-            &self.chats.keys().copied().collect::<Vec<_>>(),
-        );
+        let active = self
+            .state
+            .generations
+            .active_streams(&self.chats.keys().copied().collect::<Vec<_>>());
         // A replaced generation has already emitted its terminal event.
         // Drain that receiver before replacing it with the new generation.
         self.drain_events().await;
         for (chat, id, sender) in &active {
-            if self.subs.get(chat).is_none_or(|(old, _)| old != id) {
+            if self
+                .subs
+                .get(chat)
+                .is_none_or(|(old, receiver)| old != id || receiver.is_closed())
+            {
                 self.subs.insert(*chat, (*id, sender.subscribe()));
             }
         }
@@ -574,12 +579,11 @@ async fn capture_thread(
         seq,
     } = view;
     // The chat's project, for the sidebar's grouping (None = folderless).
-    let (project_id, project_name, project_machine_label) = match
-        store.chats().project_of(org, chat_id).await?
-    {
-        Some((id, name, label)) => (Some(id), Some(name), label),
-        None => (None, None, None),
-    };
+    let (project_id, project_name, project_machine_label) =
+        match store.chats().project_of(org, chat_id).await? {
+            Some((id, name, label)) => (Some(id), Some(name), label),
+            None => (None, None, None),
+        };
     Ok(WsServerMsg::ThreadState {
         chat_id,
         seq,

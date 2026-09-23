@@ -20,7 +20,10 @@ async fn workspace_turn_submits_the_durable_workflow() {
         .start()
         .await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .respond_with(wiremock::ResponseTemplate::new(202))
+        .respond_with(
+            wiremock::ResponseTemplate::new(202)
+                .set_body_json(json!({"invocationId":"inv-fixture"})),
+        )
         .mount(&restate)
         .await;
 

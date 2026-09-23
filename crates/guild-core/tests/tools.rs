@@ -18,7 +18,10 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 async fn read_file_happy_and_missing() {
     let dir = scratch("read");
     std::fs::write(dir.join("a.txt"), "hello world").unwrap();
-    let out = ReadFile::default().run(&dir, json!({"path": "a.txt"})).await.unwrap();
+    let out = ReadFile::default()
+        .run(&dir, json!({"path": "a.txt"}))
+        .await
+        .unwrap();
     assert_eq!(out.output_for_model, "hello world");
     assert!(ReadFile::default()
         .run(&dir, json!({"path": "nope.txt"}))
@@ -220,7 +223,10 @@ async fn read_file_offset_limit_paging() {
         .unwrap();
     assert_eq!(out.output_for_model, "");
     // defaults: no offset/limit reads everything
-    let out = ReadFile::default().run(&dir, json!({"path": "a.txt"})).await.unwrap();
+    let out = ReadFile::default()
+        .run(&dir, json!({"path": "a.txt"}))
+        .await
+        .unwrap();
     assert!(out.output_for_model.starts_with("line 1\n"));
     assert!(out.output_for_model.ends_with("line 50"));
     std::fs::remove_dir_all(&dir).unwrap();

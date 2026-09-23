@@ -22,6 +22,7 @@ async fn pool_connects_to_fixture_and_lists_tools() {
     let url = spawn_fixture().await;
     let pool = McpPool::new();
     let key = PoolKey {
+        org: Uuid::nil(),
         slug: "hubspot".into(),
         url: url.clone(),
         acting_as: None,
@@ -42,6 +43,7 @@ async fn pool_reuses_connection_for_same_key() {
     let url = spawn_fixture().await;
     let pool = McpPool::new();
     let key = PoolKey {
+        org: Uuid::nil(),
         slug: "hubspot".into(),
         url: url.clone(),
         acting_as: None,
@@ -68,6 +70,7 @@ async fn pool_reconnects_when_secrets_change() {
     let url = spawn_fixture().await;
     let pool = McpPool::new();
     let key = PoolKey {
+        org: Uuid::nil(),
         slug: "hubspot".into(),
         url: url.clone(),
         acting_as: None,
@@ -93,6 +96,7 @@ async fn pool_connect_failure_is_an_error() {
     // Port 1 refuses connections — a broken server degrades, never panics.
     let pool = McpPool::new();
     let key = PoolKey {
+        org: Uuid::nil(),
         slug: "hubspot".into(),
         url: "http://127.0.0.1:1/mcp".into(),
         acting_as: None,
@@ -109,6 +113,7 @@ async fn mcp_call_roundtrip_through_fixture() {
     let url = spawn_fixture().await;
     let pool = McpPool::new();
     let key = PoolKey {
+        org: Uuid::nil(),
         slug: "hubspot".into(),
         url: url.clone(),
         acting_as: None,
@@ -264,6 +269,7 @@ async fn pool_connects_with_envelope_secret_headers() {
         &[("api_key".to_string(), "sk-live-123".to_string())],
     );
     let key = PoolKey {
+        org: Uuid::nil(),
         slug: "savetest".into(),
         url: url.clone(),
         acting_as: None,

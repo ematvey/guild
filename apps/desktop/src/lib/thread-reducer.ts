@@ -474,7 +474,7 @@ export interface ThreadReducer {
   appendError(text: string): ApplyResult;
   /** The send's HTTP request failed: the optimistic block goes, an error
    * block takes its place, and the pending marker is released. */
-  failSend(chatId: string, key: string, errorText: string): ApplyResult;
+  failSend(chatId: string | null, key: string, errorText: string): ApplyResult;
   /** Arms (chatId) or disarms (null) the manual-compaction line. Arming
    * snapshots the compaction keys present now; applyState reconciles. */
   setCompacting(chatId: string | null): ApplyResult;
@@ -492,10 +492,12 @@ export function createThreadReducer(): ThreadReducer {
   /** Chat with a manual /compact in flight; null = none. */
   let compactingChat: string | null = null;
   /** Optimistic send marker keyed by chat (settled by the durable echo). */
-  const pendingByChat = new Map<string, PendingSend>();
-  /** A first send's marker between the optimistic append and the chat's
-   * creation. */
-  let loosePending: PendingSend | null = null;
+  const pendingByChat = new Map<string, Map<string, PendingSend>>();
+  const pendingOf = (cid: string) => {
+    let sends = pendingByChat.get(cid);
+    if (!sends) { sends = new Map(); pendingByChat.set(cid, sends); }
+    return sends;
+  };
 
   const freshView = (): ChatView => ({
     blocks: [],
@@ -657,8 +659,7 @@ export function createThreadReducer(): ThreadReducer {
       }
       if (chatId === null) {
         current = LOOSE;
-        loosePending = null;
-        views.set(LOOSE, freshView());
+        if (!pendingOf(LOOSE).size) views.set(LOOSE, freshView());
         return result(viewOf(LOOSE), false, false);
       }
       current = chatId;
@@ -667,16 +668,8 @@ export function createThreadReducer(): ThreadReducer {
     },
 
     adopt(chatId) {
-      const loose = viewOf(LOOSE);
-      const v = viewOf(chatId);
-      v.blocks = loose.blocks;
-      v.watermark = loose.watermark;
-      v.lastEventSeq = loose.lastEventSeq;
-      v.toolsByCall = loose.toolsByCall;
-      v.approvalsByCall = loose.approvalsByCall;
-      views.set(LOOSE, freshView());
       current = chatId;
-      return result(v);
+      return result(viewOf(chatId));
     },
 
     applyState(state) {
@@ -712,26 +705,14 @@ export function createThreadReducer(): ThreadReducer {
       v.blocks = blocks;
       // Optimistic send: the durable user_message echo (matched by client
       // message id) settles the marker; before it, keep the command visible.
-      const pending = cid === LOOSE ? loosePending : pendingByChat.get(cid) ?? null;
-      if (pending) {
-        const durable = state.events.some(
-          (r) => r.event.type === "user_message" && r.id === pending.key,
-        );
+      for (const [key, pending] of pendingOf(cid)) {
+        const durable = state.events.some(r => r.event.type === "user_message" && r.id === key);
         if (durable) {
-          if (cid === LOOSE) loosePending = null;
-          else pendingByChat.delete(cid);
-          v.blocks = v.blocks.filter((b) => !(b.key === pending.key && b.pending));
-        } else if (!v.blocks.some((b) => b.key === pending.key)) {
-          v.blocks = [
-            ...v.blocks,
-            {
-              kind: "user",
-              text: pending.text,
-              key: pending.key,
-              attachments: pending.attachments,
-              pending: true,
-            },
-          ];
+          pendingOf(cid).delete(key);
+          v.blocks = v.blocks.filter(b => !(b.key === key && b.pending));
+        } else if (!v.blocks.some(b => b.key === key)) {
+          v.blocks = [...v.blocks, { kind: "user", text: pending.text, key,
+            attachments: pending.attachments, pending: true }];
         }
       }
       // Pending /compact reconciliation: a newly appeared compaction event
@@ -803,9 +784,9 @@ export function createThreadReducer(): ThreadReducer {
     },
 
     optimisticSend(pending) {
-      const v = viewOf(current);
+      const v = viewOf(pending.chatId ?? LOOSE);
       v.blocks = [
-        ...v.blocks,
+        ...v.blocks.filter(b => b.key !== pending.key),
         {
           kind: "user",
           text: pending.text,
@@ -814,35 +795,34 @@ export function createThreadReducer(): ThreadReducer {
           attachments: pending.attachments,
         },
       ];
-      if (pending.chatId === null) loosePending = pending;
-      else pendingByChat.set(pending.chatId, pending);
+      pendingOf(pending.chatId ?? LOOSE).set(pending.key, pending);
       return result(v);
     },
 
     bindPending(chatId, key) {
-      if (loosePending?.key === key) {
-        pendingByChat.set(chatId, { ...loosePending, chatId });
-        loosePending = null;
+      const pending = pendingOf(LOOSE).get(key);
+      if (pending) {
+        pendingOf(chatId).set(key, { ...pending, chatId });
+        pendingOf(LOOSE).delete(key);
+        const loose = viewOf(LOOSE);
+        const bound = viewOf(chatId);
+        bound.blocks = [...bound.blocks, ...loose.blocks.filter(b => b.key === key)];
+        loose.blocks = loose.blocks.filter(b => b.key !== key);
       }
     },
 
     settleAttachment(key, pendingId, uploadedId) {
-      const v = viewOf(current);
-      v.blocks = v.blocks.map((b) =>
-        b.key === key && b.kind === "user"
-          ? {
-              ...b,
-              attachments: b.attachments?.map((a) =>
-                a.id === pendingId
-                  ? uploadedId
-                    ? { ...a, id: uploadedId, previewUrl: undefined }
-                    : { ...a, previewUrl: undefined }
-                  : a,
-              ),
-            }
-          : b,
-      );
-      return result(v);
+      const update = (attachments: PendingSend["attachments"]) => attachments?.map(a =>
+        a.id === pendingId ? { ...a, ...(uploadedId ? { id: uploadedId, previewUrl: undefined } : {}) } : a);
+      for (const sends of pendingByChat.values()) {
+        const pending = sends.get(key);
+        if (pending) sends.set(key, { ...pending, attachments: update(pending.attachments) });
+      }
+      for (const v of views.values()) {
+        v.blocks = v.blocks.map(b => b.key === key && b.kind === "user"
+          ? { ...b, attachments: update(b.attachments) } : b);
+      }
+      return result(viewOf(current));
     },
 
     appendError(text) {
@@ -852,9 +832,8 @@ export function createThreadReducer(): ThreadReducer {
     },
 
     failSend(chatId, key, errorText) {
-      const v = viewOf(chatId);
-      if (pendingByChat.get(chatId)?.key === key) pendingByChat.delete(chatId);
-      if (loosePending?.key === key) loosePending = null;
+      const v = viewOf(chatId ?? LOOSE);
+      pendingOf(chatId ?? LOOSE).delete(key);
       v.blocks = [
         ...v.blocks.filter((b) => b.key !== key),
         { kind: "error", text: errorText, key: liveKey() },

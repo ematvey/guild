@@ -190,24 +190,23 @@ describe("prepareTurn (end to end over the bridge)", () => {
 });
 
 describe("discoverSkills precedence", () => {
-  it("later scopes win a name collision (config < user < repo < .guild)", async () => {
+  it("later scopes win a name collision (legacy < config < user < repo)", async () => {
     const fs = fakeFs({
       "/cfg/guild/skills/dup/SKILL.md": SKILL("dup", "config desc"),
       "/home/u/.agents/skills/dup/SKILL.md": SKILL("dup", "user desc"),
       "/proj/.git/x": "",
-      "/proj/skills/dup/SKILL.md": SKILL("dup", "repo desc"),
+      "/proj/.agents/skills/dup/SKILL.md": SKILL("dup", "repo desc"),
       "/proj/.guild/skills/dup/SKILL.md": SKILL("dup", "legacy desc"),
     });
     const skills = await discoverSkills(fs, "/proj", "/cfg/guild", "/home/u");
-    console.log("DEBUG skills:", JSON.stringify(skills));
     expect(skills).toHaveLength(1);
-    expect(skills[0].description).toBe("legacy desc");
+    expect(skills[0].description).toBe("repo desc");
   });
   it("repo chain scans every level root → cwd", async () => {
     const fs = fakeFs({
       "/repo/.git/x": "",
-      "/repo/skills/root-skill/SKILL.md": SKILL("root-skill", "root"),
-      "/repo/sub/skills/sub-skill/SKILL.md": SKILL("sub-skill", "sub"),
+      "/repo/.agents/skills/root-skill/SKILL.md": SKILL("root-skill", "root"),
+      "/repo/sub/.agents/skills/sub-skill/SKILL.md": SKILL("sub-skill", "sub"),
     });
     const skills = await discoverSkills(fs, "/repo/sub", "/cfg/guild", "/home/u");
     expect(skills.map((s) => s.name).sort()).toEqual(["root-skill", "sub-skill"]);
@@ -244,5 +243,26 @@ describe("skills manager listing + toggles", () => {
     const saved = JSON.parse(fs.written["/cfg/guild/settings.json"]);
     expect(saved.other).toBe(1);
     expect(saved.skillsDisabled["/cfg/guild/skills/a/SKILL.md"]).toBe(false);
+  });
+});
+
+
+describe("project skill scope contracts", () => {
+  it("prefers the closest repository scope for duplicate names", async () => {
+    const fs = fakeFs({
+      "/repo/.git/x": "",
+      "/repo/.agents/skills/dup/SKILL.md": SKILL("dup", "parent"),
+      "/repo/sub/.agents/skills/dup/SKILL.md": SKILL("dup", "child"),
+    });
+    expect((await discoverSkills(fs, "/repo/sub", "/cfg", "/home/u"))[0].description).toBe("child");
+  });
+  it("walks native Windows project paths using filesystem-compatible separators", async () => {
+    const fs = fakeFs({
+      "C:/repo/.git/x": "",
+      "C:/repo/.agents/skills/root/SKILL.md": SKILL("root", "root"),
+      "C:/repo/AGENTS.md": "root instructions",
+    });
+    expect((await discoverSkills(fs, "C:\\repo\\sub", "/cfg", "/home/u"))[0].name).toBe("root");
+    expect((await projectAgentDocs(fs, "C:\\repo\\sub"))[0].contents).toBe("root instructions");
   });
 });

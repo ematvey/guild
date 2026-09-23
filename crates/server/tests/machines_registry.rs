@@ -78,11 +78,23 @@ async fn fingerprint_match_adopts_the_row_and_rekeys_the_id() {
 
     db.machines()
         .upsert_connected(
-            org, user, "old-id", Some("OLD"), Some("FP-1"), None, None, None, None,
+            org,
+            user,
+            "old-id",
+            Some("OLD"),
+            Some("FP-1"),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
-    let original_first = get_row(&db, "old-id").await.unwrap().unwrap().first_connected_at;
+    let original_first = get_row(&db, "old-id")
+        .await
+        .unwrap()
+        .unwrap()
+        .first_connected_at;
 
     let outcome = db
         .machines()
@@ -113,11 +125,7 @@ async fn fingerprint_match_adopts_the_row_and_rekeys_the_id() {
 
     // The adopted identity is bindable, and only under the new id.
     assert!(db.machines().bindable("new-id", user, org).await.unwrap());
-    assert!(!db
-        .machines()
-        .bindable("old-id", user, org)
-        .await
-        .unwrap());
+    assert!(!db.machines().bindable("old-id", user, org).await.unwrap());
 }
 
 #[tokio::test]
@@ -127,7 +135,15 @@ async fn reconnect_of_a_known_machine_never_rekeys() {
 
     db.machines()
         .upsert_connected(
-            org, user, "m1", Some("A"), Some("FP-2"), None, None, None, None,
+            org,
+            user,
+            "m1",
+            Some("A"),
+            Some("FP-2"),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -170,7 +186,15 @@ async fn fingerprint_adoption_is_scoped_to_one_org() {
 
     db.machines()
         .upsert_connected(
-            org_a, user_a, "a-desk", None, Some("FP-3"), None, None, None, None,
+            org_a,
+            user_a,
+            "a-desk",
+            None,
+            Some("FP-3"),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -179,7 +203,15 @@ async fn fingerprint_adoption_is_scoped_to_one_org() {
     let outcome = db
         .machines()
         .upsert_connected(
-            org_b, user_b, "b-desk", None, Some("FP-3"), None, None, None, None,
+            org_b,
+            user_b,
+            "b-desk",
+            None,
+            Some("FP-3"),
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -196,14 +228,30 @@ async fn cross_org_machine_id_claim_is_left_untouched() {
 
     db.machines()
         .upsert_connected(
-            org_a, user_a, "shared-id", Some("A"), None, None, None, None, None,
+            org_a,
+            user_a,
+            "shared-id",
+            Some("A"),
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
     let outcome = db
         .machines()
         .upsert_connected(
-            org_b, user_b, "shared-id", Some("B"), None, None, None, None, None,
+            org_b,
+            user_b,
+            "shared-id",
+            Some("B"),
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -247,7 +295,12 @@ async fn offline_known_machine_is_bindable_and_foreign_is_not() {
     let other_user = ts
         .db
         .identity()
-        .create_user(org, &format!("o-{}@machines.test", org.simple()), "hunter226", "member")
+        .create_user(
+            org,
+            &format!("o-{}@machines.test", org.simple()),
+            "hunter226",
+            "member",
+        )
         .await
         .unwrap();
 
@@ -260,13 +313,18 @@ async fn offline_known_machine_is_bindable_and_foreign_is_not() {
     // DB-known machine binds even with no live socket (hub stays empty).
     assert!(ts.state.machine_bindable("desk-1", user, org).await);
     // Org-wide binding still holds for a member of the same org.
-    assert!(ts.state.machine_bindable("desk-1", other_user.id, org).await);
+    assert!(
+        ts.state
+            .machine_bindable("desk-1", other_user.id, org)
+            .await
+    );
     // Unknown machine or foreign user/org cannot bind.
     assert!(!ts.state.machine_bindable("ghost", user, org).await);
-    assert!(!ts
-        .state
-        .machine_bindable("desk-1", Uuid::now_v7(), Uuid::now_v7())
-        .await);
+    assert!(
+        !ts.state
+            .machine_bindable("desk-1", Uuid::now_v7(), Uuid::now_v7())
+            .await
+    );
 }
 
 #[tokio::test]
@@ -289,9 +347,7 @@ async fn cross_user_reconnect_of_a_known_machine_id_is_refused() {
     // Same org, different user: the row's owner may reconnect, nobody else.
     let err = db
         .machines()
-        .upsert_connected(
-            org, user_b, "desk", Some("B"), None, None, None, None, None,
-        )
+        .upsert_connected(org, user_b, "desk", Some("B"), None, None, None, None, None)
         .await
         .map(|outcome| outcome.adopted_from)
         .expect_err("cross-user reconnect must be refused");
@@ -304,7 +360,17 @@ async fn cross_user_reconnect_of_a_known_machine_id_is_refused() {
     // The owner reconnecting is still fine.
     let outcome = db
         .machines()
-        .upsert_connected(org, user_a, "desk", Some("A2"), None, None, None, None, None)
+        .upsert_connected(
+            org,
+            user_a,
+            "desk",
+            Some("A2"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert!(outcome.adopted_from.is_none());
@@ -324,7 +390,17 @@ async fn cross_user_fingerprint_is_never_adopted() {
         .id;
 
     db.machines()
-        .upsert_connected(org, user_a, "a-desk", None, Some("FP-X"), None, None, None, None)
+        .upsert_connected(
+            org,
+            user_a,
+            "a-desk",
+            None,
+            Some("FP-X"),
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -332,7 +408,17 @@ async fn cross_user_fingerprint_is_never_adopted() {
     // can read) gets a fresh row, never the re-key of user_a's machine.
     let outcome = db
         .machines()
-        .upsert_connected(org, user_b, "b-rogue", None, Some("FP-X"), None, None, None, None)
+        .upsert_connected(
+            org,
+            user_b,
+            "b-rogue",
+            None,
+            Some("FP-X"),
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert!(outcome.adopted_from.is_none(), "no adoption across users");

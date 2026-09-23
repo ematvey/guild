@@ -99,7 +99,10 @@ async fn login_identify_signout_relogin_pair() {
         .transition(AuthChange::SignOut, Some(&store), &link_tx)
         .unwrap();
     assert!(link_rx.has_changed().unwrap(), "sign-out publishes");
-    assert!(link_rx.borrow_and_update().is_none(), "sign-out drops the link");
+    assert!(
+        link_rx.borrow_and_update().is_none(),
+        "sign-out drops the link"
+    );
     assert!(state.cloud().is_none() && state.email().is_none());
     assert!(state.machine_id().is_none() && state.client_id().is_none());
     assert!(
@@ -124,7 +127,10 @@ async fn login_identify_signout_relogin_pair() {
     link_rx.borrow_and_update();
     let stored = stored_at(&store);
     assert_eq!(stored.token, "login-token");
-    assert!(stored.machine_id.is_none(), "sign-out also forgot the machine");
+    assert!(
+        stored.machine_id.is_none(),
+        "sign-out also forgot the machine"
+    );
 
     // --- 5. pair: a redeemed session overwrites the login ---
     let code = format!("g1|{base_url}|deadbeef");
@@ -182,7 +188,9 @@ async fn anonymous_identify_parks_the_link_and_skips_the_store() {
 
     // login adopts the parked identity — and persists it in the same step.
     let server = fake_cloud().await;
-    let (token, _user) = CloudClient::login(&server.uri(), "a@b.c", "pw").await.unwrap();
+    let (token, _user) = CloudClient::login(&server.uri(), "a@b.c", "pw")
+        .await
+        .unwrap();
     state
         .transition(
             AuthChange::Login {

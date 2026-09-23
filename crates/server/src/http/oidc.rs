@@ -102,13 +102,15 @@ struct OidcState {
     /// back here with the session token in the URL fragment.
     app: String,
     exp: i64,
+    nonce: String,
 }
 
-fn sign_state(state: &AppState, org: Uuid, app: String) -> Result<String, ApiError> {
+fn sign_state(state: &AppState, org: Uuid, app: String, nonce: String) -> Result<String, ApiError> {
     let claims = OidcState {
         org,
         app,
         exp: chrono::Utc::now().timestamp() + 600,
+        nonce,
     };
     let key = jsonwebtoken::EncodingKey::from_secret(state.config.jwt_secret.as_bytes());
     jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claims, &key)
@@ -158,6 +160,11 @@ async fn login(
     State(state): State<AppState>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
+    let nonce = q
+        .get("nonce")
+        .filter(|v| valid_nonce(v))
+        .ok_or_else(|| ApiError::bad_request("missing or invalid login nonce"))?
+        .clone();
     let org: Uuid = q
         .get("org_id")
         .and_then(|s| s.parse().ok())
@@ -176,11 +183,21 @@ async fn login(
             ("client_id", row.client_id.as_str()),
             ("redirect_uri", redirect_uri.as_str()),
             ("scope", "openid email profile"),
-            ("state", sign_state(&state, org, app_origin)?.as_str()),
+            (
+                "state",
+                sign_state(&state, org, app_origin, nonce.clone())?.as_str(),
+            ),
         ],
     )
     .map_err(|e| ApiError::internal(format!("auth url build failed: {e}")))?;
-    Ok(Redirect::to(auth_url.as_str()).into_response())
+    Ok((
+        [(
+            axum::http::header::SET_COOKIE,
+            nonce_cookie(&state, &nonce, 600),
+        )],
+        Redirect::to(auth_url.as_str()),
+    )
+        .into_response())
 }
 
 #[derive(Deserialize)]
@@ -190,6 +207,7 @@ struct TokenResponse {
 
 async fn callback(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
     let code = q
@@ -199,6 +217,7 @@ async fn callback(
         .get("state")
         .ok_or_else(|| ApiError::bad_request("missing state"))?;
     let oidc_state = verify_state(&state, state_param)?;
+    verify_browser_nonce(&headers, &oidc_state.nonce)?;
     let org = oidc_state.org;
 
     let store = state.store().await?;
@@ -270,12 +289,51 @@ async fn callback(
     // Back to the web app; the token rides in the URL fragment so it never
     // reaches the server again, and the app picks it up on load.
     let target = format!(
-        "{}/#oidc_token={}&email={}",
+        "{}/#oidc_token={}&email={}&nonce={}",
         oidc_state.app.trim_end_matches('/'),
         urlencode(&token),
-        urlencode(&email)
+        urlencode(&email),
+        oidc_state.nonce,
     );
-    Ok(Redirect::to(&target).into_response())
+    Ok((
+        [(axum::http::header::SET_COOKIE, nonce_cookie(&state, "", 0))],
+        Redirect::to(&target),
+    )
+        .into_response())
+}
+
+fn valid_nonce(nonce: &str) -> bool {
+    nonce.len() == 64 && nonce.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn nonce_cookie(state: &AppState, nonce: &str, max_age: u32) -> String {
+    let secure = if state.config.api_url.starts_with("https://") {
+        "; Secure"
+    } else {
+        ""
+    };
+    format!("guild_oidc_nonce={nonce}; Path=/api/v1/auth/oidc; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
+}
+
+fn verify_browser_nonce(headers: &axum::http::HeaderMap, expected: &str) -> Result<(), ApiError> {
+    use subtle::ConstantTimeEq;
+    let found: Vec<&str> = headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .filter_map(|h| h.to_str().ok())
+        .flat_map(|cookies| cookies.split(';'))
+        .filter_map(|cookie| cookie.trim().strip_prefix("guild_oidc_nonce="))
+        .collect();
+    if valid_nonce(expected)
+        && found.len() == 1
+        && bool::from(found[0].as_bytes().ct_eq(expected.as_bytes()))
+    {
+        Ok(())
+    } else {
+        Err(ApiError::unauthorized(
+            "login did not originate in this browser",
+        ))
+    }
 }
 
 fn urlencode(s: &str) -> String {
@@ -397,5 +455,27 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(again.id, provisioned.id);
+    }
+}
+
+#[cfg(test)]
+mod nonce_tests {
+    use super::*;
+    #[test]
+    fn callback_requires_exactly_one_matching_browser_nonce() {
+        let nonce = "a".repeat(64);
+        let mut headers = axum::http::HeaderMap::new();
+        assert!(verify_browser_nonce(&headers, &nonce).is_err());
+        headers.insert(
+            axum::http::header::COOKIE,
+            format!("guild_oidc_nonce={nonce}").parse().unwrap(),
+        );
+        assert!(verify_browser_nonce(&headers, &nonce).is_ok());
+        assert!(verify_browser_nonce(&headers, &"b".repeat(64)).is_err());
+        headers.append(
+            axum::http::header::COOKIE,
+            format!("guild_oidc_nonce={nonce}").parse().unwrap(),
+        );
+        assert!(verify_browser_nonce(&headers, &nonce).is_err());
     }
 }

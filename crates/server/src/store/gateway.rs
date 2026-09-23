@@ -269,6 +269,8 @@ impl<'a> GatewayStore<'a> {
         Ok(row.map(|r| r.into_row(master_key)))
     }
 
+    // This upsert mirrors the route configuration columns.
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_route(
         &self,
         org_id: Uuid,

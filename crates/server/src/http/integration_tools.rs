@@ -197,7 +197,18 @@ async fn execute_tool(
     if !args.is_object() {
         return Err(ApiError::bad_request("body must be a JSON object"));
     }
-    let outcome = call_plugin(&state, turn, raw, args, caller.org, acting_as.as_deref()).await;
+    let call_id = Uuid::now_v7();
+    let outcome = call_plugin(
+        &state,
+        turn,
+        raw,
+        args,
+        caller.org,
+        caller.user_id,
+        call_id,
+        acting_as.as_deref(),
+    )
+    .await;
     // Journaled audit (spec §8): the identity record for the script call.
     let store = state.store().await?;
     let _ = store
@@ -207,6 +218,7 @@ async fn execute_tool(
             "integration.tool_called",
             json!({
                 "slug": turn.slug,
+                "call_id": call_id,
                 "tool": raw,
                 "caller": caller.user_id,
                 "acting_as": acting_as,

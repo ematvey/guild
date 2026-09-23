@@ -398,6 +398,33 @@ impl<'a> IdentityStore<'a> {
             Some(p) => Some(hash_password(p).map_err(ApiError::from)?),
             None => None,
         };
+        let mut tx = self.pool.begin().await?;
+        // All admin removals serialize on the same org row, including deletes.
+        sqlx::query("SELECT id FROM orgs WHERE id = $1 FOR UPDATE")
+            .bind(org_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let target_role: Option<String> =
+            sqlx::query_scalar("SELECT role FROM users WHERE id = $1 AND org_id = $2")
+                .bind(user_id)
+                .bind(org_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if target_role.as_deref() == Some("admin") && role.is_some_and(|r| r != "admin") {
+            let others: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM users WHERE org_id = $1 AND role = 'admin' AND id <> $2",
+            )
+            .bind(org_id)
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if others == 0 {
+                return Err(ApiError::conflict(
+                    "last_admin",
+                    "cannot demote the last admin",
+                ));
+            }
+        }
         let row = sqlx::query_as::<_, UserListRow>(
             "UPDATE users SET role = COALESCE($2::text, role), \
              password_hash = COALESCE($3::text, password_hash) \
@@ -408,23 +435,27 @@ impl<'a> IdentityStore<'a> {
         .bind(role)
         .bind(hash)
         .bind(org_id)
-        .fetch_optional(self.pool)
+        .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| ApiError::not_found("no such user"))?;
         if password.is_some() {
             sqlx::query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1")
                 .bind(user_id)
-                .execute(self.pool)
+                .execute(&mut *tx)
                 .await?;
         }
+        tx.commit().await?;
         Ok(row)
     }
 
     /// Deletes a user inside one transaction; refuses to remove the org's
-    /// last admin. The admin count is re-evaluated in the same statement that
-    /// deletes, so a concurrent role change cannot race the check.
+    /// last admin. The org lock serializes all removals and demotions.
     pub async fn delete_user(&self, org_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
         let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT id FROM orgs WHERE id = $1 FOR UPDATE")
+            .bind(org_id)
+            .fetch_one(&mut *tx)
+            .await?;
         let target: Option<(String,)> =
             sqlx::query_as("SELECT role FROM users WHERE org_id = $1 AND id = $2 FOR UPDATE")
                 .bind(org_id)
@@ -481,6 +512,57 @@ impl<'a> IdentityStore<'a> {
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use crate::store::Store;
+
+    #[tokio::test]
+    async fn concurrent_admin_removals_preserve_one_admin() {
+        for deletion in [false, true] {
+            let db = Store::connect_test().await.unwrap();
+            let store = &db.store;
+            let org = uuid::Uuid::now_v7();
+            sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+                .bind(org)
+                .execute(store.pool())
+                .await
+                .unwrap();
+            let identity = store.identity();
+            let a = identity
+                .create_user(org, "a@test", "password1", "admin")
+                .await
+                .unwrap();
+            let b = identity
+                .create_user(org, "b@test", "password1", "admin")
+                .await
+                .unwrap();
+            let (first, second) = tokio::join!(
+                identity.update_user(org, a.id, Some("member"), None),
+                async {
+                    if deletion {
+                        identity.delete_user(org, b.id).await
+                    } else {
+                        identity
+                            .update_user(org, b.id, Some("member"), None)
+                            .await
+                            .map(|_| ())
+                    }
+                },
+            );
+            assert_ne!(
+                first.is_ok(),
+                second.is_ok(),
+                "exactly one concurrent removal succeeds"
+            );
+            assert_eq!(
+                identity
+                    .list_users(org)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .filter(|u| u.role == "admin")
+                    .count(),
+                1
+            );
+        }
+    }
 
     #[tokio::test]
     async fn bootstrap_admin_once_then_login_and_session() {

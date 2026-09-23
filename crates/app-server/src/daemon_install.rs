@@ -38,10 +38,7 @@ fn unit_bin_with(home: Option<&Path>, exe: &Path) -> anyhow::Result<PathBuf> {
 
 fn unit_bin() -> anyhow::Result<PathBuf> {
     let exe = std::env::current_exe().context("no current exe")?;
-    unit_bin_with(
-        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
-        &exe,
-    )
+    unit_bin_with(std::env::var_os("HOME").map(PathBuf::from).as_deref(), &exe)
 }
 
 /// The unit file body. The ExecStart path is double-quoted so paths with
@@ -230,7 +227,9 @@ pub fn install(linger: bool) -> anyhow::Result<()> {
     }
     if linger {
         match Command::new("loginctl").arg("enable-linger").output() {
-            Ok(o) if o.status.success() => println!("linger enabled (daemon runs without an active login session)"),
+            Ok(o) if o.status.success() => {
+                println!("linger enabled (daemon runs without an active login session)")
+            }
             other => {
                 let detail = match other {
                     Ok(o) => String::from_utf8_lossy(&o.stderr).trim().to_string(),
@@ -320,17 +319,32 @@ mod tests {
     #[test]
     fn poll_socket_state_tracks_the_live_daemon_socket() {
         let _guard = SOCKET_LOCK.lock().unwrap();
-        let path =
-            std::env::temp_dir().join(format!("guild-dinst-{}.sock", std::process::id()));
+        let path = std::env::temp_dir().join(format!("guild-dinst-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&path);
         std::env::set_var("GUILD_DAEMON_SOCKET", &path);
         // Nothing listens: the socket is free immediately.
-        assert!(poll_socket_state(false, 2, std::time::Duration::from_millis(10)));
-        assert!(!poll_socket_state(true, 2, std::time::Duration::from_millis(10)));
+        assert!(poll_socket_state(
+            false,
+            2,
+            std::time::Duration::from_millis(10)
+        ));
+        assert!(!poll_socket_state(
+            true,
+            2,
+            std::time::Duration::from_millis(10)
+        ));
         // A live listener keeps accepting through the whole poll window.
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
-        assert!(!poll_socket_state(false, 2, std::time::Duration::from_millis(10)));
-        assert!(poll_socket_state(true, 2, std::time::Duration::from_millis(10)));
+        assert!(!poll_socket_state(
+            false,
+            2,
+            std::time::Duration::from_millis(10)
+        ));
+        assert!(poll_socket_state(
+            true,
+            2,
+            std::time::Duration::from_millis(10)
+        ));
         drop(listener);
         let _ = std::fs::remove_file(&path);
         std::env::remove_var("GUILD_DAEMON_SOCKET");

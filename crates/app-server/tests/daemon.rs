@@ -160,7 +160,10 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
     inert_token_store(&path.parent().unwrap().to_path_buf());
 
     let dpath = path.clone();
-    let daemon = tokio::spawn(async move { run_daemon_shared(dpath, Shared::new(Session::default())).await });
+    let daemon =
+        tokio::spawn(
+            async move { run_daemon_shared(dpath, Shared::new(Session::default())).await },
+        );
 
     // wait for the endpoint to accept
     let mut a = None;
@@ -214,10 +217,7 @@ async fn daemon_binds_shares_survives_and_shuts_down() {
 /// and reclaim + relink when the unit stops.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stops() {
-    let dir = std::env::temp_dir().join(format!(
-        "guild-daemon-reclaim-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("guild-daemon-reclaim-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("reclaim.sock");
     let _ = std::fs::remove_file(&path);
@@ -226,9 +226,10 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
 
     // First daemon owns the endpoint.
     let dpath = path.clone();
-    let first = tokio::spawn(async move {
-        run_daemon_shared(dpath, Shared::new(Session::default())).await
-    });
+    let first =
+        tokio::spawn(
+            async move { run_daemon_shared(dpath, Shared::new(Session::default())).await },
+        );
     let mut a = None;
     for _ in 0..100 {
         if try_connect_at(&path).is_ok() {
@@ -248,8 +249,7 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
     });
     tokio::time::sleep(Duration::from_millis(1200)).await;
     assert!(
-        a.call("daemon.hello", serde_json::json!({}))["result"]["version"]
-            .is_string(),
+        a.call("daemon.hello", serde_json::json!({}))["result"]["version"].is_string(),
         "the owner must keep serving while the waiter waits"
     );
 
@@ -261,7 +261,9 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
         .expect("first daemon task")
         .expect("first daemon result");
 
-    let mut b = wait_for_host(&path).await.expect("the reclaiming host must take over");
+    let mut b = wait_for_host(&path)
+        .await
+        .expect("the reclaiming host must take over");
 
     // The unit comes up and install retires the GUI's host: it must park —
     // no rebind while the unit is active, even past the reclaim grace.
@@ -288,9 +290,7 @@ async fn reclaiming_host_parks_while_the_unit_is_active_and_relinks_when_it_stop
         .expect("reclaim after the unit stop")
         .expect("reclaimed host reachable");
     assert!(
-        c.call("daemon.hello", serde_json::json!({}))["result"]["protocol"]
-            .as_u64()
-            == Some(1),
+        c.call("daemon.hello", serde_json::json!({}))["result"]["protocol"].as_u64() == Some(1),
         "the reclaimed host is a full daemon"
     );
 

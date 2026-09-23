@@ -367,12 +367,7 @@ async fn download_refuses_a_member_who_is_not_the_chat_owner() {
         .create_user(org, "not-owner@b.c", "hunter226", "member")
         .await
         .unwrap();
-    let (_sid, outsider_token) = fs
-        .db
-        .identity()
-        .create_session(outsider.id)
-        .await
-        .unwrap();
+    let (_sid, outsider_token) = fs.db.identity().create_session(outsider.id).await.unwrap();
 
     let app = axum::Router::new()
         .merge(guild_server::http::tool_artifacts::routes())

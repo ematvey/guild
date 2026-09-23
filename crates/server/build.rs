@@ -78,10 +78,26 @@ struct RuleSpec {
 /// arbitrary code — an allow rule may not be (or end at) such an invocation,
 /// since prefix matching leaves every token after the pattern unconstrained.
 const SHELL_INTERPRETERS: &[&str] = &[
-    "sh", "bash", "zsh", "dash", "ksh", "ash", "cmd", "powershell", "pwsh",
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "ash",
+    "cmd",
+    "powershell",
+    "pwsh",
 ];
 const SHELL_C_FLAGS: &[&str] = &[
-    "-c", "-lc", "-ic", "-ec", "-cl", "/c", "/k", "-command", "-encodedcommand",
+    "-c",
+    "-lc",
+    "-ic",
+    "-ec",
+    "-cl",
+    "/c",
+    "/k",
+    "-command",
+    "-encodedcommand",
 ];
 /// Single-token allow patterns that hand an unconstrained argument list to
 /// an arbitrary-execution primitive.
@@ -134,9 +150,7 @@ fn emit(policy: &codex_execpolicy::Policy) {
                 .iter()
                 .map(|token| match token {
                     codex_execpolicy::PatternToken::Single(s) => RestToken::Single(s.clone()),
-                    codex_execpolicy::PatternToken::Alts(alts) => {
-                        RestToken::Alts(alts.to_vec())
-                    }
+                    codex_execpolicy::PatternToken::Alts(alts) => RestToken::Alts(alts.to_vec()),
                 })
                 .collect();
             let decision = serde_json::to_value(prefix.decision)

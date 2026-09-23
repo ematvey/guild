@@ -256,14 +256,25 @@ async fn command_ack_is_not_a_user_echo_and_commits_fan_out_to_other_tabs() {
             .validate_session(&f.token)
             .await
             .unwrap();
-    assert!(f
-        .ts
-        .store()
-        .thread()
-        .list_events(u.org_id, f.chat)
-        .await
-        .unwrap()
-        .is_empty());
+    // Acceptance commits the durable echo and outbox atomically. The ACK
+    // is still only command metadata; views fan out the committed event.
+    assert!(body.get("event").is_none());
+    assert!(body.get("content").is_none());
+    let rows =
+        f.ts.store()
+            .thread()
+            .list_events(u.org_id, f.chat)
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, message_id);
+    let retry = reqwest::Client::new().post(format!("{}/api/v1/gateway/chat", f.base)).bearer_auth(&f.token)
+        .json(&json!({"chat_id": f.chat, "user_message_id": message_id, "model": "test", "messages": [{"role": "user", "content": "hello"}]})).send().await.unwrap();
+    assert_eq!(retry.status(), 200);
+    assert_eq!(
+        retry.json::<Value>().await.unwrap()["generation_id"],
+        message_id.to_string()
+    );
     assert!(f
         .ingress
         .requests
@@ -285,6 +296,15 @@ async fn command_ack_is_not_a_user_echo_and_commits_fan_out_to_other_tabs() {
             .await
             .unwrap();
     }
+    assert_eq!(
+        f.ts.store()
+            .thread()
+            .list_events(u.org_id, f.chat)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
     let view = until(
         &mut tab,
         |m| matches!(m, WsServerMsg::ThreadState { events, .. } if !events.is_empty()),
@@ -387,7 +407,10 @@ async fn re_pair_adoption_rekeys_the_row_and_displaces_the_old_socket() {
             .await
             .unwrap();
     assert_eq!(row.hardware_fingerprint.as_deref(), Some("FP-9"));
-    assert!(row.re_paired_at.is_some(), "adoption must stamp re_paired_at");
+    assert!(
+        row.re_paired_at.is_some(),
+        "adoption must stamp re_paired_at"
+    );
     let old_left: Option<guild_server::store::machines::MachineRow> =
         sqlx::query_as("SELECT * FROM machines WHERE machine_id = 'old-id'")
             .fetch_optional(f.ts.store().pool())

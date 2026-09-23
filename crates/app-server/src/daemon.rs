@@ -293,10 +293,7 @@ const RECLAIM_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 /// The shared shutdown flag latches on retirement; the engine lives on in
 /// this process (the webview keeps dispatching), so each new host cycle
 /// relatches it to false before hosting again.
-pub async fn run_daemon_shared_reclaiming(
-    path: PathBuf,
-    shared: Shared,
-) -> anyhow::Result<()> {
+pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
     // One live link + watcher pair at a time: a failed host cycle aborts the
     // previous cycle's tasks before the next spawn. Without this, a
     // fast-failing bind piles up an unbounded family of machine-link retry
@@ -310,7 +307,7 @@ pub async fn run_daemon_shared_reclaiming(
         while try_connect_at(&path).is_ok() {
             tokio::time::sleep(RECLAIM_POLL).await;
         }
-        if shared.shutdown.borrow().clone() {
+        if *shared.shutdown.borrow() {
             // This host was retired (shutdown latched): hold off through the
             // installer's retire→enable window before reclaiming.
             tokio::time::sleep(RECLAIM_GRACE).await;
@@ -520,9 +517,7 @@ fn create_pipe_server_instance(
     use tokio::net::windows::named_pipe::NamedPipeServer;
     use windows_sys::Win32::Foundation::{LocalFree, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
-    use windows_sys::Win32::Security::{
-        PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
-    };
+    use windows_sys::Win32::Security::{PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR};
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
     };
@@ -583,7 +578,7 @@ fn current_user_sid() -> anyhow::Result<String> {
     use windows_sys::Win32::Foundation::{CloseHandle, LocalFree};
     use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
     use windows_sys::Win32::Security::{
-        GetTokenInformation, PSID, TokenUser, TOKEN_QUERY, TOKEN_USER,
+        GetTokenInformation, TokenUser, PSID, TOKEN_QUERY, TOKEN_USER,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -612,8 +607,7 @@ fn current_user_sid() -> anyhow::Result<String> {
             }
             let tu = &*(buf.as_ptr() as *const TOKEN_USER);
             let mut sid_str: *mut u16 = std::ptr::null_mut();
-            if ConvertSidToStringSidW(tu.User.Sid as PSID, &mut sid_str) == 0 || sid_str.is_null()
-            {
+            if ConvertSidToStringSidW(tu.User.Sid as PSID, &mut sid_str) == 0 || sid_str.is_null() {
                 return Err(std::io::Error::last_os_error().into());
             }
             let mut out = String::new();

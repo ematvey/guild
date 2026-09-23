@@ -23,6 +23,22 @@ pub struct RoutineConfig {
     #[serde(default)]
     pub allowed_tools: Value,
     pub enabled: bool,
+    #[serde(default)]
+    pub trigger_config: Value,
+}
+
+/// Only the current schedule can run or reschedule. Numeric legacy timers
+/// retire as soon as the first schedule update assigns a generation.
+pub fn schedule_interval(config: &Value, scheduled: &Value) -> Option<u64> {
+    let current = config.get("schedule_generation").filter(|v| !v.is_null());
+    let supplied = scheduled.get("generation").filter(|v| !v.is_null());
+    if current != supplied {
+        return None;
+    }
+    let interval = config["interval_secs"]
+        .as_u64()
+        .or_else(|| scheduled.as_u64())?;
+    (interval >= 5).then_some(interval)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -45,6 +61,10 @@ pub struct RoutineExecutor {
     /// targets.
     pub http_tool_allow_hosts: Vec<String>,
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("routine {0} was deleted")]
+pub struct RoutineMissing(pub Uuid);
 
 impl RoutineExecutor {
     fn http(&self) -> reqwest::Client {
@@ -69,6 +89,9 @@ impl RoutineExecutor {
             self.api_base.trim_end_matches('/')
         );
         let resp = self.internal_get(url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(RoutineMissing(routine_id).into());
+        }
         anyhow::ensure!(
             resp.status().is_success(),
             "load routine failed: {}",
@@ -216,9 +239,18 @@ impl RoutineExecutor {
         if !self.allow_http_tool && parsed.scheme() != "https" {
             anyhow::bail!("only https URLs allowed in routines");
         }
-        check_target(&parsed, &self.http_tool_allow_hosts).await?;
+        let addresses = check_target(&parsed, &self.http_tool_allow_hosts).await?;
+        let host = parsed.host_str().context("missing host")?;
+        // Pin the exact checked addresses: a second resolver lookup (or an
+        // environment proxy) must not change the network destination.
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(30))
+            .resolve_to_addrs(host, &addresses)
+            .build()?;
         let method = reqwest::Method::from_bytes(method.as_bytes()).context("bad method")?;
-        let mut req = self.http().request(method, parsed);
+        let mut req = client.request(method, parsed);
         if let Some(b) = body {
             req = req.body(b);
         }
@@ -279,40 +311,35 @@ const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 /// target whose host is an IP in a denied range — loopback, link-local
 /// (169.254/16, fe80::/10; the cloud metadata address is link-local),
 /// private (RFC1918), unique-local (fc00::/7) or unspecified — or a hostname
-/// resolving only into those ranges is refused, unless the host is
+/// resolving into any of those ranges is refused, unless the host is
 /// explicitly allow-listed in the executor config.
-async fn check_target(url: &reqwest::Url, allow_hosts: &[String]) -> anyhow::Result<()> {
-    let Some(host) = url.host_str() else {
-        anyhow::bail!("http_call target has no host");
-    };
-    let host = host.trim_end_matches('.').to_ascii_lowercase();
+async fn check_target(
+    url: &reqwest::Url,
+    allow_hosts: &[String],
+) -> anyhow::Result<Vec<std::net::SocketAddr>> {
+    let host = url
+        .host_str()
+        .context("http_call target has no host")?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     let port = url.port_or_known_default().unwrap_or(80);
-    if allow_hosts
+    let allow_private = allow_hosts
         .iter()
-        .any(|allowed| allowed.trim().to_ascii_lowercase() == host)
-    {
-        return Ok(());
+        .any(|allowed| allowed.trim().to_ascii_lowercase() == host);
+    let addresses: Vec<std::net::SocketAddr> = match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => vec![std::net::SocketAddr::new(ip, port)],
+        Err(_) => tokio::net::lookup_host((host.as_str(), port))
+            .await
+            .context("http_call target does not resolve")?
+            .collect(),
+    };
+    anyhow::ensure!(!addresses.is_empty(), "http_call target does not resolve");
+    if !allow_private && addresses.iter().any(|address| ip_is_denied(&address.ip())) {
+        anyhow::bail!("http_call target '{host}' resolves into a denied range");
     }
-    // Literal IPs are checked directly; hostnames after resolving (a name
-    // that resolves anywhere public passes, loopback-only names are denied).
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        if ip_is_denied(&ip) {
-            anyhow::bail!("http_call target '{host}' is in a denied range");
-        }
-        return Ok(());
-    }
-    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
-        .await
-        .context("http_call target does not resolve")?
-        .collect();
-    anyhow::ensure!(!addrs.is_empty(), "http_call target does not resolve");
-    if let Some(addr) = addrs.iter().find(|addr| ip_is_denied(&addr.ip())) {
-        anyhow::bail!(
-            "http_call target '{host}' resolves into a denied range ({})",
-            addr.ip()
-        );
-    }
-    Ok(())
+    Ok(addresses)
 }
 
 /// The IP ranges a routine's http_call must never reach from the server.
@@ -329,7 +356,8 @@ fn ip_is_denied(ip: &std::net::IpAddr) -> bool {
                 || v4.octets()[0] == 100 && (v4.octets()[1] & 0b1100_0000) == 0b0100_0000
         }
         V6(v6) => {
-            v6.is_loopback()
+            v6.to_ipv4_mapped().is_some_and(|v4| ip_is_denied(&V4(v4)))
+                || v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_unicast_link_local()
                 || (v6.segments()[0] & 0xfe00) == 0xfc00 // unique local fc00::/7
@@ -511,9 +539,19 @@ mod ssrf_tests {
     #[test]
     fn denied_ranges_cover_loopback_link_local_private_and_metadata() {
         for ip in [
-            "127.0.0.1", "127.8.8.8", "169.254.169.254", "169.254.0.1", "10.0.0.1",
-            "172.16.0.1", "192.168.1.1", "0.0.0.0", "100.64.0.1", "::1", "fe80::1",
-            "fc00::1", "fd12:3456::1",
+            "127.0.0.1",
+            "127.8.8.8",
+            "169.254.169.254",
+            "169.254.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "0.0.0.0",
+            "100.64.0.1",
+            "::1",
+            "fe80::1",
+            "fc00::1",
+            "fd12:3456::1",
         ] {
             assert!(
                 ip_is_denied(&ip.parse::<IpAddr>().unwrap()),
@@ -536,9 +574,12 @@ mod ssrf_tests {
             allow_http_tool: true,
             http_tool_allow_hosts: Vec::new(),
         };
-        assert!(exec.http_call("http://127.0.0.1:9/x", "GET", None)
-            .await
-            .is_err(), "loopback target refused by default");
+        assert!(
+            exec.http_call("http://127.0.0.1:9/x", "GET", None)
+                .await
+                .is_err(),
+            "loopback target refused by default"
+        );
 
         let allowed = RoutineExecutor {
             api_base: "http://unused".into(),
@@ -582,6 +623,69 @@ mod ssrf_tests {
             allow_http_tool: false,
             http_tool_allow_hosts: Vec::new(),
         };
-        assert!(exec.http_call("ftp://example.com/x", "GET", None).await.is_err());
+        assert!(exec
+            .http_call("ftp://example.com/x", "GET", None)
+            .await
+            .is_err());
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    #[test]
+    fn stale_schedules_retire_and_current_schedules_use_current_interval() {
+        let config = json!({"schedule_generation":"new", "interval_secs":45});
+        assert_eq!(
+            schedule_interval(&config, &json!({"generation":"new"})),
+            Some(45)
+        );
+        assert_eq!(
+            schedule_interval(&config, &json!({"generation":"old"})),
+            None
+        );
+        assert_eq!(schedule_interval(&config, &json!(10)), None);
+        assert_eq!(
+            schedule_interval(&json!({"interval_secs":5}), &json!(10)),
+            Some(5)
+        );
+        assert_eq!(schedule_interval(&Value::Null, &json!(10)), Some(10)); // old journaled config
+        assert_eq!(
+            schedule_interval(&json!({"interval_secs":0}), &json!(10)),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn redirects_are_not_followed_and_mapped_loopback_is_denied() {
+        let destination = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&destination)
+            .await;
+        let source = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(302).insert_header("location", destination.uri()),
+            )
+            .mount(&source)
+            .await;
+        let exec = RoutineExecutor {
+            api_base: String::new(),
+            internal_token: String::new(),
+            allow_http_tool: true,
+            http_tool_allow_hosts: vec!["127.0.0.1".into()],
+        };
+        assert_eq!(
+            exec.http_call(&source.uri(), "GET", None).await.unwrap().0,
+            302
+        );
+        assert!(
+            check_target(&"http://[::ffff:127.0.0.1]/".parse().unwrap(), &[])
+                .await
+                .is_err()
+        );
     }
 }

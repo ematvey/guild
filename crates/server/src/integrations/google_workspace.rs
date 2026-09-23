@@ -380,10 +380,7 @@ fn attachment_parts(payload: &serde_json::Value) -> Vec<(String, String, String)
     out
 }
 
-fn collect_attachment_parts(
-    payload: &serde_json::Value,
-    out: &mut Vec<(String, String, String)>,
-) {
+fn collect_attachment_parts(payload: &serde_json::Value, out: &mut Vec<(String, String, String)>) {
     // Body parts of the message text carry an empty attachment id; a part
     // with a real id is an attachment (filename may sit on the part or in
     // its headers).
@@ -401,7 +398,11 @@ fn collect_attachment_parts(
             out.push((filename, mime, id.to_string()));
         }
     }
-    for part in payload["parts"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+    for part in payload["parts"]
+        .as_array()
+        .map(|a| a.as_slice())
+        .unwrap_or(&[])
+    {
         collect_attachment_parts(part, out);
     }
 }

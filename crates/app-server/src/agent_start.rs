@@ -108,22 +108,14 @@ pub(crate) async fn drive(
         } = &frame
         {
             resolve_approval(
-                &cloud,
-                chat_id,
-                &policy,
-                &pending,
-                &events,
-                call_id,
-                name,
-                arguments,
+                &cloud, chat_id, &policy, &pending, &events, call_id, name, arguments,
             )
             .await;
             continue;
         }
         for (event, payload) in map_frame(&frame, &mut text) {
-            let _ = events.send(
-                serde_json::to_value(Event::new(event, payload)).expect("event serializes"),
-            );
+            let _ = events
+                .send(serde_json::to_value(Event::new(event, payload)).expect("event serializes"));
         }
     }
     Ok(())
@@ -187,6 +179,8 @@ pub(crate) async fn drive_chat(
 /// oneshot `agent.approve` resolves). The decision posts to the approvals
 /// endpoint; a failed post is logged, not fatal (the journal expiry bounds
 /// the wait server-side anyway).
+// Approval dispatch keeps caller context and immutable call data explicit.
+#[allow(clippy::too_many_arguments)]
 async fn resolve_approval(
     cloud: &CloudClient,
     chat_id: Uuid,
@@ -202,10 +196,7 @@ async fn resolve_approval(
         Approval::Never => (false, Some("denied by policy".to_string())),
         Approval::Ask => {
             let (tx, rx) = tokio::sync::oneshot::channel();
-            pending
-                .lock()
-                .unwrap()
-                .insert(call_id.to_string(), tx);
+            pending.lock().unwrap().insert(call_id.to_string(), tx);
             let _ = events.send(
                 serde_json::to_value(Event::new(
                     "agent.approval_request",
@@ -215,7 +206,9 @@ async fn resolve_approval(
             );
             match tokio::time::timeout(APPROVAL_WAIT, rx).await {
                 Ok(Ok(guild_core::agent::ApprovalDecision::Approve)) => (true, None),
-                Ok(Ok(guild_core::agent::ApprovalDecision::Deny { reason })) => (false, Some(reason)),
+                Ok(Ok(guild_core::agent::ApprovalDecision::Deny { reason })) => {
+                    (false, Some(reason))
+                }
                 // Sender dropped (session closed) or timed out — deny so the
                 // turn proceeds; drop the dead entry.
                 Ok(Err(_)) | Err(_) => {
@@ -237,22 +230,14 @@ async fn resolve_approval(
 
 /// Finds the project for `folder` or creates one bound to `machine_id` —
 /// the workflow dispatches the turn's tools to the machine the project is
-/// bound to, which must be this daemon's own executor link. A folder bound
-/// to another machine is an error, never a silent rebind.
+/// bound to, which must be this daemon's own executor link. A matching folder on another machine remains a separate project.
 pub(crate) async fn ensure_project(
     cloud: &CloudClient,
     folder: &str,
     machine_id: &str,
 ) -> anyhow::Result<Project> {
     for project in cloud.list_projects().await? {
-        if project.folder == folder {
-            anyhow::ensure!(
-                project.machine_id == machine_id,
-                "project `{}` is bound to machine `{}`; this machine is `{}` — run it there or rebind the project",
-                project.name,
-                project.machine_id,
-                machine_id
-            );
+        if project.folder == folder && project.machine_id == machine_id {
             return Ok(project);
         }
     }
@@ -355,7 +340,9 @@ mod tests {
     #[test]
     fn non_engine_frames_map_to_nothing() {
         let frames = vec![
-            StreamEvent::ThinkingDelta { content: "hmm".into() },
+            StreamEvent::ThinkingDelta {
+                content: "hmm".into(),
+            },
             StreamEvent::ToolCallDelta {
                 index: 0,
                 id: None,
@@ -381,7 +368,9 @@ mod tests {
     #[tokio::test]
     async fn drive_maps_frames_and_resolves_approvals() {
         let frames: Vec<Result<StreamEvent, CloudError>> = vec![
-            Ok(StreamEvent::Delta { content: "hi".into() }),
+            Ok(StreamEvent::Delta {
+                content: "hi".into(),
+            }),
             Ok(StreamEvent::ApprovalRequested {
                 call_id: "ask1".into(),
                 name: "execute".into(),
@@ -417,9 +406,8 @@ mod tests {
             token: "t".into(),
         };
         let (events_tx, mut events_rx) = broadcast::channel(64);
-        let pending: PendingApprovals = std::sync::Arc::new(std::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        ));
+        let pending: PendingApprovals =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
         // The engine client approves "ask1" once it sees the request —
         // exactly what the agent.approve handler does.
@@ -460,7 +448,10 @@ mod tests {
         );
         let decisions = calls.lock().unwrap().clone();
         assert_eq!(decisions.len(), 2, "{decisions:?}");
-        assert_eq!(decisions[0]["approved"], true, "ask1 approved by the engine");
+        assert_eq!(
+            decisions[0]["approved"], true,
+            "ask1 approved by the engine"
+        );
         assert_eq!(decisions[1]["approved"], true, "auto policy: read_file");
     }
 
@@ -474,9 +465,15 @@ mod tests {
         let (events, mut events_rx) = broadcast::channel(64);
         let mid = Uuid::now_v7();
         let frames: Vec<Result<StreamEvent, CloudError>> = vec![
-            Ok(StreamEvent::Delta { content: "hi ".into() }),
-            Ok(StreamEvent::ThinkingDelta { content: "hmm".into() }),
-            Ok(StreamEvent::Delta { content: "there".into() }),
+            Ok(StreamEvent::Delta {
+                content: "hi ".into(),
+            }),
+            Ok(StreamEvent::ThinkingDelta {
+                content: "hmm".into(),
+            }),
+            Ok(StreamEvent::Delta {
+                content: "there".into(),
+            }),
             Ok(StreamEvent::Done {
                 message_id: mid,
                 cost_usd: 0.02,
@@ -506,11 +503,14 @@ mod tests {
             code: "model".into(),
             message: "boom".into(),
         })];
-        let err = drive_chat(events.clone(), stream::iter(frames)).await.unwrap_err();
+        let err = drive_chat(events.clone(), stream::iter(frames))
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("boom"), "{err}");
 
-        let frames: Vec<Result<StreamEvent, CloudError>> =
-            vec![Ok(StreamEvent::Delta { content: "partial".into() })];
+        let frames: Vec<Result<StreamEvent, CloudError>> = vec![Ok(StreamEvent::Delta {
+            content: "partial".into(),
+        })];
         let err = drive_chat(events, stream::iter(frames)).await.unwrap_err();
         assert!(err.to_string().contains("without done"), "{err}");
     }
@@ -519,7 +519,7 @@ mod tests {
     /// through, a foreign-machine binding is an error, a new folder is
     /// created against the machine id.
     #[tokio::test]
-    async fn ensure_project_binds_new_folders_and_rejects_foreign_machines() {
+    async fn ensure_project_binds_folders_independently_on_each_machine() {
         let machine = std::sync::Arc::new(uuid::Uuid::now_v7().to_string());
         let server = wiremock::MockServer::start().await;
         let listed = machine.clone();
@@ -558,13 +558,15 @@ mod tests {
         };
 
         // New folder → created, bound to this machine.
-        let created = ensure_project(&cloud, "/new/folder", &machine).await.unwrap();
+        let created = ensure_project(&cloud, "/new/folder", &machine)
+            .await
+            .unwrap();
         assert_eq!(created.folder, "/new/folder");
         assert_eq!(*posts.lock().unwrap(), 1);
 
-        // Foreign machine → error, no create.
-        let err = ensure_project(&cloud, "/other", &machine).await.unwrap_err();
-        assert!(err.to_string().contains("bound to machine"), "{err}");
-        assert_eq!(*posts.lock().unwrap(), 1);
+        // Same folder on another machine is a distinct project.
+        let other = ensure_project(&cloud, "/other", &machine).await.unwrap();
+        assert_eq!(other.machine_id, *machine);
+        assert_eq!(*posts.lock().unwrap(), 2);
     }
 }

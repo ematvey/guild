@@ -91,8 +91,8 @@ impl UsageSink {
             .and_utc();
         // Bound parameters: model is admin-configured free text and must
         // never be interpolated into the query text.
-        let query = "SELECT coalesce(sum(cost_usd), 0) FROM usage_events \
-             WHERE org_id = toUUID(?) AND model = ? AND ts >= toDateTime(?)";
+        let query = "SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events WHERE org_id = toUUID(?) AND model = ? ORDER BY ts DESC LIMIT 1 BY org_id, request_id) \
+             WHERE ts >= toDateTime(?)";
         match self
             .client
             .query(query)
@@ -142,5 +142,54 @@ impl AppState {
             })
             .await
             .cloned()
+    }
+}
+
+/// Usage for auxiliary model requests, attributed to the owning chat member.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn record_chat_request(
+    state: &AppState,
+    org_id: Uuid,
+    chat_id: Uuid,
+    model: &str,
+    route: &crate::store::gateway::RouteMeta,
+    tokens_in: u32,
+    tokens_out: u32,
+    request_id: Uuid,
+) {
+    let result: anyhow::Result<()> = async {
+        let store = state.store().await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let user_id: Uuid =
+            sqlx::query_scalar("SELECT user_id FROM chats WHERE org_id=$1 AND id=$2")
+                .bind(org_id)
+                .bind(chat_id)
+                .fetch_one(store.pool())
+                .await?;
+        let usage = state.usage().await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        usage
+            .record(UsageEvent {
+                ts: chrono::Utc::now(),
+                org_id,
+                user_id,
+                team_id: None,
+                session_id: chat_id,
+                model: model.into(),
+                provider: route.provider.clone(),
+                tokens_in,
+                tokens_out,
+                cost_usd: UsageEvent::cost_usd(
+                    tokens_in,
+                    tokens_out,
+                    route.price_in,
+                    route.price_out,
+                ),
+                request_id,
+            })
+            .await;
+        Ok(())
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(%error, "auxiliary model usage unavailable");
     }
 }

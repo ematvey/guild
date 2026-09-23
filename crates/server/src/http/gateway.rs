@@ -19,21 +19,16 @@ use uuid::Uuid;
 // derivations in worker::turn.
 pub use crate::worker::turn::enforce_quota;
 
-/// Queued send while a turn generates: commit the user turn to the thread
-/// log right away (the open feed republishes on the commit notification),
-/// so the running turn flushes it at its exit. Document attachments inline
-/// here — the continuation turn derives its model history from this event
-/// instead of a payload turn text, and image/audio parts ride later via the
-/// event's chips.
-async fn queue_user_turn(
+/// Build the immutable accepted user echo with attachment metadata/content.
+/// The command store commits this event together with its delivery outbox.
+async fn prepare_user_event(
     state: &AppState,
     org_id: Uuid,
     chat_id: Uuid,
     user_message: &str,
     attachment_ids: &[Uuid],
-    user_message_id: Option<Uuid>,
     modalities: &[String],
-) -> Result<(), ApiError> {
+) -> Result<ThreadEvent, ApiError> {
     let store = state.store().await?;
     let rows: Vec<(Uuid, String, String, i64)> = store
         .attachments()
@@ -42,32 +37,20 @@ async fn queue_user_turn(
         .into_iter()
         .map(|r| (r.id, r.filename, r.content_type, r.size_bytes))
         .collect();
-    let media = crate::worker::turn::load_media_map(state, org_id, chat_id, &[], attachment_ids)
-        .await?;
-    let (chips, inline) = crate::worker::turn::build_turn_text(
-        attachment_ids,
-        &media,
-        &rows,
-        modalities,
-    );
+    let media =
+        crate::worker::turn::load_media_map(state, org_id, chat_id, &[], attachment_ids).await?;
+    let (chips, inline) =
+        crate::worker::turn::build_turn_text(attachment_ids, &media, &rows, modalities);
     let content = match (!user_message.is_empty(), !inline.is_empty()) {
         (true, true) => format!("{user_message}\n\n{inline}"),
         (true, false) => user_message.to_string(),
         (false, true) => inline,
         (false, false) => String::new(),
     };
-    store
-        .thread()
-        .append_event_with_id(
-            chat_id,
-            &ThreadEvent::UserMessage {
-                content,
-                attachments: chips,
-            },
-            user_message_id.unwrap_or_else(Uuid::now_v7),
-        )
-        .await?;
-    Ok(())
+    Ok(ThreadEvent::UserMessage {
+        content,
+        attachments: chips,
+    })
 }
 
 /// Stops the chat's in-flight turn. The ChatRunner observes the flag inside
@@ -103,6 +86,9 @@ pub(crate) async fn abort_generation(state: &AppState, chat_id: Uuid) {
         cancel.store(true, std::sync::atomic::Ordering::SeqCst);
         return;
     }
+    if let Ok(store) = state.store().await {
+        let _ = store.turn_commands().cancel_waiting_head(chat_id).await;
+    }
     crate::worker::restate::kill_recorded_chat_generation(state, chat_id).await;
 }
 
@@ -115,8 +101,6 @@ pub(crate) fn generation_cancel(
 ) -> Option<Arc<std::sync::atomic::AtomicBool>> {
     state.generations.cancel_flag(chat_id)
 }
-
-
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -440,6 +424,11 @@ async fn chat(
     headers: axum::http::HeaderMap,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    if req.server_workspace.is_some() {
+        return Err(ApiError::bad_request(
+            "server_workspace is reserved for workspace agent sessions",
+        ));
+    }
     submit_turn(
         &state,
         &user.0,
@@ -463,7 +452,7 @@ async fn chat(
 pub(crate) async fn submit_turn(
     state: &AppState,
     user: &crate::store::identity::UserRow,
-    req: ChatCompletionRequest,
+    mut req: ChatCompletionRequest,
     client_id: Option<String>,
     origin_machine_id: Option<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -475,6 +464,19 @@ pub(crate) async fn submit_turn(
         .chats()
         .get_chat(user.org_id, req.chat_id, user)
         .await?;
+
+    let command_id = *req.user_message_id.get_or_insert_with(Uuid::now_v7);
+    let request = serde_json::to_value(&req).expect("request serializes");
+    if let Some(command) = store
+        .turn_commands()
+        .existing(command_id, user.org_id, user.id, req.chat_id, &request)
+        .await?
+    {
+        // A duplicate delivery must not change the project binding or steer
+        // another running command. Pending outbox delivery is safe to retry.
+        let _ = dispatch_turn_commands(state, Some(req.chat_id)).await;
+        return Ok(Json(command_ack(&command)));
+    }
 
     let user_message = req
         .messages
@@ -493,187 +495,163 @@ pub(crate) async fn submit_turn(
     let project_id = match req.project_id {
         Some(pid) => {
             let project = store.projects().get(user.org_id, pid, user.id).await?;
-            let label = project
-                .machine_label
-                .clone()
-                .unwrap_or_else(|| project.machine_id.clone());
-            if chat.project_id != Some(pid) {
-                // An explicit request chose the project: persist the binding
-                // and the machine together, so a later request that omits
-                // project_id cannot run the old folder on the new machine.
-                let aligned = store
-                    .chats()
-                    .set_project(
-                        user.org_id,
-                        req.chat_id,
-                        user,
-                        Some(pid),
-                        Some((&project.machine_id, label.as_str())),
-                    )
-                    .await?;
-                machine_id = aligned.machine_id;
-                machine_label = aligned.machine_label;
-            } else if Some(&project.machine_id) != chat.machine_id.as_ref() {
-                store
-                    .chats()
-                    .set_machine(
-                        user.org_id,
-                        req.chat_id,
-                        Some(&project.machine_id),
-                        Some(&label),
-                    )
-                    .await?;
-                machine_id = Some(project.machine_id.clone());
-                machine_label = Some(label);
-            }
+            machine_label = Some(
+                project
+                    .machine_label
+                    .clone()
+                    .unwrap_or_else(|| project.machine_id.clone()),
+            );
+            machine_id = Some(project.machine_id);
             Some(pid)
         }
         None => chat.project_id,
     };
 
-    // Turn already generating: the message queues by default — the user turn
-    // commits to the thread log now (the open feed republishes on the commit
-    // notification) and the running turn flushes it at its exit. "steer"
-    // additionally requests the running turn's interruption, so the queued
-    // message runs immediately after the interrupted prefix. When the turn
-    // finishes while we are here (entry vanished after the commit), the code
-    // falls through and the queued event starts the turn right away.
-    let mut queued = false;
-    if state.generations.is_generating(req.chat_id) {
-        // The route's modalities shape the attachment notes; the continuation
-        // re-resolves the route anyway, so a failure here degrades to notes.
-        let modalities = match state.config.master_key() {
-            Ok(master) => store
-                .gateway()
-                .resolve_route(user.org_id, &req.model, &master)
-                .await
-                .map(|r| r.modalities)
-                .unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
-        queue_user_turn(
-            &state,
+    let payload = crate::worker::restate::ChatRunPayload {
+        user_message_id: Some(command_id),
+        org_id: user.org_id,
+        user_id: user.id,
+        chat_id: req.chat_id,
+        model: req.model.clone(),
+        user_message: user_message.clone(),
+        client_tools: req.client_tools,
+        client_id,
+        project_id,
+        machine_id,
+        machine_label,
+        origin_machine_id,
+        attachment_ids: req.attachment_ids.clone(),
+        server_workspace: req.server_workspace.clone(),
+        skills_index: req.skills_index.clone(),
+        agents_md: req.agents_md.clone(),
+    };
+    let modalities = match state.config.master_key() {
+        Ok(master) => store
+            .gateway()
+            .resolve_route(user.org_id, &req.model, &master)
+            .await
+            .map(|r| r.modalities)
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    let event = prepare_user_event(
+        state,
+        user.org_id,
+        req.chat_id,
+        &user_message,
+        &req.attachment_ids,
+        &modalities,
+    )
+    .await?;
+    let command = store
+        .turn_commands()
+        .accept(
+            command_id,
             user.org_id,
+            user.id,
             req.chat_id,
-            &user_message,
-            &req.attachment_ids,
-            req.user_message_id,
-            &modalities,
+            request,
+            serde_json::to_value(&payload).expect("payload serializes"),
+            &event,
         )
         .await?;
-        // The turn's continuation parameters ride a kv record the flushing
-        // turn reads (model, client tools, machine/project binding — the
-        // queued request's choices, not the in-flight turn's).
-        let opts = crate::worker::restate::ChatRunPayload {
-            user_message_id: None,
-            org_id: user.org_id,
-            user_id: user.id,
-            chat_id: req.chat_id,
-            model: req.model.clone(),
-            client_tools: req.client_tools,
-            client_id: client_id.clone(),
-            project_id,
-            machine_id: machine_id.clone(),
-            machine_label: machine_label.clone(),
-            origin_machine_id: origin_machine_id.clone(),
-            user_message: String::new(),
-            attachment_ids: Vec::new(),
-            server_workspace: req.server_workspace.clone(),
-            skills_index: req.skills_index.clone(),
-            agents_md: req.agents_md.clone(),
-        };
-        store
-            .kv()
-            .put(
-                &format!("chat_queue:{}", req.chat_id),
-                &serde_json::to_string(&opts).unwrap_or_default(),
-            )
-            .await?;
-        if state.generations.is_generating(req.chat_id) {
-            if req.send_mode.as_deref() == Some("steer") {
-                if let Some(cancel) = generation_cancel(&state, req.chat_id) {
-                    cancel.store(true, std::sync::atomic::Ordering::SeqCst);
-                }
-            }
-            return Ok(Json(
-                json!({ "accepted": true, "queued": true }),
-            ));
+    if req.send_mode.as_deref() == Some("steer") {
+        if let Some(cancel) = generation_cancel(state, req.chat_id) {
+            cancel.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        queued = true;
     }
-
-    // One generation per chat at a time — reserved atomically (check+insert
-    // under one lock), so a rejected send leaves nothing behind and two
-    // concurrent sends cannot both invoke. The user turn itself is persisted
-    // by the ChatRunner workflow (journaled), never here — attach/replay
-    // stays consistent with the event log (spec §B.4). The queue fall-through
-    // is the exception: the event is already committed, so the payload's
-    // turn text stays empty and the workflow relies on the log.
-    state.generations.try_begin(req.chat_id)?;
-    if let Err(error) = crate::http::feed::prepare_generation(state, &crate::http::auth::AuthUser(user.clone())).await {
-        state.generations.remove(req.chat_id);
-        return Err(error);
+    // Acceptance is durable even when ingress is temporarily unreachable or
+    // its response is lost. The worker's outbox pump retries the same key.
+    if let Err(error) = dispatch_turn_commands(state, Some(req.chat_id)).await {
+        tracing::warn!(chat=%req.chat_id, "accepted command awaits ingress recovery: {error:?}");
     }
-
-    let generation_id = state.generations.handle(req.chat_id).unwrap().id;
-
-    // Fire-and-forget invocation via the Restate ingress; the workflow runs
-    // detached, so this HTTP request ending (or the client disconnecting)
-    // never cancels the generation.
-    let effective_message = if queued { String::new() } else { user_message };
-    let effective_attachments = if queued { Vec::new() } else { req.attachment_ids.clone() };
-    let payload = serde_json::json!({
-        "org_id": user.org_id,
-        "user_id": user.id,
-        "chat_id": req.chat_id,
-        "model": req.model,
-        "user_message": effective_message,
-        "user_message_id": req.user_message_id,
-        "client_tools": req.client_tools,
-        "attachment_ids": effective_attachments,
-        "project_id": project_id,
-        "server_workspace": req.server_workspace,
-        "skills_index": req.skills_index,
-        "agents_md": req.agents_md,
-        "client_id": client_id,
-        "machine_id": machine_id,
-        "machine_label": machine_label,
-        "origin_machine_id": origin_machine_id,
-    });
-    let invoke = crate::http::internal::restate_send_one_way(
-        &state,
-        "ChatRunner",
-        &format!("{}/generate", req.chat_id),
-        payload,
-    )
-    .await;
-    let invocation_id = match invoke {
-        Ok(id) => id,
-        Err(e) => {
-            // Invocation failed — free the chat instead of leaving a stuck lock.
-            state.generations.remove(req.chat_id);
-            return Err(e);
-        }
-    };
-    // Remember the invocation for stuck-generation cleanup across deploys
-    // (see the worker's startup sweep): the record stamps the workflow
-    // schema version, so the sweep can tell a replayable invocation from
-    // one a deploy stranded.
-    let _ = store
-        .kv()
-        .put(
-            &format!("chatgen_inv:{}", req.chat_id),
-            &format!(
-                "{}:{}",
-                crate::worker::restate::workflow_schema_version(),
-                invocation_id
-            ),
+    let command = store
+        .turn_commands()
+        .existing(
+            command.id,
+            user.org_id,
+            user.id,
+            req.chat_id,
+            &command.request,
         )
-        .await;
+        .await?
+        .unwrap_or(command);
+    Ok(Json(command_ack(&command)))
+}
 
-    Ok(Json(
-        json!({ "accepted": true, "invocation_id": invocation_id, "generation_id": generation_id }),
-    ))
+fn command_ack(command: &crate::store::turn_commands::TurnCommand) -> serde_json::Value {
+    json!({"accepted":true, "user_message_id":command.id, "generation_id":command.id, "queued":command.status == "pending",
+        "invocation_id":command.invocation_id, "status":command.status})
+}
+
+/// Deliver only queue heads. Restate de-duplicates ambiguous HTTP retries;
+/// the command's durable invocation claim backstops expired ingress keys.
+pub async fn dispatch_turn_commands(state: &AppState, chat: Option<Uuid>) -> Result<(), ApiError> {
+    let store = state.store().await?;
+    for command in store.turn_commands().pending_heads(chat).await? {
+        let Ok(reservation) = state
+            .generations
+            .try_begin_with_id(command.chat_id, command.id)
+        else {
+            continue;
+        };
+        let result: Result<(), ApiError> = async {
+            let user = store.identity().get_user(command.user_id).await?;
+            crate::http::feed::prepare_generation(state, &AuthUser(user)).await?;
+            let url = format!(
+                "{}/ChatRunner/{}/generate/send",
+                state.config.restate_url.trim_end_matches('/'),
+                command.chat_id
+            );
+            let response = reqwest::Client::new()
+                .post(url)
+                .header("Idempotency-Key", format!("turn-command:{}", command.id))
+                .timeout(std::time::Duration::from_secs(5))
+                .json(&command.payload)
+                .send()
+                .await
+                .map_err(|e| ApiError::internal(format!("turn delivery pending: {e}")))?;
+            if !response.status().is_success() {
+                return Err(ApiError::internal("turn delivery rejected by ingress"));
+            }
+            let body: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| ApiError::internal(format!("invalid ingress acknowledgement: {e}")))?;
+            let invocation = body["invocationId"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| ApiError::internal("ingress acknowledgement has no invocationId"))?;
+            store
+                .turn_commands()
+                .submitted(command.id, invocation)
+                .await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = result {
+            // An accepted-but-unacknowledged invocation may already stream.
+            // Keep that generation attached while its durable claim is live.
+            let running = store
+                .turn_commands()
+                .existing(
+                    command.id,
+                    command.org_id,
+                    command.user_id,
+                    command.chat_id,
+                    &command.request,
+                )
+                .await?
+                .is_some_and(|row| row.status == "running");
+            if !running {
+                state
+                    .generations
+                    .remove_if_id(command.chat_id, reservation.id);
+            }
+            tracing::warn!(command=%command.id, "outbox delivery will retry: {error:?}");
+        }
+    }
+    Ok(())
 }
 
 /// Delivers an approval decision (phase 2, design §D). Every decision path
@@ -689,6 +667,7 @@ pub(crate) async fn submit_turn(
 ///   the ChatRunner: after a restart the gate can be suspended in Restate
 ///   while the in-memory generation registry is empty, and that forward lets
 ///   it accept the decision.
+///
 /// Org-scoped: 404 for foreign chats.
 async fn approval_decision(
     State(state): State<AppState>,
@@ -734,7 +713,10 @@ async fn approval_decision(
     if state.generations.is_generating(chat_id) {
         // Live turn: the waiting gate journals the decision and broadcasts
         // the resolved frame; the card settles through the stream.
-        crate::worker::funnel::forward_approval_decision(&state, chat_id, &call_id, approved, reason).await?;
+        crate::worker::funnel::forward_approval_decision(
+            &state, chat_id, &call_id, approved, reason,
+        )
+        .await?;
         return Ok(Json(json!({ "ok": true, "settled": false })));
     }
     // Orphaned call: the turn is gone, the decision can never execute.

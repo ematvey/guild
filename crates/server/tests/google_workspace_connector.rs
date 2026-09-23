@@ -119,7 +119,10 @@ fn secrets() -> Vec<(String, String)> {
 fn config(server: &MockServer) -> Value {
     json!({
         "api_base": server.uri(),
-        "token_url": format!("{}/token", server.uri())
+        // Wiremock pools and reuses server addresses. Distinguish fixtures
+        // in the process-wide connector cache while preserving each test's
+        // repeated calls through its single config.
+        "token_url": format!("{}/token?fixture={}", server.uri(), uuid::Uuid::now_v7())
     })
 }
 
@@ -303,6 +306,16 @@ async fn access_token_is_cached_within_the_same_process() {
     }
     // Two tool calls, one token exchange — the second rides the cache.
     server.verify().await;
+    assert_eq!(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|request| request.url.path() == "/token")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -335,6 +348,16 @@ async fn token_refreshes_once_near_expiry() {
         .expect("gmail_search succeeds");
     }
     server.verify().await;
+    assert_eq!(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|request| request.url.path() == "/token")
+            .count(),
+        2
+    );
 }
 
 #[tokio::test]
@@ -517,7 +540,10 @@ async fn calendar_list_events_defaults_time_min_to_now() {
         .expect("timeMin is always sent");
     let sent = chrono::DateTime::parse_from_rfc3339(&time_min).expect("timeMin is RFC3339");
     let age = chrono::Utc::now().signed_duration_since(sent);
-    assert!(age.num_seconds() >= 0 && age.num_seconds() < 120, "timeMin {time_min} is close to now");
+    assert!(
+        age.num_seconds() >= 0 && age.num_seconds() < 120,
+        "timeMin {time_min} is close to now"
+    );
 }
 
 #[tokio::test]

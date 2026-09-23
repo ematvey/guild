@@ -13,7 +13,7 @@ async fn migrations_apply_once_and_detect_drift() {
         .fetch_all(db.store.pool())
         .await
         .unwrap();
-    assert_eq!(names.len(), 54, "every migration recorded exactly once");
+    assert_eq!(names.len(), 56, "every migration recorded exactly once");
     // checksums recorded for all
     let unhashed: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM schema_history WHERE content_hash IS NULL")
@@ -46,7 +46,7 @@ async fn concurrent_boots_do_not_double_apply() {
         .fetch_one(db.store.pool())
         .await
         .unwrap();
-    assert_eq!(n, 54, "no double-application under concurrent boots");
+    assert_eq!(n, 56, "no double-application under concurrent boots");
 }
 
 /// Applies the embedded migration files in order with the same
@@ -85,7 +85,9 @@ async fn apply_migrations(
 #[tokio::test]
 async fn wipe_migration_drops_thread_data_and_recreates_chats_on_projects() {
     let base = std::env::var("GUILD_TEST_PG_URL").expect("GUILD_TEST_PG_URL");
-    let admin = sqlx::PgPool::connect(&format!("{base}/postgres")).await.unwrap();
+    let admin = sqlx::PgPool::connect(&format!("{base}/postgres"))
+        .await
+        .unwrap();
     let db = format!("test_{}", uuid::Uuid::now_v7().simple());
     sqlx::query(&format!("CREATE DATABASE {db}"))
         .execute(&admin)
@@ -96,7 +98,9 @@ async fn wipe_migration_drops_thread_data_and_recreates_chats_on_projects() {
     apply_migrations(&admin, &db, &guild_server::store::MIGRATIONS_UPTO_0046)
         .await
         .unwrap();
-    let pool = sqlx::PgPool::connect(&format!("{base}/{db}")).await.unwrap();
+    let pool = sqlx::PgPool::connect(&format!("{base}/{db}"))
+        .await
+        .unwrap();
     let org = uuid::Uuid::now_v7();
     let user = uuid::Uuid::now_v7();
     let chat = uuid::Uuid::now_v7();
@@ -126,13 +130,15 @@ async fn wipe_migration_drops_thread_data_and_recreates_chats_on_projects() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO chat_reads (chat_id, user_id, last_read_event_id) VALUES ($1, $2, $3)")
-        .bind(chat)
-        .bind(user)
-        .bind(uuid::Uuid::now_v7())
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO chat_reads (chat_id, user_id, last_read_event_id) VALUES ($1, $2, $3)",
+    )
+    .bind(chat)
+    .bind(user)
+    .bind(uuid::Uuid::now_v7())
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO attachments (id, org_id, chat_id, filename, content_type, size_bytes, object_key) \
          VALUES ($1, $2, $3, 'f.txt', 'text/plain', 1, 'k')",
@@ -153,7 +159,12 @@ async fn wipe_migration_drops_thread_data_and_recreates_chats_on_projects() {
     .execute(&pool)
     .await
     .unwrap();
-    for key in ["tool_dispatch:c1:d1", "approval:c1", "chatgen_inv:c1", "keep:me"] {
+    for key in [
+        "tool_dispatch:c1:d1",
+        "approval:c1",
+        "chatgen_inv:c1",
+        "keep:me",
+    ] {
         sqlx::query("INSERT INTO server_kv (key, value) VALUES ($1, 'v')")
             .bind(key)
             .execute(&pool)
@@ -175,7 +186,13 @@ async fn wipe_migration_drops_thread_data_and_recreates_chats_on_projects() {
     assert!(cols.contains(&"project_id".to_string()));
     assert!(!cols.contains(&"project_dir".to_string()));
 
-    for table in ["projects", "thread_events", "chat_reads", "attachments", "agent_sessions"] {
+    for table in [
+        "projects",
+        "thread_events",
+        "chat_reads",
+        "attachments",
+        "agent_sessions",
+    ] {
         let exists: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)",
         )
@@ -185,15 +202,23 @@ async fn wipe_migration_drops_thread_data_and_recreates_chats_on_projects() {
         .unwrap();
         assert!(exists, "{table} must exist after the wipe");
     }
-    for table in ["chats", "thread_events", "chat_reads", "attachments", "agent_sessions"] {
+    for table in [
+        "chats",
+        "thread_events",
+        "chat_reads",
+        "attachments",
+        "agent_sessions",
+    ] {
         let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(n, 0, "{table} must be empty after the wipe");
     }
-    let kv: Vec<String> =
-        sqlx::query_scalar("SELECT key FROM server_kv ORDER BY key").fetch_all(&pool).await.unwrap();
+    let kv: Vec<String> = sqlx::query_scalar("SELECT key FROM server_kv ORDER BY key")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
     assert_eq!(kv, vec!["keep:me".to_string()]);
 
     // The fresh tables are live: a new chat takes events and read markers.

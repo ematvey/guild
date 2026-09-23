@@ -149,13 +149,38 @@ fn evaluate_line(line: &str) -> ExecPolicyDecision {
     // already evaluates each side of them on its own. Prompt and Deny
     // verdicts need no demotion — they never auto-run.
     if matches!(decision, ExecPolicyDecision::Allow)
-        && tokens
+        && (segments
             .iter()
-            .any(|t| !is_control_operator_token(t) && token_carries_shell_meta(t))
+            .any(|segment| readonly_command_has_effects(segment))
+            || tokens
+                .iter()
+                .any(|t| !is_control_operator_token(t) && token_carries_shell_meta(t)))
     {
         return ExecPolicyDecision::Prompt;
     }
     decision
+}
+
+/// Prefix matches cannot distinguish inspection from flags that write state
+/// or invoke external programs. Those variants must use the approval gate.
+fn readonly_command_has_effects(argv: &[String]) -> bool {
+    match argv.first().map(String::as_str) {
+        Some("hostname") => argv.len() > 1,
+        Some("date") => argv.iter().skip(1).any(|arg| {
+            arg.starts_with("--s")
+                || (arg.starts_with('-') && !arg.starts_with("--") && arg[1..].contains('s'))
+        }),
+        Some("git")
+            if argv
+                .get(1)
+                .is_some_and(|s| matches!(s.as_str(), "diff" | "log" | "show")) =>
+        {
+            argv.iter().skip(2).any(|arg| {
+                arg.starts_with("--output") || arg == "--ext-diff" || arg == "--textconv"
+            })
+        }
+        _ => false,
+    }
 }
 
 /// True when a token carries shell syntax the prefix rules cannot see:
@@ -165,9 +190,7 @@ fn evaluate_line(line: &str) -> ExecPolicyDecision {
 /// indistinguishable from a live one — demoting those to Prompt is the safe
 /// direction.
 fn token_carries_shell_meta(token: &str) -> bool {
-    token.contains("`")
-        || token.contains("$(")
-        || token.contains(['>', '<', ';', '|', '&'])
+    token.contains("`") || token.contains("$(") || token.contains(['>', '<', ';', '|', '&'])
 }
 
 /// A token that is exactly a shell control operator — the segment splitter
@@ -247,12 +270,69 @@ mod tests {
     }
 
     #[test]
+    fn readonly_prefixes_do_not_allow_writes_or_external_helpers() {
+        for command in [
+            "date -s tomorrow",
+            "date --set=tomorrow",
+            "date -us tomorrow",
+            "date --s tomorrow",
+            "hostname replacement",
+            "hostname --file names",
+            "git diff --output=/tmp/probe",
+            "git log --output /tmp/probe",
+            "git show --output=/tmp/probe",
+            "git diff --ext-diff",
+            "git log --textconv",
+        ] {
+            assert_eq!(
+                evaluate_execute(&serde_json::json!({"command": command})),
+                ExecPolicyDecision::Prompt,
+                "{command}"
+            );
+        }
+        for command in [
+            "date -u",
+            "date +%s",
+            "hostname",
+            "git diff --stat",
+            "git log --oneline",
+            "git show HEAD",
+        ] {
+            assert_eq!(
+                evaluate_execute(&serde_json::json!({"command": command})),
+                ExecPolicyDecision::Allow,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn time_wrapper_cannot_auto_approve_nested_commands() {
+        for command in [
+            "time sh -c 'printf probe'",
+            "time touch /tmp/probe",
+            "time rm file",
+        ] {
+            assert_eq!(
+                evaluate_execute(&serde_json::json!({"command": command})),
+                ExecPolicyDecision::Prompt
+            );
+        }
+    }
+
+    #[test]
     fn allow_listed_base_commands_still_auto_approve() {
         assert!(matches!(exec("date"), ExecPolicyDecision::Allow));
         assert!(matches!(exec("git status"), ExecPolicyDecision::Allow));
         assert!(matches!(exec("echo hi"), ExecPolicyDecision::Allow));
-        assert!(matches!(exec("cat /etc/hostname"), ExecPolicyDecision::Allow));
-        assert!(matches!(exec("git status --short"), ExecPolicyDecision::Allow));
+        assert!(matches!(
+            exec("cat /etc/hostname"),
+            ExecPolicyDecision::Allow
+        ));
+        assert!(matches!(
+            exec("git status --short"),
+            ExecPolicyDecision::Allow
+        ));
     }
 
     #[test]
@@ -312,10 +392,7 @@ mod tests {
             exec("echo `rm -rf /home`"),
             ExecPolicyDecision::Prompt
         ));
-        assert!(matches!(
-            exec("cat <(ls /etc)"),
-            ExecPolicyDecision::Prompt
-        ));
+        assert!(matches!(exec("cat <(ls /etc)"), ExecPolicyDecision::Prompt));
         assert!(matches!(
             exec("diff <(ls a) >(ls b)"),
             ExecPolicyDecision::Prompt

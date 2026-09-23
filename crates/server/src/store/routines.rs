@@ -57,15 +57,25 @@ impl<'a> RoutineStore<'a> {
         slug: &str,
         name: &str,
         trigger_kind: &str,
-        trigger_config: serde_json::Value,
+        mut trigger_config: serde_json::Value,
         prompt: &str,
         model: &str,
         allowed_tools: serde_json::Value,
         webhook_token: &str,
         enabled: bool,
     ) -> Result<RoutineRow, ApiError> {
+        if trigger_kind == "interval" {
+            let object = trigger_config
+                .as_object_mut()
+                .ok_or_else(|| ApiError::bad_request("trigger_config must be an object"))?;
+            object.insert(
+                "schedule_generation".into(),
+                serde_json::json!(Uuid::now_v7()),
+            );
+        }
         let id = Uuid::now_v7();
-        match sqlx::query_as::<_, RoutineRow>(
+        let mut tx = self.pool.begin().await?;
+        let routine = match sqlx::query_as::<_, RoutineRow>(
             "INSERT INTO routines (id, org_id, created_by, slug, name, trigger_kind, trigger_config, prompt, model, allowed_tools, webhook_token_hash, enabled) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              RETURNING *",
@@ -82,7 +92,7 @@ impl<'a> RoutineStore<'a> {
         .bind(allowed_tools)
         .bind(webhook_token_hash(webhook_token))
         .bind(enabled)
-        .fetch_one(self.pool)
+        .fetch_one(&mut *tx)
         .await
         {
             Ok(r) => Ok(r),
@@ -90,7 +100,12 @@ impl<'a> RoutineStore<'a> {
                 Err(ApiError::conflict("slug_taken", "a routine with this slug already exists"))
             }
             Err(e) => Err(ApiError::from(e)),
+        }?;
+        if routine.enabled && routine.trigger_kind == "interval" {
+            enqueue_schedule(&mut tx, &routine).await?;
         }
+        tx.commit().await?;
+        Ok(routine)
     }
 
     pub async fn get(&self, org_id: Uuid, id: Uuid) -> Result<RoutineRow, ApiError> {
@@ -132,8 +147,56 @@ impl<'a> RoutineStore<'a> {
         org_id: Uuid,
         id: Uuid,
         patch: &UpdatePatch,
-    ) -> Result<RoutineRow, ApiError> {
-        sqlx::query_as::<_, RoutineRow>(
+        is_admin: bool,
+    ) -> Result<(RoutineRow, bool), ApiError> {
+        let mut tx = self.pool.begin().await?;
+        let current: RoutineRow =
+            sqlx::query_as("SELECT * FROM routines WHERE org_id = $1 AND id = $2 FOR UPDATE")
+                .bind(org_id)
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| ApiError::not_found("no such routine"))?;
+        if !is_admin
+            && (patch.enabled == Some(true)
+                || current.enabled
+                    && (patch.prompt.is_some()
+                        || patch.model.is_some()
+                        || patch.trigger_config.is_some()))
+        {
+            return Err(ApiError::forbidden());
+        }
+        if current.trigger_kind == "interval" {
+            let config = patch
+                .trigger_config
+                .as_ref()
+                .unwrap_or(&current.trigger_config);
+            if config["interval_secs"].as_u64().is_none_or(|n| n < 5) {
+                return Err(ApiError::bad_request(
+                    "interval trigger needs trigger_config.interval_secs >= 5",
+                ));
+            }
+        }
+        let mut config = patch
+            .trigger_config
+            .clone()
+            .unwrap_or_else(|| current.trigger_config.clone());
+        let enabled = patch.enabled.unwrap_or(current.enabled);
+        let new_schedule = current.trigger_kind == "interval"
+            && enabled
+            && (!current.enabled || patch.trigger_config.is_some());
+        if current.trigger_kind == "interval" {
+            let generation = if new_schedule || current.enabled != enabled {
+                serde_json::json!(Uuid::now_v7())
+            } else {
+                current.trigger_config["schedule_generation"].clone()
+            };
+            config
+                .as_object_mut()
+                .ok_or_else(|| ApiError::bad_request("trigger_config must be an object"))?
+                .insert("schedule_generation".into(), generation);
+        }
+        let updated = sqlx::query_as::<_, RoutineRow>(
             "UPDATE routines SET \
                prompt = coalesce($3, prompt), \
                model = coalesce($4, model), \
@@ -147,10 +210,19 @@ impl<'a> RoutineStore<'a> {
         .bind(patch.prompt.clone())
         .bind(patch.model.clone())
         .bind(patch.enabled)
-        .bind(patch.trigger_config.clone())
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| ApiError::not_found("no such routine"))
+        .bind(config)
+        .fetch_one(&mut *tx)
+        .await?;
+        if current.trigger_kind == "interval" {
+            sqlx::query("UPDATE routine_schedule_starts SET status='retired' WHERE routine_id=$1 AND (NOT $2 OR generation::text != $3)")
+                .bind(id).bind(enabled).bind(updated.trigger_config["schedule_generation"].as_str().unwrap_or(""))
+                .execute(&mut *tx).await?;
+            if new_schedule {
+                enqueue_schedule(&mut tx, &updated).await?;
+            }
+        }
+        tx.commit().await?;
+        Ok((updated, new_schedule))
     }
 
     pub async fn delete(&self, org_id: Uuid, id: Uuid) -> Result<(), ApiError> {
@@ -225,4 +297,87 @@ pub struct UpdatePatch {
     pub model: Option<String>,
     pub enabled: Option<bool>,
     pub trigger_config: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct ScheduleStart {
+    pub generation: Uuid,
+    pub routine_id: Uuid,
+}
+
+async fn enqueue_schedule(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    routine: &RoutineRow,
+) -> Result<(), ApiError> {
+    let generation: Uuid = routine.trigger_config["schedule_generation"]
+        .as_str()
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| ApiError::internal("invalid schedule generation"))?;
+    sqlx::query("INSERT INTO routine_schedule_starts (generation,routine_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
+        .bind(generation).bind(routine.id).execute(&mut **tx).await?;
+    Ok(())
+}
+
+impl RoutineStore<'_> {
+    pub async fn pending_schedules(
+        &self,
+        routine: Option<Uuid>,
+    ) -> Result<Vec<ScheduleStart>, ApiError> {
+        Ok(sqlx::query_as("SELECT generation,routine_id FROM routine_schedule_starts WHERE status='pending' AND ($1::uuid IS NULL OR routine_id=$1) ORDER BY created_at LIMIT 64")
+            .bind(routine).fetch_all(self.pool).await?)
+    }
+
+    pub async fn schedule_dispatched(
+        &self,
+        generation: Uuid,
+        invocation: &str,
+    ) -> Result<(), ApiError> {
+        // A late acknowledgement must not resurrect a retired or started schedule.
+        sqlx::query("UPDATE routine_schedule_starts SET status='dispatched',invocation_id=coalesce(invocation_id,$2) WHERE generation=$1 AND status='pending'")
+            .bind(generation).bind(invocation).execute(self.pool).await?;
+        Ok(())
+    }
+
+    /// Permanent singleton claim supplements the ingress idempotency window.
+    /// The same invocation may replay its claim after an ambiguous DB response.
+    pub async fn claim_schedule(
+        &self,
+        routine: Uuid,
+        generation: Uuid,
+        invocation: &str,
+    ) -> Result<bool, ApiError> {
+        let mut tx = self.pool.begin().await?;
+        let current: Option<RoutineRow> =
+            sqlx::query_as("SELECT * FROM routines WHERE id=$1 FOR UPDATE")
+                .bind(routine)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some(current) = current else {
+            return Ok(false);
+        };
+        let row: Option<(String,Option<String>)> = sqlx::query_as("SELECT status,invocation_id FROM routine_schedule_starts WHERE generation=$1 AND routine_id=$2 FOR UPDATE")
+            .bind(generation).bind(routine).fetch_optional(&mut *tx).await?;
+        let Some((status, owner)) = row else {
+            return Ok(false);
+        };
+        if !current.enabled
+            || current.trigger_kind != "interval"
+            || current.trigger_config["schedule_generation"].as_str()
+                != Some(generation.to_string().as_str())
+        {
+            sqlx::query("UPDATE routine_schedule_starts SET status='retired' WHERE generation=$1")
+                .bind(generation)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            return Ok(false);
+        }
+        if status == "retired" || owner.as_deref().is_some_and(|owner| owner != invocation) {
+            return Ok(false);
+        }
+        sqlx::query("UPDATE routine_schedule_starts SET status='started',invocation_id=$2 WHERE generation=$1")
+            .bind(generation).bind(invocation).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
 }

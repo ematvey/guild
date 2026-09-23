@@ -174,7 +174,12 @@ async fn user_level_key_lifecycle() {
         .await
         .unwrap();
     let v: Value = serde_json::from_slice(&body).unwrap();
-    let ids: Vec<&str> = v["keys"].as_array().unwrap().iter().map(|k| k["id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> = v["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k["id"].as_str().unwrap())
+        .collect();
     assert_eq!(ids, vec![key_id.to_string().as_str()]);
 
     // bob cannot revoke alice's key

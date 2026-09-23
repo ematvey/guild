@@ -84,6 +84,7 @@ import {
   uploadAttachment,
 } from "../transport";
 import {
+  apiUrl,
   createChat,
   getChatApproval,
   listArchivedChats,
@@ -114,11 +115,16 @@ import {
 } from "../transport";
 import {
   canPersistDraft,
+  completeDraftInventory,
   clearDrafts,
+  scopedDraftStorage,
   gcDrafts,
   readDraft,
   writeDraft,
 } from "../lib/drafts";
+import { BrowserSendStore } from "../lib/browser-send-store";
+import { clearCommands, detachCommandDraft, selectRestoredCommand, captureCommand, forgetCommand, matchesCommandDraft, prepareOnSendingMachine, recoveryDraft, rememberCommand, restoreCommands, submitCommand,
+  type DraftAttachment, type OutgoingCommand } from "../lib/outgoing-command";
 import {
   artifactCardOf,
   createThreadReducer,
@@ -1352,27 +1358,47 @@ function useVisualViewportPin(ref: RefObject<HTMLDivElement | null>) {
 
 /// Chat view backed by the org gateway. Browser and Tauri webview members
 /// render frames; the Tauri app process separately executes local tools.
-export default function WebChat({
-  email,
-  role = "member",
-  displayName,
-  avatarUrl,
-  onSignOut,
-}: {
+type WebChatProps = {
   email: string;
   role?: string;
   displayName?: string | null;
   avatarUrl?: string | null;
   onSignOut: () => void;
-}) {
+};
+export default function WebChat(props: WebChatProps) {
+  return <WebChatAccount key={`${apiUrl("")}\n${props.email}`} {...props} />;
+}
+function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSignOut }: WebChatProps) {
+  const outgoingScope = `${apiUrl("")}\n${email}`;
+  const draftStorage = useMemo(() => scopedDraftStorage(localStorage, outgoingScope), [outgoingScope]);
+  const [fileStore] = useState(() => new BrowserSendStore(outgoingScope));
+  const storageWarningRef = useRef(false);
+  const [filesReady, setFilesReady] = useState(false);
+  const deliveringRef = useRef(new Set<string>());
+  const observedUserIdsRef = useRef(new Set<string>());
+  const storageFailure = () => {
+    if (!storageWarningRef.current && mountedRef.current) {
+      storageWarningRef.current = true;
+      toast.error("Files could not be saved for reloads in this browser");
+    }
+  };
+  const persistCommand = async (command: OutgoingCommand) => {
+    if (!mountedRef.current) throw new Error("Chat session closed");
+    try { await fileStore.saveCommand(command); } catch { storageFailure(); }
+  };
+  const persistFiles = (target: string | null, files: readonly DraftAttachment[]) => {
+    void fileStore.saveDraft(target, files).catch(storageFailure);
+  };
   const [models, setModels] = useState<string[] | null>(null);
   // Sign-out hygiene: drafts can hold sensitive composer text, so they are
   // cleared with the session — a shared browser's next account must not
   // inherit them. Every sign-out path in this view goes through here.
   const signOut = useCallback(() => {
-    clearDrafts(localStorage);
-    onSignOut();
-  }, [onSignOut]);
+    mountedRef.current = false;
+    clearDrafts(draftStorage);
+    clearCommands(localStorage, outgoingScope);
+    void fileStore.clear().catch(() => {}).finally(onSignOut);
+  }, [onSignOut, draftStorage, fileStore, outgoingScope]);
   const [model, setModel] = useState("");
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
   // Live sidebar status overlay (thread-list spinner/dot): frames from the
@@ -1406,6 +1432,15 @@ export default function WebChat({
   // line flashed on every first send.
   const [compacting, setCompacting] = useState(false);
   const [prompt, setPrompt] = useState("");
+  const promptRef = useRef(prompt);
+  promptRef.current = prompt;
+
+  const [restoredOutgoing] = useState(() => restoreCommands(localStorage, outgoingScope));
+  const outgoingRef = useRef(restoredOutgoing);
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  const restoredCommandRef = useRef(new Map<string | null, string>());
+  const [, refreshOutgoing] = useState(0);
   // The chat the chatId effect last restored a draft for (undefined = no
   // restore ran yet): the persist effect below writes only for this chat.
   const restoredForRef = useRef<string | null | undefined>(undefined);
@@ -1419,7 +1454,7 @@ export default function WebChat({
     // clobber the destination chat's saved draft before its restore reads
     // it.
     if (!canPersistDraft(restoredForRef.current, chatId)) return;
-    writeDraft(localStorage, chatId, prompt);
+    writeDraft(draftStorage, chatId, prompt);
   }, [prompt, chatId]);
   // ---- skill mentions: / opens the autocomplete (skills design §3) ----
   const [skills, setSkills] = useState<ComposerSkill[] | null>(null);
@@ -1471,11 +1506,34 @@ export default function WebChat({
   );
   // Composer attachments: strip of previews above the input — image
   // thumbnails with an overlay ✕, file chips with an icon.
-  const [pending, setPending] = useState<
-    (MessageAttachmentMeta & { file?: File; previewUrl?: string })[]
-  >([]);
+  const [pending, renderPending] = useState<DraftAttachment[]>([]);
   const pendingRef = useRef(pending);
-  pendingRef.current = pending;
+  const [restoredAttachmentDrafts] = useState(() => {
+    const drafts = new Map<string | null, DraftAttachment[]>();
+    for (const command of restoredOutgoing.values()) {
+      const target = command.chatId ?? command.originChatId;
+      if (!drafts.has(target) && readDraft(draftStorage, target) === command.text) {
+        drafts.set(target, command.attachments);
+        restoredCommandRef.current.set(target, command.id);
+      }
+    }
+    return drafts;
+  });
+  const pendingDraftsRef = useRef(restoredAttachmentDrafts);
+  const pendingChatRef = useRef<string | null>(chatId);
+  const setPending = (update: DraftAttachment[] | ((old: DraftAttachment[]) => DraftAttachment[])) => {
+    const next = typeof update === "function" ? update(pendingRef.current) : update;
+    pendingRef.current = next;
+    pendingDraftsRef.current.set(pendingChatRef.current, next);
+    persistFiles(pendingChatRef.current, next);
+    renderPending(next);
+  };
+  useEffect(() => () => {
+    const urls = new Set<string>();
+    for (const files of pendingDraftsRef.current.values()) for (const a of files) if (a.previewUrl) urls.add(a.previewUrl);
+    for (const command of outgoingRef.current.values()) for (const a of command.attachments) if (a.previewUrl) urls.add(a.previewUrl);
+    for (const url of urls) URL.revokeObjectURL(url);
+  }, []);
   const fileInput = useRef<HTMLInputElement | null>(null);
   // Drag-and-drop target state: the whole chat pane accepts attachment
   // drops, with a drop-hint overlay.
@@ -1604,7 +1662,7 @@ export default function WebChat({
         const mine = currentBundle();
         if (served && mine && served !== mine) {
           const s = loadStateRef.current;
-          if (!s.busy && !s.threadLoading && !stopped) window.location.reload();
+          if (!s.busy && !s.threadLoading && !stopped && outgoingRef.current.size === 0 && ![...pendingDraftsRef.current.values()].some(files => files.length)) window.location.reload();
         }
       } catch {
         /* offline: nothing to compare this tick */
@@ -1767,19 +1825,52 @@ export default function WebChat({
   // webview mode. The desktop app process keeps the separate machine socket.
   const openChatIdRef = useRef<string | null>(chatId);
   openChatIdRef.current = chatId;
+  const knownDraftChatsRef = useRef(new Set<string>());
   // Draft GC: per-chat draft keys would otherwise accumulate forever and
   // outlive their chats. Drop the keys whose chat left the sidebar lists
   // (archived or deleted); the scratch draft ("new") and the open chat's
   // key always stay, and unloaded lists prune nothing.
   useEffect(() => {
-    if (!chats) return;
-    const keep = new Set<string>(chats.map((c) => c.id));
-    for (const c of archivedChats ?? []) keep.add(c.id);
-    if (openChatIdRef.current) keep.add(openChatIdRef.current);
-    gcDrafts(localStorage, keep);
+    const keep = completeDraftInventory(chats, archivedChats, openChatIdRef.current);
+    for (const chat of [...(chats ?? []), ...(archivedChats ?? [])]) knownDraftChatsRef.current.add(chat.id);
+    if (keep) {
+      // Active/archive refreshes can straddle an archive operation. Once a
+      // chat was observed this session, absence from one refresh cannot
+      // prove deletion. Unresolved sends also own their draft keys.
+      for (const id of knownDraftChatsRef.current) keep.add(id);
+      for (const command of outgoingRef.current.values()) if (command.chatId) keep.add(command.chatId);
+      gcDrafts(draftStorage, keep);
+    }
   }, [chats, archivedChats]);
   const socketRef = useRef<{ resync: () => void; stop: () => void } | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
+
+  const settleOutgoing = (command: OutgoingCommand) => {
+    if (!mountedRef.current) return;
+    command.accepted = true;
+    outgoingRef.current.delete(command.id);
+    forgetCommand(localStorage, outgoingScope, command.id);
+    void fileStore.forgetCommand(command.id).catch(storageFailure);
+    const target = command.chatId ?? command.originChatId;
+    if (restoredCommandRef.current.get(target) === command.id) {
+      const active = openChatIdRef.current === target;
+      const draft = active ? promptRef.current : readDraft(draftStorage, target);
+      const files = pendingDraftsRef.current.get(target) ?? [];
+      if (matchesCommandDraft(command, draft, files)) {
+        writeDraft(draftStorage, target, "");
+        pendingDraftsRef.current.set(target, []);
+        persistFiles(target, []);
+        if (active) { promptRef.current = ""; setPrompt(""); setPending([]); }
+      }
+      restoredCommandRef.current.delete(target);
+    }
+    for (const a of command.attachments) {
+      if (a.previewUrl && ![...pendingDraftsRef.current.values()].some(files => files.some(f => f.previewUrl === a.previewUrl))) {
+        URL.revokeObjectURL(a.previewUrl);
+      }
+    }
+    refreshOutgoing(n => n + 1);
+  };
 
   const applyHistory = (state: ThreadState) => {
     const cid = state.chat_id;
@@ -1787,6 +1878,11 @@ export default function WebChat({
     // only its new events (a stale one changes nothing anywhere).
     const applied = reducerRef.current.applyState(state);
     if (applied.stale) return;
+    for (const row of state.events) {
+      if (row.event.type === "user_message") observedUserIdsRef.current.add(row.id);
+      const command = outgoingRef.current.get(row.id);
+      if (row.event.type === "user_message" && command && command.chatId === cid) settleOutgoing(command);
+    }
     setChatStatus(prev => ({ ...prev, [cid]: {
       generating: state.generating,
       unread: cid === openChatIdRef.current ? false :
@@ -1838,7 +1934,11 @@ export default function WebChat({
     // instead of keeping the previous chat's text in the input. This
     // restore also marks the chat the persist effect may write for — from
     // here every prompt change belongs to this chatId.
-    const restored = readDraft(localStorage, chatId);
+    const restored = readDraft(draftStorage, chatId);
+    promptRef.current = restored;
+    pendingChatRef.current = chatId;
+    pendingRef.current = pendingDraftsRef.current.get(chatId) ?? [];
+    renderPending(pendingRef.current);
     setPrompt(restored);
     setCaret(restored.length);
     restoredForRef.current = chatId;
@@ -1982,212 +2082,200 @@ export default function WebChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // mode: "normal" starts a turn (blocked while one runs); "queue" commits
-  // the message for the running turn's next pause; "steer" also interrupts
-  // the in-flight turn so the message runs immediately.
-  const send = async (mode: "normal" | "queue" | "steer" = "normal") => {
-    const text = prompt.trim();
-    if ((!text && pendingRef.current.length === 0) || !model) return;
-    // Composer command: /compact manually compacts this chat instead of
-    // sending a turn. Needs an existing chat; while generating the server
-    // rejects with its own error, surfaced below.
-    if (text.toLowerCase() === "/compact") {
-      if (!chatId) {
-        toast.error("Compact needs an existing chat — send a message first");
-        return;
-      }
-      setPrompt("");
-      setCompacting(reducerRef.current.setCompacting(chatId).compacting);
-      try {
-        await compactChat(chatId);
-      } catch (e) {
-        setCompacting(reducerRef.current.setCompacting(null).compacting);
-        toast.error(e instanceof Error ? e.message : String(e));
-      }
-      return;
-    }
-    const generating = busy || openGenerating;
-    if (mode === "normal" && generating) return;
-    const mySeq = loadSeq.current; // ignores results after a chat switch
-    const sentAt = Date.now();
-    if (mode === "normal") {
-      setBusy(true); // queue/steer: the spinner is already on
-      sendingRef.current = true;
-    }
-    setPrompt("");
-    if (ta.current) ta.current.style.height = "auto";
-    // Focus stays in the composer after send. Scheduled after the pending
-    // state commit: disabling the
-    // Send button during the same commit would otherwise move focus to
-    // body and override a synchronous focus().
-    requestAnimationFrame(() => ta.current?.focus());
-    const sentKey = crypto.randomUUID();
-    const sentAttachments = pendingRef.current.map((a) => ({
-      id: `pending-${a.id}`,
-      filename: a.filename,
-      content_type: a.content_type,
-      size_bytes: a.size_bytes,
-      modality: a.modality,
-      previewUrl: a.previewUrl,
-    }));
-    // Optimistic: the block rides the current view; a first send's marker
-    // binds to the chat once createChat returns (bindPending below). The
-    // durable socket echo settles it — submission is not persistence.
-    setBlocks(
-      reducerRef.current
-        .optimisticSend({ chatId, text, key: sentKey, sentAt, attachments: sentAttachments })
-        .blocks,
-    );
-    let cid = chatId;
-    let createError: unknown = null;
-    if (!cid) {
-      try {
-        cid = await createChat(text.slice(0, 48), pickedProjectRef.current?.id ?? null);
-      } catch (e) {
-        // A fetch rejection (offline, TLS, server down) takes the same path
-        // as an HTTP failure below — the rejection must not escape send():
-        // its void callers would leave the composer busy forever with an
-        // unresolved optimistic block.
-        createError = e;
-      }
-      if (cid && loadSeq.current === mySeq) {
-        // Move the URL to the new thread without losing the optimistic
-        // pending marker; the chatId effect still requests socket reconcile.
-        skipLoadRef.current = cid;
-        if (approvalMode !== "default") {
-          // The pick was made before the chat existed — persist it now.
-          justCreatedApprovalRef.current = cid;
-          void setChatApproval(cid, approvalMode).catch(() =>
-            toast.error("Could not save approval mode"),
-          );
-        }
-        pushRoute({ chatId: cid, overlay: null });
-        void refreshChats();
-        ta.current?.focus();
+  const recoverOutgoing = (command: OutgoingCommand) => {
+    const target = command.chatId ?? command.originChatId;
+    const active = openChatIdRef.current === target;
+    const newerText = active ? promptRef.current : readDraft(draftStorage, target);
+    const newerFiles = pendingDraftsRef.current.get(target) ?? [];
+    // A newer draft wins. The failed command stays available separately.
+    const recovered = recoveryDraft(command, newerText, newerFiles);
+    if (recovered.restored) {
+      writeDraft(draftStorage, target, recovered.text);
+      pendingDraftsRef.current.set(target, recovered.files);
+      persistFiles(target, recovered.files);
+      restoredCommandRef.current.set(target, command.id);
+      if (active) {
+        promptRef.current = recovered.text;
+        setPrompt(recovered.text);
+        setPending(recovered.files);
       }
     }
-    if (!cid) {
-      if (loadSeq.current === mySeq) {
-        setBlocks(
-          reducerRef.current
-            .appendError(
-              createError instanceof Error
-                ? `chat create failed: ${createError.message}`
-                : "chat create failed",
-            )
-            .blocks,
-        );
-        setBusy(false);
-      }
-      if (mode === "normal") sendingRef.current = false;
-      return;
+    refreshOutgoing(n => n + 1);
+  };
+
+  const deliverOutgoing = async (command: OutgoingCommand) => {
+    if (!mountedRef.current) return;
+    if (command.running || command.accepted || deliveringRef.current.has(command.id)) return;
+    deliveringRef.current.add(command.id);
+    try { await persistCommand(command); } catch { deliveringRef.current.delete(command.id); return; }
+    if (!mountedRef.current) { deliveringRef.current.delete(command.id); return; }
+    const target = command.chatId ?? command.originChatId;
+    detachCommandDraft(command, {
+      read: target => ({ text: openChatIdRef.current === target ? promptRef.current : readDraft(draftStorage, target),
+        files: pendingDraftsRef.current.get(target) ?? [] }),
+      clear: target => {
+        writeDraft(draftStorage, target, "");
+        pendingDraftsRef.current.set(target, []);
+        persistFiles(target, []);
+        if (openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); }
+      },
+    });
+    if (command.accepted) { deliveringRef.current.delete(command.id); return; }
+    const mySeq = loadSeq.current;
+    if (openChatIdRef.current === target) {
+      setBusy(true);
+      setBlocks(reducerRef.current.optimisticSend({ chatId: target, text: command.text,
+        key: command.id, sentAt: command.sentAt,
+        attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
     }
-    reducerRef.current.bindPending(cid, sentKey);
-    // Optimistic sidebar spinner: the server's generating flag lands via
-    // the chat-status channel within a second; this makes it instant.
-    setChatStatus((prev) => ({ ...prev, [cid]: { ...(prev[cid] ?? { unread: false }), generating: true } }));
-    let keepBusyThroughFinally = false;
+    sendingRef.current = true;
     try {
-      // Upload attachments first; their ids ride along with the send and
-      // the server inlines text / passes media parts per route modality.
-      const attachmentIds: string[] = [];
-      for (const a of pendingRef.current) {
-        if (!a.file) continue;
-        try {
-          const meta = await uploadAttachment(cid, a.file);
-          attachmentIds.push(meta.id);
-          setBlocks(reducerRef.current.settleAttachment(sentKey, `pending-${a.id}`, meta.id).blocks);
-        } catch (e) {
-          if (loadSeq.current === mySeq) {
-            setBlocks(reducerRef.current.settleAttachment(sentKey, `pending-${a.id}`).blocks);
-            setBlocks(
-              reducerRef.current
-                .appendError(
-                  `attachment upload failed (${a.filename}): ${e instanceof Error ? e.message : String(e)}`,
-                )
-                .blocks,
-            );
+      await submitCommand(command, {
+        checkpoint: persistCommand,
+        create: async (text, project) => {
+          if (!mountedRef.current) throw new Error("Chat session closed");
+          const cid = await createChat(text.slice(0, 48), project);
+          if (!cid) throw new Error("Chat create failed");
+          return cid;
+        },
+        created: (cid) => {
+          if (!mountedRef.current) return;
+          reducerRef.current.bindPending(cid, command.id);
+          if (loadSeq.current === mySeq && openChatIdRef.current === command.originChatId) {
+            // Preserve follow-up typing/files entered during chat creation.
+            writeDraft(draftStorage, cid, promptRef.current);
+            writeDraft(draftStorage, command.originChatId, "");
+            pendingDraftsRef.current.set(cid, pendingRef.current);
+            pendingDraftsRef.current.set(command.originChatId, []);
+            persistFiles(cid, pendingRef.current);
+            persistFiles(command.originChatId, []);
+            skipLoadRef.current = cid;
+            if (approvalMode !== "default") {
+              justCreatedApprovalRef.current = cid;
+              void setChatApproval(cid, approvalMode).catch(() => toast.error("Could not save approval mode"));
+            }
+            pushRoute({ chatId: cid, overlay: null });
+            void refreshChats();
           }
-        }
-      }
-      for (const a of pendingRef.current) {
-        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
-      }
-      setPending([]);
-      // Request-wins only for an in-session pick: the pick action set the
-      // ref. Otherwise the field is omitted and the server falls back to
-      // the chat's persisted binding — a stale sidebar row must never win
-      // over a re-bind from another device.
-      // Skill slash commands: expand `/name` mentions with the full
-      // SKILL.md body and carry the skills index (app-process RPC; browser
-      // mode has no local skills and sends the prompt through untouched).
-      // AGENTS.md (Codex semantics): the bound project's local folder feeds
-      // the instruction chain — global config-dir file + git-root→folder
-      // docs — riding the additive `agents_md` request field.
-      let turnText = text;
-      let turnSkillsIndex: string | undefined;
-      let turnAgentsMd: string | undefined;
-      if (isTauri) {
-        try {
-          const projectFolder =
-            currentProject &&
-            (currentProject.folder ??
-              projects?.find((p) => p.id === currentProject.id)?.folder);
-          // Context assembly is sugar — the send must never wait on it past
-          // this deadline. A wedged local daemon burns one 15s timeout per
-          // fs call (and there are many), silently stalling the send for
-          // minutes; the deadline caps the whole step and falls back to the
-          // typed text.
-          const prep = await Promise.race([
-            prepareTurn(text, projectFolder || undefined),
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
-          ]);
-          if (prep) {
-            turnText = prep.prompt;
-            if (prep.index) turnSkillsIndex = prep.index;
-            if (prep.instructions) turnAgentsMd = prep.instructions;
-          }
-        } catch {
-          /* expansion is sugar — send the typed text */
-        }
-      }
-      await sendChatNoStream(
-        cid,
-        model,
-        turnText,
-        attachmentIds,
-        outgoingProjectId(pickedProjectRef.current),
-        sentKey,
-        generating ? (mode === "steer" ? "steer" : "queue") : undefined,
-        turnSkillsIndex,
-        turnAgentsMd,
-      );
-      // Submission is not persistence. Only the committed socket echo settles the marker.
-      // The member socket delivers every effect. Busy ends on done/error or
-      // when a state sync observes that the server is no longer generating.
-      keepBusyThroughFinally = true;
+        },
+        upload: (cid, attachment) => {
+          if (!mountedRef.current) throw new Error("Chat session closed");
+          return uploadAttachment(cid, attachment.file!);
+        },
+        uploaded: (attachment, meta) => {
+          if (!mountedRef.current) return;
+          const changed = reducerRef.current.settleAttachment(command.id, `pending-${attachment.id}`, meta.id);
+          if (openChatIdRef.current === command.chatId || loadSeq.current === mySeq) setBlocks(changed.blocks);
+        },
+        prepare: async (text, folder) => {
+          if (!mountedRef.current) throw new Error("Chat session closed");
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            return await Promise.race([prepareTurn(text, folder), new Promise<null>(resolve => {
+              timer = setTimeout(() => resolve(null), 10_000);
+            })]);
+          } finally { if (timer) clearTimeout(timer); }
+        },
+        submit: async (cid, id, body) => {
+          if (!mountedRef.current) throw new Error("Chat session closed");
+          rememberCommand(localStorage, outgoingScope, command);
+          await sendChatNoStream(cid, body.model, body.prompt, body.attachmentIds, body.projectId,
+            id, body.sendMode, body.skillsIndex, body.instructions);
+        },
+      });
+      settleOutgoing(command);
     } catch (e) {
-      // The optimistic block goes, an error block takes its place, and the
-      // pending marker is released (in the chat's own view — a switch keeps
-      // the outcome there).
-      const failed = reducerRef.current
-        .failSend(cid, sentKey, e instanceof Error ? e.message : String(e));
-      if (loadSeq.current === mySeq) {
-        setBlocks(failed.blocks);
-        if (mode === "normal") setBusy(false);
-      }
-      // A normal send that failed here never reached the server (the accept
-      // response returns in milliseconds; a 30s timeout means nothing was
-      // submitted) — give the typed text back so a retry is one click.
-      if (mode === "normal") setPrompt(text);
+      if (!mountedRef.current) return;
+      const cid = command.chatId ?? command.originChatId;
+      const failed = reducerRef.current.failSend(cid, command.id, e instanceof Error ? e.message : String(e));
+      if (openChatIdRef.current === cid) { setBlocks(failed.blocks); setBusy(false); }
+      recoverOutgoing(command);
     } finally {
-      // Queue/steer never own the busy flag — the running turn does.
-      if (mode === "normal") {
-        sendingRef.current = false; // the round trip settled; list pushes may lower busy from the server's flag again
-        if (!keepBusyThroughFinally) setBusy(false);
-      }
+      deliveringRef.current.delete(command.id);
+      if (!mountedRef.current) return;
+      sendingRef.current = [...outgoingRef.current.values()].some(c => c.running && (c.chatId ?? c.originChatId) === openChatIdRef.current);
+      if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) setBusy(false);
+      refreshOutgoing(n => n + 1);
     }
   };
+
+  const send = async (mode: "normal" | "queue" | "steer" = "normal") => {
+    if (!mountedRef.current || !filesReady) return;
+    const text = promptRef.current.trim();
+    if ((!text && pendingRef.current.length === 0) || !model) return;
+    if (text.toLowerCase() === "/compact") {
+      if (!chatId) { toast.error("Compact needs an existing chat — send a message first"); return; }
+      promptRef.current = "";
+      setPrompt("");
+      setCompacting(reducerRef.current.setCompacting(chatId).compacting);
+      try { await compactChat(chatId); }
+      catch (e) { setCompacting(reducerRef.current.setCompacting(null).compacting); toast.error(e instanceof Error ? e.message : String(e)); }
+      return;
+    }
+    const retry = [...outgoingRef.current.values()].find(c => c.error && (c.chatId ?? c.originChatId) === chatId && matchesCommandDraft(c, text, pendingRef.current));
+    if (retry) { await deliverOutgoing(retry); return; }
+    const generating = busy || openGenerating;
+    if (mode === "normal" && generating) return;
+    if ([...outgoingRef.current.values()].some(c => deliveringRef.current.has(c.id) && !c.running && (c.chatId ?? c.originChatId) === chatId)) return;
+    if (!chatId && [...outgoingRef.current.values()].some(c => c.running && c.originChatId === null)) return;
+    const selected = currentProject ? projects?.find(p => p.id === currentProject.id) : undefined;
+    const executor = selected?.machine_id ?? (currentProject ? openRow?.machine_id ?? undefined : undefined);
+    const command = captureCommand({
+      id: crypto.randomUUID(), originChatId: chatId, chatId, text, model,
+      createProjectId: pickedProjectRef.current?.id ?? null,
+      projectId: outgoingProjectId(pickedProjectRef.current),
+      projectFolder: currentProject?.folder ?? selected?.folder,
+      prepareLocally: prepareOnSendingMachine(isTauri, !!currentProject, executor ?? undefined, isTauri ? machineId() : ""),
+      sendMode: generating ? (mode === "steer" ? "steer" : "queue") : undefined,
+      attachments: pendingRef.current,
+    });
+    outgoingRef.current.set(command.id, command);
+    // Persist the immutable file snapshot before detaching the composer.
+    await deliverOutgoing(command);
+  };
+
+  useEffect(() => {
+    let active = true;
+    void fileStore.restore().then(({ drafts, commands }) => {
+      if (!active || !mountedRef.current) {
+        for (const files of drafts.values()) for (const file of files) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+        for (const command of commands.values()) for (const file of command.attachments) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+        return;
+      }
+      for (const [target, files] of drafts) pendingDraftsRef.current.set(target, files);
+      pendingRef.current = pendingDraftsRef.current.get(openChatIdRef.current) ?? [];
+      renderPending(pendingRef.current);
+      for (const [id, loaded] of commands) {
+        // The synchronous fallback records the exact submitted body even
+        // when an IndexedDB checkpoint failed; never replace it with an
+        // earlier upload/context snapshot.
+        const existing = outgoingRef.current.get(id);
+        const command = selectRestoredCommand(existing, loaded);
+        if (command !== loaded) for (const file of loaded.attachments) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+        if (observedUserIdsRef.current.has(id)) {
+          void fileStore.forgetCommand(id).catch(storageFailure);
+          forgetCommand(localStorage, outgoingScope, id);
+          for (const file of command.attachments) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+          continue;
+        }
+        outgoingRef.current.set(id, command);
+        // Unfinished sends remain in their retry card. Composer records,
+        // including intentionally emptied drafts, retain their own state.
+      }
+      // Files and text may both have been saved before a send detached its
+      // composer. Keep their relationship so acceptance clears only that draft.
+      for (const command of outgoingRef.current.values()) {
+        const target = command.chatId ?? command.originChatId;
+        const text = target === openChatIdRef.current ? promptRef.current : readDraft(draftStorage, target);
+        if (matchesCommandDraft(command, text, pendingDraftsRef.current.get(target) ?? [])) restoredCommandRef.current.set(target, command.id);
+      }
+      refreshOutgoing(n => n + 1);
+      setFilesReady(true);
+    }).catch(() => { if (active) { storageFailure(); setFilesReady(true); } });
+    return () => { active = false; };
+    // One account-scoped instance; navigation/edits are resolved through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileStore]);
 
   // Stop the chat's in-flight turn. 409 (nothing generating) resolves
   // silently — the turn already ended between the render and the click.
@@ -2482,6 +2570,12 @@ export default function WebChat({
                 e.target.value = "";
               }}
             />
+            {[...outgoingRef.current.values()].filter(c => c.error && (c.chatId ?? c.originChatId) === chatId).map(command => (
+              <div key={command.id} className="flex items-center gap-2 px-2 pb-2 text-sm text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate" title={command.text}>Send needs retry: {command.text || "attachments"}</span>
+                <Button variant="outline" size="sm" disabled={command.running} onClick={() => void deliverOutgoing(command)}>Retry send</Button>
+              </div>
+            ))}
             {pending.length > 0 && (
               <div className="flex flex-wrap items-start gap-2 px-1 pb-2">
                 {pending.filter((a) => a.modality === "image").map((a) => (
@@ -2544,6 +2638,8 @@ export default function WebChat({
               ref={ta}
               value={prompt}
               onChange={(e) => {
+                fileStore.touchDraft(chatId);
+                promptRef.current = e.target.value;
                 setPrompt(e.target.value);
                 setCaret(e.target.selectionStart ?? e.target.value.length);
                 autoGrow();

@@ -113,7 +113,7 @@ async fn usage(
     let mut sql = format!(
         "SELECT {group} AS \"group\", sum(tokens_in) AS tokens_in, sum(tokens_out) AS tokens_out, \
          sum(cost_usd) AS cost_usd, count() AS requests \
-         FROM usage_events WHERE org_id = toUUID(?)",
+         FROM (SELECT * FROM usage_events WHERE org_id = toUUID(?) ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE 1=1",
         group = group_by.0,
     );
     let member_scoped = user.0.role != "admin";
@@ -208,7 +208,7 @@ async fn series(
     let mut sql = format!(
         "SELECT {bucket} AS bucket, {group} AS \"group\", sum(tokens_in) AS tokens_in, \
          sum(tokens_out) AS tokens_out, sum(cost_usd) AS cost_usd, count() AS requests \
-         FROM usage_events WHERE org_id = toUUID(?)",
+         FROM (SELECT * FROM usage_events WHERE org_id = toUUID(?) ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE 1=1",
         bucket = bucket_expr,
         group = group_by.0,
     );
@@ -353,7 +353,7 @@ async fn summary(
         q.bind(ts_bound)
     };
     let today: f64 = match bind_scope(
-        "SELECT coalesce(sum(cost_usd), 0) FROM usage_events WHERE {scope} AND ts >= toDateTime(?)"
+        "SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events WHERE {scope} ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE ts >= toDateTime(?)"
             .replace("{scope}", &scope),
         start_of_day.timestamp(),
     )
@@ -365,7 +365,7 @@ async fn summary(
         Err(e) => return Err(ApiError::internal(format!("usage query failed: {e}"))),
     };
     let month: f64 = match bind_scope(
-        "SELECT coalesce(sum(cost_usd), 0) FROM usage_events WHERE {scope} AND ts >= toDateTime(?)"
+        "SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events WHERE {scope} ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE ts >= toDateTime(?)"
             .replace("{scope}", &scope),
         start_of_month.timestamp(),
     )

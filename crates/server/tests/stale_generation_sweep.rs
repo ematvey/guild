@@ -1,6 +1,6 @@
 //! The stuck-generation deploy sweep: record format (version-stamped by the
-//! gateway), kill-only-after-success, and current-version records dropped
-//! without a kill call.
+//! worker), kill-only-after-success, and current-version records retained
+//! for hard stop during replay without a kill call.
 
 use axum::extract::State;
 use guild_server::test_support::{purge_stale_chat_generations, workflow_schema_version};
@@ -81,9 +81,16 @@ async fn sweep_kills_stale_records_only_after_a_successful_kill() {
         .into_iter()
         .map(|(k, _)| k)
         .collect();
-    // Current-version record dropped (no kill needed); killed records
-    // dropped; the failed-kill record kept.
-    assert_eq!(kept, vec!["chatgen_inv:retry".to_string()], "{kept:?}");
+    // Current-version replay still needs its invocation pointer for hard
+    // stop; failed stale kills retain theirs for retry.
+    assert_eq!(
+        kept,
+        vec![
+            "chatgen_inv:current-ver".to_string(),
+            "chatgen_inv:retry".to_string()
+        ],
+        "{kept:?}"
+    );
 
     let killed = captured.lock().unwrap().clone();
     assert_eq!(killed.len(), 3, "{killed:?}");
@@ -109,7 +116,11 @@ async fn sweep_kills_stale_records_only_after_a_successful_kill() {
         .into_iter()
         .map(|(k, _)| k)
         .collect();
-    assert!(kept.is_empty(), "{kept:?}");
+    assert_eq!(
+        kept,
+        vec!["chatgen_inv:current-ver".to_string()],
+        "{kept:?}"
+    );
     assert!(captured
         .lock()
         .unwrap()

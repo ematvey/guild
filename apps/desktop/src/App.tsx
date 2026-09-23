@@ -1,3 +1,4 @@
+import { beginOidcLogin, consumeOidcLogin } from "./lib/oidc-login";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
@@ -140,7 +141,7 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
                 variant="outline"
                 onClick={
                   () =>
-                    (window.location.href = `/api/v1/auth/oidc/login?org_id=${sso.org_id}`)
+                    (window.location.href = beginOidcLogin(sso.org_id))
                 }
               >
                 Continue with SSO
@@ -463,12 +464,9 @@ function AppInner() {
     // An OIDC callback lands here as #oidc_token=…&email=…; adopt the
     // session and strip the fragment so the token never lingers in the URL.
     if (window.location.hash.startsWith("#oidc_token=")) {
-      const params = new URLSearchParams(window.location.hash.slice(1));
-      const token = params.get("oidc_token");
-      if (token) {
-        setToken(token);
-        history.replaceState(null, "", window.location.pathname + window.location.search);
-      }
+      const token = consumeOidcLogin(window.location.hash);
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      if (token) setToken(token);
     }
     apiMe()
       .then((u) => {

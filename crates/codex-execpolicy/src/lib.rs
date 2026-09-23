@@ -1,10 +1,10 @@
-pub(crate) mod decision;
-pub(crate) mod error;
-mod executable_name;
 #[cfg(feature = "parser")]
 pub(crate) mod amend;
+pub(crate) mod decision;
+pub(crate) mod error;
 #[cfg(feature = "parser")]
 pub(crate) mod execpolicycheck;
+mod executable_name;
 #[cfg(feature = "parser")]
 pub(crate) mod parser;
 pub(crate) mod policy;
