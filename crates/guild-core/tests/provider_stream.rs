@@ -93,7 +93,8 @@ async fn anthropic_stream_yields_deltas_then_usage() {
              event: content_block_delta\n\
              data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Salut\"}}\n\n\
              event: message_delta\n\
-             data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":6}}\n\n",
+             data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":6}}\n\n\
+             data: {\"type\":\"message_stop\"}\n\n",
         ))
         .mount(&server)
         .await;
@@ -217,4 +218,22 @@ async fn anthropic_midstream_error_frame_surfaces() {
     let last = items.last().unwrap();
     let err = last.as_ref().unwrap_err();
     assert!(err.to_string().contains("overloaded_error"), "{err}");
+}
+
+#[tokio::test]
+async fn truncated_streams_fail_both_provider_protocols() {
+    for (protocol, body) in [
+        ("openai", "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"),
+        ("anthropic", "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n"),
+    ] {
+        let server = MockServer::builder().listener(standalone_listener().await.into_std().unwrap()).start().await;
+        Mock::given(method("POST")).respond_with(sse(body)).mount(&server).await;
+        let provider = guild_core::provider::for_protocol(protocol).unwrap();
+        let chunks: Vec<_> = provider.chat_stream(ProviderRequest {
+            model: "fixture", system: None, messages: &[], api_key: "fixture",
+            base_url: &server.uri(), tools: None, max_tokens: 32,
+        }).await.unwrap().collect().await;
+        assert!(chunks.first().unwrap().is_ok());
+        assert!(chunks.last().unwrap().is_err(), "{protocol} accepted truncated stream");
+    }
 }

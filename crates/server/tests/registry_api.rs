@@ -515,8 +515,9 @@ async fn republished_bundle_bytes_require_rereview() {
         .await
         .unwrap();
 
+    let original = demo_bundle("swap", "1.0.0");
     assert_eq!(
-        publish(&app, "skill", "swap", "1.0.0", &token)
+        publish_bytes(&app, "skill", "swap", "1.0.0", &token, original.clone())
             .await
             .status(),
         StatusCode::OK
@@ -532,7 +533,8 @@ async fn republished_bundle_bytes_require_rereview() {
     // identical bytes: the approval survives the republish (the same bundle
     // object is re-uploaded — byte-for-byte, via the same content-addressed
     // key)
-    let identical = demo_bundle("swap", "1.0.0");
+    // Repacking fresh files can change tar metadata even with identical content.
+    let identical = original;
     assert_eq!(
         publish_bytes(&app, "skill", "swap", "1.0.0", &token, identical)
             .await

@@ -57,13 +57,23 @@ async fn get_json(app: &axum::Router, fs: &FullState, uri: &str) -> (StatusCode,
     let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
         .await
         .unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 #[tokio::test]
 async fn projects_crud_roundtrip_with_delete_unlink() {
     let fs = full_state().await;
-    register_test_machine(&fs.state, "machine-1", fs.user_id, fs.org_id, Some("WORKSTATION")).await;
+    register_test_machine(
+        &fs.state,
+        "machine-1",
+        fs.user_id,
+        fs.org_id,
+        Some("WORKSTATION"),
+    )
+    .await;
     let app = guild_server::build_router(fs.state.clone());
 
     // Create → full row shape (machine label joined from the registry).
@@ -180,7 +190,11 @@ async fn projects_crud_roundtrip_with_delete_unlink() {
     let bound = fs
         .store()
         .chats()
-        .get_chat(fs.org_id, chat.id, &fs.store().identity().get_user(fs.user_id).await.unwrap())
+        .get_chat(
+            fs.org_id,
+            chat.id,
+            &fs.store().identity().get_user(fs.user_id).await.unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(bound.project_id, Some(project_b.id));
@@ -226,7 +240,11 @@ async fn projects_crud_roundtrip_with_delete_unlink() {
     let after = fs
         .store()
         .chats()
-        .get_chat(fs.org_id, chat.id, &fs.store().identity().get_user(fs.user_id).await.unwrap())
+        .get_chat(
+            fs.org_id,
+            chat.id,
+            &fs.store().identity().get_user(fs.user_id).await.unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(after.project_id, Some(project_b.id));
@@ -242,7 +260,11 @@ async fn projects_crud_roundtrip_with_delete_unlink() {
     let after = fs
         .store()
         .chats()
-        .get_chat(fs.org_id, chat.id, &fs.store().identity().get_user(fs.user_id).await.unwrap())
+        .get_chat(
+            fs.org_id,
+            chat.id,
+            &fs.store().identity().get_user(fs.user_id).await.unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(after.project_id, None);
@@ -258,7 +280,14 @@ async fn projects_crud_roundtrip_with_delete_unlink() {
 #[tokio::test]
 async fn project_binding_inherits_the_projects_machine() {
     let fs = full_state().await;
-    register_test_machine(&fs.state, "machine-1", fs.user_id, fs.org_id, Some("WORKSTATION")).await;
+    register_test_machine(
+        &fs.state,
+        "machine-1",
+        fs.user_id,
+        fs.org_id,
+        Some("WORKSTATION"),
+    )
+    .await;
     register_test_machine(&fs.state, "machine-2", fs.user_id, fs.org_id, Some("NODE2")).await;
     let app = guild_server::build_router(fs.state.clone());
 
@@ -272,7 +301,11 @@ async fn project_binding_inherits_the_projects_machine() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{project}");
-    let project_id = project["id"].as_str().unwrap().parse::<uuid::Uuid>().unwrap();
+    let project_id = project["id"]
+        .as_str()
+        .unwrap()
+        .parse::<uuid::Uuid>()
+        .unwrap();
 
     // Chat created with the project inherits the project's machine.
     let (status, chat) = post_json(
@@ -303,14 +336,8 @@ async fn project_binding_inherits_the_projects_machine() {
 
     // An existing unbound chat aligns to machine-2 when the project is
     // bound afterwards.
-    let (status, chat2) = post_json(
-        &app,
-        &fs,
-        "POST",
-        "/api/v1/chats",
-        json!({"title": "c2"}),
-    )
-    .await;
+    let (status, chat2) =
+        post_json(&app, &fs, "POST", "/api/v1/chats", json!({"title": "c2"})).await;
     assert_eq!(status, StatusCode::OK, "{chat2}");
     assert_eq!(chat2["machine_id"], Value::Null);
     let chat2_id = chat2["id"].as_str().unwrap();

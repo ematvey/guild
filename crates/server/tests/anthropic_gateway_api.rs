@@ -147,8 +147,7 @@ async fn non_stream_tool_round_trip() {
     let upstream = chat_calls(&provider).await.remove(0);
     let upstream_body: Value = serde_json::from_slice(&upstream.body).unwrap();
     assert_eq!(
-        upstream_body["messages"][0]["role"],
-        "system",
+        upstream_body["messages"][0]["role"], "system",
         "top-level system lands as the system message"
     );
     assert_eq!(upstream_body["messages"][0]["content"], "be terse");

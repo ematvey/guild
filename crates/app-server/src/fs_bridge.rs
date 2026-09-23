@@ -11,8 +11,8 @@
 //! root (that is how the root is *found*); reads never do. Write roots:
 //! the config dir and the project folder.
 
-use std::path::{Path, PathBuf};
 use anyhow::Context as _;
+use std::path::{Path, PathBuf};
 
 /// What one fs.* call may touch, resolved fresh per call from the
 /// session's bound project (cheap: a handful of metadata probes).
@@ -48,15 +48,11 @@ impl Allowlist {
 
     /// Injectable roots (tests isolate the config/home dirs — the env-based
     /// defaults race with parallel tests that set XDG_CONFIG_HOME).
-    pub fn for_project_with(
-        project_dir: Option<&Path>,
-        config: &Path,
-        home: &Path,
-    ) -> Allowlist {
+    pub fn for_project_with(project_dir: Option<&Path>, config: &Path, home: &Path) -> Allowlist {
         let user_skills = home.join(".agents");
         let config = config.to_path_buf();
         let mut read = vec![config.clone(), user_skills.clone()];
-        let mut exists = vec![config.clone(), user_skills.clone(), home.to_path_buf()];
+        let exists = vec![config.clone(), user_skills.clone(), home.to_path_buf()];
         let mut write = vec![config];
         let mut walk_ancestors = Vec::new();
         if let Some(project) = project_dir {
@@ -107,12 +103,14 @@ impl Allowlist {
 
     /// Absolute form of a request path: relative paths anchor at the bound
     /// project (the webview works in project-relative terms).
-    fn resolve(&self, raw_path: &str) -> PathBuf {
+    fn resolve(&self, raw_path: &str) -> anyhow::Result<PathBuf> {
         let raw = Path::new(raw_path);
         if raw.is_relative() {
             match &self.project {
                 Some(project) => return normalize(&project.join(raw)),
-                None => return normalize(&self.read.first().cloned().unwrap_or_default().join(raw)),
+                None => {
+                    return normalize(&self.read.first().cloned().unwrap_or_default().join(raw))
+                }
             }
         }
         normalize(raw)
@@ -133,10 +131,7 @@ impl Allowlist {
         // Above the read roots, existence is only exposed for `.git` probes
         // (the git-root discovery walk) — never for other paths.
         path.file_name().is_some_and(|n| n == ".git")
-            && self
-                .walk_ancestors
-                .iter()
-                .any(|a| path.starts_with(a))
+            && self.walk_ancestors.iter().any(|a| path.starts_with(a))
     }
 
     pub fn can_write(&self, path: &Path) -> bool {
@@ -149,7 +144,8 @@ impl Allowlist {
 /// land on their real target and fail the root check), the nonexistent
 /// tail is kept lexically with `..` popped. Symlink targets that dangle
 /// are resolved too — a write through a link must not escape the roots.
-fn normalize(path: &Path) -> PathBuf {
+fn normalize(path: &Path) -> anyhow::Result<PathBuf> {
+    let mut links = 0;
     let mut stack: Vec<std::ffi::OsString> = path
         .components()
         .map(|c| c.as_os_str().to_owned())
@@ -166,6 +162,8 @@ fn normalize(path: &Path) -> PathBuf {
                 out.push(&comp);
                 if let Ok(meta) = std::fs::symlink_metadata(&out) {
                     if meta.file_type().is_symlink() {
+                        links += 1;
+                        anyhow::ensure!(links <= 40, "too many symbolic links in path");
                         let target = std::fs::read_link(&out).unwrap_or_default();
                         out.pop(); // the link component is replaced by its target
                         let tcomps: Vec<_> = Path::new(&target)
@@ -183,7 +181,7 @@ fn normalize(path: &Path) -> PathBuf {
             }
         }
     }
-    out.canonicalize().unwrap_or(out)
+    Ok(out.canonicalize().unwrap_or(out))
 }
 
 /// fs.read_text: the file's text, gated by the read roots.
@@ -192,9 +190,35 @@ pub fn read_text(project_dir: Option<&Path>, raw_path: &str) -> anyhow::Result<S
 }
 
 pub fn read_text_with(allow: &Allowlist, raw_path: &str) -> anyhow::Result<String> {
-    let path = allow.resolve(raw_path);
+    let path = allow.resolve(raw_path)?;
     anyhow::ensure!(allow.can_read(&path), "path is outside the allowed roots");
     std::fs::read_to_string(&path).context("read failed")
+}
+
+/// Bounded context reads reject devices/pipes and preserve UTF-8 boundaries.
+pub fn read_text_limited_with(
+    allow: &Allowlist,
+    raw_path: &str,
+    limit: usize,
+) -> anyhow::Result<String> {
+    use std::io::Read;
+    let path = allow.resolve(raw_path)?;
+    anyhow::ensure!(allow.can_read(&path), "path is outside the allowed roots");
+    anyhow::ensure!(
+        std::fs::metadata(&path)?.is_file(),
+        "context path is not a regular file"
+    );
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit as u64)
+        .read_to_end(&mut bytes)?;
+    match std::str::from_utf8(&bytes) {
+        Ok(text) => Ok(text.to_string()),
+        Err(error) if error.error_len().is_none() => {
+            Ok(std::str::from_utf8(&bytes[..error.valid_up_to()])?.to_string())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// One directory entry for fs.list_dir (sorted by name — scan order).
@@ -211,10 +235,22 @@ pub fn list_dir(project_dir: Option<&Path>, raw_path: &str) -> anyhow::Result<Ve
 }
 
 pub fn list_dir_with(allow: &Allowlist, raw_path: &str) -> anyhow::Result<Vec<DirEntry>> {
-    let path = allow.resolve(raw_path);
+    list_dir_limited_with(allow, raw_path, usize::MAX)
+}
+
+pub fn list_dir_limited_with(
+    allow: &Allowlist,
+    raw_path: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<DirEntry>> {
+    let path = allow.resolve(raw_path)?;
     anyhow::ensure!(allow.can_read(&path), "path is outside the allowed roots");
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(&path).context("list_dir failed")?.flatten() {
+    for entry in std::fs::read_dir(&path)
+        .context("list_dir failed")?
+        .take(limit)
+        .flatten()
+    {
         let kind = if entry.path().is_dir() { "dir" } else { "file" };
         out.push(DirEntry {
             name: entry.file_name().to_string_lossy().into_owned(),
@@ -232,7 +268,9 @@ pub fn exists(project_dir: Option<&Path>, raw_path: &str) -> bool {
 }
 
 pub fn exists_with(allow: &Allowlist, raw_path: &str) -> bool {
-    let path = allow.resolve(raw_path);
+    let Ok(path) = allow.resolve(raw_path) else {
+        return false;
+    };
     allow.can_probe(&path) && path.exists()
 }
 
@@ -242,7 +280,7 @@ pub fn write_text(project_dir: Option<&Path>, raw_path: &str, body: &str) -> any
 }
 
 pub fn write_text_with(allow: &Allowlist, raw_path: &str, body: &str) -> anyhow::Result<()> {
-    let path = allow.resolve(raw_path);
+    let path = allow.resolve(raw_path)?;
     anyhow::ensure!(allow.can_write(&path), "path is outside the allowed roots");
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("create parent dir failed")?;
@@ -275,12 +313,31 @@ mod tests {
         (tmp, allow)
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn cyclic_symlinks_fail_without_blocking_reads_writes_or_probes() {
+        let (tmp, allow) = isolated("symlink-cycle");
+        let path = tmp.join("config/guild/loop");
+        std::os::unix::fs::symlink("loop", &path).unwrap();
+        assert!(read_text_with(&allow, path.to_str().unwrap())
+            .unwrap_err()
+            .to_string()
+            .contains("symbolic links"));
+        assert!(write_text_with(&allow, path.to_str().unwrap(), "x").is_err());
+        assert!(!exists_with(&allow, path.to_str().unwrap()));
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
     #[test]
     fn reads_inside_the_project_and_roots_pass_outside_fail() {
         let (tmp, mut allow) = isolated("read");
         let project = tmp.join("proj");
         std::fs::create_dir_all(&project).unwrap();
-        allow = Allowlist::for_project_with(Some(&project), &tmp.join("config/guild"), &tmp.join("home"));
+        allow = Allowlist::for_project_with(
+            Some(&project),
+            &tmp.join("config/guild"),
+            &tmp.join("home"),
+        );
         let inside = touch(&project, "README.md", "hello");
         let outside = touch(&tmp.join("elsewhere"), "secret.txt", "nope");
         let user_skill = touch(&tmp.join("home/.agents"), "skills/x/SKILL.md", "skill body");
@@ -300,7 +357,8 @@ mod tests {
         );
         assert!(read_text_with(&allow, outside.to_str().unwrap()).is_err());
         // No project bound: the project file is unreachable.
-        let unbound = Allowlist::for_project_with(None, &tmp.join("config/guild"), &tmp.join("home"));
+        let unbound =
+            Allowlist::for_project_with(None, &tmp.join("config/guild"), &tmp.join("home"));
         assert!(read_text_with(&unbound, inside.to_str().unwrap()).is_err());
         // The ancestor walk probes .git only — other paths above (even
         // system files) report nothing.
@@ -346,8 +404,11 @@ mod tests {
         let (tmp, _) = isolated("write");
         let project = tmp.join("proj");
         std::fs::create_dir_all(&project).unwrap();
-        let allow =
-            Allowlist::for_project_with(Some(&project), &tmp.join("config/guild"), &tmp.join("home"));
+        let allow = Allowlist::for_project_with(
+            Some(&project),
+            &tmp.join("config/guild"),
+            &tmp.join("home"),
+        );
         let elsewhere = tmp.join("elsewhere");
         std::fs::create_dir_all(&elsewhere).unwrap();
 
@@ -382,8 +443,11 @@ mod tests {
         let real = tmp.join("real");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(&real).unwrap();
-        let allow =
-            Allowlist::for_project_with(Some(&project), &tmp.join("config/guild"), &tmp.join("home"));
+        let allow = Allowlist::for_project_with(
+            Some(&project),
+            &tmp.join("config/guild"),
+            &tmp.join("home"),
+        );
         touch(&real, "secret.txt", "nope");
         #[cfg(unix)]
         {
@@ -393,7 +457,12 @@ mod tests {
             // A dangling link whose target is outside the roots must not
             // become a write path either.
             std::os::unix::fs::symlink(&tmp.join("no-such-dir"), project.join("dangling")).unwrap();
-            assert!(write_text_with(&allow, &format!("{}/dangling/x.txt", project.display()), "no").is_err());
+            assert!(write_text_with(
+                &allow,
+                &format!("{}/dangling/x.txt", project.display()),
+                "no"
+            )
+            .is_err());
         }
     }
 }

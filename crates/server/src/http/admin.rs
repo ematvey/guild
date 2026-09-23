@@ -528,12 +528,10 @@ async fn save_integration(
                     .map(|a| a.secret_names.clone())
                     .unwrap_or_default()
             });
-        if enabled {
-            if config["mcp"]["url"].as_str().is_none() {
-                return Err(ApiError::bad_request(
-                    "mcp plugin needs an mcp.url before enabling",
-                ));
-            }
+        if enabled && config["mcp"]["url"].as_str().is_none() {
+            return Err(ApiError::bad_request(
+                "mcp plugin needs an mcp.url before enabling",
+            ));
         }
         // Resolve stored secrets, overlay the submitted values in memory,
         // and test the connection before anything is written. A save that
@@ -589,7 +587,7 @@ async fn save_integration(
             .await?;
         return Ok(());
     }
-    let Some(plugin) = crate::integrations::integration_by_name(&name) else {
+    let Some(plugin) = crate::integrations::integration_by_name(name) else {
         return Err(ApiError::not_found(format!("unknown integration {name}")));
     };
     let mut config = body
@@ -707,6 +705,7 @@ async fn mcp_test_connection(
     let headers =
         crate::integrations::envelope_headers(&Uuid::now_v7(), &org_id, None, None, secrets);
     let key = crate::worker::mcp_pool::PoolKey {
+        org: org_id,
         slug: "save-test".to_string(),
         url: url.to_string(),
         acting_as: None,
@@ -742,55 +741,6 @@ async fn list_integration_secrets(
         .list(admin.0.org_id, &row.name, &master)
         .await?;
     Ok(Json(json!({ "secrets": secrets })))
-}
-
-/// Removes one secret. If the integration is enabled and its manifest
-/// declares that secret, the row is auto-disabled (spec §9).
-async fn delete_integration_secret(
-    State(state): State<AppState>,
-    admin: AdminUser,
-    Path((id, secret)): Path<(Uuid, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let store = state.store().await?;
-    let row = store
-        .integrations()
-        .get(admin.0.org_id, id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("unknown integration"))?;
-    store
-        .integration_secrets()
-        .delete(admin.0.org_id, &row.name, &secret)
-        .await?;
-    if row.enabled {
-        // The row's manifest declares its secrets: the registry manifest
-        // when a v2 bundle claims the slug (it shadows a same-named
-        // built-in, see save_integration), the in-code manifest otherwise.
-        let registry_manifest =
-            latest_integration_manifest(&store, admin.0.org_id, &row.name).await?;
-        let v2_claimed = registry_manifest
-            .as_ref()
-            .map(|m| m.mcp.is_some())
-            .unwrap_or(false)
-            || row.config["mcp"]["url"].as_str().is_some();
-        let declares = if v2_claimed {
-            registry_manifest
-                .and_then(|m| m.auth)
-                .map(|a| a.secret_names.contains(&secret))
-                .unwrap_or(false)
-        } else {
-            crate::integrations::integration_by_name(&row.name)
-                .and_then(|p| p.manifest().auth)
-                .map(|a| a.secret_names.contains(&secret))
-                .unwrap_or(false)
-        };
-        if declares {
-            store
-                .integrations()
-                .update(admin.0.org_id, row.id, &row.config, false)
-                .await?;
-        }
-    }
-    Ok(Json(json!({ "ok": true })))
 }
 
 // ---------- per-tool admin curation (adapters spec §5/§6) ----------
@@ -894,6 +844,7 @@ async fn list_integration_tools(
         &secrets,
     );
     let key = crate::worker::mcp_pool::PoolKey {
+        org: admin.0.org_id,
         slug: row.name.clone(),
         url: url.to_string(),
         acting_as: None,
@@ -1131,17 +1082,8 @@ async fn update_user(
     // An admin must not demote themselves, and the org's last admin must
     // not lose the admin role — otherwise no one can administer the org.
     let target = store.identity().get_user(user_id).await?;
-    if target.role == "admin" && role == Some("member") {
-        if target.id == admin.0.id {
-            return Err(ApiError::bad_request("cannot demote yourself"));
-        }
-        let admins = store.identity().list_users(admin.0.org_id).await?;
-        if admins.iter().filter(|u| u.role == "admin").count() <= 1 {
-            return Err(ApiError::conflict(
-                "last_admin",
-                "cannot demote the last admin",
-            ));
-        }
+    if target.role == "admin" && role == Some("member") && target.id == admin.0.id {
+        return Err(ApiError::bad_request("cannot demote yourself"));
     }
     let user = store
         .identity()

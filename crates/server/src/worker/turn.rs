@@ -284,7 +284,6 @@ pub async fn load_media_map(
     Ok(map)
 }
 
-
 /// Route quota enforcement (spec §4.5): reject when month-to-date spend for
 /// (org, model) has reached the route's monthly cap.
 pub async fn enforce_quota(
@@ -311,4 +310,3 @@ pub async fn enforce_quota(
     }
     Ok(())
 }
-

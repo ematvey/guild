@@ -12,10 +12,7 @@ use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route(
-            "/api/v1/projects",
-            axum::routing::post(create).get(list),
-        )
+        .route("/api/v1/projects", axum::routing::post(create).get(list))
         .route(
             "/api/v1/projects/{id}",
             axum::routing::put(update).delete(delete),

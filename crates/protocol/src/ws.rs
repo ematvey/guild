@@ -5,6 +5,16 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Executor-owned context returned by the versioned context.prepare_v1 operation.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "Ws.ts", optional_fields))]
+pub struct MachineContext {
+    pub instructions: Option<String>,
+    pub skills_index: String,
+    pub skill_expansions: String,
+}
+
 /// Client → server. `Sync` declares the currently open chat (None = none
 /// open); the server answers with the state-sync sequence. `ToolResult`
 /// delivers a machine-tool outcome (the WS replacement for the HTTP
@@ -32,6 +42,8 @@ pub enum WsClientMsg {
         content: String,
         is_error: bool,
         meta: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<String>,
     },
 }
 
@@ -146,6 +158,7 @@ mod tests {
         let tr = WsClientMsg::ToolResult {
             chat_id: Uuid::nil(),
             call_id: "c1".into(),
+            images: vec!["data:image/png;base64,eA==".into()],
             content: "out".into(),
             is_error: false,
             meta: None,
@@ -154,6 +167,16 @@ mod tests {
             serde_json::from_str::<WsClientMsg>(&serde_json::to_string(&tr).unwrap()).unwrap(),
             tr
         );
+    }
+
+    #[test]
+    fn old_tool_result_without_images_still_deserializes() {
+        let message: WsClientMsg = serde_json::from_value(serde_json::json!({
+            "type": "tool_result", "chat_id": Uuid::nil(), "call_id": "old",
+            "content": "text", "is_error": false, "meta": null
+        }))
+        .unwrap();
+        assert!(matches!(message, WsClientMsg::ToolResult { images, .. } if images.is_empty()));
     }
 
     #[test]

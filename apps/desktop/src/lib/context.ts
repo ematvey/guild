@@ -159,13 +159,16 @@ async function repoRoots(
     cur = parent;
   }
   if (!atGit) levels.splice(1);
-  return levels;
+  return levels.reverse();
 }
 
 function parentOf(dir: string): string | null {
-  const i = dir.lastIndexOf("/");
+  const normalized = dir.replaceAll("\\", "/").replace(/\/$/, "");
+  if (/^[a-z]:$/i.test(normalized) || /^\/\/[^/]+\/[^/]+$/.test(normalized)) return null;
+  const i = normalized.lastIndexOf("/");
   if (i <= 0) return null;
-  return dir.slice(0, i);
+  const parent = normalized.slice(0, i);
+  return /^[a-z]:$/i.test(parent) ? `${parent}/` : parent;
 }
 
 /** Skills visible to a turn, lowest precedence first (skills.rs discover_with_home). */
@@ -176,13 +179,16 @@ export async function discoverSkills(
   home: string,
 ): Promise<SkillEntry[]> {
   const out: SkillEntry[] = [];
+  if (projectDir) {
+    projectDir = projectDir.replaceAll("\\", "/").replace(/\/$/, "");
+    for (const e of await scanDir(fs, projectDir, `${projectDir}/.guild`)) merge(out, e);
+  }
   for (const e of await scanDir(fs, projectDir, configDir)) merge(out, e);
   for (const e of await scanDir(fs, projectDir, `${home}/.agents`)) merge(out, e);
   if (projectDir) {
     for (const root of await repoRoots(fs, projectDir)) {
-      for (const e of await scanDir(fs, projectDir, root)) merge(out, e);
+      for (const e of await scanDir(fs, projectDir, `${root}/.agents`)) merge(out, e);
     }
-    for (const e of await scanDir(fs, projectDir, `${projectDir}/.guild`)) merge(out, e);
   }
   return out;
 }
@@ -352,6 +358,7 @@ export async function projectAgentDocs(
   projectDir: string,
   maxBytes = PROJECT_DOC_MAX_BYTES,
 ): Promise<DocEntry[]> {
+  projectDir = projectDir.replaceAll("\\", "/").replace(/\/$/, "");
   const out: DocEntry[] = [];
   let remaining = maxBytes;
   for (const dir of await searchDirs(fs, projectDir)) {

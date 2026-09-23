@@ -14,6 +14,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{OnceCell, RwLock};
 use uuid::Uuid;
 
+type AgentsMdCache = HashMap<(Uuid, String, String), (std::time::Instant, String)>;
+pub type GenerationBuffers = (Arc<RwLock<String>>, Arc<RwLock<String>>);
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -32,11 +35,9 @@ pub struct AppState {
     pub hub: Arc<Hub>,
     /// One live-frame feed per user, shared by all of their sockets.
     pub feeds: Arc<Mutex<HashMap<Uuid, crate::http::feed::FeedHandle>>>,
-    /// Machine-fetched AGENTS.md chains per project folder (web parity, spec
-    /// 2026-09-18 unification §4 phase 5a): the machine channel exposes no
-    /// mtime verb, so freshness is a TTL bound instead. Outside the Restate
-    /// journal — a cache miss just re-dispatches the read.
-    pub agents_md_cache: Arc<Mutex<HashMap<String, (std::time::Instant, String)>>>,
+    /// Machine-fetched instructions keyed by organization, executor and folder.
+    /// Cache selection is journaled by the workflow before branching.
+    pub agents_md_cache: Arc<Mutex<AgentsMdCache>>,
 }
 
 impl AppState {
@@ -233,6 +234,14 @@ impl GenerationTable {
     /// covers both the check and the insert, so two concurrent sends cannot
     /// both start a ChatRunner invocation.
     pub fn try_begin(&self, chat_id: Uuid) -> Result<GenerationHandle, ApiError> {
+        self.try_begin_with_id(chat_id, Uuid::now_v7())
+    }
+
+    pub fn try_begin_with_id(
+        &self,
+        chat_id: Uuid,
+        generation_id: Uuid,
+    ) -> Result<GenerationHandle, ApiError> {
         let mut map = self.map.lock().unwrap();
         if map.contains_key(&chat_id) {
             return Err(ApiError::new(
@@ -241,7 +250,7 @@ impl GenerationTable {
                 "a generation is already running for this chat — wait for it to finish",
             ));
         }
-        let gen = Self::insert(&mut map, chat_id);
+        let gen = Self::insert(&mut map, chat_id, generation_id);
         Ok(gen)
     }
 
@@ -253,6 +262,10 @@ impl GenerationTable {
     /// clients attached on the worker's process — catch-up after completion
     /// is unaffected since Postgres is the record system.
     pub fn attach(&self, chat_id: Uuid) -> GenerationHandle {
+        self.attach_with_id(chat_id, None)
+    }
+
+    pub fn attach_with_id(&self, chat_id: Uuid, generation_id: Option<Uuid>) -> GenerationHandle {
         let mut map = self.map.lock().unwrap();
         if let Some(g) = map.get(&chat_id) {
             return GenerationHandle {
@@ -263,19 +276,25 @@ impl GenerationTable {
                 cancel: g.cancel.clone(),
             };
         }
-        Self::insert(&mut map, chat_id)
+        Self::insert(
+            &mut map,
+            chat_id,
+            generation_id.unwrap_or_else(Uuid::now_v7),
+        )
     }
 
     fn insert(
         map: &mut HashMap<Uuid, ActiveGeneration>,
         chat_id: Uuid,
+        generation_id: Uuid,
     ) -> GenerationHandle {
         let (tx, _) = tokio::sync::broadcast::channel::<StreamEvent>(1024);
-        let gen = ActiveGeneration::new(
+        let mut gen = ActiveGeneration::new(
             tx,
             Arc::new(RwLock::new(String::new())),
             Arc::new(RwLock::new(String::new())),
         );
+        gen.id = generation_id;
         let handle = GenerationHandle {
             id: gen.id,
             tx: gen.tx.clone(),
@@ -288,13 +307,17 @@ impl GenerationTable {
     }
 
     pub fn handle(&self, chat_id: Uuid) -> Option<GenerationHandle> {
-        self.map.lock().unwrap().get(&chat_id).map(|g| GenerationHandle {
-            id: g.id,
-            tx: g.tx.clone(),
-            text: g.text.clone(),
-            thinking: g.thinking.clone(),
-            cancel: g.cancel.clone(),
-        })
+        self.map
+            .lock()
+            .unwrap()
+            .get(&chat_id)
+            .map(|g| GenerationHandle {
+                id: g.id,
+                tx: g.tx.clone(),
+                text: g.text.clone(),
+                thinking: g.thinking.clone(),
+                cancel: g.cancel.clone(),
+            })
     }
 
     pub fn is_generating(&self, chat_id: Uuid) -> bool {
@@ -305,13 +328,31 @@ impl GenerationTable {
     /// stop endpoint and steered sends set it; the ChatRunner observes it
     /// inside journaled steps.
     pub fn cancel_flag(&self, chat_id: Uuid) -> Option<Arc<std::sync::atomic::AtomicBool>> {
-        self.map.lock().unwrap().get(&chat_id).map(|g| g.cancel.clone())
+        self.map
+            .lock()
+            .unwrap()
+            .get(&chat_id)
+            .map(|g| g.cancel.clone())
     }
 
     /// Retires the chat's generation (turn exit, invocation failure, stuck
     /// sweep).
     pub fn remove(&self, chat_id: Uuid) -> bool {
         self.map.lock().unwrap().remove(&chat_id).is_some()
+    }
+
+    /// Releases only the reservation made by this delivery attempt.
+    pub fn remove_if_id(&self, chat_id: Uuid, generation_id: Uuid) -> bool {
+        let mut map = self.map.lock().unwrap();
+        if map
+            .get(&chat_id)
+            .is_some_and(|generation| generation.id == generation_id)
+        {
+            map.remove(&chat_id);
+            true
+        } else {
+            false
+        }
     }
 
     /// The (chat, id, frame sender) of every tracked chat's in-flight
@@ -323,18 +364,12 @@ impl GenerationTable {
         let map = self.map.lock().unwrap();
         chats
             .iter()
-            .filter_map(|chat| {
-                map.get(chat)
-                    .map(|g| (*chat, g.id, g.tx.clone()))
-            })
+            .filter_map(|chat| map.get(chat).map(|g| (*chat, g.id, g.tx.clone())))
             .collect()
     }
 
     /// The replay buffers of a running generation, for delta-signature checks.
-    pub fn buffers(
-        &self,
-        chat_id: Uuid,
-    ) -> Option<(Arc<RwLock<String>>, Arc<RwLock<String>>)> {
+    pub fn buffers(&self, chat_id: Uuid) -> Option<GenerationBuffers> {
         self.map
             .lock()
             .unwrap()
@@ -392,17 +427,13 @@ impl GenerationTable {
     /// True while the call is suspended and owned by the given connection —
     /// the ownership check a late ToolResult frame must pass.
     pub fn owns_pending_tool(&self, chat_id: Uuid, call_id: &str, connection_id: Uuid) -> bool {
-        self.map
-            .lock()
-            .unwrap()
-            .get(&chat_id)
-            .is_some_and(|g| {
-                g.pending_tools
-                    .lock()
-                    .unwrap()
-                    .get(call_id)
-                    .is_some_and(|tool| tool.connection_id == Some(connection_id))
-            })
+        self.map.lock().unwrap().get(&chat_id).is_some_and(|g| {
+            g.pending_tools
+                .lock()
+                .unwrap()
+                .get(call_id)
+                .is_some_and(|tool| tool.connection_id == Some(connection_id))
+        })
     }
 
     pub fn has_pending_tool(&self, chat_id: Uuid, call_id: &str) -> bool {
@@ -441,11 +472,11 @@ impl GenerationTable {
                     .lock()
                     .unwrap()
                     .iter()
-                    .filter_map(|(call, tool)| {
-                        (tool.machine_id.as_deref() == Some(machine_id)
-                            && tool.connection_id != Some(connection))
-                        .then(|| (*chat, call.clone()))
+                    .filter(|&(_, tool)| {
+                        tool.machine_id.as_deref() == Some(machine_id)
+                            && tool.connection_id != Some(connection)
                     })
+                    .map(|(call, _)| (*chat, call.clone()))
                     .collect::<Vec<_>>()
             })
             .collect()
@@ -495,10 +526,20 @@ impl GenerationTable {
 /// the buffer write locks are held across the durable append, so a
 /// concurrent capture sees the view either before or after the commit,
 /// never torn.
+#[cfg(test)]
 pub(crate) async fn persist_assistant_step(
     state: &AppState,
     chat: Uuid,
     event: &protocol::api::ThreadEvent,
+) -> Result<crate::store::thread::ThreadEventRow, ApiError> {
+    persist_assistant_step_with_id(state, chat, event, Uuid::now_v7()).await
+}
+
+pub(crate) async fn persist_assistant_step_with_id(
+    state: &AppState,
+    chat: Uuid,
+    event: &protocol::api::ThreadEvent,
+    event_id: Uuid,
 ) -> Result<crate::store::thread::ThreadEventRow, ApiError> {
     let gen = state.generations.attach(chat);
     let text = gen.text;
@@ -509,7 +550,7 @@ pub(crate) async fn persist_assistant_step(
         .store()
         .await?
         .thread()
-        .append_event(chat, event)
+        .append_event_with_id(chat, event, event_id)
         .await?;
     text.clear();
     thinking.clear();
@@ -523,6 +564,48 @@ mod generation_table_tests {
 
     fn state() -> AppState {
         AppState::from_config(Config::test_config())
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn retried_assistant_commit_keeps_one_event_and_its_original_sequence() {
+        use protocol::api::{Block, ThreadEvent, UsagePayload};
+        let fixture = crate::test_support::full_state().await;
+        let event_id =
+            crate::worker::restate::durable_event_id("invocation-fixture", "assistant:1");
+        let event = ThreadEvent::AssistantMessage {
+            turn: 1,
+            step: 1,
+            blocks: vec![Block::Text {
+                text: "completed".into(),
+            }],
+            usage: UsagePayload::default(),
+            model: "fixture".into(),
+            interrupted: None,
+        };
+        let (first, retry) = tokio::join!(
+            persist_assistant_step_with_id(&fixture.state, fixture.chat_id, &event, event_id),
+            persist_assistant_step_with_id(&fixture.state, fixture.chat_id, &event, event_id),
+        );
+        let first = first.unwrap();
+        let retry = retry.unwrap();
+        assert_eq!(first.id, retry.id);
+        assert_eq!(first.seq, retry.seq);
+        let rows = fixture
+            .store()
+            .thread()
+            .list_events(fixture.org_id, fixture.chat_id)
+            .await
+            .unwrap();
+        assert_eq!(rows.iter().filter(|row| row.id == event_id).count(), 1);
+        assert_ne!(
+            event_id,
+            crate::worker::restate::durable_event_id("invocation-fixture", "assistant:2")
+        );
+        assert_ne!(
+            event_id,
+            crate::worker::restate::durable_event_id("other-invocation", "assistant:1")
+        );
     }
 
     fn tool(_call: &str, machine: Option<&str>, connection: Option<Uuid>) -> PendingTool {
@@ -558,6 +641,17 @@ mod generation_table_tests {
         // The slot frees cleanly.
         assert!(s.generations.remove(chat));
         assert!(s.generations.try_begin(chat).is_ok());
+    }
+
+    #[test]
+    fn stale_delivery_cleanup_preserves_new_generation() {
+        let s = state();
+        let chat = Uuid::now_v7();
+        let old = s.generations.try_begin(chat).unwrap();
+        assert!(s.generations.remove_if_id(chat, old.id));
+        let current = s.generations.try_begin(chat).unwrap();
+        assert!(!s.generations.remove_if_id(chat, old.id));
+        assert_eq!(s.generations.handle(chat).unwrap().id, current.id);
     }
 
     #[test]
@@ -606,7 +700,8 @@ mod generation_table_tests {
         // owns_pending_tool matches the dispatch connection only.
         assert!(!s.generations.owns_pending_tool(chat, &call, Uuid::now_v7()));
         let conn = Uuid::now_v7();
-        s.generations.set_pending_tool_connection(chat, &call, Some(conn));
+        s.generations
+            .set_pending_tool_connection(chat, &call, Some(conn));
         assert!(s.generations.owns_pending_tool(chat, &call, conn));
         assert!(!s.generations.owns_pending_tool(chat, &call, Uuid::now_v7()));
 
@@ -644,8 +739,11 @@ mod generation_table_tests {
         s.generations
             .set_pending_tool(chat_b, "b1", tool("b1", Some("m"), Some(live_conn)));
         // A tool bound to a different machine is never reported.
-        s.generations
-            .set_pending_tool(chat_b, "b2", tool("b2", Some("other"), Some(Uuid::now_v7())));
+        s.generations.set_pending_tool(
+            chat_b,
+            "b2",
+            tool("b2", Some("other"), Some(Uuid::now_v7())),
+        );
         let stale = s.generations.stale_machine_calls("m", live_conn);
         assert_eq!(stale, vec![(chat_a, "a1".to_string())]);
     }
@@ -695,8 +793,7 @@ mod generation_table_tests {
         let writer_state = state.clone();
         let writer = tokio::spawn(async move {
             for i in 0..40u32 {
-                *writer_state.generations.attach(chat).text.write().await =
-                    format!("step-{i}");
+                *writer_state.generations.attach(chat).text.write().await = format!("step-{i}");
                 let event = ThreadEvent::AssistantMessage {
                     turn: 1,
                     step: i,

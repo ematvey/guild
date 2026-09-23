@@ -28,6 +28,10 @@ fn sha256_hex(data: &[u8]) -> String {
 /// Exposes `echo(text)` (class read) and `admin_only_op()` (class admin),
 /// bound on 127.0.0.1:<random port>. Returns the base URL.
 async fn spawn_fixture() -> String {
+    spawn_fixture_recorded().await.0
+}
+
+async fn spawn_fixture_recorded() -> (String, Arc<std::sync::Mutex<Vec<axum::http::HeaderMap>>>) {
     use axum::Router;
     use rmcp::handler::server::ServerHandler;
     use rmcp::model::{
@@ -108,11 +112,20 @@ async fn spawn_fixture() -> String {
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     );
-    let app = Router::new().nest_service("/mcp", service);
+    let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let capture = recorded.clone();
+    let app = Router::new()
+        .nest_service("/mcp", service)
+        .layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                capture.lock().unwrap().push(request.headers().clone());
+                async move { next.run(request).await }
+            },
+        ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await });
-    format!("http://{addr}/mcp")
+    (format!("http://{addr}/mcp"), recorded)
 }
 
 // ---------- fixtures: org rows, registry, secrets ----------
@@ -339,7 +352,10 @@ fn auto_tools_are_recognized_and_namespaced() {
 #[tokio::test]
 async fn mcp_call_carries_identity_and_roundtrips() {
     let ts = test_state_with_db().await;
-    let url = spawn_fixture().await;
+    let (url, recorded) = spawn_fixture_recorded().await;
+    let caller = Uuid::now_v7();
+    let call_one = Uuid::now_v7();
+    let call_two = Uuid::now_v7();
     let (org, _) = install_plugin(&ts.store(), &url, None).await;
     let turn = resolve_plugins(&ts.state, org).await.unwrap().remove(0);
 
@@ -350,6 +366,8 @@ async fn mcp_call_carries_identity_and_roundtrips() {
         "echo",
         json!({ "text": "hello" }),
         org,
+        caller,
+        call_one,
         Some("caller@a.b"),
     )
     .await
@@ -358,11 +376,35 @@ async fn mcp_call_carries_identity_and_roundtrips() {
 
     // A changed acting_as creates a separate pooled connection (the
     // envelope rides the connection), and the call still works.
-    let out = call_plugin(&ts.state, &turn, "echo", json!({ "text": "x" }), org, None)
-        .await
-        .unwrap();
+    let out = call_plugin(
+        &ts.state,
+        &turn,
+        "echo",
+        json!({ "text": "x" }),
+        org,
+        caller,
+        call_two,
+        Some("caller@a.b"),
+    )
+    .await
+    .unwrap();
     assert_eq!(out.content, "echo: x");
-    assert_eq!(ts.state.mcp_pool.len(), 2);
+    assert_eq!(
+        ts.state.mcp_pool.len(),
+        1,
+        "tool calls do not accumulate pool entries"
+    );
+    let headers = recorded.lock().unwrap();
+    for call_id in [call_one, call_two] {
+        assert!(headers
+            .iter()
+            .any(|h| h.get("x-guild-call-id").and_then(|v| v.to_str().ok())
+                == Some(call_id.to_string().as_str())
+                && h.get("x-guild-caller").and_then(|v| v.to_str().ok())
+                    == Some(caller.to_string().as_str())
+                && h.get("x-guild-org").and_then(|v| v.to_str().ok())
+                    == Some(org.to_string().as_str())));
+    }
 }
 
 #[tokio::test]

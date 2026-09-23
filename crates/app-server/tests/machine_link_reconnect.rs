@@ -25,7 +25,8 @@ async fn standalone_listener() -> tokio::net::TcpListener {
             if let Ok(content) = std::fs::read_to_string(path) {
                 for line in content.lines().skip(1) {
                     if let Some(p) = line.split_whitespace().nth(1) {
-                        if let Ok(p) = u64::from_str_radix(p.rsplit(':').next().unwrap_or("0"), 16) {
+                        if let Ok(p) = u64::from_str_radix(p.rsplit(':').next().unwrap_or("0"), 16)
+                        {
                             if p as u16 != port {
                                 ports.insert(p as u16);
                             }

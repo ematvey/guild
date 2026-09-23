@@ -20,10 +20,16 @@ uuid.workspace = true
 chrono.workspace = true
 jsonschema = { version = "0.55", default-features = false }
 similar = "3"
-tokio = { version = "1", features = ["process", "time", "fs"] }
+tokio = { version = "1", features = ["process", "time", "fs", "io-util", "macros"] }
 tar = "0.4"
 flate2 = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 wiremock = "0.6"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_Security"] }

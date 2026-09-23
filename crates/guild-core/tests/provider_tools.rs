@@ -96,7 +96,8 @@ async fn anthropic_tool_call_blocks_assemble() {
              event: content_block_delta\n\
              data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\": \\\"a.rs\\\"}\"}}\n\n\
              event: content_block_stop\n\
-             data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+             data: {\"type\":\"content_block_stop\",\"index\":0}\n\n\
+             data: {\"type\":\"message_stop\"}\n\n",
         ))
         .mount(&server)
         .await;

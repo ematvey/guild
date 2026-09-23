@@ -99,7 +99,7 @@ pub struct UpgradeQuery {
 
 /// Desktop-supplied registry metadata from the upgrade query.
 #[derive(Default, Clone)]
-struct MachineConnectMeta {
+pub(crate) struct MachineConnectMeta {
     label: Option<String>,
     fingerprint: Option<String>,
     os: Option<String>,
@@ -200,12 +200,15 @@ pub struct SocketSink {
 }
 
 impl SocketSink {
-    fn enqueue(&self, output: SocketOutput) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+    fn enqueue(
+        &self,
+        output: SocketOutput,
+    ) -> Result<(), Box<mpsc::error::SendError<SocketOutput>>> {
         let _ordering = self.ordering.lock().unwrap();
         let pending = self.backlog.pending.fetch_add(1, Ordering::Relaxed) + 1;
         if let Err(error) = self.tx.send(output) {
             self.backlog.pending.fetch_sub(1, Ordering::Relaxed);
-            return Err(error);
+            return Err(Box::new(error));
         }
         if pending > SOCKET_HIGH_WATER {
             // Latched until disconnect; the writer observes this even while
@@ -218,14 +221,14 @@ impl SocketSink {
     pub(crate) fn try_send(
         &self,
         message: WsServerMsg,
-    ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+    ) -> Result<(), Box<mpsc::error::SendError<SocketOutput>>> {
         self.enqueue(SocketOutput::Message(message))
     }
 
     pub(crate) async fn send(
         &self,
         message: WsServerMsg,
-    ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+    ) -> Result<(), Box<mpsc::error::SendError<SocketOutput>>> {
         if matches!(message, WsServerMsg::AuthRequired) {
             self.backlog.auth_required.send_replace(true);
             return Ok(());
@@ -239,14 +242,14 @@ impl SocketSink {
         let _ = self.enqueue(SocketOutput::Message(WsServerMsg::Displaced));
     }
 
-    pub(crate) async fn start_sync(&self) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+    pub(crate) async fn start_sync(&self) -> Result<(), Box<mpsc::error::SendError<SocketOutput>>> {
         self.enqueue(SocketOutput::SyncStart)
     }
 
     async fn pong(
         &self,
         payload: axum::body::Bytes,
-    ) -> Result<(), mpsc::error::SendError<SocketOutput>> {
+    ) -> Result<(), Box<mpsc::error::SendError<SocketOutput>>> {
         self.enqueue(SocketOutput::Pong(payload))
     }
 }
@@ -502,6 +505,8 @@ async fn supervise_socket(
     }
 }
 
+// Socket lifecycle receives the already authenticated connection context explicitly.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn drive_socket(
     state: AppState,
     identity: TicketIdentity,
@@ -555,14 +560,8 @@ pub(crate) async fn drive_socket(
                 .await
             {
                 Ok(registration) => {
-                    register_machine_record(
-                        &state,
-                        &user.0,
-                        machine_id,
-                        &machine_meta,
-                        peer_ip,
-                    )
-                    .await;
+                    register_machine_record(&state, &user.0, machine_id, &machine_meta, peer_ip)
+                        .await;
                     Some(registration.shutdown)
                 }
                 Err(crate::http::hub::MachineRejected::ForeignOwner) => {
@@ -579,15 +578,15 @@ pub(crate) async fn drive_socket(
                     return;
                 }
                 Err(crate::http::hub::MachineRejected::Displaced) => {
-                let _ = tokio::time::timeout(
-                    TERMINAL_WRITE_TIMEOUT,
-                    ws_tx.send(axum::extract::ws::Message::text(
-                        serde_json::to_string(&WsServerMsg::Displaced).unwrap(),
-                    )),
-                )
-                .await;
-                return;
-            }
+                    let _ = tokio::time::timeout(
+                        TERMINAL_WRITE_TIMEOUT,
+                        ws_tx.send(axum::extract::ws::Message::text(
+                            serde_json::to_string(&WsServerMsg::Displaced).unwrap(),
+                        )),
+                    )
+                    .await;
+                    return;
+                }
                 Err(crate::http::hub::MachineRejected::Cap) => {
                     let _ = tokio::time::timeout(
                         TERMINAL_WRITE_TIMEOUT,
@@ -713,7 +712,11 @@ pub(crate) async fn drive_socket(
 /// only by its owning user (the registry row is the durable identity; the
 /// hub enforces the same rule against a live slot). An unregistered id is a
 /// new pairing and passes. Registry unavailability fails closed.
-async fn machine_slot_owned(state: &AppState, user: &crate::store::identity::UserRow, machine_id: &str) -> bool {
+async fn machine_slot_owned(
+    state: &AppState,
+    user: &crate::store::identity::UserRow,
+    machine_id: &str,
+) -> bool {
     let Ok(store) = state.store().await else {
         // Registry unavailable: fail closed — no slot is claimed without an
         // ownership answer.
@@ -797,18 +800,18 @@ async fn handle_client_msg(
             error,
         } => state
             .hub
-            .resolve_machine_response(&request_id, ok, payload, error),
+            .resolve_machine_response(member, &request_id, ok, payload, error),
         WsClientMsg::ToolResult {
             chat_id,
             call_id,
             content,
             is_error,
             meta,
+            images,
         } => {
-            let owns_call =
-                state
-                    .generations
-                    .owns_pending_tool(chat_id, &call_id, member.conn_id);
+            let owns_call = state
+                .generations
+                .owns_pending_tool(chat_id, &call_id, member.conn_id);
             if !owns_call {
                 return;
             }
@@ -827,6 +830,7 @@ async fn handle_client_msg(
                         "content": content,
                         "is_error": is_error,
                         "meta": meta,
+                        "images": images,
                     }),
                 )
                 .await?;

@@ -38,8 +38,15 @@ fn workspace_root(state: &AppState, org_id: Uuid) -> PathBuf {
         .join(org_id.to_string())
 }
 
-pub fn workspace_dir(state: &AppState, org_id: Uuid, workspace_name: &str) -> PathBuf {
-    workspace_root(state, org_id).join(workspace_name)
+pub fn workspace_dir(
+    state: &AppState,
+    org_id: Uuid,
+    workspace_name: &str,
+) -> Result<PathBuf, ApiError> {
+    if !crate::store::agent_sessions::valid_workspace_name(workspace_name) {
+        return Err(ApiError::bad_request("invalid workspace name"));
+    }
+    Ok(workspace_root(state, org_id).join(workspace_name))
 }
 
 async fn create_session(
@@ -50,6 +57,7 @@ async fn create_session(
     let name = body["workspace_name"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing workspace_name"))?;
+    let dir = workspace_dir(&state, user.0.org_id, name)?;
     let store = state.store().await?;
     let chat = store
         .chats()
@@ -59,7 +67,6 @@ async fn create_session(
         .agent_sessions()
         .create(user.0.org_id, user.0.id, chat.id, name)
         .await?;
-    let dir = workspace_dir(&state, user.0.org_id, name);
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| ApiError::internal(format!("workspace dir create failed: {e}")))?;
@@ -146,4 +153,21 @@ async fn run_turn(
         agents_md: None,
     };
     crate::http::gateway::submit_turn(&state, &user.0, req, None, None).await
+}
+
+#[cfg(test)]
+mod workspace_boundary_tests {
+    use super::*;
+    #[test]
+    fn workspace_paths_reject_absolute_traversal_and_empty_names() {
+        let state = AppState::from_config(crate::config::Config::test_config());
+        let org = Uuid::nil();
+        for name in ["/", "../other", "a/b", "", "C:\\Windows"] {
+            assert!(workspace_dir(&state, org, name).is_err(), "{name}");
+        }
+        assert_eq!(
+            workspace_dir(&state, org, "repo-1").unwrap(),
+            workspace_root(&state, org).join("repo-1")
+        );
+    }
 }

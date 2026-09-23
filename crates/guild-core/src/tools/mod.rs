@@ -144,6 +144,18 @@ impl ToolRegistry {
         workdir: &Path,
         args: Value,
     ) -> Result<ToolOutcome, ToolFailure> {
+        self.run_with_artifacts(name, workdir, args, self.artifacts.as_deref())
+            .await
+    }
+
+    /// Per-call authenticated artifact source for a shared builtin registry.
+    pub async fn run_with_artifacts(
+        &self,
+        name: &str,
+        workdir: &Path,
+        args: Value,
+        hooks: Option<&artifacts::ArtifactHooks>,
+    ) -> Result<ToolOutcome, ToolFailure> {
         let tool = self
             .get(name)
             .ok_or_else(|| ToolFailure::InvalidInput(format!("unknown tool {name}")))?;
@@ -155,7 +167,7 @@ impl ToolRegistry {
                 "arguments for {name} failed validation: {first}"
             )));
         }
-        if let Some(hooks) = &self.artifacts {
+        if let Some(hooks) = hooks {
             artifacts::prepare(hooks, name, workdir, &args).await?;
         }
         tool.run(workdir, args).await

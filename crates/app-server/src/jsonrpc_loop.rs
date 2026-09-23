@@ -84,7 +84,11 @@ impl Shared {
     /// its machine identity. Called after every auth transition (inside
     /// `AuthState::transition`) and at boot.
     pub fn publish_machine_link(&self) {
-        self.session.lock().unwrap().auth.publish(&self.machine_link);
+        self.session
+            .lock()
+            .unwrap()
+            .auth
+            .publish(&self.machine_link);
     }
 }
 
@@ -92,8 +96,10 @@ impl Shared {
 /// app restart or a GUI engine re-spawn keeps auth. Thin wrapper over
 /// `AuthState::restored` (the auth-state module owns the store).
 pub async fn restored_session() -> anyhow::Result<Session> {
-    let mut session = Session::default();
-    session.auth = AuthState::restored().await?;
+    let session = Session {
+        auth: AuthState::restored().await?,
+        ..Session::default()
+    };
     Ok(session)
 }
 
@@ -410,8 +416,12 @@ fn fs_bridge_call(req: &Request) -> anyhow::Result<Response> {
         .context("missing path")?
         .to_string();
     let payload = match req.method.as_str() {
-        "fs.read_text" => json!({ "content": crate::fs_bridge::read_text(project_dir.as_deref(), &path)? }),
-        "fs.list_dir" => json!({ "entries": crate::fs_bridge::list_dir(project_dir.as_deref(), &path)? }),
+        "fs.read_text" => {
+            json!({ "content": crate::fs_bridge::read_text(project_dir.as_deref(), &path)? })
+        }
+        "fs.list_dir" => {
+            json!({ "entries": crate::fs_bridge::list_dir(project_dir.as_deref(), &path)? })
+        }
         "fs.exists" => json!({ "exists": crate::fs_bridge::exists(project_dir.as_deref(), &path) }),
         "fs.write_text" => {
             let body = req.params["body"].as_str().context("missing body")?;
@@ -420,7 +430,7 @@ fn fs_bridge_call(req: &Request) -> anyhow::Result<Response> {
         }
         other => anyhow::bail!("unknown fs verb {other}"),
     };
-    Ok(Response::ok(req.id, payload.into()))
+    Ok(Response::ok(req.id, payload))
 }
 
 fn param<'a>(req: &'a Request, key: &'a str) -> anyhow::Result<&'a str> {
@@ -448,7 +458,8 @@ fn auth_change_with_store(
     store: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let mut s = shared.session.lock().unwrap();
-    s.auth.transition(change, store.as_deref(), &shared.machine_link)
+    s.auth
+        .transition(change, store.as_deref(), &shared.machine_link)
 }
 
 async fn machine_identify(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
@@ -479,8 +490,8 @@ async fn machine_identify_with_store(
 /// machine link (the webview re-identifies on the next login). Thin over
 /// `AuthState::transition`.
 async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    let result =
-        auth_change(&shared, AuthChange::SignOut).map(|_| Response::ok(req.id, json!({ "ok": true })));
+    let result = auth_change(&shared, AuthChange::SignOut)
+        .map(|_| Response::ok(req.id, json!({ "ok": true })));
     let _ = out_tx.send(response_value(req.id, result));
 }
 
@@ -489,8 +500,7 @@ async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSend
 /// The webview sends its stable per-install `machine_id` along (when it has
 /// one), so the executor link comes up in the same step as the login — no
 /// gap in which a project create can race the not-yet-registered machine
-/// and fail with "unknown machine". Shells that omit the field keep working
-/// via the follow-up `machine.identify` rpc.
+/// and fail with "unknown machine". Shells that omit the field reuse the stored identity or generate one.
 fn adopt_login_with_identity(
     shared: &Shared,
     base_url: String,
@@ -508,17 +518,23 @@ fn adopt_login_with_identity(
         },
         store.clone(),
     )?;
-    if let Some(machine_id) = machine_id.filter(|id| !id.is_empty()) {
-        auth_change_with_store(shared, AuthChange::Identify { machine_id }, store)?;
-    }
+    let machine_id = machine_id
+        .filter(|id| !id.is_empty())
+        .or_else(|| {
+            shared
+                .session
+                .lock()
+                .unwrap()
+                .auth
+                .machine_id()
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| Uuid::now_v7().to_string());
+    auth_change_with_store(shared, AuthChange::Identify { machine_id }, store)?;
     Ok(())
 }
 
-async fn login_task(
-    shared: Shared,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
+async fn login_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let result = async {
         let base_url = param(&req, "base_url")?.to_string();
         let email = param(&req, "email")?.to_string();
@@ -540,11 +556,7 @@ async fn login_task(
 
 /// Redeems a one-time pairing code (webapp-issued) for a session — the
 /// desktop counterpart of login when the org ships shared installers.
-async fn pair_task(
-    shared: Shared,
-    req: Request,
-    out_tx: mpsc::UnboundedSender<Value>,
-) {
+async fn pair_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let result = async {
         let code = param(&req, "code")?.to_string();
         let (base_url, token, user) = CloudClient::pair(&code).await?;
@@ -658,13 +670,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         );
         s.agent_running = true;
         let prompt = param(&req, "prompt")?.to_string();
-        Ok((
-            cloud,
-            project_dir,
-            s.model.clone(),
-            prompt,
-            machine_id,
-        ))
+        Ok((cloud, project_dir, s.model.clone(), prompt, machine_id))
     })() {
         Ok(v) => v,
         Err(e) => {
@@ -722,7 +728,10 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
     //    agent.error — the old agent.start contract.
     let _ = out_tx.send(response_value(
         req.id,
-        Ok(Response::ok(req.id, serde_json::json!({"started": true, "chat_id": chat_id}))),
+        Ok(Response::ok(
+            req.id,
+            serde_json::json!({"started": true, "chat_id": chat_id}),
+        )),
     ));
 
     let (policy, pending) = {
@@ -908,7 +917,13 @@ async fn registry_install(
             .clone()
             .context("missing project_dir — pass it in registry.install params")?;
         let global = req.params["global"].as_bool().unwrap_or(false);
-        let publisher = session.lock().unwrap().auth.email().unwrap_or_default().to_string();
+        let publisher = session
+            .lock()
+            .unwrap()
+            .auth
+            .email()
+            .unwrap_or_default()
+            .to_string();
         let entry = crate::registry_client::install_skill(
             &cloud,
             &project_dir,
@@ -1033,7 +1048,52 @@ mod machine_link_tests {
     }
 
     #[tokio::test]
-    async fn login_without_machine_id_leaves_the_link_parked() {
+    async fn headless_login_persists_and_reuses_the_machine_identity() {
+        let shared = logged_in_shared();
+        let _rx = shared.machine_link.subscribe();
+        let path = std::env::temp_dir().join(format!("guild-headless-{}.json", Uuid::now_v7()));
+        for token in ["first", "second"] {
+            adopt_login_with_identity(
+                &shared,
+                "http://srv".into(),
+                token.into(),
+                "a@b".into(),
+                None,
+                Some(path.clone()),
+            )
+            .unwrap();
+            let stored = crate::session_store::load(&path).unwrap();
+            let cfg = crate::machine_link::config_from_store(&path)
+                .expect("persisted identity is executable");
+            assert_eq!(stored.token, token);
+            assert_eq!(
+                cfg.machine_id,
+                shared.session.lock().unwrap().auth.machine_id().unwrap()
+            );
+            if token == "first" {
+                let before = cfg.machine_id.clone();
+                adopt_login_with_identity(
+                    &shared,
+                    "http://srv".into(),
+                    token.into(),
+                    "a@b".into(),
+                    None,
+                    Some(path.clone()),
+                )
+                .unwrap();
+                assert_eq!(
+                    crate::machine_link::config_from_store(&path)
+                        .unwrap()
+                        .machine_id,
+                    before
+                );
+            }
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn login_without_machine_id_generates_an_identity() {
         let shared = logged_in_shared();
         let mut link_rx = shared.machine_link.subscribe();
 
@@ -1047,11 +1107,14 @@ mod machine_link_tests {
         )
         .unwrap();
 
-        assert!(link_rx.borrow_and_update().is_none());
+        assert!(link_rx
+            .borrow_and_update()
+            .as_ref()
+            .is_some_and(|cfg| Uuid::parse_str(&cfg.machine_id).is_ok()));
     }
 
     #[tokio::test]
-    async fn login_with_blank_machine_id_leaves_the_link_parked() {
+    async fn login_with_blank_machine_id_generates_an_identity() {
         let shared = logged_in_shared();
         let mut link_rx = shared.machine_link.subscribe();
 
@@ -1065,7 +1128,10 @@ mod machine_link_tests {
         )
         .unwrap();
 
-        assert!(link_rx.borrow_and_update().is_none());
+        assert!(link_rx
+            .borrow_and_update()
+            .as_ref()
+            .is_some_and(|cfg| Uuid::parse_str(&cfg.machine_id).is_ok()));
     }
 
     #[tokio::test]
@@ -1137,6 +1203,9 @@ mod machine_link_tests {
         let (out_tx2, mut out_rx2) = mpsc::unbounded_channel();
         session_clear(shared.clone(), identify_req(5, ""), out_tx2).await;
         let _ = out_rx2.recv().await.unwrap();
-        assert!(link_rx.borrow_and_update().is_none(), "sign-out drops the link");
+        assert!(
+            link_rx.borrow_and_update().is_none(),
+            "sign-out drops the link"
+        );
     }
 }

@@ -73,7 +73,7 @@ async fn publish_then_install_roundtrip() {
     let entry =
         registry_client::install_skill(&cloud, &project, "deploy-check", None, false, "a@b.c")
             .await
-        .unwrap();
+            .unwrap();
     assert_eq!(entry.name, "deploy-check");
     assert_eq!(entry.description, "test skill deploy-check");
     let installed = std::fs::read_to_string(&entry.path).unwrap();

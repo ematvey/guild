@@ -1,10 +1,46 @@
 # Guild — current state of work
 
-Updated 2026-09-23 (devbox executor restored on 0.5.18; daemon tracing
-enabled). Read this before touching the codebase; the requirements live in
+Updated 2026-09-24 (full-review continuation deployed and verified). Read this before touching the codebase; the requirements live in
 `docs/PRD.md` (product) and `docs/SRS.md` (system contracts); deploy
 nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
+
+## Review continuation deployed — 2026-09-24
+
+Closed the remaining recovery gaps from the full review, using no more than two
+subagents. Interval initialization now commits a schedule-starter outbox with
+its generation; a permanent invocation claim prevents duplicate chains beyond
+Restate idempotency retention. Separate dispatchers isolate routine outages
+from chat recovery. Disabled/superseded/deleted ticks retire; migration 0056
+rotates existing enabled generations and enqueues their replacement atomically.
+
+Executor capabilities add bounded instruction/skill hierarchy discovery and
+explicit skill expansion on the bound machine. Control replies match their
+original organization and connection. Old clients fall back to root AGENTS.md.
+Immediate artifact prefetch uses authenticated fetch and atomic publication;
+first-touch remains the offline/old-client recovery path.
+
+Browser File/Blob drafts and immutable unfinished sends now persist by API,
+account and chat. Checkpoints retain created chat IDs, successful uploads and
+exact POST payloads. Async hydration, navigation, newer edits, acceptance and
+signout preserve their ownership. Composer text shares the account scope;
+legacy global text is not silently imported into an unidentified account.
+
+603 distinct Rust tests, 163 frontend tests and nine mounted browser scenarios
+passed. Real Restate tests cover queued chat recovery and forced-replay routine
+startup with an accepted-but-lost response. Strict workspace Clippy and all
+Rust formatting pass; 12 legacy runtime tests remain ignored. Windows engine
+cross-compilation passed; native OS/external-provider checks remain separate.
+
+Server/UI deployed via detached compose build/up. Live bundle
+`index-BHKK91FR.js` matches the exact Docker bytes tested in the browser;
+API health is ok, migration count 56 and start_schedule registration verified.
+Restate retained its existing container, persistent volume and node identity;
+754 retained completed invocations before/after, no active invocations at cutover.
+No client release/installation, commit or push was performed. New executor
+capabilities require a later coordinated client release; the concurrently
+published 0.5.19 is preserved. Full evidence and limits:
+`docs/reviews/2026-09-23-full/REMEDIATION.md`.
 
 ## 0.5.19 released — 2026-09-23
 

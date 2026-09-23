@@ -156,3 +156,71 @@ async fn bad_group_by_is_rejected() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn replayed_usage_is_counted_once_in_reports_and_quota() {
+    use guild_core::usage::UsageEvent;
+    let fs = full_state().await;
+    let sink = fs.state.usage().await.unwrap();
+    let first_id = Uuid::new_v4();
+    for request_id in [first_id, first_id, Uuid::new_v4()] {
+        sink.record(UsageEvent {
+            ts: chrono::Utc::now(),
+            org_id: fs.org_id,
+            user_id: fs.user_id,
+            team_id: None,
+            session_id: fs.chat_id,
+            model: "gpt-test".into(),
+            provider: "fixture".into(),
+            tokens_in: 100,
+            tokens_out: 20,
+            cost_usd: 0.25,
+            request_id,
+        })
+        .await;
+    }
+    assert_eq!(sink.month_spend(fs.org_id, "gpt-test").await.unwrap(), 0.5);
+    let app = guild_server::build_router(fs.state.clone());
+    for uri in [
+        "/api/v1/usage?group_by=model",
+        "/api/v1/usage/series?group_by=model",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("authorization", format!("Bearer {}", fs.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["rows"][0]["requests"], 2, "{uri}: {value}");
+        assert_eq!(value["rows"][0]["tokens_in"], 200);
+        assert_eq!(value["rows"][0]["tokens_out"], 40);
+        assert_eq!(value["rows"][0]["cost_usd"], 0.5);
+    }
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/usage/summary")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["month_cost_usd"], 0.5);
+    assert_eq!(value["today_cost_usd"], 0.5);
+}

@@ -10,9 +10,9 @@ use crate::http::error::ApiError;
 use crate::http::llm_proxy::{accumulate, dispatch, usage_event, ProxyError};
 use crate::state::AppState;
 use axum::extract::FromRequestParts;
+use axum::extract::State;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
-use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::IntoResponse;
@@ -93,14 +93,14 @@ struct AnthropicRequest {
     tools: Option<Vec<AnthropicTool>>,
     // Accepted for SDK compatibility but not forwarded: the internal
     // ProviderRequest carries only model/system/messages/tools/max_tokens.
-    #[serde(default)]
-    temperature: Option<f64>,
-    #[serde(default)]
-    top_p: Option<f64>,
-    #[serde(default)]
-    stop_sequences: Option<Vec<String>>,
-    #[serde(default)]
-    tool_choice: Option<Value>,
+    #[serde(default, rename = "temperature")]
+    _temperature: Option<f64>,
+    #[serde(default, rename = "top_p")]
+    _top_p: Option<f64>,
+    #[serde(default, rename = "stop_sequences")]
+    _stop_sequences: Option<Vec<String>>,
+    #[serde(default, rename = "tool_choice")]
+    _tool_choice: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -185,14 +185,12 @@ fn to_internal(req: &AnthropicRequest) -> (Option<String>, Vec<Message>) {
                         }
                         text.push_str(b["text"].as_str().unwrap_or_default());
                     }
-                    Some("image") => {
-                        if b["source"]["type"] == "base64" {
-                            images.push(format!(
-                                "data:{};base64,{}",
-                                b["source"]["media_type"].as_str().unwrap_or("image/png"),
-                                b["source"]["data"].as_str().unwrap_or_default()
-                            ));
-                        }
+                    Some("image") if b["source"]["type"] == "base64" => {
+                        images.push(format!(
+                            "data:{};base64,{}",
+                            b["source"]["media_type"].as_str().unwrap_or("image/png"),
+                            b["source"]["data"].as_str().unwrap_or_default()
+                        ));
                     }
                     _ => {}
                 }
@@ -310,31 +308,27 @@ async fn messages(
             .keep_alive(KeepAlive::default())
             .into_response())
     } else {
-        let (text, calls, tokens_in, tokens_out) =
-            accumulate(call.stream).await.map_err(|e| {
-                anthropic_error(
+        let (text, calls, tokens_in, tokens_out) = accumulate(call.stream).await.map_err(|e| {
+            anthropic_error(
+                StatusCode::BAD_GATEWAY,
+                &ProxyError(ApiError::new(
                     StatusCode::BAD_GATEWAY,
-                    &ProxyError(ApiError::new(
-                        StatusCode::BAD_GATEWAY,
-                        "provider_error",
-                        e.to_string(),
-                    )),
-                )
-            })?;
+                    "provider_error",
+                    e.to_string(),
+                )),
+            )
+        })?;
         usage
             .record(usage_event(
-                org_id,
-                user_id,
-                session_id,
-                &model,
-                &provider,
-                price_in,
-                price_out,
-                tokens_in,
+                org_id, user_id, session_id, &model, &provider, price_in, price_out, tokens_in,
                 tokens_out,
             ))
             .await;
-        let stop = if calls.is_empty() { "end_turn" } else { "tool_use" };
+        let stop = if calls.is_empty() {
+            "end_turn"
+        } else {
+            "tool_use"
+        };
         Ok(Json(json!({
             "id": format!("msg_{}", Uuid::now_v7()),
             "type": "message",
@@ -366,7 +360,7 @@ fn stream_events(
         let model = call.model.clone();
         let send = |event: &str, data: &Value| -> SseItem {
             Ok(SseEvent::default()
-                .event(event.to_string())
+                .event(event)
                 .data(data.to_string()))
         };
 

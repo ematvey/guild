@@ -24,13 +24,11 @@ use uuid::Uuid;
 /// How long a machine tool may stay suspended before the journaled timeout
 /// resolves it (client tools and the AGENTS.md fetch bound their own
 /// shorter windows).
-pub(crate) const CLIENT_TOOL_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(5 * 60);
+pub(crate) const CLIENT_TOOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 /// How long an approval card may wait for a user decision before the gate
 /// auto-denies.
-pub(crate) const APPROVAL_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(5 * 60);
+pub(crate) const APPROVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 pub(crate) fn pending_tool_exists(state: &AppState, chat_id: Uuid, call_id: &str) -> bool {
     state.generations.has_pending_tool(chat_id, call_id)
@@ -71,8 +69,8 @@ pub(crate) fn spawn_machine_watcher(
                 return; // resolved already
             }
             let current = state.hub.machine_connection(&machine_id);
-            if current.is_some() && current != connection {
-                reconcile_machine_tools(&state, &machine_id, current.unwrap()).await;
+            if let Some(current_id) = current.filter(|id| Some(*id) != connection) {
+                reconcile_machine_tools(&state, &machine_id, current_id).await;
                 return;
             }
             if current.is_some() {
@@ -213,18 +211,15 @@ pub(crate) async fn dispatch_pending_tool(
     call_id: &str,
     dispatch_id: &str,
 ) -> Result<Option<Uuid>, crate::http::error::ApiError> {
-    let tool = state
-        .generations
-        .pending_tool(chat_id, call_id)
-        .map(|t| {
-            (
-                t.connection_id,
-                t.machine_id,
-                t.name,
-                t.arguments,
-                t.workdir,
-            )
-        });
+    let tool = state.generations.pending_tool(chat_id, call_id).map(|t| {
+        (
+            t.connection_id,
+            t.machine_id,
+            t.name,
+            t.arguments,
+            t.workdir,
+        )
+    });
     let Some((connection, machine, name, arguments, workdir)) = tool else {
         return Ok(None);
     };
@@ -292,7 +287,6 @@ pub(crate) fn clear_pending_tool(state: &AppState, chat_id: Uuid, call_id: &str)
     state.generations.clear_pending_tool(chat_id, call_id);
 }
 
-
 /// Which executor runs the call — the taxonomy the spec promised (2026-09-18
 /// unification §2.1), now a type. Adding an executor is a dispatch-shape
 /// change here, never a loop change.
@@ -325,6 +319,8 @@ pub(crate) fn sandbox_dir(state: &AppState, chat_id: Uuid) -> std::path::PathBuf
 /// the awakeable + KV dispatch claim + watchers + durable timeout (machine
 /// executor) or the journaled inline run (server-side executors). Returns
 /// the payload the caller persists on the tool_result event.
+// The durable tool suspension boundary carries execution and stream context.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn suspend(
     ctx: &ObjectContext<'_>,
     state: &AppState,
@@ -395,14 +391,10 @@ pub(crate) async fn suspend(
                     let name = name.clone();
                     let args = args2.clone();
                     async move {
-                        let connection = dispatch_pending_tool(
-                            &state,
-                            chat_id,
-                            &call_id,
-                            &dispatch_id,
-                        )
-                        .await
-                        .map_err(api_err)?;
+                        let connection =
+                            dispatch_pending_tool(&state, chat_id, &call_id, &dispatch_id)
+                                .await
+                                .map_err(api_err)?;
                         let _ = tx.send(StreamEvent::ToolStarted {
                             call_id,
                             name,
@@ -525,9 +517,18 @@ async fn exec_and_approval_gate(
         // ---- Approval gate (phase 2, design §C). Journaled
         // request/decision flow; denial is a normal tool_result payload the
         // caller persists.
-        if let Some(denial) =
-            approval_gate(ctx, state, tx, org_id, model, chat_id, call, Approval::Ask, false)
-                .await?
+        if let Some(denial) = approval_gate(
+            ctx,
+            state,
+            tx,
+            org_id,
+            model,
+            chat_id,
+            call,
+            Approval::Ask,
+            false,
+        )
+        .await?
         {
             return Ok(Some(denial));
         }
@@ -576,12 +577,18 @@ async fn run_server_tool(
     let shell_allowed = state.config.allow_shell_tools;
     let name = call.name.clone();
     let args = call.arguments.clone();
+    let effect_key = format!("server_effect:{}:{}", ctx.invocation_id(), call.id);
+    let st = state.clone();
     let payload: ToolResultPayload = ctx
         .run(move || {
             let dir = dir.clone();
             let name = name.clone();
             let args = args.clone();
+            let state = st.clone();
+            let effect_key = effect_key.clone();
             async move {
+                let guarded = name != "read_file";
+                let store = state.store().await.map_err(api_err)?;
                 if name == "execute" && !shell_allowed {
                     return Ok(Json(ToolResultPayload {
                         content: "denied: shell tools are disabled on this server".into(),
@@ -600,6 +607,16 @@ async fn run_server_tool(
                             meta: None,
                             images: Vec::new(),
                         }));
+                    }
+                }
+                if guarded {
+                    match crate::worker::effects::claim(&store, &effect_key).await? {
+                        crate::worker::effects::Claim::Execute => {},
+                        crate::worker::effects::Claim::Completed(result) => return Ok(Json(result)),
+                        crate::worker::effects::Claim::Unknown => return Ok(Json(ToolResultPayload {
+                            content: "Execution outcome is unknown after interruption; check effects before retrying this action.".into(),
+                            is_error: true, meta: None, images: Vec::new(),
+                        })),
                     }
                 }
                 tokio::fs::create_dir_all(&dir)
@@ -634,6 +651,9 @@ async fn run_server_tool(
                         images: Vec::new(),
                     },
                 };
+                if guarded {
+                    crate::worker::effects::complete(&store, &effect_key, &payload).await?;
+                }
                 Ok(Json(payload))
             }
         })
@@ -666,7 +686,6 @@ async fn run_server_tool(
     Ok(payload)
 }
 
-
 /// One-way forward of an approval decision to the ChatRunner's
 /// `complete_approval` awakeable resolver (the resolve side of the approval
 /// gate: user decisions from any client, the auto-deny timer, and the
@@ -696,9 +715,9 @@ pub(crate) async fn forward_approval_decision(
 mod tests {
     use super::*;
     use crate::http::hub::Member;
-    use std::time::Duration;
     use crate::http::ws::{socket_channel, SocketOutput};
     use crate::test_support::test_state_with_mock_ingress;
+    use std::time::Duration;
     use uuid::Uuid;
 
     #[cfg(feature = "test-support")]
@@ -761,7 +780,15 @@ mod tests {
             .await
             .unwrap();
         restarted.generations.attach(chat);
-        note_pending_tool(&restarted, chat, "call", "execute", "{}", Some("machine"), None);
+        note_pending_tool(
+            &restarted,
+            chat,
+            "call",
+            "execute",
+            "{}",
+            Some("machine"),
+            None,
+        );
         assert_eq!(
             dispatch_pending_tool(&restarted, chat, "call", "durable-awakeable")
                 .await
@@ -932,17 +959,11 @@ mod tests {
         }
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                if ingress
-                    .requests
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|(path, body)| {
-                        path.contains("complete_tool")
-                            && body["call_id"] == "call"
-                            && body["is_error"] == true
-                    })
-                {
+                if ingress.requests.lock().unwrap().iter().any(|(path, body)| {
+                    path.contains("complete_tool")
+                        && body["call_id"] == "call"
+                        && body["is_error"] == true
+                }) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;

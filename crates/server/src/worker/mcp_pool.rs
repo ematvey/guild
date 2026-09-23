@@ -1,5 +1,5 @@
 //! Cached MCP client connections for integration plugins. A connection is
-//! keyed by (slug, url, acting_as, secrets fingerprint): the identity
+//! keyed by (org, slug, url, acting_as, secrets fingerprint): the identity
 //! envelope and secret headers ride on the connection, so a changed identity
 //! or secret set creates a new pooled connection. Entries unused for
 //! `POOL_TTL` are evicted on the next access scan.
@@ -22,6 +22,7 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PoolKey {
+    pub org: uuid::Uuid,
     pub slug: String,
     pub url: String,
     pub acting_as: Option<String>,
@@ -88,6 +89,13 @@ impl McpPool {
     fn lookup(&self, key: &PoolKey) -> Option<Peer<RoleClient>> {
         let mut entries = self.entries.lock().unwrap();
         Self::evict_stale(&mut entries);
+        if entries
+            .get(key)
+            .is_some_and(|e| e.service.is_closed() || e.service.peer().is_transport_closed())
+        {
+            entries.remove(key);
+            return None;
+        }
         entries.get_mut(key).map(|e| {
             e.last_used = Instant::now();
             e.service.peer().clone()
@@ -118,7 +126,7 @@ impl McpPool {
         }
     }
 
-    async fn connect(
+    pub async fn connect(
         url: &str,
         headers: HeaderMap,
     ) -> anyhow::Result<RunningService<RoleClient, InitializeRequestParams>> {
@@ -136,5 +144,66 @@ impl McpPool {
             .context("mcp connect timed out")?
             .context("mcp handshake failed")?;
         Ok(service)
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use rmcp::handler::server::ServerHandler;
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager,
+        tower::{StreamableHttpServerConfig, StreamableHttpService},
+    };
+    use std::sync::Arc;
+
+    struct Fixture;
+    impl ServerHandler for Fixture {}
+
+    #[tokio::test]
+    async fn orgs_are_isolated_and_closed_peers_are_reconnected() {
+        let service = StreamableHttpService::new(
+            || Ok(Fixture),
+            Arc::new(LocalSessionManager::default()),
+            StreamableHttpServerConfig::default(),
+        );
+        let app = axum::Router::new().nest_service("/mcp", service);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let pool = McpPool::new();
+        let key = PoolKey {
+            org: uuid::Uuid::now_v7(),
+            slug: "same".into(),
+            url: url.clone(),
+            acting_as: None,
+            secrets_fingerprint: 0,
+        };
+        pool.get_or_connect(&key, &url, HeaderMap::new())
+            .await
+            .unwrap();
+        let other = PoolKey {
+            org: uuid::Uuid::now_v7(),
+            ..key.clone()
+        };
+        pool.get_or_connect(&other, &url, HeaderMap::new())
+            .await
+            .unwrap();
+        assert_eq!(pool.len(), 2);
+        pool.entries
+            .lock()
+            .unwrap()
+            .get(&key)
+            .unwrap()
+            .service
+            .cancellation_token()
+            .cancel();
+        let peer = pool
+            .get_or_connect(&key, &url, HeaderMap::new())
+            .await
+            .unwrap();
+        assert!(!peer.is_transport_closed());
+        assert_eq!(pool.len(), 2);
+        server.abort();
     }
 }

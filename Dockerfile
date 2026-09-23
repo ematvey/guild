@@ -12,12 +12,13 @@ RUN npm run build --workspace apps/desktop
 
 # Build stage: compile guild-server from the workspace.
 FROM rust:1.97 AS build
+ARG CARGO_BUILD_JOBS=4
 WORKDIR /build
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 COPY apps/desktop/src-tauri ./apps/desktop/src-tauri
 COPY --from=chatapp /app/apps/desktop/dist ./apps/desktop/dist
-RUN cargo build --release -p guild-server
+RUN cargo build --release -p guild-server --jobs "$CARGO_BUILD_JOBS"
 
 # Runtime stage.
 FROM debian:trixie-slim

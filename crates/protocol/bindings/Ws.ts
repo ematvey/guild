@@ -3,13 +3,18 @@ import type { StreamEvent } from "./StreamEvent";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
+ * Executor-owned context returned by the versioned context.prepare_v1 operation.
+ */
+export type MachineContext = { instructions?: string, skills_index: string, skill_expansions: string, };
+
+/**
  * Client → server. `Sync` declares the currently open chat (None = none
  * open); the server answers with the state-sync sequence. `ToolResult`
  * delivers a machine-tool outcome (the WS replacement for the HTTP
  * tool-result endpoint). `MachineResponse` answers a `MachineRequest` the
  * server sent over this socket (control-plane ops: folder browse).
  */
-export type WsClientMsg = { "type": "sync", chat_id?: string, } | { "type": "machine_response", request_id: string, ok: boolean, payload?: JsonValue, error?: string, } | { "type": "tool_result", chat_id: string, call_id: string, content: string, is_error: boolean, meta?: JsonValue, };
+export type WsClientMsg = { "type": "sync", chat_id?: string, } | { "type": "machine_response", request_id: string, ok: boolean, payload?: JsonValue, error?: string, } | { "type": "tool_result", chat_id: string, call_id: string, content: string, is_error: boolean, meta?: JsonValue, images: Array<string>, };
 
 /**
  * Server → client. ThreadState is the only rendered-content source: both

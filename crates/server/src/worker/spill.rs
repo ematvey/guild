@@ -152,6 +152,8 @@ pub fn artifact_meta(
 /// re-uploads the same bytes under the same key and never duplicates the
 /// row. The spill itself rides the journaled tool-execution run, whose
 /// recorded result restores the spill decision on replay without executing.
+// Storage, caller and tool provenance remain explicit at the spill boundary.
+#[allow(clippy::too_many_arguments)]
 pub async fn spill_artifact(
     state: &AppState,
     org_id: Uuid,
@@ -365,4 +367,49 @@ mod tests {
             SpillDecision::Artifact(_)
         ));
     }
+}
+
+/// Best-effort delivery after the artifact's thread event commits. Old
+/// executors decline capability discovery; first-touch fetch remains available.
+pub fn spawn_machine_prefetch(
+    state: &crate::state::AppState,
+    org_id: Uuid,
+    chat_id: Uuid,
+    machine: &str,
+    folder: &str,
+    artifact: &SpilledArtifact,
+) {
+    let state = state.clone();
+    let machine = machine.to_owned();
+    let payload = serde_json::json!({"workdir": folder, "chat_id": chat_id,
+        "artifact_id": artifact.artifact_id, "filename": artifact.filename});
+    tokio::spawn(async move {
+        let timeout = std::time::Duration::from_secs(10);
+        let Ok(caps) = state
+            .hub
+            .machine_request(
+                &machine,
+                org_id,
+                "capabilities",
+                serde_json::json!({}),
+                timeout,
+            )
+            .await
+        else {
+            return;
+        };
+        if !caps["operations"]
+            .as_array()
+            .is_some_and(|ops| ops.iter().any(|v| v == "artifact.prefetch_v1"))
+        {
+            return;
+        }
+        if let Err(error) = state
+            .hub
+            .machine_request(&machine, org_id, "artifact.prefetch_v1", payload, timeout)
+            .await
+        {
+            tracing::debug!(?error, "artifact prefetch deferred to first touch");
+        }
+    });
 }

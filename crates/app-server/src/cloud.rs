@@ -5,8 +5,8 @@ use futures::SinkExt;
 use futures::Stream;
 use protocol::api::{
     Chat, ChatCompletionRequest, CreateChatRequest, CreateProjectRequest, LoginRequest,
-    LoginResponse, Message, PairRequest, PairResponse, Project, StreamEvent, ThreadEvent,
-    ToolCall, UserInfo,
+    LoginResponse, Message, PairRequest, PairResponse, Project, StreamEvent, ThreadEvent, ToolCall,
+    UserInfo,
 };
 use protocol::ws::WsServerMsg;
 use std::time::Duration;
@@ -184,10 +184,12 @@ impl CloudClient {
     /// Projects of the caller's org (workspace folders + machine bindings).
     pub async fn list_projects(&self) -> Result<Vec<Project>, CloudError> {
         let url = format!("{}/api/v1/projects", self.base_url.trim_end_matches('/'));
-        let resp = Self::check(Self::timed(self.http().get(&url))
-            .bearer_auth(&self.token)
-            .send()
-            .await?)
+        let resp = Self::check(
+            Self::timed(self.http().get(&url))
+                .bearer_auth(&self.token)
+                .send()
+                .await?,
+        )
         .await?;
         let body: serde_json::Value = resp
             .json()
@@ -198,16 +200,15 @@ impl CloudClient {
     }
 
     /// Creates a project (a named workspace folder bound to a machine).
-    pub async fn create_project(
-        &self,
-        req: &CreateProjectRequest,
-    ) -> Result<Project, CloudError> {
+    pub async fn create_project(&self, req: &CreateProjectRequest) -> Result<Project, CloudError> {
         let url = format!("{}/api/v1/projects", self.base_url.trim_end_matches('/'));
-        let resp = Self::check(Self::timed(self.http().post(&url))
-            .bearer_auth(&self.token)
-            .json(req)
-            .send()
-            .await?)
+        let resp = Self::check(
+            Self::timed(self.http().post(&url))
+                .bearer_auth(&self.token)
+                .json(req)
+                .send()
+                .await?,
+        )
         .await?;
         resp.json::<Project>()
             .await
@@ -232,11 +233,13 @@ impl CloudClient {
         if let Some(reason) = reason {
             body["reason"] = serde_json::json!(reason);
         }
-        Self::check(Self::timed(self.http().post(&url))
-            .bearer_auth(&self.token)
-            .json(&body)
-            .send()
-            .await?)
+        Self::check(
+            Self::timed(self.http().post(&url))
+                .bearer_auth(&self.token)
+                .json(&body)
+                .send()
+                .await?,
+        )
         .await?;
         Ok(())
     }
@@ -471,10 +474,10 @@ impl CloudClient {
     /// appear in the upgrade query string.
     pub async fn ws_ticket(&self) -> Result<String, CloudError> {
         let resp = Self::check(
-            Self::timed(
-                self.http()
-                    .post(format!("{}/api/v1/ws/ticket", self.base_url.trim_end_matches('/'))),
-            )
+            Self::timed(self.http().post(format!(
+                "{}/api/v1/ws/ticket",
+                self.base_url.trim_end_matches('/')
+            )))
             .bearer_auth(&self.token)
             .send()
             .await?,
@@ -482,10 +485,10 @@ impl CloudClient {
         .await?
         .json::<serde_json::Value>()
         .await?;
-        Ok(resp["ticket"]
+        resp["ticket"]
             .as_str()
             .map(str::to_string)
-            .ok_or(CloudError::Request("ticket response missing ticket".into()))?)
+            .ok_or(CloudError::Request("ticket response missing ticket".into()))
     }
 
     /// Shared client: connect-level timeout only. No total timeout —
@@ -702,7 +705,9 @@ mod artifact_endpoints_tests {
         });
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path(format!("/api/v1/chats/{CHAT}/thread")))
+            .and(wiremock::matchers::path(format!(
+                "/api/v1/chats/{CHAT}/thread"
+            )))
             .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
             .mount(&server)
             .await;

@@ -41,11 +41,7 @@ fn build_turn_text_inline_and_notes() {
         media(doc, "text/markdown", "hello world"),
         media(png, "image/png", "PNG"),
         media(wav, "audio/wav", "WAV"),
-        media(
-            big,
-            "text/plain",
-            &"x".repeat(80_001),
-        ),
+        media(big, "text/plain", &"x".repeat(80_001)),
     ]
     .into_iter()
     .collect();

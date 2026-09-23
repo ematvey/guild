@@ -481,3 +481,25 @@ describe("open / adopt / cache", () => {
 function viewBlocks(r: ReturnType<typeof createThreadReducer>, chatId: string) {
   return r.open(chatId).blocks;
 }
+
+it("retains every queued optimistic command across authoritative rebuilds", () => {
+  const r = createThreadReducer(); r.open("chat");
+  r.optimisticSend({ chatId: "chat", text: "one", key: "id-1", sentAt: 1 });
+  r.optimisticSend({ chatId: "chat", text: "two", key: "id-2", sentAt: 2 });
+  expect(r.applyState(state("chat", 1, [])).blocks.filter(b => b.pending).map(b => b.text)).toEqual(["one", "two"]);
+  r.invalidate();
+  const rebuilt = r.applyState(state("chat", 2, [echo(1, "one", "id-1")]));
+  expect(rebuilt.blocks.filter(b => b.kind === "user").map(b => b.text)).toEqual(["one", "two"]);
+  expect(rebuilt.blocks.filter(b => b.pending).map(b => b.text)).toEqual(["two"]);
+  expect(r.applyState(state("chat", 3, [echo(1, "one", "id-1"), echo(2, "two", "id-2")])).blocks.filter(b => b.pending)).toEqual([]);
+});
+
+it("a create-time failure is owned by scratch and cannot reappear on later adoption", () => {
+  const r = createThreadReducer(); r.open(null);
+  r.optimisticSend({ chatId: null, text: "first", key: "first", sentAt: 1 });
+  r.bindPending("created", "first");
+  r.failSend("created", "first", "upload failed");
+  const adopted = r.adopt("created");
+  expect(adopted.blocks.some(b => b.pending)).toBe(false);
+  expect(adopted.blocks.some(b => b.kind === "error")).toBe(true);
+});

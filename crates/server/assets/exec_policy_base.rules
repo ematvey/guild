@@ -4,7 +4,7 @@
 
 # --- read-only probes -----------------------------------------------------
 prefix_rule(pattern=["date"], decision="allow", justification="prints the current date/time")
-prefix_rule(pattern=["time"], decision="allow", justification="prints the current time")
+prefix_rule(pattern=["time"], decision="prompt", justification="executes another command; requires approval")
 prefix_rule(pattern=["pwd"], decision="allow", justification="prints the working directory")
 prefix_rule(pattern=["whoami"], decision="allow", justification="prints the current user")
 prefix_rule(pattern=["hostname"], decision="allow", justification="prints the machine name")

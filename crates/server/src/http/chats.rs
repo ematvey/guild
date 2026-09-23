@@ -67,6 +67,7 @@ async fn machine_fs_request(
         .hub
         .machine_request(
             &machine_id.to_string(),
+            user.0.org_id,
             &op,
             payload,
             std::time::Duration::from_secs(10),
@@ -92,7 +93,11 @@ async fn update_chat(
     Path(chat_id): Path<Uuid>,
     Json(req): Json<UpdateChatRequest>,
 ) -> Result<Json<Chat>, ApiError> {
-    let title = req.title.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let title = req
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let store = state.store().await?;
     let row = store
         .chats()
@@ -333,16 +338,14 @@ async fn set_project(
     // project's (the project's label comes from the machines registry) in
     // the same UPDATE as the binding; unbinding the project clears it — a
     // machine-bound chat with no project is not a valid state.
-    let machine = project
-        .as_ref()
-        .map(|p| {
-            (
-                p.machine_id.clone(),
-                p.machine_label
-                    .clone()
-                    .unwrap_or_else(|| p.machine_id.clone()),
-            )
-        });
+    let machine = project.as_ref().map(|p| {
+        (
+            p.machine_id.clone(),
+            p.machine_label
+                .clone()
+                .unwrap_or_else(|| p.machine_id.clone()),
+        )
+    });
     let chat = store
         .chats()
         .set_project(
@@ -350,7 +353,9 @@ async fn set_project(
             chat_id,
             &user.0,
             project_id,
-            machine.as_ref().map(|(id, label)| (id.as_str(), label.as_str())),
+            machine
+                .as_ref()
+                .map(|(id, label)| (id.as_str(), label.as_str())),
         )
         .await?;
     // Every device renders the project grouping: push a fresh thread list to

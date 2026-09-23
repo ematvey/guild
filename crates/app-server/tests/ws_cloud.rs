@@ -5,6 +5,15 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn cloud_command_uses_ws_for_output_and_json_for_acknowledgment() {
+    cloud_command_contract(false).await;
+}
+
+#[tokio::test]
+async fn cloud_command_keeps_its_stream_identity_during_ingress_outage() {
+    cloud_command_contract(true).await;
+}
+
+async fn cloud_command_contract(ingress_outage: bool) {
     let (fixture, ingress) = test_state_with_mock_ingress().await;
     let store = fixture.store();
     let user = store
@@ -22,7 +31,15 @@ async fn cloud_command_uses_ws_for_output_and_json_for_acknowledgment() {
         .id;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}", listener.local_addr().unwrap());
-    let app = guild_server::build_router(fixture.state.clone());
+    let mut api_state = fixture.state.clone();
+    if ingress_outage {
+        let mut config = (*api_state.config).clone();
+        let unavailable = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        config.restate_url = format!("http://{}", unavailable.local_addr().unwrap());
+        drop(unavailable);
+        api_state.config = std::sync::Arc::new(config);
+    }
+    let app = guild_server::build_router(api_state);
     let server = tokio::spawn(async move {
         axum::serve(
             listener,
@@ -36,6 +53,14 @@ async fn cloud_command_uses_ws_for_output_and_json_for_acknowledgment() {
         .chat_stream(chat, "test", &[protocol::api::Message::user("hello")])
         .await
         .unwrap();
+    if ingress_outage {
+        assert!(ingress.requests.lock().unwrap().is_empty());
+        // The accepted command already returned a usable stream to the CLI.
+        // Delivery resumes with the same identity after ingress recovers.
+        guild_server::http::gateway::dispatch_turn_commands(&fixture.state, Some(chat))
+            .await
+            .unwrap();
+    }
     assert!(ingress
         .requests
         .lock()

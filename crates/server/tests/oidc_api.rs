@@ -110,12 +110,16 @@ async fn oidc_login_provisions_user_and_issues_session() {
     assert_eq!(v["client_id"], "guild-client");
     assert!(v.get("client_secret").is_none());
 
+    let nonce = "a".repeat(64);
     // login → 302 to the IdP with signed state
     let res = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/api/v1/auth/oidc/login?org_id={}", fs.org_id))
+                .uri(format!(
+                    "/api/v1/auth/oidc/login?org_id={}&nonce={nonce}",
+                    fs.org_id
+                ))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -142,6 +146,21 @@ async fn oidc_login_provisions_user_and_issues_session() {
         .unwrap()
         .to_string();
 
+    // A callback URL relayed to another browser is rejected before IdP exchange.
+    let rejected = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/auth/oidc/callback?code=the-code&state={state}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+
     // callback exchanges the code, provisions the user with the IdP profile,
     // and redirects to the app with the session token in the URL fragment
     let res = app
@@ -151,6 +170,7 @@ async fn oidc_login_provisions_user_and_issues_session() {
                 .uri(format!(
                     "/api/v1/auth/oidc/callback?code=the-code&state={state}"
                 ))
+                .header("cookie", format!("guild_oidc_nonce={nonce}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -214,6 +234,7 @@ async fn oidc_login_provisions_user_and_issues_session() {
                 .uri(format!(
                     "/api/v1/auth/oidc/callback?code=again&state={state}"
                 ))
+                .header("cookie", format!("guild_oidc_nonce={nonce}"))
                 .body(Body::empty())
                 .unwrap(),
         )

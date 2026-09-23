@@ -44,12 +44,11 @@ impl MachineStore<'_> {
     /// any hub slot is claimed: a registered machine connects only as its
     /// owning user.
     pub async fn owner_of(&self, machine_id: &str) -> Result<Option<(Uuid, Uuid)>, ApiError> {
-        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-            "SELECT user_id, org_id FROM machines WHERE machine_id = $1",
-        )
-        .bind(machine_id)
-        .fetch_optional(self.pool)
-        .await?;
+        let row: Option<(Uuid, Uuid)> =
+            sqlx::query_as("SELECT user_id, org_id FROM machines WHERE machine_id = $1")
+                .bind(machine_id)
+                .fetch_optional(self.pool)
+                .await?;
         Ok(row)
     }
 }
@@ -115,10 +114,7 @@ impl<'a> MachineStore<'a> {
             });
         }
 
-        if existing
-            .as_ref()
-            .is_some_and(|row| row.user_id != user_id)
-        {
+        if existing.as_ref().is_some_and(|row| row.user_id != user_id) {
             // Same-org machine id claimed by another user: refuse. The
             // fingerprint is plaintext registry metadata any member can
             // read, so the id alone proves nothing about who may connect.

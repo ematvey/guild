@@ -61,8 +61,12 @@ services:
       "
 
   restate:
-    image: docker.io/restatedev/restate:latest
+    image: docker.io/restatedev/restate@sha256:6893750bdd261030529a507e9e0fd9df00ac0af8b24e650026b0b2df9ae34cbe
     restart: unless-stopped
+    environment:
+      RESTATE_NODE_NAME: ${GUILD_RESTATE_NODE_NAME:-guild-restate}
+    volumes:
+      - restate_data:/restate-data
     # Ingress stays internal (worker role talks to it over the compose
     # network); the admin/UI port is published for operators.
     ports:
@@ -90,3 +94,4 @@ volumes:
   chdata:
   miniodata:
   guild_data:
+  restate_data:

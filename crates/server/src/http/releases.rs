@@ -76,8 +76,8 @@ fn verify_signature(state: &AppState, id: Uuid, exp: i64, sig: &str) -> Result<(
 
 #[derive(serde::Deserialize)]
 struct SigQuery {
-    exp: i64,
-    sig: String,
+    exp: Option<i64>,
+    sig: Option<String>,
 }
 
 async fn upload(
@@ -300,8 +300,7 @@ fn version_gt(a: &str, b: &str) -> bool {
     let (core_a, pre_a) = split_prerelease(a);
     let (core_b, pre_b) = split_prerelease(b);
     let nums = |core: &str| -> Vec<u64> {
-        core
-            .split('.')
+        core.split('.')
             .map(|p| p.parse::<u64>().unwrap_or(0))
             .collect()
     };
@@ -319,8 +318,7 @@ fn version_gt(a: &str, b: &str) -> bool {
         (None, Some(_)) => true,
         (Some(_), None) => false,
         (Some(pa), Some(pb)) => {
-            let ids: Vec<Vec<&str>> =
-                [pa, pb].iter().map(|p| p.split('.').collect()).collect();
+            let ids: Vec<Vec<&str>> = [pa, pb].iter().map(|p| p.split('.').collect()).collect();
             for i in 0..ids[0].len().max(ids[1].len()) {
                 match (ids[0].get(i), ids[1].get(i)) {
                     (Some(x), Some(y)) => {
@@ -379,7 +377,10 @@ async fn download(
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     let id = path.0;
-    let signed = verify_signature(&state, id, sig.exp, &sig.sig).is_ok();
+    let signed = match (sig.exp, sig.sig.as_deref()) {
+        (Some(exp), Some(sig)) => verify_signature(&state, id, exp, sig).is_ok(),
+        _ => false,
+    };
     if !signed {
         // fall back to session bearer auth (UIs that fetch with credentials)
         let token = headers
@@ -443,11 +444,17 @@ mod tests {
         assert!(version_gt("1.0.0", "1.0.0-beta"));
         // Prerelease identifiers: numeric < alphanumeric, numeric numeric.
         assert!(version_gt("1.0.0-beta.2", "1.0.0-beta.1"));
-        assert!(!version_gt("1.0.0-alpha", "1.0.0-beta"), "alpha < beta lexically");
+        assert!(
+            !version_gt("1.0.0-alpha", "1.0.0-beta"),
+            "alpha < beta lexically"
+        );
         // numeric identifiers rank BELOW alphanumeric ones
         assert!(!version_gt("1.0.0-1", "1.0.0-alpha"));
         assert!(version_gt("1.0.0-alpha", "1.0.0-1"));
-        assert!(version_gt("1.0.0-beta.2.1", "1.0.0-beta.2"), "longer set wins");
+        assert!(
+            version_gt("1.0.0-beta.2.1", "1.0.0-beta.2"),
+            "longer set wins"
+        );
         // Prereleases of different cores still follow the core.
         assert!(version_gt("1.1.0-beta", "1.0.0"));
         assert!(!version_gt("1.0.0-beta", "1.1.0-alpha"));

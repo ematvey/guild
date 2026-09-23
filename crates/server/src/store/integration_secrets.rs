@@ -144,7 +144,12 @@ impl<'a> IntegrationSecretStore<'a> {
         for row in &mut rows {
             if row.masked.is_empty() || row.masked.chars().any(|c| c != '•') {
                 let plaintext = self
-                    .resolve(org_id, integration, &[row.name.clone()], master_key)
+                    .resolve(
+                        org_id,
+                        integration,
+                        std::slice::from_ref(&row.name),
+                        master_key,
+                    )
                     .await
                     .map_err(|e| match e {
                         ResolveError::Api(api) => api,

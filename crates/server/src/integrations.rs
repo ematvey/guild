@@ -1531,6 +1531,7 @@ pub struct ToolCurate {
 ///   zero-config behavior is identical to the pre-curation model;
 /// - MCP-bound (live discovery): disabled — nothing is exposed that the
 ///   admin did not approve, and remote drift lands in the disabled state.
+///
 /// Unknown approval values read as the default (follow user policy).
 pub fn tool_curate(row_config: &serde_json::Value, mcp: bool, raw_tool: &str) -> ToolCurate {
     let stored = &row_config["tools"][raw_tool];
@@ -1722,6 +1723,7 @@ pub async fn resolve_plugins(state: &AppState, org: Uuid) -> anyhow::Result<Vec<
         };
         let headers = envelope_headers(&Uuid::now_v7(), &org, None, None, &secrets);
         let key = PoolKey {
+            org,
             slug: row.name.clone(),
             url: url.to_string(),
             acting_as: None,
@@ -1812,9 +1814,7 @@ async fn guide_object_key(
     org: Uuid,
     manifest: &BundleManifest,
 ) -> Option<String> {
-    let Some(slug) = manifest.skills.first() else {
-        return None;
-    };
+    let slug = manifest.skills.first()?;
     // A store error is not unapproved content — the guide degrades to None
     // so a transient store failure never fails plugin resolution for the
     // whole turn. Approval gates below stay fail-closed.
@@ -1840,12 +1840,16 @@ async fn guide_object_key(
 /// (journaled snapshots never carry values), then runs the built-in plugin
 /// directly or connects to the MCP server via the pool with the identity
 /// envelope, and calls the raw tool name.
+// Plugin dispatch keeps org, caller and call identity separate at this boundary.
+#[allow(clippy::too_many_arguments)]
 pub async fn call_plugin(
     state: &AppState,
     turn: &PluginTurn,
     raw_tool: &str,
     args: serde_json::Value,
     org: Uuid,
+    caller: Uuid,
+    call_id: Uuid,
     acting_as: Option<&str>,
 ) -> Result<ToolOutcome, String> {
     let store = state
@@ -1866,7 +1870,6 @@ pub async fn call_plugin(
                 .await
                 .map_err(|e| format!("secrets unavailable: {e:?}"))?
                 .into_iter()
-                .map(|s| s)
                 .collect::<Vec<_>>();
             let secrets = store
                 .integration_secrets()
@@ -1887,19 +1890,14 @@ pub async fn call_plugin(
                 .as_str()
                 .ok_or("mcp url missing")?
                 .to_string();
-            let headers = envelope_headers(&Uuid::now_v7(), &org, None, acting_as, &secrets);
-            let key = PoolKey {
-                slug: turn.slug.clone(),
-                url: url.clone(),
-                acting_as: acting_as.map(str::to_string),
-                secrets_fingerprint: secrets_fingerprint(&secrets),
-            };
-            let peer = state
-                .mcp_pool
-                .get_or_connect(&key, &url, headers)
+            let headers = envelope_headers(&call_id, &org, Some(&caller), acting_as, &secrets);
+            // rmcp headers belong to the transport. A short-lived call
+            // connection keeps caller and call ID exact without shared
+            // mutable headers or accumulating one pool entry per call.
+            let service = crate::worker::mcp_pool::McpPool::connect(&url, headers)
                 .await
                 .map_err(|e| format!("integration {} unreachable: {e}", turn.slug))?;
-            mcp_call_tool(&peer, raw_tool, args).await
+            mcp_call_tool(service.peer(), raw_tool, args).await
         }
     }
 }

@@ -19,6 +19,7 @@ pub mod routines;
 pub mod teams;
 pub mod thread;
 pub mod tool_artifacts;
+pub mod turn_commands;
 
 #[cfg(feature = "test-support")]
 pub use test_db::TestDb;
@@ -210,6 +211,10 @@ impl Store {
 
     pub fn routines(&self) -> routines::RoutineStore<'_> {
         routines::RoutineStore { pool: &self.pool }
+    }
+
+    pub fn turn_commands(&self) -> turn_commands::TurnCommandStore<'_> {
+        turn_commands::TurnCommandStore { pool: &self.pool }
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -406,7 +411,7 @@ pub static MIGRATIONS_UPTO_0046: [(&str, &str); 46] = [
     ),
 ];
 
-pub static MIGRATIONS_FROM_0047: [(&str, &str); 8] = [
+pub static MIGRATIONS_FROM_0047: [(&str, &str); 10] = [
     (
         "0047_projects",
         include_str!("../../migrations/0047_projects.sql"),
@@ -439,6 +444,14 @@ pub static MIGRATIONS_FROM_0047: [(&str, &str); 8] = [
         "0054_api_key_owner",
         include_str!("../../migrations/0054_api_key_owner.sql"),
     ),
+    (
+        "0055_turn_commands",
+        include_str!("../../migrations/0055_turn_commands.sql"),
+    ),
+    (
+        "0056_routine_schedule_starts",
+        include_str!("../../migrations/0056_routine_schedule_starts.sql"),
+    ),
 ];
 
 /// The full migration set, in filename order.
@@ -450,6 +463,7 @@ fn migrations() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
 
 const MIGRATION_LOCK_ID: i64 = 0x4755_494C_444D_4752;
 /// Serializes test-template database builds (connect_test fast path).
+#[cfg(feature = "test-support")]
 const TEST_TEMPLATE_LOCK_ID: i64 = 0x4755_494C_4444_5450;
 
 /// sha256 hex of one migration file — the checksum stored in schema_history.
@@ -492,6 +506,7 @@ mod test_db {
                 let stale: Vec<String> = sqlx::query_scalar(
                     "SELECT datname FROM pg_database d \
                      WHERE datname LIKE 'test\\_%' AND datname NOT LIKE 'test_tpl_%' \
+                       AND datdba = (SELECT oid FROM pg_roles WHERE rolname = current_user) \
                        AND NOT EXISTS (\
                        SELECT 1 FROM pg_stat_activity a \
                        WHERE a.datname = d.datname AND a.pid <> pg_backend_pid())",
@@ -652,10 +667,7 @@ mod test_db {
                 if exists {
                     return Ok(template.clone());
                 }
-                let build = format!(
-                    "test_tpl_{role}_build_{}",
-                    uuid::Uuid::now_v7().simple()
-                );
+                let build = format!("test_tpl_{role}_build_{}", uuid::Uuid::now_v7().simple());
                 sqlx::query(&format!("CREATE DATABASE {build}"))
                     .execute(&mut *conn)
                     .await?;

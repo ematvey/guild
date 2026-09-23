@@ -213,8 +213,8 @@ async fn chat_completions(
         req.tools.clone(),
         None,
     )
-        .await
-        .map_err(|e| openai_error(e.status(), e.openai_type(), e.0.message.clone()))?;
+    .await
+    .map_err(|e| openai_error(e.status(), e.openai_type(), e.0.message.clone()))?;
 
     let usage = call.usage.clone();
     let completion_id = format!("chatcmpl-{}", Uuid::now_v7());
@@ -242,15 +242,13 @@ async fn chat_completions(
             .keep_alive(KeepAlive::default())
             .into_response())
     } else {
-        let (text, calls, tokens_in, tokens_out) = accumulate(prov_stream)
-            .await
-            .map_err(|e| {
-                openai_error(
-                    axum::http::StatusCode::BAD_GATEWAY,
-                    "provider_error",
-                    e.to_string(),
-                )
-            })?;
+        let (text, calls, tokens_in, tokens_out) = accumulate(prov_stream).await.map_err(|e| {
+            openai_error(
+                axum::http::StatusCode::BAD_GATEWAY,
+                "provider_error",
+                e.to_string(),
+            )
+        })?;
         usage
             .record(usage_event(
                 org_id,
@@ -375,5 +373,3 @@ fn stream_chunks(
         }).await;
     }
 }
-
-

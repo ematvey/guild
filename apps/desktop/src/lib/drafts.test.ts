@@ -136,3 +136,17 @@ describe("clearDrafts (sign-out)", () => {
     expect(keys(storage)).toEqual(["guild:token"]);
   });
 });
+
+it("requires complete archived and active inventories before collecting drafts", async () => {
+  const { completeDraftInventory } = await import("./drafts");
+  expect(completeDraftInventory([{ id: "active" }], null, null)).toBeNull();
+  expect(completeDraftInventory(null, [{ id: "archived" }], null)).toBeNull();
+  expect([...completeDraftInventory([{ id: "active" }], [{ id: "archived" }], "open")!]).toEqual(["active", "archived", "open"]);
+});
+
+
+it("signout clears persisted outgoing commands with composer drafts", () => {
+  const storage = fakeStorage({ "guild:outgoing:account:message": "payload", "guild:draft:a": "text", unrelated: "keep" });
+  clearDrafts(storage);
+  expect(keys(storage)).toEqual(["unrelated"]);
+});

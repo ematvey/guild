@@ -189,17 +189,22 @@ impl ModelProvider for OpenAiProvider {
         let stream = stream! {
             let mut partials: Vec<PartialCall> = Vec::new();
             let mut finish_tool_calls = false;
+            let mut completed = false;
             let mut events = resp.bytes_stream().eventsource();
             while let Some(ev) = events.next().await {
                 let ev = match ev {
                     Ok(ev) => ev,
                     Err(e) => {
                         yield Err(ProviderError::Stream(e.to_string()));
-                        break;
+                        return;
                     }
                 };
                 let data = ev.data.trim().to_string();
-                if data.is_empty() || data == "[DONE]" {
+                if data == "[DONE]" {
+                    completed = true;
+                    break;
+                }
+                if data.is_empty() {
                     continue;
                 }
                 let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) else {
@@ -214,7 +219,7 @@ impl ModelProvider for OpenAiProvider {
                         .map(String::from)
                         .unwrap_or_else(|| v["error"].to_string());
                     yield Err(ProviderError::Upstream(msg));
-                    break;
+                    return;
                 }
                 for chunk in Self::parse_frame(&data) {
                     yield Ok(chunk);
@@ -249,9 +254,16 @@ impl ModelProvider for OpenAiProvider {
                         });
                     }
                 }
+                if choice["finish_reason"].as_str().is_some() {
+                    completed = true;
+                }
                 if choice["finish_reason"].as_str() == Some("tool_calls") {
                     finish_tool_calls = true;
                 }
+            }
+            if !completed {
+                yield Err(ProviderError::Stream("provider stream ended before a completion marker".into()));
+                return;
             }
             if finish_tool_calls {
                 for (idx, p) in partials.into_iter().enumerate() {

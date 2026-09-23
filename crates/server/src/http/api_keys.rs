@@ -131,12 +131,7 @@ impl axum::extract::FromRequestParts<AppState> for ApiKeyUser {
             .get(AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .or_else(|| {
-                parts
-                    .headers
-                    .get("x-api-key")
-                    .and_then(|v| v.to_str().ok())
-            })
+            .or_else(|| parts.headers.get("x-api-key").and_then(|v| v.to_str().ok()))
             .filter(|t| !t.is_empty())
             .ok_or_else(|| OpenAiAuthError(ApiError::unauthorized("missing api key")))?;
         let row = state

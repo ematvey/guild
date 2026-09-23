@@ -1,11 +1,11 @@
 //! Registry client: publish and install over the cloud API (spec §4.4).
 
 use crate::cloud::{CloudClient, CloudError};
-use serde::{Deserialize, Serialize};
 use anyhow::Context as _;
-use std::collections::BTreeMap;
 use guild_core::registry::{self, BundleManifest};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub struct PublishResult {
@@ -88,8 +88,16 @@ fn stamp_publish_sidecar(
 ) {
     let p = SkillProvenance {
         source: "registry".into(),
-        slug: if slug.is_empty() { manifest.slug.clone() } else { slug },
-        version: if version.is_empty() { manifest.version.clone() } else { version },
+        slug: if slug.is_empty() {
+            manifest.slug.clone()
+        } else {
+            slug
+        },
+        version: if version.is_empty() {
+            manifest.version.clone()
+        } else {
+            version
+        },
         published_by_me: true,
         review_status: "pending".into(),
         installed_at: chrono::Utc::now().to_rfc3339(),
@@ -198,10 +206,7 @@ pub fn uninstall_skill(project_dir: &Path, slug: &str, global: bool) -> Result<(
         project_dir.join(".agents").join("skills").join(slug)
     };
     if !dest.is_dir() {
-        return Err(CloudError::Request(format!(
-            "{} is not installed",
-            slug
-        )));
+        return Err(CloudError::Request(format!("{} is not installed", slug)));
     }
     match crate::registry_client::read_sidecar(&dest) {
         Some(p) if p.source == "registry" => {}
@@ -217,8 +222,7 @@ pub fn uninstall_skill(project_dir: &Path, slug: &str, global: bool) -> Result<(
             )))
         }
     }
-    std::fs::remove_dir_all(&dest)
-        .map_err(|e| CloudError::Request(format!("remove failed: {e}")))
+    std::fs::remove_dir_all(&dest).map_err(|e| CloudError::Request(format!("remove failed: {e}")))
 }
 
 fn urlencode(s: &str) -> String {
@@ -244,12 +248,9 @@ pub struct SkillEntry {
     pub path: PathBuf,
 }
 
-
 pub fn parse_frontmatter(body: &str, fallback_name: &str) -> (String, String) {
     guild_core::registry::parse_frontmatter(body, fallback_name)
 }
-
-/// Scans `<dir>/skills/*/SKILL.md` and `<dir>/skills/<file>.md`.
 
 /// Provenance for one installed/published skill dir. Guild metadata never
 /// enters SKILL.md; this rides beside it where other harnesses ignore it.
@@ -294,7 +295,9 @@ pub fn read_sidecar(dir: &Path) -> Option<SkillProvenance> {
     let body = std::fs::read_to_string(dir.join(SIDECAR_REL)).ok()?;
     let mut map: BTreeMap<String, String> = BTreeMap::new();
     for line in body.lines() {
-        let Some((k, v)) = line.split_once(':') else { continue };
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         map.insert(k.trim().to_string(), v.trim().to_string());
     }
     let get = |k: &str| map.get(k).cloned().unwrap_or_default();

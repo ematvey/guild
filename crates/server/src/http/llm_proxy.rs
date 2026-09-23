@@ -84,10 +84,8 @@ pub async fn dispatch(
 
     crate::http::gateway::enforce_quota(state, org_id, model, &route).await?;
 
-    let provider: Arc<dyn guild_core::provider::ModelProvider> =
-        for_protocol(&route.protocol).ok_or_else(|| {
-            ApiError::internal(format!("unknown protocol {}", route.protocol))
-        })?;
+    let provider: Arc<dyn guild_core::provider::ModelProvider> = for_protocol(&route.protocol)
+        .ok_or_else(|| ApiError::internal(format!("unknown protocol {}", route.protocol)))?;
     // Route cap wins; the client's max_tokens applies when the route
     // doesn't set one (0 = provider default).
     let max_tokens = route
@@ -104,16 +102,13 @@ pub async fn dispatch(
         tools: tools.as_deref(),
         max_tokens,
     };
-    let stream = provider
-        .chat_stream(preq)
-        .await
-        .map_err(|e| {
-            ProxyError(ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "provider_error",
-                e.to_string(),
-            ))
-        })?;
+    let stream = provider.chat_stream(preq).await.map_err(|e| {
+        ProxyError(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "provider_error",
+            e.to_string(),
+        ))
+    })?;
 
     Ok(RoutedCall {
         stream,
@@ -150,10 +145,7 @@ pub fn usage_event(
         tokens_in,
         tokens_out,
         cost_usd: guild_core::usage::UsageEvent::cost_usd(
-            tokens_in,
-            tokens_out,
-            price_in,
-            price_out,
+            tokens_in, tokens_out, price_in, price_out,
         ),
         request_id: Uuid::now_v7(),
     }

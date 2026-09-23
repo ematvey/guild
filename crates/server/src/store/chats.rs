@@ -691,9 +691,19 @@ mod tests {
             .update_chat(org, chat.id, &alice, None, Some(true))
             .await
             .unwrap();
-        assert!(store.chats().list_chats(org, alice.id).await.unwrap().is_empty());
+        assert!(store
+            .chats()
+            .list_chats(org, alice.id)
+            .await
+            .unwrap()
+            .is_empty());
         assert_eq!(
-            store.chats().get_chat(org, chat.id, &alice).await.unwrap().id,
+            store
+                .chats()
+                .get_chat(org, chat.id, &alice)
+                .await
+                .unwrap()
+                .id,
             chat.id
         );
 

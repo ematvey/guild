@@ -34,7 +34,12 @@ pub fn ipc_trace(event: &str, detail: &str) {
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    ipc_trace_to(&dir.join("guild-rpc.log"), IPC_TRACE_MAX_BYTES, event, detail);
+    ipc_trace_to(
+        &dir.join("guild-rpc.log"),
+        IPC_TRACE_MAX_BYTES,
+        event,
+        detail,
+    );
 }
 
 /// Size cap for the IPC trace: past it the file is truncated and restarted.
@@ -346,8 +351,18 @@ fn fetch_wsl_distros(state: &Arc<GuildState>) -> Result<Vec<Distro>, String> {
         if name.starts_with("docker-desktop") {
             continue;
         }
-        let pretty_name = state.wsl_pretty.lock().unwrap().get(&name).cloned().flatten();
-        out.push(Distro { name, running, pretty_name });
+        let pretty_name = state
+            .wsl_pretty
+            .lock()
+            .unwrap()
+            .get(&name)
+            .cloned()
+            .flatten();
+        out.push(Distro {
+            name,
+            running,
+            pretty_name,
+        });
     }
     *state.wsl_distros.lock().unwrap() = Some((std::time::Instant::now(), out.clone()));
     Ok(out)
@@ -399,7 +414,6 @@ fn parse_pretty_name(os_release: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-
 #[derive(Debug)]
 enum LinkError {
     Displaced,
@@ -421,7 +435,6 @@ impl std::fmt::Display for LinkError {
     }
 }
 
-const OUTBOUND_QUEUE_CAP: usize = 1024;
 const PRIORITY_QUEUE_CAP: usize = 16;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const TERMINAL_WRITE_TIMEOUT: Duration = WRITE_TIMEOUT;
@@ -600,7 +613,9 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
             }
         }
         if state.link_epoch.load(Ordering::SeqCst) == epoch
-            && state.link_config().is_some_and(|(b, t)| b == base && t == token)
+            && state
+                .link_config()
+                .is_some_and(|(b, t)| b == base && t == token)
         {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
@@ -613,12 +628,7 @@ async fn ws_link_task(state: Arc<GuildState>, app: AppHandle) {
 /// instance just re-displaces us, visibly, at the slow cadence).
 const DISPLACED_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
 
-async fn wait_for_link_change(
-    state: &GuildState,
-    epoch: u64,
-    base: &str,
-    token: &str,
-) {
+async fn wait_for_link_change(state: &GuildState, epoch: u64, base: &str, token: &str) {
     let deadline = tokio::time::Instant::now() + DISPLACED_BACKOFF;
     loop {
         if state.link_epoch.load(Ordering::SeqCst) != epoch {
@@ -693,7 +703,9 @@ async fn ws_session(
     };
     let writer = tokio::spawn(async move {
         loop {
-            let Some(message) = priority_rx.recv().await else { break };
+            let Some(message) = priority_rx.recv().await else {
+                break;
+            };
             send_ws_message_with_deadline(&mut socket_tx, message, WRITE_TIMEOUT).await?;
         }
         Ok::<(), String>(())
@@ -808,12 +820,23 @@ fn classify_member_frame(text: &str) -> MemberFrame {
     match tag.as_str() {
         "live_frame" | "chat_status" | "org_event" | "hello" | "thread_list" | "error" => {
             match serde_json::from_value::<WsServerMsg>(value) {
-                Ok(WsServerMsg::LiveFrame { chat_id, machine_id, event, .. }) => {
-                    MemberFrame::LiveFrame { chat_id, machine_id, event }
-                }
-                Ok(WsServerMsg::ChatStatus { chat_id, generating }) => {
-                    MemberFrame::ChatStatus { chat_id, generating }
-                }
+                Ok(WsServerMsg::LiveFrame {
+                    chat_id,
+                    machine_id,
+                    event,
+                    ..
+                }) => MemberFrame::LiveFrame {
+                    chat_id,
+                    machine_id,
+                    event,
+                },
+                Ok(WsServerMsg::ChatStatus {
+                    chat_id,
+                    generating,
+                }) => MemberFrame::ChatStatus {
+                    chat_id,
+                    generating,
+                },
                 Ok(WsServerMsg::OrgEvent { event }) => MemberFrame::OrgEvent { event },
                 Ok(WsServerMsg::Hello) => MemberFrame::Hello,
                 Ok(WsServerMsg::ThreadList { .. }) => MemberFrame::ThreadList,
@@ -1030,7 +1053,9 @@ pub mod commands {
     /// runtime; the cache lock is never held across a spawn. Windows only;
     /// every other platform returns an empty list.
     #[tauri::command]
-    pub async fn list_wsl_distros(state: State<'_, Arc<GuildState>>) -> Result<Vec<Distro>, String> {
+    pub async fn list_wsl_distros(
+        state: State<'_, Arc<GuildState>>,
+    ) -> Result<Vec<Distro>, String> {
         let state = state.inner().clone();
         tokio::task::spawn_blocking(move || {
             const TTL: std::time::Duration = std::time::Duration::from_secs(60);
@@ -1042,9 +1067,10 @@ pub mod commands {
                 // Stale: answer from the cache at once, refresh behind it —
                 // the next open sees the fresh list without ever waiting.
                 let bg = state.clone();
-                let _ = tokio::spawn(async move {
+                // Dropping the JoinHandle detaches this cache refresh.
+                drop(tokio::spawn(async move {
                     let _ = tokio::task::spawn_blocking(move || fetch_wsl_distros(&bg)).await;
-                });
+                }));
                 return Ok(distros);
             }
             fetch_wsl_distros(&state)
@@ -1100,11 +1126,7 @@ pub mod commands {
             let home = run_wsl(&["-d", &distro, "--exec", "sh", "-c", "echo $HOME"])
                 .map(|raw| raw.trim().to_string())
                 .filter(|h| h.starts_with('/') && !h.is_empty());
-            state
-                .wsl_homes
-                .lock()
-                .unwrap()
-                .insert(distro, home.clone());
+            state.wsl_homes.lock().unwrap().insert(distro, home.clone());
             Ok(home)
         })
         .await
@@ -1146,8 +1168,8 @@ pub mod commands {
             }
         }
         let key = |e: &ListEntry| e.name.to_lowercase();
-        dirs.sort_by(|a, b| key(a).cmp(&key(b)));
-        files.sort_by(|a, b| key(a).cmp(&key(b)));
+        dirs.sort_by_key(|a| key(a));
+        files.sort_by_key(|a| key(a));
         dirs.extend(files);
         Ok(dirs)
     }
@@ -1198,8 +1220,7 @@ pub mod commands {
                 || norm_str[home_str.len()..].starts_with(['/', '\\']));
         #[cfg(not(windows))]
         let under = norm_str.starts_with(&*home_str)
-            && (norm_str.len() == home_str.len()
-                || norm_str[home_str.len()..].starts_with('/'));
+            && (norm_str.len() == home_str.len() || norm_str[home_str.len()..].starts_with('/'));
         if !under {
             return Err(format!("not browsable (outside home): {path}"));
         }
@@ -1954,7 +1975,9 @@ mod tests {
             overflow,
         };
         for _ in 0..PRIORITY_QUEUE_CAP {
-            queue.try_send_priority(WsMessage::Text("frame".into())).unwrap();
+            queue
+                .try_send_priority(WsMessage::Text("frame".into()))
+                .unwrap();
         }
         assert!(matches!(
             queue.try_send_priority(WsMessage::Text("overflow".into())),
@@ -2011,17 +2034,12 @@ mod tests {
     ) -> Result<url::Url, LinkError> {
         let mut url = url::Url::parse(base)
             .map_err(|error| LinkError::Failed(format!("bad server URL: {error}")))?;
-        url.set_scheme(
-            match url.scheme() {
-                "https" => "wss",
-                _ => "ws",
-            },
-        )
+        url.set_scheme(match url.scheme() {
+            "https" => "wss",
+            _ => "ws",
+        })
         .map_err(|_| LinkError::Failed("scheme".into()))?;
-        url.set_path(&format!(
-            "{}/api/v1/ws",
-            url.path().trim_end_matches('/')
-        ));
+        url.set_path(&format!("{}/api/v1/ws", url.path().trim_end_matches('/')));
         url.set_query(Some(&format!(
             "ticket={}&client_id={}&machine_id={}&machine_name={}",
             qenc(ticket),
@@ -2105,7 +2123,10 @@ mod tests {
         );
         assert!(matches!(
             status,
-            MemberFrame::ChatStatus { generating: true, .. }
+            MemberFrame::ChatStatus {
+                generating: true,
+                ..
+            }
         ));
         let live = classify_member_frame(
             r#"{"type":"live_frame","chat_id":"00000000-0000-0000-0000-000000000000","generation_id":"00000000-0000-0000-0000-000000000000","seq":1,"event":{"type":"delta","content":"hi"}}"#,
@@ -2131,10 +2152,7 @@ mod tests {
     #[test]
     fn wsl_list_survives_nul_separators_and_uses_lowercase_running() {
         let raw = "N\u{0}A\u{0}M\u{0}E\u{0}\n\u{0} a\u{0}r\u{0}c\u{0}h\u{0} \u{0}R\u{0}u\u{0}n\u{0}n\u{0}i\u{0}n\u{0}g\u{0} \u{0}2\u{0}\n\u{0}";
-        assert_eq!(
-            parse_wsl_list(raw),
-            vec![("arch".to_string(), true)]
-        );
+        assert_eq!(parse_wsl_list(raw), vec![("arch".to_string(), true)]);
     }
 
     #[test]

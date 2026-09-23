@@ -6,9 +6,7 @@
 
 use crate::cloud::{CloudClient, CloudError};
 use async_trait::async_trait;
-use guild_core::tools::artifacts::{
-    self, ArtifactFetcher, ArtifactIndex, ArtifactPath,
-};
+use guild_core::tools::artifacts::{self, ArtifactFetcher, ArtifactIndex, ArtifactPath};
 use protocol::api::ThreadEvent;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,16 +32,16 @@ impl ArtifactFetcher for CloudArtifacts {
     }
 
     async fn thread_events(&self, chat_id: Uuid) -> Result<Vec<ThreadEvent>, String> {
-        self.cloud
-            .thread_events(chat_id)
-            .await
-            .map_err(cloud_err)
+        self.cloud.thread_events(chat_id).await.map_err(cloud_err)
     }
 }
 
 /// Registry hooks for one engine: the process-shared path→id index plus
 /// the cloud fetch source.
-pub fn registry_hooks(cloud: CloudClient, index: Arc<ArtifactIndex>) -> Arc<artifacts::ArtifactHooks> {
+pub fn registry_hooks(
+    cloud: CloudClient,
+    index: Arc<ArtifactIndex>,
+) -> Arc<artifacts::ArtifactHooks> {
     Arc::new(artifacts::ArtifactHooks {
         index,
         fetcher: Arc::new(CloudArtifacts { cloud }),
@@ -104,9 +102,7 @@ pub fn spawn_thread_sync_prefetch(
         let events = match fetcher.thread_events(chat_id).await {
             Ok(e) => e,
             Err(e) => {
-                crate::dtrace::dtrace(&format!(
-                    "artifact index sync failed (chat {chat_id}): {e}"
-                ));
+                crate::dtrace::dtrace(&format!("artifact index sync failed (chat {chat_id}): {e}"));
                 return;
             }
         };

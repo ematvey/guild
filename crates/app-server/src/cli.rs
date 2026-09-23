@@ -76,7 +76,7 @@ pub fn cmd_chat(args: &[String]) -> anyhow::Result<()> {
 
 pub fn cmd_publish(args: &[String]) -> anyhow::Result<()> {
     let kind = flag(args, "--kind")?;
-    let dir = flag(args, "--dir")?;
+    let dir = absolute_cli_path(&flag(args, "--dir")?)?;
     let version = flag(args, "--version")?;
     let mut client = DaemonClient::attach(&this_bin()?)?;
     let res = client.call(
@@ -95,7 +95,7 @@ pub fn cmd_publish(args: &[String]) -> anyhow::Result<()> {
 pub fn cmd_install(args: &[String]) -> anyhow::Result<()> {
     let slug = flag(args, "--slug")?;
     let version = flag(args, "--version").ok();
-    let project = flag(args, "--project").unwrap_or_else(|_| ".".into());
+    let project = absolute_cli_path(&flag(args, "--project").unwrap_or_else(|_| ".".into()))?;
     let mut client = DaemonClient::attach(&this_bin()?)?;
     let res = client.call(
         "registry.install",
@@ -133,4 +133,31 @@ pub fn cmd_verify(args: &[String]) -> anyhow::Result<()> {
         .context("signature does NOT match — artifact is not authentic")?;
     println!("OK: {} verified (sha256 {})", file, hex::encode(digest));
     Ok(())
+}
+
+/// Relative paths belong to the invoking shell, not the long-lived daemon.
+fn absolute_cli_path(path: &str) -> anyhow::Result<PathBuf> {
+    let path = PathBuf::from(path);
+    Ok(if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()?.join(path)
+    })
+}
+
+#[cfg(test)]
+mod cli_path_tests {
+    use super::*;
+    #[test]
+    fn paths_crossing_rpc_are_absolute_in_the_callers_directory() {
+        assert_eq!(
+            absolute_cli_path(".").unwrap(),
+            std::env::current_dir().unwrap().join(".")
+        );
+        let absolute = std::env::temp_dir().join("guild-cli-path");
+        assert_eq!(
+            absolute_cli_path(absolute.to_str().unwrap()).unwrap(),
+            absolute
+        );
+    }
 }

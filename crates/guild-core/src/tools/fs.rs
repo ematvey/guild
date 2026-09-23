@@ -1,7 +1,10 @@
 //! File tools: read, write, edit — all scoped to the project dir.
 
 use super::workspace::{self, WorkspaceKind};
-use super::{diff_text, resolve_scoped, resolve_scoped_in, truncate, Approval, Tool, ToolFailure, ToolOutcome};
+use super::{
+    diff_text, resolve_scoped, resolve_scoped_in, truncate, Approval, Tool, ToolFailure,
+    ToolOutcome,
+};
 use async_trait::async_trait;
 use base64::Engine as _;
 use protocol::api::ToolSpec;
@@ -186,7 +189,11 @@ async fn wsl_read_bytes(distro: &str, inner: &str) -> Result<Vec<u8>, ToolFailur
     decode_wsl_base64(&out, inner, distro)
 }
 
-async fn wsl_read_bytes_capped(distro: &str, inner: &str, cap: usize) -> Result<Vec<u8>, ToolFailure> {
+async fn wsl_read_bytes_capped(
+    distro: &str,
+    inner: &str,
+    cap: usize,
+) -> Result<Vec<u8>, ToolFailure> {
     let argv = wsl_read_prefix_argv(distro, inner, cap);
     let out = wsl_run_collecting(&argv, std::process::Stdio::null()).await?;
     decode_wsl_base64(&out, inner, distro)
@@ -228,33 +235,32 @@ async fn wsl_write_bytes(distro: &str, inner: &str, content: &[u8]) -> Result<()
         .map_err(|e| ToolFailure::Execution(format!("wsl.exe spawn failed: {e}")))?;
     // kill_on_drop reaps the child when the timeout drops the write+wait
     // future mid-flight.
-    let out = tokio::time::timeout(WSL_TOOL_TIMEOUT, async {
-        {
-            let mut stdin = child.stdin.take().ok_or_else(|| {
-                ToolFailure::Execution("wsl.exe stdin unavailable".to_string())
-            })?;
-            stdin
-                .write_all(content)
+    let out =
+        tokio::time::timeout(WSL_TOOL_TIMEOUT, async {
+            {
+                let mut stdin = child.stdin.take().ok_or_else(|| {
+                    ToolFailure::Execution("wsl.exe stdin unavailable".to_string())
+                })?;
+                stdin.write_all(content).await.map_err(|e| {
+                    ToolFailure::Execution(format!("wsl.exe stdin write failed: {e}"))
+                })?;
+                stdin.shutdown().await.map_err(|e| {
+                    ToolFailure::Execution(format!("wsl.exe stdin close failed: {e}"))
+                })?;
+                // Dropping the handle delivers EOF so `cat` can finish.
+            }
+            child
+                .wait_with_output()
                 .await
-                .map_err(|e| ToolFailure::Execution(format!("wsl.exe stdin write failed: {e}")))?;
-            stdin
-                .shutdown()
-                .await
-                .map_err(|e| ToolFailure::Execution(format!("wsl.exe stdin close failed: {e}")))?;
-            // Dropping the handle delivers EOF so `cat` can finish.
-        }
-        child
-            .wait_with_output()
-            .await
-            .map_err(|e| ToolFailure::Execution(format!("wsl.exe wait failed: {e}")))
-    })
-    .await
-    .map_err(|_| {
-        ToolFailure::Execution(format!(
-            "wsl.exe write timed out after {}s: {inner} (distro {distro})",
-            WSL_TOOL_TIMEOUT.as_secs()
-        ))
-    })??;
+                .map_err(|e| ToolFailure::Execution(format!("wsl.exe wait failed: {e}")))
+        })
+        .await
+        .map_err(|_| {
+            ToolFailure::Execution(format!(
+                "wsl.exe write timed out after {}s: {inner} (distro {distro})",
+                WSL_TOOL_TIMEOUT.as_secs()
+            ))
+        })??;
     if !out.status.success() {
         return Err(ToolFailure::Execution(format!(
             "write {inner} (distro {distro}): {}",
@@ -659,7 +665,9 @@ mod tests {
             assert!(out.meta.as_ref().unwrap()["truncated"].as_bool().unwrap());
             assert!(out.output_for_model.contains("[truncated:"));
             // Small files are not flagged.
-            tokio::fs::write(dir.join("small.txt"), &b"tiny\n"[..]).await.unwrap();
+            tokio::fs::write(dir.join("small.txt"), &b"tiny\n"[..])
+                .await
+                .unwrap();
             let out = ReadFile::default()
                 .run(&dir, serde_json::json!({"path": "small.txt"}))
                 .await

@@ -199,7 +199,7 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
             // The generated form treats `default` per the field kind, so the
             // JSON value must match: string for string/text, number for
             // number, boolean for boolean. Missing and null stay allowed.
-            let default_ok = f.default.as_ref().map_or(true, |d| {
+            let default_ok = f.default.as_ref().is_none_or(|d| {
                 d.is_null()
                     || match f.kind.as_str() {
                         "number" => d.is_number(),
@@ -221,7 +221,7 @@ pub fn validate_v2(m: &BundleManifest) -> anyhow::Result<()> {
                 "tool class for {name} must be read, write, or admin"
             );
             anyhow::ensure!(
-                name.len() <= 64 - m.slug.len() - 1,
+                name.len() < 64 - m.slug.len(),
                 "tool name {name} too long for namespacing under {}",
                 m.slug
             );
@@ -360,9 +360,7 @@ pub fn read_bundle_file(bundle: &[u8], path: &str) -> anyhow::Result<Option<Vec<
                 MAX_BUNDLE_FILE
             );
             let mut buf = Vec::new();
-            (&mut entry)
-                .take(MAX_BUNDLE_FILE)
-                .read_to_end(&mut buf)?;
+            (&mut entry).take(MAX_BUNDLE_FILE).read_to_end(&mut buf)?;
             anyhow::ensure!(
                 buf.len() as u64 <= MAX_BUNDLE_FILE,
                 "bundle entry '{}' exceeds the {}-byte read cap",

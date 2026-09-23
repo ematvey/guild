@@ -23,6 +23,164 @@ pub struct RunCommand;
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
 
+// Retain at most this much per pipe while continuing to drain the child.
+const MAX_PIPE_BYTES: usize = 64 * 1024;
+
+async fn collect_pipe(mut pipe: impl tokio::io::AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut kept = Vec::new();
+    let mut buffer = [0u8; 8192];
+    let mut truncated = false;
+    loop {
+        let n = pipe.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+        let retain = n.min(MAX_PIPE_BYTES.saturating_sub(kept.len()));
+        kept.extend_from_slice(&buffer[..retain]);
+        truncated |= retain < n;
+    }
+    if truncated {
+        kept.extend_from_slice(b"\n[output truncated]\n");
+    }
+    Ok(kept)
+}
+
+#[cfg(unix)]
+struct ProcessTree(i32);
+#[cfg(unix)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        // This execution owns a fresh process group; descendants retaining
+        // the pipes must not survive timeout or cancellation of the future.
+        unsafe {
+            libc::kill(-self.0, libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(windows)]
+struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
+#[cfg(windows)]
+unsafe impl Send for ProcessTree {}
+#[cfg(windows)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn process_tree(child: &tokio::process::Child) -> std::io::Result<ProcessTree> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::{Diagnostics::ToolHelp::*, JobObjects::*, Threading::*};
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let guard = ProcessTree(job);
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            std::mem::size_of_val(&info) as u32,
+        ) == 0
+            || AssignProcessToJobObject(job, child.raw_handle().unwrap() as _) == 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        // The child starts suspended, so it cannot create descendants before
+        // joining the job. std/Tokio do not expose the primary thread handle.
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error());
+        }
+        let resumed = (|| {
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut found = false;
+            let mut next = Thread32First(snapshot, &mut entry);
+            while next != 0 {
+                if Some(entry.th32OwnerProcessID) == child.id() {
+                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    if thread.is_null() {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    let result = ResumeThread(thread);
+                    let error = std::io::Error::last_os_error();
+                    CloseHandle(thread);
+                    if result == u32::MAX {
+                        return Err(error);
+                    }
+                    found = true;
+                }
+                next = Thread32Next(snapshot, &mut entry);
+            }
+            if !found {
+                return Err(std::io::Error::other("suspended child thread not found"));
+            }
+            Ok(())
+        })();
+        CloseHandle(snapshot);
+        resumed?;
+        Ok(guard)
+    }
+}
+
+async fn run_bounded(
+    cmd: &mut tokio::process::Command,
+    timeout_ms: u64,
+) -> Result<std::process::Output, ToolFailure> {
+    #[cfg(unix)]
+    cmd.process_group(0);
+    #[cfg(windows)]
+    cmd.creation_flags(
+        windows_sys::Win32::System::Threading::CREATE_SUSPENDED
+            | windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
+    );
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| ToolFailure::Execution(format!("spawn failed: {e}")))?;
+    #[cfg(unix)]
+    let tree = ProcessTree(child.id().expect("spawned child id") as i32);
+    #[cfg(windows)]
+    let tree = process_tree(&child)
+        .map_err(|e| ToolFailure::Execution(format!("process job failed: {e}")))?;
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let result = tokio::time::timeout(Duration::from_millis(timeout_ms), async {
+        tokio::try_join!(child.wait(), collect_pipe(stdout), collect_pipe(stderr))
+    })
+    .await;
+    drop(tree);
+    match result {
+        Ok(Ok((status, stdout, stderr))) => Ok(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        }),
+        Ok(Err(e)) => {
+            let _ = child.kill().await;
+            Err(ToolFailure::Execution(format!("wait failed: {e}")))
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            Err(ToolFailure::Execution(format!(
+                "command timed out after {timeout_ms}ms"
+            )))
+        }
+    }
+}
+
 /// The WSLInterop binfmt_misc registration. Matches what WSL itself writes
 /// (magic `MZ`, interpreter `/init`, preserve-argv0 + fix-binary flags).
 /// Proven sufficient on WSL 2.7.x: with this entry present, login-shell
@@ -92,6 +250,22 @@ fn wsl_shell_argv(distro: &str, inner: &str, command: &str) -> Vec<String> {
         "-lc".to_string(),
         command.to_string(),
     ]
+}
+
+/// Enforce the timeout inside the Linux namespace too: killing wsl.exe
+/// alone does not reliably terminate its distro-side descendants.
+#[cfg(windows)]
+fn wsl_timed_shell_argv(distro: &str, inner: &str, command: &str, timeout_ms: u64) -> Vec<String> {
+    let mut argv = wsl_shell_argv(distro, inner, command);
+    argv.splice(
+        6..6,
+        [
+            "timeout".into(),
+            "--kill-after=1s".into(),
+            format!("{}s", (timeout_ms as f64 / 1000.0).max(0.001)),
+        ],
+    );
+    argv
 }
 
 /// A spawn-ready wsl.exe child with the desktop guards (no console window,
@@ -187,10 +361,7 @@ impl Tool for RunCommand {
             let mut c = match workspace::classify(workdir) {
                 WorkspaceKind::Wsl { ref distro } => {
                     let base = workspace::to_inner(workdir).ok_or_else(|| {
-                        ToolFailure::InvalidInput(format!(
-                            "bad WSL workdir: {}",
-                            workdir.display()
-                        ))
+                        ToolFailure::InvalidInput(format!("bad WSL workdir: {}", workdir.display()))
                     })?;
                     let cd = match &cwd {
                         Some(p) => workspace::to_inner(p).ok_or_else(|| {
@@ -198,7 +369,7 @@ impl Tool for RunCommand {
                         })?,
                         None => base,
                     };
-                    let argv = wsl_shell_argv(distro, &cd, &command);
+                    let argv = wsl_timed_shell_argv(distro, &cd, &command, timeout_ms);
                     wsl_ctx = Some((distro.clone(), cd));
                     let mut w = tokio::process::Command::new(&argv[0]);
                     w.args(&argv[1..]);
@@ -214,24 +385,7 @@ impl Tool for RunCommand {
             c.creation_flags(CREATE_NO_WINDOW);
             c
         };
-        let child = cmd
-            // stdin is pinned to null so interactive prompts (e.g. bare
-            // `date`) read EOF instead of hanging until the timeout.
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            // On timeout the wait future is dropped with the child inside:
-            // kill_on_drop reaps it instead of leaking an orphan process.
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| ToolFailure::Execution(format!("spawn failed: {e}")))?;
-
-        let out = tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait_with_output())
-            .await
-            .map_err(|_| {
-                ToolFailure::Execution(format!("command timed out after {timeout_ms}ms: {command}"))
-            })?
-            .map_err(|e| ToolFailure::Execution(format!("wait failed: {e}")))?;
+        let out = run_bounded(&mut cmd, timeout_ms).await?;
 
         // WSL self-heal: on the interop-ENOEXEC signature, repair the binfmt
         // entry and run the command once more. The first attempt never ran
@@ -243,32 +397,9 @@ impl Tool for RunCommand {
                 if is_interop_enoexec(out.status.code(), &String::from_utf8_lossy(&out.stderr)) =>
             {
                 if wsl_heal_interop(distro).await {
-                    let argv = wsl_shell_argv(distro, cd, &command);
-                    let retry = wsl_child(&argv)
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .kill_on_drop(true)
-                        .spawn();
-                    match retry {
-                        Ok(child) => {
-                            let retried = tokio::time::timeout(
-                                Duration::from_millis(timeout_ms),
-                                child.wait_with_output(),
-                            )
-                            .await
-                            .map_err(|_| {
-                                ToolFailure::Execution(format!(
-                                    "command timed out after {timeout_ms}ms: {command}"
-                                ))
-                            })?
-                            .map_err(|e| ToolFailure::Execution(format!("wait failed: {e}")))?;
-                            (retried, true)
-                        }
-                        // Keep the original failure if the heal child itself
-                        // could not spawn.
-                        Err(_) => (out, false),
-                    }
+                    let argv = wsl_timed_shell_argv(distro, cd, &command, timeout_ms);
+                    let retried = run_bounded(&mut wsl_child(&argv), timeout_ms).await?;
+                    (retried, true)
                 } else {
                     (out, false)
                 }
@@ -313,6 +444,29 @@ impl Tool for RunCommand {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bounded_output_drains_both_pipes_and_timeout_kills_descendants() {
+        let mut noisy = tokio::process::Command::new("sh");
+        noisy.args([
+            "-c",
+            "head -c 300000 /dev/zero; head -c 300000 /dev/zero >&2",
+        ]);
+        let out = run_bounded(&mut noisy, 5000).await.unwrap();
+        assert!(out.stdout.len() <= MAX_PIPE_BYTES + 32);
+        assert!(out.stderr.len() <= MAX_PIPE_BYTES + 32);
+        assert!(out.stdout.ends_with(b"[output truncated]\n"));
+        let marker = std::env::temp_dir().join(format!("guild-timeout-{}", uuid::Uuid::now_v7()));
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c").arg(format!(
+            "(sleep 0.3; echo survived > '{}') & wait",
+            marker.display()
+        ));
+        assert!(run_bounded(&mut cmd, 80).await.is_err());
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(!marker.exists(), "descendant survived timeout");
+    }
+
     #[test]
     fn interop_enoexec_signature() {
         assert!(is_interop_enoexec(
@@ -328,7 +482,10 @@ mod tests {
         // printed MZ in its own output.
         assert!(!is_interop_enoexec(Some(0), "MZ"));
         assert!(!is_interop_enoexec(Some(2), "MZ missing"));
-        assert!(!is_interop_enoexec(Some(127), "bash: foo: command not found"));
+        assert!(!is_interop_enoexec(
+            Some(127),
+            "bash: foo: command not found"
+        ));
         assert!(!is_interop_enoexec(
             Some(127),
             "MZ file header checked — tool exited 127 on its own"
@@ -342,7 +499,10 @@ mod tests {
     #[test]
     fn wsl_heal_argv_shape() {
         let argv = wsl_heal_argv("archlinux");
-        assert_eq!(&argv[..6], &["wsl.exe", "-d", "archlinux", "-u", "root", "--exec"]);
+        assert_eq!(
+            &argv[..6],
+            &["wsl.exe", "-d", "archlinux", "-u", "root", "--exec"]
+        );
         assert_eq!(&argv[6..8], &["sh", "-c"]);
         let script = &argv[8];
         // Registers only when absent; the spec travels quoted.

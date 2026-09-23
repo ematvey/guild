@@ -403,7 +403,11 @@ async fn list_events_tolerates_unknown_event_payloads() {
         .await
         .unwrap();
 
-    let events = store.thread().list_events(user.org_id, chat.id).await.unwrap();
+    let events = store
+        .thread()
+        .list_events(user.org_id, chat.id)
+        .await
+        .unwrap();
     let contents: Vec<&str> = events
         .iter()
         .filter_map(|row| match &row.event {

@@ -228,13 +228,14 @@ impl ModelProvider for AnthropicProvider {
         let stream = stream! {
             // per-block partial tool calls, keyed by block index
             let mut partials: std::collections::BTreeMap<u32, PartialCall> = Default::default();
+            let mut completed = false;
             let mut events = resp.bytes_stream().eventsource();
             while let Some(ev) = events.next().await {
                 let ev = match ev {
                     Ok(ev) => ev,
                     Err(e) => {
                         yield Err(ProviderError::Stream(e.to_string()));
-                        break;
+                        return;
                     }
                 };
                 let data = ev.data.trim().to_string();
@@ -252,6 +253,10 @@ impl ModelProvider for AnthropicProvider {
                         .as_str()
                         .unwrap_or("upstream error");
                     yield Err(ProviderError::Upstream(format!("{etype}: {msg}")));
+                    return;
+                }
+                if v["type"].as_str() == Some("message_stop") {
+                    completed = true;
                     break;
                 }
                 if let Some(chunk) = Self::parse_frame(&data) {
@@ -298,6 +303,9 @@ impl ModelProvider for AnthropicProvider {
                     }
                     _ => {}
                 }
+            }
+            if !completed {
+                yield Err(ProviderError::Stream("provider stream ended before message_stop".into()));
             }
         };
         Ok(stream.boxed())

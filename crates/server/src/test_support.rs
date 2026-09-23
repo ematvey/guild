@@ -76,7 +76,9 @@ pub async fn register_test_machine(
         Ok(store) => {
             store
                 .machines()
-                .upsert_connected(org_id, user_id, machine_id, label, None, None, None, None, None)
+                .upsert_connected(
+                    org_id, user_id, machine_id, label, None, None, None, None, None,
+                )
                 .await
                 .expect("test machine registry row");
         }

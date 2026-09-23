@@ -62,11 +62,7 @@ impl<'a> ProjectStore<'a> {
     }
 
     /// Lists the caller's projects — owner-only, admins included.
-    pub async fn list(
-        &self,
-        org_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<Vec<ProjectRow>, ApiError> {
+    pub async fn list(&self, org_id: Uuid, user_id: Uuid) -> Result<Vec<ProjectRow>, ApiError> {
         sqlx::query_as(&format!(
             "SELECT {ROW_COLUMNS} FROM {ROW_FROM} \
              WHERE p.org_id = $1 AND p.user_id = $2 AND p.archived_at IS NULL \
@@ -101,6 +97,8 @@ impl<'a> ProjectStore<'a> {
     /// Updates the editable fields (`None` = keep). A duplicate name is a 409.
     /// `archived` soft-hides: archived projects drop out of `list` but direct
     /// fetches still resolve.
+    // This scoped update accepts independent optional project fields.
+    #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
         org_id: Uuid,
@@ -164,9 +162,9 @@ impl<'a> ProjectStore<'a> {
             "UPDATE chats SET project_id = NULL, machine_id = NULL, machine_label = NULL \
              WHERE project_id = $1",
         )
-            .bind(project_id)
-            .execute(&mut *tx)
-            .await?;
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -188,7 +186,11 @@ impl<'a> ProjectStore<'a> {
 mod tests {
     use crate::store::Store;
 
-    async fn fixture() -> (crate::store::TestDb, uuid::Uuid, crate::store::identity::UserRow) {
+    async fn fixture() -> (
+        crate::store::TestDb,
+        uuid::Uuid,
+        crate::store::identity::UserRow,
+    ) {
         let db = Store::connect_test().await.unwrap();
         let store = &db.store;
         let org = uuid::Uuid::now_v7();
@@ -309,7 +311,12 @@ mod tests {
         assert_eq!(chat.project_id, None);
         assert_eq!(chat.machine_id, None);
         assert_eq!(chat.machine_label, None);
-        assert!(store.projects().list(org, user.id).await.unwrap().is_empty());
+        assert!(store
+            .projects()
+            .list(org, user.id)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     /// Archiving soft-hides: archived projects drop out of `list` but a
@@ -329,7 +336,12 @@ mod tests {
             .update(org, project.id, user.id, None, None, None, Some(true))
             .await
             .unwrap();
-        assert!(store.projects().list(org, user.id).await.unwrap().is_empty());
+        assert!(store
+            .projects()
+            .list(org, user.id)
+            .await
+            .unwrap()
+            .is_empty());
         // Direct fetch still resolves — direct links keep working.
         assert_eq!(
             store

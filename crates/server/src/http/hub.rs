@@ -54,6 +54,27 @@ pub enum MachineRequestError {
     Rejected(String),
 }
 
+struct PendingMachineRequest {
+    connection_id: Uuid,
+    org_id: Uuid,
+    reply: oneshot::Sender<Result<serde_json::Value, String>>,
+}
+
+struct PendingRequestGuard<'a> {
+    hub: &'a Hub,
+    request_id: String,
+}
+impl Drop for PendingRequestGuard<'_> {
+    fn drop(&mut self) {
+        self.hub
+            .inner
+            .lock()
+            .unwrap()
+            .machine_requests
+            .remove(&self.request_id);
+    }
+}
+
 #[derive(Default)]
 pub struct Hub {
     inner: Mutex<HubInner>,
@@ -66,19 +87,23 @@ struct HubInner {
     /// reclaim the slot after losing its terminal notice.
     owners: HashMap<String, Uuid>,
     members: HashMap<Uuid, HashMap<Uuid, Member>>,
-    machine_requests: HashMap<String, oneshot::Sender<Result<serde_json::Value, String>>>,
+    machine_requests: HashMap<String, PendingMachineRequest>,
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("socket limit reached")]
+pub struct SocketLimitReached;
 
 impl Hub {
     /// Registers a browser socket, rejecting a new connection over the limit.
-    pub fn register_member(&self, m: Member) -> Result<(), ()> {
+    pub fn register_member(&self, m: Member) -> Result<(), SocketLimitReached> {
         let mut guard = self.inner.lock().unwrap();
         let already_registered = guard
             .members
             .get(&m.user_id)
             .is_some_and(|members| members.contains_key(&m.conn_id));
         if !already_registered && self.socket_count(&guard, m.user_id) >= MAX_SOCKETS_PER_USER {
-            return Err(());
+            return Err(SocketLimitReached);
         }
         guard
             .members
@@ -190,6 +215,9 @@ impl Hub {
 
     pub fn unregister_machine(&self, machine_id: &str, conn_id: Uuid) {
         let mut guard = self.inner.lock().unwrap();
+        guard
+            .machine_requests
+            .retain(|_, pending| pending.connection_id != conn_id);
         let is_current = guard
             .machines
             .get(machine_id)
@@ -229,30 +257,45 @@ impl Hub {
     pub async fn machine_request(
         &self,
         machine_id: &str,
+        org_id: Uuid,
         op: &str,
         payload: serde_json::Value,
         timeout: std::time::Duration,
     ) -> Result<serde_json::Value, MachineRequestError> {
         let holder = self
             .machine_holder(machine_id)
+            .filter(|holder| holder.org_id == org_id)
             .ok_or(MachineRequestError::Offline)?;
         let request_id = Uuid::now_v7().to_string();
         let (tx, rx) = oneshot::channel();
         {
             let mut guard = self.inner.lock().unwrap();
-            guard
-                .machine_requests
-                .insert(request_id.clone(), tx);
+            guard.machine_requests.insert(
+                request_id.clone(),
+                PendingMachineRequest {
+                    connection_id: holder.conn_id,
+                    org_id,
+                    reply: tx,
+                },
+            );
         }
+        let _pending = PendingRequestGuard {
+            hub: self,
+            request_id: request_id.clone(),
+        };
         let sent = holder
             .sink
             .try_send(protocol::ws::WsServerMsg::MachineRequest {
-            request_id: request_id.clone(),
-            op: op.to_owned(),
-            payload,
-        });
+                request_id: request_id.clone(),
+                op: op.to_owned(),
+                payload,
+            });
         if sent.is_err() {
-            self.inner.lock().unwrap().machine_requests.remove(&request_id);
+            self.inner
+                .lock()
+                .unwrap()
+                .machine_requests
+                .remove(&request_id);
             return Err(MachineRequestError::SendFailed);
         }
         match tokio::time::timeout(timeout, rx).await {
@@ -264,7 +307,11 @@ impl Hub {
             Err(_) => {
                 // Elapsed timer: drop the pending entry so the late response
                 // (if the machine still answers) finds no waiter.
-                self.inner.lock().unwrap().machine_requests.remove(&request_id);
+                self.inner
+                    .lock()
+                    .unwrap()
+                    .machine_requests
+                    .remove(&request_id);
                 Err(MachineRequestError::TimedOut)
             }
         }
@@ -275,18 +322,24 @@ impl Hub {
     /// whose timer already fired.
     pub fn resolve_machine_response(
         &self,
+        member: &Member,
         request_id: &str,
         ok: bool,
         payload: Option<serde_json::Value>,
         error: Option<String>,
     ) {
-        let waiter = self
-            .inner
-            .lock()
-            .unwrap()
+        let mut guard = self.inner.lock().unwrap();
+        let matches = guard
             .machine_requests
-            .remove(request_id);
-        if let Some(tx) = waiter {
+            .get(request_id)
+            .is_some_and(|pending| {
+                pending.connection_id == member.conn_id && pending.org_id == member.org_id
+            });
+        if !matches {
+            return;
+        }
+        if let Some(pending) = guard.machine_requests.remove(request_id) {
+            let tx = pending.reply;
             let _ = tx.send(if ok {
                 Ok(payload.unwrap_or(serde_json::Value::Null))
             } else {
@@ -698,6 +751,67 @@ mod tests {
             SocketOutput::SyncStart
         ));
         assert!(old_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn control_response_requires_exact_dispatch_connection_and_org() {
+        let hub = std::sync::Arc::new(Hub::default());
+        let (sink, mut receiver) = socket_channel();
+        let machine = Member { sink, ..member() };
+        hub.register_machine(machine.clone(), "context-machine")
+            .await
+            .unwrap();
+        let task_hub = hub.clone();
+        let org = machine.org_id;
+        let pending = tokio::spawn(async move {
+            task_hub
+                .machine_request(
+                    "context-machine",
+                    org,
+                    "context.prepare_v1",
+                    serde_json::json!({}),
+                    std::time::Duration::from_secs(2),
+                )
+                .await
+        });
+        let request_id = match receiver.recv().await.unwrap() {
+            SocketOutput::Message(WsServerMsg::MachineRequest { request_id, .. }) => request_id,
+            _ => panic!("expected request"),
+        };
+        let wrong_connection = Member {
+            conn_id: Uuid::now_v7(),
+            ..machine.clone()
+        };
+        hub.resolve_machine_response(
+            &wrong_connection,
+            &request_id,
+            true,
+            Some(serde_json::json!("forged")),
+            None,
+        );
+        let wrong_org = Member {
+            org_id: Uuid::now_v7(),
+            ..machine.clone()
+        };
+        hub.resolve_machine_response(
+            &wrong_org,
+            &request_id,
+            true,
+            Some(serde_json::json!("forged")),
+            None,
+        );
+        assert!(!pending.is_finished());
+        hub.resolve_machine_response(
+            &machine,
+            &request_id,
+            true,
+            Some(serde_json::json!("executor")),
+            None,
+        );
+        assert_eq!(
+            pending.await.unwrap().unwrap(),
+            serde_json::json!("executor")
+        );
     }
 
     #[tokio::test]

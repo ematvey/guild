@@ -64,10 +64,38 @@ export function clearDrafts(storage: DraftStorage): void {
     const drop: string[] = [];
     for (let i = 0; i < storage.length; i++) {
       const key = storage.key(i);
-      if (key?.startsWith("guild:draft:")) drop.push(key);
+      if (key?.startsWith("guild:draft:") || key?.startsWith("guild:outgoing:")) drop.push(key);
     }
     for (const key of drop) storage.removeItem(key);
   } catch {
     /* storage unavailable — drafts are best-effort */
   }
+}
+
+/** Only a complete active+archived inventory authorizes deletion. */
+export function completeDraftInventory(
+  active: readonly { id: string }[] | null,
+  archived: readonly { id: string }[] | null,
+  openChatId: string | null,
+): Set<string> | null {
+  if (active === null || archived === null) return null;
+  return new Set([...active.map(c => c.id), ...archived.map(c => c.id), ...(openChatId ? [openChatId] : [])]);
+}
+
+/** Namespace every composer key to the authenticated API/account. Unowned
+ * legacy keys are deliberately not imported into an arbitrary account. */
+export function scopedDraftStorage(storage: DraftStorage, scope: string): DraftStorage {
+  const prefix = `guild:composer:${encodeURIComponent(scope)}:`;
+  const keys = () => {
+    const result: string[] = [];
+    for (let i = 0; i < storage.length; i++) { const key = storage.key(i); if (key?.startsWith(prefix)) result.push(key.slice(prefix.length)); }
+    return result;
+  };
+  return {
+    getItem: key => storage.getItem(prefix + key),
+    setItem: (key, value) => storage.setItem(prefix + key, value),
+    removeItem: key => storage.removeItem(prefix + key),
+    key: index => keys()[index] ?? null,
+    get length() { return keys().length; },
+  };
 }

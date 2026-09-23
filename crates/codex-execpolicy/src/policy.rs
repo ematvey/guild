@@ -165,8 +165,7 @@ impl Policy {
             decision,
             justification,
         });
-        self.rules_by_program
-            .insert(first.to_string(), rule);
+        self.rules_by_program.insert(first.to_string(), rule);
         Ok(())
     }
 
