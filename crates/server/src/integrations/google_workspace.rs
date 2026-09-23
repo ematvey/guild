@@ -516,14 +516,17 @@ async fn calendar_list_events(
     args: &serde_json::Value,
     token: &str,
 ) -> Result<ToolOutcome, String> {
+    // timeMin defaults to now: without it the API expands recurring events
+    // from their first instance and ascending startTime order makes the
+    // first page decades of old recurrences instead of upcoming events.
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let time_min = args["time_min"].as_str().unwrap_or(&now);
     let mut url = format!(
-        "{}/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults={}",
+        "{}/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults={}&timeMin={}",
         api_base(config),
-        max_results(args, 10, 50)
+        max_results(args, 10, 50),
+        urlencoding_lite(time_min)
     );
-    if let Some(t) = args["time_min"].as_str() {
-        url.push_str(&format!("&timeMin={}", urlencoding_lite(t)));
-    }
     if let Some(t) = args["time_max"].as_str() {
         url.push_str(&format!("&timeMax={}", urlencoding_lite(t)));
     }
@@ -760,7 +763,9 @@ impl Integration for GoogleWorkspace {
             },
             ToolSpec {
                 name: "calendar_list_events".into(),
-                description: "List upcoming events on the primary Google Calendar.".into(),
+                description: "List upcoming events on the primary Google Calendar (time_min \
+                              defaults to now)."
+                    .into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {

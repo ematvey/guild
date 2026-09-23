@@ -483,6 +483,44 @@ async fn calendar_list_events_lists_primary_events() {
 }
 
 #[tokio::test]
+async fn calendar_list_events_defaults_time_min_to_now() {
+    let server = MockServer::start().await;
+    mount_token_endpoint(&server, 3600).await;
+    Mock::given(method("GET"))
+        .and(path("/calendar/v3/calendars/primary/events"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": []})))
+        .mount(&server)
+        .await;
+
+    let outcome = connector()
+        .execute(
+            &config(&server),
+            "calendar_list_events",
+            json!({}),
+            &secrets(),
+            None,
+        )
+        .await
+        .expect("calendar_list_events succeeds");
+    assert!(outcome.content.contains("No events"));
+
+    let requests = server.received_requests().await.unwrap();
+    let api_req = requests
+        .iter()
+        .find(|r| r.url.path() == "/calendar/v3/calendars/primary/events")
+        .unwrap();
+    let time_min = api_req
+        .url
+        .query_pairs()
+        .find(|(k, _)| k == "timeMin")
+        .map(|(_, v)| v.to_string())
+        .expect("timeMin is always sent");
+    let sent = chrono::DateTime::parse_from_rfc3339(&time_min).expect("timeMin is RFC3339");
+    let age = chrono::Utc::now().signed_duration_since(sent);
+    assert!(age.num_seconds() >= 0 && age.num_seconds() < 120, "timeMin {time_min} is close to now");
+}
+
+#[tokio::test]
 async fn drive_search_builds_name_contains_query() {
     let server = MockServer::start().await;
     mount_token_endpoint(&server, 3600).await;
