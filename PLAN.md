@@ -6,6 +6,21 @@ enabled). Read this before touching the codebase; the requirements live in
 nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
 
+## Chat "Working" shimmer indicator — 2026-09-23
+
+While a turn is generating, the chat log itself had no in-flow indicator
+(only the composer send button and the sidebar thread spinner). Shipped a
+ChatGPT-style shimmer label: `WorkingIndicator` in `@guild/ui`
+(`components/working-indicator.tsx`) sweeps a brightness wave across the
+letters via a new `--animate-working-shimmer` keyframe (theme.css) with
+per-letter `animation-delay`. WebChat shows it under the log tail whenever
+`streaming` (busy ∨ server generating) and the tail isn't already animating
+— before the first token, after a finished/error tool frame, or on silent
+gaps. A live text tail keeps its ▍ caret and live thinking keeps
+"Thinking…" — no double indicator. This also retires the old
+`streaming && blocks.length === 0` bare-Caret line, which was dead code
+anyway (the empty-log branch never reaches the block pane render).
+
 ## Message-send loss diagnosis + composer hardening + chip merge — 2026-09-23
 
 A user send (desktop app, 17:55:41) created the chat and uploaded the
