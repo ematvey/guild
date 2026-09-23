@@ -2133,10 +2133,20 @@ export default function WebChat({
             currentProject &&
             (currentProject.folder ??
               projects?.find((p) => p.id === currentProject.id)?.folder);
-          const prep = await prepareTurn(text, projectFolder || undefined);
-          turnText = prep.prompt;
-          if (prep.index) turnSkillsIndex = prep.index;
-          if (prep.instructions) turnAgentsMd = prep.instructions;
+          // Context assembly is sugar — the send must never wait on it past
+          // this deadline. A wedged local daemon burns one 15s timeout per
+          // fs call (and there are many), silently stalling the send for
+          // minutes; the deadline caps the whole step and falls back to the
+          // typed text.
+          const prep = await Promise.race([
+            prepareTurn(text, projectFolder || undefined),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
+          ]);
+          if (prep) {
+            turnText = prep.prompt;
+            if (prep.index) turnSkillsIndex = prep.index;
+            if (prep.instructions) turnAgentsMd = prep.instructions;
+          }
         } catch {
           /* expansion is sugar — send the typed text */
         }
@@ -2166,6 +2176,10 @@ export default function WebChat({
         setBlocks(failed.blocks);
         if (mode === "normal") setBusy(false);
       }
+      // A normal send that failed here never reached the server (the accept
+      // response returns in milliseconds; a 30s timeout means nothing was
+      // submitted) — give the typed text back so a retry is one click.
+      if (mode === "normal") setPrompt(text);
     } finally {
       // Queue/steer never own the busy flag — the running turn does.
       if (mode === "normal") {
@@ -2594,37 +2608,46 @@ export default function WebChat({
                 </Button>
                 {(() => {
                   const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-                  // Machine binding is project-derived: only project-bound
-                  // chats show the pill, and on desktop the local machine
-                  // executes its own tools so the pill is noise there.
+                  // One chip for project + machine. The executing machine is
+                  // project-derived: an existing chat inherits its bound
+                  // project's machine, a new chat the picked project's. The
+                  // dot renders only for a remote machine (on desktop the
+                  // local machine executes its own tools) whose live socket
+                  // state is known — the chat row for existing chats, the
+                  // machines list for new ones (hidden while unknown).
+                  const chipMachineId =
+                    row?.machine_id && row.project_id
+                      ? row.machine_id
+                      : projects?.find((p) => p.id === currentProject?.id)?.machine_id;
                   const remoteMachine =
-                    row?.machine_id &&
-                    row.project_id &&
-                    (!isTauri || row.machine_id !== machineId());
+                    !!chipMachineId && (!isTauri || chipMachineId !== machineId());
+                  const machineOnline: boolean | undefined = remoteMachine
+                    ? chatId
+                      ? row!.machine_online
+                      : machines?.find((m) => m.machine_id === chipMachineId)?.connected
+                    : undefined;
+                  const showMachine = remoteMachine && machineOnline !== undefined;
+                  const machineLabel =
+                    row?.machine_label ??
+                    machines?.find((m) => m.machine_id === chipMachineId)?.name ??
+                    chipMachineId;
                   return (
-                    <>
-                      {remoteMachine && row!.machine_id && (
-                        <span
-                          className="flex h-7 max-w-44 shrink-0 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground"
-                          title={`Machine: ${row!.machine_label ?? row!.machine_id}${row!.machine_online ? " (online)" : " (offline)"}`}
-                        >
-                          <span
-                            className={`size-2 shrink-0 rounded-full ${row!.machine_online ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
-                          />
-                          <span className="truncate">
-                            {row!.machine_label ?? row!.machine_id}
-                          </span>
-                        </span>
-                      )}
-                      {(!chatId || currentProject) && (
+                    (!chatId || currentProject) && (
                       <span
-                        className="flex h-7 max-w-52 items-center gap-1 rounded-full bg-secondary px-2 text-muted-foreground"
+                        className="flex h-7 max-w-52 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground"
                         title={
-                          currentProject
-                            ? `${currentProject.name} — ${currentProject.machine_label ?? "project"}`
-                            : "Pick the folder the agent works in"
+                          showMachine
+                            ? `${currentProject ? `${currentProject.name} — ` : ""}Machine: ${machineLabel}${machineOnline ? " (online)" : " (offline)"}`
+                            : currentProject
+                              ? `${currentProject.name} — ${currentProject.machine_label ?? "project"}`
+                              : "Pick the folder the agent works in"
                         }
                       >
+                        {showMachine && (
+                          <span
+                            className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+                          />
+                        )}
                         {chatId ? (
                           // An existing chat: the binding is fixed at chat
                           // start — a bound project shows as a read-only
@@ -2658,8 +2681,7 @@ export default function WebChat({
                           </>
                         )}
                       </span>
-                      )}
-                    </>
+                    )
                   );
                 })()}
                 <DropdownMenu>
