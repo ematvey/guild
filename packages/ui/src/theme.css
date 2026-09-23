@@ -72,7 +72,6 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --animate-caret: caret-blink 1.1s step-end infinite;
-  --animate-working-shimmer: working-shimmer 1.4s ease-in-out infinite;
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
@@ -88,18 +87,31 @@
   }
 }
 
-/* Bright band sweeping letter-by-letter across the Working indicator
-   (components/working-indicator.tsx staggers the animation-delay). */
+/* Working indicator: a bright band sweeps across the word
+   (components/working-indicator.tsx) — background-clip:text over a moving
+   gradient, like the reference shimmer. */
+.working-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 40%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 60%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: working-shimmer 1.8s linear infinite;
+}
+
 @keyframes working-shimmer {
-  0%,
-  100% {
-    opacity: 0.35;
+  from {
+    background-position: 200% 0;
   }
-  30% {
-    opacity: 1;
-  }
-  55% {
-    opacity: 0.35;
+  to {
+    background-position: -200% 0;
   }
 }
 
