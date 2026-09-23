@@ -42,14 +42,29 @@ server — thread_events stayed empty and no agent started. Diagnosis:
   back to the typed text; the turn POST gets `AbortSignal.timeout(30 s)`
   with a friendly "send timed out … press send to retry" error block; the
   typed text is restored to the composer on a failed normal send.
-- **WORKSTATION machine-link 401 loop captured**: the 17:xx 401 storm
-  (814 hits, mint 200 → upgrade 401 several times/sec) starts 17:48:28 —
-  exactly when WORKSTATION connected (17:49:20), and WORKSTATION's last_seen froze at
-  connect (link down, mint→401 retry loop). The 06:xx storm (1447 hits,
-  right after the 06:56 redeploy) is the same signature — this is likely
-  the mechanism behind the "slow reconnect after a CLEAN server restart"
-  gap from the devbox outage entry. Needs a captured 401 body to confirm
-  which unauthorized branch fires.
+- **WORKSTATION machine-link storm root-caused (Windows GUI leak)**: the
+  "WORKSTATION" registry record is the user's Windows desktop app (HQ box).
+  Traced in situ with `GUILD_DAEMON_TRACE=1`: the process runs hundreds of
+  concurrent `machine_link::run` loops (~2600 trace lines/s, thread ids
+  5–20 interleaving), each minting tickets — most fail client-side ("error
+  sending request": local resource exhaustion under the hammer), a few get
+  through (the server's logged 200s + 401s). Cause:
+  `run_daemon_shared_reclaiming` spawns a fresh link task + token watcher +
+  reaper on EVERY host cycle, and its bind
+  (`create_pipe_server_instance` with `FILE_FLAG_FIRST_PIPE_INSTANCE`)
+  fails instantly on this machine (zero `accept:` trace lines) with NO
+  backoff and NO cancellation of the previous cycle's tasks — an unbounded
+  task pileup, ~5–13 GB of commit per minute and pegged cores. The starving
+  engine stalls the in-process RPCs — this is what ate the 17:55 send
+  (context assembly never finished, so the turn POST never fired). Fixed:
+  one live link+watcher pair per process (previous pair aborted at cycle
+  start), `RECLAIM_POLL` sleep after a failed host cycle, and the failure
+  is now traced (`daemon host cycle failed: …`). Still open: WHY the first
+  pipe instance fails on this machine (stderr is unreachable in a
+  windows-subsystem binary; the trace now captures the error text for the
+  next run). This also supersedes the 401-storm theory for the "slow
+  reconnect after a clean restart" gaps: a machine stuck failing its bind
+  cannot link at all until the app restarts.
 - Composer chips merged into one: the standalone machine pill (dot +
   "devbox") is gone; the project chip now carries the online dot +
   machine-suffixed label ("guild · devbox"), identical structure in new
