@@ -90,6 +90,16 @@ async fn fingerprint_match_adopts_the_row_and_rekeys_the_id() {
         )
         .await
         .unwrap();
+    let project = db
+        .projects()
+        .create(org, user, "bound", "/workspace", "old-id")
+        .await
+        .unwrap();
+    let chat = db
+        .chats()
+        .create_chat_with_machine(org, user, None, Some(project.id), Some("old-id"), None)
+        .await
+        .unwrap();
     let original_first = get_row(&db, "old-id")
         .await
         .unwrap()
@@ -123,6 +133,32 @@ async fn fingerprint_match_adopts_the_row_and_rekeys_the_id() {
     assert!(row.re_paired_at.is_some(), "re-pair must be stamped");
     assert_eq!(row.first_connected_at, original_first);
 
+    let bound: String = sqlx::query_scalar("SELECT machine_id FROM projects WHERE id = $1")
+        .bind(project.id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(bound, "new-id");
+    let bound: String = sqlx::query_scalar("SELECT machine_id FROM chats WHERE id = $1")
+        .bind(chat.id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(bound, "new-id");
+    let other = db
+        .identity()
+        .create_user(org, "other@machines.test", "hunter226", "member")
+        .await
+        .unwrap();
+    db.machines()
+        .upsert_connected(org, other.id, "old-id", None, None, None, None, None, None)
+        .await
+        .unwrap();
+    assert!(db
+        .chats()
+        .readable_by_executor(org, chat.id, &other)
+        .await
+        .is_err());
     // The adopted identity is bindable, and only under the new id.
     assert!(db.machines().bindable("new-id", user, org).await.unwrap());
     assert!(!db.machines().bindable("old-id", user, org).await.unwrap());
