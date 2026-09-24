@@ -766,3 +766,82 @@ async fn text_alongside_tool_result_keeps_results_adjacent_upstream() {
     assert_eq!(msgs[2]["content"], "snow");
     assert_eq!(msgs[3]["content"], "What next?");
 }
+
+/// Reasoning survives both directions on the Anthropic surface: a
+/// reasoning route's streamed `thinking` reaches non-stream clients as a
+/// leading thinking content block, and the client's replayed assistant
+/// `thinking` block is forwarded upstream as `reasoning_content` (the
+/// same contract the OpenAI ingress honors).
+#[tokio::test]
+async fn thinking_round_trips_through_ingress_and_non_stream_response() {
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"pondering\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"sunny\"}}]}\n\n",
+                    "data: [DONE]\n\n",
+                )),
+        )
+        .mount(&provider)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_user_key(&app, &fs.token).await;
+
+    // Non-stream response: the reasoning leads the content as a thinking
+    // block, before the text.
+    let (status, v) = post_messages(
+        &app,
+        &key,
+        None,
+        json!({"model": "gpt-test", "max_tokens": 1024,
+               "messages": [{"role": "user", "content": "hi"}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["content"][0]["type"], "thinking");
+    assert_eq!(v["content"][0]["thinking"], "pondering");
+    assert_eq!(v["content"][1]["type"], "text");
+    assert_eq!(v["content"][1]["text"], "sunny");
+
+    // The client replays the assistant turn with its thinking block; the
+    // upstream continuation carries it as reasoning_content.
+    let (status, v) = post_messages(
+        &app,
+        &key,
+        None,
+        json!({"model": "gpt-test", "max_tokens": 1024, "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "pondering"},
+                {"type": "text", "text": "sunny"}
+            ]}
+        ]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let upstream = chat_calls(&provider).await.remove(1);
+    let sent: Value = serde_json::from_slice(&upstream.body).unwrap();
+    assert_eq!(
+        sent["messages"].as_array().unwrap().last().unwrap()["reasoning_content"],
+        "pondering"
+    );
+}

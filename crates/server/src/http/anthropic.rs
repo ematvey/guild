@@ -157,6 +157,7 @@ fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>),
         if role == "assistant" {
             let mut text = String::new();
             let mut calls: Vec<ToolCall> = Vec::new();
+            let mut reasoning = String::new();
             for b in &blocks {
                 match b["type"].as_str() {
                     Some("text") => text.push_str(b["text"].as_str().unwrap_or_default()),
@@ -165,6 +166,17 @@ fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>),
                         name: b["name"].as_str().unwrap_or("").to_string(),
                         arguments: b["input"].clone(),
                     }),
+                    // The model's thinking rides the internal reasoning
+                    // field and is replayed upstream (openai-shape routes
+                    // resend it as reasoning_content). Signature-bearing
+                    // deltas have no internal carrier beyond the text.
+                    Some("thinking") => {
+                        if !reasoning.is_empty() {
+                            reasoning.push('\n');
+                        }
+                        reasoning.push_str(b["thinking"].as_str().unwrap_or_default());
+                    }
+                    Some("redacted_thinking") => {}
                     _ => {}
                 }
             }
@@ -175,7 +187,7 @@ fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>),
                 audio: Vec::new(),
                 tool_calls: (!calls.is_empty()).then_some(calls),
                 tool_call_id: None,
-                reasoning: None,
+                reasoning: (!reasoning.is_empty()).then_some(reasoning),
             });
         } else {
             // user turns: tool_result blocks become tool messages FIRST (a
@@ -279,8 +291,13 @@ fn to_tool_specs(tools: &[AnthropicTool]) -> Vec<ToolSpec> {
         .collect()
 }
 
-fn content_blocks(text: &str, calls: &[ToolCall]) -> Value {
+fn content_blocks(reasoning: &str, text: &str, calls: &[ToolCall]) -> Value {
     let mut blocks = Vec::new();
+    // The provider's reasoning leads the content, mirroring how it streams
+    // (thinking before text) so non-stream clients can replay it.
+    if !reasoning.is_empty() {
+        blocks.push(json!({"type": "thinking", "thinking": reasoning}));
+    }
     if !text.is_empty() {
         blocks.push(json!({"type": "text", "text": text}));
     }
@@ -402,7 +419,7 @@ async fn messages(
             "type": "message",
             "role": "assistant",
             "model": model,
-            "content": content_blocks(&acc.text, &acc.calls),
+            "content": content_blocks(&acc.reasoning, &acc.text, &acc.calls),
             "stop_reason": stop,
             "stop_sequence": null,
             "usage": {"input_tokens": acc.tokens_in, "output_tokens": acc.tokens_out},
