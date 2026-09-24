@@ -69,6 +69,11 @@ const rpcWaiters = new Map<
   number,
   { resolve: (v: any) => void; reject: (e: Error) => void }
 >();
+// Results drained by the poll loop before their caller's waiter was
+// registered (a fast call completes in the engine while its submit ack is
+// still in flight). Kept briefly so the registration can pick them up.
+const rpcOrphans = new Map<number, { value: any; at: number }>();
+const RPC_ORPHAN_TTL_MS = 10000;
 let rpcPolling = false;
 
 async function rpcPollLoop(): Promise<void> {
@@ -79,9 +84,16 @@ async function rpcPollLoop(): Promise<void> {
         const w = rpcWaiters.get(v?.id);
         if (w) {
           rpcWaiters.delete(v.id);
+          rpcOrphans.delete(v.id);
           if (v?.error) w.reject(new Error(v.error?.message ?? String(v.error)));
           else w.resolve(v);
+        } else {
+          rpcOrphans.set(v.id, { value: v, at: Date.now() });
         }
+      }
+      const now = Date.now();
+      for (const [id, orphan] of rpcOrphans) {
+        if (now - orphan.at > RPC_ORPHAN_TTL_MS) rpcOrphans.delete(id);
       }
     } catch {
       // engine restarting — keep polling until the caller's timeout fires
@@ -116,6 +128,11 @@ export async function rpcCall(
         reject(e);
       },
     });
+    const orphan = rpcOrphans.get(id);
+    if (orphan) {
+      rpcOrphans.delete(id);
+      rpcWaiters.get(id)?.resolve(orphan.value);
+    }
     if (!rpcPolling) {
       rpcPolling = true;
       rpcPollLoop();
