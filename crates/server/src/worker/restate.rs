@@ -3204,13 +3204,10 @@ async fn fetch_context_via_machine(
                     // them. A failed validation degrades to no context (the
                     // turn proceeds without project instructions) — the
                     // fail-closed outcome.
-                    let Some(machine) = crate::worker::funnel::validate_context_executor(
+                    let machine = crate::worker::funnel::validate_context_executor(
                         &state, &machine, &expected, org_id,
                     )
-                    .await
-                    else {
-                        return None;
-                    };
+                    .await?;
                     let caps = state
                         .hub
                         .machine_request(
