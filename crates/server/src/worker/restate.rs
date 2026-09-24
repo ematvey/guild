@@ -19,7 +19,7 @@ use crate::worker::funnel::{
     clear_pending_tool, dispatch_pending_tool, note_pending_tool, restore_dispatch_connection,
     spawn_machine_watcher, spawn_stop_approval_watcher, suspend, Executor, APPROVAL_TIMEOUT,
 };
-use crate::worker::overflow::is_context_overflow_wrapped;
+use crate::worker::overflow::{is_context_overflow, is_context_overflow_wrapped};
 use crate::worker::run::MAX_STEPS;
 use crate::worker::turn::{build_turn_text, enforce_quota, load_media_map, media_parts, MediaMap};
 use futures::StreamExt;
