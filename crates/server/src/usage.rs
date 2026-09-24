@@ -52,6 +52,7 @@ impl From<UsageEvent> for UsageRow {
 
 pub struct UsageSink {
     client: clickhouse::Client,
+    pool: Option<sqlx::PgPool>,
 }
 
 use chrono::Datelike;
@@ -69,10 +70,18 @@ impl UsageSink {
             )
             .execute()
             .await?;
-        Ok(Self { client })
+        Ok(Self { client, pool: None })
     }
 
-    pub async fn record(&self, ev: UsageEvent) {
+    pub async fn record(&self, mut ev: UsageEvent) {
+        if ev.team_id.is_none() {
+            if let Some(pool) = &self.pool {
+                // Membership has no primary flag; the earliest-created team is primary.
+                ev.team_id = sqlx::query_scalar("SELECT t.id FROM teams t JOIN team_members m ON m.team_id = t.id WHERE m.user_id = $1 AND t.org_id = $2 ORDER BY t.created_at, t.id LIMIT 1")
+                    .bind(ev.user_id).bind(ev.org_id).fetch_optional(pool).await
+                    .unwrap_or_else(|error| { tracing::warn!(?error, "usage team lookup failed"); None });
+            }
+        }
         if let Err(e) = self.write(ev.into()).await {
             tracing::warn!("usage event dropped: {e}");
         }
@@ -137,10 +146,11 @@ impl AppState {
     pub async fn usage(&self) -> Result<SharedUsageSink, crate::http::error::ApiError> {
         self.usage_cell()
             .get_or_try_init(|| async {
-                UsageSink::connect(&self.config)
+                let mut sink = UsageSink::connect(&self.config)
                     .await
-                    .map(Arc::new)
-                    .map_err(|e| crate::http::error::ApiError::internal(e.to_string()))
+                    .map_err(|e| crate::http::error::ApiError::internal(e.to_string()))?;
+                sink.pool = Some(self.store().await?.pool().clone());
+                Ok(Arc::new(sink))
             })
             .await
             .cloned()
