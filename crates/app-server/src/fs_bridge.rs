@@ -103,7 +103,7 @@ impl Allowlist {
             read,
             exists,
             write,
-            project: project_dir.map(|p| canonical_root(p)),
+            project: project_dir.map(canonical_root),
             walk_ancestors,
         }
     }
