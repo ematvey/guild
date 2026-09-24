@@ -2164,6 +2164,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         },
         uploaded: (attachment, meta) => {
           if (!mountedRef.current) return;
+          // The stamp persists with the attachment (localStorage and the
+          // file store): a restored draft re-sends the server id instead of
+          // its local identity.
+          attachment.uploadedAs = meta;
           const changed = reducerRef.current.settleAttachment(command.id, `pending-${attachment.id}`, meta.id);
           if (openChatIdRef.current === command.chatId || loadSeq.current === mySeq) setBlocks(changed.blocks);
         },

@@ -1,6 +1,13 @@
 import type { MessageAttachmentMeta } from "../transport";
 
-export type DraftAttachment = MessageAttachmentMeta & { file?: File; previewUrl?: string };
+export type DraftAttachment = MessageAttachmentMeta & {
+  file?: File;
+  previewUrl?: string;
+  /** Server metadata once the file uploaded; the local `id` stays the
+   * identity across retries and reloads. Restored file-less entries use
+   * this instead of being mistaken for already-uploaded rows. */
+  uploadedAs?: MessageAttachmentMeta;
+};
 export type PreparedCommand = {
   model: string;
   prompt: string;
@@ -76,7 +83,13 @@ export async function submitCommand(command: OutgoingCommand, io: SubmissionIO):
     }
     for (const attachment of command.attachments) {
       if (command.uploaded.has(attachment.id)) continue;
-      const meta = attachment.file ? await io.upload(command.chatId, attachment) : attachment;
+      // A file-less entry (restored from storage) is only reusable when its
+      // upload already completed — the server metadata rides `uploadedAs`;
+      // the raw local-id meta would reach the server as an invalid UUID.
+      const meta = attachment.file
+        ? await io.upload(command.chatId, attachment)
+        : attachment.uploadedAs ?? attachment;
+      attachment.uploadedAs = meta;
       command.uploaded.set(attachment.id, meta);
       await io.checkpoint?.(command);
       io.uploaded(attachment, meta);
@@ -141,6 +154,13 @@ export function restoreCommands(storage: Pick<Storage, "getItem" | "key" | "leng
           || typeof row.prepared?.prompt !== "string" || !Array.isArray(row.prepared?.attachmentIds)
           || !Array.isArray(row.attachments) || !Array.isArray(row.uploaded)) continue;
         const uploaded = new Map<string, MessageAttachmentMeta>(row.uploaded);
+        // Heal records written before the stamp existed: an uploaded
+        // attachment's server metadata travels on the entry itself, so an
+        // EDITED re-send of the restored draft reuses it.
+        for (const a of row.attachments) {
+          const meta = uploaded.get(a.id);
+          if (meta) (a as DraftAttachment).uploadedAs = meta;
+        }
         // The local attachment ID stays the identity in both stores so the
         // recovered composer draft still matches on retry (server dedup and
         // acceptance cleanup keep working); the server ID lives in the
