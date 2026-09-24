@@ -264,6 +264,18 @@ function DesktopApp() {
         );
       }
     }
+    // Adopt the new server/token BEFORE resolving the profile: apiMe reads
+    // both from localStorage, and fetching first (the old order) sent the
+    // profile lookup with the OLD or missing credential — a fresh admin
+    // login after sign-out deterministically landed on the member fallback.
+    try {
+      localStorage.setItem("guild.serverUrl", baseUrl);
+      // Unified shell: the webview talks to the same server over HTTP, so the
+      // engine's session token becomes the webview's chat token.
+      if (info.result?.token) localStorage.setItem("guild_token", info.result.token);
+    } catch {
+      /* private mode: pref simply not remembered */
+    }
     // Resolve the server profile before entering the shell: the splash holds
     // until the IdP name/avatar are known, so the sidebar never flashes the
     // bare-email fallback. Bounded: an unreachable server must not hang the
@@ -278,14 +290,6 @@ function DesktopApp() {
     setRole(me?.role ?? "member");
     setDisplayName(me?.display_name ?? null);
     setAvatarUrl(me?.avatar_url ?? null);
-    try {
-      localStorage.setItem("guild.serverUrl", baseUrl);
-      // Unified shell: the webview talks to the same server over HTTP, so the
-      // engine's session token becomes the webview's chat token.
-      if (info.result?.token) localStorage.setItem("guild_token", info.result.token);
-    } catch {
-      /* private mode: pref simply not remembered */
-    }
   };
 
   const pair = async () => {
