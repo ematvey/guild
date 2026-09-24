@@ -331,7 +331,14 @@ pub(crate) async fn validate_context_executor(
     let row_owner = store.machines().owner_of(&resolved).await.ok().flatten();
     match (row_owner, holder) {
         (Some((owner_user, owner_org)), Some(member))
-            if member.user_id == owner_user
+            // The final registry snapshot must still be the CAPTURED owner:
+            // between the first owner check (in resolve_executor_target)
+            // and this read, a re-pair can free the id and a same-org
+            // member can claim it — the new row and the new holder would
+            // agree with each other, so only the captured owner exposes
+            // the replacement.
+            if expected.owner == Some((owner_user, owner_org))
+                && member.user_id == owner_user
                 && member.org_id == owner_org
                 && owner_org == org_id =>
         {
@@ -379,7 +386,12 @@ pub(crate) async fn dispatch_pending_tool(
     };
     let identity_ok = match (machine.as_deref(), row_owner.as_ref(), holder.as_ref()) {
         (Some(_), Some((owner_user, owner_org)), Some(member)) => {
-            member.user_id == *owner_user
+            // The final registry snapshot must still be the CAPTURED owner
+            // (same reasoning as validate_context_executor): the row and
+            // holder agreeing with each other is not identity — a claimant
+            // that took the freed id between the two reads satisfies both.
+            Some((*owner_user, *owner_org)) == tool.expected_owner
+                && member.user_id == *owner_user
                 && member.org_id == *owner_org
                 && tool.org_id.is_some_and(|org| org == *owner_org)
         }
@@ -1199,6 +1211,105 @@ mod tests {
             other => panic!("expected ToolDispatch, got {other:?}"),
         }
     }
+    /// A same-org claimant that takes the machine id between the first
+    /// owner check and the holder capture leaves every NEW snapshot
+    /// agreeing with itself (row owner = holder = claimant, org matches):
+    /// only the comparison against the CAPTURED owner rejects it. Both
+    /// validation paths fail closed; a legitimate re-pair of the same
+    /// owner (new socket) still passes, since identity is owner+org.
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn claimant_of_a_freed_id_fails_validation_and_dispatch() {
+        let (fixture, ingress) = test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let owner_id = store
+            .identity()
+            .ensure_bootstrap_admin("captured-owner@example.org", "hunter226")
+            .await
+            .unwrap();
+        let org = store.identity().get_user(owner_id).await.unwrap().org_id;
+        let claimant = store
+            .identity()
+            .create_user(org, "claimant@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+
+        // The freed id is now claimed by the same-org member: registry row
+        // and live socket both name the claimant and agree with each other.
+        let (_conn, mut output) = register_executor(&fixture, "machine", claimant.id, org).await;
+
+        let expected_owner = ExpectedExecutor {
+            org_id: Some(org),
+            project_id: None,
+            owner: Some((owner_id, org)),
+        };
+        assert!(
+            validate_context_executor(&fixture.state, "machine", &expected_owner, org)
+                .await
+                .is_none(),
+            "the claimant must not pass control-channel validation"
+        );
+
+        // The tool path fails closed the same way: no ToolDispatch reaches
+        // the claimant's socket; the tool resolves as an error instead.
+        let chat = Uuid::now_v7();
+        fixture.state.generations.attach(chat);
+        note_pending_tool(
+            &fixture.state,
+            chat,
+            "call",
+            "execute",
+            "{\"cmd\":\"ls\"}",
+            Some("machine"),
+            None,
+            expected_owner,
+        );
+        assert_eq!(
+            dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
+                .await
+                .unwrap(),
+            (None, None)
+        );
+        assert!(
+            output.try_recv().is_err(),
+            "no dispatch reaches the claimant"
+        );
+        assert!(ingress
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, body)| body["is_error"] == true));
+
+        // The SAME owner re-pairing (new socket, same registry owner) still
+        // passes both paths — identity is owner+org, not the socket.
+        let (_conn, mut owner_output) =
+            register_executor(&fixture, "machine2", owner_id, org).await;
+        fixture.state.generations.attach(chat);
+        note_pending_tool(
+            &fixture.state,
+            chat,
+            "call2",
+            "execute",
+            "{}",
+            Some("machine2"),
+            None,
+            expected_owner,
+        );
+        assert!(
+            validate_context_executor(&fixture.state, "machine2", &expected_owner, org)
+                .await
+                .is_some()
+        );
+        dispatch_pending_tool(&fixture.state, chat, "call2", "durable-awakeable")
+            .await
+            .unwrap();
+        assert!(matches!(
+            owner_output.try_recv().unwrap(),
+            crate::http::ws::SocketOutput::Message(protocol::ws::WsServerMsg::ToolDispatch { .. })
+        ));
+    }
+
     /// A stop while the tool is suspended resolves it through the durable
     /// resolver (the interrupt notice rides the same complete_tool funnel as
     /// every other resolution), so the turn ends at the next journaled cancel
