@@ -50,13 +50,36 @@ impl<'a> KvStore<'a> {
 
     pub async fn put(&self, key: &str, value: &str) -> Result<(), ApiError> {
         sqlx::query(
-            "INSERT INTO server_kv (key, value) VALUES ($1, $2) \
-             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            "INSERT INTO server_kv (key, value, updated_at) VALUES ($1, $2, now()) \
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
         )
         .bind(key)
         .bind(value)
         .execute(self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Deletes entries under the given key prefixes whose last write is
+    /// older than the cutoff (days). Bounded-key namespaces (e.g. durable
+    /// effect claims) use this in the hourly maintenance loop.
+    pub async fn prune_older_than(
+        &self,
+        prefixes: &[&str],
+        days: i32,
+    ) -> Result<u64, ApiError> {
+        let mut query = String::from("DELETE FROM server_kv WHERE updated_at < now() - make_interval(days => $1) AND (");
+        for (i, prefix) in prefixes.iter().enumerate() {
+            if i > 0 {
+                query.push_str(" OR ");
+            }
+            query.push_str(&format!("key LIKE ${} || '%'", i + 2));
+        }
+        query.push(')');
+        let mut bound = sqlx::query(&query).bind(days);
+        for prefix in prefixes {
+            bound = bound.bind(prefix);
+        }
+        Ok(bound.execute(self.pool).await?.rows_affected())
     }
 }

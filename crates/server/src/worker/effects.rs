@@ -3,6 +3,19 @@
 use crate::store::Store;
 use serde::{de::DeserializeOwned, Serialize};
 
+/// Claim namespaces (key prefixes in server_kv). Each invocation writes its
+/// own keys, so they are pruned once the invocation can no longer replay.
+pub(crate) const CLAIM_PREFIXES: &[&str] = &["plugin_effect:", "routine_effect:"];
+
+/// Claims outlive every replay window (Restate's own journal/idempotency
+/// retention is shorter); the hourly loop retires anything older.
+pub(crate) const CLAIM_RETENTION_DAYS: i32 = 30;
+
+/// A stored result larger than this is not persisted: the stored claim then
+/// resolves to `Unknown` on replay ("outcome unknown"), which is the honest
+/// report for a result that cannot be represented in the claim store.
+pub(crate) const MAX_RESULT_BYTES: usize = 256 * 1024;
+
 pub(crate) enum Claim<T> {
     Execute,
     Completed(T),
@@ -42,17 +55,70 @@ pub(crate) async fn complete<T: Serialize>(
     key: &str,
     result: &T,
 ) -> anyhow::Result<()> {
+    let value = serde_json::to_string(result)?;
+    if value.len() > MAX_RESULT_BYTES {
+        tracing::warn!(key, bytes = value.len(), "effect result over claim bound; replay reports unknown outcome");
+        return Ok(());
+    }
     store
         .kv()
-        .put(&format!("{key}:result"), &serde_json::to_string(result)?)
+        .put(&format!("{key}:result"), &value)
         .await
         .map_err(|e| anyhow::anyhow!("{e:?}"))?;
     Ok(())
 }
 
+/// Retires claim entries (and their stored results) older than the
+/// retention bound. Called from the hourly maintenance loop.
+pub(crate) async fn prune(store: &Store) -> anyhow::Result<u64> {
+    Ok(store
+        .kv()
+        .prune_older_than(CLAIM_PREFIXES, CLAIM_RETENTION_DAYS)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?)
+}
+
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stale_effect_claims_are_pruned_and_other_kv_survives() {
+        let fixture = crate::test_support::test_state_with_db().await;
+        let store = fixture.store();
+        claim::<String>(&store, "plugin_effect:inv-1").await.unwrap();
+        complete(&store, "plugin_effect:inv-1", &"result").await.unwrap();
+        claim::<String>(&store, "routine_effect:inv-2:0:0").await.unwrap();
+        store.kv().put("release_signing_seed", "keep").await.unwrap();
+        sqlx::query("UPDATE server_kv SET updated_at = now() - make_interval(days => $1)")
+            .bind(CLAIM_RETENTION_DAYS + 1)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let pruned = prune(&store).await.unwrap();
+        assert_eq!(pruned, 3);
+        assert!(store
+            .kv()
+            .get("plugin_effect:inv-1:result")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .kv()
+            .get("routine_effect:inv-2:0:0")
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store.kv().get("release_signing_seed").await.unwrap().as_deref(),
+            Some("keep")
+        );
+        // A pruned claim is free again: a fresh claim executes.
+        assert!(matches!(
+            claim::<String>(&store, "plugin_effect:inv-1").await.unwrap(),
+            Claim::Execute
+        ));
+    }
 
     #[tokio::test]
     async fn concurrent_and_crashed_execution_never_gets_a_second_claim() {
