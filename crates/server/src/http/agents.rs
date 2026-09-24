@@ -63,10 +63,22 @@ async fn create_session(
         .chats()
         .create_chat(user.0.org_id, user.0.id, Some(name), None)
         .await?;
-    let session = store
+    let session = match store
         .agent_sessions()
         .create(user.0.org_id, user.0.id, chat.id, name)
-        .await?;
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            // A taken workspace name must not leave an orphan chat behind.
+            sqlx::query("DELETE FROM chats WHERE id = $1")
+                .bind(chat.id)
+                .execute(store.pool())
+                .await
+                .map_err(|del| ApiError::internal(format!("orphan chat cleanup failed: {del}")))?;
+            return Err(e);
+        }
+    };
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| ApiError::internal(format!("workspace dir create failed: {e}")))?;
