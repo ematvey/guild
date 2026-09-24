@@ -4,6 +4,9 @@ import { daemonFs, listSkills } from "../lib/context";
 import { openExternal } from "../lib/open-external";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+// Client-side tools need the desktop runtime (local files, shell); in a plain
+// browser they stay pending until the server-side timeout releases the turn.
 import Markdown, { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
@@ -423,8 +426,6 @@ function AttachmentFileChip({
   );
 }
 
-/// Client-side tools need the desktop runtime (local files, shell); in a plain
-/// browser they stay pending until the server-side timeout releases the turn.
 /// Anchor for markdown content: every link routes through `openExternal`.
 /// Images never load from model/tool-controlled URLs: injected markdown
 /// could otherwise exfiltrate via the image request (the CSP only allows
