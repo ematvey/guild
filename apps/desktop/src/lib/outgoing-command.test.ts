@@ -120,3 +120,59 @@ it("a restored command keeps the local attachment ID so a reload retry still mat
   expect(retry.upload).not.toHaveBeenCalled();
   expect(retry.submit).toHaveBeenCalledWith("chat-a", "stable-id", restored.prepared);
 });
+
+describe("restored file-less attachments", () => {
+  it("reuse their uploadedAs server metadata instead of the local id", async () => {
+    const fileless: DraftAttachment = {
+      id: "local-1", filename: "a.txt", content_type: "text/plain",
+      size_bytes: 3, modality: "text",
+      uploadedAs: { id: "8e0f3a2b-1111-4ccc-8ddd-222233334444", filename: "a.txt", content_type: "text/plain", size_bytes: 3, modality: "text" },
+    };
+    const send = command([fileless]);
+    const api = io();
+    await submitCommand(send, api);
+    expect(api.upload).not.toHaveBeenCalled();
+    expect(send.prepared?.attachmentIds).toEqual(["8e0f3a2b-1111-4ccc-8ddd-222233334444"]);
+  });
+
+  it("restoreCommands heals the stamp from the persisted upload map", () => {
+    const storage = {
+      i: 0,
+      getItem: (_k: string) => null as string | null,
+      key: () => null as string | null,
+      length: 0,
+    };
+    const send = command([attachment("a")]);
+    send.chatId = "chat-a";
+    send.prepared = { model: "m", prompt: "p", attachmentIds: ["remote-a"], projectId: null, sendMode: undefined };
+    send.uploaded.set("a", { id: "remote-a", filename: "a.txt", content_type: "text/plain", size_bytes: 3, modality: "text" });
+    // Persist exactly as rememberCommand does (attachments without file).
+    const row = JSON.stringify({
+      ...send,
+      attachments: send.attachments.map(({ file: _f, previewUrl: _p, ...meta }) => meta),
+      uploaded: [...send.uploaded],
+      running: false, accepted: false, error: "retry",
+    });
+    const prefix = `guild:outgoing:${encodeURIComponent("test-scope")}:`;
+    const fake = {
+      length: 1,
+      key: (_i: number) => prefix + send.id,
+      getItem: (_k: string) => row,
+    };
+    const restored = restoreCommands(fake as unknown as Storage, "test-scope");
+    const got = restored.get(send.id)!;
+    expect(got.attachments[0].uploadedAs?.id).toBe("remote-a");
+    // An edited re-send of the restored draft (fresh command, same drafts)
+    // then submits the server id.
+    const edited = captureCommand({
+      id: "edited-id", originChatId: "chat-a", chatId: "chat-a", text: "edited",
+      model: "m", createProjectId: null, prepareLocally: false,
+      attachments: got.attachments,
+    });
+    const api = io();
+    return submitCommand(edited, api).then(() => {
+      expect(api.upload).not.toHaveBeenCalled();
+      expect(edited.prepared?.attachmentIds).toEqual(["remote-a"]);
+    });
+  });
+});
