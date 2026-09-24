@@ -79,6 +79,11 @@ async fn create_session(
             return Err(e);
         }
     };
+    // The row exists, so no live session of this org holds the name: any
+    // dir still on disk is an orphan a deleted account left behind.
+    // Reclaim it — the next user of the same workspace name must not
+    // inherit its files.
+    let _ = tokio::fs::remove_dir_all(&dir).await;
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| ApiError::internal(format!("workspace dir create failed: {e}")))?;

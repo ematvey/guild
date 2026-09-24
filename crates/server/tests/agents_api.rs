@@ -240,3 +240,70 @@ async fn workspace_name_conflict_leaves_no_orphan_chat() {
         .unwrap();
     assert_eq!(chats, 1, "the conflicted create's chat was removed");
 }
+
+/// A workspace dir left behind by a deleted account is reclaimed when the
+/// same workspace name is taken again: the next user must not inherit the
+/// previous account's files.
+#[tokio::test]
+async fn an_orphaned_workspace_dir_is_reclaimed_on_recreate() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/agents/sessions")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"workspace_name": "repo-x"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let dir = std::path::Path::new(&fs.state.config.data_dir)
+        .join("workspaces")
+        .join(fs.org_id.to_string())
+        .join("repo-x");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("secret.txt"), "previous account's data").unwrap();
+
+    // The account (and its session row) goes away; the dir stays.
+    sqlx::query("DELETE FROM agent_sessions WHERE workspace_name = 'repo-x' AND org_id = $1")
+        .bind(fs.org_id)
+        .execute(fs.store().pool())
+        .await
+        .unwrap();
+    assert!(dir.join("secret.txt").exists());
+
+    // A new user takes the same name: the dir is reclaimed.
+    let other = fs
+        .store()
+        .identity()
+        .create_user(fs.org_id, "next@example.org", "hunter226", "member")
+        .await
+        .unwrap();
+    let next_token = {
+        let (_sid, token) = fs.store().identity().create_session(other.id).await.unwrap();
+        token
+    };
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/agents/sessions")
+                .header("authorization", format!("Bearer {next_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"workspace_name": "repo-x"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(
+        !dir.join("secret.txt").exists(),
+        "the orphaned files must not reach the new user"
+    );
+    assert!(dir.exists(), "a fresh empty workspace dir is created");
+}
