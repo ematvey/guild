@@ -377,7 +377,19 @@ impl Tool for RunCommand {
                 }
                 _ => {
                     let mut w = tokio::process::Command::new("cmd");
-                    w.arg("/c").arg(&command);
+                    // /d skips AutoRun; /s + the command as ONE raw quoted
+                    // argument: `Command::arg`'s MSVC argv quoting turns `"`
+                    // into `\"`, which cmd.exe does not unescape — any
+                    // command containing double quotes was mangled.
+                    w.args(["/d", "/s", "/c"]);
+                    #[cfg(windows)]
+                    {
+                        w.raw_arg(format!("\"{command}\""));
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        w.arg(&command);
+                    }
                     w.current_dir(cwd.as_deref().unwrap_or(workdir));
                     w
                 }
