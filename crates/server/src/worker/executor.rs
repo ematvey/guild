@@ -41,9 +41,20 @@ pub fn schedule_interval(config: &Value, scheduled: &Value) -> Option<u64> {
     (interval >= 5).then_some(interval)
 }
 
-/// Why a routine's model step failed. Restate retries plain errors forever,
-/// so every non-retryable failure class must be typed terminal; only
-/// transport failures and 5xx stay retryable.
+/// Extracts the provider's own status from a provider error message
+/// (the stable rendering "status NNN: body" the provider adapters emit).
+fn provider_status(message: &str) -> Option<u16> {
+    let idx = message.find("status ")?;
+    let rest = &message[idx + "status ".len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// Why a routine's model step failed. Restate retries plain errors forever
+/// unless the journaled run carries a bounded retry policy; every
+/// non-retryable failure class must be typed terminal. Permanent provider
+/// rejections are terminal; throttling/quota stay transient under the
+/// model step's bounded retry policy.
 #[derive(Debug, thiserror::Error)]
 pub enum CompletionError {
     /// Non-retryable: any 4xx except 408 (a timed-out request can succeed on
@@ -161,6 +172,57 @@ impl RoutineExecutor {
         Ok(())
     }
 
+    /// The internal completion endpoint translates provider failures into
+    /// ApiError envelopes ({"error":{code,message}}); the classification
+    /// must read the UNDERLYING provider condition, not the translated
+    /// HTTP status: a provider 400 arrives as 502/provider_upstream, and
+    /// both quota exhaustion and provider throttling arrive as
+    /// 429-with-different-codes.
+    fn classify_internal_failure(status: u16, body: &str) -> CompletionError {
+        let parsed: Option<serde_json::Value> = serde_json::from_str(body.trim())
+            .ok()
+            .or_else(|| serde_json::from_str(&format!("{{\"error\":{}}}", body.trim())).ok());
+        let code = parsed
+            .as_ref()
+            .and_then(|v| v["error"]["code"].as_str())
+            .map(str::to_string);
+        let message = parsed
+            .as_ref()
+            .and_then(|v| v["error"]["message"].as_str())
+            .map(str::to_string);
+        match (status, code.as_deref(), message.as_deref()) {
+            // The provider itself rejected the request (translated to 502):
+            // permanent rejection (4xx except 408/429) is terminal; provider
+            // infrastructure (5xx) stays transient.
+            (_, Some("provider_upstream"), Some(message)) => match provider_status(message) {
+                Some(s) if (400..500).contains(&s) && s != 408 && s != 429 => {
+                    CompletionError::Terminal(format!(
+                        "completion failed: provider rejected the request: {message}"
+                    ))
+                }
+                _ => CompletionError::Transient(anyhow::anyhow!("completion failed: {message}")),
+            },
+            // Quota exhaustion and provider throttling both arrive as 429.
+            // Retrying them is legitimate (the throttle can lift, the month
+            // rolls over) but must be BOUNDED — the journaled model-step run
+            // carries a bounded retry policy, so these stay transient.
+            (429, Some(code), _) if code == "provider_rate_limited" || code == "quota_exceeded" => {
+                CompletionError::Transient(anyhow::anyhow!(
+                    "completion failed: provider throttled or quota reached ({code})"
+                ))
+            }
+            // Explicit unsupported-request rejections are permanent.
+            (_, Some(_), Some(message)) if message.contains("not supported") => {
+                CompletionError::Terminal(format!("completion failed: {message}"))
+            }
+            // Internal endpoint's own 4xx are deterministic.
+            (s, _, _) if (400..500).contains(&s) && s != 408 => {
+                CompletionError::Terminal(format!("completion failed: {status}"))
+            }
+            (s, _, _) => CompletionError::Transient(anyhow::anyhow!("completion failed: {s}")),
+        }
+    }
+
     /// One model call through the internal completion endpoint (journaled by
     /// the caller). Tool calls arrive assembled.
     pub async fn completion(
@@ -193,20 +255,12 @@ impl RoutineExecutor {
             .map_err(|e| CompletionError::Transient(e.into()))?;
         let status = resp.status();
         if !status.is_success() {
-            let code = status.as_u16();
-            // Client errors are deterministic (no route, bad model, invalid
-            // request) — retrying them re-sends the same failing request,
-            // and for 429 every retry is a fresh paid request into a hard
-            // quota. A 408 can succeed on retry and stays transient; so do
-            // transport failures and 5xx.
-            if (400..500).contains(&code) && code != 408 {
-                return Err(CompletionError::Terminal(format!(
-                    "completion failed: {status}"
-                )));
-            }
-            return Err(CompletionError::Transient(anyhow::anyhow!(
-                "completion failed: {status}"
-            )));
+            // Classify from the underlying provider condition the endpoint
+            // translated (see classify_internal_failure), not the HTTP
+            // status alone.
+            let body = resp.text().await.unwrap_or_default();
+            let truncated: String = body.chars().take(4096).collect();
+            return Err(Self::classify_internal_failure(status.as_u16(), &truncated));
         }
 
         let mut text = String::new();
@@ -242,9 +296,19 @@ impl RoutineExecutor {
                 StreamEvent::ThinkingDelta { .. } => {}
                 StreamEvent::ApprovalRequested { .. } | StreamEvent::ApprovalResolved { .. } => {}
                 StreamEvent::Error { code, message } => {
-                    // The provider already failed mid-answer; a replay would
-                    // just repeat the failure.
-                    return Err(CompletionError::Terminal(format!(
+                    // The provider failed mid-answer. Only a PERMANENT
+                    // condition is terminal (a replay re-sends the same
+                    // failing request); throttling and provider
+                    // infrastructure can lift, so they stay transient under
+                    // the bounded retry policy.
+                    if (400..500).contains(&provider_status(&message).unwrap_or(0))
+                        && !matches!(provider_status(&message), Some(408) | Some(429))
+                    {
+                        return Err(CompletionError::Terminal(format!(
+                            "completion stream error [{code}]: {message}"
+                        )));
+                    }
+                    return Err(CompletionError::Transient(anyhow::anyhow!(
                         "completion stream error [{code}]: {message}"
                     )));
                 }

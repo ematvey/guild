@@ -139,11 +139,19 @@ macro_rules! journaled_run_body {
 
         for step in 0..MAX_STEPS {
             // Journaled: one model call. Non-retryable completion failures
-            // (4xx, quota, in-stream provider errors) are terminal: the run
-            // record closes as failed and the invocation stops — a retry
-            // would re-send the same failing request, and for a hard quota
-            // each retry is a fresh paid request. Only transport failures
-            // and 5xx stay retryable.
+            // (permanent provider rejections, unsupported inputs,
+            // in-stream 4xx) are terminal: the run record closes as failed
+            // and the invocation stops — a retry would re-send the same
+            // failing request. Throttling, quota exhaustion and provider
+            // infrastructure failures stay RETRYABLE but under a BOUNDED
+            // retry policy: the SDK's default retries indefinitely, and an
+            // unbounded retry of a paid model call is unbounded spend.
+            let bounded_model_retry = restate_sdk::context::RunRetryPolicy::default()
+                .initial_delay(std::time::Duration::from_secs(2))
+                .exponentiation_factor(2.0)
+                .max_delay(std::time::Duration::from_secs(30))
+                .max_attempts(6)
+                .max_duration(std::time::Duration::from_secs(300));
             let exec2 = exec.clone();
             let msgs = messages.clone();
             let specs2 = specs.clone();
@@ -170,6 +178,7 @@ macro_rules! journaled_run_body {
                         Ok(Json(c))
                     }
                 })
+                .retry_policy(bounded_model_retry)
                 .await;
             let c: Completion = match step_result {
                 Ok(json) => json.into_inner(),
