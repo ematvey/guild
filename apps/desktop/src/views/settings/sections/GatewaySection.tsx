@@ -27,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@guild/ui/components/alert-dialog";
-import { serverBase } from "../../../transport";
+import { serverUrl } from "../../../transport";
 import {
   createMyApiKey,
   listMyApiKeys,
@@ -99,7 +99,9 @@ export function GatewaySection() {
     });
   }, []);
 
-  const origin = serverBase();
+  // serverUrl: in the browser the origin must be absolute for the
+  // connection snippets to be usable — serverBase is "" there.
+  const origin = serverUrl();
   const openaiBase = `${origin}/openai/v1`;
   const anthropicBase = `${origin}/anthropic`;
 
