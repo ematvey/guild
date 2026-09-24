@@ -44,7 +44,7 @@ describe("refreshSession ignores stale responses", () => {
     release({ status: 200, json: async () => ({ token: "stale-A" }) });
     await pending;
 
-    expect(getToken()).toBe("B", "the stale response must not replace B's bearer");
+    expect(getToken()).toBe("B");
   });
 
   it("a fresh account's refresh still applies its own response", async () => {
