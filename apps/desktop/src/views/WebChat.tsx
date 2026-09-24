@@ -438,6 +438,9 @@ const openExternal = (url: string) => {
 };
 
 /// Anchor for markdown content: every link routes through `openExternal`.
+/// Images never load from model/tool-controlled URLs: injected markdown
+/// could otherwise exfiltrate via the image request (the CSP only allows
+/// local schemes); a rendered placeholder links out instead.
 const mdComponents: Components = {
   a: ({ node: _node, href, children, ...rest }) => (
     <a
@@ -453,6 +456,19 @@ const mdComponents: Components = {
       {children}
     </a>
   ),
+  img: ({ node: _node, src, alt }) => {
+    const url = typeof src === "string" ? src : undefined;
+    const label = alt || url || "image";
+    return (
+      <button
+        type="button"
+        className="inline-flex max-w-full items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+        onClick={() => url && openExternal(url)}
+      >
+        🖼 {label}
+      </button>
+    );
+  },
 };
 
 /// Per-chat workspace state lives server-side now: the chat's project

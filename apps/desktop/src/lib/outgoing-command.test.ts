@@ -136,12 +136,6 @@ describe("restored file-less attachments", () => {
   });
 
   it("restoreCommands heals the stamp from the persisted upload map", () => {
-    const storage = {
-      i: 0,
-      getItem: (_k: string) => null as string | null,
-      key: () => null as string | null,
-      length: 0,
-    };
     const send = command([attachment("a")]);
     send.chatId = "chat-a";
     send.prepared = { model: "m", prompt: "p", attachmentIds: ["remote-a"], projectId: null, sendMode: undefined };

@@ -9,6 +9,13 @@ use axum::response::{IntoResponse, Response};
 static CHAT_DIST: include_dir::Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../apps/desktop/dist");
 
+/// Same contract as the Tauri CSP minus its ipc/connect extensions, plus
+/// websockets for the live feed. Model/tool-controlled content must never
+/// gain img/http exfiltration or script channels here either.
+const WEB_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+    font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' data: blob:; \
+    connect-src 'self' ws: wss:";
+
 fn serve_file(dist: &include_dir::Dir<'static>, path: &str) -> Option<Response> {
     let file = dist.get_file(path.trim_start_matches('/'))?;
     let mime = mime_guess::from_path(path).first_or_octet_stream();
@@ -24,6 +31,7 @@ fn serve_file(dist: &include_dir::Dir<'static>, path: &str) -> Option<Response> 
             [
                 (header::CONTENT_TYPE, mime.as_ref()),
                 (header::CACHE_CONTROL, cache),
+                (header::CONTENT_SECURITY_POLICY, WEB_CSP),
             ],
             file.contents(),
         )
