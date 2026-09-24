@@ -3016,7 +3016,7 @@ function DeviceSetupDialog({
   }, [open]);
 
   const installers =
-    releases === null ? null : releases.filter((r) => r.platform.startsWith(OS_KEY[os]));
+    releases === null ? null : releases.filter((r) => r.platform.startsWith(OS_KEY[os]) && !r.filename.endsWith(".app.tar.gz"));
 
   const generatePairing = () => {
     setPairBusy(true);
