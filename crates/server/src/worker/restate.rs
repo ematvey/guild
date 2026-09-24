@@ -100,7 +100,7 @@ macro_rules! journaled_load_config {
 /// Journaled run body: open the run record, run the ReAct loop with per-step
 /// journaling, close the record. Yields `HandlerResult<()>`.
 macro_rules! journaled_run_body {
-    ($ctx:expr, $exec:expr, $cfg:expr, $trigger:expr, $input:expr) => {{
+    ($ctx:expr, $exec:expr, $cfg:expr, $trigger:expr, $input:expr, $state:expr) => {{
         let exec: RoutineExecutor = ($exec).clone();
         let cfg: RoutineConfig = ($cfg).clone();
         let trigger: &'static str = $trigger;
@@ -137,7 +137,7 @@ macro_rules! journaled_run_body {
         let mut messages = vec![Message::user(opening)];
         let mut completion: Option<Completion> = None;
 
-        for _step in 0..MAX_STEPS {
+        for step in 0..MAX_STEPS {
             // Journaled: one model call.
             let exec2 = exec.clone();
             let msgs = messages.clone();
@@ -173,23 +173,60 @@ macro_rules! journaled_run_body {
                 tool_call_id: None,
                 reasoning: None,
             });
-            for call in c.tool_calls {
+            for (tool_index, call) in c.tool_calls.into_iter().enumerate() {
                 // Journaled: one tool execution; failures become tool results.
+                // Mutating tools claim durably first (stable identity:
+                // invocation/step/tool index): a crash between the external
+                // side effect and this step's journaled result replays the
+                // recorded outcome instead of repeating the call.
                 let registry2 = registry.clone();
+                let state2 = ($state).clone();
+                let invocation = $ctx.invocation_id().to_string();
+                let effect_key =
+                    format!("routine_effect:{invocation}:{step}:{tool_index}");
+                let mutating = matches!(call.name.as_str(), "http_call" | "storage_put");
                 let call_name = call.name.clone();
                 let call_id = call.id.clone();
                 let args = call.arguments.clone();
                 let content: String = $ctx
                     .run(move || {
                         let registry = registry2.clone();
+                        let state = state2.clone();
+                        let effect_key = effect_key.clone();
                         let name = call_name.clone();
                         let args = args.clone();
                         async move {
+                            let store = state
+                                .store()
+                                .await
+                                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                            if mutating {
+                                match crate::worker::effects::claim::<String>(&store, &effect_key)
+                                    .await
+                                    .map_err(|e| anyhow::anyhow!("{e:?}"))?
+                                {
+                                    crate::worker::effects::Claim::Execute => {}
+                                    crate::worker::effects::Claim::Completed(result) => {
+                                        return Ok(Json(result))
+                                    }
+                                    crate::worker::effects::Claim::Unknown => {
+                                        return Ok(Json(
+                                            "routine action outcome is unknown after interruption; check effects before retrying"
+                                                .to_string(),
+                                        ))
+                                    }
+                                }
+                            }
                             let result = registry.run(&name, std::path::Path::new("/"), args).await;
                             let content = match result {
                                 Ok(out) => out.output_for_model,
                                 Err(e) => format!("tool {name} failed: {e}"),
                             };
+                            if mutating {
+                                crate::worker::effects::complete(&store, &effect_key, &content)
+                                    .await
+                                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                            }
                             Ok(Json(content))
                         }
                     })
@@ -243,7 +280,7 @@ impl RoutineRunner {
         let routine_id: Uuid = ctx.key().parse().map_err(anyhow::Error::msg)?;
         let exec = self.executor();
         let cfg = journaled_load_config!(ctx, exec, routine_id);
-        journaled_run_body!(ctx, exec, cfg, "webhook", payload.into_inner())
+        journaled_run_body!(ctx, exec, cfg, "webhook", payload.into_inner(), self.state.clone())
     }
 
     /// Start exactly one interval chain for a committed schedule generation.
@@ -301,7 +338,7 @@ impl RoutineRunner {
         ctx.object_client::<RoutineRunnerClient>(ctx.key())
             .tick(schedule)
             .send_after(Duration::from_secs(interval));
-        journaled_run_body!(ctx, exec, cfg, "interval", json!({}))
+        journaled_run_body!(ctx, exec, cfg, "interval", json!({}), self.state.clone())
     }
 }
 
