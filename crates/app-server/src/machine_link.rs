@@ -416,7 +416,16 @@ async fn ws_session(
                         ServerFrame::Displaced => break LinkEnd::Displaced,
                         ServerFrame::AuthRequired => break LinkEnd::AuthRequired,
                         ServerFrame::Error { message } => {
-                            break LinkEnd::Failed(format!("server error: {message}"));
+                            // The server sends Error for non-terminal
+                            // conditions too (rejected ToolResult, feed
+                            // resync, thread_list failure): the link stays
+                            // up — terminal conditions close the socket
+                            // anyway. One transient error must not tear the
+                            // link down and leave in-flight results with an
+                            // unknown outcome.
+                            crate::dtrace::dtrace(&format!(
+                                "machine link server error: {message}"
+                            ));
                         }
                         ServerFrame::Other => {} // display frames and unknown variants: not ours
                     },
@@ -1447,5 +1456,114 @@ mod tests {
         assert_eq!(next(&mut rx).await, None);
         shutdown_tx.send(true).ok();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod error_frame_tests {
+    use super::*;
+
+    /// A server Error frame (rejected ToolResult, feed resync, thread_list
+    /// failure) is non-terminal: the link must stay up — the session loop
+    /// still answers Pings afterwards and ends Closed on the server's
+    /// close, not Failed.
+    #[tokio::test]
+    async fn server_error_frame_does_not_end_the_link() {
+        ensure_crypto_provider();
+        use futures::{SinkExt, StreamExt};
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let notify = entered.clone();
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/ws/ticket",
+                axum::routing::post(|| async {
+                    axum::Json(serde_json::json!({"ticket":"fixture"}))
+                }),
+            )
+            .route(
+                "/api/v1/ws",
+                axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
+                    let notify = notify.clone();
+                    async move {
+                        notify.notify_one();
+                        ws.on_upgrade(move |socket| async move {
+                            let (mut tx, mut rx) = socket.split();
+                            // Consume the client's registration noise.
+                            for _ in 0..20 {
+                                match tokio::time::timeout(
+                                    Duration::from_secs(2),
+                                    rx.next(),
+                                )
+                                .await
+                                {
+                                    Ok(Some(Ok(axum::extract::ws::Message::Text(_)))) => break,
+                                    Ok(Some(Ok(_))) => continue,
+                                    _ => return,
+                                }
+                            }
+                            let _ = tx
+                                .send(axum::extract::ws::Message::text(
+                                    serde_json::json!({"type":"error","message":"transient: rejected ToolResult"})
+                                        .to_string(),
+                                ))
+                                .await;
+                            // The loop must still answer pings after the error.
+                            let _ = tx
+                                .send(axum::extract::ws::Message::Ping(vec![1u8].into()))
+                                .await;
+                            for _ in 0..50 {
+                                match tokio::time::timeout(
+                                    Duration::from_millis(200),
+                                    rx.next(),
+                                )
+                                .await
+                                {
+                                    Ok(Some(Ok(axum::extract::ws::Message::Pong(_)))) => {
+                                        let _ = tx.close().await;
+                                        return;
+                                    }
+                                    _ => continue,
+                                }
+                            }
+                            let _ = tx.close().await;
+                        })
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let config = MachineLinkConfig {
+            base_url,
+            token: "tok".into(),
+            machine_id: Uuid::now_v7().to_string(),
+            client_id: "client-1".into(),
+            machine_name: "box".into(),
+        };
+        let (tx, mut rx) = watch::channel(Some(config.clone()));
+        let (_shutdown, mut stop) = watch::channel(false);
+        let session = tokio::spawn(async move {
+            ws_session(
+                &Shared::new(crate::jsonrpc_loop::Session::default()),
+                &config,
+                &MachineMeta::default(),
+                Uuid::now_v7(),
+                &mut rx,
+                &mut stop,
+            )
+            .await
+        });
+        entered.notified().await;
+        let end = tokio::time::timeout(Duration::from_secs(15), session)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(end, LinkEnd::Closed),
+            "an Error frame must not fail the link, got {end:?}"
+        );
+        server.abort();
     }
 }
