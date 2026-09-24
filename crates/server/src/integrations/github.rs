@@ -78,14 +78,14 @@ fn github_file_path(owner: &str, repo: &str, path: &str) -> Result<String, Strin
             if p == ".." {
                 Err(format!("path segment {p:?} is not allowed"))
             } else {
-                Ok(path_segment(p))
+                Ok(path_segment(p)?)
             }
         })
         .collect::<Result<_, _>>()?;
     Ok(format!(
         "/repos/{}/{}/contents/{}",
-        path_segment(owner),
-        path_segment(repo),
+        path_segment(owner)?,
+        path_segment(repo)?,
         parts.join("/")
     ))
 }
@@ -306,8 +306,8 @@ impl Integration for Github {
                             &tok,
                             &format!(
                                 "/repos/{}/{}/issues",
-                                path_segment(owner),
-                                path_segment(repo)
+                                path_segment(owner)?,
+                                path_segment(repo)?
                             ),
                         )
                         .query(&[("state", state), ("per_page", per_page.as_str())]),
@@ -346,8 +346,8 @@ impl Integration for Github {
                             &tok,
                             &format!(
                                 "/repos/{}/{}/pulls",
-                                path_segment(owner),
-                                path_segment(repo)
+                                path_segment(owner)?,
+                                path_segment(repo)?
                             ),
                         )
                         .query(&[("state", state), ("per_page", per_page.as_str())]),
@@ -423,7 +423,11 @@ impl Integration for Github {
                         payload["labels"] = serde_json::Value::Array(labels.clone());
                     }
                     let resp = reqwest::Client::new()
-                        .post(format!("{api}/repos/{owner}/{repo}/issues"))
+                        .post(format!(
+                            "{api}/repos/{}/{}/issues",
+                            path_segment(owner)?,
+                            path_segment(repo)?
+                        ))
                         .bearer_auth(&tok)
                         .header("User-Agent", USER_AGENT)
                         .header("Accept", "application/vnd.github+json")

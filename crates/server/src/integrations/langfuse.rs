@@ -250,7 +250,7 @@ async fn get_trace(
         .ok_or("get_trace requires trace_id")?;
     let trace = get(
         base,
-        &format!("/api/public/traces/{}", path_segment(trace_id)),
+        &format!("/api/public/traces/{}", path_segment(trace_id)?),
         public_key,
         secret_key,
     )
@@ -286,8 +286,8 @@ async fn get_prompt(
     // The prompt name is a path segment (folder names carry `/`): encoded,
     // so it cannot escape the segment or carry `?`/`#` into the request.
     let path = match version {
-        Some(v) => format!("/api/public/prompts/{}?version={v}", path_segment(&name)),
-        None => format!("/api/public/prompts/{}", path_segment(&name)),
+        Some(v) => format!("/api/public/prompts/{}?version={v}", path_segment(&name)?),
+        None => format!("/api/public/prompts/{}", path_segment(&name)?),
     };
     let body = get(base, &path, public_key, secret_key).await?;
     let prompt_name = body["name"].as_str().unwrap_or(&name);

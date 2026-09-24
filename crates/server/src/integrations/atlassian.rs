@@ -346,7 +346,7 @@ impl Integration for Atlassian {
                             .get(format!(
                                 "{}/rest/api/3/issue/{}",
                                 creds.site,
-                                path_segment(key)
+                                path_segment(key)?
                             ))
                             .basic_auth(&creds.email, Some(&creds.token))
                             .query(&[("fields", JIRA_FIELDS)]),
@@ -415,7 +415,7 @@ impl Integration for Atlassian {
                             .get(format!(
                                 "{}/wiki/rest/api/content/{}",
                                 creds.site,
-                                path_segment(page_id)
+                                path_segment(page_id)?
                             ))
                             .basic_auth(&creds.email, Some(&creds.token))
                             .query(&[("expand", "body.storage")]),
