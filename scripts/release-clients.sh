@@ -57,10 +57,14 @@ sign() { # file -> stdout signature
 publish() { # platform src filename [updater_sig]
   local platform="$1" src="$2" filename="$3"
   local usig="${4:-}"
+  # Delete only the same artifact's previous row: the release identity is
+  # (version, kind, platform, filename) — one platform carries several
+  # artifacts (macOS DMG + its .app.tar.gz updater bundle) that must not
+  # delete each other.
   for old in $(curl -sf "$BASE/api/v1/releases" -H "authorization: Bearer $TOKEN" \
-    | jq -r --arg p "$platform" '.releases[] | select(.version == "'"$VERSION"'" and .platform == $p) | .id'); do
+    | jq -r --arg p "$platform" --arg f "$filename" '.releases[] | select(.version == "'"$VERSION"'" and .platform == $p and .filename == $f) | .id'); do
     curl -sf -X DELETE "$BASE/api/v1/admin/releases/$old" -H "authorization: Bearer $TOKEN" >/dev/null
-    echo "    replaced existing $platform artifact"
+    echo "    replaced existing $platform artifact $filename"
   done
   local local_sha remote_sha ctype="application/gzip"
   if [[ "$filename" == *.zip ]]; then ctype="application/zip"; fi
