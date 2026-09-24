@@ -207,7 +207,10 @@ pub fn resolve_scoped_in(
         Ok(p) => p,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // Target may not exist yet (write_file): canonicalize the
-            // nearest existing ancestor and rejoin the missing tail.
+            // nearest existing ancestor, then walk the missing tail
+            // component by component. A missing component may be a
+            // dangling symlink whose target would carry the write
+            // outside the workspace, so lexical rejoining is not enough.
             let mut missing: Vec<std::ffi::OsString> = vec![];
             let mut probe: &Path = &joined;
             let existing = loop {
@@ -229,8 +232,26 @@ pub fn resolve_scoped_in(
                 }
             };
             let mut resolved = existing;
-            for part in missing.iter().rev() {
-                resolved = resolved.join(part);
+            for part in missing.into_iter().rev() {
+                let candidate = resolved.join(&part);
+                let is_link = std::fs::symlink_metadata(&candidate)
+                    .ok()
+                    .is_some_and(|md| md.file_type().is_symlink());
+                if is_link {
+                    let target = std::fs::read_link(&candidate).map_err(|e| {
+                        ToolFailure::InvalidInput(format!("path resolution failed: {e}"))
+                    })?;
+                    resolved = if target.is_absolute() {
+                        target
+                    } else {
+                        resolved.join(target)
+                    };
+                    if let Ok(real) = resolved.canonicalize() {
+                        resolved = real;
+                    }
+                } else {
+                    resolved = candidate;
+                }
             }
             resolved
         }
@@ -292,6 +313,39 @@ mod tests {
         assert!(resolve_scoped(&dir, "../outside.txt").is_err());
         assert!(resolve_scoped(&dir, "/etc/passwd").is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_scoped_rejects_dangling_symlink_escapes() {
+        let tag = format!("guild-scope3-{}", std::process::id());
+        let base = std::env::temp_dir().join(&tag);
+        let dir = base.join("project");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        // Dangling link directly in the workspace: the write would create
+        // the outside target.
+        std::os::unix::fs::symlink(outside.join("new-file"), dir.join("link")).unwrap();
+        assert!(resolve_scoped(&dir, "link").is_err());
+        assert!(!outside.join("new-file").exists());
+        // Dangling link as a missing-tail intermediate component.
+        assert!(resolve_scoped(&dir, "link/deeper.txt").is_err());
+        assert!(!outside.join("new-file").exists());
+        // An existing symlink to an outside file stays rejected too.
+        std::fs::write(outside.join("real"), "x").unwrap();
+        std::os::unix::fs::symlink(outside.join("real"), dir.join("link2")).unwrap();
+        assert!(resolve_scoped(&dir, "link2").is_err());
+        // A missing file under a real workspace dir still resolves.
+        assert!(resolve_scoped(&dir, "sub-new/file.txt").is_ok());
+        // A relative dangling target that stays inside the workspace is
+        // allowed and resolves to its target path.
+        std::os::unix::fs::symlink("inner-target", dir.join("link3")).unwrap();
+        assert_eq!(
+            resolve_scoped(&dir, "link3").unwrap(),
+            dir.join("inner-target")
+        );
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
