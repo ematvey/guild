@@ -531,8 +531,9 @@ mod tests {
         assert_eq!(arr[3]["content"][0]["type"], "image_url");
         assert_eq!(
             arr.iter().filter(|m| m["role"] == "user").count(),
-            2,
-            "original user turn plus one media carrier"
+            3,
+            "original turn, media carrier, final turn"
         );
+        assert_eq!(arr[4]["content"], "thanks");
     }
 }

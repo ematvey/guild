@@ -77,6 +77,12 @@ impl AnthropicProvider {
                 // unreplayed for anthropic routes (kept in the thread log,
                 // never dropped there) — see design §B.1.
                 let Some(calls) = &m.tool_calls else {
+                    // An empty completion or an interrupted reasoning-only
+                    // turn persists no content; Anthropic rejects empty
+                    // assistant content.
+                    if m.content.is_empty() {
+                        continue;
+                    }
                     messages.push(serde_json::json!({"role": m.role, "content": m.content}));
                     continue;
                 };
@@ -85,8 +91,16 @@ impl AnthropicProvider {
                     blocks.push(serde_json::json!({"type": "text", "text": m.content}));
                 }
                 for c in calls {
+                    // A tool_use block truncated by max_tokens persists
+                    // partial JSON (a non-object value); the wire requires
+                    // an object, so anything else goes as an empty input.
+                    let input = if c.arguments.is_object() {
+                        c.arguments.clone()
+                    } else {
+                        serde_json::json!({})
+                    };
                     blocks.push(serde_json::json!({
-                        "type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments,
+                        "type": "tool_use", "id": c.id, "name": c.name, "input": input,
                     }));
                 }
                 messages.push(serde_json::json!({"role": "assistant", "content": blocks}));
@@ -425,5 +439,69 @@ mod tests {
         assert_eq!(image["type"], "image");
         assert_eq!(image["source"]["media_type"], "image/png");
         assert_eq!(image["source"]["data"], "QUJD");
+    }
+
+    #[test]
+    fn non_object_tool_use_input_goes_as_empty_object() {
+        let msgs = vec![
+            Message::user("hi"),
+            Message {
+                role: "assistant".into(),
+                content: String::new(),
+                images: Vec::new(),
+                audio: Vec::new(),
+                tool_calls: Some(vec![ToolCall {
+                    id: "c1".into(),
+                    name: "f".into(),
+                    arguments: serde_json::Value::String(r#"{"path":"#.into()),
+                }]),
+                tool_call_id: None,
+                reasoning: None,
+            },
+            Message::tool_result("c1", "ok"),
+        ];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+            max_tokens: 0,
+        };
+        let body = AnthropicProvider::body(&req);
+        let block = &body["messages"][1]["content"][0];
+        assert_eq!(block["type"], "tool_use");
+        assert_eq!(block["input"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn empty_assistant_turns_are_skipped() {
+        let msgs = vec![
+            Message::user("hi"),
+            Message {
+                role: "assistant".into(),
+                content: String::new(),
+                images: Vec::new(),
+                audio: Vec::new(),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning: Some("interrupted".into()),
+            },
+            Message::user("again"),
+        ];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+            max_tokens: 0,
+        };
+        let body = AnthropicProvider::body(&req);
+        assert_eq!(body["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "again");
     }
 }
