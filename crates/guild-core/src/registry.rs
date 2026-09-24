@@ -349,9 +349,20 @@ fn collect_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> anyhow::Resul
 pub fn read_bundle_file(bundle: &[u8], path: &str) -> anyhow::Result<Option<Vec<u8>>> {
     let gz = flate2::read::GzDecoder::new(bundle);
     let mut tar = tar::Archive::new(gz);
+    let mut seen = std::collections::HashSet::new();
+    let mut found = None;
     for entry in tar.entries()? {
         let mut entry = entry?;
-        let entry_path = entry.path()?.to_path_buf();
+        let entry_path: std::path::PathBuf = entry
+            .path()?
+            .components()
+            .filter(|c| *c != std::path::Component::CurDir)
+            .collect();
+        anyhow::ensure!(
+            seen.insert(entry_path.clone()),
+            "duplicate bundle entry: {}",
+            entry_path.display()
+        );
         if entry_path == std::path::Path::new(path) {
             anyhow::ensure!(
                 entry.size() <= MAX_BUNDLE_FILE,
@@ -367,10 +378,10 @@ pub fn read_bundle_file(bundle: &[u8], path: &str) -> anyhow::Result<Option<Vec<
                 path,
                 MAX_BUNDLE_FILE
             );
-            return Ok(Some(buf));
+            found = Some(buf);
         }
     }
-    Ok(None)
+    Ok(found)
 }
 
 /// Network-delivered bundles are untrusted: a decompressed bundle may not
@@ -393,9 +404,19 @@ fn extract_with_cap(bundle: &[u8], dest: &Path, cap: u64) -> anyhow::Result<Bund
     let mut tar = tar::Archive::new(gz);
     let mut manifest: Option<BundleManifest> = None;
     let mut total: u64 = 0;
+    let mut seen = std::collections::HashSet::new();
     for entry in tar.entries()? {
         let mut entry = entry?;
-        let path = entry.path()?.to_path_buf();
+        let path: std::path::PathBuf = entry
+            .path()?
+            .components()
+            .filter(|c| *c != std::path::Component::CurDir)
+            .collect();
+        anyhow::ensure!(
+            seen.insert(path.clone()),
+            "duplicate bundle entry: {}",
+            path.display()
+        );
         anyhow::ensure!(
             !path.is_absolute(),
             "bundle entry is absolute: {}",
@@ -734,7 +755,6 @@ mod tests {
 #[cfg(test)]
 mod bundle_read_tests {
     use super::*;
-    use std::io::Write as _;
 
     /// Builds a raw tar.gz bundle with one entry of the given size (filled
     /// with a repeating byte) — no pack() pipeline, so the entry size is
@@ -749,6 +769,30 @@ mod bundle_read_tests {
         let body = vec![b'x'; size];
         tar.append_data(&mut header, name, body.as_slice()).unwrap();
         tar.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn duplicate_normalized_bundle_paths_are_rejected_by_both_readers() {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut tar = tar::Builder::new(encoder);
+        for name in ["routine.json", "./routine.json"] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(2);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, name, &b"{}"[..]).unwrap();
+        }
+        let bytes = tar.into_inner().unwrap().finish().unwrap();
+        assert!(read_bundle_file(&bytes, "routine.json")
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate"));
+        let dest = std::env::temp_dir().join(format!("guild-duplicate-{}", uuid::Uuid::now_v7()));
+        assert!(extract(&bytes, &dest)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate"));
+        let _ = std::fs::remove_dir_all(dest);
     }
 
     #[test]
