@@ -152,7 +152,6 @@ fn wsl_command(argv: &[String]) -> tokio::process::Command {
     c.args(&argv[1..]);
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         c.creation_flags(CREATE_NO_WINDOW);
     }

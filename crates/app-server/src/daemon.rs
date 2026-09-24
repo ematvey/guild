@@ -113,6 +113,20 @@ pub fn handshake_timed(timeout: std::time::Duration) -> anyhow::Result<()> {
     res.map(|_| ())
 }
 
+/// Connect + handshake with a bounded wait for the hello response
+/// (Windows). A named pipe has no read timeout, so the handshake runs on a
+/// worker thread and the caller stops waiting at `timeout`; a silent owner
+/// leaves only that parked thread behind.
+#[cfg(windows)]
+pub fn handshake_timed(timeout: std::time::Duration) -> anyhow::Result<()> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(try_connect().and_then(|pair| handshake_with(pair, None).map(|_| ())));
+    });
+    rx.recv_timeout(timeout)
+        .map_err(|_| anyhow::anyhow!("daemon handshake timed out after {timeout:?}"))?
+}
+
 /// Asks a running daemon (any build) to exit via `daemon.shutdown`.
 /// Returns true when a daemon was reachable and the request went out.
 /// Used by daemon install (Linux) to retire an unsupervised daemon before
