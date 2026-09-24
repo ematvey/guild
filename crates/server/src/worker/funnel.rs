@@ -227,44 +227,115 @@ pub(crate) fn note_pending_tool(
 /// adoption) re-keys the registry row to a new id under the SAME owner; the
 /// journaled turn id then has no row, and the project's current binding is
 /// the alias — the same re-resolution rule the queued-command path applies
-/// at turn start. Returns `(machine_id, durable_owner)`.
-async fn resolve_dispatch_target(
+/// at turn start. Returns the resolved machine id, or `None` when no
+/// machine can prove the captured executor identity.
+///
+/// Fail-closed on ownerless snapshots: a turn journal that predates
+/// owner capture cannot prove who the executor was, so a machine whose
+/// current row disagrees (or has no row) is never followed — not even the
+/// project alias. The org check alone is not identity.
+pub(crate) async fn resolve_executor_target(
     store: &crate::store::Store,
-    tool: &crate::state::PendingTool,
-) -> Result<(Option<String>, Option<(Uuid, Uuid)>), crate::http::error::ApiError> {
-    let mut machine_id = tool.machine_id.clone();
-    let mut owner = match machine_id.as_deref() {
-        Some(id) => store.machines().owner_of(id).await.ok().flatten(),
-        None => None,
+    machine_id: Option<String>,
+    expected: &ExpectedExecutor,
+) -> Result<Option<String>, crate::http::error::ApiError> {
+    let Some(expected_owner) = expected.owner else {
+        return Ok(None);
     };
-    let owner_matches = |owner: &Option<(Uuid, Uuid)>| {
-        match tool.expected_owner {
-            Some(expected) => owner.as_ref() == Some(&expected),
-            // No captured owner (legacy journal): the org check below still
-            // applies.
-            None => true,
+    let Some(mut current) = machine_id else {
+        return Ok(None);
+    };
+    for _ in 0..2 {
+        if store
+            .machines()
+            .owner_of(&current)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|o| o == expected_owner)
+        {
+            return Ok(Some(current));
         }
-    };
-    if !owner_matches(&owner) {
-        if let (Some(project_id), Some(org_id)) = (tool.project_id, tool.org_id) {
-            let alias: Option<(Option<String>,)> =
+        // One alias hop through the project row (the re-key source).
+        let alias: Option<(Option<String>,)> = match (expected.project_id, expected.org_id) {
+            (Some(project_id), Some(org_id)) => {
                 sqlx::query_as("SELECT machine_id FROM projects WHERE id = $1 AND org_id = $2")
                     .bind(project_id)
                     .bind(org_id)
                     .fetch_optional(store.pool())
-                    .await?;
-            if let Some((Some(alias),)) = alias {
-                if Some(&alias) != machine_id.as_ref() {
-                    let alias_owner = store.machines().owner_of(&alias).await.ok().flatten();
-                    if owner_matches(&alias_owner) {
-                        machine_id = Some(alias);
-                        owner = alias_owner;
-                    }
-                }
+                    .await?
             }
+            _ => None,
+        };
+        match alias {
+            Some((Some(next),)) if next != current => current = next,
+            _ => break,
         }
     }
-    Ok((machine_id, owner))
+    Ok(None)
+}
+
+/// Worker-entry pre-dispatch check shared by every machine-mediated call
+/// (client tools, the AGENTS.md fetch): the journaled machine must be
+/// online, or — when a re-pair re-keyed it — its project-row alias must
+/// be. Returns the id to dispatch to, or `None` when the turn should
+/// degrade (offline / pairing changed). The full identity validation
+/// still happens in dispatch_pending_tool; this only prevents the early
+/// offline check from pre-empting a legitimate re-key.
+pub(crate) async fn online_executor_or_alias(
+    state: &AppState,
+    org_id: Uuid,
+    project_id: Option<Uuid>,
+    machine_id: &str,
+) -> Option<String> {
+    if state.hub.machine_online(machine_id) {
+        return Some(machine_id.to_string());
+    }
+    let project_id = project_id?;
+    let store = state.store().await.ok()?;
+    let alias: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT machine_id FROM projects WHERE id = $1 AND org_id = $2")
+            .bind(project_id)
+            .bind(org_id)
+            .fetch_optional(store.pool())
+            .await
+            .ok()?;
+    let alias = alias?.0?;
+    if alias != machine_id && state.hub.machine_online(&alias) {
+        Some(alias)
+    } else {
+        None
+    }
+}
+
+/// Executor-identity validation for machine-mediated control requests
+/// (context.prepare_v1 / capabilities): the same rule as tool dispatch —
+/// the resolved machine's durable row AND live socket must both be the
+/// captured executor. Returns the validated machine id, or `None`
+/// (fail-closed: the caller degrades instead of talking to a claimant).
+pub(crate) async fn validate_context_executor(
+    state: &AppState,
+    machine_id: &str,
+    expected: &ExpectedExecutor,
+    org_id: Uuid,
+) -> Option<String> {
+    let store = state.store().await.ok()?;
+    let resolved = resolve_executor_target(&store, Some(machine_id.to_string()), expected)
+        .await
+        .ok()
+        .flatten()?;
+    let holder = state.hub.machine_holder(&resolved);
+    let row_owner = store.machines().owner_of(&resolved).await.ok().flatten();
+    match (row_owner, holder) {
+        (Some((owner_user, owner_org)), Some(member))
+            if member.user_id == owner_user
+                && member.org_id == owner_org
+                && owner_org == org_id =>
+        {
+            Some(resolved)
+        }
+        _ => None,
+    }
 }
 
 /// Dispatches once inside the worker's journaled operation. The returned
@@ -274,10 +345,15 @@ pub(crate) async fn dispatch_pending_tool(
     chat_id: Uuid,
     call_id: &str,
     dispatch_id: &str,
-) -> Result<Option<Uuid>, crate::http::error::ApiError> {
+) -> Result<(Option<Uuid>, Option<String>), crate::http::error::ApiError> {
     let tool = state.generations.pending_tool(chat_id, call_id);
     let Some(tool) = tool else {
-        return Ok(None);
+        return Ok((None, None));
+    };
+    let expected = ExpectedExecutor {
+        org_id: tool.org_id,
+        project_id: tool.project_id,
+        owner: tool.expected_owner,
     };
     let store = state.store().await?;
     let key = format!("tool_dispatch:{chat_id}:{dispatch_id}");
@@ -288,29 +364,28 @@ pub(crate) async fn dispatch_pending_tool(
     // followed through the project row's re-keyed binding; a foreign claim
     // of the freed id never matches, and the call fails closed instead of
     // sending arguments and the workspace path to another member's socket.
-    let (machine, owner) = resolve_dispatch_target(&store, &tool).await?;
+    // Ownerless (legacy) snapshots fail closed too: without the captured
+    // owner there is nothing to match against.
+    let machine = resolve_executor_target(&store, tool.machine_id.clone(), &expected).await?;
     let holder = machine
         .as_deref()
         .and_then(|id| state.hub.machine_holder(id));
-    let mut identity_ok = match (&tool.expected_owner, &owner) {
-        (Some(expected), Some(current)) => expected == current,
-        (Some(_), None) => false,
-        // Legacy turn without a captured owner: the org boundary still holds.
-        (None, owner) => match (owner, &holder) {
-            (Some((_, org)), Some(member)) => *org == member.org_id,
-            (Some((_, org)), None) => tool.org_id == Some(*org),
-            (None, _) => true,
-        },
+    let row_owner = match machine.as_deref() {
+        Some(id) => store.machines().owner_of(id).await.ok().flatten(),
+        None => None,
     };
-    if let (Some(member), Some((owner_user, owner_org))) = (holder.as_ref(), owner.as_ref()) {
-        if member.user_id != *owner_user || member.org_id != *owner_org {
-            identity_ok = false;
+    let identity_ok = match (machine.as_deref(), row_owner.as_ref(), holder.as_ref()) {
+        (Some(_), Some((owner_user, owner_org)), Some(member)) => {
+            member.user_id == *owner_user
+                && member.org_id == *owner_org
+                && tool.org_id.is_some_and(|org| org == *owner_org)
         }
-    }
+        _ => false,
+    };
     if !identity_ok {
         restate_send_one_way(state, "ChatRunner", &format!("{chat_id}/complete_tool"),
             json!({"call_id": call_id, "content": "tool not dispatched: the bound machine's pairing changed; the executor identity no longer matches the turn", "is_error": true})).await?;
-        return Ok(None);
+        return Ok((None, None));
     }
 
     let connection = holder.as_ref().map(|m| m.conn_id);
@@ -325,7 +400,7 @@ pub(crate) async fn dispatch_pending_tool(
         let recorded = store.kv().get(&key).await?.and_then(|id| id.parse().ok());
         restate_send_one_way(state, "ChatRunner", &format!("{chat_id}/complete_tool"),
             json!({"call_id": call_id, "content": "Dispatch was already reserved; execution outcome is unknown. Check effects before retrying.", "is_error": true})).await?;
-        return Ok(recorded);
+        return Ok((recorded, machine.clone()));
     }
     if let Some(holder) = holder {
         if holder
@@ -339,23 +414,12 @@ pub(crate) async fn dispatch_pending_tool(
             })
             .is_ok()
         {
-            if machine != tool.machine_id {
-                // The dispatch followed a re-pair to the re-keyed id: keep
-                // the pending call's machine identity in step so the
-                // watcher and the ownership checks track the live executor.
-                state.generations.update_pending_tool_machine(
-                    chat_id,
-                    call_id,
-                    machine,
-                    Some(holder.conn_id),
-                );
-            }
-            return Ok(Some(holder.conn_id));
+            return Ok((Some(holder.conn_id), machine.clone()));
         }
     }
     restate_send_one_way(state, "ChatRunner", &format!("{chat_id}/complete_tool"),
         json!({"call_id": call_id, "content": "Machine is offline; tool was not dispatched", "is_error": true})).await?;
-    Ok(connection)
+    Ok((connection, machine.clone()))
 }
 
 pub(crate) fn restore_dispatch_connection(
@@ -483,7 +547,8 @@ pub(crate) async fn suspend(
             let args2 = args_json.clone();
             let dispatch_state = state.clone();
             let dispatch_id = awakeable_id.clone();
-            let dispatched_connection = ctx
+            let captured_machine = machine_id.clone();
+            let dispatched = ctx
                 .run(move || {
                     let state = dispatch_state.clone();
                     let dispatch_id = dispatch_id.clone();
@@ -492,7 +557,12 @@ pub(crate) async fn suspend(
                     let name = name.clone();
                     let args = args2.clone();
                     async move {
-                        let connection =
+                        // (connection, resolved machine): the journal entry
+                        // carries the RESOLVED machine too, so a replay
+                        // restores the alias (the re-keyed id) rather than
+                        // the captured one — the watcher and ownership
+                        // checks then track the live executor.
+                        let (connection, machine) =
                             dispatch_pending_tool(&state, chat_id, &call_id, &dispatch_id)
                                 .await
                                 .map_err(api_err)?;
@@ -503,25 +573,39 @@ pub(crate) async fn suspend(
                             executor: ToolExecutor::Client,
                             kind: None,
                         });
-                        Ok(Json(connection))
+                        Ok(Json((connection, machine)))
                     }
                 })
                 .await?
                 .into_inner();
+            let (dispatched_connection, resolved_machine) = dispatched;
             restore_dispatch_connection(state, chat_id, &call.id, dispatched_connection);
+            if let Some(machine) = resolved_machine.clone() {
+                state.generations.update_pending_tool_machine(
+                    chat_id,
+                    &call.id,
+                    Some(machine.clone()),
+                    dispatched_connection,
+                );
+            }
 
             // Termination detection: if the bound machine disappears
             // (executor connection gone, app-lifetime — not per-thread
             // streams), resolve the tool with an error after a grace window
             // instead of dead-airing for the full timeout. Spawned outside
             // the journaled sections on purpose: a worker restart replays
-            // this handler and re-spawns the watcher.
+            // this handler and re-spawns the watcher. The watcher follows
+            // the RESOLVED machine (the re-keyed alias), never the captured
+            // one — with the captured id absent after a re-pair, a
+            // legitimate long-running tool on the alias would otherwise be
+            // declared aborted.
+            let watch_machine = resolved_machine.unwrap_or(captured_machine);
             spawn_machine_watcher(
                 state,
                 chat_id,
                 call.id.clone(),
                 call.name.clone(),
-                machine_id,
+                watch_machine,
                 machine_label,
                 done.clone(),
             );
@@ -817,32 +901,77 @@ mod tests {
     use super::*;
     use crate::http::hub::Member;
     use crate::http::ws::{socket_channel, SocketOutput};
-    use crate::test_support::test_state_with_mock_ingress;
+    use crate::test_support::{test_state_with_mock_ingress, TestState};
     use std::time::Duration;
     use uuid::Uuid;
+
+    /// Registers `id` in the machines registry (owner `user` in `org`) and
+    /// attaches a matching hub socket — the production shape every dispatch
+    /// validation now requires (row owner + socket holder + captured owner).
+    /// Returns `(connection, dispatch receiver)`.
+    #[cfg(feature = "test-support")]
+    async fn register_executor(
+        fixture: &TestState,
+        id: &str,
+        user: Uuid,
+        org: Uuid,
+    ) -> (Uuid, tokio::sync::mpsc::UnboundedReceiver<SocketOutput>) {
+        register_executor_with_fingerprint(fixture, id, user, org, None).await
+    }
+
+    #[cfg(feature = "test-support")]
+    async fn register_executor_with_fingerprint(
+        fixture: &TestState,
+        id: &str,
+        user: Uuid,
+        org: Uuid,
+        fingerprint: Option<&str>,
+    ) -> (Uuid, tokio::sync::mpsc::UnboundedReceiver<SocketOutput>) {
+        fixture
+            .store()
+            .machines()
+            .upsert_connected(org, user, id, None, fingerprint, None, None, None, None)
+            .await
+            .unwrap();
+        let conn = Uuid::now_v7();
+        let (sink, out) = socket_channel();
+        fixture
+            .state
+            .hub
+            .register_machine(
+                Member {
+                    conn_id: conn,
+                    user_id: user,
+                    org_id: org,
+                    sink,
+                    label: None,
+                },
+                id,
+            )
+            .await
+            .unwrap();
+        (conn, out)
+    }
 
     #[cfg(feature = "test-support")]
     #[tokio::test]
     async fn dispatch_reservation_survives_process_state_loss_without_reexecution() {
         let (fixture, ingress) = crate::test_support::test_state_with_mock_ingress().await;
         let chat = Uuid::now_v7();
-        let original = Uuid::now_v7();
-        let (sink, mut output) = crate::http::ws::socket_channel();
-        fixture
-            .state
-            .hub
-            .register_machine(
-                crate::http::hub::Member {
-                    conn_id: original,
-                    user_id: Uuid::now_v7(),
-                    org_id: Uuid::now_v7(),
-                    sink,
-                    label: None,
-                },
-                "machine",
-            )
+        let user = fixture
+            .store()
+            .identity()
+            .ensure_bootstrap_admin("exec@example.org", "hunter226")
             .await
             .unwrap();
+        let org = fixture
+            .store()
+            .identity()
+            .get_user(user)
+            .await
+            .unwrap()
+            .org_id;
+        let (original, mut output) = register_executor(&fixture, "machine", user, org).await;
         fixture.state.generations.attach(chat);
         note_pending_tool(
             &fixture.state,
@@ -852,12 +981,17 @@ mod tests {
             "{}",
             Some("machine"),
             None,
-            Default::default(),
+            ExpectedExecutor {
+                org_id: Some(org),
+                project_id: None,
+                owner: Some((user, org)),
+            },
         );
         assert_eq!(
             dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
                 .await
-                .unwrap(),
+                .unwrap()
+                .0,
             Some(original)
         );
         assert!(matches!(
@@ -872,8 +1006,8 @@ mod tests {
             .register_machine(
                 crate::http::hub::Member {
                     conn_id: Uuid::now_v7(),
-                    user_id: Uuid::now_v7(),
-                    org_id: Uuid::now_v7(),
+                    user_id: user,
+                    org_id: org,
                     sink,
                     label: None,
                 },
@@ -890,12 +1024,17 @@ mod tests {
             "{}",
             Some("machine"),
             None,
-            Default::default(),
+            ExpectedExecutor {
+                org_id: Some(org),
+                project_id: None,
+                owner: Some((user, org)),
+            },
         );
         assert_eq!(
             dispatch_pending_tool(&restarted, chat, "call", "durable-awakeable")
                 .await
-                .unwrap(),
+                .unwrap()
+                .0,
             Some(original)
         );
         assert!(replacement_output.try_recv().is_err());
@@ -913,23 +1052,20 @@ mod tests {
     async fn dispatch_carries_workdir_from_project_folder() {
         let (fixture, _ingress) = crate::test_support::test_state_with_mock_ingress().await;
         let chat = Uuid::now_v7();
-        let conn = Uuid::now_v7();
-        let (sink, mut output) = crate::http::ws::socket_channel();
-        fixture
-            .state
-            .hub
-            .register_machine(
-                crate::http::hub::Member {
-                    conn_id: conn,
-                    user_id: Uuid::now_v7(),
-                    org_id: Uuid::now_v7(),
-                    sink,
-                    label: None,
-                },
-                "machine",
-            )
+        let user = fixture
+            .store()
+            .identity()
+            .ensure_bootstrap_admin("exec2@example.org", "hunter226")
             .await
             .unwrap();
+        let org = fixture
+            .store()
+            .identity()
+            .get_user(user)
+            .await
+            .unwrap()
+            .org_id;
+        let (conn, mut output) = register_executor(&fixture, "machine", user, org).await;
         fixture.state.generations.attach(chat);
         note_pending_tool(
             &fixture.state,
@@ -939,7 +1075,11 @@ mod tests {
             "{}",
             Some("machine"),
             Some(r"\\wsl.localhost\Ubuntu-22.04\home\u\repo"),
-            Default::default(),
+            ExpectedExecutor {
+                org_id: Some(org),
+                project_id: None,
+                owner: Some((user, org)),
+            },
         );
         dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
             .await
@@ -1039,7 +1179,11 @@ mod tests {
             "{}",
             Some("machine"),
             Some(&workspace.folder),
-            Default::default(),
+            ExpectedExecutor {
+                org_id: Some(user.org_id),
+                project_id: None,
+                owner: Some((user.id, user.org_id)),
+            },
         );
         dispatch_pending_tool(&fixture.state, chat_row.id, "call", "durable-awakeable")
             .await
@@ -1112,23 +1256,20 @@ mod tests {
     async fn suspended_call_dispatches_and_clears_on_completion() {
         let (fixture, _ingress) = test_state_with_mock_ingress().await;
         let chat = Uuid::now_v7();
-        let conn = Uuid::now_v7();
-        let (sink, mut output) = socket_channel();
-        fixture
-            .state
-            .hub
-            .register_machine(
-                Member {
-                    conn_id: conn,
-                    user_id: Uuid::now_v7(),
-                    org_id: Uuid::now_v7(),
-                    sink,
-                    label: None,
-                },
-                "machine",
-            )
+        let user = fixture
+            .store()
+            .identity()
+            .ensure_bootstrap_admin("exec3@example.org", "hunter226")
             .await
             .unwrap();
+        let org = fixture
+            .store()
+            .identity()
+            .get_user(user)
+            .await
+            .unwrap()
+            .org_id;
+        let (conn, mut output) = register_executor(&fixture, "machine", user, org).await;
         fixture.state.generations.attach(chat);
         let done = note_pending_tool(
             &fixture.state,
@@ -1138,12 +1279,17 @@ mod tests {
             "{}",
             Some("machine"),
             None,
-            Default::default(),
+            ExpectedExecutor {
+                org_id: Some(org),
+                project_id: None,
+                owner: Some((user, org)),
+            },
         );
         assert_eq!(
             dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
                 .await
-                .unwrap(),
+                .unwrap()
+                .0,
             Some(conn)
         );
         assert!(matches!(
@@ -1226,15 +1372,23 @@ mod tests {
         assert_eq!(
             dispatch_pending_tool(&fixture.state, chat, "call1", "d1")
                 .await
-                .unwrap(),
+                .unwrap()
+                .0,
             Some(conn_a)
         );
 
         // A re-pairs away from the id (the row is re-keyed, so "m" has no
-        // registry row) and member B claims the freed id.
+        // registry row) and member B claims the freed id: a fresh registry
+        // row under B's ownership AND B's live socket — the full
+        // claimed-row scenario the dispatch must refuse.
         fixture.state.hub.unregister_machine("m", conn_a);
         sqlx::query("DELETE FROM machines WHERE machine_id = 'm'")
             .execute(store.pool())
+            .await
+            .unwrap();
+        store
+            .machines()
+            .upsert_connected(a.org_id, b.id, "m", None, None, None, None, None, None)
             .await
             .unwrap();
         let conn_b = Uuid::now_v7();
@@ -1267,7 +1421,8 @@ mod tests {
         assert_eq!(
             dispatch_pending_tool(&fixture.state, chat, "call2", "d2")
                 .await
-                .unwrap(),
+                .unwrap()
+                .0,
             None
         );
         assert!(
@@ -1280,6 +1435,211 @@ mod tests {
             .unwrap()
             .iter()
             .any(|(_, body)| { body["call_id"] == "call2" && body["is_error"] == true }));
+    }
+
+    /// The worker-entry pre-dispatch check resolves the re-keyed alias:
+    /// with the captured id absent (re-pair) and the alias online, the
+    /// check returns the alias instead of pre-empting the dispatch with an
+    /// offline verdict. This is the exact helper client_tool_step and the
+    /// AGENTS.md fetch invoke inside their journaled offline check.
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn the_online_check_follows_a_rekeyed_alias() {
+        let (fixture, _ingress) = test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let admin = store
+            .identity()
+            .ensure_bootstrap_admin("a@b.c", "hunter226")
+            .await
+            .unwrap();
+        let a = store.identity().get_user(admin).await.unwrap();
+        let org = a.org_id;
+        store
+            .machines()
+            .upsert_connected(org, a.id, "m", None, Some("fp-1"), None, None, None, None)
+            .await
+            .unwrap();
+        let project = store
+            .projects()
+            .create(org, a.id, "repo", r"C:\code\repo", "m")
+            .await
+            .unwrap();
+        // Offline captured id, no alias: None (the offline verdict stands).
+        assert_eq!(
+            online_executor_or_alias(&fixture.state, org, Some(project.id), "m").await,
+            None
+        );
+        // Re-pair re-keys to "n"; the alias is online: the check returns it.
+        let (_conn_n, _out_n) =
+            register_executor_with_fingerprint(&fixture, "n", a.id, org, Some("fp-1")).await;
+        sqlx::query("UPDATE projects SET machine_id = 'n' WHERE id = $1")
+            .bind(project.id)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            online_executor_or_alias(&fixture.state, org, Some(project.id), "m").await,
+            Some("n".to_string()),
+            "the re-keyed alias is the dispatch target"
+        );
+    }
+
+    /// An ownerless snapshot (a journal predating owner capture) fails
+    /// closed even when the machine's row and socket both belong to the
+    /// same org: the org check alone is not executor identity.
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn an_ownerless_snapshot_never_dispatches() {
+        let (fixture, ingress) = test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let admin = store
+            .identity()
+            .ensure_bootstrap_admin("a@b.c", "hunter226")
+            .await
+            .unwrap();
+        let a = store.identity().get_user(admin).await.unwrap();
+        store
+            .machines()
+            .upsert_connected(a.org_id, a.id, "m", None, None, None, None, None, None)
+            .await
+            .unwrap();
+        let conn = Uuid::now_v7();
+        let (sink, mut out) = socket_channel();
+        fixture
+            .state
+            .hub
+            .register_machine(
+                Member {
+                    conn_id: conn,
+                    user_id: a.id,
+                    org_id: a.org_id,
+                    sink,
+                    label: None,
+                },
+                "m",
+            )
+            .await
+            .unwrap();
+        let chat = Uuid::now_v7();
+        fixture.state.generations.attach(chat);
+        note_pending_tool(
+            &fixture.state,
+            chat,
+            "call",
+            "execute",
+            "{\"cmd\":\"secret\"}",
+            Some("m"),
+            None,
+            Default::default(),
+        );
+        assert_eq!(
+            dispatch_pending_tool(&fixture.state, chat, "call", "d1")
+                .await
+                .unwrap()
+                .0,
+            None,
+            "ownerless snapshot must not dispatch"
+        );
+        assert!(out.try_recv().is_err(), "no dispatch reaches the socket");
+        assert!(ingress
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, body)| { body["call_id"] == "call" && body["is_error"] == true }));
+    }
+
+    /// The context/capabilities control channel enforces the same executor
+    /// identity as tool dispatch: a same-org claimant of a freed id never
+    /// receives context.prepare_v1 (it carries the user prompt and the
+    /// project directory), while a re-keyed alias owned by the captured
+    /// executor validates.
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn context_executor_validation_refuses_a_claimed_row_and_follows_the_alias() {
+        let (fixture, _ingress) = test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let admin = store
+            .identity()
+            .ensure_bootstrap_admin("a@b.c", "hunter226")
+            .await
+            .unwrap();
+        let a = store.identity().get_user(admin).await.unwrap();
+        let b = store
+            .identity()
+            .create_user(a.org_id, "b@b.c", "hunter226", "member")
+            .await
+            .unwrap();
+        let org = a.org_id;
+        store
+            .machines()
+            .upsert_connected(org, a.id, "m", None, Some("fp-1"), None, None, None, None)
+            .await
+            .unwrap();
+        let project = store
+            .projects()
+            .create(org, a.id, "repo", r"C:\code\repo", "m")
+            .await
+            .unwrap();
+        let expected = ExpectedExecutor {
+            org_id: Some(org),
+            project_id: Some(project.id),
+            owner: Some((a.id, org)),
+        };
+        // The captured executor itself validates.
+        let (conn_a, _out_a) = register_executor(&fixture, "m", a.id, org).await;
+        assert_eq!(
+            validate_context_executor(&fixture.state, "m", &expected, org).await,
+            Some("m".to_string())
+        );
+        let _ = conn_a;
+
+        // A re-pair re-keys the row to "n" (same owner, same fingerprint)
+        // and the project binding follows: the alias validates even though
+        // "m" is gone.
+        fixture.state.hub.displace_machine("m");
+        let (_conn_n, _out_n) =
+            register_executor_with_fingerprint(&fixture, "n", a.id, org, Some("fp-1")).await;
+        sqlx::query("UPDATE projects SET machine_id = 'n' WHERE id = $1")
+            .bind(project.id)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE projects SET machine_id = 'n' WHERE id = $1")
+            .bind(project.id)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            validate_context_executor(&fixture.state, "m", &expected, org).await,
+            Some("n".to_string()),
+            "the re-keyed alias is the validated target"
+        );
+
+        // B claims the freed "m": with no project alias to follow (the
+        // project binding already moved to "n"), the claimed row is
+        // refused — the direct identity check fails.
+        store
+            .machines()
+            .upsert_connected(org, b.id, "m", None, None, None, None, None, None)
+            .await
+            .unwrap();
+        let _conn_b = register_executor(&fixture, "m", b.id, org).await;
+        let no_alias = ExpectedExecutor {
+            org_id: Some(org),
+            project_id: None,
+            owner: Some((a.id, org)),
+        };
+        assert_eq!(
+            validate_context_executor(&fixture.state, "n", &expected, org).await,
+            Some("n".to_string()),
+            "A's re-keyed machine still validates"
+        );
+        assert_eq!(
+            validate_context_executor(&fixture.state, "m", &no_alias, org).await,
+            None,
+            "a claimed-row id is refused on the control channel"
+        );
     }
 
     /// A re-pair (fingerprint adoption) re-keys the registry row to a new id
@@ -1369,7 +1729,8 @@ mod tests {
         assert_eq!(
             dispatch_pending_tool(&fixture.state, chat, "call1", "d1")
                 .await
-                .unwrap(),
+                .unwrap()
+                .0,
             Some(conn_new)
         );
         assert!(matches!(

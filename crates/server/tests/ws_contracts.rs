@@ -160,7 +160,8 @@ async fn silent_open_machine_goes_offline_and_pending_tool_settles() {
         f.chat,
         "silent-call",
         "silent",
-    );
+    )
+    .await;
     tokio::time::timeout(Duration::from_secs(40), async {
         loop {
             if f.ingress
@@ -198,7 +199,7 @@ async fn reconnect_fails_unknown_execution_with_member_keeping_feed_alive() {
     let mut old = f.socket(Some(("executor", instance, false))).await;
     until(&mut old, |m| matches!(m, WsServerMsg::ThreadList { .. })).await;
     note_generation(&f.ts.state, f.chat);
-    note_client_tool(&f.ts.state, f.chat, "call", "execute", "{}", "executor");
+    note_client_tool(&f.ts.state, f.chat, "call", "execute", "{}", "executor").await;
     until(&mut old, |m| matches!(m, WsServerMsg::ToolDispatch { .. })).await;
     drop(old);
     let mut new = f.socket(Some(("executor", instance, true))).await;
@@ -510,7 +511,7 @@ async fn org_shared_machine_returns_results_to_another_members_chat() {
 
     // The turn suspends on a client tool dispatched to the shared machine.
     note_generation(&ts.state, chat);
-    note_client_tool(&ts.state, chat, "call-1", "execute", "{}", "shared-1");
+    note_client_tool(&ts.state, chat, "call-1", "execute", "{}", "shared-1").await;
     until(&mut machine, |m| {
         matches!(m, WsServerMsg::ToolDispatch { .. })
     })
