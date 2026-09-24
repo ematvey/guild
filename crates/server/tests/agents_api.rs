@@ -312,3 +312,65 @@ async fn an_orphaned_workspace_dir_is_reclaimed_on_recreate() {
     );
     assert!(dir.exists(), "a fresh empty workspace dir is created");
 }
+
+/// A reclaim that cannot run (the org workspace dir was made non-writable,
+/// so `remove_dir_all` cannot unlink the orphan) must fail the session
+/// create loudly: silently proceeding would let the new session inherit
+/// the orphan's files — exactly what the reclaim exists to prevent.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_unreclaimable_orphan_dir_fails_the_session_create() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let org_dir = std::path::Path::new(&fs.state.config.data_dir)
+        .join("workspaces")
+        .join(fs.org_id.to_string());
+    std::fs::create_dir_all(&org_dir).unwrap();
+    let dir = org_dir.join("locked-x");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("secret.txt"), "previous account's data").unwrap();
+
+    // No live session row holds the name, so the create takes the reclaim
+    // branch. `remove_dir_all` deletes depth-first and unlinks the top dir
+    // last; making the ORPHAN DIR itself non-writable stops the first
+    // unlink (its contents) — so the orphan's files demonstrably survive.
+    let mut perms = std::fs::metadata(&dir).unwrap().permissions();
+    let original_mode = perms.mode();
+    perms.set_mode(0o500);
+    std::fs::set_permissions(&dir, perms.clone()).unwrap();
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/agents/sessions")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"workspace_name": "locked-x"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    perms.set_mode(0o700);
+    std::fs::set_permissions(&dir, perms).unwrap();
+
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("reclaim failed"),
+        "the reclaim failure is propagated, got: {body}"
+    );
+    // The orphan's files survived: nothing was silently inherited.
+    assert!(dir.join("secret.txt").exists());
+}

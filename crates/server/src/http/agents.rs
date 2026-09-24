@@ -82,8 +82,18 @@ async fn create_session(
     // The row exists, so no live session of this org holds the name: any
     // dir still on disk is an orphan a deleted account left behind.
     // Reclaim it — the next user of the same workspace name must not
-    // inherit its files.
-    let _ = tokio::fs::remove_dir_all(&dir).await;
+    // inherit its files. A reclaim that cannot run (permissions, mounted
+    // files) must fail the request loudly: silently inheriting a foreign
+    // directory is the failure this reclaim exists to prevent.
+    match tokio::fs::remove_dir_all(&dir).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(ApiError::internal(format!(
+                "orphan workspace dir reclaim failed: {e}"
+            )));
+        }
+    }
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| ApiError::internal(format!("workspace dir create failed: {e}")))?;
