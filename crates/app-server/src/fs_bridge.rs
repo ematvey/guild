@@ -416,10 +416,10 @@ mod tests {
 
     #[test]
     fn reads_inside_the_project_and_roots_pass_outside_fail() {
-        let (tmp, mut allow) = isolated("read");
+        let (tmp, _) = isolated("read");
         let project = tmp.join("proj");
         std::fs::create_dir_all(&project).unwrap();
-        allow = Allowlist::for_project_with(
+        let allow = Allowlist::for_project_with(
             Some(&project),
             &tmp.join("config/guild"),
             &tmp.join("home"),

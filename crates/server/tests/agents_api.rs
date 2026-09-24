@@ -1,6 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use guild_server::test_support::{clickhouse_usage_rows, full_state, standalone_listener};
+use guild_server::test_support::{full_state, standalone_listener};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

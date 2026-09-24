@@ -116,7 +116,7 @@ fn assemble_with(
     let mut instructions = String::new();
     for name in ["AGENTS.override.md", "AGENTS.md"] {
         if let Some(body) = reader
-            .read(&config, &config.join(name))
+            .read(config, &config.join(name))
             .filter(|s| !s.trim().is_empty())
         {
             append(&mut instructions, &body, DOC_BUDGET);
@@ -140,7 +140,7 @@ fn assemble_with(
         }
     }
     let disabled = reader
-        .read(&config, &config.join("settings.json"))
+        .read(config, &config.join("settings.json"))
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v.get("skillsDisabled").cloned())
         .unwrap_or_default();
@@ -378,7 +378,7 @@ mod tests {
         put(&repo, ".git", "gitdir: elsewhere");
         std::fs::create_dir_all(&repo).unwrap();
         std::os::unix::fs::symlink(config.join("token.json"), repo.join("AGENTS.md")).unwrap();
-        std::fs::create_dir_all(repo.join(".agents/skills"));
+        std::fs::create_dir_all(repo.join(".agents/skills")).unwrap();
         std::os::unix::fs::symlink(
             config.join("skills/legit/SKILL.md"),
             repo.join(".agents/skills/stolen.md"),

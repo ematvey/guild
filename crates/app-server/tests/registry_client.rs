@@ -217,16 +217,9 @@ async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
             )
             .await
             .unwrap();
-        registry_client::install_skill(
-            cloud,
-            project,
-            "upgradable",
-            Some(version.into()),
-            false,
-            "a@b.c",
-        )
-        .await
-        .unwrap();
+        registry_client::install_skill(cloud, project, "upgradable", Some(version), false, "a@b.c")
+            .await
+            .unwrap();
     }
     approve_and_install(&store, user.org_id, &cloud, &project, "1.0.0").await;
     assert!(dest.join("old-helper.txt").is_file());

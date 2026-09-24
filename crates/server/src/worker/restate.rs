@@ -727,13 +727,14 @@ pub(crate) async fn resolve_workspace(
         return Ok(None);
     };
     let store = state.store().await?;
-    let row: Option<(
+    type WorkspaceOwnerRow = (
         String,
         Option<String>,
         Option<String>,
         Option<Uuid>,
         Option<Uuid>,
-    )> = sqlx::query_as(
+    );
+    let row: Option<WorkspaceOwnerRow> = sqlx::query_as(
         "SELECT p.folder, p.machine_id, coalesce(m.label, p.machine_id), mu.user_id, mu.org_id \
          FROM projects p \
          LEFT JOIN machines m ON m.machine_id = p.machine_id \
@@ -3247,6 +3248,7 @@ async fn fetch_context_via_machine(
     })
 }
 
+#[allow(clippy::too_many_arguments)] // journaled step signature mirrors the payload
 async fn fetch_agents_md_via_machine(
     ctx: &ObjectContext<'_>,
     state: &AppState,

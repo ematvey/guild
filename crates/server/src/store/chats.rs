@@ -780,7 +780,7 @@ mod tests {
                 .status,
             axum::http::StatusCode::NOT_FOUND
         );
-        assert!(list().await.unwrap()[0].unread == false);
+        assert!(!list().await.unwrap()[0].unread);
     }
 
     /// Rename + archive roundtrip: PATCH changes the title, archiving hides

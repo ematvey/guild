@@ -68,7 +68,7 @@ fn attach_uses_the_app_hosted_socket() {
     let path = temp_socket_attach();
     let _ = std::fs::remove_file(&path);
     std::env::set_var("GUILD_DAEMON_SOCKET", &path);
-    inert_token_store(&path.parent().unwrap().to_path_buf());
+    inert_token_store(path.parent().unwrap());
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -157,7 +157,7 @@ impl Client {
 async fn daemon_binds_shares_survives_and_shuts_down() {
     let path = temp_socket();
     let _ = std::fs::remove_file(&path);
-    inert_token_store(&path.parent().unwrap().to_path_buf());
+    inert_token_store(path.parent().unwrap());
 
     let dpath = path.clone();
     let daemon =

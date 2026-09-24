@@ -318,8 +318,8 @@ async fn disclosure_filters_tools_by_role() {
 
     // The pure enforcement fn agrees (spec §6).
     let info = &turn.tools[1];
-    assert!(!tool_allowed(&turn, info, "member"));
-    assert!(tool_allowed(&turn, info, "admin"));
+    assert!(!tool_allowed(turn, info, "member"));
+    assert!(tool_allowed(turn, info, "admin"));
 }
 
 #[test]

@@ -189,7 +189,7 @@ fn decode_content(role: &str, content: &Option<Value>) -> Result<DecodedContent,
                         });
                     }
                     other => {
-                        return Err(ApiError::bad_request(&format!(
+                        return Err(ApiError::bad_request(format!(
                             "unsupported content part type: {other}"
                         )));
                     }
