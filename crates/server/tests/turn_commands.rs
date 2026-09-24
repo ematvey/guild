@@ -626,3 +626,27 @@ async fn finished_command_during_ingress_ack_releases_reservation() {
         .try_begin_with_id(fs.chat_id, Uuid::now_v7())
         .is_ok());
 }
+
+/// A dispatcher reservation that lands after the worker's unconditional
+/// removal but before the finish commit survives the pump's `running`
+/// re-reads; the worker's post-finish id-checked release clears exactly that
+/// entry and never touches a newer generation's reservation.
+#[tokio::test]
+async fn post_finish_release_drops_a_pump_reservation_that_landed_mid_finish() {
+    let fs = full_state().await;
+    let state = fs.state.clone();
+    let id = Uuid::now_v7();
+    assert!(state.generations.try_begin_with_id(fs.chat_id, id).is_ok());
+    // Worker epilogue: unconditional removal, finish commits, then the
+    // id-checked release.
+    state.generations.remove(fs.chat_id);
+    guild_server::worker::restate::release_claim_reservation(&state, fs.chat_id, id);
+    assert!(state.generations.handle(fs.chat_id).is_none());
+    // A stale release never removes a newer generation's entry.
+    let newer = Uuid::now_v7();
+    assert!(state.generations.try_begin_with_id(fs.chat_id, newer).is_ok());
+    guild_server::worker::restate::release_claim_reservation(&state, fs.chat_id, id);
+    assert!(state.generations.handle(fs.chat_id).is_some());
+    guild_server::worker::restate::release_claim_reservation(&state, fs.chat_id, newer);
+    assert!(state.generations.handle(fs.chat_id).is_none());
+}
