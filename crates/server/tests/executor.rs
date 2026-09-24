@@ -238,6 +238,90 @@ async fn routine_run_records_failure_when_tool_fails_repeatedly() {
     assert!(error.contains("step limit"), "{error}");
 }
 
+/// The verifier's probe shape through the REAL boundary: the provider
+/// upstream itself rejects the model call with 400 → the internal endpoint
+/// translates it to 502/provider_upstream → the routine's model step must
+/// classify it TERMINAL and close the run record as failed (no infinite
+/// paid retry, no stuck running row).
+#[tokio::test]
+async fn a_real_provider_rejection_fails_the_run_not_the_retry_loop() {
+    let served = serve_full().await;
+    // The UPSTREAM provider always answers 400 (a real provider rejection).
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(400)
+                .set_body_string(r#"{"error":{"message":"invalid model: nope"}}"#),
+        )
+        .mount(&provider)
+        .await;
+    let master = served.full.state.config.master_key().unwrap();
+    served
+        .full
+        .store()
+        .gateway()
+        .upsert_provider_key(
+            served.full.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let store = served.full.store();
+    let creator = store
+        .identity()
+        .create_user(served.full.org_id, "r3@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let routine = store
+        .routines()
+        .create(
+            served.full.org_id,
+            creator.id,
+            "broken",
+            "Broken",
+            "webhook",
+            json!({}),
+            "Loop.",
+            "gpt-test",
+            json!([]),
+            "hook_z",
+            true,
+        )
+        .await
+        .unwrap();
+    let exec = RoutineExecutor {
+        api_base: served.base_url.clone(),
+        internal_token: "test-internal".into(),
+        allow_http_tool: false,
+        http_tool_allow_hosts: Vec::new(),
+    };
+    // The run FAILS (terminal classification through the real 400→502
+    // translation); it must not hang on retries.
+    let err = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        run_routine(&exec, routine.id, "manual", json!({})),
+    )
+    .await
+    .expect("the terminal classification ends the run (no retry loop)")
+    .expect_err("provider 400 must fail the run");
+    assert!(err.to_string().contains("400"), "{err}");
+
+    let runs = store
+        .routines()
+        .list_runs(served.full.org_id, routine.id)
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, "failed", "the run record closed as failed");
+    assert!(runs[0].error.as_deref().unwrap_or("").contains("400"));
+}
+
 #[test]
 fn parses_done_frame_directly() {
     use protocol::api::StreamEvent;
@@ -267,10 +351,13 @@ fn parses_done_frame_directly() {
     assert!(v3.is_ok(), "roundtrip from_str on {s}: {v3:?}");
 }
 
-/// Completion failures classify: 4xx (including 429 quota) and in-stream
-/// error events are terminal — Restate must not retry them (each retry of a
-/// quota failure is a fresh paid request); 408, transport failures and 5xx
-/// stay retryable.
+/// Completion failures classify from the UNDERLYING provider condition the
+/// internal endpoint translated — not the translated HTTP status. The real
+/// shape: a provider 400 arrives as internal 502 + `provider_upstream`
+/// (must be terminal, not an infinite retry); provider throttling and
+/// quota exhaustion arrive as 429 with distinct codes (transient under the
+/// model step's bounded retry policy); in-stream errors are terminal only
+/// when the provider condition is permanent.
 #[tokio::test]
 async fn completion_failures_classify_terminal_vs_transient() {
     use guild_server::worker::executor::CompletionError;
@@ -280,17 +367,35 @@ async fn completion_failures_classify_terminal_vs_transient() {
         .await;
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let c = calls.clone();
+    let upstream_400 = r#"{"error":{"code":"provider_upstream","message":"provider error: status 400: invalid model"}}"#;
+    let upstream_503 = r#"{"error":{"code":"provider_upstream","message":"provider error: status 503: overloaded"}}"#;
+    let rate_limited =
+        r#"{"error":{"code":"provider_rate_limited","message":"provider rate limited"}}"#;
+    let quota =
+        r#"{"error":{"code":"quota_exceeded","message":"monthly quota for this model reached"}}"#;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .respond_with(move |_: &wiremock::Request| {
             let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             match n {
+                // The internal endpoint's own 4xx stay terminal.
                 0 => wiremock::ResponseTemplate::new(400).set_body_string("{}"),
-                1 => wiremock::ResponseTemplate::new(429).set_body_string("{}"),
-                2 => wiremock::ResponseTemplate::new(408).set_body_string("{}"),
-                3 => wiremock::ResponseTemplate::new(500).set_body_string("{}"),
-                4 => wiremock::ResponseTemplate::new(200)
+                // Provider 400 translated to 502/provider_upstream: TERMINAL.
+                1 => wiremock::ResponseTemplate::new(502).set_body_string(upstream_400),
+                // Provider 503 translated to 502/provider_upstream: transient.
+                2 => wiremock::ResponseTemplate::new(502).set_body_string(upstream_503),
+                // Throttling and quota: transient (bounded by the run policy).
+                3 => wiremock::ResponseTemplate::new(429).set_body_string(rate_limited),
+                4 => wiremock::ResponseTemplate::new(429).set_body_string(quota),
+                5 => wiremock::ResponseTemplate::new(408).set_body_string("{}"),
+                6 => wiremock::ResponseTemplate::new(500).set_body_string("{}"),
+                // In-stream: a permanent provider rejection is terminal…
+                7 => wiremock::ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
-                    .set_body_string("data: {\"type\":\"error\",\"code\":\"provider\",\"message\":\"boom\"}\n\n"),
+                    .set_body_string("data: {\"type\":\"error\",\"code\":\"provider\",\"message\":\"provider error: status 401: invalid key\"}\n\n"),
+                // …a throttling frame is transient.
+                8 => wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string("data: {\"type\":\"error\",\"code\":\"provider\",\"message\":\"overloaded_error: the upstream is overloaded\"}\n\n"),
                 _ => wiremock::ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
                     .set_body_string(concat!(
@@ -309,7 +414,17 @@ async fn completion_failures_classify_terminal_vs_transient() {
     };
     let messages = vec![protocol::api::Message::user("hi")];
     let specs: Vec<protocol::api::ToolSpec> = Vec::new();
-    for expect_terminal in [true, true, false, false, true] {
+    for expect_terminal in [
+        true,  // internal 400
+        true,  // upstream 400 → 502 provider_upstream
+        false, // upstream 503 → 502 provider_upstream
+        false, // provider_rate_limited
+        false, // quota_exceeded (bounded transient)
+        false, // 408
+        false, // 5xx
+        true,  // in-stream permanent rejection
+        false, // in-stream throttle
+    ] {
         let result = exec
             .completion(
                 Uuid::now_v7(),
