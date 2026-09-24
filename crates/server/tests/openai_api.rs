@@ -243,3 +243,77 @@ async fn openai_stream_and_auth_failures() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+/// A client's tool-call `arguments` arrive as a JSON-encoded string; the
+/// internal Message must carry them parsed, so an Anthropic-shaped upstream
+/// receives a `tool_use.input` object (a string input is a 400) instead of
+/// a double-encoded one.
+#[tokio::test]
+async fn ingress_tool_call_arguments_are_unpacked_to_objects() {
+    let anthropic = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"sunny\"}}\n\n",
+                    "data: {\"type\":\"message_stop\"}\n\n",
+                )),
+        )
+        .mount(&anthropic)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(fs.org_id, "anthropic", anthropic.uri().as_str(), "sk-test", &master)
+        .await
+        .unwrap();
+    fs.store()
+        .gateway()
+        .upsert_route(fs.org_id, "claude-test", "anthropic", true, 2.0, 4.0, None, false, None, None, &[])
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_key(&app, &fs.token).await;
+
+    let req_body = json!({
+        "model": "claude-test",
+        "messages": [
+            {"role": "user", "content": "weather?"},
+            {"role": "assistant", "content": null, "tool_calls": [
+                {"id": "call_x", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\":\"oslo\"}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "call_x", "content": "snow"}
+        ]
+    });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/openai/v1/chat/completions")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(req_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let upstream = anthropic.received_requests().await.unwrap();
+    let body: Value = serde_json::from_slice(&upstream[0].body).unwrap();
+    let blocks = body["messages"].as_array().unwrap();
+    let tool_use = blocks
+        .iter()
+        .flat_map(|m| {
+            m["content"].as_array().cloned().unwrap_or_default()
+        })
+        .find(|b| b["type"] == "tool_use")
+        .expect("tool_use block in upstream");
+    assert!(tool_use["input"].is_object(), "input must be an object, got {tool_use}");
+    assert_eq!(tool_use["input"]["city"], "oslo");
+}

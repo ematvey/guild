@@ -114,6 +114,17 @@ fn content_to_text(content: &Option<Value>) -> String {
     }
 }
 
+/// OpenAI clients send tool-call `arguments` as a JSON-encoded string; the
+/// internal Message carries a parsed object (the Anthropic wire requires an
+/// object and the OpenAI replay path re-encodes). Unparseable strings stay
+/// raw — the provider replay handles non-objects.
+fn parse_tool_arguments(v: &Value) -> Value {
+    match v {
+        Value::String(s) => serde_json::from_str(s).unwrap_or_else(|_| v.clone()),
+        other => other.clone(),
+    }
+}
+
 fn to_internal_messages(msgs: &[OpenAiMessage]) -> (Option<String>, Vec<Message>) {
     let mut system_parts: Vec<String> = Vec::new();
     let mut out = Vec::new();
@@ -131,7 +142,7 @@ fn to_internal_messages(msgs: &[OpenAiMessage]) -> (Option<String>, Vec<Message>
                         .map(|c| ToolCall {
                             id: c.id.clone(),
                             name: c.function.name.clone(),
-                            arguments: c.function.arguments.clone(),
+                            arguments: parse_tool_arguments(&c.function.arguments),
                         })
                         .collect()
                 }),
