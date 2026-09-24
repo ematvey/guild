@@ -819,11 +819,16 @@ pub async fn watch_token_store(
             // registry.* read it — a re-pair must not leave stale auth.
             // Memory-only: no persist, and the link send below keeps its
             // dedup.
+            // A different principal (sign-out, or another account's login)
+            // resets the account-owned execution state like an in-process
+            // transition.
             let mut s = session.lock().unwrap();
+            let previous = crate::jsonrpc_loop::principal_of(&s);
             match session_store::load(&path) {
                 Some(stored) => s.auth.adopt_stored(&stored),
                 None => s.auth = crate::auth_state::AuthState::default(),
             }
+            crate::jsonrpc_loop::reset_if_principal_changed(&mut s, previous);
         }
         if *link.borrow() != cfg {
             let _ = link.send(cfg);
@@ -1481,6 +1486,65 @@ mod tests {
         // The in-memory session followed every store change and the
         // sign-out cleared it.
         assert!(session.lock().unwrap().auth.cloud().is_none());
+        shutdown_tx.send(true).ok();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Another process switches token.json from account A to B while the
+    /// daemon holds the link: the daemon session drops A's chat/model/
+    /// pending state and bumps the epoch, exactly like an in-process switch.
+    #[tokio::test]
+    async fn token_store_watcher_account_switch_resets_account_state() {
+        let dir = std::env::temp_dir().join(format!("guild-link-switch-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("token.json");
+        let store = |token: &str, email: &str| session_store::StoredSession {
+            base_url: "http://x".into(),
+            token: token.into(),
+            email: Some(email.into()),
+            machine_id: Some("m-1".into()),
+            client_id: Some("c-1".into()),
+            machine_name: Some("box".into()),
+        };
+        session_store::save(&path, &store("ta", "a@b")).unwrap();
+        let mut initial = crate::jsonrpc_loop::Session::default();
+        initial.auth.adopt_stored(&store("ta", "a@b"));
+        initial.chat_id = Some(uuid::Uuid::now_v7());
+        initial.model = "m".into();
+        let session = Arc::new(std::sync::Mutex::new(initial));
+        let (tx, _) = watch::channel(None);
+        let link = Arc::new(tx);
+        let mut rx = link.subscribe();
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        tokio::spawn(watch_token_store(
+            path.clone(),
+            session.clone(),
+            link.clone(),
+            shutdown_rx,
+            Duration::from_millis(20),
+        ));
+        // First poll adopts the same principal: nothing resets.
+        tokio::time::timeout(Duration::from_secs(5), rx.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        {
+            let s = session.lock().unwrap();
+            assert!(s.chat_id.is_some(), "same principal keeps its chat");
+            assert_eq!(s.epoch, 0);
+        }
+        session_store::save(&path, &store("tb", "b@b")).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), rx.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        {
+            let s = session.lock().unwrap();
+            assert_eq!(s.auth.email(), Some("b@b"));
+            assert!(s.chat_id.is_none(), "A's chat survived the external switch");
+            assert!(s.model.is_empty());
+            assert_eq!(s.epoch, 1);
+        }
         shutdown_tx.send(true).ok();
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -476,16 +476,26 @@ fn auth_change_with_store(
 ) -> anyhow::Result<()> {
     let mut s = shared.session.lock().unwrap();
     let previous = principal_of(&s);
-    s.auth
-        .transition(change, store.as_deref(), &shared.machine_link)?;
-    let current = principal_of(&s);
-    if current != previous {
-        // The previous account's execution state must not leak into a new
-        // principal (or the signed-out state): a retained chat id would send
-        // the next user's turns into the old chat under the new credential —
-        // authz failures at best, another member's conversation at worst.
-        // In-flight agent runs keep their own cloud client and fail on their
-        // revoked bearer; the flags below let the new principal start fresh.
+    // The in-memory transition applies even when persistence fails, so the
+    // account-state reset runs before the persistence error propagates.
+    let result = s
+        .auth
+        .transition(change, store.as_deref(), &shared.machine_link);
+    reset_if_principal_changed(&mut s, previous);
+    result
+}
+
+/// Resets the account-owned execution state when the session's principal
+/// differs from `previous` (a sign-out, a login as someone else, or an
+/// external token.json switch). The previous account's execution state must
+/// not leak into a new principal (or the signed-out state): a retained chat
+/// id would send the next user's turns into the old chat under the new
+/// credential — authz failures at best, another member's conversation at
+/// worst. In-flight agent runs keep their own cloud client and fail on their
+/// revoked bearer; the epoch bump makes their late writes stale and the
+/// cleared flags let the new principal start fresh.
+pub(crate) fn reset_if_principal_changed(s: &mut Session, previous: Option<(String, String)>) {
+    if principal_of(s) != previous {
         s.chat_id = None;
         s.project_dir = None;
         s.model = String::new();
@@ -493,11 +503,10 @@ fn auth_change_with_store(
         s.agent_running = false;
         s.epoch = s.epoch.wrapping_add(1);
     }
-    Ok(())
 }
 
 /// The account a session's execution state belongs to: server + email.
-fn principal_of(s: &Session) -> Option<(String, String)> {
+pub(crate) fn principal_of(s: &Session) -> Option<(String, String)> {
     let cloud = s.auth.cloud()?;
     Some((cloud.base_url.clone(), s.auth.email()?.to_string()))
 }
@@ -786,21 +795,22 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         let project =
             crate::agent_start::ensure_project(&cloud, &project_dir.to_string_lossy(), &machine_id)
                 .await?;
-        let (chat_id, epoch) = {
+        // Every session read/write after an await is guarded by the epoch
+        // captured at start: a sign-out/account switch meanwhile means this
+        // start belongs to the previous account — it neither consumes nor
+        // installs a chat in the new account's session.
+        let chat_id = {
             let s = shared.session.lock().unwrap();
-            (s.chat_id, s.epoch)
+            anyhow::ensure!(s.epoch == epoch, "account changed during agent start");
+            s.chat_id
         };
         let chat_id = match chat_id {
             Some(c) => c,
             None => {
                 let c = cloud.create_chat(Some("agent")).await?;
-                // Same principal/epoch guard as chat.send: a response
-                // released after a sign-out/account switch is discarded.
                 let mut s = shared.session.lock().unwrap();
-                if s.epoch == epoch && s.chat_id.is_none() {
-                    s.chat_id = Some(c);
-                }
-                c
+                anyhow::ensure!(s.epoch == epoch, "account changed during agent start");
+                *s.chat_id.get_or_insert(c)
             }
         };
         Ok::<_, anyhow::Error>((project, chat_id))
@@ -1542,5 +1552,138 @@ mod agent_start_tests {
             );
         }
         let _ = out_rx.try_recv();
+    }
+
+    /// An account switch while agent.start's project lookup is withheld:
+    /// the start belongs to the previous account, so it neither creates nor
+    /// installs a chat into the new account's session (the epoch captured at
+    /// start is the guard — never a re-read after the await).
+    #[tokio::test]
+    async fn an_account_switch_during_the_project_lookup_installs_nothing() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/v1/projects"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"projects": [{
+                        "id": Uuid::now_v7(),
+                        "name": "x",
+                        "folder": "/tmp/x",
+                        "machine_id": "mid",
+                        "machine_label": null,
+                        "created_at": "2026-01-01T00:00:00Z"
+                    }]}))
+                    .set_delay(std::time::Duration::from_millis(800)),
+            )
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/api/v1/chats"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": Uuid::now_v7(),
+                    "org_id": Uuid::now_v7(),
+                    "user_id": Uuid::now_v7(),
+                    "created_at": "2026-01-01T00:00:00Z"
+                })),
+            )
+            .mount(&server)
+            .await;
+        let session = Session {
+            auth: crate::auth_state::AuthState::from_parts(
+                Some(CloudClient {
+                    base_url: server.uri(),
+                    token: "tok-a".into(),
+                }),
+                Some("a@b".into()),
+                Some("mid".into()),
+                None,
+            ),
+            ..Default::default()
+        };
+        let shared = Shared::new(session);
+        let req = Request {
+            jsonrpc: "2.0".into(),
+            id: 1,
+            protocol: protocol::rpc::PROTOCOL_VERSION,
+            method: "agent.start".into(),
+            params: serde_json::json!({ "project_dir": "/tmp/x", "prompt": "hi" }),
+        };
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        let task = tokio::spawn(agent_start_task(shared.clone(), req, out_tx));
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // A → B while the lookup is parked.
+        auth_change_with_store(
+            &shared,
+            AuthChange::Login {
+                base_url: server.uri(),
+                token: "tok-b".into(),
+                email: "b@b".into(),
+            },
+            None,
+        )
+        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        let reply = out_rx.recv().await.unwrap();
+        assert!(reply["error"].is_object(), "the stale start fails: {reply}");
+        assert!(
+            shared.session.lock().unwrap().chat_id.is_none(),
+            "A's chat must not be installed into B's session"
+        );
+        let created = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/api/v1/chats")
+            .count();
+        assert_eq!(created, 0, "no chat is created for the stale start");
+    }
+
+    /// A login whose token.json write fails still changes the in-memory
+    /// principal: the previous account's state is reset before the error
+    /// propagates, and a retry succeeds.
+    #[test]
+    fn a_failed_persist_during_an_account_switch_still_resets_account_state() {
+        let session = Session {
+            auth: crate::auth_state::AuthState::from_parts(
+                Some(CloudClient {
+                    base_url: "http://srv".into(),
+                    token: "tok-a".into(),
+                }),
+                Some("a@b".into()),
+                None,
+                None,
+            ),
+            chat_id: Some(Uuid::now_v7()),
+            model: "m".into(),
+            ..Default::default()
+        };
+        let shared = Shared::new(session);
+        let login = || AuthChange::Login {
+            base_url: "http://srv".into(),
+            token: "tok-b".into(),
+            email: "b@b".into(),
+        };
+        // A path under a regular file cannot be written.
+        let blocker = std::env::temp_dir().join(format!("guild-blocker-{}", Uuid::now_v7()));
+        std::fs::write(&blocker, "x").unwrap();
+        let bad = blocker.join("token.json");
+        assert!(auth_change_with_store(&shared, login(), Some(bad)).is_err());
+        {
+            let s = shared.session.lock().unwrap();
+            assert_eq!(s.auth.email(), Some("b@b"));
+            assert!(s.chat_id.is_none(), "A's chat survived the switch");
+            assert!(s.model.is_empty());
+            assert_eq!(s.epoch, 1);
+        }
+        let good = std::env::temp_dir().join(format!("guild-token-{}.json", Uuid::now_v7()));
+        auth_change_with_store(&shared, login(), Some(good.clone())).unwrap();
+        let _ = std::fs::remove_file(&blocker);
+        let _ = std::fs::remove_file(&good);
     }
 }
