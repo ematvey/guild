@@ -1,9 +1,32 @@
 # Guild — current state of work
 
-Updated 2026-09-24 (full-review continuation deployed and verified). Read this before touching the codebase; the requirements live in
+Updated 2026-09-24 (round-3 review fixes; not deployed). Read this before touching the codebase; the requirements live in
 `docs/PRD.md` (product) and `docs/SRS.md` (system contracts); deploy
 nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
+
+## Round 3 review fixes — 2026-09-24 (not deployed)
+
+The 20 round-3 findings are addressed on `fix/round3`; per-finding evidence
+and validation live in `FIX-REPORT.md`. Machine fingerprint adoption rebinds
+projects and chats in the registry transaction, preserving adoption and moving
+all current bindings off the retired id. No retired-id ownership table is needed
+for those bindings; a later registrant of the old id cannot read them.
+
+Gateway completion recording transfers owned usage to an independent task before
+awaiting it. One guard keeps one request id across completion/drop paths; reports
+and quotas deduplicate by that id. Non-stream drains and failed in-app provider
+streams use the same guard. Successful in-app usage retains its journaled step.
+Usage attribution selects the user's earliest-created org team (id breaks ties),
+because memberships have no explicit primary flag; users without a team remain
+unassigned. Existing historical usage rows are unchanged.
+
+Admin integration forms resolve only approved manifests. Both archive readers
+reject normalized duplicate paths. Logout revokes the bearer session; clients
+attempt revocation with a three-second bound before local clearing. Password
+reset updates the password, revokes sessions/API keys, and deletes unused pairing
+codes in one transaction. WebSocket messages reload the caller's current role.
+No deployment is authorized for this task.
 
 ## Review continuation deployed — 2026-09-24
 
