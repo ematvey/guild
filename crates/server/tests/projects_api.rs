@@ -464,3 +464,97 @@ async fn editing_a_projects_machine_rebinds_its_chats() {
         .unwrap();
     assert_eq!(after.machine_label.as_deref(), Some("machine-3"));
 }
+
+/// Binding a chat to a project requires owning the project: another
+/// member's project, an unknown id, and another org's project are all not
+/// found and leave the binding unchanged; an explicit null still unbinds.
+#[tokio::test]
+async fn binding_a_foreign_or_unknown_project_is_not_found() {
+    let fs = full_state().await;
+    register_test_machine(&fs.state, "machine-1", fs.user_id, fs.org_id, Some("MINE")).await;
+    let app = guild_server::build_router(fs.state.clone());
+    let own = fs
+        .store()
+        .projects()
+        .create(fs.org_id, fs.user_id, "own", "C:\\own", "machine-1")
+        .await
+        .unwrap();
+    let chat = fs
+        .store()
+        .chats()
+        .create_chat(fs.org_id, fs.user_id, Some("c"), None)
+        .await
+        .unwrap();
+    let (status, _) = post_json(
+        &app,
+        &fs,
+        "POST",
+        &format!("/api/v1/chats/{}/project", chat.id),
+        json!({"project_id": own.id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Member B's project on B's machine.
+    let member = fs
+        .store()
+        .identity()
+        .create_user(fs.org_id, "b@p.test", "hunter226", "member")
+        .await
+        .unwrap();
+    register_test_machine(&fs.state, "machine-b", member.id, fs.org_id, Some("BBOX")).await;
+    let foreign = fs
+        .store()
+        .projects()
+        .create(fs.org_id, member.id, "theirs", "C:\\theirs", "machine-b")
+        .await
+        .unwrap();
+
+    // Another org's project.
+    let other_chat = guild_server::test_support::insert_org_with_chat(&fs.store()).await;
+    let (other_org, other_user): (uuid::Uuid, uuid::Uuid) =
+        sqlx::query_as("SELECT org_id, user_id FROM chats WHERE id = $1")
+            .bind(other_chat)
+            .fetch_one(fs.store().pool())
+            .await
+            .unwrap();
+    register_test_machine(&fs.state, "machine-x", other_user, other_org, Some("XBOX")).await;
+    let cross_org = fs
+        .store()
+        .projects()
+        .create(other_org, other_user, "x", "C:\\x", "machine-x")
+        .await
+        .unwrap();
+
+    let user = fs.store().identity().get_user(fs.user_id).await.unwrap();
+    for pid in [foreign.id, uuid::Uuid::now_v7(), cross_org.id] {
+        let (status, body) = post_json(
+            &app,
+            &fs,
+            "POST",
+            &format!("/api/v1/chats/{}/project", chat.id),
+            json!({"project_id": pid}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{pid}: {body}");
+        let row = fs
+            .store()
+            .chats()
+            .get_chat(fs.org_id, chat.id, &user)
+            .await
+            .unwrap();
+        assert_eq!(row.project_id, Some(own.id));
+        assert_eq!(row.machine_id.as_deref(), Some("machine-1"));
+    }
+
+    let (status, unbound) = post_json(
+        &app,
+        &fs,
+        "POST",
+        &format!("/api/v1/chats/{}/project", chat.id),
+        json!({"project_id": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unbound}");
+    assert_eq!(unbound["project_id"], Value::Null);
+}

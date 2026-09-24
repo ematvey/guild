@@ -474,9 +474,11 @@ impl<'a> ChatStore<'a> {
         // Machine binding is project-derived and read INSIDE the write tx
         // with the project row locked: adoption re-keys the binding
         // atomically, so a split read/write could reinstate the
-        // pre-adoption machine id over the adopted one.
+        // pre-adoption machine id over the adopted one. A requested project
+        // the caller doesn't own (or that doesn't exist) is not found; only
+        // `project_id: None` unbinds.
         let machine: Option<(Option<String>, Option<String>)> = match project_id {
-            Some(pid) => {
+            Some(pid) => Some(
                 sqlx::query_as(
                     "SELECT p.machine_id, m.label FROM projects p \
                  LEFT JOIN machines m ON m.machine_id = p.machine_id \
@@ -487,7 +489,8 @@ impl<'a> ChatStore<'a> {
                 .bind(caller.id)
                 .fetch_optional(&mut *tx)
                 .await?
-            }
+                .ok_or_else(|| ApiError::not_found("no such project"))?,
+            ),
             None => None,
         };
         let chat: ChatRow = sqlx::query_as(
