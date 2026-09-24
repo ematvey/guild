@@ -2392,6 +2392,7 @@ impl ChatRunner {
                 let event_id = durable_event_id(ctx.invocation_id(), &format!("tool:{step}:{idx}"));
                 let prefetch_target = turn_machine_id.clone().zip(workspace.as_ref().map(|w| w.folder.clone()));
                 let prefetch_org = req.org_id;
+                let prefetch_expected = turn_expected;
                 ctx.run(move || {
                     let state = st.clone();
                     let call = call2.clone();
@@ -2415,7 +2416,7 @@ impl ChatRunner {
                             .await
                             .map_err(api_err)?;
                         if let (Some(artifact), Some((machine, folder))) = (&spilled, &prefetch_target) {
-                            crate::worker::spill::spawn_machine_prefetch(&state, prefetch_org, chat_id, machine, folder, artifact);
+                            crate::worker::spill::spawn_machine_prefetch(&state, prefetch_org, chat_id, machine, prefetch_expected, folder, artifact);
                         }
                         Ok(Json(()))
                     }

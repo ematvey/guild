@@ -392,27 +392,40 @@ mod tests {
     }
 }
 
-/// Best-effort delivery after the artifact's thread event commits. Old
-/// executors decline capability discovery; first-touch fetch remains available.
+/// Best-effort delivery after the artifact's thread event commits. Same
+/// executor-identity rule as tool dispatch and the context channel (the
+/// payload names the workdir, chat id and artifact filename): the requests
+/// go only to a machine whose registry row AND live socket still match the
+/// turn's captured executor, pinned to the validated holder — a same-org
+/// claimant of a freed/re-keyed id never receives them. Old executors
+/// decline capability discovery; first-touch fetch remains available.
 pub fn spawn_machine_prefetch(
     state: &crate::state::AppState,
     org_id: Uuid,
     chat_id: Uuid,
     machine: &str,
+    expected: crate::worker::funnel::ExpectedExecutor,
     folder: &str,
     artifact: &SpilledArtifact,
 ) {
     let state = state.clone();
     let machine = machine.to_owned();
+    let folder = folder.to_owned();
     let payload = serde_json::json!({"workdir": folder, "chat_id": chat_id,
         "artifact_id": artifact.artifact_id, "filename": artifact.filename});
     tokio::spawn(async move {
         let timeout = std::time::Duration::from_secs(10);
+        let Some((machine, holder)) =
+            crate::worker::funnel::validate_context_executor(&state, &machine, &expected, org_id)
+                .await
+        else {
+            return;
+        };
         let Ok(caps) = state
             .hub
-            .machine_request(
+            .machine_request_pinned(
                 &machine,
-                org_id,
+                &holder,
                 "capabilities",
                 serde_json::json!({}),
                 timeout,
@@ -429,10 +442,152 @@ pub fn spawn_machine_prefetch(
         }
         if let Err(error) = state
             .hub
-            .machine_request(&machine, org_id, "artifact.prefetch_v1", payload, timeout)
+            .machine_request_pinned(&machine, &holder, "artifact.prefetch_v1", payload, timeout)
             .await
         {
             tracing::debug!(?error, "artifact prefetch deferred to first touch");
         }
     });
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod prefetch_validation_tests {
+    use super::*;
+    use crate::http::hub::Member;
+    use crate::worker::funnel::ExpectedExecutor;
+
+    fn spilled() -> SpilledArtifact {
+        SpilledArtifact {
+            artifact_id: Uuid::now_v7(),
+            filename: "report.xlsx".into(),
+            content_type: "application/octet-stream".into(),
+            size_bytes: 1024,
+            path: ".guild/artifacts/x/report.xlsx".into(),
+        }
+    }
+
+    /// Registers `id` (owner `user` in `org`) in the registry + hub — the
+    /// production shape a prefetch target must still match.
+    async fn register_executor(
+        fixture: &crate::test_support::TestState,
+        id: &str,
+        user: Uuid,
+        org: Uuid,
+    ) -> (
+        Member,
+        tokio::sync::mpsc::UnboundedReceiver<crate::http::ws::SocketOutput>,
+    ) {
+        fixture
+            .store()
+            .machines()
+            .upsert_connected(org, user, id, None, None, None, None, None, None)
+            .await
+            .unwrap();
+        let (sink, out) = crate::http::ws::socket_channel();
+        let member = Member {
+            conn_id: Uuid::now_v7(),
+            user_id: user,
+            org_id: org,
+            sink,
+            label: None,
+        };
+        fixture
+            .state
+            .hub
+            .register_machine(member.clone(), id)
+            .await
+            .unwrap();
+        (member, out)
+    }
+
+    async fn fixture() -> crate::test_support::TestState {
+        crate::test_support::test_state_with_db().await
+    }
+
+    /// The prefetch (workdir, chat id, artifact filename) goes only to the
+    /// captured executor: a same-org claimant of the freed id passes an
+    /// org-scoped request today, so this path is validated and pinned like
+    /// tool dispatch and the context channel. A foreign-claimed id receives
+    /// nothing; the true owner's machine does.
+    #[tokio::test]
+    async fn prefetch_reaches_only_the_captured_executor() {
+        let f = fixture().await;
+        let owner = f
+            .store()
+            .identity()
+            .ensure_bootstrap_admin("spill-owner@example.org", "hunter226")
+            .await
+            .unwrap();
+        let org = f.store().identity().get_user(owner).await.unwrap().org_id;
+        let claimant = f
+            .store()
+            .identity()
+            .create_user(org, "spill-claimant@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let (_claimant_member, mut claimant_out) =
+            register_executor(&f, "machine", claimant.id, org).await;
+        let expected = ExpectedExecutor {
+            org_id: Some(org),
+            project_id: None,
+            owner: Some((owner, org)),
+        };
+        spawn_machine_prefetch(
+            &f.state,
+            org,
+            Uuid::now_v7(),
+            "machine",
+            expected,
+            "/workspace/repo",
+            &spilled(),
+        );
+        // The claimant's socket receives nothing (the capabilities probe is
+        // the first request — no validation, no request).
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            claimant_out.try_recv().is_err(),
+            "a claimant must not receive the prefetch or its probe"
+        );
+
+        // The owner's own machine (fresh socket, same owner) gets the probe
+        // and, once it advertises prefetch, the prefetch request itself.
+        let (owner_member, mut owner_out) = register_executor(&f, "machine2", owner, org).await;
+        spawn_machine_prefetch(
+            &f.state,
+            org,
+            Uuid::now_v7(),
+            "machine2",
+            expected,
+            "/workspace/repo",
+            &spilled(),
+        );
+        let probe = tokio::time::timeout(std::time::Duration::from_secs(2), owner_out.recv())
+            .await
+            .expect("the owner's machine receives the capabilities probe");
+        let request_id = match probe {
+            Some(crate::http::ws::SocketOutput::Message(
+                protocol::ws::WsServerMsg::MachineRequest { request_id, .. },
+            )) => request_id,
+            other => panic!("expected MachineRequest, got {other:?}"),
+        };
+        f.state.hub.resolve_machine_response(
+            &owner_member,
+            &request_id,
+            true,
+            Some(serde_json::json!({"operations": ["artifact.prefetch_v1"]})),
+            None,
+        );
+        let prefetch = tokio::time::timeout(std::time::Duration::from_secs(2), owner_out.recv())
+            .await
+            .expect("the owner's machine receives the prefetch request");
+        match prefetch {
+            Some(crate::http::ws::SocketOutput::Message(
+                protocol::ws::WsServerMsg::MachineRequest { op, payload, .. },
+            )) => {
+                assert_eq!(op, "artifact.prefetch_v1");
+                assert_eq!(payload["workdir"], "/workspace/repo");
+            }
+            other => panic!("expected prefetch MachineRequest, got {other:?}"),
+        }
+    }
 }
