@@ -454,6 +454,14 @@ fn api_terminal_free_chat(state: &AppState, chat_id: Uuid, e: ApiError) -> Handl
     api_terminal(e)
 }
 
+/// Releases the dispatcher's reservation for a command that never reaches
+/// its turn (settled by the archive race or already finished). The
+/// reservation is made under the command id, so the id check keeps a
+/// concurrent user-facing generation untouched.
+pub fn release_claim_reservation(state: &AppState, chat_id: Uuid, command_id: Uuid) {
+    state.generations.remove_if_id(chat_id, command_id);
+}
+
 /// Virtual object: key = chat id (string form). One generation at a time per
 /// chat — Restate serializes handler invocations per object key.
 pub struct ChatRunner {
@@ -1443,6 +1451,9 @@ impl ChatRunner {
             .await?
             .into_inner();
         if claimed == Some(false) {
+            if let Some(command_id) = command {
+                release_claim_reservation(&state, command_chat, command_id);
+            }
             return Ok(());
         }
         let tracked_command = claimed == Some(true);

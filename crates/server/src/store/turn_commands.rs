@@ -155,16 +155,24 @@ impl TurnCommandStore<'_> {
         let Some((status, owner)) = row else {
             return Ok(None);
         };
+        if status == "running" {
+            return Ok(Some(owner.as_deref() == Some(invocation)));
+        }
         let archived: Option<(bool,)> =
             sqlx::query_as("SELECT archived_at IS NOT NULL FROM chats WHERE id = $1")
                 .bind(chat)
                 .fetch_optional(&mut *tx)
                 .await?;
         if archived.is_some_and(|(a,)| a) {
+            // The archive raced this delivery: settle the command in the
+            // same transaction, or it stays an unfinished head that blocks
+            // the chat's queue after unarchive.
+            sqlx::query("UPDATE turn_commands SET status = 'cancelled', finished_at = coalesce(finished_at, now()) WHERE id = $1 AND finished_at IS NULL")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
             return Ok(Some(false));
-        }
-        if status == "running" {
-            return Ok(Some(owner.as_deref() == Some(invocation)));
         }
         if !matches!(status.as_str(), "pending" | "submitted") {
             return Ok(Some(false));
