@@ -71,12 +71,18 @@ impl<'a> KvStore<'a> {
             if i > 0 {
                 query.push_str(" OR ");
             }
-            query.push_str(&format!("key LIKE ${} || '%'", i + 2));
+            // ESCAPE keeps `_`/`%` in a prefix literal instead of wildcard
+            // semantics (`plugin_effect:` must not match `pluginXeffect:…`).
+            query.push_str(&format!("key LIKE ${} || '%' ESCAPE '\\'", i + 2));
         }
         query.push(')');
         let mut bound = sqlx::query(&query).bind(days);
         for prefix in prefixes {
-            bound = bound.bind(prefix);
+            let escaped = prefix
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            bound = bound.bind(escaped);
         }
         Ok(bound.execute(self.pool).await?.rows_affected())
     }
