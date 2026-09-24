@@ -81,12 +81,24 @@ impl<'a> PairingStore<'a> {
     }
 
     /// Redeems a secret: single-use (used_at must be null) and unexpired.
-    /// Returns the owning user id on success.
+    /// Returns the owning user id and the user's auth generation — the
+    /// session issuance stamps it, so a password reset that commits between
+    /// redemption and issuance leaves the created session unable to validate.
     pub async fn redeem(&self, secret: &str) -> Result<(Uuid, Uuid), ApiError> {
-        let row: (Uuid, Uuid) = sqlx::query_as(
+        self.redeem_with_generation(secret)
+            .await
+            .map(|r| (r.0, r.1))
+    }
+
+    pub async fn redeem_with_generation(
+        &self,
+        secret: &str,
+    ) -> Result<(Uuid, Uuid, i64), ApiError> {
+        let row: (Uuid, Uuid, i64) = sqlx::query_as(
             "UPDATE pairing_tokens SET used_at = now() \
              WHERE secret_hash = $1 AND used_at IS NULL AND expires_at > now() \
-             RETURNING org_id, user_id",
+             RETURNING org_id, user_id, \
+               (SELECT auth_generation FROM users WHERE id = pairing_tokens.user_id)",
         )
         .bind(hash_secret(secret))
         .fetch_optional(self.pool)

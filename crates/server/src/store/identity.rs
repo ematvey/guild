@@ -280,36 +280,76 @@ impl<'a> IdentityStore<'a> {
             .map(|_| ())
     }
 
+    /// Password authentication. Returns the user's auth generation, which
+    /// the session issuance must stamp: a reset that commits after this
+    /// validation bumps the generation, so any session created from this
+    /// stale validation never validates.
     pub async fn authenticate(&self, email: &str, password: &str) -> Result<UserRow, ApiError> {
-        let row: Option<AuthRow> = sqlx::query_as(
-            "SELECT id, org_id, email, role, identity_type, password_hash, display_name, avatar_url FROM users WHERE email = $1",
+        self.authenticate_with_generation(email, password)
+            .await
+            .map(|r| r.0)
+    }
+
+    pub async fn authenticate_with_generation(
+        &self,
+        email: &str,
+        password: &str,
+    ) -> Result<(UserRow, i64), ApiError> {
+        let row: Option<(
+            Uuid,
+            Uuid,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
+        )> = sqlx::query_as(
+            "SELECT u.id, u.org_id, u.email, u.role, u.identity_type, u.password_hash, u.display_name, u.avatar_url, u.auth_generation \
+             FROM users u WHERE u.email = $1",
         )
         .bind(email)
         .fetch_optional(self.pool)
         .await?;
-        let Some(auth) = row else {
+        let Some((
+            id,
+            org_id,
+            email,
+            role,
+            identity_type,
+            password_hash,
+            display_name,
+            avatar_url,
+            auth_generation,
+        )) = row
+        else {
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 "invalid_credentials",
                 "invalid email or password",
             ));
         };
-        if !verify_password(password, &auth.password_hash) {
+        let password_ok = verify_password(password, &password_hash);
+        if !password_ok {
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 "invalid_credentials",
                 "invalid email or password",
             ));
         }
-        Ok(UserRow {
-            id: auth.id,
-            org_id: auth.org_id,
-            email: auth.email,
-            role: auth.role,
-            identity_type: auth.identity_type,
-            display_name: auth.display_name,
-            avatar_url: auth.avatar_url,
-        })
+        Ok((
+            UserRow {
+                id,
+                org_id,
+                email,
+                role,
+                identity_type,
+                display_name,
+                avatar_url,
+            },
+            auth_generation,
+        ))
     }
 
     pub async fn create_session(&self, user_id: Uuid) -> anyhow::Result<(Uuid, String)> {
@@ -318,13 +358,42 @@ impl<'a> IdentityStore<'a> {
         let id = Uuid::now_v7();
         let expires = Utc::now() + Duration::days(30);
         // Only the sha256 hash is stored (api keys and pairing codes do the
-        // same): a database dump must not convert into session theft.
-        sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
-            .bind(sha256_hex(token.as_bytes()))
-            .bind(user_id)
-            .bind(expires)
-            .execute(self.pool)
-            .await?;
+        // same): a database dump must not convert into session theft. The
+        // session stamps the user's CURRENT auth generation.
+        sqlx::query(
+            "INSERT INTO sessions (token_hash, user_id, expires_at, auth_generation) \
+             VALUES ($1, $2, $3, (SELECT auth_generation FROM users WHERE id = $2))",
+        )
+        .bind(sha256_hex(token.as_bytes()))
+        .bind(user_id)
+        .bind(expires)
+        .execute(self.pool)
+        .await?;
+        Ok((id, token))
+    }
+
+    /// Session issuance from a credential validated EARLIER (password
+    /// verification or pairing-code redemption): the session stamps the
+    /// generation captured at validation, so a password reset that committed
+    /// in between leaves this session unable to validate.
+    pub async fn create_session_for_credential(
+        &self,
+        user_id: Uuid,
+        auth_generation: i64,
+    ) -> anyhow::Result<(Uuid, String)> {
+        let token = random_token();
+        let id = Uuid::now_v7();
+        let expires = Utc::now() + Duration::days(30);
+        sqlx::query(
+            "INSERT INTO sessions (token_hash, user_id, expires_at, auth_generation) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(sha256_hex(token.as_bytes()))
+        .bind(user_id)
+        .bind(expires)
+        .bind(auth_generation)
+        .execute(self.pool)
+        .await?;
         Ok((id, token))
     }
 
@@ -332,7 +401,8 @@ impl<'a> IdentityStore<'a> {
         sqlx::query_as(
             "SELECT u.id, u.org_id, u.email, u.role, u.identity_type, u.display_name, u.avatar_url FROM sessions s \
              JOIN users u ON u.id = s.user_id \
-             WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()",
+             WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() \
+               AND s.auth_generation = u.auth_generation",
         )
         .bind(sha256_hex(token.as_bytes()))
         .fetch_optional(self.pool)
@@ -350,14 +420,16 @@ impl<'a> IdentityStore<'a> {
     }
 
     pub async fn session_expiry(&self, hash: &str) -> Result<chrono::DateTime<Utc>, ApiError> {
-        sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()")
+        sqlx::query_scalar("SELECT s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND s.auth_generation = u.auth_generation")
             .bind(hash).fetch_optional(self.pool).await?
             .ok_or_else(|| ApiError::unauthorized("invalid or expired session"))
     }
 
-    /// Refresh only a still-valid session. Revocation and expiry are final.
+    /// Refresh only a still-valid session whose auth generation matches the
+    /// user's (a reset makes the session dead, not refreshable). Revocation
+    /// and expiry are final.
     pub async fn refresh_session(&self, token: &str) -> Result<(), ApiError> {
-        let result = sqlx::query("UPDATE sessions SET expires_at = now() + interval '30 days' WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()")
+        let result = sqlx::query("UPDATE sessions s SET expires_at = now() + interval '30 days' FROM users u WHERE s.user_id = u.id AND s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND s.auth_generation = u.auth_generation")
             .bind(sha256_hex(token.as_bytes())).execute(self.pool).await?;
         if result.rows_affected() == 0 {
             return Err(ApiError::unauthorized("invalid or expired session"));
@@ -427,7 +499,8 @@ impl<'a> IdentityStore<'a> {
         }
         let row = sqlx::query_as::<_, UserListRow>(
             "UPDATE users SET role = COALESCE($2::text, role), \
-             password_hash = COALESCE($3::text, password_hash) \
+             password_hash = COALESCE($3::text, password_hash), \
+             auth_generation = CASE WHEN $3::text IS NOT NULL THEN auth_generation + 1 ELSE auth_generation END \
              WHERE id = $1 AND org_id = $4 \
              RETURNING id, email, role, identity_type, created_at",
         )
@@ -657,5 +730,60 @@ mod tests {
             .unwrap();
         assert!(store.identity().validate_session(&token2).await.is_ok());
         let _ = admin;
+    }
+
+    /// The redeem → reset → issuance race: a session created from a
+    /// credential validated before the reset (its captured auth generation)
+    /// never validates, while a session created after the reset does.
+    #[tokio::test]
+    async fn session_from_a_stale_credential_validation_never_validates_after_reset() {
+        let db = Store::connect_test().await.unwrap();
+        let store = &db.store;
+        let org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+            .bind(org)
+            .execute(db.store.pool())
+            .await
+            .unwrap();
+        let member = store
+            .identity()
+            .create_user(org, "race@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+
+        // Password login: validation captures the pre-reset generation.
+        let (_user, generation) = store
+            .identity()
+            .authenticate_with_generation("race@example.org", "hunter226")
+            .await
+            .unwrap();
+        // Pairing redemption captures the same generation.
+        let code = store.pairing().create(org, member.id, 30).await.unwrap();
+        let (_o, _u, redeemed_generation) = store
+            .pairing()
+            .redeem_with_generation(&code.secret)
+            .await
+            .unwrap();
+        assert_eq!(generation, redeemed_generation);
+
+        // The reset commits between validation and issuance.
+        store
+            .identity()
+            .update_user(org, member.id, None, Some("newpass99"))
+            .await
+            .unwrap();
+        let (_sid, stale) = store
+            .identity()
+            .create_session_for_credential(member.id, generation)
+            .await
+            .unwrap();
+        assert!(store.identity().validate_session(&stale).await.is_err());
+        // The heartbeat path rejects the stale generation too.
+        let hash = super::sha256_hex(stale.as_bytes());
+        assert!(store.identity().session_expiry(&hash).await.is_err());
+
+        // Issuance from a post-reset validation is unaffected.
+        let (_sid, fresh) = store.identity().create_session(member.id).await.unwrap();
+        assert!(store.identity().validate_session(&fresh).await.is_ok());
     }
 }
