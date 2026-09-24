@@ -21,7 +21,29 @@ impl OpenAiProvider {
         if let Some(system) = req.system {
             messages.push(serde_json::json!({"role": "system", "content": system}));
         }
+        // Chat Completions accepts only text content on `role:"tool"`
+        // messages; media attached to a tool result rides in a user message
+        // emitted after the run of tool results.
+        let mut pending_tool_media: Vec<serde_json::Value> = Vec::new();
         for m in req.messages {
+            if m.role == "tool" {
+                let mut mv = serde_json::json!({"role": "tool", "content": m.content});
+                if let Some(cid) = &m.tool_call_id {
+                    mv["tool_call_id"] = serde_json::Value::String(cid.clone());
+                }
+                messages.push(mv);
+                for uri in &m.images {
+                    pending_tool_media.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": {"url": uri},
+                    }));
+                }
+                continue;
+            }
+            if !pending_tool_media.is_empty() {
+                let parts = std::mem::take(&mut pending_tool_media);
+                messages.push(serde_json::json!({"role": "user", "content": parts}));
+            }
             // Multimodal user turns: text plus image/audio content parts
             // (OpenAI contract: image_url with data URIs, input_audio with
             // base64+format). Text-only messages keep the plain string form.
@@ -69,6 +91,10 @@ impl OpenAiProvider {
                 mv["reasoning_content"] = serde_json::Value::String(reasoning.to_string());
             }
             messages.push(mv);
+        }
+        if !pending_tool_media.is_empty() {
+            let parts = std::mem::take(&mut pending_tool_media);
+            messages.push(serde_json::json!({"role": "user", "content": parts}));
         }
         let mut body = serde_json::json!({
             "model": req.model,
@@ -472,5 +498,41 @@ mod tests {
         let req = ProviderRequest { max_tokens: 0, ..req };
         let body = OpenAiProvider::body(&req);
         assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn tool_result_media_rides_a_following_user_message() {
+        let msgs = vec![
+            Message::user("look"),
+            Message::tool_result("c1", "screenshot attached")
+                .with_images(vec!["data:image/png;base64,QUJD".into()]),
+            Message::tool_result("c2", "plain"),
+            Message::user("thanks"),
+        ];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+            max_tokens: 0,
+        };
+        let body = OpenAiProvider::body(&req);
+        let arr = body["messages"].as_array().unwrap();
+        // tool messages stay text-only (Chat Completions rejects media parts
+        // on role:"tool")...
+        assert_eq!(arr[1]["role"], "tool");
+        assert_eq!(arr[1]["content"], "screenshot attached");
+        assert_eq!(arr[2]["role"], "tool");
+        assert_eq!(arr[2]["content"], "plain");
+        // ...and the image lands once, after the run of tool results.
+        assert_eq!(arr[3]["role"], "user");
+        assert_eq!(arr[3]["content"][0]["type"], "image_url");
+        assert_eq!(
+            arr.iter().filter(|m| m["role"] == "user").count(),
+            2,
+            "original user turn plus one media carrier"
+        );
     }
 }
