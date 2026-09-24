@@ -21,7 +21,10 @@ pub async fn run_routine(
     if !cfg.enabled {
         anyhow::bail!("routine {routine_id} is disabled");
     }
-    let run_id = exec.start_run(routine_id, trigger).await?;
+    // The direct (non-Restate) path has no replayable invocation: the run
+    // carries no invocation id, so its effect claims are retained
+    // permanently by the prune rule (tombstone — repeated-action safety).
+    let run_id = exec.start_run(routine_id, trigger, "").await?;
 
     match run_loop(exec, &cfg, trigger, input).await {
         Ok(summary) => {

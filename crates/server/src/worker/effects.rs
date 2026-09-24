@@ -78,23 +78,164 @@ pub(crate) async fn complete<T: Serialize>(
 }
 
 /// Retires claim entries (and their stored results) older than the
-/// retention bound. Called from the hourly maintenance loop.
+/// retention bound — but ONLY when the owning invocation is durably
+/// terminal. Called from the hourly maintenance loop.
+///
+/// The guarantee: a claim exists to stop a replayed invocation from
+/// re-executing a side effect whose result was never journaled. Age alone
+/// proves nothing — an invocation that crashed mid-effect and whose worker
+/// version was unavailable for months can still resume and replay. So a
+/// candidate claim is pruned only when its owning invocation id (recorded
+/// in the key and looked up in `turn_commands` / `routine_runs`) has
+/// reached a terminal status (`completed`/`failed`/`cancelled` for turn
+/// commands, `succeeded`/`failed` for routine runs). Claims with no
+/// discoverable owning invocation — including `tool_dispatch:` keys, which
+/// are keyed by chat/dispatch — are kept permanently as tombstones:
+/// repeated-action safety beats storage.
 pub(crate) async fn prune(store: &Store) -> anyhow::Result<u64> {
-    store
-        .kv()
-        .prune_older_than(CLAIM_PREFIXES, CLAIM_RETENTION_DAYS)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e:?}"))
+    let mut query = String::from(
+        "SELECT key FROM server_kv WHERE updated_at < now() - make_interval(days => $1) AND (",
+    );
+    for i in 0..CLAIM_PREFIXES.len() {
+        if i > 0 {
+            query.push_str(" OR ");
+        }
+        // ESCAPE keeps `_`/`%` in a prefix literal instead of wildcard
+        // semantics (`plugin_effect:` must not match `pluginXeffect:…`).
+        query.push_str(&format!("key LIKE ${} || '%' ESCAPE '\\'", i + 2));
+    }
+    query.push(')');
+    let mut bound = sqlx::query_as::<_, (String,)>(&query).bind(CLAIM_RETENTION_DAYS);
+    for prefix in CLAIM_PREFIXES {
+        let escaped = prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        bound = bound.bind(escaped.to_string());
+    }
+    let candidates = bound.fetch_all(store.pool()).await?;
+    #[cfg(test)]
+    eprintln!("[dbg-prune] candidates: {:?}", candidates);
+
+    let mut pruned: u64 = 0;
+    for (key,) in candidates {
+        let Some(invocation) = owning_invocation(&key) else {
+            continue; // tombstone: no owning invocation is discoverable
+        };
+        let terminal: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM turn_commands WHERE invocation_id = $1              AND status IN ('completed','failed','cancelled'))              OR EXISTS(SELECT 1 FROM routine_runs WHERE invocation_id = $1              AND status IN ('succeeded','failed'))",
+        )
+        .bind(&invocation)
+        .fetch_one(store.pool())
+        .await?;
+        if !terminal {
+            continue; // the invocation may still replay — keep the claim
+        }
+        pruned += sqlx::query("DELETE FROM server_kv WHERE key = $1 OR key = $1 || ':result'")
+            .bind(&key)
+            .execute(store.pool())
+            .await?
+            .rows_affected();
+    }
+    Ok(pruned)
+}
+
+/// The owning invocation id of a claim key: the segment right after the
+/// namespace prefix (`server_effect:<invocation>:<call>`,
+/// `plugin_effect:<invocation>`, `routine_effect:<invocation>:…`).
+/// `tool_dispatch:` keys carry a chat/dispatch pair, not an invocation —
+/// they return `None` and are retained as tombstones.
+fn owning_invocation(key: &str) -> Option<String> {
+    for prefix in CLAIM_PREFIXES {
+        if let Some(rest) = key.strip_prefix(prefix) {
+            let segment = rest.split(':').next().unwrap_or_default();
+            if segment.is_empty() {
+                return None;
+            }
+            return Some(segment.to_string());
+        }
+    }
+    None
 }
 
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[tokio::test]
-    async fn stale_effect_claims_are_pruned_and_other_kv_survives() {
+    async fn aged_claims_prune_only_when_the_owning_invocation_is_durable_terminal() {
         let fixture = crate::test_support::test_state_with_db().await;
         let store = fixture.store();
+        let admin = store
+            .identity()
+            .ensure_bootstrap_admin("prune@example.test", "hunter226")
+            .await
+            .unwrap();
+        let user_row = store.identity().get_user(admin).await.unwrap();
+        let org = user_row.org_id;
+        let user = user_row.id;
+        let chat = store
+            .chats()
+            .create_chat(org, user, Some("t"), None)
+            .await
+            .unwrap()
+            .id;
+        let routine = store
+            .routines()
+            .create(
+                org,
+                user,
+                "prune-digest",
+                "Digest",
+                "webhook",
+                serde_json::json!({}),
+                "p",
+                "m",
+                serde_json::json!([]),
+                "hook",
+                true,
+            )
+            .await
+            .unwrap();
+        let routine_id = routine.id;
+        // inv-1 owns a routine run that FINISHED (succeeded) — prunable.
+        let (run_done, _) = store
+            .routines()
+            .start_run(routine_id, "webhook", "inv-1")
+            .await
+            .unwrap();
+        store
+            .routines()
+            .finish_run(run_done, "succeeded", Some("done"), None)
+            .await
+            .unwrap();
+        // inv-2 owns a turn command that FINISHED (completed) — prunable.
+        sqlx::query(
+            "INSERT INTO turn_commands (id, org_id, user_id, chat_id, request, payload) \
+             VALUES ($1,$2,$3,$4,$5,$6)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(org)
+        .bind(user)
+        .bind(chat)
+        .bind(serde_json::json!({}))
+        .bind(serde_json::json!({}))
+        .execute(store.pool())
+        .await
+        .unwrap();
+        sqlx::query("UPDATE turn_commands SET invocation_id = 'inv-2', status = 'completed', finished_at = now() WHERE chat_id = $1")
+            .bind(chat)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        // inv-3 owns a routine run still RUNNING — never pruned, however old.
+        let (_run_live, _) = store
+            .routines()
+            .start_run(routine_id, "webhook", "inv-3")
+            .await
+            .unwrap();
+
         claim::<String>(&store, "plugin_effect:inv-1")
             .await
             .unwrap();
@@ -104,16 +245,13 @@ mod tests {
         claim::<String>(&store, "routine_effect:inv-2:0:0")
             .await
             .unwrap();
-        // Server-local tool calls claim the same store (the key plus its
-        // stored result, one pair per call).
         claim::<String>(&store, "server_effect:inv-3:call-1")
             .await
             .unwrap();
         complete(&store, "server_effect:inv-3:call-1", &"done")
             .await
             .unwrap();
-        // Client tool dispatches claim the same store, one row per tool call
-        // (1:1 with chat history); they retire on the same bound.
+        // No discoverable owning invocation: tombstone, never pruned.
         store
             .kv()
             .put("tool_dispatch:chat-1:dispatch-1", "conn")
@@ -130,10 +268,32 @@ mod tests {
             .await
             .unwrap();
         let pruned = prune(&store).await.unwrap();
-        assert_eq!(pruned, 6);
+        assert_eq!(pruned, 3, "the two finished-invocation pairs, nothing else");
+        // The still-running invocation's claim survives regardless of age:
+        // its replay window never closed.
+        assert!(store
+            .kv()
+            .get("server_effect:inv-3:call-1")
+            .await
+            .unwrap()
+            .is_some());
+        assert!(store
+            .kv()
+            .get("server_effect:inv-3:call-1:result")
+            .await
+            .unwrap()
+            .is_some());
+        // Tombstone: a claim without an owning invocation is kept forever.
         assert!(store
             .kv()
             .get("tool_dispatch:chat-1:dispatch-1")
+            .await
+            .unwrap()
+            .is_some());
+        // The terminal invocations' claims went.
+        assert!(store
+            .kv()
+            .get("plugin_effect:inv-1")
             .await
             .unwrap()
             .is_none());
@@ -146,18 +306,6 @@ mod tests {
         assert!(store
             .kv()
             .get("routine_effect:inv-2:0:0")
-            .await
-            .unwrap()
-            .is_none());
-        assert!(store
-            .kv()
-            .get("server_effect:inv-3:call-1")
-            .await
-            .unwrap()
-            .is_none());
-        assert!(store
-            .kv()
-            .get("server_effect:inv-3:call-1:result")
             .await
             .unwrap()
             .is_none());

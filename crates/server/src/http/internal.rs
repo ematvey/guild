@@ -405,7 +405,11 @@ async fn internal_run_record(
         .ok_or_else(|| ApiError::bad_request("missing routine_id"))?;
     store.routines().get_for_internal(routine_id).await?;
     let trigger = body["trigger"].as_str().unwrap_or("manual");
-    let (run_id, _started) = store.routines().start_run(routine_id, trigger).await?;
+    let invocation_id = body["invocation_id"].as_str().unwrap_or_default();
+    let (run_id, _started) = store
+        .routines()
+        .start_run(routine_id, trigger, invocation_id)
+        .await?;
     Ok(Json(json!({ "run_id": run_id })))
 }
 

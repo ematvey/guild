@@ -242,14 +242,16 @@ impl<'a> RoutineStore<'a> {
         &self,
         routine_id: Uuid,
         trigger: &str,
+        invocation_id: &str,
     ) -> Result<(Uuid, DateTime<Utc>), ApiError> {
         let id = Uuid::now_v7();
         let started_at: DateTime<Utc> = sqlx::query_scalar(
-            "INSERT INTO routine_runs (id, routine_id, trigger) VALUES ($1, $2, $3) RETURNING started_at",
+            "INSERT INTO routine_runs (id, routine_id, trigger, invocation_id) VALUES ($1, $2, $3, $4) RETURNING started_at",
         )
         .bind(id)
         .bind(routine_id)
         .bind(trigger)
+        .bind(invocation_id)
         .fetch_one(self.pool)
         .await?;
         Ok((id, started_at))
