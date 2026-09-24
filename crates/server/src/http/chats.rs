@@ -106,8 +106,10 @@ async fn update_chat(
     if req.archived == Some(true) {
         // Archiving is an escape hatch: it must also end any in-flight
         // generation, or an archived chat keeps spinning where the user can
-        // no longer reach it (the sidebar never lists archived chats).
-        crate::http::gateway::abort_generation(&state, chat_id).await;
+        // no longer reach it (the sidebar never lists archived chats). A
+        // failed termination fails the archive too — the invocation record
+        // survives and the retry ends it.
+        crate::http::gateway::abort_generation(&state, chat_id).await?;
     }
     Ok(Json(Chat::from(row)))
 }

@@ -57,9 +57,10 @@ async fn prepare_user_event(
 /// journaled steps: the streaming model call truncates, the delivered prefix
 /// persists as an interrupted assistant event, and the turn ends — no
 /// continuation unless user turns were queued meanwhile. Org-scoped: 404 for
-/// foreign chats. Always reports `stopped` — with no registry entry it falls
-/// back to killing the recorded invocation (and clears a stale generating
-/// flag, self-healing the spinner).
+/// foreign chats. With no registry entry it falls back to killing the
+/// recorded invocation (and clears a stale generating flag, self-healing
+/// the spinner); a failed termination surfaces as 503 and retries on the
+/// next stop — the invocation record is preserved.
 async fn stop_chat(
     State(state): State<AppState>,
     user: AuthUser,
@@ -70,7 +71,7 @@ async fn stop_chat(
         .chats()
         .get_chat(user.0.org_id, chat_id, &user.0)
         .await?;
-    abort_generation(&state, chat_id).await;
+    abort_generation(&state, chat_id).await?;
     Ok(Json(json!({ "stopped": true })))
 }
 
@@ -80,16 +81,18 @@ async fn stop_chat(
 /// hard kill of the recorded Restate invocation otherwise — registry entry
 /// lost (worker restart, replay pending) or a stale spinner with nothing
 /// running. Stop and archive both go through here: both must be
-/// guaranteed to end the run.
-pub(crate) async fn abort_generation(state: &AppState, chat_id: Uuid) {
+/// guaranteed to end the run. A failed kill is an error (the caller's
+/// request fails; the next call retries) — the invocation record and
+/// generating state survive it.
+pub(crate) async fn abort_generation(state: &AppState, chat_id: Uuid) -> Result<(), ApiError> {
     if let Some(cancel) = generation_cancel(state, chat_id) {
         cancel.store(true, std::sync::atomic::Ordering::SeqCst);
-        return;
+        return Ok(());
     }
     if let Ok(store) = state.store().await {
         let _ = store.turn_commands().cancel_waiting_head(chat_id).await;
     }
-    crate::worker::restate::kill_recorded_chat_generation(state, chat_id).await;
+    crate::worker::restate::kill_recorded_chat_generation(state, chat_id).await
 }
 
 /// The cancel flag of a chat's active generation, if one is running. The
