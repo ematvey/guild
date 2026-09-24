@@ -70,7 +70,8 @@ async fn run_loop(
                 messages.clone(),
                 specs.clone(),
             )
-            .await?;
+            .await
+            .map_err(anyhow::Error::from)?;
         if c.tool_calls.is_empty() {
             completion = Some(c);
             break;

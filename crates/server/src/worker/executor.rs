@@ -41,6 +41,22 @@ pub fn schedule_interval(config: &Value, scheduled: &Value) -> Option<u64> {
     (interval >= 5).then_some(interval)
 }
 
+/// Why a routine's model step failed. Restate retries plain errors forever,
+/// so every non-retryable failure class must be typed terminal; only
+/// transport failures and 5xx stay retryable.
+#[derive(Debug, thiserror::Error)]
+pub enum CompletionError {
+    /// Non-retryable: any 4xx except 408 (a timed-out request can succeed on
+    /// retry), including 429 — quota exhaustion stays exhausted and every
+    /// retry would be a fresh paid request. An in-stream error event is
+    /// terminal too: the provider already failed mid-answer.
+    #[error("{0}")]
+    Terminal(String),
+    /// Transient: transport failures and 5xx — the invocation may retry.
+    #[error(transparent)]
+    Transient(#[from] anyhow::Error),
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Completion {
     pub text: String,
@@ -155,7 +171,7 @@ impl RoutineExecutor {
         system: Option<String>,
         messages: Vec<Message>,
         tools: Vec<ToolSpec>,
-    ) -> anyhow::Result<Completion> {
+    ) -> Result<Completion, CompletionError> {
         let url = format!(
             "{}/api/v1/internal/completion",
             self.api_base.trim_end_matches('/')
@@ -173,12 +189,25 @@ impl RoutineExecutor {
             .header("content-type", "application/json")
             .body(body.to_string())
             .send()
-            .await?;
-        anyhow::ensure!(
-            resp.status().is_success(),
-            "completion failed: {}",
-            resp.status()
-        );
+            .await
+            .map_err(|e| CompletionError::Transient(e.into()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let code = status.as_u16();
+            // Client errors are deterministic (no route, bad model, invalid
+            // request) — retrying them re-sends the same failing request,
+            // and for 429 every retry is a fresh paid request into a hard
+            // quota. A 408 can succeed on retry and stays transient; so do
+            // transport failures and 5xx.
+            if (400..500).contains(&code) && code != 408 {
+                return Err(CompletionError::Terminal(format!(
+                    "completion failed: {status}"
+                )));
+            }
+            return Err(CompletionError::Transient(anyhow::anyhow!(
+                "completion failed: {status}"
+            )));
+        }
 
         let mut text = String::new();
         let mut tool_calls = Vec::new();
@@ -187,8 +216,9 @@ impl RoutineExecutor {
         let mut tokens_out = 0u32;
         let mut stream = resp.bytes_stream().eventsource();
         while let Some(ev) = stream.next().await {
-            let ev = ev?;
-            let parsed: StreamEvent = serde_json::from_str(&ev.data)?;
+            let ev = ev.map_err(|e| CompletionError::Transient(e.into()))?;
+            let parsed: StreamEvent =
+                serde_json::from_str(&ev.data).map_err(|e| CompletionError::Transient(e.into()))?;
             match parsed {
                 StreamEvent::Delta { content } => text.push_str(&content),
                 StreamEvent::ToolCallDone { call } => tool_calls.push(call),
@@ -212,7 +242,11 @@ impl RoutineExecutor {
                 StreamEvent::ThinkingDelta { .. } => {}
                 StreamEvent::ApprovalRequested { .. } | StreamEvent::ApprovalResolved { .. } => {}
                 StreamEvent::Error { code, message } => {
-                    anyhow::bail!("completion stream error [{code}]: {message}");
+                    // The provider already failed mid-answer; a replay would
+                    // just repeat the failure.
+                    return Err(CompletionError::Terminal(format!(
+                        "completion stream error [{code}]: {message}"
+                    )));
                 }
             }
         }

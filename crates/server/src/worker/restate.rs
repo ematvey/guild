@@ -19,7 +19,7 @@ use crate::worker::funnel::{
     clear_pending_tool, dispatch_pending_tool, note_pending_tool, restore_dispatch_connection,
     spawn_machine_watcher, spawn_stop_approval_watcher, suspend, Executor, APPROVAL_TIMEOUT,
 };
-use crate::worker::overflow::is_context_overflow;
+use crate::worker::overflow::is_context_overflow_wrapped;
 use crate::worker::run::MAX_STEPS;
 use crate::worker::turn::{build_turn_text, enforce_quota, load_media_map, media_parts, MediaMap};
 use futures::StreamExt;
@@ -138,14 +138,19 @@ macro_rules! journaled_run_body {
         let mut completion: Option<Completion> = None;
 
         for step in 0..MAX_STEPS {
-            // Journaled: one model call.
+            // Journaled: one model call. Non-retryable completion failures
+            // (4xx, quota, in-stream provider errors) are terminal: the run
+            // record closes as failed and the invocation stops — a retry
+            // would re-send the same failing request, and for a hard quota
+            // each retry is a fresh paid request. Only transport failures
+            // and 5xx stay retryable.
             let exec2 = exec.clone();
             let msgs = messages.clone();
             let specs2 = specs.clone();
             let model = cfg.model.clone();
             let system = Some(cfg.prompt.clone());
             let org = cfg.org_id;
-            let c: Completion = $ctx
+            let step_result = $ctx
                 .run(move || {
                     let exec = exec2.clone();
                     let messages = msgs.clone();
@@ -153,12 +158,33 @@ macro_rules! journaled_run_body {
                     async move {
                         let c = exec
                             .completion(org, user_id, &model, system, messages, specs)
-                            .await?;
+                            .await
+                            .map_err(|error| match error {
+                                crate::worker::executor::CompletionError::Terminal(msg) => {
+                                    HandlerError::from(TerminalError::new(msg))
+                                }
+                                crate::worker::executor::CompletionError::Transient(e) => {
+                                    HandlerError::from(e)
+                                }
+                            })?;
                         Ok(Json(c))
                     }
                 })
-                .await?
-                .into_inner();
+                .await;
+            let c: Completion = match step_result {
+                Ok(json) => json.into_inner(),
+                Err(e) => {
+                    // Close the run record before surfacing the terminal
+                    // error: without this the row stays `running` forever
+                    // (no sweep resets it) and the exclusive `tick` handler
+                    // queues behind the stuck invocation, silently ending
+                    // the interval schedule. Journaled, so replays of the
+                    // terminal failure run it exactly once.
+                    let msg = format!("routine model step failed: {e}");
+                    finish_run_journaled!($ctx, $exec, run_id, "failed", Some(msg), None);
+                    return Err(HandlerError::from(e));
+                }
+            };
 
             if c.tool_calls.is_empty() {
                 completion = Some(c);
@@ -2103,7 +2129,11 @@ impl ChatRunner {
                             // gets exactly one compaction + re-derivation +
                             // retry per turn; every other error propagates
                             // unchanged.
-                            if compacted_this_turn || !is_context_overflow(&e.to_string()) {
+                            if compacted_this_turn
+                                || !crate::worker::overflow::is_context_overflow_wrapped(
+                                    &e.to_string(),
+                                )
+                            {
                                 return Err(HandlerError::from(e));
                             }
                             compacted_this_turn = true;

@@ -14,7 +14,10 @@ use regex::Regex;
 /// any of these is never treated as a context overflow.
 static NON_OVERFLOW_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     [
-        r"^(Throttling error|Service unavailable):",
+        // Unanchored on purpose: the string a caller passes is wrapped by the
+        // turn's error layers ("provider error: …"), so a `^` anchor never
+        // sees the provider's own wording.
+        r"(Throttling error|Service unavailable):",
         r"rate limit",
         r"too many requests",
     ]
@@ -53,7 +56,11 @@ static OVERFLOW_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         r"context[_ ]length[_ ]exceeded",
         r"too many tokens",
         r"token limit exceeded",
-        r"^4(?:00|13)\s*(?:status code)?\s*\(no body\)",
+        // HTTP 400/413 with an empty (or absent) body — the shape the
+        // provider adapter renders (`status 413: `), and the pi-era
+        // `(no body)` variant.
+        r"^status 4(?:00|13):?\s*$",
+        r"\b4(?:00|13)\s*(?:status code)?\s*\(no body\)",
     ]
     .iter()
     .map(|p| Regex::new(&format!(r"(?i){p}")).expect("overflow pattern is valid"))
@@ -68,6 +75,25 @@ pub fn is_context_overflow(msg: &str) -> bool {
         return false;
     }
     OVERFLOW_PATTERNS.iter().any(|re| re.is_match(msg))
+}
+
+/// Classifies the error strings the ChatRunner actually sees: a journaled
+/// run failure is wrapped as `provider error: provider error: <raw>` (the
+/// TerminalError wrapper plus the provider error's own display prefix), so
+/// the wrappers are stripped before the patterns run.
+pub fn is_context_overflow_wrapped(msg: &str) -> bool {
+    let mut inner = msg;
+    loop {
+        let stripped = inner
+            .strip_prefix("provider error: ")
+            .or_else(|| inner.strip_prefix("turn failed: "))
+            .unwrap_or(inner);
+        if stripped.len() == inner.len() {
+            break;
+        }
+        inner = stripped;
+    }
+    is_context_overflow(inner)
 }
 
 #[cfg(test)]
@@ -111,5 +137,25 @@ mod tests {
         assert!(!is_context_overflow("invalid api key"));
         assert!(!is_context_overflow("connection reset by peer"));
         assert!(!is_context_overflow(""));
+    }
+
+    /// The strings the turn's catch path passes: the TerminalError wrapper
+    /// plus the provider error's own display prefix sit in front of the raw
+    /// provider message.
+    #[test]
+    fn wrapped_provider_errors_classify() {
+        let wrapped_413 = "provider error: provider error: status 413: ";
+        assert!(is_context_overflow_wrapped(wrapped_413));
+        let wrapped_throttle =
+            "provider error: provider error: status 429: Throttling error: too many requests";
+        assert!(!is_context_overflow_wrapped(wrapped_throttle));
+        let wrapped_throttle_wording =
+            "provider error: provider error: Throttling error: too many tokens in flight";
+        assert!(!is_context_overflow_wrapped(wrapped_throttle_wording));
+        let wrapped_real =
+            "provider error: provider error: status 400: prompt is too long: 213462 tokens > 200000 maximum";
+        assert!(is_context_overflow_wrapped(wrapped_real));
+        let wrapped_plain = "provider error: provider error: status 500: internal";
+        assert!(!is_context_overflow_wrapped(wrapped_plain));
     }
 }

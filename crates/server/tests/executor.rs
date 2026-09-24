@@ -2,6 +2,7 @@ use guild_server::test_support::{clickhouse_usage_rows, serve_full, standalone_l
 use guild_server::worker::executor::RoutineExecutor;
 use guild_server::worker::run::run_routine;
 use serde_json::json;
+use uuid::Uuid;
 
 /// Scripted provider: turn 1 → http_call tool; turn 2 → final text.
 async fn scripted_provider(external_url: String) -> wiremock::MockServer {
@@ -263,4 +264,75 @@ fn parses_done_frame_directly() {
     let s: String = serde_json::to_string(&val).unwrap();
     let v3: Result<StreamEvent, _> = serde_json::from_str(&s);
     assert!(v3.is_ok(), "roundtrip from_str on {s}: {v3:?}");
+}
+
+/// Completion failures classify: 4xx (including 429 quota) and in-stream
+/// error events are terminal — Restate must not retry them (each retry of a
+/// quota failure is a fresh paid request); 408, transport failures and 5xx
+/// stay retryable.
+#[tokio::test]
+async fn completion_failures_classify_terminal_vs_transient() {
+    use guild_server::worker::executor::CompletionError;
+    let server = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let c = calls.clone();
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(move |_: &wiremock::Request| {
+            let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match n {
+                0 => wiremock::ResponseTemplate::new(400).set_body_string("{}"),
+                1 => wiremock::ResponseTemplate::new(429).set_body_string("{}"),
+                2 => wiremock::ResponseTemplate::new(408).set_body_string("{}"),
+                3 => wiremock::ResponseTemplate::new(500).set_body_string("{}"),
+                4 => wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string("data: {\"type\":\"error\",\"code\":\"provider\",\"message\":\"boom\"}\n\n"),
+                _ => wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"type\":\"delta\",\"content\":\"hi\"}\n\n",
+                        "data: {\"type\":\"done\",\"message_id\":\"00000000-0000-0000-0000-000000000000\",\"cost_usd\":0.0,\"tokens_in\":1,\"tokens_out\":1}\n\n",
+                    )),
+            }
+        })
+        .mount(&server)
+        .await;
+    let exec = RoutineExecutor {
+        api_base: server.uri(),
+        internal_token: "test-internal".into(),
+        allow_http_tool: false,
+        http_tool_allow_hosts: vec![],
+    };
+    let messages = vec![protocol::api::Message::user("hi")];
+    let specs: Vec<protocol::api::ToolSpec> = Vec::new();
+    for expect_terminal in [true, true, false, false, true] {
+        let result = exec
+            .completion(
+                Uuid::now_v7(),
+                Uuid::now_v7(),
+                "m",
+                None,
+                messages.clone(),
+                specs.clone(),
+            )
+            .await;
+        let is_terminal = matches!(result.unwrap_err(), CompletionError::Terminal(_));
+        assert_eq!(is_terminal, expect_terminal, "step classification");
+    }
+    assert!(
+        exec.completion(
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            "m",
+            None,
+            messages.clone(),
+            specs.clone()
+        )
+        .await
+        .is_ok(),
+        "a normal completion succeeds"
+    );
 }
