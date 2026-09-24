@@ -76,6 +76,11 @@ impl OpenAiProvider {
             "stream": true,
             "stream_options": {"include_usage": true},
         });
+        // 0 = provider default: the field stays absent (the Anthropic
+        // provider makes its own required-max_tokens arrangement).
+        if req.max_tokens > 0 {
+            body["max_tokens"] = serde_json::json!(req.max_tokens);
+        }
         if let Some(tools) = req.tools {
             body["tools"] = serde_json::Value::Array(
                 tools
@@ -448,5 +453,24 @@ mod tests {
         };
         let body = OpenAiProvider::body(&req);
         assert!(body["messages"][0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn body_serializes_nonzero_max_tokens_and_omits_zero() {
+        let msgs = vec![Message::user("hi")];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+            max_tokens: 512,
+        };
+        let body = OpenAiProvider::body(&req);
+        assert_eq!(body["max_tokens"], 512);
+        let req = ProviderRequest { max_tokens: 0, ..req };
+        let body = OpenAiProvider::body(&req);
+        assert!(body.get("max_tokens").is_none());
     }
 }
