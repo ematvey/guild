@@ -287,7 +287,14 @@ pub async fn run_daemon_shared(path: PathBuf, shared: Shared) -> anyhow::Result<
         return Ok(()); // another daemon owns the endpoint (and the link)
     }
     spawn_machine_link(&shared);
-    host_shared_socket(path, shared).await
+    // Every entry point owns a reaper for its host lifetime: without it,
+    // completed agent runs accumulate in Shared.agents until shutdown.
+    // host_shared_socket itself stays reaper-free — the reclaiming entry
+    // manages a fresh reaper per host cycle instead.
+    let reaper = spawn_reaper(&shared);
+    let result = host_shared_socket(path, shared).await;
+    reaper.abort();
+    result
 }
 
 /// Poll cadence for the reclaim/park loops below.
@@ -768,4 +775,69 @@ pub fn peek_available_pub(_raw: isize) -> u32 {
 #[cfg(windows)]
 pub fn client_pipe_path() -> anyhow::Result<String> {
     Ok(socket_path()?.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod entry_reaper_tests {
+    use super::*;
+    use crate::jsonrpc_loop::Shared;
+
+    /// Shared shape for a daemon entry: every completed agent run the
+    /// reaper must drain lands in `agents`.
+    async fn drive_entry_reaping(
+        entry: fn(
+            PathBuf,
+            Shared,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>,
+        >,
+    ) {
+        let path = std::env::temp_dir().join(format!(
+            "guild-reap-{}-{}",
+            std::process::id(),
+            uuid::Uuid::now_v7().simple()
+        ));
+        let shared = Shared::new(Default::default());
+        let daemon = tokio::spawn(entry(path.clone(), shared.clone()));
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // Three agent tasks that finish immediately: without a reaper they
+        // stay in the JoinSet forever.
+        {
+            let mut agents = shared.agents.lock().await;
+            for _ in 0..3 {
+                agents.spawn(async {});
+            }
+        }
+        // One reaper cadence (10 s) plus margin.
+        tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+        {
+            let mut agents = shared.agents.lock().await;
+            assert!(
+                agents.try_join_next().is_none(),
+                "the daemon entry's reaper drained the completed agent tasks"
+            );
+        }
+        shared.shutdown.send(true).ok();
+        daemon.abort();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn the_ordinary_daemon_entry_reaps_completed_agent_tasks() {
+        drive_entry_reaping(|p, s| Box::pin(async move { run_daemon_shared(p, s).await })).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_reclaiming_daemon_entry_reaps_completed_agent_tasks() {
+        // This dev box runs a live guild-daemon unit; the reclaiming entry
+        // would wait for it to retire forever. The override pins the probe.
+        crate::daemon_install::set_unit_active_override(Some(false));
+        drive_entry_reaping(|p, s| {
+            Box::pin(async move { run_daemon_shared_reclaiming(p, s).await })
+        })
+        .await;
+        crate::daemon_install::set_unit_active_override(None);
+    }
 }
