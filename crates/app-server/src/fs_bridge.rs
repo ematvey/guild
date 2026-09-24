@@ -49,20 +49,27 @@ impl Allowlist {
     /// Injectable roots (tests isolate the config/home dirs — the env-based
     /// defaults race with parallel tests that set XDG_CONFIG_HOME).
     pub fn for_project_with(project_dir: Option<&Path>, config: &Path, home: &Path) -> Allowlist {
-        let user_skills = home.join(".agents");
-        let config = config.to_path_buf();
+        // Roots and request paths must be in the same form: requests are
+        // canonicalized (symlinks resolved, `\\?\` verbatim form on
+        // Windows), so a raw root never matches once any component is a
+        // symlink — every access would be denied.
+        let root = |path: &Path| canonical_root(path);
+        let config = root(config);
+        let user_skills = root(&home.join(".agents"));
+        let home = root(home);
         let mut read = vec![config.clone(), user_skills.clone()];
-        let exists = vec![config.clone(), user_skills.clone(), home.to_path_buf()];
+        let exists = vec![config.clone(), user_skills.clone(), home.clone()];
         let mut write = vec![config];
         let mut walk_ancestors = Vec::new();
         if let Some(project) = project_dir {
-            read.push(project.to_path_buf());
-            write.push(project.to_path_buf());
+            let project = root(project);
+            read.push(project.clone());
+            write.push(project.clone());
             // Find the git root first (Codex semantics: the default project
             // root marker). Without one, ancestors stay out of the READ
             // roots — only the project itself is readable; the existence
             // walk above is what *finds* the root.
-            let mut cursor = Some(project.to_path_buf());
+            let mut cursor = Some(project.clone());
             let mut root: Option<PathBuf> = None;
             while let Some(dir) = cursor {
                 if dir.join(".git").exists() {
@@ -73,7 +80,7 @@ impl Allowlist {
             }
             if let Some(root) = root {
                 let mut chain = Vec::new();
-                let mut cursor = Some(project.to_path_buf());
+                let mut cursor = Some(project.clone());
                 while let Some(dir) = cursor {
                     chain.push(dir.clone());
                     if dir == root {
@@ -88,7 +95,7 @@ impl Allowlist {
             // read roots.
             let mut cursor = project.parent().map(Path::to_path_buf);
             while let Some(dir) = cursor {
-                walk_ancestors.push(dir.clone());
+                walk_ancestors.push(canonical_root(&dir));
                 cursor = dir.parent().map(Path::to_path_buf);
             }
         }
@@ -96,7 +103,7 @@ impl Allowlist {
             read,
             exists,
             write,
-            project: project_dir.map(Path::to_path_buf),
+            project: project_dir.map(|p| canonical_root(p)),
             walk_ancestors,
         }
     }
@@ -137,6 +144,13 @@ impl Allowlist {
     pub fn can_write(&self, path: &Path) -> bool {
         self.allowed(&self.write, path)
     }
+}
+
+/// The allowlist root form: canonicalized when the path exists (symlink
+/// components resolved, verbatim form on Windows), raw otherwise — the same
+/// resolution requests go through, so roots and requests always compare.
+fn canonical_root(path: &Path) -> PathBuf {
+    normalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Canonicalizes as far as the filesystem allows: the existing prefix is
@@ -434,6 +448,44 @@ mod tests {
         assert_eq!(names, vec!["a_dir", "b.txt", "notes"]);
         assert_eq!(entries[0].kind, "dir");
         assert_eq!(entries[1].kind, "file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_project_and_config_roots_still_match_canonical_requests() {
+        let (tmp, _) = isolated("root-sym");
+        let real_project = tmp.join("real-proj");
+        std::fs::create_dir_all(&real_project).unwrap();
+        let real_cfg = tmp.join("config").join("guild");
+        std::fs::create_dir_all(&real_cfg).unwrap();
+        std::os::unix::fs::symlink(&real_project, tmp.join("linked-proj")).unwrap();
+        std::os::unix::fs::symlink(&real_cfg, tmp.join("linked-cfg")).unwrap();
+        // Roots are bound via symlinked paths; requests resolve to the real
+        // targets (or vice versa) — both forms must be allowed.
+        let allow = Allowlist::for_project_with(
+            Some(&tmp.join("linked-proj")),
+            &real_cfg,
+            &tmp.join("home"),
+        );
+        let doc = touch(&real_project, "AGENTS.md", "hello");
+        assert_eq!(read_text_with(&allow, doc.to_str().unwrap()).unwrap(), "hello");
+        assert_eq!(read_text_with(&allow, "AGENTS.md").unwrap(), "hello");
+        write_text_with(&allow, "notes/x.txt", "written").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(real_project.join("notes/x.txt")).unwrap(),
+            "written"
+        );
+        let cfg_allow = Allowlist::for_project_with(
+            Some(&real_project),
+            &tmp.join("linked-cfg"),
+            &tmp.join("home"),
+        );
+        let cfg_file = touch(&real_cfg, "settings.json", "{}");
+        assert_eq!(
+            read_text_with(&cfg_allow, cfg_file.to_str().unwrap()).unwrap(),
+            "{}"
+        );
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 
     #[test]
