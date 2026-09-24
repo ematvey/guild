@@ -1,6 +1,7 @@
 //! Sidebar account badge: avatar photo when set, initials fallback
 //! otherwise, display name, and a dropdown whose items the caller supplies.
 
+import { useState } from "react";
 import { ChevronUp } from "lucide-react";
 import {
   DropdownMenu,
@@ -21,6 +22,10 @@ export function UserBadge({
   children?: React.ReactNode;
 }) {
   const initials = (displayName ?? email).slice(0, 2).toUpperCase();
+  // The CSP allows no remote img hosts (IdP avatar URLs are blocked), so a
+  // failed load falls back to initials instead of a broken image.
+  const [avatarBroken, setAvatarBroken] = useState(false);
+  const showAvatar = avatarUrl && !avatarBroken;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -28,12 +33,13 @@ export function UserBadge({
           className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent"
           title="Account"
         >
-          {avatarUrl ? (
+          {showAvatar ? (
             <img
               src={avatarUrl}
               alt=""
               className="size-7 shrink-0 rounded-full object-cover"
               referrerPolicy="no-referrer"
+              onError={() => setAvatarBroken(true)}
             />
           ) : (
             <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
