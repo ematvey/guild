@@ -270,14 +270,9 @@ async fn create(
     // project's label comes from the machines registry). A chat with no
     // project stays fully unbound — its tools run in the sandbox executor.
     // INSERT sets project and machine atomically.
-    let machine = project.as_ref().map(|p| {
-        (
-            p.machine_id.clone(),
-            p.machine_label
-                .clone()
-                .unwrap_or_else(|| p.machine_id.clone()),
-        )
-    });
+    let machine = project
+        .as_ref()
+        .map(|p| (p.machine_id.clone(), p.machine_label.clone()));
     let chat = store
         .chats()
         .create_chat_with_machine(
@@ -286,7 +281,7 @@ async fn create(
             req.title.as_deref(),
             req.project_id,
             machine.as_ref().map(|(id, _)| id.as_str()),
-            machine.as_ref().map(|(_, label)| label.as_str()),
+            machine.as_ref().and_then(|(_, label)| label.as_deref()),
         )
         .await?;
     Ok(Json(chat.into()))
@@ -338,14 +333,9 @@ async fn set_project(
     // project's (the project's label comes from the machines registry) in
     // the same UPDATE as the binding; unbinding the project clears it — a
     // machine-bound chat with no project is not a valid state.
-    let machine = project.as_ref().map(|p| {
-        (
-            p.machine_id.clone(),
-            p.machine_label
-                .clone()
-                .unwrap_or_else(|| p.machine_id.clone()),
-        )
-    });
+    let machine = project
+        .as_ref()
+        .map(|p| (p.machine_id.clone(), p.machine_label.clone()));
     let chat = store
         .chats()
         .set_project(
@@ -355,7 +345,7 @@ async fn set_project(
             project_id,
             machine
                 .as_ref()
-                .map(|(id, label)| (id.as_str(), label.as_str())),
+                .and_then(|(id, label)| Some((id.as_str(), label.as_deref()?))),
         )
         .await?;
     // Every device renders the project grouping: push a fresh thread list to
