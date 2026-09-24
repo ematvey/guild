@@ -58,6 +58,19 @@ async fn chat_app_is_served() {
         html.contains("<div id=\"root\">"),
         "chat index html: {html}"
     );
+    // Every inline <script> block in the served HTML is allowed by hash —
+    // the theme pre-paint, pinch-zoom guard and service-worker unregister
+    // scripts must actually run under web mode's CSP.
+    let inline = html
+        .match_indices("<script")
+        .filter(|(i, _)| {
+            let tag_end = html[*i..].find('>').unwrap();
+            !html[*i..*i + tag_end].contains(" src=")
+        })
+        .count();
+    let hashes = csp.matches("'sha256-").count();
+    assert_eq!(hashes, inline, "csp must allow every inline script: {csp}");
+    assert!(hashes > 0, "index.html is expected to carry inline scripts");
     let asset = first_asset(&html, "src=\"").expect("chat index references a js asset");
     assert!(asset.starts_with("/assets/"), "chat asset path: {asset}");
     assert_eq!(get(&app, &asset).await.status(), StatusCode::OK);
