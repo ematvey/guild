@@ -337,7 +337,6 @@ async fn an_unreclaimable_orphan_dir_fails_the_session_create() {
     // last; making the ORPHAN DIR itself non-writable stops the first
     // unlink (its contents) — so the orphan's files demonstrably survive.
     let mut perms = std::fs::metadata(&dir).unwrap().permissions();
-    let original_mode = perms.mode();
     perms.set_mode(0o500);
     std::fs::set_permissions(&dir, perms.clone()).unwrap();
 
