@@ -5,7 +5,11 @@ use serde::{de::DeserializeOwned, Serialize};
 
 /// Claim namespaces (key prefixes in server_kv). Each invocation writes its
 /// own keys, so they are pruned once the invocation can no longer replay.
-pub(crate) const CLAIM_PREFIXES: &[&str] = &["plugin_effect:", "routine_effect:"];
+pub(crate) const CLAIM_PREFIXES: &[&str] = &[
+    "plugin_effect:",
+    "routine_effect:",
+    "tool_dispatch:",
+];
 
 /// Claims outlive every replay window (Restate's own journal/idempotency
 /// retention is shorter); the hourly loop retires anything older.
@@ -99,6 +103,13 @@ mod tests {
         claim::<String>(&store, "routine_effect:inv-2:0:0")
             .await
             .unwrap();
+        // Client tool dispatches claim the same store, one row per tool call
+        // (1:1 with chat history); they retire on the same bound.
+        store
+            .kv()
+            .put("tool_dispatch:chat-1:dispatch-1", "conn")
+            .await
+            .unwrap();
         store
             .kv()
             .put("release_signing_seed", "keep")
@@ -110,7 +121,13 @@ mod tests {
             .await
             .unwrap();
         let pruned = prune(&store).await.unwrap();
-        assert_eq!(pruned, 3);
+        assert_eq!(pruned, 4);
+        assert!(store
+            .kv()
+            .get("tool_dispatch:chat-1:dispatch-1")
+            .await
+            .unwrap()
+            .is_none());
         assert!(store
             .kv()
             .get("plugin_effect:inv-1:result")
