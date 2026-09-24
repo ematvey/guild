@@ -18,10 +18,12 @@ Updated 2026-09-24.
   (126 findings fixed across auth/session, machines/executor identity, turn
   queue, provider contracts, engine session lifecycle, integrations, and
   desktop transport). Live-bundle and migration state verified per deploy.
-- **Clients** are behind the server: the released desktop is 0.5.19 and the
-  devbox install (WORKSTATION) is 0.5.18. None of the review-round fixes shipped to
-  clients yet. The 0.5.18 install cannot connect to the current server (see
-  next steps). Client releases remain dev-controlled and deliberate.
+- **Clients:** desktop 0.5.20 released 2026-09-24 (all four platforms, both
+  installers and updater bundles, sha256-verified downloads, updater manifest
+  serving it with minisign signatures). Running clients pick it up via the
+  auto-updater on relaunch; the devbox install (0.5.18) must be relaunched
+  (or updated in place) to reconnect — 0.5.18 cannot talk to the current
+  server. Client releases remain dev-controlled and deliberate.
 - **Quality baseline:** six review rounds with adversarial verification; the
   last two fix-diff audits found no regressions. Full gates at merge time:
   workspace cargo test (705+ tests), frontend vitest, strict clippy,
@@ -29,14 +31,10 @@ Updated 2026-09-24.
 
 ## Next steps (ordered)
 
-1. **Release and ship desktop 0.5.20 — blocking, user-visible.** The devbox
-   desktop cannot connect to the current server; the ticket→WS upgrade path
-   is verified working server-side, so the old client build is the problem.
-   `scripts/release-clients.sh VERSION=0.5.20` from master, then update the
-   devbox install and confirm the machine link establishes. When publishing,
-   verify all four platforms retain both installer and updater artifacts
-   (the round-2 fix stopped the macOS DMG deletion; confirm on the live
-   release table).
+1. **Ship desktop 0.5.20 to the devbox install — blocking, user-visible.**
+   The release is published and verified; the devbox install (0.5.18) needs a
+   relaunch so its auto-updater takes 0.5.20, then confirm the machine link
+   establishes against the current server.
 2. **Confirm-or-reopen two legacy items** (their original context predates
    the review loop):
    - Thread list + thread messages keyset pagination/infinite scroll —
@@ -48,7 +46,7 @@ Updated 2026-09-24.
 3. **Fix the flaky reaper test** `the_reclaiming_daemon_entry_reaps_completed_agent_tasks`
    (fixed 12 s sleep racing a 10 s cadence; failed under load three times
    during verification).
-4. **Optional client hardening while releasing 0.5.20:** confirm the updater
+4. **Optional client hardening after the 0.5.20 rollout:** confirm the updater
    pending-update fix behaves on a real install (it was logic-verified only —
    Tauri updater APIs need an app bundle to test).
 
