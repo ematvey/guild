@@ -3168,6 +3168,66 @@ async fn server_local_tool_step(
     .await
 }
 
+/// Machine-mediated context preparation (`capabilities` then
+/// `context.prepare_v1`). Executor-identity validation on the CONTROL
+/// channel, same rule as tool dispatch: the context request carries the
+/// user prompt and project directory, so a same-org claimant of a
+/// freed/re-keyed id must never receive it. Both requests are pinned to the
+/// validated socket holder — a re-pair/reclaim between them fails the second
+/// send instead of re-resolving the slot. Any failure is `None` (the turn
+/// proceeds without project instructions) — the fail-closed outcome.
+pub(crate) async fn prepare_context_on_machine(
+    state: &AppState,
+    machine: &str,
+    expected: &crate::worker::funnel::ExpectedExecutor,
+    org_id: Uuid,
+    folder: &str,
+    prompt: &str,
+) -> Option<protocol::ws::MachineContext> {
+    let (machine, holder) =
+        crate::worker::funnel::validate_context_executor(state, machine, expected, org_id).await?;
+    let caps = state
+        .hub
+        .machine_request_pinned(
+            &machine,
+            &holder,
+            "capabilities",
+            json!({}),
+            Duration::from_secs(3),
+        )
+        .await
+        .ok()?;
+    if !caps["operations"]
+        .as_array()?
+        .iter()
+        .any(|v| v == "context.prepare_v1")
+    {
+        return None;
+    }
+    let value = state
+        .hub
+        .machine_request_pinned(
+            &machine,
+            &holder,
+            "context.prepare_v1",
+            json!({"project_dir": folder, "prompt": prompt}),
+            Duration::from_secs(15),
+        )
+        .await
+        .ok()?;
+    let context: protocol::ws::MachineContext = serde_json::from_value(value).ok()?;
+    if context
+        .instructions
+        .as_ref()
+        .is_some_and(|s| s.len() > AGENTS_MD_CAP)
+        || context.skills_index.len() > 8000
+        || context.skill_expansions.len() > 64 * 1024
+    {
+        return None;
+    }
+    Some(context)
+}
+
 /// Phase 5a: one machine-mediated read_file for the bound project's
 /// AGENTS.md (web chats: the caller cannot assemble the chain). Same durable
 /// dispatch shape as a client tool, minus the interactive gate (read-only,
@@ -3202,60 +3262,9 @@ async fn fetch_context_via_machine(
             let folder = folder.clone();
             let prompt = prompt.clone();
             async move {
-                let result = async {
-                    // Executor-identity validation on the CONTROL channel,
-                    // same rule as tool dispatch: the context requests carry
-                    // the user prompt and project directory, so a same-org
-                    // claimant of a freed/re-keyed id must never receive
-                    // them. A failed validation degrades to no context (the
-                    // turn proceeds without project instructions) — the
-                    // fail-closed outcome.
-                    let machine = crate::worker::funnel::validate_context_executor(
-                        &state, &machine, &expected, org_id,
-                    )
-                    .await?;
-                    let caps = state
-                        .hub
-                        .machine_request(
-                            &machine,
-                            org_id,
-                            "capabilities",
-                            json!({}),
-                            Duration::from_secs(3),
-                        )
-                        .await
-                        .ok()?;
-                    if !caps["operations"]
-                        .as_array()?
-                        .iter()
-                        .any(|v| v == "context.prepare_v1")
-                    {
-                        return None;
-                    }
-                    let value = state
-                        .hub
-                        .machine_request(
-                            &machine,
-                            org_id,
-                            "context.prepare_v1",
-                            json!({"project_dir": folder, "prompt": prompt}),
-                            Duration::from_secs(15),
-                        )
-                        .await
-                        .ok()?;
-                    let context: protocol::ws::MachineContext =
-                        serde_json::from_value(value).ok()?;
-                    if context
-                        .instructions
-                        .as_ref()
-                        .is_some_and(|s| s.len() > AGENTS_MD_CAP)
-                        || context.skills_index.len() > 8000
-                        || context.skill_expansions.len() > 64 * 1024
-                    {
-                        return None;
-                    }
-                    Some(context)
-                }
+                let result = prepare_context_on_machine(
+                    &state, &machine, &expected, org_id, &folder, &prompt,
+                )
                 .await;
                 Ok(Json(result))
             }

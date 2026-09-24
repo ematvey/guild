@@ -311,14 +311,17 @@ pub(crate) async fn online_executor_or_alias(
 /// Executor-identity validation for machine-mediated control requests
 /// (context.prepare_v1 / capabilities): the same rule as tool dispatch —
 /// the resolved machine's durable row AND live socket must both be the
-/// captured executor. Returns the validated machine id, or `None`
-/// (fail-closed: the caller degrades instead of talking to a claimant).
+/// captured executor. Returns the validated machine id with the validated
+/// socket holder — every follow-up request is pinned to that connection
+/// (`Hub::machine_request_pinned`) so a re-pair/reclaim after validation
+/// never receives it — or `None` (fail-closed: the caller degrades instead
+/// of talking to a claimant).
 pub(crate) async fn validate_context_executor(
     state: &AppState,
     machine_id: &str,
     expected: &ExpectedExecutor,
     org_id: Uuid,
-) -> Option<String> {
+) -> Option<(String, crate::http::hub::Member)> {
     let store = state.store().await.ok()?;
     let resolved = resolve_executor_target(&store, Some(machine_id.to_string()), expected)
         .await
@@ -332,7 +335,7 @@ pub(crate) async fn validate_context_executor(
                 && member.org_id == owner_org
                 && owner_org == org_id =>
         {
-            Some(resolved)
+            Some((resolved, member))
         }
         _ => None,
     }
@@ -1589,7 +1592,9 @@ mod tests {
         // The captured executor itself validates.
         let (conn_a, _out_a) = register_executor(&fixture, "m", a.id, org).await;
         assert_eq!(
-            validate_context_executor(&fixture.state, "m", &expected, org).await,
+            validate_context_executor(&fixture.state, "m", &expected, org)
+                .await
+                .map(|(id, _)| id),
             Some("m".to_string())
         );
         let _ = conn_a;
@@ -1611,7 +1616,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            validate_context_executor(&fixture.state, "m", &expected, org).await,
+            validate_context_executor(&fixture.state, "m", &expected, org)
+                .await
+                .map(|(id, _)| id),
             Some("n".to_string()),
             "the re-keyed alias is the validated target"
         );
@@ -1631,15 +1638,110 @@ mod tests {
             owner: Some((a.id, org)),
         };
         assert_eq!(
-            validate_context_executor(&fixture.state, "n", &expected, org).await,
+            validate_context_executor(&fixture.state, "n", &expected, org)
+                .await
+                .map(|(id, _)| id),
             Some("n".to_string()),
             "A's re-keyed machine still validates"
         );
         assert_eq!(
-            validate_context_executor(&fixture.state, "m", &no_alias, org).await,
+            validate_context_executor(&fixture.state, "m", &no_alias, org)
+                .await
+                .map(|(id, _)| id),
             None,
             "a claimed-row id is refused on the control channel"
         );
+    }
+
+    /// The context request is pinned to the socket holder validated before
+    /// `capabilities`: a reclaim of the id between the two requests (A's
+    /// socket leaves, member B claims the freed id) fails the
+    /// `context.prepare_v1` send — B never receives A's prompt or folder.
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn context_prepare_never_reaches_a_holder_that_took_over_after_capabilities() {
+        let (fixture, _ingress) = test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let admin = store
+            .identity()
+            .ensure_bootstrap_admin("a@b.c", "hunter226")
+            .await
+            .unwrap();
+        let a = store.identity().get_user(admin).await.unwrap();
+        let b = store
+            .identity()
+            .create_user(a.org_id, "b@b.c", "hunter226", "member")
+            .await
+            .unwrap();
+        let org = a.org_id;
+        let (conn_a, mut out_a) = register_executor(&fixture, "m", a.id, org).await;
+        let project = store
+            .projects()
+            .create(org, a.id, "repo", r"C:\code\repo", "m")
+            .await
+            .unwrap();
+        let expected = ExpectedExecutor {
+            org_id: Some(org),
+            project_id: Some(project.id),
+            owner: Some((a.id, org)),
+        };
+        let state = fixture.state.clone();
+        let task = tokio::spawn(async move {
+            crate::worker::restate::prepare_context_on_machine(
+                &state,
+                "m",
+                &expected,
+                org,
+                r"C:\code\repo",
+                "secret prompt",
+            )
+            .await
+        });
+
+        // A receives `capabilities`.
+        let request_id = match tokio::time::timeout(Duration::from_secs(5), out_a.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            SocketOutput::Message(protocol::ws::WsServerMsg::MachineRequest {
+                request_id,
+                op,
+                ..
+            }) => {
+                assert_eq!(op, "capabilities");
+                request_id
+            }
+            _ => panic!("expected a machine request"),
+        };
+        // Before A answers, the slot changes hands: A's socket is gone and B
+        // claims the freed id (row + socket).
+        fixture.state.hub.displace_machine("m");
+        sqlx::query("DELETE FROM machines WHERE machine_id = 'm'")
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let (_conn_b, mut out_b) = register_executor(&fixture, "m", b.id, org).await;
+        let (sink_a, _) = socket_channel();
+        fixture.state.hub.resolve_machine_response(
+            &Member {
+                conn_id: conn_a,
+                user_id: a.id,
+                org_id: org,
+                sink: sink_a,
+                label: None,
+            },
+            &request_id,
+            true,
+            Some(serde_json::json!({"operations": ["context.prepare_v1"]})),
+            None,
+        );
+        let prepared = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the pinned context send fails fast instead of reaching B")
+            .unwrap();
+        assert!(prepared.is_none());
+        assert!(out_b.try_recv().is_err(), "B receives no context request");
     }
 
     /// A re-pair (fingerprint adoption) re-keys the registry row to a new id
