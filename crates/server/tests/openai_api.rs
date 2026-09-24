@@ -427,8 +427,11 @@ async fn aborted_stream_still_records_usage() {
     }
 }
 
-/// A provider error before any usage frame bills nothing: the guard's
-/// drop path skips the 0-token row (it would inflate per-request counts).
+/// A provider error before any real chunk bills nothing: the guard's
+/// drop path skips the row when no Ok provider frame was observed (a
+/// 0-token row would inflate per-request counts). The provider here
+/// accepts the stream (200) and then errors as its first SSE event — an
+/// HTTP-level failure never reaches the guard, so it proves nothing.
 #[tokio::test]
 async fn provider_error_before_any_usage_frame_records_nothing() {
     let provider = wiremock::MockServer::builder()
@@ -436,7 +439,14 @@ async fn provider_error_before_any_usage_frame_records_nothing() {
         .start()
         .await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .respond_with(wiremock::ResponseTemplate::new(500))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"error\": {\"message\": \"mid-stream boom\"}}\n\n",
+                    "data: [DONE]\n\n",
+                )),
+        )
         .mount(&provider)
         .await;
     let fs = full_state().await;
@@ -472,7 +482,19 @@ async fn provider_error_before_any_usage_frame_records_nothing() {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_GATEWAY);
+    assert_eq!(
+        res.status(),
+        StatusCode::OK,
+        "the stream itself is accepted"
+    );
+    let body_text = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_text = String::from_utf8_lossy(&body_text);
+    assert!(
+        body_text.contains("mid-stream boom"),
+        "the provider error must surface on the stream: {body_text}"
+    );
     // Give any (wrongly) spawned record time to land, then assert absence.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let (count, _) = clickhouse_usage_rows(&fs.state).await;
