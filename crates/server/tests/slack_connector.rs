@@ -192,3 +192,128 @@ async fn post_message_posts_json_with_bearer_and_maps_error() {
 
     server.verify().await;
 }
+
+/// Cursors and `has_more` reach the model: they ride the content (the
+/// model sees content only — meta goes to the client widget), so a
+/// multi-page list can actually be paged.
+#[tokio::test]
+async fn list_tools_surface_cursors_and_has_more_in_content() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/conversations.list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "channels": [{ "id": "C1", "name": "general", "is_private": false,
+                           "topic": { "value": "" } }],
+            "has_more": true,
+            "response_metadata": { "next_cursor": "page-2" }
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/users.list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "members": [{ "id": "U1", "name": "ada" }],
+            "has_more": true,
+            "response_metadata": { "next_cursor": "users-page-2" }
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/conversations.history"))
+        .and(query_param("channel", "C1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "messages": [{ "ts": "1", "user": "U1", "text": "hey" }],
+            "has_more": true,
+            "response_metadata": { "next_cursor": "hist-page-2" }
+        })))
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("slack").unwrap();
+    let channels: serde_json::Value = serde_json::from_str(
+        &plugin
+            .execute(
+                &server_config(&server),
+                "conversations_list",
+                json!({}),
+                &secrets_with(None),
+                None,
+            )
+            .await
+            .unwrap()
+            .content,
+    )
+    .unwrap();
+    assert_eq!(channels["next_cursor"], "page-2");
+    let users: serde_json::Value = serde_json::from_str(
+        &plugin
+            .execute(
+                &server_config(&server),
+                "users_list",
+                json!({}),
+                &secrets_with(None),
+                None,
+            )
+            .await
+            .unwrap()
+            .content,
+    )
+    .unwrap();
+    assert_eq!(users["next_cursor"], "users-page-2");
+    let history: serde_json::Value = serde_json::from_str(
+        &plugin
+            .execute(
+                &server_config(&server),
+                "conversations_history",
+                json!({ "channel": "C1" }),
+                &secrets_with(None),
+                None,
+            )
+            .await
+            .unwrap()
+            .content,
+    )
+    .unwrap();
+    assert_eq!(history["has_more"], true);
+    assert_eq!(history["next_cursor"], "hist-page-2");
+}
+
+/// `auth.test` answers HTTP 200 with `{"ok": false}` for an invalid or
+/// revoked token: the connection test must read the body verdict, not just
+/// the status — a bad token fails the save gate.
+#[tokio::test]
+async fn test_connection_requires_slacks_ok_verdict() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/auth.test"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "ok": false, "error": "invalid_auth" })),
+        )
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("slack").unwrap();
+    let err = plugin
+        .test_connection(&server_config(&server), &secrets_with(None))
+        .await
+        .unwrap_err();
+    assert!(err.contains("invalid_auth"), "got: {err}");
+
+    // And a genuinely valid token passes.
+    let ok_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/auth.test"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "ok": true, "team": "acme" })),
+        )
+        .mount(&ok_server)
+        .await;
+    plugin
+        .test_connection(&server_config(&ok_server), &secrets_with(None))
+        .await
+        .expect("a valid token passes");
+}
