@@ -193,7 +193,9 @@ console.log(msg.content[0].text);`,
   };
 
   async function create() {
+    const epoch = currentCacheEpoch();
     const res = await createMyApiKey(name.trim() || "api key");
+    if (cacheEpochChanged(epoch)) return;
     if (res === null) {
       toast.error("Could not create API key");
       return;
@@ -208,7 +210,9 @@ console.log(msg.content[0].text);`,
 
   async function revoke() {
     if (!revokeTarget) return;
+    const epoch = currentCacheEpoch();
     const ok = await revokeMyApiKey(revokeTarget.id);
+    if (cacheEpochChanged(epoch)) return;
     if (!ok) {
       toast.error("Could not revoke API key");
       return;
