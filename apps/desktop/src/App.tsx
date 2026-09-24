@@ -8,7 +8,7 @@ import { Button } from "@guild/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@guild/ui/components/card";
 import { Input } from "@guild/ui/components/input";
 import { Bot } from "lucide-react";
-import { IS_TAURI, apiLogin, apiMe, clearToken, machineId, rpcCall, setToken } from "./transport";
+import { IS_TAURI, apiLogin, apiLogout, apiMe, clearToken, machineId, rpcCall, setToken } from "./transport";
 import { toast } from "sonner";
 import { clearApiCache } from "./views/settings/use-cached-api";
 import { clearMachinesCache } from "./views/settings/sections/MachineSection";
@@ -482,7 +482,8 @@ function AppInner() {
     return <Splash />;
 
   if (!IS_TAURI) {
-    const signOut = () => {
+    const signOut = async () => {
+      await apiLogout();
       clearToken();
       clearApiCache();
       clearMachinesCache();

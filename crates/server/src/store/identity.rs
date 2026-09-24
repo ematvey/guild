@@ -439,6 +439,12 @@ impl<'a> IdentityStore<'a> {
         .await?
         .ok_or_else(|| ApiError::not_found("no such user"))?;
         if password.is_some() {
+            sqlx::query("DELETE FROM pairing_tokens WHERE user_id = $1 AND used_at IS NULL")
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE api_keys SET revoked_at = now() WHERE (user_id = $1 OR created_by = $1) AND revoked_at IS NULL")
+                .bind(user_id).execute(&mut *tx).await?;
             sqlx::query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1")
                 .bind(user_id)
                 .execute(&mut *tx)
