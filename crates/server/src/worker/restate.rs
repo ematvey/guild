@@ -3981,9 +3981,12 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
             if let Ok(store) = prune_state.store().await {
                 let sessions = store.identity().prune_expired_sessions().await.unwrap_or(0);
                 let tokens = store.pairing().prune_dead_tokens().await.unwrap_or(0);
-                if sessions + tokens > 0 {
+                let effects = crate::worker::effects::prune(&store)
+                    .await
+                    .unwrap_or(0);
+                if sessions + tokens + effects > 0 {
                     tracing::info!(
-                        "pruned {sessions} expired sessions, {tokens} dead pairing tokens"
+                        "pruned {sessions} expired sessions, {tokens} dead pairing tokens, {effects} effect claims"
                     );
                 }
             }
