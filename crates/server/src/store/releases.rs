@@ -102,7 +102,7 @@ impl<'a> ReleaseStore<'a> {
             Ok(r) => Ok(r),
             Err(sqlx::Error::Database(db)) if db.is_unique_violation() => Err(ApiError::conflict(
                 "release_taken",
-                "an artifact for this version/kind/platform already exists",
+                "an artifact with this version/kind/platform/filename already exists",
             )),
             Err(e) => Err(ApiError::from(e)),
         }

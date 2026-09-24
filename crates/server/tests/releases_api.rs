@@ -93,7 +93,7 @@ async fn release_upload_list_signed_download_round_trip() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/admin/releases?version=0.1.0&kind=cli&platform=linux-x86_64&filename=other.tar.gz")
+                .uri("/api/v1/admin/releases?version=0.1.0&kind=cli&platform=linux-x86_64&filename=guild-cli.tar.gz")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/gzip")
                 .body(Body::from(b"other".to_vec()))
@@ -338,4 +338,104 @@ async fn updater_manifest_is_204_when_nothing_is_signed() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
+}
+
+/// The release identity includes the artifact filename: one (version,
+/// platform) carries several artifacts (macOS DMG + its .app.tar.gz updater
+/// bundle), and republishing one must not delete the other — the old
+/// (version, kind, platform) unique key made the second publish delete the
+/// first.
+#[tokio::test]
+async fn same_platform_artifacts_with_different_filenames_coexist() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+    let upload = |filename: &str, body: &'static [u8]| {
+        app.clone().oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/admin/releases?version=0.6.0&kind=desktop&platform=darwin-aarch64&filename={filename}&content_type=application/octet-stream&updater_sig=sig"
+                ))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/octet-stream")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+    };
+    let dmg = upload("Guild-0.6.0-macos-aarch64.dmg", b"dmg-bytes").await.unwrap();
+    assert_eq!(dmg.status(), StatusCode::OK);
+    let tar = upload("Guild-0.6.0-macos-aarch64.app.tar.gz", b"tar-bytes")
+        .await
+        .unwrap();
+    assert_eq!(tar.status(), StatusCode::OK, "the second artifact must not delete the first");
+
+    let list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/releases")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(list.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    let names: Vec<&str> = v["releases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["version"] == "0.6.0")
+        .filter_map(|r| r["filename"].as_str())
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+
+    // Republish the DMG: delete its row, re-upload — the tarball stays.
+    let dmg_id = v["releases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["filename"].as_str().unwrap_or("").ends_with(".dmg"))
+        .and_then(|r| r["id"].as_str())
+        .unwrap()
+        .to_string();
+    let del = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/admin/releases/{dmg_id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del.status(), StatusCode::OK);
+    assert_eq!(upload("Guild-0.6.0-macos-aarch64.dmg", b"dmg-v2").await.unwrap().status(), StatusCode::OK);
+    let list = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/releases")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(list.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    let count = v["releases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["version"] == "0.6.0")
+        .count();
+    assert_eq!(count, 2, "republish retained both artifacts");
 }
