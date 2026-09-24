@@ -232,7 +232,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(created.name, "web");
-        assert_eq!(created.machine_label, None);
+        // No registry row for the machine: the label falls back to the
+        // machine id (uniform on every project-derived label write).
+        assert_eq!(created.machine_label.as_deref(), Some("machine-1"));
 
         // Duplicate names are allowed (folder-derived labels), same user
         // or different users alike.
