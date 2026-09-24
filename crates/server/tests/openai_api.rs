@@ -5,6 +5,18 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 /// OpenAI SSE provider: first call emits a tool call, second a final text.
+/// Only the provider's POSTs: stray loopback probes from other processes on
+/// the host (plain GETs) can land on the mock's port.
+async fn provider_calls(server: &wiremock::MockServer) -> Vec<wiremock::Request> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "POST")
+        .collect()
+}
+
 async fn scripted_provider() -> wiremock::MockServer {
     let server = wiremock::MockServer::builder()
         .listener(standalone_listener().await.into_std().unwrap())
@@ -101,7 +113,7 @@ async fn openai_non_stream_with_tool_round_trip() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let requests = provider.received_requests().await.unwrap();
+    let requests = provider_calls(&provider).await;
     let upstream: Value = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(upstream["tools"][0]["function"]["name"], "get_weather");
     assert_eq!(upstream["max_tokens"], 123);
@@ -146,7 +158,7 @@ async fn openai_non_stream_with_tool_round_trip() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let requests = provider.received_requests().await.unwrap();
+    let requests = provider_calls(&provider).await;
     let upstream: Value = serde_json::from_slice(&requests[1].body).unwrap();
     assert_eq!(upstream["max_tokens"], 77);
 
@@ -335,7 +347,7 @@ async fn ingress_tool_call_arguments_are_unpacked_to_objects() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
-    let upstream = anthropic.received_requests().await.unwrap();
+    let upstream = provider_calls(&anthropic).await;
     let body: Value = serde_json::from_slice(&upstream[0].body).unwrap();
     let blocks = body["messages"].as_array().unwrap();
     let tool_use = blocks
@@ -675,7 +687,7 @@ async fn reasoning_is_preserved_on_non_stream_responses_and_replays_upstream() {
     }))
     .await;
     assert_eq!(res.status(), StatusCode::OK);
-    let upstream = provider.received_requests().await.unwrap();
+    let upstream = provider_calls(&provider).await;
     let sent: Value = serde_json::from_slice(&upstream[1].body).unwrap();
     assert_eq!(sent["messages"][1]["reasoning_content"], "pondering");
 }
@@ -828,7 +840,7 @@ async fn media_parts_reach_upstream_and_unsupported_parts_are_rejected() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let upstream = provider.received_requests().await.unwrap();
+    let upstream = provider_calls(&provider).await;
     let sent: Value = serde_json::from_slice(&upstream[0].body).unwrap();
     let parts = sent["messages"][0]["content"]
         .as_array()
