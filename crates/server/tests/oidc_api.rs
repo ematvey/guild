@@ -230,7 +230,7 @@ async fn oidc_login_provisions_user_and_issues_session() {
         .await
         .unwrap()
         .expect("oidc user provisioned");
-    let _ = row.id;
+    assert_eq!(row.identity_type, "oidc");
 
     // second login for the same email reuses the account (and re-syncs the
     // profile — same claims, no duplicate row)
@@ -248,14 +248,23 @@ async fn oidc_login_provisions_user_and_issues_session() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    // still exactly one row with that email (find_by_email returns one)
+    // still exactly one row with that email, and the SAME account (the
+    // second login reused it rather than provisioning a duplicate)
     let again = store
         .identity()
         .find_by_email(fs.org_id, "sso.user@example.org")
         .await
         .unwrap()
         .expect("user still present");
-    let _ = again;
+    assert_eq!(again.id, row.id);
+    let users_with_email: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM users WHERE org_id = $1 AND email = 'sso.user@example.org'",
+    )
+    .bind(fs.org_id)
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(users_with_email, 1, "no duplicate account was provisioned");
 
     // bad state rejected
     let res = app
