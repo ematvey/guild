@@ -472,3 +472,112 @@ async fn archive_sees_a_command_committed_while_it_waited_on_the_row_lock() {
         .unwrap();
     assert_eq!(status.0, "cancelled");
 }
+
+/// The archive-vs-begin race: a command the archive settles after its
+/// delivery already succeeded must not strand the dispatcher's reservation
+/// (the chat wedges after unarchive), and a running command caught by the
+/// archive must resume for its own invocation instead of being abandoned
+/// unfinished.
+#[tokio::test]
+async fn archive_race_releases_the_reservation_and_resumes_running_commands() {
+    let fs = full_state().await;
+    let store = fs.store();
+    let user = store.identity().get_user(fs.user_id).await.unwrap();
+
+    // Scenario b: the command committed `running`, the chat was archived
+    // mid-turn; the same invocation's replay resumes it instead of
+    // abandoning the row unfinished.
+    let second = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO turn_commands (id, org_id, user_id, chat_id, request, payload) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(second)
+    .bind(fs.org_id)
+    .bind(fs.user_id)
+    .bind(fs.chat_id)
+    .bind(serde_json::json!({}))
+    .bind(serde_json::json!({}))
+    .execute(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        store
+            .turn_commands()
+            .begin(second, fs.chat_id, "inv-running")
+            .await
+            .unwrap(),
+        Some(true)
+    );
+    store
+        .chats()
+        .update_chat(fs.org_id, fs.chat_id, &user, None, Some(true))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .turn_commands()
+            .begin(second, fs.chat_id, "inv-running")
+            .await
+            .unwrap(),
+        Some(true)
+    );
+    store
+        .turn_commands()
+        .finish(second, "inv-running", false)
+        .await
+        .unwrap();
+    let row: (String, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as("SELECT status, finished_at FROM turn_commands WHERE id = $1")
+            .bind(second)
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    assert_eq!(row.0, "completed");
+    assert!(row.1.is_some());
+
+    // Scenario a: the dispatcher reserved under the command id, the archive
+    // committed and settled the command, then the delivery succeeded.
+    let chat2 = Uuid::now_v7();
+    sqlx::query("INSERT INTO chats (id, org_id, user_id, title) VALUES ($1, $2, $3, 'race')")
+        .bind(chat2)
+        .bind(fs.org_id)
+        .bind(fs.user_id)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO turn_commands (id, org_id, user_id, chat_id, request, payload) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(id)
+    .bind(fs.org_id)
+    .bind(fs.user_id)
+    .bind(chat2)
+    .bind(serde_json::json!({}))
+    .bind(serde_json::json!({}))
+    .execute(store.pool())
+    .await
+    .unwrap();
+    let _reservation = fs
+        .state
+        .generations
+        .try_begin_with_id(chat2, id)
+        .unwrap();
+    store
+        .chats()
+        .update_chat(fs.org_id, chat2, &user, None, Some(true))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .turn_commands()
+            .begin(id, chat2, "inv-raced")
+            .await
+            .unwrap(),
+        Some(false)
+    );
+    guild_server::worker::restate::release_claim_reservation(&fs.state, chat2, id);
+    assert!(fs.state.generations.handle(chat2).is_none());
+}
