@@ -470,8 +470,30 @@ fn auth_change_with_store(
     store: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let mut s = shared.session.lock().unwrap();
+    let previous = principal_of(&s);
     s.auth
-        .transition(change, store.as_deref(), &shared.machine_link)
+        .transition(change, store.as_deref(), &shared.machine_link)?;
+    let current = principal_of(&s);
+    if current != previous {
+        // The previous account's execution state must not leak into a new
+        // principal (or the signed-out state): a retained chat id would send
+        // the next user's turns into the old chat under the new credential —
+        // authz failures at best, another member's conversation at worst.
+        // In-flight agent runs keep their own cloud client and fail on their
+        // revoked bearer; the flags below let the new principal start fresh.
+        s.chat_id = None;
+        s.project_dir = None;
+        s.model = String::new();
+        s.pending = PendingApprovals::default();
+        s.agent_running = false;
+    }
+    Ok(())
+}
+
+/// The account a session's execution state belongs to: server + email.
+fn principal_of(s: &Session) -> Option<(String, String)> {
+    let cloud = s.auth.cloud()?;
+    Some((cloud.base_url.clone(), s.auth.email()?.to_string()))
 }
 
 async fn machine_identify(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
@@ -1244,6 +1266,65 @@ mod machine_link_tests {
             link_rx.borrow_and_update().is_none(),
             "sign-out drops the link"
         );
+    }
+
+    /// Sign-out and a principal switch reset the account-owned session
+    /// state: a retained chat id would send the next account's turns into
+    /// the previous account's chat under the new credential.
+    #[tokio::test]
+    async fn sign_out_and_account_switch_reset_account_owned_session_state() {
+        let shared = logged_in_shared();
+        {
+            let mut s = shared.session.lock().unwrap();
+            s.chat_id = Some(Uuid::now_v7());
+            s.project_dir = Some(std::path::PathBuf::from("/tmp/a"));
+            s.model = "m".into();
+            s.agent_running = true;
+        }
+
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        session_clear(shared.clone(), identify_req(6, ""), out_tx).await;
+        let _ = out_rx.recv().await.unwrap();
+        {
+            let s = shared.session.lock().unwrap();
+            assert!(s.chat_id.is_none());
+            assert!(s.project_dir.is_none());
+            assert!(s.model.is_empty());
+            assert!(!s.agent_running);
+        }
+
+        // Logging back in as a DIFFERENT account starts clean too.
+        adopt_login_with_identity(
+            &shared,
+            "http://srv".into(),
+            "tok2".into(),
+            "b@b".into(),
+            Some("machine-4".into()),
+            None,
+        )
+        .unwrap();
+        let s = shared.session.lock().unwrap();
+        assert!(s.chat_id.is_none());
+        assert!(s.project_dir.is_none());
+    }
+
+    /// A re-login of the SAME account keeps the session's state (a fresh
+    /// token must not discard the working chat).
+    #[tokio::test]
+    async fn relogin_of_the_same_principal_keeps_session_state() {
+        let shared = logged_in_shared();
+        let chat = Uuid::now_v7();
+        shared.session.lock().unwrap().chat_id = Some(chat);
+        adopt_login_with_identity(
+            &shared,
+            "http://srv".into(),
+            "tok-fresh".into(),
+            "a@b".into(),
+            Some("machine-4".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(shared.session.lock().unwrap().chat_id, Some(chat));
     }
 }
 
