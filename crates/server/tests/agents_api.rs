@@ -210,3 +210,30 @@ async fn agent_turn_enforces_route_quota() {
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["events"].as_array().unwrap().len(), 0);
 }
+
+/// A session create that loses the workspace-name race must not leave its
+/// pre-created chat orphaned.
+#[tokio::test]
+async fn workspace_name_conflict_leaves_no_orphan_chat() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let create = |name: &str| {
+        app.clone().oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/agents/sessions")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"workspace_name": name}).to_string()))
+                .unwrap(),
+        )
+    };
+    assert_eq!(create("dup-ws").await.unwrap().status(), StatusCode::OK);
+    assert_eq!(create("dup-ws").await.unwrap().status(), StatusCode::CONFLICT);
+
+    let chats: i64 = sqlx::query_scalar("SELECT count(*) FROM chats WHERE title = 'dup-ws'")
+        .fetch_one(fs.store().pool())
+        .await
+        .unwrap();
+    assert_eq!(chats, 1, "the conflicted create's chat was removed");
+}
