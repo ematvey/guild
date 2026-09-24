@@ -39,8 +39,9 @@ async fn set_config(
     let client_id = body["client_id"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("missing client_id"))?;
-    // Blank secret = keep the stored one (the edit form's contract).
-    let client_secret = body["client_secret"].as_str();
+    // Blank secret = keep the stored one (the edit form's contract); an
+    // empty string must not overwrite the encrypted secret.
+    let client_secret = body["client_secret"].as_str().filter(|s| !s.is_empty());
     let master = state.config.master_key()?;
     state
         .store()

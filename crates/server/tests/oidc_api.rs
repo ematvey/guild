@@ -263,3 +263,40 @@ async fn oidc_login_provisions_user_and_issues_session() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// The edit form sends a blank secret to keep the stored one; a blank must
+/// not overwrite the encrypted secret (SSO then fails at token exchange).
+#[tokio::test]
+async fn blank_client_secret_keeps_the_stored_one() {
+    let idp = fake_idp("sso.user@example.org").await;
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let config = |secret: Value| {
+        json!({"issuer": idp.uri(), "client_id": "guild-client", "client_secret": secret})
+    };
+    let put = |app: axum::Router, body: Value| {
+        app.clone().oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/admin/oidc")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+    };
+    assert_eq!(put(app.clone(), config(json!("s3cret"))).await.unwrap().status(), StatusCode::OK);
+
+    let store = fs.store();
+    let master = fs.state.config.master_key().unwrap();
+    let before = store.oidc().get(fs.org_id).await.unwrap().unwrap();
+    let len_before = store.oidc().decrypt_secret(&before, &master).unwrap().len();
+
+    // A blank secret keeps the stored one.
+    assert_eq!(put(app.clone(), config(json!(""))).await.unwrap().status(), StatusCode::OK);
+    let after = store.oidc().get(fs.org_id).await.unwrap().unwrap();
+    assert_eq!(
+        store.oidc().decrypt_secret(&after, &master).unwrap().len(),
+        len_before
+    );
+}
