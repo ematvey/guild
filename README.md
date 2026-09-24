@@ -124,6 +124,6 @@ Full process: `docs/clients.md`.
   over Postgres LISTEN/NOTIFY; subscribe with
   `GET /api/v1/events/stream` (SSE) or read recent events from
   `GET /api/v1/events`. Emitted on skill publish and member join today.
-- **Generated TS types** (§6): `crates/protocol/ts/**` is generated with
-  `TS_RS_EXPORT_DIR=ts cargo test -p protocol --features ts`; do not edit by
-  hand.
+- **Generated TS types** (§6): `crates/protocol/bindings/**` is generated
+  with `cargo test -p protocol --features ts` (freshness check:
+  `scripts/check-bindings.sh`); do not edit by hand.
