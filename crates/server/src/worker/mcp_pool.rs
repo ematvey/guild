@@ -81,9 +81,7 @@ impl McpPool {
             return Ok(peer);
         }
         let service = Self::connect(url, headers).await?;
-        let peer = service.peer().clone();
-        self.insert(key.clone(), service);
-        Ok(peer)
+        Ok(self.insert(key.clone(), service))
     }
 
     fn lookup(&self, key: &PoolKey) -> Option<Peer<RoleClient>> {
@@ -102,9 +100,25 @@ impl McpPool {
         })
     }
 
-    fn insert(&self, key: PoolKey, service: RunningService<RoleClient, InitializeRequestParams>) {
+    /// Caches the connection and returns the peer the caller must use. Two
+    /// concurrent cold connects for the same key race here: the entry that
+    /// landed first stays (dropping its service would cancel the first
+    /// caller's live session), and the loser's fresh connection closes
+    /// unused.
+    fn insert(
+        &self,
+        key: PoolKey,
+        service: RunningService<RoleClient, InitializeRequestParams>,
+    ) -> Peer<RoleClient> {
         let mut entries = self.entries.lock().unwrap();
         Self::evict_stale(&mut entries);
+        if let Some(existing) = entries
+            .get(&key)
+            .filter(|e| !e.service.is_closed() && !e.service.peer().is_transport_closed())
+        {
+            return existing.service.peer().clone();
+        }
+        let peer = service.peer().clone();
         entries.insert(
             key,
             PoolEntry {
@@ -112,6 +126,7 @@ impl McpPool {
                 last_used: Instant::now(),
             },
         );
+        peer
     }
 
     fn evict_stale(entries: &mut HashMap<PoolKey, PoolEntry>) {
@@ -204,6 +219,40 @@ mod recovery_tests {
             .unwrap();
         assert!(!peer.is_transport_closed());
         assert_eq!(pool.len(), 2);
+        server.abort();
+    }
+
+    /// Two concurrent cold connects for one key share a single live session:
+    /// the second insert must not evict (and thereby cancel) the first
+    /// caller's connection.
+    #[tokio::test]
+    async fn concurrent_cold_connects_share_one_live_session() {
+        let service = StreamableHttpService::new(
+            || Ok(Fixture),
+            Arc::new(LocalSessionManager::default()),
+            StreamableHttpServerConfig::default(),
+        );
+        let app = axum::Router::new().nest_service("/mcp", service);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let pool = McpPool::new();
+        let key = PoolKey {
+            org: uuid::Uuid::now_v7(),
+            slug: "same".into(),
+            url: url.clone(),
+            acting_as: None,
+            secrets_fingerprint: 0,
+        };
+        let (a, b) = tokio::join!(
+            pool.get_or_connect(&key, &url, HeaderMap::new()),
+            pool.get_or_connect(&key, &url, HeaderMap::new())
+        );
+        let a = a.unwrap();
+        let b = b.unwrap();
+        assert_eq!(pool.len(), 1, "one pooled entry for the key");
+        assert!(!a.is_transport_closed(), "first caller's session survives");
+        assert!(!b.is_transport_closed());
         server.abort();
     }
 }

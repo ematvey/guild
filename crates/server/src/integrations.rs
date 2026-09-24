@@ -1023,10 +1023,11 @@ pub mod firecrawl {
             .await
             .map_err(|e| format!("firecrawl returned an unreadable body: {e}"))?;
         if !status.is_success() {
-            return Err(format!(
-                "firecrawl returned {status}: {}",
-                &text[..text.len().min(300)]
-            ));
+            // Char-bounded head: byte-slicing could panic inside the plugin
+            // run when a multibyte character straddles the cut, and the
+            // resulting panic loop would retry the read forever.
+            let head: String = text.chars().take(300).collect();
+            return Err(format!("firecrawl returned {status}: {head}"));
         }
         let parsed: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| format!("firecrawl returned bad json: {e}"))?;

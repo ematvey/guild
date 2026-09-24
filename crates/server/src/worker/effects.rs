@@ -5,7 +5,12 @@ use serde::{de::DeserializeOwned, Serialize};
 
 /// Claim namespaces (key prefixes in server_kv). Each invocation writes its
 /// own keys, so they are pruned once the invocation can no longer replay.
-pub(crate) const CLAIM_PREFIXES: &[&str] = &["plugin_effect:", "routine_effect:", "tool_dispatch:"];
+pub(crate) const CLAIM_PREFIXES: &[&str] = &[
+    "plugin_effect:",
+    "routine_effect:",
+    "tool_dispatch:",
+    "server_effect:",
+];
 
 /// Claims outlive every replay window (Restate's own journal/idempotency
 /// retention is shorter); the hourly loop retires anything older.
@@ -99,6 +104,14 @@ mod tests {
         claim::<String>(&store, "routine_effect:inv-2:0:0")
             .await
             .unwrap();
+        // Server-local tool calls claim the same store (the key plus its
+        // stored result, one pair per call).
+        claim::<String>(&store, "server_effect:inv-3:call-1")
+            .await
+            .unwrap();
+        complete(&store, "server_effect:inv-3:call-1", &"done")
+            .await
+            .unwrap();
         // Client tool dispatches claim the same store, one row per tool call
         // (1:1 with chat history); they retire on the same bound.
         store
@@ -117,7 +130,7 @@ mod tests {
             .await
             .unwrap();
         let pruned = prune(&store).await.unwrap();
-        assert_eq!(pruned, 4);
+        assert_eq!(pruned, 6);
         assert!(store
             .kv()
             .get("tool_dispatch:chat-1:dispatch-1")
@@ -133,6 +146,18 @@ mod tests {
         assert!(store
             .kv()
             .get("routine_effect:inv-2:0:0")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .kv()
+            .get("server_effect:inv-3:call-1")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .kv()
+            .get("server_effect:inv-3:call-1:result")
             .await
             .unwrap()
             .is_none());
