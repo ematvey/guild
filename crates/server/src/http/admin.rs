@@ -316,24 +316,22 @@ async fn effective_settings(
     })
 }
 
-/// Latest published manifest of one registry integration item, if any.
+/// Currently approved manifest of one registry integration item, if any.
 async fn latest_integration_manifest(
     store: &crate::store::Store,
     org_id: Uuid,
     slug: &str,
 ) -> Result<Option<guild_core::registry::BundleManifest>, ApiError> {
-    let Some(v) = store
+    let Some((version, _hash)) = store
         .registry()
-        .item_versions(org_id, "integration", slug)
+        .approved_bundle(org_id, "integration", slug)
         .await?
-        .into_iter()
-        .next()
     else {
         return Ok(None);
     };
     let stored = store
         .registry()
-        .get_version(org_id, "integration", slug, &v.version)
+        .get_version(org_id, "integration", slug, &version)
         .await?;
     serde_json::from_value(stored.manifest)
         .map(Some)

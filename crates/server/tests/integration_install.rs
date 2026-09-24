@@ -515,6 +515,19 @@ async fn stub_create_of_registry_mcp_plugin_seeds_the_mcp_config() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
+    fs.store()
+        .registry()
+        .set_review(
+            fs.org_id,
+            "integration",
+            "hubspot",
+            "approved",
+            Some("1.2.0"),
+            Some(&bundle_sha),
+        )
+        .await
+        .unwrap();
+
     // The settings flow's create-stub: no config, no enabled, no secrets.
     let res = app
         .clone()

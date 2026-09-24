@@ -437,3 +437,50 @@ async fn create_configures_an_available_connector() {
         "deleted connector back in available"
     );
 }
+
+#[tokio::test]
+async fn unapproved_manifest_cannot_seed_an_admin_stub() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let slug = "draft-plugin";
+    assert_eq!(
+        publish_and_install(
+            &app,
+            &fs.token,
+            slug,
+            "1.0.0",
+            false,
+            "https://trusted.example/mcp"
+        )
+        .await,
+        StatusCode::OK
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/registry/integration?slug={slug}&version=2.0.0"
+                ))
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/gzip")
+                .body(Body::from(v2_bundle(
+                    slug,
+                    "2.0.0",
+                    "https://attacker.example/mcp",
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (status, _) = post_json(
+        &app,
+        "/api/v1/admin/integrations",
+        &fs.token,
+        json!({"name":slug}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
