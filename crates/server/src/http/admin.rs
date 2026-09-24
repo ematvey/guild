@@ -469,9 +469,21 @@ async fn save_integration(
         && body.get("enabled").is_none()
         && body.get("secrets").is_none();
     if is_stub_create {
+        // An MCP plugin from the registry seeds its stub with the manifest's
+        // mcp/auth blocks (as registry install does): the settings editor
+        // can then complete and enable it — an empty stub can never enable
+        // ("mcp plugin needs an mcp.url").
+        let config = match latest_integration_manifest(store, org_id, name).await {
+            Ok(Some(manifest)) if manifest.mcp.is_some() => json!({
+                "mcp": manifest.mcp.clone().unwrap_or_default(),
+                "auth": manifest.auth.clone().unwrap_or_default(),
+                "tool_policy": {},
+            }),
+            _ => json!({}),
+        };
         store
             .integrations()
-            .upsert(org_id, name, &json!({}), false)
+            .upsert(org_id, name, &config, false)
             .await?;
         return Ok(());
     }
