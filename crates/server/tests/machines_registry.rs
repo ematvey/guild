@@ -145,6 +145,8 @@ async fn fingerprint_match_adopts_the_row_and_rekeys_the_id() {
         .await
         .unwrap();
     assert_eq!(bound, "new-id");
+    assert!(db.machines().bindable("new-id", user, org).await.unwrap());
+    assert!(!db.machines().bindable("old-id", user, org).await.unwrap());
     let other = db
         .identity()
         .create_user(org, "other@machines.test", "hunter226", "member")
@@ -159,9 +161,6 @@ async fn fingerprint_match_adopts_the_row_and_rekeys_the_id() {
         .readable_by_executor(org, chat.id, &other)
         .await
         .is_err());
-    // The adopted identity is bindable, and only under the new id.
-    assert!(db.machines().bindable("new-id", user, org).await.unwrap());
-    assert!(!db.machines().bindable("old-id", user, org).await.unwrap());
 }
 
 #[tokio::test]
