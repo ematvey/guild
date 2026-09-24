@@ -5,6 +5,21 @@ Updated 2026-09-24 (round-3 review fixes; not deployed). Read this before touchi
 nuances in `docs/deploy-nuances.md`, hang-patterns in
 `~/workspace/hanging-commands.md`.
 
+## Round 5 review fixes — 2026-09-24 (not deployed)
+
+16 findings on `fix/round5`; evidence in `FIX-REPORT.md`. Decisions:
+credentials minted from a session (pairing codes, API keys) carry that
+session's auth generation (migration 0061) — redeem issues at the stamp, key
+auth needs the creator's current generation. Context requests to a machine are
+pinned to the socket holder validated for them. Lock order for binding writers
+is project → chat everywhere (turn accept included). Chat-keyed
+`tool_dispatch:` claims retire once the chat is idle (no unfinished command,
+not generating) instead of living forever; the key format is unchanged so
+in-flight claims keep matching. Routine run records are unique per invocation
+(0063). The engine resets account-owned state on any principal change —
+in-process transition (even when persistence fails) or token-store watcher.
+Windows engine compile is a gate (`scripts/check-windows.sh`).
+
 ## Round 3 review fixes — 2026-09-24 (not deployed)
 
 The 20 round-3 findings are addressed on `fix/round3`; per-finding evidence
