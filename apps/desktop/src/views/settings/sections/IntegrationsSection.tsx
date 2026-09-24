@@ -604,6 +604,10 @@ function IntegrationDetail({
     // Schema-field edits persist for MCP rows too — a save that ignored
     // the draft reported success with nothing changed.
     for (const f of fields) {
+      if (f.kind === "secret") {
+        delete cfg[f.name];
+        continue;
+      }
       const value = draft[f.name];
       if (f.kind === "boolean") {
         cfg[f.name] = value === true;
