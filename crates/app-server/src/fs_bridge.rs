@@ -22,6 +22,10 @@ pub struct Allowlist {
     pub write: Vec<PathBuf>,
     /// The bound project (relative request paths anchor here).
     pub project: Option<PathBuf>,
+    /// The canonical config dir — granted per-name for reads (see
+    /// `can_read`); the engine-private files in it (token.json) are never
+    /// model-readable.
+    config_root: Option<PathBuf>,
     /// Ancestors of the project (the `.git`-probe walk only).
     walk_ancestors: Vec<PathBuf>,
 }
@@ -55,6 +59,7 @@ impl Allowlist {
         // symlink — every access would be denied.
         let root = |path: &Path| canonical_root(path);
         let config = root(config);
+        let config_root = config.clone();
         let user_skills = root(&home.join(".agents"));
         let home = root(home);
         let mut read = vec![config.clone(), user_skills.clone()];
@@ -104,6 +109,7 @@ impl Allowlist {
             exists,
             write,
             project: project_dir.map(canonical_root),
+            config_root: Some(config_root),
             walk_ancestors,
         }
     }
@@ -127,8 +133,25 @@ impl Allowlist {
         roots.iter().any(|root| path.starts_with(root))
     }
 
+    /// The config dir is granted per-name: the context files (global
+    /// AGENTS.md / AGENTS.override.md), settings.json and the legacy skills
+    /// tree. Everything else in it — token.json in particular — is
+    /// engine-private: repo content must not be able to read the bearer
+    /// through a symlink or a direct model call.
     pub fn can_read(&self, path: &Path) -> bool {
+        if let Some(config) = &self.config_root {
+            if path.starts_with(config) && !config_path_readable(config, path) {
+                return false;
+            }
+        }
         self.allowed(&self.read, path)
+    }
+
+    /// Sets the config dir this allowlist was built with; `for_project_with`
+    /// calls it so the per-name config reads are enforced.
+    pub fn with_config_root(mut self, config: &Path) -> Self {
+        self.config_root = Some(canonical_root(config));
+        self
     }
 
     pub fn can_probe(&self, path: &Path) -> bool {
@@ -144,6 +167,16 @@ impl Allowlist {
     pub fn can_write(&self, path: &Path) -> bool {
         self.allowed(&self.write, path)
     }
+}
+
+/// The model-readable names inside the config dir (the per-name grant;
+/// see `Allowlist::can_read`).
+fn config_path_readable(config: &Path, path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string());
+    matches!(
+        name.as_deref(),
+        Some("settings.json") | Some("AGENTS.md") | Some("AGENTS.override.md")
+    ) || path.starts_with(config.join("skills"))
 }
 
 /// The allowlist root form: canonicalized when the path exists (symlink
@@ -234,17 +267,20 @@ pub fn read_text_with(allow: &Allowlist, raw_path: &str) -> anyhow::Result<Strin
     std::fs::read_to_string(&path).context("read failed")
 }
 
-/// Bounded context reads reject devices/pipes and preserve UTF-8 boundaries.
-pub fn read_text_limited_with(
-    allow: &Allowlist,
-    raw_path: &str,
-    limit: usize,
-) -> anyhow::Result<String> {
-    use std::io::Read;
+/// Resolves a raw path through the allowlist (symlinks, project anchoring,
+/// read grant) without reading it — callers with a stricter containment
+/// rule (context assembly) use this to enforce where the read must land.
+pub fn resolve_allowed(allow: &Allowlist, raw_path: &str) -> anyhow::Result<PathBuf> {
     let path = allow.resolve(raw_path)?;
     anyhow::ensure!(allow.can_read(&path), "path is outside the allowed roots");
+    Ok(path)
+}
+
+/// Bounded UTF-8-safe read of an already-gated path.
+pub fn read_resolved_limited(path: &Path, limit: usize) -> anyhow::Result<String> {
+    use std::io::Read;
     anyhow::ensure!(
-        std::fs::metadata(&path)?.is_file(),
+        std::fs::metadata(path)?.is_file(),
         "context path is not a regular file"
     );
     let mut bytes = Vec::new();
@@ -258,6 +294,17 @@ pub fn read_text_limited_with(
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// Bounded context reads reject devices/pipes and preserve UTF-8 boundaries.
+pub fn read_text_limited_with(
+    allow: &Allowlist,
+    raw_path: &str,
+    limit: usize,
+) -> anyhow::Result<String> {
+    let path = allow.resolve(raw_path)?;
+    anyhow::ensure!(allow.can_read(&path), "path is outside the allowed roots");
+    read_resolved_limited(&path, limit)
 }
 
 /// One directory entry for fs.list_dir (sorted by name — scan order).
@@ -543,6 +590,43 @@ mod tests {
                 "no"
             )
             .is_err());
+        }
+    }
+
+    /// The config dir is granted per-name for model-facing reads: token.json
+    /// (the bearer) is never readable, and a direct or symlinked request for it
+    /// fails the gate.
+    #[test]
+    fn config_dir_reads_are_per_name_and_token_json_is_never_readable() {
+        let (tmp, allow) = isolated("config-narrow");
+        let cfg = tmp.join("config").join("guild");
+        touch(&cfg, "token.json", "{\"token\":\"SECRET-BEARER\"}");
+        touch(&cfg, "settings.json", "{}");
+        touch(&cfg, "AGENTS.md", "GLOBAL");
+        touch(&cfg, "skills/demo/SKILL.md", "skill body");
+        touch(&cfg, "state.db", "engine-private");
+
+        assert_eq!(
+            read_text_with(&allow, cfg.join("settings.json").to_str().unwrap()).unwrap(),
+            "{}"
+        );
+        assert_eq!(
+            read_text_with(&allow, cfg.join("AGENTS.md").to_str().unwrap()).unwrap(),
+            "GLOBAL"
+        );
+        assert_eq!(
+            read_text_with(&allow, cfg.join("skills/demo/SKILL.md").to_str().unwrap()).unwrap(),
+            "skill body"
+        );
+        assert!(read_text_with(&allow, cfg.join("token.json").to_str().unwrap()).is_err());
+        assert!(read_text_with(&allow, cfg.join("state.db").to_str().unwrap()).is_err());
+
+        // The same denial through a symlink from outside the config tree.
+        #[cfg(unix)]
+        {
+            let link = tmp.join("link-to-token");
+            std::os::unix::fs::symlink(cfg.join("token.json"), &link).unwrap();
+            assert!(read_text_with(&allow, link.to_str().unwrap()).is_err());
         }
     }
 }

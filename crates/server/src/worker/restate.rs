@@ -2130,9 +2130,7 @@ impl ChatRunner {
                             // retry per turn; every other error propagates
                             // unchanged.
                             if compacted_this_turn
-                                || !crate::worker::overflow::is_context_overflow_wrapped(
-                                    &e.to_string(),
-                                )
+                                || !is_context_overflow_wrapped(&e.to_string())
                             {
                                 return Err(HandlerError::from(e));
                             }

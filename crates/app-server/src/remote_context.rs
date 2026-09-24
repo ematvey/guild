@@ -30,16 +30,22 @@ struct Reader {
     remaining: usize,
 }
 impl Reader {
-    fn read(&mut self, path: &Path) -> Option<String> {
+    /// Reads through the allowlist with a containment rule: the resolved
+    /// file must stay inside the tree its lexical path started in. A
+    /// repo-committed `AGENTS.md -> ~/.config/guild/token.json` symlink
+    /// resolves into the config root and is rejected here — the token (or
+    /// any other file of another root) never becomes project instructions.
+    fn read(&mut self, root: &Path, path: &Path) -> Option<String> {
         if self.remaining == 0 {
             return None;
         }
-        let body = fs_bridge::read_text_limited_with(
-            &self.allow,
-            &path.to_string_lossy(),
-            self.remaining.min(MENTION_BUDGET),
-        )
-        .ok()?;
+        let root = fs_bridge::canonical_root(root);
+        let resolved = fs_bridge::resolve_allowed(&self.allow, &path.to_string_lossy()).ok()?;
+        if !resolved.starts_with(&root) {
+            return None;
+        }
+        let body =
+            fs_bridge::read_resolved_limited(&resolved, self.remaining.min(MENTION_BUDGET)).ok()?;
         self.remaining = self.remaining.saturating_sub(body.len().max(1));
         Some(body)
     }
@@ -49,6 +55,8 @@ struct Skill {
     name: String,
     description: String,
     path: PathBuf,
+    /// The tree the skill file lives in (its containment root).
+    root: PathBuf,
 }
 
 pub fn prepare(project: &Path, prompt: &str) -> Result<MachineContext, String> {
@@ -108,7 +116,7 @@ fn assemble_with(
     let mut instructions = String::new();
     for name in ["AGENTS.override.md", "AGENTS.md"] {
         if let Some(body) = reader
-            .read(&config.join(name))
+            .read(&config, &config.join(name))
             .filter(|s| !s.trim().is_empty())
         {
             append(&mut instructions, &body, DOC_BUDGET);
@@ -120,7 +128,7 @@ fn assemble_with(
             break;
         }
         for name in ["AGENTS.override.md", "AGENTS.md"] {
-            if let Some(body) = reader.read(&dir.join(name)) {
+            if let Some(body) = reader.read(dir, &dir.join(name)) {
                 if !body.trim().is_empty() {
                     if !instructions.is_empty() {
                         append(&mut instructions, SEPARATOR, DOC_BUDGET);
@@ -132,7 +140,7 @@ fn assemble_with(
         }
     }
     let disabled = reader
-        .read(&config.join("settings.json"))
+        .read(&config, &config.join("settings.json"))
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v.get("skillsDisabled").cloned())
         .unwrap_or_default();
@@ -161,7 +169,7 @@ fn assemble_with(
             } else {
                 continue;
             };
-            let Some(body) = reader.read(&path) else {
+            let Some(body) = reader.read(&root, &path) else {
                 continue;
             };
             let fallback = entry.name.trim_end_matches(".md");
@@ -170,6 +178,7 @@ fn assemble_with(
                 name,
                 description,
                 path,
+                root: root.clone(),
             });
         }
     }
@@ -231,7 +240,7 @@ fn assemble_with(
         if !mentions.contains(&skill.name) || expansions.len() >= MENTION_BUDGET {
             continue;
         }
-        let Some(body) = reader.read(&skill.path) else {
+        let Some(body) = reader.read(&skill.root, &skill.path) else {
             continue;
         };
         if expansions.is_empty() {
@@ -345,6 +354,52 @@ mod tests {
         std::os::unix::fs::symlink(temp.join("secret"), cwd.join("AGENTS.md")).unwrap();
         let ctx = prepare_with(&cwd, "", &temp.join("config"), &temp.join("home")).unwrap();
         assert!(ctx.instructions.is_none());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    /// A repo-committed symlink that points INTO another read root (the
+    /// config dir, where the bearer token lives) is not a context file: the
+    /// read must land in the tree its lexical path started in. Same rule for
+    /// a symlinked skill file.
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_context_cannot_reach_into_the_config_root() {
+        let temp =
+            std::env::temp_dir().join(format!("guild-remote-token-{}", uuid::Uuid::now_v7()));
+        let config = temp.join("config");
+        let home = temp.join("home");
+        let repo = temp.join("repo");
+        put(&config, "token.json", "{\"token\":\"SECRET-BEARER\"}");
+        put(
+            &config,
+            "skills/legit/SKILL.md",
+            "---\nname: legit\n---\nbody",
+        );
+        put(&repo, ".git", "gitdir: elsewhere");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::os::unix::fs::symlink(config.join("token.json"), repo.join("AGENTS.md")).unwrap();
+        std::fs::create_dir_all(repo.join(".agents/skills"));
+        std::os::unix::fs::symlink(
+            config.join("skills/legit/SKILL.md"),
+            repo.join(".agents/skills/stolen.md"),
+        )
+        .unwrap();
+        let ctx = prepare_with(&repo, "/stolen", &config, &home).unwrap();
+        assert!(
+            ctx.instructions.is_none(),
+            "token must not become instructions"
+        );
+        assert!(
+            !ctx.skills_index.contains("stolen"),
+            "symlinked skill into the config root is not discoverable: {}",
+            ctx.skills_index
+        );
+        assert!(
+            !ctx.skill_expansions.contains("SECRET-BEARER"),
+            "token must not reach expansions"
+        );
+        // The config's own skill (a legit root member) still lists.
+        assert!(ctx.skills_index.contains("legit"));
         std::fs::remove_dir_all(temp).unwrap();
     }
 }
