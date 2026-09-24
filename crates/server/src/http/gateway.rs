@@ -495,12 +495,7 @@ pub(crate) async fn submit_turn(
     let project_id = match req.project_id {
         Some(pid) => {
             let project = store.projects().get(user.org_id, pid, user.id).await?;
-            machine_label = Some(
-                project
-                    .machine_label
-                    .clone()
-                    .unwrap_or_else(|| project.machine_id.clone()),
-            );
+            machine_label = project.machine_label.clone();
             machine_id = Some(project.machine_id);
             Some(pid)
         }
@@ -513,12 +508,7 @@ pub(crate) async fn submit_turn(
             match chat.project_id {
                 Some(pid) => match store.projects().get(user.org_id, pid, user.id).await {
                     Ok(project) => {
-                        machine_label = Some(
-                            project
-                                .machine_label
-                                .clone()
-                                .unwrap_or_else(|| project.machine_id.clone()),
-                        );
+                        machine_label = project.machine_label.clone();
                         machine_id = Some(project.machine_id.clone());
                         if chat.machine_id.as_deref() != Some(project.machine_id.as_str()) {
                             store

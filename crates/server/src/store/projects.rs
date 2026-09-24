@@ -29,7 +29,7 @@ pub struct ProjectStore<'a> {
 
 const ROW_COLUMNS: &str =
     "p.id, p.org_id, p.user_id, p.name, p.folder, p.machine_id, p.created_at, \
-     m.label AS machine_label";
+     coalesce(m.label, p.machine_id) AS machine_label";
 
 const ROW_FROM: &str = "projects p LEFT JOIN machines m ON m.machine_id = p.machine_id";
 
