@@ -653,3 +653,63 @@ async fn post_finish_release_drops_a_pump_reservation_that_landed_mid_finish() {
     guild_server::worker::restate::release_claim_reservation(&state, fs.chat_id, newer);
     assert!(state.generations.handle(fs.chat_id).is_none());
 }
+
+/// Acceptance locks the requested project before the chat — the order the
+/// adoption and project writers use (project → chat). A writer holding the
+/// project row and then updating the chat must not deadlock with a send
+/// that names the project: both commit.
+#[tokio::test]
+async fn a_send_naming_a_project_does_not_deadlock_with_a_project_writer() {
+    let fs = full_state().await;
+    guild_server::test_support::register_test_machine(
+        &fs.state,
+        "machine-1",
+        fs.user_id,
+        fs.org_id,
+        Some("BOX"),
+    )
+    .await;
+    note_generation(&fs.state, fs.chat_id);
+    let store = fs.store();
+    let project = store
+        .projects()
+        .create(fs.org_id, fs.user_id, "repo", "C:\\repo", "machine-1")
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+
+    // The writer (as adoption / a project edit does) holds the project row.
+    let mut writer = store.pool().begin().await.unwrap();
+    sqlx::query("SELECT id FROM projects WHERE id = $1 FOR UPDATE")
+        .bind(project.id)
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+
+    let mut body = command(fs.chat_id, Uuid::now_v7(), "hi");
+    body["project_id"] = json!(project.id);
+    let send = tokio::spawn(app.oneshot(post(&fs.token, &body)));
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // …then re-keys the chat: with chat → project in accept this closed a
+    // lock cycle and Postgres aborted one side.
+    let rekey = sqlx::query("UPDATE chats SET machine_label = 'REKEYED' WHERE id = $1")
+        .bind(fs.chat_id)
+        .execute(&mut *writer)
+        .await;
+    assert!(rekey.is_ok(), "writer deadlocked: {rekey:?}");
+    writer.commit().await.unwrap();
+
+    let res = tokio::time::timeout(std::time::Duration::from_secs(10), send)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bound: Option<Uuid> = sqlx::query_scalar("SELECT project_id FROM chats WHERE id = $1")
+        .bind(fs.chat_id)
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert_eq!(bound, Some(project.id));
+}
