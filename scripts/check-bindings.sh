@@ -4,9 +4,12 @@
 set -e
 cd "$(dirname "$0")/.."
 cargo test -p protocol --features ts --quiet
-if ! git diff --exit-code -- crates/protocol/bindings >/dev/null; then
-  echo "crates/protocol/bindings is stale — run scripts/check-bindings.sh and commit" >&2
+# Uncommitted NEW files would not show in git diff — catch them too.
+if ! git diff --exit-code -- crates/protocol/bindings >/dev/null || \
+   [ -n "$(git status --porcelain -- crates/protocol/bindings)" ]; then
+  echo "crates/protocol/bindings is stale or uncommitted — run scripts/check-bindings.sh and commit" >&2
   git --no-pager diff -- crates/protocol/bindings | head -40 >&2
+  git status --porcelain -- crates/protocol/bindings >&2
   exit 1
 fi
 echo "bindings are fresh"
