@@ -42,6 +42,17 @@ async fn chat_app_is_served() {
         return;
     }
     assert_eq!(res.status(), StatusCode::OK);
+    // Web mode ships a CSP: no remote img/script channels (model-controlled
+    // markdown must not be able to exfiltrate or load remote content).
+    let csp = res
+        .headers()
+        .get("content-security-policy")
+        .expect("web CSP header")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(csp.contains("script-src 'self'"), "csp: {csp}");
+    assert!(!csp.contains("img-src 'self' http"), "csp: {csp}");
     let html = body(res).await;
     assert!(
         html.contains("<div id=\"root\">"),
