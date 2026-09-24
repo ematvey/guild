@@ -258,6 +258,39 @@ async fn firecrawl_scrape_builds_content_and_fetch_meta() {
     server.verify().await;
 }
 
+/// An error body whose byte 300 falls inside a multibyte character must come
+/// back as a tool error, not panic the plugin run (a panic would retry the
+/// read forever).
+#[tokio::test]
+async fn firecrawl_error_body_with_multibyte_at_the_cut_is_a_tool_error() {
+    let server = MockServer::start().await;
+    let mut body = "x".repeat(299);
+    body.push('и'); // 2-byte Cyrillic и at byte 299 — byte 300 is its middle
+    body.push_str(" more text to push past the boundary");
+    Mock::given(method("POST"))
+        .and(path("/v1/scrape"))
+        .respond_with(ResponseTemplate::new(500).set_body_string(body))
+        .mount(&server)
+        .await;
+    let plugin = integration_by_name("firecrawl").unwrap();
+    let config = json!({ "base_url": server.uri() });
+    let err = plugin
+        .execute(
+            &config,
+            "scrape",
+            json!({ "url": "https://example.com" }),
+            &firecrawl_bearer(),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("firecrawl returned 500"), "got: {err}");
+    assert!(
+        err.contains('и'),
+        "the multibyte character survives the cut"
+    );
+}
+
 #[tokio::test]
 async fn firecrawl_omits_bearer_when_no_key_stored() {
     let server = MockServer::start().await;
