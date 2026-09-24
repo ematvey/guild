@@ -86,13 +86,15 @@ pub async fn dispatch(
 
     let provider: Arc<dyn guild_core::provider::ModelProvider> = for_protocol(&route.protocol)
         .ok_or_else(|| ApiError::internal(format!("unknown protocol {}", route.protocol)))?;
-    // Route cap wins; the client's max_tokens applies when the route
-    // doesn't set one (0 = provider default).
-    let max_tokens = route
-        .max_output_tokens
-        .or(client_max_tokens)
-        .unwrap_or(0)
-        .max(0) as u32;
+    // The tighter limit wins when both sides set one: a client asking for
+    // less than the route cap must not be billed for output it did not ask
+    // for (0 = provider default).
+    let max_tokens = match (route.max_output_tokens, client_max_tokens) {
+        (Some(route_cap), Some(client)) => Some(route_cap.min(client)),
+        (route_cap, client) => route_cap.or(client),
+    }
+    .unwrap_or(0)
+    .max(0) as u32;
     let preq = ProviderRequest {
         model,
         system: system.as_deref(),
@@ -302,18 +304,32 @@ impl Drop for StreamUsageGuard {
     }
 }
 
+/// What a drained provider stream produced: the model-facing content, the
+/// terminal finish reason (canonical OpenAI vocabulary, when the provider
+/// reported one), and usage totals.
+pub(crate) struct Accumulated {
+    pub text: String,
+    pub reasoning: String,
+    pub calls: Vec<protocol::api::ToolCall>,
+    pub finish_reason: Option<String>,
+    pub tokens_in: u32,
+    pub tokens_out: u32,
+}
+
 /// Drains the provider stream, folding tool-call fragments into complete
 /// calls (the streaming endpoints emit fragments themselves, the
-/// non-streaming ones use this). Returns (text, calls, tokens_in, tokens_out).
+/// non-streaming ones use this).
 pub(crate) async fn accumulate(
     stream: futures::stream::BoxStream<
         'static,
         Result<ProviderChunk, guild_core::provider::ProviderError>,
     >,
     counters: StreamUsageCounters,
-) -> anyhow::Result<(String, Vec<protocol::api::ToolCall>, u32, u32)> {
+) -> anyhow::Result<Accumulated> {
     let mut text = String::new();
+    let mut reasoning = String::new();
     let mut calls = Vec::new();
+    let mut finish_reason: Option<String> = None;
     let mut tokens_in = 0u32;
     let mut tokens_out = 0u32;
     let mut pinned = Box::pin(stream);
@@ -333,12 +349,23 @@ pub(crate) async fn accumulate(
                     tokens_out = n;
                 }
             }
+            // Reasoning is preserved end to end (protocol contract: it is
+            // never dropped from context): non-streaming clients get it in
+            // the response message so they can replay it.
+            ProviderChunk::Thinking(t) => reasoning.push_str(&t.text_delta),
             ProviderChunk::ToolCallDelta { .. } => {}
-            ProviderChunk::Thinking(_) => {}
             ProviderChunk::ToolCallDone { call } => calls.push(call),
+            ProviderChunk::Finished { reason } => finish_reason = Some(reason),
         }
     }
-    Ok((text, calls, tokens_in, tokens_out))
+    Ok(Accumulated {
+        text,
+        reasoning,
+        calls,
+        finish_reason,
+        tokens_in,
+        tokens_out,
+    })
 }
 
 #[cfg(all(test, feature = "test-support"))]

@@ -49,6 +49,14 @@ pub enum ProviderChunk {
     ToolCallDone {
         call: ToolCall,
     },
+    /// The provider's terminal finish reason for the response, in the
+    /// canonical OpenAI vocabulary (`stop`, `length`, `tool_calls`,
+    /// `content_filter`). Emitted once per response; gateways forward it so
+    /// a truncated (`length`) answer is distinguishable from a completed
+    /// one.
+    Finished {
+        reason: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]

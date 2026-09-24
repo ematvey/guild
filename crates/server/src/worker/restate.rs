@@ -2061,6 +2061,9 @@ impl ChatRunner {
                                     tool_calls.push(call.clone());
                                     let _ = tx.send(StreamEvent::ToolCallDone { call });
                                 }
+                                // The chat turn ends on stream end as before;
+                                // the canonical finish reason is gateway-facing.
+                                Ok(ProviderChunk::Finished { .. }) => {}
                                 Err(e) => {
                                     let _ = tx.send(StreamEvent::Error {
                                         code: "provider".into(),

@@ -533,6 +533,9 @@ async fn internal_completion(
                     tool_calls.push(call.clone());
                     yield sse_event(StreamEvent::ToolCallDone { call });
                 }
+                // The internal stream contract has no finish-reason frame of
+                // its own; the turn ends the same way it did before.
+                Ok(ProviderChunk::Finished { .. }) => {}
                 Err(e) => {
                     yield sse_event(StreamEvent::Error { code: "provider".into(), message: e.to_string() });
                     return;

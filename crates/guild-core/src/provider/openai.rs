@@ -310,11 +310,14 @@ impl ModelProvider for OpenAiProvider {
                         });
                     }
                 }
-                if choice["finish_reason"].as_str().is_some() {
+                if let Some(reason) = choice["finish_reason"].as_str() {
                     completed = true;
-                }
-                if choice["finish_reason"].as_str() == Some("tool_calls") {
-                    finish_tool_calls = true;
+                    if choice["finish_reason"].as_str() == Some("tool_calls") {
+                        finish_tool_calls = true;
+                    }
+                    yield Ok(ProviderChunk::Finished {
+                        reason: reason.to_string(),
+                    });
                 }
             }
             if !completed {

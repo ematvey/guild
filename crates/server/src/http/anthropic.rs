@@ -318,7 +318,7 @@ async fn messages(
             price_in,
             price_out,
         );
-        let (text, calls, tokens_in, tokens_out) = accumulate(call.stream, guard.counters())
+        let acc = accumulate(call.stream, guard.counters())
             .await
             .map_err(|e| {
                 anthropic_error(
@@ -331,20 +331,29 @@ async fn messages(
                 )
             })?;
         guard.record_sync().await;
-        let stop = if calls.is_empty() {
-            "end_turn"
-        } else {
-            "tool_use"
+        // The provider's reported terminal reason maps into the Anthropic
+        // vocabulary; without one the shape decides (today's fallback).
+        let stop = match acc.finish_reason.as_deref() {
+            Some("length") => "max_tokens",
+            Some("tool_calls") => "tool_use",
+            Some("content_filter") => "refusal",
+            _ => {
+                if acc.calls.is_empty() {
+                    "end_turn"
+                } else {
+                    "tool_use"
+                }
+            }
         };
         Ok(Json(json!({
             "id": format!("msg_{}", Uuid::now_v7()),
             "type": "message",
             "role": "assistant",
             "model": model,
-            "content": content_blocks(&text, &calls),
+            "content": content_blocks(&acc.text, &acc.calls),
             "stop_reason": stop,
             "stop_sequence": null,
-            "usage": {"input_tokens": tokens_in, "output_tokens": tokens_out},
+            "usage": {"input_tokens": acc.tokens_in, "output_tokens": acc.tokens_out},
         }))
         .into_response())
     }
@@ -431,6 +440,7 @@ fn stream_events(
         }
 
         let mut pinned = Box::pin(call.stream);
+        let mut stop_reason: Option<String> = None;
         while let Some(item) = pinned.next().await {
             // Only Ok items count as served frames: an in-stream provider
             // error before any real chunk must not bill a 0-token request.
@@ -510,6 +520,9 @@ fn stream_events(
                         close_current!();
                     }
                 }
+                Ok(ProviderChunk::Finished { reason }) => {
+                    stop_reason = Some(reason);
+                }
                 Err(e) => {
                     yield send("error", &json!({
                         "type": "error",
@@ -526,7 +539,20 @@ fn stream_events(
                 "type": "content_block_stop", "index": idx,
             }));
         }
-        let stop_reason = if tool_blocks.is_empty() { "end_turn" } else { "tool_use" };
+        // A reported terminal reason maps into the Anthropic vocabulary; the
+        // shape decides when none arrived (today's fallback).
+        let stop_reason = match stop_reason.as_deref() {
+            Some("length") => "max_tokens",
+            Some("tool_calls") => "tool_use",
+            Some("content_filter") => "refusal",
+            _ => {
+                if tool_blocks.is_empty() {
+                    "end_turn"
+                } else {
+                    "tool_use"
+                }
+            }
+        };
         yield send("message_delta", &json!({
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": null},
