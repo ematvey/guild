@@ -109,6 +109,10 @@ async fn oidc_login_provisions_user_and_issues_session() {
     assert_eq!(v["configured"], true);
     assert_eq!(v["client_id"], "guild-client");
     assert!(v.get("client_secret").is_none());
+    // The redirect URI the server itself uses (API-URL-derived), for IdP
+    // registration.
+    assert!(v["redirect_uri"].as_str().unwrap_or("").ends_with("/api/v1/auth/oidc/callback"));
+    assert!(v["redirect_uri"].as_str().unwrap_or("").starts_with("http"));
 
     let nonce = "a".repeat(64);
     // login → 302 to the IdP with signed state

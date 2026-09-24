@@ -56,6 +56,14 @@ async fn get_config(
     State(state): State<AppState>,
     admin: AdminUser,
 ) -> Result<Json<Value>, ApiError> {
+    // The redirect URI the server actually uses (built from the configured
+    // API URL): IdP registration must match this, so settings shows it
+    // instead of a window.location.origin guess that diverges inside the
+    // desktop webview.
+    let redirect_uri = format!(
+        "{}/api/v1/auth/oidc/callback",
+        server_origin(&state)
+    );
     let row = state.store().await?.oidc().get(admin.0.org_id).await?;
     Ok(Json(match row {
         Some(r) => {
@@ -69,9 +77,10 @@ async fn get_config(
                 .decrypt_secret(&r, &master)
                 .ok()
                 .map(|s| crate::crypto::mask_secret_len(s.chars().count()));
-            json!({"configured": true, "issuer": r.issuer, "client_id": r.client_id, "secret_masked": secret_masked})
+            json!({"configured": true, "issuer": r.issuer, "client_id": r.client_id,
+                   "secret_masked": secret_masked, "redirect_uri": redirect_uri})
         }
-        None => json!({"configured": false}),
+        None => json!({"configured": false, "redirect_uri": redirect_uri}),
     }))
 }
 

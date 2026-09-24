@@ -29,6 +29,8 @@ interface OidcConfig {
   issuer?: string;
   client_id?: string;
   secret_masked?: string | null;
+  /** The redirect URI the server builds from its configured API URL. */
+  redirect_uri?: string;
 }
 
 export default function SsoSection() {
@@ -97,7 +99,7 @@ export default function SsoSection() {
           </FactCard>
           <FactCard label="Redirect URI (registered at the identity provider)" className="sm:col-span-2">
             <p className="break-all font-mono text-sm">
-              {`${window.location.origin}/api/v1/auth/oidc/callback`}
+              {cfg.redirect_uri ?? `${window.location.origin}/api/v1/auth/oidc/callback`}
             </p>
           </FactCard>
         </FactGrid>
