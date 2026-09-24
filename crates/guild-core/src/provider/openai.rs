@@ -13,11 +13,12 @@ pub struct OpenAiProvider;
 
 /// The output-token-limit dialect for a model name: OpenAI reasoning
 /// families (`o1*`, `o3*`, `o4*`, `gpt-5*` — matched on the final path
-/// segment so provider-prefixed names like `openai/o3-mini` count) take
+/// segment after `/` so provider-prefixed names like `openai/o3-mini` and
+/// variant suffixes like `openai/o3-mini:free` count) take
 /// `max_completion_tokens`; every other OpenAI-compatible backend takes
 /// `max_tokens`.
 fn uses_completion_tokens(model: &str) -> bool {
-    let name = model.rsplit(['/', ':']).next().unwrap_or(model);
+    let name = model.rsplit('/').next().unwrap_or(model);
     let lower = name.to_ascii_lowercase();
     lower.starts_with("o1")
         || lower.starts_with("o3")
@@ -539,8 +540,15 @@ mod tests {
             tools: None,
             max_tokens: 512,
         };
-        // Reasoning families take max_completion_tokens.
-        for model in ["o3-mini", "openai/o1-preview", "gpt-5", "O4-MINI"] {
+        // Reasoning families take max_completion_tokens (variant suffixes
+        // like :free must not hide the model family).
+        for model in [
+            "o3-mini",
+            "openai/o1-preview",
+            "gpt-5",
+            "O4-MINI",
+            "openai/o3-mini:free",
+        ] {
             let body = OpenAiProvider::body(&req(model));
             assert_eq!(body["max_completion_tokens"], 512, "{model}");
             assert!(body.get("max_tokens").is_none(), "{model}");

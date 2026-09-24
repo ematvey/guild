@@ -1,7 +1,7 @@
 //! Sidebar account badge: avatar photo when set, initials fallback
 //! otherwise, display name, and a dropdown whose items the caller supplies.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import {
   DropdownMenu,
@@ -25,6 +25,8 @@ export function UserBadge({
   // The CSP allows no remote img hosts (IdP avatar URLs are blocked), so a
   // failed load falls back to initials instead of a broken image.
   const [avatarBroken, setAvatarBroken] = useState(false);
+  // A changed URL may load fine — clear the broken flag for the new source.
+  useEffect(() => setAvatarBroken(false), [avatarUrl]);
   const showAvatar = avatarUrl && !avatarBroken;
   return (
     <DropdownMenu>

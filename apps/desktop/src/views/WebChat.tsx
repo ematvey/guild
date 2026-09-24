@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { applyMention, detectMention } from "../lib/skill-mention";
 import { daemonFs, listSkills } from "../lib/context";
+import { openExternal } from "../lib/open-external";
+
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 import Markdown, { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
@@ -422,21 +425,6 @@ function AttachmentFileChip({
 
 /// Client-side tools need the desktop runtime (local files, shell); in a plain
 /// browser they stay pending until the server-side timeout releases the turn.
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-/// Links always open in the user's browser, never navigate the app window:
-/// in the Tauri webview a plain anchor navigation would load the URL in
-/// place, so external opens go through the opener plugin there.
-const openExternal = (url: string) => {
-  if (isTauri) {
-    void import("@tauri-apps/plugin-opener")
-      .then(m => m.openUrl(url))
-      .catch(() => {});
-  } else {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-};
-
 /// Anchor for markdown content: every link routes through `openExternal`.
 /// Images never load from model/tool-controlled URLs: injected markdown
 /// could otherwise exfiltrate via the image request (the CSP only allows
