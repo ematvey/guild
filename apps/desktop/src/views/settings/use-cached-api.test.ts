@@ -20,3 +20,16 @@ describe("quantizeIso", () => {
     expect(new Date(quantizeIso(60_000, Date.now())).toString()).not.toBe("Invalid Date");
   });
 });
+
+// The usage endpoints filter with an inclusive upper bound; the UI's
+// quantized `to` must therefore quantize UP, or events inside the current
+// (partial) bucket are silently dropped from the charts.
+describe("quantizeIso with a future timestamp", () => {
+  it("reaches into the current bucket", () => {
+    const granularity = 600_000;
+    const now = Math.floor(Date.now() / granularity) * granularity + 1;
+    const to = new Date(quantizeIso(granularity, now + granularity)).getTime();
+    expect(to).toBeGreaterThan(now);
+    // events at `now` pass an inclusive ts <= to filter
+  });
+});
