@@ -30,7 +30,12 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "rt"], optional 
 # `default-features = false` and get only the evaluation engine; the Starlark
 # parser runs at build time via guild-server's build script instead.
 [features]
-default = ["parser"]
+# Opt-in: starlark enables serde_json/arbitrary_precision cargo-globally,
+# which breaks internally-tagged serde deserialization in every binary
+# unifying this crate's features (guild-server's runtime graph). Consumers
+# needing the Starlark parser request it explicitly (guild-server's build
+# dependency edge); its own tests run with `--features parser`.
+default = []
 parser = ["dep:starlark", "dep:clap", "dep:tokio"]
 
 [[bin]]
