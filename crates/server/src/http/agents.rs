@@ -59,62 +59,43 @@ async fn create_session(
         .ok_or_else(|| ApiError::bad_request("missing workspace_name"))?;
     let dir = workspace_dir(&state, user.0.org_id, name)?;
     let store = state.store().await?;
+    // The name reservation, the chat/session inserts, and the workspace
+    // preparation share one transaction: the rows become visible only after
+    // the orphan reclaim and dir create succeeded, so list/get/run_turn can
+    // never observe a session whose directory is mid-reclaim (a slow or
+    // large orphan tree holds the uncommitted transaction, not a published
+    // session). A failure rolls the inserts back; the unique name index
+    // still serializes competing creates.
+    let mut tx = store.pool().begin().await?;
     let chat = store
         .chats()
-        .create_chat(user.0.org_id, user.0.id, Some(name), None)
+        .create_chat_on(&mut *tx, user.0.org_id, user.0.id, Some(name), None)
         .await?;
-    let session = match store
+    let session = store
         .agent_sessions()
-        .create(user.0.org_id, user.0.id, chat.id, name)
-        .await
-    {
-        Ok(s) => s,
+        .create_on(&mut *tx, user.0.org_id, user.0.id, chat.id, name)
+        .await?;
+    // No committed session holds the name, so any dir still on disk is an
+    // orphan a deleted account left behind. Reclaim it — the next user of
+    // the same workspace name must not inherit its files. A reclaim that
+    // cannot run (permissions, mounted files) must fail the request loudly:
+    // silently inheriting a foreign directory is the failure this reclaim
+    // exists to prevent — and the uncommitted rows roll back, so no usable
+    // session is left over the dirty workspace and a retry is not blocked
+    // by the name.
+    match tokio::fs::remove_dir_all(&dir).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => {
-            // A taken workspace name must not leave an orphan chat behind.
-            sqlx::query("DELETE FROM chats WHERE id = $1")
-                .bind(chat.id)
-                .execute(store.pool())
-                .await
-                .map_err(|del| ApiError::internal(format!("orphan chat cleanup failed: {del}")))?;
-            return Err(e);
+            return Err(ApiError::internal(format!(
+                "orphan workspace dir reclaim failed: {e}"
+            )));
         }
-    };
-    // The row exists, so no live session of this org holds the name: any
-    // dir still on disk is an orphan a deleted account left behind.
-    // Reclaim it — the next user of the same workspace name must not
-    // inherit its files. A reclaim that cannot run (permissions, mounted
-    // files) must fail the request loudly: silently inheriting a foreign
-    // directory is the failure this reclaim exists to prevent — and the
-    // session + chat rows are removed again, so no usable session is left
-    // over the dirty workspace and a retry is not blocked by the name.
-    let prepared = async {
-        match tokio::fs::remove_dir_all(&dir).await {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(ApiError::internal(format!(
-                    "orphan workspace dir reclaim failed: {e}"
-                )));
-            }
-        }
-        tokio::fs::create_dir_all(&dir)
-            .await
-            .map_err(|e| ApiError::internal(format!("workspace dir create failed: {e}")))
     }
-    .await;
-    if let Err(e) = prepared {
-        sqlx::query("DELETE FROM agent_sessions WHERE id = $1")
-            .bind(session.id)
-            .execute(store.pool())
-            .await
-            .map_err(|del| ApiError::internal(format!("session rollback failed: {del}")))?;
-        sqlx::query("DELETE FROM chats WHERE id = $1")
-            .bind(chat.id)
-            .execute(store.pool())
-            .await
-            .map_err(|del| ApiError::internal(format!("chat rollback failed: {del}")))?;
-        return Err(e);
-    }
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| ApiError::internal(format!("workspace dir create failed: {e}")))?;
+    tx.commit().await?;
     Ok(Json(
         serde_json::to_value(&session).expect("session serializes"),
     ))

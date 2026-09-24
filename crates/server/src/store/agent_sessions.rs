@@ -36,6 +36,20 @@ impl<'a> AgentSessionStore<'a> {
         chat_id: Uuid,
         workspace_name: &str,
     ) -> Result<AgentSessionRow, ApiError> {
+        self.create_on(self.pool, org_id, user_id, chat_id, workspace_name)
+            .await
+    }
+
+    /// The insert on a caller-supplied executor (the create handler runs it
+    /// inside its own transaction, uncommitted until the workspace is ready).
+    pub async fn create_on(
+        &self,
+        ex: impl sqlx::PgExecutor<'_>,
+        org_id: Uuid,
+        user_id: Uuid,
+        chat_id: Uuid,
+        workspace_name: &str,
+    ) -> Result<AgentSessionRow, ApiError> {
         if !valid_workspace_name(workspace_name) {
             return Err(ApiError::bad_request(
                 "workspace_name must be 1-64 chars of [a-zA-Z0-9-_]",
@@ -52,7 +66,7 @@ impl<'a> AgentSessionStore<'a> {
         .bind(user_id)
         .bind(chat_id)
         .bind(workspace_name)
-        .fetch_one(self.pool)
+        .fetch_one(ex)
         .await
         {
             Ok(row) => Ok(row),

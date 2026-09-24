@@ -2,6 +2,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use guild_server::test_support::{full_state, standalone_listener};
 use serde_json::{json, Value};
+use sqlx::Acquire as _;
 use tower::ServiceExt;
 
 /// A turn submits the durable ChatRunner workflow (spec 2026-09-18
@@ -386,4 +387,92 @@ async fn an_unreclaimable_orphan_dir_fails_the_session_create() {
         .await
         .unwrap();
     assert_eq!(chats, 0);
+}
+
+/// A create that is mid-preparation (here: its transaction blocked on a
+/// held table lock, standing in for a slow orphan-tree reclamation) has
+/// committed nothing: the session is not listable and the chat row is not
+/// visible. Rows publish only after the workspace is ready — a turn can
+/// never run against a directory that reclamation is still deleting.
+#[tokio::test]
+async fn a_session_mid_preparation_is_never_listable_or_runnable() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+
+    // Hold an uncommitted EXCLUSIVE lock on agent_sessions from a separate
+    // pooled connection: the create's INSERT queues behind it.
+    let mut conn = fs.store().pool().acquire().await.unwrap();
+    let mut lock_tx = conn.begin().await.unwrap();
+    sqlx::query("LOCK TABLE agent_sessions IN EXCLUSIVE MODE")
+        .execute(&mut *lock_tx)
+        .await
+        .unwrap();
+
+    let create = tokio::spawn({
+        let app = app.clone();
+        let token = fs.token.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/agents/sessions")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"workspace_name": "mid-ws"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    });
+
+    // Give the create time to reach its blocked INSERT, then observe.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agents/sessions")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(
+        !String::from_utf8(body.to_vec()).unwrap().contains("mid-ws"),
+        "a mid-preparation session must not be listable"
+    );
+    let chats: i64 = sqlx::query_scalar("SELECT count(*) FROM chats WHERE title = 'mid-ws'")
+        .fetch_one(fs.store().pool())
+        .await
+        .unwrap();
+    assert_eq!(chats, 0, "the chat row commits only with the workspace");
+
+    // Release the lock: the create completes and publishes normally.
+    lock_tx.rollback().await.unwrap();
+    drop(conn);
+    let res = create.await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agents/sessions")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8(body.to_vec()).unwrap().contains("mid-ws"),
+        "the committed session is listable"
+    );
 }
