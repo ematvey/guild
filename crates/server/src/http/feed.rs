@@ -409,9 +409,16 @@ async fn feed_task(
             continue;
         }
         if listener.listen("guild_thread_committed").await.is_err() {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             continue;
         }
+        // A fresh reconnect re-captures everything: views AND buffer
+        // signatures. Signatures that persist across the outage would make
+        // publish_views skip chats whose buffers did not move — updates
+        // committed while the listener was down (an approval card, a tool
+        // result) would never re-capture.
         feed.views.clear();
+        feed.signatures.clear();
         let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -1003,5 +1010,50 @@ mod tests {
         );
         assert_eq!(sent[0].1["call_id"], "call-1");
         assert_eq!(sent[0].1["is_error"], true);
+    }
+
+    /// After a listener outage the reconnect clears buffer signatures along
+    /// with the views: a chat whose buffers did not move while disconnected
+    /// (an approval card committed during the outage) must be re-captured
+    /// and re-broadcast, not skipped by the unchanged-signature filter.
+    #[tokio::test]
+    async fn reconnect_clears_signatures_so_unchanged_views_are_recaptured() {
+        let (ts, user, chat, _ingress) = setup().await;
+        ts.state.generations.attach(chat.id);
+        let (broadcast, _) = broadcast::channel(16);
+        let mut feed = Feed::new(
+            ts.state.clone(),
+            Arc::new(ts.store()),
+            user.0.org_id,
+            user.0.id,
+            broadcast.clone(),
+        );
+        feed.poll().await;
+        assert!(
+            feed.signatures.contains_key(&chat.id),
+            "the first capture records the buffer signature"
+        );
+
+        // Simulate the reconnect: views cleared, buffers unchanged.
+        feed.views.clear();
+        let mut receiver = broadcast.subscribe();
+
+        // Without the signature clear the chat is skipped: no re-capture,
+        // no broadcast — the committed-during-outage update is lost.
+        feed.poll().await;
+        let lost = tokio::time::timeout(Duration::from_millis(50), receiver.recv()).await;
+        assert!(lost.is_err(), "an unchanged signature suppresses recapture");
+
+        // The fix: the reconnect clears signatures too — the same poll now
+        // re-captures and re-broadcasts the view.
+        feed.signatures.clear();
+        feed.poll().await;
+        let recaptured = tokio::time::timeout(Duration::from_millis(500), receiver.recv())
+            .await
+            .expect("the view is re-captured after the reconnect")
+            .expect("broadcast alive");
+        assert!(
+            matches!(recaptured, WsServerMsg::ThreadState { chat_id, .. } if chat_id == chat.id)
+        );
     }
 }
