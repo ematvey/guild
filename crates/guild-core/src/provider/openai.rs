@@ -91,7 +91,7 @@ impl OpenAiProvider {
                         .map(|c: &ToolCall| {
                             serde_json::json!({
                                 "id": c.id, "type": "function",
-                                "function": {"name": c.name, "arguments": c.arguments.to_string()},
+                                "function": {"name": c.name, "arguments": match &c.arguments { serde_json::Value::String(raw) => raw.clone(), value => value.to_string() }},
                             })
                         })
                         .collect(),
@@ -449,6 +449,48 @@ mod tests {
         let tc = &body["messages"][1]["tool_calls"][0];
         assert_eq!(tc["id"], "c1");
         assert_eq!(tc["function"]["arguments"], r#"{"path":"a"}"#);
+        assert_eq!(body["messages"][2]["tool_call_id"], "c1");
+    }
+
+    #[test]
+    fn body_preserves_unparseable_tool_arguments() {
+        let msgs = vec![
+            Message::user("hi"),
+            Message {
+                role: "assistant".into(),
+                content: String::new(),
+                images: Vec::new(),
+                audio: Vec::new(),
+                tool_calls: Some(vec![ToolCall {
+                    id: "c1".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::Value::String(r#"{"path":"#.into()),
+                }]),
+                tool_call_id: None,
+                reasoning: None,
+            },
+            Message::tool_result("c1", "contents"),
+        ];
+        let tools = vec![ToolSpec {
+            name: "read_file".into(),
+            description: "read".into(),
+            parameters: serde_json::json!({"type": "object"}),
+            kind: Default::default(),
+        }];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: Some(&tools),
+            max_tokens: 0,
+        };
+        let body = OpenAiProvider::body(&req);
+        assert_eq!(body["tools"][0]["function"]["name"], "read_file");
+        let tc = &body["messages"][1]["tool_calls"][0];
+        assert_eq!(tc["id"], "c1");
+        assert_eq!(tc["function"]["arguments"], r#"{"path":"#);
         assert_eq!(body["messages"][2]["tool_call_id"], "c1");
     }
 
