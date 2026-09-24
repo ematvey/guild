@@ -691,7 +691,7 @@ pub(crate) async fn resolve_workspace(
     };
     let store = state.store().await?;
     let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT p.folder, p.machine_id, m.label \
+        "SELECT p.folder, p.machine_id, coalesce(m.label, p.machine_id) \
          FROM projects p \
          LEFT JOIN machines m ON m.machine_id = p.machine_id \
          WHERE p.id = $1 AND p.org_id = $2",
@@ -1600,15 +1600,17 @@ impl ChatRunner {
             .into_inner();
         // The machine is project-derived: the live project row wins over the
         // payload's captured binding, which may be stale after the project's
-        // machine was edited while a queued command waited.
+        // machine was edited while a queued command waited. The label follows
+        // the same row (registry label, machine-id fallback) — it is
+        // display-only but must never name a machine other than the executor.
         let turn_machine_id = workspace
             .as_ref()
             .and_then(|w| w.machine_id.clone())
             .or_else(|| req.machine_id.clone());
-        let turn_machine_label = workspace
-            .as_ref()
-            .and_then(|w| w.machine_label.clone())
-            .or_else(|| req.machine_label.clone());
+        let turn_machine_label = match workspace.as_ref() {
+            Some(w) => w.machine_label.clone(),
+            None => req.machine_label.clone(),
+        };
         // Phase 5a (spec 2026-09-18 unification): machine-mediated AGENTS.md
         // fetch. A web chat's caller cannot read files (browser tab), so when
         // no client-assembled chain arrived and the turn runs against a bound

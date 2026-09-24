@@ -438,4 +438,29 @@ async fn editing_a_projects_machine_rebinds_its_chats() {
         .unwrap();
     assert_eq!(after.machine_id.as_deref(), Some("machine-2"));
     assert_eq!(after.machine_label.as_deref(), Some("NODE2"));
+
+    // The label rule is uniform on every write path: registry label, with
+    // the machine id as the fallback when the machine is unlabelled.
+    register_test_machine(&fs.state, "machine-3", fs.user_id, fs.org_id, None).await;
+    let (status, body) = post_json(
+        &app,
+        &fs,
+        "PUT",
+        &format!("/api/v1/projects/{project_id}"),
+        json!({"machine_id": "machine-3"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["machine_label"], "machine-3");
+    let after = fs
+        .store()
+        .chats()
+        .get_chat(
+            fs.org_id,
+            chat_id,
+            &fs.store().identity().get_user(fs.user_id).await.unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(after.machine_label.as_deref(), Some("machine-3"));
 }
