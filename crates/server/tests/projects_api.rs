@@ -368,3 +368,70 @@ async fn project_binding_inherits_the_projects_machine() {
     assert_eq!(unbound["project_id"], Value::Null);
     assert_eq!(unbound["machine_id"], Value::Null);
 }
+
+/// Editing a project's machine re-binds its chats in the same transaction:
+/// a chat bound to a project runs where the project's folder lives, so its
+/// cached executor may never go stale against the edited folder.
+#[tokio::test]
+async fn editing_a_projects_machine_rebinds_its_chats() {
+    let fs = full_state().await;
+    register_test_machine(
+        &fs.state,
+        "machine-1",
+        fs.user_id,
+        fs.org_id,
+        Some("WORKSTATION"),
+    )
+    .await;
+    register_test_machine(&fs.state, "machine-2", fs.user_id, fs.org_id, Some("NODE2")).await;
+    let app = guild_server::build_router(fs.state.clone());
+
+    let (status, project) = post_json(
+        &app,
+        &fs,
+        "POST",
+        "/api/v1/projects",
+        json!({"name": "repo", "folder": "C:\\code\\repo", "machine_id": "machine-1"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{project}");
+    let project_id = project["id"].as_str().unwrap().parse::<uuid::Uuid>().unwrap();
+
+    let (status, chat) = post_json(
+        &app,
+        &fs,
+        "POST",
+        "/api/v1/chats",
+        json!({"title": "c1", "project_id": project_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{chat}");
+    assert_eq!(chat["machine_id"], "machine-1");
+
+    // Edit the project's executor: bound chats follow, including the label.
+    let (status, body) = post_json(
+        &app,
+        &fs,
+        "PUT",
+        &format!("/api/v1/projects/{project_id}"),
+        json!({"machine_id": "machine-2"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["machine_id"], "machine-2");
+    assert_eq!(body["machine_label"], "NODE2");
+
+    let chat_id: uuid::Uuid = chat["id"].as_str().unwrap().parse().unwrap();
+    let after = fs
+        .store()
+        .chats()
+        .get_chat(
+            fs.org_id,
+            chat_id,
+            &fs.store().identity().get_user(fs.user_id).await.unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(after.machine_id.as_deref(), Some("machine-2"));
+    assert_eq!(after.machine_label.as_deref(), Some("NODE2"));
+}

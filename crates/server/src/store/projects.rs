@@ -109,6 +109,7 @@ impl<'a> ProjectStore<'a> {
         machine_id: Option<&str>,
         archived: Option<bool>,
     ) -> Result<ProjectRow, ApiError> {
+        let mut tx = self.pool.begin().await?;
         let updated = sqlx::query_scalar::<_, Uuid>(
             "UPDATE projects SET \
              name = COALESCE($3, name), \
@@ -128,9 +129,22 @@ impl<'a> ProjectStore<'a> {
         .bind(machine_id)
         .bind(archived)
         .bind(user_id)
-        .fetch_optional(self.pool)
+        .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| ApiError::not_found("no such project"))?;
+        // The chat machine binding is project-derived: bound chats follow
+        // the project's machine (label from the machines registry) in the
+        // same transaction, so no send can pair the old executor with the
+        // edited folder.
+        sqlx::query(
+            "UPDATE chats SET machine_id = p.machine_id, machine_label = m.label \
+             FROM projects p LEFT JOIN machines m ON m.machine_id = p.machine_id \
+             WHERE p.id = $1 AND chats.project_id = p.id",
+        )
+        .bind(updated)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         self.fetch_by_id(updated).await
     }
 

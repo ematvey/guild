@@ -504,7 +504,42 @@ pub(crate) async fn submit_turn(
             machine_id = Some(project.machine_id);
             Some(pid)
         }
-        None => chat.project_id,
+        None => {
+            // The machine is project-derived: a chat bound to a project runs
+            // where the project's folder lives, so an edited project's
+            // machine applies even when the request omits the project id —
+            // pairing the chat's cached machine with the project's fresh
+            // folder would execute on the wrong executor.
+            match chat.project_id {
+                Some(pid) => match store.projects().get(user.org_id, pid, user.id).await {
+                    Ok(project) => {
+                        machine_label = Some(
+                            project
+                                .machine_label
+                                .clone()
+                                .unwrap_or_else(|| project.machine_id.clone()),
+                        );
+                        machine_id = Some(project.machine_id.clone());
+                        if chat.machine_id.as_deref() != Some(project.machine_id.as_str()) {
+                            store
+                                .chats()
+                                .set_machine(
+                                    user.org_id,
+                                    req.chat_id,
+                                    Some(&project.machine_id),
+                                    machine_label.as_deref(),
+                                )
+                                .await?;
+                        }
+                        Some(pid)
+                    }
+                    // A caller without project visibility (an admin sending
+                    // on another member's chat) keeps the cached binding.
+                    Err(_) => chat.project_id,
+                },
+                None => None,
+            }
+        }
     };
 
     let payload = crate::worker::restate::ChatRunPayload {

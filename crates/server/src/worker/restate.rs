@@ -589,11 +589,14 @@ pub const APPROVAL_POLICY_PROMPT_KEY: &str = "assistant_approval_policy_prompt";
 /// potentially unsafe actions). Admin-tunable in Assistant settings.
 pub const DEFAULT_APPROVAL_POLICY_PROMPT: &str = "You are the safety gate for an AI assistant that runs tools on the user's machine. You are given one proposed tool action as JSON. Decide whether it is safe to run automatically, without asking the user first.\n\nApprove routine, low-risk actions: reading files, ordinary read-only shell commands (ls, dir, cat, git status, git log, ping, date), writing or editing files inside the user's workspace, web searches, and fetching public URLs.\n\nAsk the user when the action is potentially unsafe: destructive or irreversible operations (deleting files or data, force-pushing, dropping or truncating databases, factory resets), anything touching files outside the workspace or system locations, installing or upgrading software, killing processes or services, sending credentials or secrets anywhere, spending money, sending messages or email on the user's behalf, or anything unusual for a coding assistant.\n\nReply with ONLY a JSON object, no other text: {\"approve\": true, \"reason\": \"one short sentence\"} where approve=true means run it silently and approve=false means the user must be asked first.";
 
-/// The workspace reference resolved from the chat's project: folder plus
-/// the machine's registry label.
+/// The workspace reference resolved from the chat's project: folder, the
+/// project's machine (the executor — re-derived live so an edited project
+/// never pairs its folder with the chat's cached machine), and the machine's
+/// registry label.
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub(crate) struct WorkspaceRef {
     pub folder: String,
+    pub machine_id: Option<String>,
     pub machine_label: Option<String>,
 }
 
@@ -643,8 +646,8 @@ pub(crate) async fn resolve_workspace(
         return Ok(None);
     };
     let store = state.store().await?;
-    let row: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT p.folder, m.label \
+    let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT p.folder, p.machine_id, m.label \
          FROM projects p \
          LEFT JOIN machines m ON m.machine_id = p.machine_id \
          WHERE p.id = $1 AND p.org_id = $2",
@@ -653,8 +656,9 @@ pub(crate) async fn resolve_workspace(
     .bind(org_id)
     .fetch_optional(store.pool())
     .await?;
-    Ok(row.map(|(folder, machine_label)| WorkspaceRef {
+    Ok(row.map(|(folder, machine_id, machine_label)| WorkspaceRef {
         folder,
+        machine_id,
         machine_label,
     }))
 }
@@ -1550,6 +1554,17 @@ impl ChatRunner {
             })
             .await?
             .into_inner();
+        // The machine is project-derived: the live project row wins over the
+        // payload's captured binding, which may be stale after the project's
+        // machine was edited while a queued command waited.
+        let turn_machine_id = workspace
+            .as_ref()
+            .and_then(|w| w.machine_id.clone())
+            .or_else(|| req.machine_id.clone());
+        let turn_machine_label = workspace
+            .as_ref()
+            .and_then(|w| w.machine_label.clone())
+            .or_else(|| req.machine_label.clone());
         // Phase 5a (spec 2026-09-18 unification): machine-mediated AGENTS.md
         // fetch. A web chat's caller cannot read files (browser tab), so when
         // no client-assembled chain arrived and the turn runs against a bound
@@ -1559,7 +1574,7 @@ impl ChatRunner {
         // exposes no mtime verb).
         let remote_context = if req.agents_md.is_none() && req.server_workspace.is_none() {
             fetch_context_via_machine(&ctx, &state, req.org_id, req.chat_id, workspace.clone(),
-                req.machine_id.clone(), turn_no, &req.user_message).await?
+                turn_machine_id.clone(), turn_no, &req.user_message).await?
         } else { protocol::ws::MachineContext::default() };
         let agents_md = req.agents_md.clone().or(remote_context.instructions.clone());
         let skills_index = req.skills_index.as_deref().unwrap_or(&remote_context.skills_index);
@@ -2154,8 +2169,8 @@ impl ChatRunner {
                             req.chat_id,
                             call,
                             format!("{step}.{idx}"),
-                            req.machine_id.clone(),
-                            req.machine_label.clone(),
+                            turn_machine_id.clone(),
+                            turn_machine_label.clone(),
                             workspace.as_ref().map(|w| w.folder.clone()),
                         )
                         .await?
@@ -2211,7 +2226,7 @@ impl ChatRunner {
                 };
                 let persisted_images = event_images.clone();
                 let event_id = durable_event_id(ctx.invocation_id(), &format!("tool:{step}:{idx}"));
-                let prefetch_target = req.machine_id.clone().zip(workspace.as_ref().map(|w| w.folder.clone()));
+                let prefetch_target = turn_machine_id.clone().zip(workspace.as_ref().map(|w| w.folder.clone()));
                 let prefetch_org = req.org_id;
                 ctx.run(move || {
                     let state = st.clone();
@@ -4078,6 +4093,7 @@ mod tests {
     fn system_prompt_org_persona_replaces_default_only() {
         let ws = WorkspaceRef {
             folder: "/w".into(),
+            machine_id: None,
             machine_label: None,
         };
         let p = build_system_prompt(
@@ -4250,6 +4266,7 @@ mod tests {
         let md = "Project conventions here.".to_string();
         let ws = WorkspaceRef {
             folder: "/home/u/repo".into(),
+            machine_id: None,
             machine_label: Some("box".into()),
         };
         let p = build_system_prompt(
