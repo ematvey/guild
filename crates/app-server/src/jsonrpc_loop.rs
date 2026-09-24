@@ -623,6 +623,17 @@ async fn pair_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<V
     let _ = out_tx.send(response_value(req.id, result));
 }
 
+/// The effective model for a `chat.send`: an explicit `params.model`
+/// overrides the session's current model (same as agent.start); without
+/// one, the session model stands, falling back to the default.
+fn resolve_chat_model(session_model: &str) -> String {
+    if session_model.is_empty() {
+        "gpt-4o-mini".to_string()
+    } else {
+        session_model.to_string()
+    }
+}
+
 async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let result = async {
         let text = param(&req, "text")?.to_string();
@@ -633,9 +644,10 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
                 .cloud()
                 .cloned()
                 .context("not logged in — call login first")?;
-            if s.model.is_empty() {
-                s.model = req.params["model"].as_str().unwrap_or("gpt-4o-mini").to_string();
+            if let Some(m) = req.params["model"].as_str() {
+                s.model = m.to_string();
             }
+            s.model = resolve_chat_model(&s.model);
             (cloud, s.chat_id, s.model.clone())
         };
         let chat_id = match existing_chat {
@@ -1265,6 +1277,32 @@ mod machine_link_tests {
         assert!(
             link_rx.borrow_and_update().is_none(),
             "sign-out drops the link"
+        );
+    }
+
+    /// `chat.send --model X` applies even when the session already has a
+    /// model — the explicit request wins (agent.start semantics), and a
+    /// send without a model keeps the session's standing model.
+    #[test]
+    fn chat_send_model_applies_over_an_existing_session_model() {
+        assert_eq!(resolve_chat_model("kept"), "kept");
+        assert_eq!(resolve_chat_model(""), "gpt-4o-mini");
+        // the same override logic chat_send_task applies under the lock:
+        let mut session_model = "m1".to_string();
+        let requested: Option<&str> = Some("m2");
+        if let Some(m) = requested {
+            session_model = m.to_string();
+        }
+        session_model = resolve_chat_model(&session_model);
+        assert_eq!(session_model, "m2");
+        let requested: Option<&str> = None;
+        if let Some(m) = requested {
+            session_model = m.to_string();
+        }
+        session_model = resolve_chat_model(&session_model);
+        assert_eq!(
+            session_model, "m2",
+            "no model param keeps the session model"
         );
     }
 
