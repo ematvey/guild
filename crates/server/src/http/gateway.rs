@@ -632,6 +632,9 @@ pub async fn dispatch_turn_commands(state: &AppState, chat: Option<Uuid>) -> Res
         if let Err(error) = result {
             // An accepted-but-unacknowledged invocation may already stream.
             // Keep that generation attached while its durable claim is live.
+            // A failed status read counts as not-running: the release must
+            // never be skipped, or the chat's queue wedges until restart
+            // (a genuinely running command re-claims via attach_with_id).
             let running = store
                 .turn_commands()
                 .existing(
@@ -641,8 +644,9 @@ pub async fn dispatch_turn_commands(state: &AppState, chat: Option<Uuid>) -> Res
                     command.chat_id,
                     &command.request,
                 )
-                .await?
-                .is_some_and(|row| row.status == "running");
+                .await
+                .map(|row| row.is_some_and(|row| row.status == "running"))
+                .unwrap_or(false);
             if !running {
                 state
                     .generations
