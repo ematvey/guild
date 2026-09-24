@@ -683,8 +683,11 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
             !s.agent_running,
             "an agent run is already in progress for this session"
         );
-        s.agent_running = true;
         let prompt = param(&req, "prompt")?.to_string();
+        // Set only after every param check: an early error return must not
+        // wedge the session flag (every later start would report "already
+        // in progress" until restart).
+        s.agent_running = true;
         Ok((cloud, project_dir, s.model.clone(), prompt, machine_id))
     })() {
         Ok(v) => v,
@@ -1230,6 +1233,45 @@ mod machine_link_tests {
         assert!(
             link_rx.borrow_and_update().is_none(),
             "sign-out drops the link"
+        );
+    }
+}
+
+#[cfg(test)]
+mod agent_start_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn missing_prompt_does_not_wedge_the_session_flag() {
+        let shared = Shared::new(Session::default());
+        let req = |id: u64| Request {
+            jsonrpc: "2.0".into(),
+            id,
+            protocol: protocol::rpc::PROTOCOL_VERSION,
+            method: "agent.start".into(),
+            params: serde_json::json!({ "project_dir": "/tmp/x" }),
+        };
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        agent_start_task(shared.clone(), req(1), out_tx.clone()).await;
+        let first = out_rx.recv().await.unwrap();
+        assert!(
+            first.get("error").is_some(),
+            "missing prompt is an error: {first}"
+        );
+        assert!(
+            !first["error"]["message"].as_str().unwrap_or("").contains("already in progress"),
+            "the flag must not wedge: {first}"
+        );
+        assert!(!shared.session.lock().unwrap().agent_running);
+
+        // The next start reaches the real validation path (not logged in
+        // here) instead of the false "already in progress".
+        agent_start_task(shared.clone(), req(2), out_tx).await;
+        let second = out_rx.recv().await.unwrap();
+        let msg = second["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            !msg.contains("already in progress"),
+            "session wedged by the failed start: {second}"
         );
     }
 }
