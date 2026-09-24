@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(a.chat_id, CHAT);
         assert_eq!(a.filename, "report.xlsx");
         let abs = dir.join(&rel);
-        let b = parse_artifact_path(&dir, &abs.to_str().unwrap()).unwrap();
+        let b = parse_artifact_path(&dir, abs.to_str().unwrap()).unwrap();
         assert_eq!(a, b);
         assert_eq!(a.rel_path(), rel);
         std::fs::remove_dir_all(&dir).ok();
