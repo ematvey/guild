@@ -84,19 +84,37 @@ async fn create_session(
     // Reclaim it — the next user of the same workspace name must not
     // inherit its files. A reclaim that cannot run (permissions, mounted
     // files) must fail the request loudly: silently inheriting a foreign
-    // directory is the failure this reclaim exists to prevent.
-    match tokio::fs::remove_dir_all(&dir).await {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            return Err(ApiError::internal(format!(
-                "orphan workspace dir reclaim failed: {e}"
-            )));
+    // directory is the failure this reclaim exists to prevent — and the
+    // session + chat rows are removed again, so no usable session is left
+    // over the dirty workspace and a retry is not blocked by the name.
+    let prepared = async {
+        match tokio::fs::remove_dir_all(&dir).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(ApiError::internal(format!(
+                    "orphan workspace dir reclaim failed: {e}"
+                )));
+            }
         }
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| ApiError::internal(format!("workspace dir create failed: {e}")))
     }
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|e| ApiError::internal(format!("workspace dir create failed: {e}")))?;
+    .await;
+    if let Err(e) = prepared {
+        sqlx::query("DELETE FROM agent_sessions WHERE id = $1")
+            .bind(session.id)
+            .execute(store.pool())
+            .await
+            .map_err(|del| ApiError::internal(format!("session rollback failed: {del}")))?;
+        sqlx::query("DELETE FROM chats WHERE id = $1")
+            .bind(chat.id)
+            .execute(store.pool())
+            .await
+            .map_err(|del| ApiError::internal(format!("chat rollback failed: {del}")))?;
+        return Err(e);
+    }
     Ok(Json(
         serde_json::to_value(&session).expect("session serializes"),
     ))
