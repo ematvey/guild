@@ -468,7 +468,10 @@ mod tests {
             &tmp.join("home"),
         );
         let doc = touch(&real_project, "AGENTS.md", "hello");
-        assert_eq!(read_text_with(&allow, doc.to_str().unwrap()).unwrap(), "hello");
+        assert_eq!(
+            read_text_with(&allow, doc.to_str().unwrap()).unwrap(),
+            "hello"
+        );
         assert_eq!(read_text_with(&allow, "AGENTS.md").unwrap(), "hello");
         write_text_with(&allow, "notes/x.txt", "written").unwrap();
         assert_eq!(

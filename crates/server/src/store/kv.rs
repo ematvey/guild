@@ -63,12 +63,10 @@ impl<'a> KvStore<'a> {
     /// Deletes entries under the given key prefixes whose last write is
     /// older than the cutoff (days). Bounded-key namespaces (e.g. durable
     /// effect claims) use this in the hourly maintenance loop.
-    pub async fn prune_older_than(
-        &self,
-        prefixes: &[&str],
-        days: i32,
-    ) -> Result<u64, ApiError> {
-        let mut query = String::from("DELETE FROM server_kv WHERE updated_at < now() - make_interval(days => $1) AND (");
+    pub async fn prune_older_than(&self, prefixes: &[&str], days: i32) -> Result<u64, ApiError> {
+        let mut query = String::from(
+            "DELETE FROM server_kv WHERE updated_at < now() - make_interval(days => $1) AND (",
+        );
         for (i, prefix) in prefixes.iter().enumerate() {
             if i > 0 {
                 query.push_str(" OR ");
