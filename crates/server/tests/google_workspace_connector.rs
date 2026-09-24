@@ -88,6 +88,84 @@ DQIDAQAB
 const CLIENT_EMAIL: &str = "svc@guild-test.iam.gserviceaccount.com";
 const ADMIN_EMAIL: &str = "gw-admin@example.com";
 const FAKE_ACCESS_TOKEN: &str = "fake-access-token-1";
+
+/// A second generated fake keypair — the credential another org would
+/// configure under the same client_email.
+const SECOND_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----
+\
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDI5+I6WLRKdXcY
+\
+/gacF5sWFKPMNSLE7vKWGCrupANyfHBteLQwpDQG9YOrChM0PRhgx8YUwpZQHc5p
+\
+tAdjxSG6+E2g30QFoMQtTVkCYWf6/AeH6T9ZrSPaAnT7r4F8DfvVGZO6wGiN69Vu
+\
+cZFGunoZM9Qq7FpRMWI0JHhGqhxO5w1eBed0kTqcJt7aDeRwfCI++i4zBViTUxZA
+\
+YwmFdp9oudrrHXZ26N4Q1BTBfntv4OHgZ8bp1UhfAlmrkdQqnsEx/wXcL312Rjui
+\
+EfOoZaHS+jXqKkzhCAXPH4RMCTQ9gia9aoa2rvWb+bNnXEOt/3LhJnyT09Vs8Aq0
+\
+oKobte/9AgMBAAECggEABpsxYi/GhehE6Up5Fyrji59UH4Pjx8v/qBXVW5GDF4Gm
+\
+BMOCUVMk7tGl6brkFMSph40qI0aewLWqMumbkJlL2aUOkGqnBvRZXw/7DEv9qlAd
+\
+Q0fVMHK0ChgolpoXzOd8z24O4IYxKfGGTCJp34SEPU3p/RtWgPL5wrMsTU6Mrb92
+\
+SKQY9LjkGG4x3qwabv4e8Ocv4rJmZdqyiMvkxWASXm6lXZBkNijA3MAd9VDCxFO+
+\
+qcGTFZtBEbiNjhwxVLOeNoWPwuZjZwR7buz+F//WOKz6IYV6UwHhk71A3oVWmfH+
+\
+XIryoa1mSBStol3PJanGGebI4ZAD4a/VxXRY6JFpNQKBgQD05BZDz8KE+TDzA105
+\
+9D507zSlpp+EnxlJWGqtxPJwV1iHPs+3k00QR1CIDO6YXZb7Nm53FnintoM5Zjou
+\
+cvYDKvf7ES+PIO2AU9OVdVWkhF2PGH7djWiaqwgwbw9dVUd/S/5jqyVVA3NJs+W6
+\
+r6s3KUeLsoCKdx49V2s+S08bpwKBgQDSBP98lQau08ASdloNjDZR1nfeF/I7CVwV
+\
+58zubhejEbwb7xgySnzqPN1kYgiwsUraP/tZqftBY4W+5nTRcivIG7lvtm5BFZF2
+\
+Ho6NH7UWEvQ5tRY/ogCFrVFYZ3bqHjWg2H+ZK5uwVpl0JkierTPUpOChP02oITZ8
+\
+Ey+tCrD7uwKBgQCq4OTwWG5hHwia6YQJxnY2XhucYxH4FpQsa7e0nTKWVTx+0sNa
+\
+Uzx42WpGJM/wHY4WqLqX+mQikuYqDT0X4DvtpfP3itxmwRE4dEW1inRCIeKu0Obl
+\
+baDKHAHQ2g4ckD8dgkd2AJxCH/A4Q4FPrPiJuxIjVmD/PXMqVm+MvjvrDQKBgC+x
+\
+qN9+7GSZe931eJ/o/pD5NoF+SKk1h+8FlBl1cPK8XU6urn0FQ3biWZipVrXhnVER
+\
+BKCpJIEF++KNbWv/FIg+G4+OC13GayE68T6FO9eGeGX+hM3wmVPCN13vKScjsyQS
+\
+5m8/YvzZvcGNzCIUzVd2FfkoahdLa5cjuEkAy45vAoGAUw2N3SBI0be7johrAtrO
+\
+KtaUPnrGgk7mzHwK1X5Hen5yMeapiPwfW2oHP+ts9YpF/az1GyjBjJNQUZ3N4B5R
+\
+B5RHbcpDnHNp/4Ua6Pq5nGe/+ti16x3hg4jUtD6ABJMEDUO83IUkrmSDO6s5jsUD
+\
+zGC+rXxhPy6L/CAlIawnmgg=
+\
+-----END PRIVATE KEY-----
+";
+
+const SECOND_PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----
+\
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyOfiOli0SnV3GP4GnBeb
+\
+FhSjzDUixO7ylhgq7qQDcnxwbXi0MKQ0BvWDqwoTND0YYMfGFMKWUB3OabQHY8Uh
+\
+uvhNoN9EBaDELU1ZAmFn+vwHh+k/Wa0j2gJ0+6+BfA371RmTusBojevVbnGRRrp6
+\
+GTPUKuxaUTFiNCR4RqocTucNXgXndJE6nCbe2g3kcHwiPvouMwVYk1MWQGMJhXaf
+\
+aLna6x12dujeENQUwX57b+Dh4GfG6dVIXwJZq5HUKp7BMf8F3C99dkY7ohHzqGWh
+\
+0vo16ipM4QgFzx+ETAk0PYImvWqGtq71m/mzZ1xDrf9y4SZ8k9PVbPAKtKCqG7Xv
+\
+/QIDAQAB
+\
+-----END PUBLIC KEY-----
+";
 const SCOPES: &str = "https://www.googleapis.com/auth/gmail.readonly \
                       https://www.googleapis.com/auth/calendar.readonly \
                       https://www.googleapis.com/auth/drive.readonly \
@@ -640,4 +718,271 @@ async fn api_passthrough_carries_identity_token() {
         .await
         .unwrap();
     assert_eq!(out.meta.unwrap()["status"], 200);
+}
+
+// ---------- cache isolation ----------
+
+/// Another org configured the same client_email (not a secret) with its own
+/// RSA key: the credential is part of the cache key, so the second org
+/// never receives the first org's cached token — it signs its own exchange
+/// (which also means a rotated/revoked key cannot ride a stale cache entry
+/// past a `test_connection`).
+#[tokio::test]
+async fn different_private_keys_under_one_client_email_never_share_cached_tokens() {
+    let server = MockServer::start().await;
+    mount_token_endpoint(&server, 3600).await;
+    Mock::given(method("GET"))
+        .and(path("/gmail/v1/users/me/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "messages": [],
+            "resultSizeEstimate": 0
+        })))
+        .mount(&server)
+        .await;
+
+    let cfg = config(&server);
+    let c = connector();
+    let second_secrets = vec![
+        (
+            "service_account_json".to_string(),
+            json!({
+                "type": "service_account",
+                "project_id": "guild-test",
+                "client_email": CLIENT_EMAIL,
+                "private_key": SECOND_PRIVATE_KEY,
+                "token_uri": "https://oauth2.googleapis.com/token"
+            })
+            .to_string(),
+        ),
+        ("admin_email".to_string(), ADMIN_EMAIL.to_string()),
+    ];
+    c.execute(
+        &cfg,
+        "gmail_search",
+        json!({"query": "q"}),
+        &secrets(),
+        None,
+    )
+    .await
+    .expect("first credential succeeds");
+    c.execute(
+        &cfg,
+        "gmail_search",
+        json!({"query": "q"}),
+        &second_secrets,
+        None,
+    )
+    .await
+    .expect("second credential succeeds");
+
+    // Two credentials under one client_email: two exchanges, no sharing.
+    let token_calls = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.url.path() == "/token")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        token_calls.len(),
+        2,
+        "each credential exchanges its own token"
+    );
+    // The second exchange was signed with the SECOND key.
+    let second_assertion = token_calls
+        .last()
+        .map(|r| String::from_utf8(r.body.clone()).unwrap())
+        .map(|body| {
+            body.split('&')
+                .find_map(|pair| pair.strip_prefix("assertion="))
+                .unwrap()
+                .to_string()
+        })
+        .unwrap();
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.set_audience(&[cfg["token_url"].as_str().unwrap()]);
+    jsonwebtoken::decode::<GwClaims>(
+        &second_assertion,
+        &jsonwebtoken::DecodingKey::from_rsa_pem(SECOND_PUBLIC_KEY.as_bytes()).unwrap(),
+        &validation,
+    )
+    .expect("the second exchange is signed by the second credential");
+}
+
+// ---------- script-caller identity (HTTP path) ----------
+
+/// A member's API key calling a read tool mints Google tokens as the
+/// MEMBER'S email — never the admin/default subject (any member can mint a
+/// key; the default subject is the domain-wide-delegation admin, so an
+/// unmapped caller must never fall back to it). An admin-minted org key
+/// keeps the designed admin default. The gateway also refuses a non-admin
+/// call with no resolvable identity on this impersonating connector
+/// (unit-level guard in the script handler).
+#[tokio::test]
+async fn member_api_key_never_mints_the_admin_subject() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    let server = MockServer::start().await;
+    mount_token_endpoint(&server, 3600).await;
+    Mock::given(method("GET"))
+        .and(path("/gmail/v1/users/me/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "messages": [],
+            "resultSizeEstimate": 0
+        })))
+        .mount(&server)
+        .await;
+
+    let db = guild_server::store::Store::connect_test()
+        .await
+        .expect("postgres");
+    let state = guild_server::state::AppState::with_store(
+        std::sync::Arc::new(db.store.clone()),
+        guild_server::config::Config::test_config(),
+    );
+    let store = db.store.clone();
+    let admin_id = store
+        .identity()
+        .ensure_bootstrap_admin("gw-owner@example.org", "hunter226")
+        .await
+        .unwrap();
+    let admin = store.identity().get_user(admin_id).await.unwrap();
+    let org = admin.org_id;
+    let member = store
+        .identity()
+        .create_user(org, "gw-member@example.org", "hunter226", "member")
+        .await
+        .unwrap();
+    let member_email = store.identity().get_user(member.id).await.unwrap().email;
+
+    store
+        .integrations()
+        .upsert(
+            org,
+            "google_workspace",
+            &json!({
+                "api_base": server.uri(),
+                "token_url": format!("{}/token", server.uri()),
+                "admin_email": ADMIN_EMAIL,
+            }),
+            true,
+        )
+        .await
+        .unwrap();
+    store
+        .integration_secrets()
+        .upsert(
+            org,
+            "google_workspace",
+            "service_account_json",
+            &service_account_json(),
+            &[0u8; 32],
+        )
+        .await
+        .unwrap();
+
+    let app = guild_server::build_router(state);
+    let call = |app: axum::Router, auth: String| async move {
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/integrations/google_workspace/tools/gmail_search")
+                .header("authorization", format!("Bearer {auth}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"query": "q"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    };
+
+    // The member mints their own key and searches Gmail.
+    let (_, member_token) = store.identity().create_session(member.id).await.unwrap();
+    let mint = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/api-keys")
+                .header("authorization", format!("Bearer {member_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"name": "k"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mint.status(), axum::http::StatusCode::OK);
+    let minted: Value = serde_json::from_slice(
+        &axum::body::to_bytes(mint.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let res = call(
+        app.clone(),
+        minted["plaintext"].as_str().unwrap().to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), axum::http::StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["ok"], true, "{body}");
+    // The token subject is the member's own email, not the admin's.
+    let assertion = captured_assertion(&server).await;
+    verify_service_account_jwt(
+        &assertion,
+        &member_email,
+        &format!("{}/token", server.uri()),
+    );
+
+    // An admin-minted org key (no separate owner) resolves to the ADMIN's
+    // own email — the designed default subject for the one principal that
+    // holds the delegation.
+    let org_key = store
+        .api_keys()
+        .create(org, admin_id, "org", None, None)
+        .await
+        .unwrap();
+    let res = call(app, org_key.plaintext).await;
+    assert_eq!(res.status(), axum::http::StatusCode::OK);
+
+    // Two exchanges: the first as the member, the second as the admin —
+    // each caller's own identity, never someone else's.
+    let token_calls: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.url.path() == "/token")
+        .map(|r| String::from_utf8(r.body).unwrap())
+        .collect();
+    assert_eq!(token_calls.len(), 2, "each caller exchanges its own token");
+    let sub_of = |body: &String| {
+        body.split('&')
+            .find_map(|pair| pair.strip_prefix("assertion="))
+            .unwrap()
+            .to_string()
+    };
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.set_audience(&[format!("{}/token", server.uri())]);
+    let decode = |assertion: &str| {
+        jsonwebtoken::decode::<GwClaims>(
+            assertion,
+            &jsonwebtoken::DecodingKey::from_rsa_pem(FAKE_PUBLIC_KEY.as_bytes()).unwrap(),
+            &validation,
+        )
+        .unwrap()
+        .claims
+        .sub
+    };
+    assert_eq!(decode(&sub_of(&token_calls[0])), member_email);
+    // The org key's principal is the admin account itself (its login
+    // email) — not some other principal's identity.
+    assert_eq!(decode(&sub_of(&token_calls[1])), admin.email);
 }

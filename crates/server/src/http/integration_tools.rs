@@ -75,10 +75,16 @@ impl FromRequestParts<AppState> for IntegrationCaller {
             .await
             .map(|u| u.role)
             .unwrap_or_else(|_| "member".to_string());
+        // The key's owner is the acting principal: the email is loaded, not
+        // left unset — an unmapped caller would otherwise fall through to
+        // the connectors' admin/default subject and read another person's
+        // mailbox, Drive, calendar.
+        let owner = key.user_id.unwrap_or(key.created_by);
+        let email = store.identity().get_user(owner).await.ok().map(|u| u.email);
         Ok(Self {
             org: key.org_id,
-            user_id: key.created_by,
-            email: None,
+            user_id: owner,
+            email,
             role,
         })
     }
@@ -185,6 +191,13 @@ async fn execute_tool(
     let is_admin = caller.role == "admin" || caller.role == "owner";
     let acting_as = resolve_acting_as(caller.email.as_deref(), override_, is_admin)
         .map_err(|_| ApiError::forbidden())?;
+    // Impersonating connectors (Google domain-wide delegation) mint the
+    // token subject from the acting identity — no resolved identity would
+    // fall back to the admin subject, i.e. a non-admin reading the admin's
+    // mailbox. The call is refused instead of defaulted.
+    if acting_as.is_none() && !is_admin && turn.slug == "google_workspace" {
+        return Err(ApiError::forbidden());
+    }
     let raw = unnamespaced_tool(&turn.slug, &tool)
         .or_else(|| unnamespaced_tool(&turn.slug, &info.spec.name))
         .unwrap_or(info.spec.name.as_str());

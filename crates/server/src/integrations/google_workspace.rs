@@ -40,8 +40,13 @@ const MAX_BODY_CHARS: usize = 8000;
 const API_MAX_CHARS: usize = 1024 * 1024;
 
 pub struct GoogleWorkspace {
-    /// Access tokens keyed by `token_url|client_email|subject` — one cache
-    /// entry per acting identity, shared across calls in this process.
+    /// Access tokens keyed by
+    /// `token_url|client_email|subject|secret-fingerprint` — one cache
+    /// entry per acting identity AND credential, shared across calls in
+    /// this process. The full secret is part of the key: a different
+    /// private key under the same client_email (another org reusing the
+    /// id, or a rotation) never reads another credential's cached token,
+    /// and a rotated/revoked key misses the cache and re-exchanges.
     tokens: Mutex<HashMap<String, CachedToken>>,
 }
 
@@ -136,7 +141,13 @@ async fn access_token(
 ) -> Result<String, String> {
     let (client_email, private_key) = service_account(secrets)?;
     let token_url = token_url(config);
-    let cache_key = format!("{token_url}|{client_email}|{sub}");
+    let secret_fingerprint = {
+        use sha2::Digest;
+        hex::encode(sha2::Sha256::digest(
+            secret(secrets, "service_account_json")?.as_bytes(),
+        ))
+    };
+    let cache_key = format!("{token_url}|{client_email}|{sub}|{secret_fingerprint}");
     {
         let cache = connector.tokens.lock().await;
         if let Some(cached) = cache.get(&cache_key) {
