@@ -61,8 +61,32 @@ impl TurnCommandStore<'_> {
         event: &protocol::api::ThreadEvent,
     ) -> Result<TurnCommand, ApiError> {
         let mut tx = self.pool.begin().await?;
-        // The row lock serializes acceptance against archiving: a send that
-        // races the archive either sees `archived_at` here (rejected, no
+        // Lock order is project → chat, the same as adoption (machines →
+        // projects → chats) and the project/binding writers: the requested
+        // project's row is locked FIRST. Its machine binding is read under
+        // that lock — the payload's machine snapshot can predate an adoption
+        // re-key, and reinstating it would move the chat back to the
+        // pre-adoption id; adoption waits on this lock and re-keys after.
+        let requested_project = match request.get("project_id").and_then(Value::as_str) {
+            Some(project) => {
+                let project: Uuid = project
+                    .parse()
+                    .map_err(|_| ApiError::bad_request("invalid project"))?;
+                let binding: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+                    "SELECT p.machine_id, m.label FROM projects p \
+                     LEFT JOIN machines m ON m.machine_id = p.machine_id \
+                     WHERE p.id = $1 AND p.org_id = $2 FOR UPDATE OF p",
+                )
+                .bind(project)
+                .bind(org)
+                .fetch_optional(&mut *tx)
+                .await?;
+                Some((project, binding))
+            }
+            None => None,
+        };
+        // The chat row lock serializes acceptance against archiving: a send
+        // that races the archive either sees `archived_at` here (rejected, no
         // command row) or commits first (the archive then settles it). A
         // command can therefore never be accepted into an archived chat and
         // hang undispatched; unarchive never resurrects settled commands.
@@ -93,23 +117,7 @@ impl TurnCommandStore<'_> {
             ));
         }
         if inserted {
-            if let Some(project) = request.get("project_id").and_then(Value::as_str) {
-                let project: Uuid = project
-                    .parse()
-                    .map_err(|_| ApiError::bad_request("invalid project"))?;
-                // Machine binding is project-derived and read under the
-                // same tx (project row locked): the payload's machine
-                // snapshot can predate an adoption re-key, and reinstating
-                // it would move the chat back to the pre-adoption id.
-                let binding: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-                    "SELECT p.machine_id, m.label FROM projects p \
-                     LEFT JOIN machines m ON m.machine_id = p.machine_id \
-                     WHERE p.id = $1 AND p.org_id = $2 FOR UPDATE OF p",
-                )
-                .bind(project)
-                .bind(org)
-                .fetch_optional(&mut *tx)
-                .await?;
+            if let Some((project, binding)) = requested_project {
                 match binding {
                     Some((machine_id, label)) => {
                         sqlx::query(
