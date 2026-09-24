@@ -156,6 +156,19 @@ impl AuthState {
         let _ = link.send(cfg);
     }
 
+    /// Adopts a store reloaded by ANOTHER process (the token.json watcher):
+    /// memory only — no persist (the store is the source) and no publish
+    /// (the watcher owns the link send with its own dedup).
+    pub fn adopt_stored(&mut self, stored: &session_store::StoredSession) {
+        self.cloud = Some(CloudClient {
+            base_url: stored.base_url.clone(),
+            token: stored.token.clone(),
+        });
+        self.email = stored.email.clone();
+        self.machine_id = stored.machine_id.clone();
+        self.client_id = stored.client_id.clone();
+    }
+
     /// The store row for the current state (`Some` while logged in).
     fn stored(&self) -> Option<StoredSession> {
         let cloud = self.cloud.as_ref()?;
