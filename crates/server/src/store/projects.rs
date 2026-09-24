@@ -133,11 +133,11 @@ impl<'a> ProjectStore<'a> {
         .await?
         .ok_or_else(|| ApiError::not_found("no such project"))?;
         // The chat machine binding is project-derived: bound chats follow
-        // the project's machine (label from the machines registry) in the
-        // same transaction, so no send can pair the old executor with the
-        // edited folder.
+        // the project's machine (registry label, machine-id fallback — the
+        // same rule the acceptance path writes) in the same transaction, so
+        // no send can pair the old executor with the edited folder.
         sqlx::query(
-            "UPDATE chats SET machine_id = p.machine_id, machine_label = m.label \
+            "UPDATE chats SET machine_id = p.machine_id, machine_label = coalesce(m.label, p.machine_id) \
              FROM projects p LEFT JOIN machines m ON m.machine_id = p.machine_id \
              WHERE p.id = $1 AND chats.project_id = p.id",
         )
