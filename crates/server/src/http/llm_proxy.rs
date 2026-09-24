@@ -89,7 +89,11 @@ pub async fn dispatch(
     // The tighter limit wins when both sides set one: a client asking for
     // less than the route cap must not be billed for output it did not ask
     // for (0 = provider default).
-    let max_tokens = match (route.max_output_tokens, client_max_tokens) {
+    // A nonpositive route cap (legacy row, hand-edited DB) is not a cap:
+    // through min() it would erase a positive client limit. Normalize to
+    // absent ("provider default") before combining.
+    let route_cap = route.max_output_tokens.filter(|c| *c > 0);
+    let max_tokens = match (route_cap, client_max_tokens) {
         (Some(route_cap), Some(client)) => Some(route_cap.min(client)),
         (route_cap, client) => route_cap.or(client),
     }
