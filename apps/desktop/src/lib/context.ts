@@ -115,6 +115,8 @@ async function scanDir(
   const entries = await fs.listDir(projectDir, skillsDir);
   const out: SkillEntry[] = [];
   for (const entry of entries) {
+    // Dot-entries are never skills (install staging / backup dirs).
+    if (entry.name.startsWith(".")) continue;
     const path = entry.kind === "dir" ? `${skillsDir}/${entry.name}/SKILL.md` : `${skillsDir}/${entry.name}`;
     const body = await fs.readText(projectDir, path);
     if (body === null) continue;

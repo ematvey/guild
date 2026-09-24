@@ -250,3 +250,37 @@ async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
         "1.1.0"
     );
 }
+
+/// A failed upgrade extract leaves no staging dir behind (scanners would
+/// index it as a skill) and keeps the previous install intact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_upgrade_extract_leaves_no_staging_dir() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path(
+            "/api/v1/registry/skill/broken/2.0.0/bundle",
+        ))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(b"not a bundle".to_vec()))
+        .mount(&server)
+        .await;
+    let cloud = CloudClient {
+        base_url: server.uri(),
+        token: "t".into(),
+    };
+    let project = scratch("brokenup");
+    let skills = project.join(".agents/skills");
+    let dest = make_skill(&skills, "broken");
+    let err =
+        registry_client::install_skill(&cloud, &project, "broken", Some("2.0.0"), false, "").await;
+    assert!(err.is_err());
+    assert!(
+        dest.join("SKILL.md").is_file(),
+        "the previous install survives"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(&skills)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with('.'))
+        .collect();
+    assert!(leftovers.is_empty(), "staging leaked: {leftovers:?}");
+}
