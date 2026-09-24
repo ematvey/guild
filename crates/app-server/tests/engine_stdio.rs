@@ -204,7 +204,7 @@ async fn engine_stdio_pair_flow() {
     let created = srv
         .store()
         .pairing()
-        .create(srv.org_id, srv.user_id, 30)
+        .create(srv.org_id, srv.user_id, 30, None)
         .await
         .unwrap();
 
