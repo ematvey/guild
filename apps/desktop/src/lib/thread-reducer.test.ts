@@ -56,6 +56,17 @@ const artifactMeta = {
   },
 };
 
+/** The server's spilled ToolResult writes the card keys FLAT on meta —
+ * the exact shape spill::artifact_meta produces (same keys/values). */
+const artifactMetaFlat = {
+  card: "artifact",
+  id: "11111111-1111-1111-1111-111111111111",
+  filename: "report.xlsx",
+  content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  size_bytes: 14821,
+  path: ".guild/artifacts/chat-1/report.xlsx",
+};
+
 describe("applyState: replay-during-generating (incremental, not re-derived)", () => {
   it("applies only the new events per publish; earlier blocks keep identity", () => {
     const r = createThreadReducer();
@@ -417,6 +428,17 @@ describe("artifact card on spilled tool_result frames", () => {
     expect(orphan.blocks).toHaveLength(1);
     expect(orphan.blocks[0].tool!.status).toBe("done");
     expect(artifactCardOf(orphan.blocks[0].tool!)?.filename).toBe("report.xlsx");
+  });
+
+  it("renders the server's flat card shape (spill::artifact_meta output)", () => {
+    expect(artifactCardOf({ meta: artifactMetaFlat })?.filename).toBe("report.xlsx");
+    expect(artifactCardOf({ meta: artifactMetaFlat })?.id).toBe(
+      "11111111-1111-1111-1111-111111111111",
+    );
+    // A nested card still renders (compatibility).
+    expect(artifactCardOf({ meta: artifactMeta })?.filename).toBe("report.xlsx");
+    // Non-artifact meta still narrows to null.
+    expect(artifactCardOf({ meta: { card: "api", status: 200 } })).toBeNull();
   });
 });
 

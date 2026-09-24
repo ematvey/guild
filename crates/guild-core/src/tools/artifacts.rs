@@ -202,14 +202,21 @@ impl ArtifactIndex {
     }
 }
 
-/// Extracts the filename from `meta.card = { card: "artifact", filename, … }`
-/// (the card is UI render intent; the filename is the materialization key).
-fn artifact_card_filename(meta: &Value) -> Option<String> {
-    let card = meta.get("card")?;
-    if card.get("card")?.as_str()? != "artifact" {
-        return None;
+/// Extracts the filename from a spilled ToolResult's `meta`: the server
+/// writes the card keys FLAT on meta (`card` is the string "artifact"
+/// alongside `filename`, …); the nested `{ card: { card: "artifact", … } }`
+/// form stays accepted for compatibility (the filename is the
+/// materialization key).
+pub fn artifact_card_filename(meta: &Value) -> Option<String> {
+    match meta.get("card") {
+        Some(Value::String(s)) if s == "artifact" => {
+            meta.get("filename")?.as_str().map(String::from)
+        }
+        Some(card) if card.get("card")?.as_str()? == "artifact" => {
+            card.get("filename")?.as_str().map(String::from)
+        }
+        _ => None,
     }
-    card.get("filename")?.as_str().map(String::from)
 }
 
 /// Artifact byte + thread-event source. Implemented over the cloud API
