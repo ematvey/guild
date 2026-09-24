@@ -526,6 +526,7 @@ async fn internal_completion(
                 }
             }
         }
+        guard.record_sync().await;
         let cost = UsageEvent::cost_usd(tokens_in, tokens_out, price_in, price_out);
         yield sse_event(StreamEvent::Done {
             message_id: Uuid::now_v7(),

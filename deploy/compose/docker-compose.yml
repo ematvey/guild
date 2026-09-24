@@ -68,9 +68,11 @@ services:
     volumes:
       - restate_data:/restate-data
     # Ingress stays internal (worker role talks to it over the compose
-    # network); the admin/UI port is published for operators.
+    # network); the admin/UI port is published loopback-only — it can
+    # register deployments, kill invocations and read journals, so it must
+    # never be reachable off-host. Operators tunnel in.
     ports:
-      - "${GUILD_RESTATE_ADMIN_PORT:-9070}:9070"
+      - "127.0.0.1:${GUILD_RESTATE_ADMIN_PORT:-9070}:9070"
 
   server:
     build:
