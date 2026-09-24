@@ -88,10 +88,12 @@ pub(crate) async fn complete<T: Serialize>(
 /// candidate claim is pruned only when its owning invocation id (recorded
 /// in the key and looked up in `turn_commands` / `routine_runs`) has
 /// reached a terminal status (`completed`/`failed`/`cancelled` for turn
-/// commands, `succeeded`/`failed` for routine runs). Claims with no
-/// discoverable owning invocation — including `tool_dispatch:` keys, which
-/// are keyed by chat/dispatch — are kept permanently as tombstones:
-/// repeated-action safety beats storage.
+/// commands, `succeeded`/`failed` for routine runs). `tool_dispatch:` keys
+/// are keyed by chat/dispatch: a ChatRunner invocation can replay a
+/// dispatch only while one of the chat's turn commands is unfinished (or
+/// the chat is generating), so an idle chat's aged dispatch claims are
+/// retired. Claims with no discoverable owner are kept permanently as
+/// tombstones: repeated-action safety beats storage.
 pub(crate) async fn prune(store: &Store) -> anyhow::Result<u64> {
     let mut query = String::from(
         "SELECT key FROM server_kv WHERE updated_at < now() - make_interval(days => $1) AND (",
@@ -114,20 +116,33 @@ pub(crate) async fn prune(store: &Store) -> anyhow::Result<u64> {
         bound = bound.bind(escaped.to_string());
     }
     let candidates = bound.fetch_all(store.pool()).await?;
-    #[cfg(test)]
-    eprintln!("[dbg-prune] candidates: {:?}", candidates);
 
     let mut pruned: u64 = 0;
     for (key,) in candidates {
-        let Some(invocation) = owning_invocation(&key) else {
-            continue; // tombstone: no owning invocation is discoverable
+        let terminal: bool = match owner(&key) {
+            None => continue, // tombstone: no owner is discoverable
+            Some(ClaimOwner::Invocation(invocation)) => {
+                sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM turn_commands WHERE invocation_id = $1 \
+                 AND status IN ('completed','failed','cancelled')) \
+                 OR EXISTS(SELECT 1 FROM routine_runs WHERE invocation_id = $1 \
+                 AND status IN ('succeeded','failed'))",
+                )
+                .bind(&invocation)
+                .fetch_one(store.pool())
+                .await?
+            }
+            Some(ClaimOwner::Chat(chat)) => {
+                sqlx::query_scalar(
+                    "SELECT NOT EXISTS(SELECT 1 FROM turn_commands WHERE chat_id = $1 \
+                 AND finished_at IS NULL) \
+                 AND NOT EXISTS(SELECT 1 FROM chats WHERE id = $1 AND generating)",
+                )
+                .bind(chat)
+                .fetch_one(store.pool())
+                .await?
+            }
         };
-        let terminal: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM turn_commands WHERE invocation_id = $1              AND status IN ('completed','failed','cancelled'))              OR EXISTS(SELECT 1 FROM routine_runs WHERE invocation_id = $1              AND status IN ('succeeded','failed'))",
-        )
-        .bind(&invocation)
-        .fetch_one(store.pool())
-        .await?;
         if !terminal {
             continue; // the invocation may still replay — keep the claim
         }
@@ -140,19 +155,31 @@ pub(crate) async fn prune(store: &Store) -> anyhow::Result<u64> {
     Ok(pruned)
 }
 
-/// The owning invocation id of a claim key: the segment right after the
-/// namespace prefix (`server_effect:<invocation>:<call>`,
-/// `plugin_effect:<invocation>`, `routine_effect:<invocation>:…`).
-/// `tool_dispatch:` keys carry a chat/dispatch pair, not an invocation —
-/// they return `None` and are retained as tombstones.
-fn owning_invocation(key: &str) -> Option<String> {
+/// What decides whether a claim can still be replayed.
+#[derive(Debug, PartialEq)]
+enum ClaimOwner {
+    /// The invocation that wrote it (`server_effect:<invocation>:<call>`,
+    /// `plugin_effect:<invocation>`, `routine_effect:<invocation>:…`).
+    Invocation(String),
+    /// The chat whose runner dispatched it (`tool_dispatch:<chat>:<dispatch>`).
+    Chat(uuid::Uuid),
+}
+
+fn owner(key: &str) -> Option<ClaimOwner> {
+    if let Some(rest) = key.strip_prefix("tool_dispatch:") {
+        return rest
+            .split(':')
+            .next()
+            .and_then(|chat| chat.parse().ok())
+            .map(ClaimOwner::Chat);
+    }
     for prefix in CLAIM_PREFIXES {
         if let Some(rest) = key.strip_prefix(prefix) {
             let segment = rest.split(':').next().unwrap_or_default();
             if segment.is_empty() {
                 return None;
             }
-            return Some(segment.to_string());
+            return Some(ClaimOwner::Invocation(segment.to_string()));
         }
     }
     None
@@ -251,12 +278,37 @@ mod tests {
         complete(&store, "server_effect:inv-3:call-1", &"done")
             .await
             .unwrap();
-        // No discoverable owning invocation: tombstone, never pruned.
+        // No discoverable owner: tombstone, never pruned.
         store
             .kv()
             .put("tool_dispatch:chat-1:dispatch-1", "conn")
             .await
             .unwrap();
+        // Dispatch claims of an idle chat (every command finished) retire;
+        // a chat with an unfinished command keeps its dispatch claims.
+        let busy = store
+            .chats()
+            .create_chat(org, user, Some("busy"), None)
+            .await
+            .unwrap()
+            .id;
+        sqlx::query(
+            "INSERT INTO turn_commands (id, org_id, user_id, chat_id, request, payload) \
+             VALUES ($1,$2,$3,$4,$5,$6)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(org)
+        .bind(user)
+        .bind(busy)
+        .bind(serde_json::json!({}))
+        .bind(serde_json::json!({}))
+        .execute(store.pool())
+        .await
+        .unwrap();
+        let idle_key = format!("tool_dispatch:{chat}:dispatch-1");
+        let busy_key = format!("tool_dispatch:{busy}:dispatch-1");
+        store.kv().put(&idle_key, "conn").await.unwrap();
+        store.kv().put(&busy_key, "conn").await.unwrap();
         store
             .kv()
             .put("release_signing_seed", "keep")
@@ -268,7 +320,12 @@ mod tests {
             .await
             .unwrap();
         let pruned = prune(&store).await.unwrap();
-        assert_eq!(pruned, 3, "the two finished-invocation pairs, nothing else");
+        assert_eq!(
+            pruned, 4,
+            "the two finished-invocation pairs and the idle chat's dispatch claim"
+        );
+        assert!(store.kv().get(&idle_key).await.unwrap().is_none());
+        assert!(store.kv().get(&busy_key).await.unwrap().is_some());
         // The still-running invocation's claim survives regardless of age:
         // its replay window never closed.
         assert!(store
