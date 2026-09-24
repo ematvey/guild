@@ -182,7 +182,12 @@ fn assemble_with(
                         .strip_prefix("~/")
                         .map(|p| home.join(p))
                         .unwrap_or_else(|| PathBuf::from(path));
-                    value == &serde_json::Value::Bool(false) && expanded == s.path
+                    // Both sides canonicalize (the webview reports raw
+                    // configured paths; skill paths are resolved reads):
+                    // lexical comparison misses on Windows (\?\ prefix) and
+                    // symlinked projects.
+                    value == &serde_json::Value::Bool(false)
+                        && fs_bridge::canonical_root(&expanded) == fs_bridge::canonical_root(&s.path)
                 })
             })
         })
@@ -339,6 +344,58 @@ mod tests {
         std::os::unix::fs::symlink(temp.join("secret"), cwd.join("AGENTS.md")).unwrap();
         let ctx = prepare_with(&cwd, "", &temp.join("config"), &temp.join("home")).unwrap();
         assert!(ctx.instructions.is_none());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod disabled_path_tests {
+    use super::*;
+
+    fn put(root: &Path, path: &str, body: &str) {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, body).unwrap();
+    }
+
+    /// A skill disabled via a path that only lexically differs from the
+    /// resolved skill path (symlinked project root; on Windows always the
+    /// \\?\ verbatim prefix) must still be filtered — the comparison
+    /// canonicalizes both sides.
+    #[cfg(unix)]
+    #[test]
+    fn disabled_entries_match_symlinked_project_paths() {
+        let temp = std::env::temp_dir()
+            .join(format!("guild-remote-off-{}", uuid::Uuid::now_v7()));
+        let config = temp.join("config");
+        let home = temp.join("home");
+        let repo = temp.join("repo");
+        put(&config, "AGENTS.md", "GLOBAL");
+        put(&repo, ".git", "gitdir: elsewhere");
+        put(
+            &repo,
+            ".agents/skills/off/SKILL.md",
+            "---\nname: off\n---\nNEVER",
+        );
+        // The settings record the skill through a symlink to the repo.
+        std::os::unix::fs::symlink(&repo, temp.join("link")).unwrap();
+        let through_link = temp
+            .join("link")
+            .join(".agents/skills/off/SKILL.md")
+            .to_string_lossy()
+            .to_string();
+        put(
+            &config,
+            "settings.json",
+            &serde_json::json!({ "skillsDisabled": { through_link: false } }).to_string(),
+        );
+        let ctx = prepare_with(&repo, "/off", &config, &home).unwrap();
+        assert!(
+            !ctx.skills_index.contains("off:"),
+            "disabled skill still listed: {}",
+            ctx.skills_index
+        );
+        assert!(!ctx.skill_expansions.contains("NEVER"));
         std::fs::remove_dir_all(temp).unwrap();
     }
 }
