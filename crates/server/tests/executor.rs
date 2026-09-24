@@ -246,8 +246,9 @@ fn parses_done_frame_directly() {
     let v2 = serde_json::from_value::<StreamEvent>(val.clone());
     #[derive(serde::Deserialize, Debug)]
     #[serde(tag = "type", rename_all = "snake_case")]
+    #[allow(dead_code)] // the probe only checks that the frame parses
     enum Probe {
-        Done { _cost_usd: f64 },
+        Done { cost_usd: f64 },
         Idle,
     }
     let probe: Result<Probe, _> = serde_json::from_str(r#"{"type":"done","cost_usd":1.5}"#);
