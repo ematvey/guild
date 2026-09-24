@@ -600,26 +600,28 @@ function IntegrationDetail({
       };
     } else {
       cfg = { ...initialConfig };
-      for (const f of fields) {
-        const value = draft[f.name];
-        if (f.kind === "boolean") {
-          cfg[f.name] = value === true;
-        } else if (f.kind === "number") {
-          const n = Number(value);
-          if (value === "" || value === null || Number.isNaN(n)) {
-            if (f.required) throw new Error(`${fieldLabel(f)} is required`);
-            delete cfg[f.name];
-          } else {
-            cfg[f.name] = n;
-          }
+    }
+    // Schema-field edits persist for MCP rows too — a save that ignored
+    // the draft reported success with nothing changed.
+    for (const f of fields) {
+      const value = draft[f.name];
+      if (f.kind === "boolean") {
+        cfg[f.name] = value === true;
+      } else if (f.kind === "number") {
+        const n = Number(value);
+        if (value === "" || value === null || Number.isNaN(n)) {
+          if (f.required) throw new Error(`${fieldLabel(f)} is required`);
+          delete cfg[f.name];
         } else {
-          const s = String(value ?? "");
-          if (s === "") {
-            if (f.required) throw new Error(`${fieldLabel(f)} is required`);
-            delete cfg[f.name];
-          } else {
-            cfg[f.name] = s;
-          }
+          cfg[f.name] = n;
+        }
+      } else {
+        const s = String(value ?? "");
+        if (s === "") {
+          if (f.required) throw new Error(`${fieldLabel(f)} is required`);
+          delete cfg[f.name];
+        } else {
+          cfg[f.name] = s;
         }
       }
     }
