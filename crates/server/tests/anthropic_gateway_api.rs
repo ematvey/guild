@@ -539,3 +539,173 @@ async fn a_nonpositive_route_cap_never_erases_a_positive_client_limit() {
         .unwrap();
     assert_eq!(admin.status(), StatusCode::BAD_REQUEST);
 }
+
+/// Image inputs reach the provider in both response modes: a url-source
+/// image on an image-only user turn and an image inside a tool_result (a
+/// screenshot) are forwarded, not silently dropped; an unsupported source
+/// form is a 400.
+#[tokio::test]
+async fn url_images_and_tool_result_images_reach_the_provider() {
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    for stream in [false, true] {
+        let provider = scripted_provider().await;
+        fs.store()
+            .gateway()
+            .upsert_provider_key(
+                fs.org_id,
+                "openai",
+                provider.uri().as_str(),
+                "sk-test",
+                &master,
+            )
+            .await
+            .unwrap();
+        fs.store()
+            .gateway()
+            .upsert_route(
+                fs.org_id,
+                "gpt-test",
+                "openai",
+                true,
+                1.0,
+                2.0,
+                None,
+                false,
+                None,
+                None,
+                &["image".to_string()],
+            )
+            .await
+            .unwrap();
+        let app = guild_server::build_router(fs.state.clone());
+        let key = issue_user_key(&app, &fs.token).await;
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/anthropic/v1/messages")
+                    .header("content-type", "application/json")
+                    .header("x-api-key", &key)
+                    .body(Body::from(
+                        json!({
+                            "model": "gpt-test",
+                            "max_tokens": 100,
+                            "stream": stream,
+                            "messages": [
+                                {"role": "user", "content": [
+                                    {"type": "image", "source": {"type": "url",
+                                        "url": "https://img.test/cat.png"}}
+                                ]},
+                                {"role": "assistant", "content": [
+                                    {"type": "tool_use", "id": "call_s", "name": "screenshot",
+                                     "input": {}}
+                                ]},
+                                {"role": "user", "content": [
+                                    {"type": "tool_result", "tool_use_id": "call_s", "content": [
+                                        {"type": "text", "text": "captured"},
+                                        {"type": "image", "source": {"type": "base64",
+                                            "media_type": "image/png", "data": "U0NS"}}
+                                    ]}
+                                ]}
+                            ]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "stream={stream}");
+        let _ = axum::body::to_bytes(res.into_body(), usize::MAX).await;
+        let calls = chat_calls(&provider).await;
+        assert_eq!(calls.len(), 1, "stream={stream}");
+        let sent: Value = serde_json::from_slice(&calls[0].body).unwrap();
+        let body = sent.to_string();
+        assert!(
+            body.contains("https://img.test/cat.png"),
+            "url image dropped (stream={stream}): {body}"
+        );
+        assert!(
+            body.contains("data:image/png;base64,U0NS"),
+            "tool-result image dropped (stream={stream}): {body}"
+        );
+    }
+
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_user_key(&app, &fs.token).await;
+    let (status, body) = post_messages(
+        &app,
+        &key,
+        Some(key.clone()),
+        json!({"model": "gpt-test", "max_tokens": 10, "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "file", "file_id": "f_1"}}
+        ]}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+}
+
+/// A nonpositive client max_tokens is rejected like the OpenAI ingress —
+/// it can never strip the route's output cap.
+#[tokio::test]
+async fn a_nonpositive_client_limit_is_rejected_and_never_erases_the_route_cap() {
+    let provider = scripted_provider().await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    fs.store()
+        .gateway()
+        .upsert_route(
+            fs.org_id,
+            "gpt-test",
+            "openai",
+            true,
+            1.0,
+            2.0,
+            None,
+            false,
+            None,
+            Some(1000),
+            &[],
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_user_key(&app, &fs.token).await;
+    for bad in [0, -5] {
+        let (status, body) = post_messages(
+            &app,
+            &key,
+            Some(key.clone()),
+            json!({"model": "gpt-test", "max_tokens": bad, "messages": [{"role": "user", "content": "hi"}]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+        assert_eq!(body["error"]["type"], "invalid_request_error");
+    }
+    assert!(chat_calls(&provider).await.is_empty());
+    let (status, _) = post_messages(
+        &app,
+        &key,
+        Some(key.clone()),
+        json!({"model": "gpt-test", "max_tokens": 5000, "messages": [{"role": "user", "content": "hi"}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let calls = chat_calls(&provider).await;
+    let sent: Value = serde_json::from_slice(&calls[0].body).unwrap();
+    assert_eq!(sent["max_tokens"], 1000, "the route cap applies");
+}

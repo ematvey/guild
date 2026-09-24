@@ -121,8 +121,10 @@ struct AnthropicTool {
 
 /// Anthropic request → internal (system, messages). Mirrors the llm/gateway
 /// proxy's `anthropicToOpenAI`: top-level system, text/image/tool_result
-/// blocks in user turns, text/tool_use blocks in assistant turns.
-fn to_internal(req: &AnthropicRequest) -> (Option<String>, Vec<Message>) {
+/// blocks in user turns (tool results keep their text and image parts),
+/// text/tool_use blocks in assistant turns. An image in a form the internal
+/// media contract cannot carry is a 400, never silently dropped.
+fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>), ApiError> {
     let system = req.system.as_ref().map(|s| match s {
         Value::String(t) => t.clone(),
         Value::Array(blocks) => blocks
@@ -185,13 +187,7 @@ fn to_internal(req: &AnthropicRequest) -> (Option<String>, Vec<Message>) {
                         }
                         text.push_str(b["text"].as_str().unwrap_or_default());
                     }
-                    Some("image") if b["source"]["type"] == "base64" => {
-                        images.push(format!(
-                            "data:{};base64,{}",
-                            b["source"]["media_type"].as_str().unwrap_or("image/png"),
-                            b["source"]["data"].as_str().unwrap_or_default()
-                        ));
-                    }
+                    Some("image") => images.push(image_uri(b)?),
                     _ => {}
                 }
             }
@@ -208,24 +204,60 @@ fn to_internal(req: &AnthropicRequest) -> (Option<String>, Vec<Message>) {
             }
             for b in &blocks {
                 if b["type"] == "tool_result" {
+                    let mut images = Vec::new();
                     let content = match &b["content"] {
                         Value::String(s) => s.clone(),
-                        Value::Array(parts) => parts
-                            .iter()
-                            .filter_map(|p| p["text"].as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n"),
+                        Value::Array(parts) => {
+                            let mut texts = Vec::new();
+                            for p in parts {
+                                match p["type"].as_str() {
+                                    Some("image") => images.push(image_uri(p)?),
+                                    _ => texts.extend(p["text"].as_str()),
+                                }
+                            }
+                            texts.join("\n")
+                        }
                         _ => String::new(),
                     };
-                    out.push(Message::tool_result(
+                    let mut msg = Message::tool_result(
                         b["tool_use_id"].as_str().unwrap_or_default(),
                         content,
-                    ));
+                    );
+                    msg.images = images;
+                    out.push(msg);
                 }
             }
         }
     }
-    (system, out)
+    Ok((system, out))
+}
+
+/// An Anthropic image block's source as an internal image part: base64 →
+/// data URI, url → the URL itself (providers forward both). Other source
+/// types (e.g. `file`) have no internal form.
+fn image_uri(block: &Value) -> Result<String, ApiError> {
+    let source = &block["source"];
+    match source["type"].as_str() {
+        Some("base64") => {
+            let data = source["data"]
+                .as_str()
+                .filter(|d| !d.is_empty())
+                .ok_or_else(|| ApiError::bad_request("base64 image source is missing its data"))?;
+            Ok(format!(
+                "data:{};base64,{data}",
+                source["media_type"].as_str().unwrap_or("image/png"),
+            ))
+        }
+        Some("url") => source["url"]
+            .as_str()
+            .filter(|u| u.starts_with("https://") || u.starts_with("http://"))
+            .map(str::to_string)
+            .ok_or_else(|| ApiError::bad_request("url image source needs an http(s) url")),
+        other => Err(ApiError::bad_request(format!(
+            "unsupported image source type {}",
+            other.unwrap_or("(missing)")
+        ))),
+    }
 }
 
 fn to_tool_specs(tools: &[AnthropicTool]) -> Vec<ToolSpec> {
@@ -273,6 +305,17 @@ fn anthropic_error(status: StatusCode, e: &ProxyError) -> axum::response::Respon
         .into_response()
 }
 
+fn invalid_request(message: &str) -> axum::response::Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": message},
+        })),
+    )
+        .into_response()
+}
+
 async fn messages(
     State(state): State<AppState>,
     key: AnthropicKey,
@@ -282,7 +325,12 @@ async fn messages(
     let user_id = key.0.user_id.unwrap_or(key.0.created_by);
     let session_id = key.0.id;
 
-    let (system, internal) = to_internal(&req);
+    // A nonpositive client limit is invalid (the OpenAI ingress rejects it
+    // too): passed through, it would erase the route's output cap.
+    if req.max_tokens.is_some_and(|n| n <= 0) {
+        return Err(invalid_request("output token limit must be positive"));
+    }
+    let (system, internal) = to_internal(&req).map_err(|e| invalid_request(&e.message))?;
     let tools = req.tools.as_ref().map(|t| to_tool_specs(t));
 
     let call = dispatch(
@@ -577,7 +625,8 @@ mod tests {
             "model": "m",
             "system": "be terse",
             "messages": [{"role": "user", "content": "hi"}],
-        })));
+        })))
+        .unwrap();
         assert_eq!(system.as_deref(), Some("be terse"));
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "user");
@@ -587,7 +636,8 @@ mod tests {
             "model": "m",
             "system": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}],
             "messages": [{"role": "user", "content": "hi"}],
-        })));
+        })))
+        .unwrap();
         assert_eq!(system.as_deref(), Some("a\nb"));
     }
 
@@ -604,7 +654,8 @@ mod tests {
                      "content": [{"type": "text", "text": "snow"}]}
                 ]}
             ],
-        })));
+        })))
+        .unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].content, "look");
@@ -625,7 +676,8 @@ mod tests {
                      "input": {"city": "oslo"}}
                 ]}
             ],
-        })));
+        })))
+        .unwrap();
         assert_eq!(msgs.len(), 1);
         let calls = msgs[0].tool_calls.as_ref().unwrap();
         assert_eq!(calls.len(), 1);

@@ -92,13 +92,15 @@ pub async fn dispatch(
     // A nonpositive route cap (legacy row, hand-edited DB) is not a cap:
     // through min() it would erase a positive client limit. Normalize to
     // absent ("provider default") before combining.
+    // The same holds for a nonpositive client limit (the ingresses reject
+    // it; normalizing here keeps the cap even if one does not).
     let route_cap = route.max_output_tokens.filter(|c| *c > 0);
+    let client_max_tokens = client_max_tokens.filter(|c| *c > 0);
     let max_tokens = match (route_cap, client_max_tokens) {
         (Some(route_cap), Some(client)) => Some(route_cap.min(client)),
         (route_cap, client) => route_cap.or(client),
     }
-    .unwrap_or(0)
-    .max(0) as u32;
+    .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX));
     let preq = ProviderRequest {
         model,
         system: system.as_deref(),
