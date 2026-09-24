@@ -1356,14 +1356,18 @@ pub mod commands {
         state: State<'_, UpdateState>,
         app: AppHandle,
     ) -> Result<(), String> {
-        let (update, bytes) = state
-            .pending
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| "no pending update".to_string())?;
+        let (update, bytes) = {
+            let mut guard = state.pending.lock().unwrap();
+            guard.take().ok_or_else(|| "no pending update".to_string())?
+        };
         // on Windows the installer exits the app itself; mac/linux restart below
-        update.install(bytes).map_err(|e| e.to_string())?;
+        if let Err(e) = update.install(&bytes) {
+            // Restore: a failed install must not lose the pending update —
+            // the next install attempt would otherwise report "no pending
+            // update".
+            *state.pending.lock().unwrap() = Some((update, bytes));
+            return Err(e.to_string());
+        }
         app.request_restart();
         #[allow(unreachable_code)]
         Ok(())
@@ -1473,6 +1477,22 @@ async fn check_and_prepare_update(app: &AppHandle) {
         }
     };
     let version = update.version.clone();
+    // An already-downloaded pending update must not re-download every
+    // cycle — the bytes are ready and a restart applies them.
+    {
+        let state: State<UpdateState> = app.state();
+        let already = state
+            .pending
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|(pending, _)| pending.version == version);
+        if already {
+            eprintln!("updater: version {version} already pending");
+            let _ = app.emit("update-ready", serde_json::json!({"version": version}));
+            return;
+        }
+    }
     eprintln!("updater: downloading version {version}");
     let app_for_progress = app.clone();
     let result = update
