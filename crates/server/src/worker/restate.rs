@@ -677,6 +677,38 @@ pub(crate) fn workspace_sentence(folder: &str, machine_label: Option<&str>) -> S
     }
 }
 
+/// Audit identity for one executed plugin tool call (spec §8): derived from
+/// the same `target` the execution gate matched (it tolerates legacy-prefixed
+/// journal names), so legacy `int_<slug>_<tool>` calls audit too. `None` →
+/// a disclosure-only auto tool or unknown name: executed, not audited.
+fn audit_identity(
+    target: Option<(usize, &crate::integrations::PluginToolInfo)>,
+    plugin_turns: &[crate::integrations::PluginTurn],
+    call_name: &str,
+) -> Option<(String, String)> {
+    let (i, info) = target?;
+    let turn = &plugin_turns[i];
+    let raw = crate::integrations::unnamespaced_tool(&turn.slug, call_name)
+        .unwrap_or(&info.spec.name)
+        .to_string();
+    Some((turn.slug.clone(), raw))
+}
+
+/// The plugin turn + tool a wire tool name resolves against: the execution
+/// gate and the audit share this matcher (legacy-prefixed journal names
+/// tolerated). Auto disclosure tools have no target.
+fn plugin_target<'a>(
+    plugin_turns: &'a [crate::integrations::PluginTurn],
+    call_name: &str,
+) -> Option<(usize, &'a crate::integrations::PluginToolInfo)> {
+    plugin_turns.iter().enumerate().find_map(|(i, turn)| {
+        turn.tools
+            .iter()
+            .find(|t| integrations::tool_matches(&turn.slug, &t.spec.name, call_name))
+            .map(|info| (i, info))
+    })
+}
+
 /// Server-owned system prompt (the client never sends one). Without it small
 /// models fall back to generic web-assistant behavior even with the full tool
 /// surface declared — they need the role, the workspace, and when to use
@@ -3301,14 +3333,10 @@ async fn server_tool_step(
 )> {
     // Resolve the tool once: target (turn + info) drives everything below —
     // the spec kind on the started frame, the approval gate, the policy
-    // check, and execution. Auto-tools (list_tools/guide) have no target and
-    // no gate. The matching tolerates legacy-prefixed journal names.
-    let target = plugin_turns.iter().enumerate().find_map(|(i, turn)| {
-        turn.tools
-            .iter()
-            .find(|t| integrations::tool_matches(&turn.slug, &t.spec.name, &call.name))
-            .map(|info| (i, info))
-    });
+    // check, execution, and the audit identity. Auto-tools (list_tools/guide)
+    // have no target and no gate. The matching tolerates legacy-prefixed
+    // journal names.
+    let target = plugin_target(plugin_turns, &call.name);
     let (tool_kind, write_class, always_ask) = match target {
         Some((i, info)) => {
             let turn = &plugin_turns[i];
@@ -3559,22 +3587,10 @@ async fn server_tool_step(
 
     // Journaled: audit the identity of one plugin tool call (spec §8) —
     // built-in and MCP alike. Auto tools are disclosure-only, not audited.
-    let audited = plugin_turns.iter().any(|turn| {
-        integrations::unnamespaced_tool(&turn.slug, &call.name).is_some()
-            && turn.tools.iter().any(|t| t.spec.name == call.name)
-    });
-    if audited {
+    // The gate's `target` is the same matcher execution used (it tolerates
+    // legacy-prefixed journal names), so the audit covers exactly what ran.
+    if let Some((slug, raw)) = audit_identity(target, plugin_turns, &call.name) {
         let st = state.clone();
-        let slug = plugin_turns
-            .iter()
-            .find(|turn| turn.tools.iter().any(|t| t.spec.name == call.name))
-            .map(|turn| turn.slug.clone())
-            .unwrap_or_default();
-        let raw = plugin_turns
-            .iter()
-            .find_map(|turn| integrations::unnamespaced_tool(&turn.slug, &call.name))
-            .unwrap_or(call.name.as_str())
-            .to_string();
         let acting = acting_as.map(str::to_string);
         let ok = !is_error;
         ctx.run(move || {
@@ -3979,6 +3995,43 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn crm_turn() -> crate::integrations::PluginTurn {
+        crate::integrations::PluginTurn {
+            executor: crate::integrations::PluginExecutor::Rust,
+            slug: "crm".into(),
+            description: "crm".into(),
+            tools: vec![crate::integrations::PluginToolInfo {
+                spec: protocol::api::ToolSpec {
+                    name: "crm_add_note".into(),
+                    description: "add".into(),
+                    parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                    kind: Default::default(),
+                },
+                class: "write".into(),
+            }],
+            guide_object_key: None,
+            row_config: serde_json::Value::Null,
+            secret_names: Vec::new(),
+            identity_key: "email".into(),
+        }
+    }
+
+    #[test]
+    fn audit_identity_matches_what_the_gate_executed_including_legacy_names() {
+        let turns = [crm_turn()];
+        // Current and legacy wire names both execute through the gate and
+        // both audit with the same identity.
+        for call in ["crm_add_note", "int_crm_add_note"] {
+            let target = plugin_target(&turns, call);
+            let (slug, raw) = audit_identity(target, &turns, call).expect("audited");
+            assert_eq!(slug, "crm");
+            assert_eq!(raw, "add_note");
+        }
+        // Disclosure-only auto tools and unknown names audit nothing.
+        assert!(audit_identity(plugin_target(&turns, "crm_guide"), &turns, "crm_guide").is_none());
+        assert!(audit_identity(plugin_target(&turns, "other_thing"), &turns, "other_thing").is_none());
+    }
 
     #[test]
     fn classify_chatgen_entry_matches_the_writer_format() {
