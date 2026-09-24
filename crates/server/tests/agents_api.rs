@@ -372,4 +372,18 @@ async fn an_unreclaimable_orphan_dir_fails_the_session_create() {
     );
     // The orphan's files survived: nothing was silently inherited.
     assert!(dir.join("secret.txt").exists());
+    // No session (or chat) is left over the dirty workspace.
+    let sessions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_sessions WHERE org_id = $1 AND workspace_name = 'locked-x'",
+    )
+    .bind(fs.org_id)
+    .fetch_one(fs.store().pool())
+    .await
+    .unwrap();
+    assert_eq!(sessions, 0, "the failed create left a usable session");
+    let chats: i64 = sqlx::query_scalar("SELECT count(*) FROM chats WHERE title = 'locked-x'")
+        .fetch_one(fs.store().pool())
+        .await
+        .unwrap();
+    assert_eq!(chats, 0);
 }
