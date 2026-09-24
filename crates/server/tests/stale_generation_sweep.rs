@@ -5,6 +5,7 @@
 use axum::extract::State;
 use guild_server::test_support::{purge_stale_chat_generations, workflow_schema_version};
 use std::sync::{Arc, Mutex};
+use tower::ServiceExt;
 
 type Captured = Arc<Mutex<Vec<String>>>;
 
@@ -199,4 +200,139 @@ async fn paused_invocations_are_killed_and_flags_cleared() {
         .await
         .unwrap();
     assert!(!generating);
+}
+
+/// A failed hard stop (transient Restate admin outage) keeps the invocation
+/// record and the generating flag and reports the failure, instead of
+/// deleting the record behind a success report — the next stop retries the
+/// kill against the same recorded address and clears the state only once
+/// the invocation actually terminates.
+#[tokio::test]
+async fn failed_stop_preserves_the_invocation_record_until_the_kill_succeeds() {
+    use std::collections::HashMap;
+
+    // Mock admin: the FIRST delete of each invocation fails (the transient
+    // outage), any retry succeeds.
+    let counts: Arc<Mutex<HashMap<String, usize>>> = Default::default();
+    let app = axum::Router::new()
+        .fallback(
+            |method: axum::http::Method,
+             uri: axum::http::Uri,
+             State(counts): State<Arc<Mutex<HashMap<String, usize>>>>| async move {
+                if method == axum::http::Method::DELETE {
+                    let mut c = counts.lock().unwrap();
+                    let n = c.entry(uri.to_string()).or_insert(0);
+                    *n += 1;
+                    if *n == 1 {
+                        return axum::http::StatusCode::SERVICE_UNAVAILABLE;
+                    }
+                }
+                axum::http::StatusCode::OK
+            },
+        )
+        .with_state(counts.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let db = guild_server::store::Store::connect_test()
+        .await
+        .expect("postgres");
+    let mut config = guild_server::config::Config::test_config();
+    config.restate_admin_url = format!("http://{addr}");
+    let state = guild_server::state::AppState::with_store(Arc::new(db.store.clone()), config);
+    let store = db.store.clone();
+
+    let user = store
+        .identity()
+        .ensure_bootstrap_admin("stopper@example.org", "hunter226")
+        .await
+        .unwrap();
+    let user_row = store.identity().get_user(user).await.unwrap();
+    let (_sid, token) = store.identity().create_session(user).await.unwrap();
+    let chat = store
+        .chats()
+        .create_chat(user_row.org_id, user, Some("stopchat"), None)
+        .await
+        .unwrap();
+    store
+        .chats()
+        .set_generating(user_row.org_id, chat.id, true)
+        .await
+        .unwrap();
+    let current = guild_server::test_support::workflow_schema_version();
+    store
+        .kv()
+        .put(
+            &format!("chatgen_inv:{}", chat.id),
+            &format!("{current}:inv-outage"),
+        )
+        .await
+        .unwrap();
+
+    let app = guild_server::build_router(state);
+    let stop = || {
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            app.clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method("POST")
+                        .uri(format!("/api/v1/gateway/chat/{}/stop", chat.id))
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    // First stop: the kill fails → 503, the record and generating flag stay.
+    let res = stop().await;
+    assert_eq!(res.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    let record = store
+        .kv()
+        .get(&format!("chatgen_inv:{}", chat.id))
+        .await
+        .unwrap();
+    assert!(
+        record.is_some(),
+        "the invocation record must survive a failed kill"
+    );
+    let row = store
+        .chats()
+        .get_chat(user_row.org_id, chat.id, &user_row)
+        .await
+        .unwrap();
+    assert!(
+        row.generating,
+        "the generating flag must survive a failed kill"
+    );
+
+    // Retry: the kill succeeds, and only then is the state cleared.
+    let res = stop().await;
+    assert_eq!(res.status(), axum::http::StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(
+            &axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap()
+        )
+        .unwrap()["stopped"],
+        serde_json::json!(true)
+    );
+    let record = store
+        .kv()
+        .get(&format!("chatgen_inv:{}", chat.id))
+        .await
+        .unwrap();
+    assert!(record.is_none(), "a confirmed kill clears the record");
+    let row = store
+        .chats()
+        .get_chat(user_row.org_id, chat.id, &user_row)
+        .await
+        .unwrap();
+    assert!(!row.generating);
 }

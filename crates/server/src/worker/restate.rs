@@ -3969,12 +3969,20 @@ fn classify_chatgen_entry(current_version: &str, value: &str) -> StaleChatgenEnt
 /// replay pending — and the archive escape hatch): without it a suspended
 /// invocation would keep the chat's spinner alive with nothing observing
 /// the request to end.
-pub(crate) async fn kill_recorded_chat_generation(state: &AppState, chat_id: Uuid) {
-    let Ok(store) = state.store().await else {
-        return;
-    };
+///
+/// Retry semantics: a failed termination keeps the invocation record and
+/// the generating flag and returns an error — the invocation stays
+/// visible and the next stop (and the stale-generation sweep) retries the
+/// kill against the same recorded address. Clearing the record on a failed
+/// kill would hide a live invocation behind a success report and leave
+/// every later stop with nothing to terminate.
+pub(crate) async fn kill_recorded_chat_generation(
+    state: &AppState,
+    chat_id: Uuid,
+) -> Result<(), crate::http::error::ApiError> {
+    let store = state.store().await?;
     let key = format!("chatgen_inv:{chat_id}");
-    if let Ok(Some(value)) = store.kv().get(&key).await {
+    if let Some(value) = store.kv().get(&key).await? {
         let inv = value.rsplit(':').next().unwrap_or_default();
         if !inv.is_empty() {
             let url = format!(
@@ -3982,24 +3990,37 @@ pub(crate) async fn kill_recorded_chat_generation(state: &AppState, chat_id: Uui
                 state.config.restate_admin_url.trim_end_matches('/'),
                 inv
             );
-            match reqwest::Client::new().delete(&url).send().await {
+            let terminated = match reqwest::Client::new().delete(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     let _ = store.turn_commands().finish_invocation(inv).await;
                     tracing::info!(
                         "killed chat generation {inv} (hard stop): {}",
                         resp.status()
                     );
+                    true
                 }
                 Ok(resp) => {
-                    tracing::warn!("kill of chat generation {inv} got {}", resp.status())
+                    tracing::warn!("kill of chat generation {inv} got {}", resp.status());
+                    false
                 }
-                Err(e) => tracing::warn!("kill of chat generation {inv} failed: {e}"),
+                Err(e) => {
+                    tracing::warn!("kill of chat generation {inv} failed: {e}");
+                    false
+                }
+            };
+            if !terminated {
+                return Err(crate::http::error::ApiError::new(
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "stop_failed",
+                    "the running invocation could not be terminated (restate admin unreachable); retry the stop — the invocation record is kept so the next attempt targets it",
+                ));
             }
         }
         let _ = store.kv().delete(&key).await;
     }
     let _ = store.chats().clear_generating(chat_id).await;
     state.generations.remove(chat_id);
+    Ok(())
 }
 
 /// Purges in-flight chat generations dispatched by a different workflow
