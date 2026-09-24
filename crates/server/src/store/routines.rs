@@ -238,23 +238,30 @@ impl<'a> RoutineStore<'a> {
         Ok(())
     }
 
+    /// Opens a run record, idempotently per invocation: a retried creation
+    /// for the same (non-empty) invocation id returns the existing run
+    /// instead of inserting a second one. An empty invocation id (a run
+    /// outside Restate) always opens a fresh record.
     pub async fn start_run(
         &self,
         routine_id: Uuid,
         trigger: &str,
         invocation_id: &str,
     ) -> Result<(Uuid, DateTime<Utc>), ApiError> {
-        let id = Uuid::now_v7();
-        let started_at: DateTime<Utc> = sqlx::query_scalar(
-            "INSERT INTO routine_runs (id, routine_id, trigger, invocation_id) VALUES ($1, $2, $3, $4) RETURNING started_at",
+        let row: (Uuid, DateTime<Utc>) = sqlx::query_as(
+            "INSERT INTO routine_runs (id, routine_id, trigger, invocation_id) \
+             VALUES ($1, $2, $3, NULLIF($4, '')) \
+             ON CONFLICT (invocation_id) WHERE invocation_id IS NOT NULL \
+             DO UPDATE SET invocation_id = EXCLUDED.invocation_id \
+             RETURNING id, started_at",
         )
-        .bind(id)
+        .bind(Uuid::now_v7())
         .bind(routine_id)
         .bind(trigger)
         .bind(invocation_id)
         .fetch_one(self.pool)
         .await?;
-        Ok((id, started_at))
+        Ok(row)
     }
 
     pub async fn finish_run(

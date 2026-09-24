@@ -573,3 +573,63 @@ fn completion_journal_without_reasoning_deserializes() {
     let c: guild_server::worker::executor::Completion = serde_json::from_value(old).unwrap();
     assert!(c.reasoning.is_none());
 }
+
+/// Run-record creation is idempotent per invocation: a retried start for
+/// the same invocation (the first INSERT committed, its response was lost)
+/// resolves to the same run, so no phantom `running` row is left behind.
+#[tokio::test]
+async fn a_retried_run_start_for_one_invocation_opens_one_run() {
+    let (served, _external) = setup().await;
+    let store = served.full.store();
+    let creator = store
+        .identity()
+        .create_user(served.full.org_id, "runs@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let routine = store
+        .routines()
+        .create(
+            served.full.org_id,
+            creator.id,
+            "retried",
+            "Retried",
+            "webhook",
+            json!({}),
+            "p",
+            "gpt-test",
+            json!([]),
+            "hook_retried",
+            true,
+        )
+        .await
+        .unwrap();
+    let exec = RoutineExecutor {
+        api_base: served.base_url.clone(),
+        internal_token: "test-internal".into(),
+        allow_http_tool: false,
+        http_tool_allow_hosts: vec![],
+    };
+    let first = exec
+        .start_run(routine.id, "webhook", "inv-retry")
+        .await
+        .unwrap();
+    let retry = exec
+        .start_run(routine.id, "webhook", "inv-retry")
+        .await
+        .unwrap();
+    assert_eq!(first, retry, "the retry resolves to the committed run");
+    exec.finish_run(retry, "succeeded", Some("ok"), None)
+        .await
+        .unwrap();
+    let runs = store
+        .routines()
+        .list_runs(served.full.org_id, routine.id)
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, "succeeded");
+    // Runs outside Restate (no invocation id) stay independent.
+    let a = exec.start_run(routine.id, "manual", "").await.unwrap();
+    let b = exec.start_run(routine.id, "manual", "").await.unwrap();
+    assert_ne!(a, b);
+}

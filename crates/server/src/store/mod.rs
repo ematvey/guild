@@ -411,7 +411,7 @@ pub static MIGRATIONS_UPTO_0046: [(&str, &str); 46] = [
     ),
 ];
 
-pub static MIGRATIONS_FROM_0047: [(&str, &str); 16] = [
+pub static MIGRATIONS_FROM_0047: [(&str, &str); 17] = [
     (
         "0047_projects",
         include_str!("../../migrations/0047_projects.sql"),
@@ -475,6 +475,10 @@ pub static MIGRATIONS_FROM_0047: [(&str, &str); 16] = [
     (
         "0062_claim_prune_indexes",
         include_str!("../../migrations/0062_claim_prune_indexes.sql"),
+    ),
+    (
+        "0063_routine_run_invocation_unique",
+        include_str!("../../migrations/0063_routine_run_invocation_unique.sql"),
     ),
 ];
 
