@@ -89,10 +89,12 @@ impl UsageSink {
             .and_hms_opt(0, 0, 0)
             .unwrap()
             .and_utc();
-        // Bound parameters: model is admin-configured free text and must
-        // never be interpolated into the query text.
-        let query = "SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events WHERE org_id = toUUID(?) AND model = ? ORDER BY ts DESC LIMIT 1 BY org_id, request_id) \
-             WHERE ts >= toDateTime(?)";
+        // Dedup replay duplicates first (one row per request), then sum the
+        // month — the ts filter sits inside the dedup subquery so the scan
+        // never walks the org's full per-model history.
+        let query = "SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events \
+             WHERE org_id = toUUID(?) AND model = ? AND ts >= toDateTime(?) \
+             ORDER BY ts DESC LIMIT 1 BY org_id, request_id)";
         match self
             .client
             .query(query)
