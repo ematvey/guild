@@ -263,10 +263,18 @@ impl<'a> ChatStore<'a> {
     /// Renames and/or archives the chat (owner-scoped, admin bypass — the
     /// same gate as reads). `None` fields stay unchanged; archiving stamps
     /// `archived_at` and settles every waiting command as cancelled in the
-    /// same statement — successors of a stopped turn must not run in an
+    /// same transaction — successors of a stopped turn must not run in an
     /// archived chat. Unarchiving clears the flag without restoring them.
     /// The sidebar list never returns archived chats, but direct links
     /// still resolve.
+    ///
+    /// The chats row lock is taken in its own statement BEFORE the settle
+    /// runs, so the ordering serializes against in-flight turn acceptance
+    /// (which locks the same row): the settle's snapshot is taken after any
+    /// concurrent send committed and sees its command; a send that starts
+    /// later blocks on the lock and then observes `archived_at`. A shared
+    /// statement snapshot would miss a command inserted while the archive
+    /// waited on the lock and strand it undispatched in the archived chat.
     pub async fn update_chat(
         &self,
         org_id: Uuid,
@@ -276,23 +284,28 @@ impl<'a> ChatStore<'a> {
         archived: Option<bool>,
     ) -> Result<ChatRow, ApiError> {
         let is_admin = caller.role == "admin";
-        sqlx::query_as(
-            "WITH updated AS ( \
-             UPDATE chats SET \
+        let mut tx = self.pool.begin().await?;
+        let locked: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM chats WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4) FOR UPDATE",
+        )
+        .bind(org_id)
+        .bind(chat_id)
+        .bind(caller.id)
+        .bind(is_admin)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if locked.is_none() {
+            return Err(ApiError::not_found("no such chat"));
+        }
+        let row: ChatRow = sqlx::query_as(
+            "UPDATE chats SET \
              title = COALESCE($3, title), \
              archived_at = CASE \
                WHEN $4::bool IS NULL THEN archived_at \
                WHEN $4::bool THEN now() \
                ELSE NULL END \
              WHERE org_id = $1 AND id = $2 AND (user_id = $5 OR $6) \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id, archived_at \
-             ), settled AS ( \
-             UPDATE turn_commands SET status = 'cancelled', finished_at = now() \
-             WHERE chat_id = (SELECT id FROM updated) \
-               AND (SELECT archived_at FROM updated) IS NOT NULL \
-               AND finished_at IS NULL AND status IN ('pending','submitted') \
-             ) \
-             SELECT id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id FROM updated",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
         )
         .bind(org_id)
         .bind(chat_id)
@@ -300,9 +313,20 @@ impl<'a> ChatStore<'a> {
         .bind(archived)
         .bind(caller.id)
         .bind(is_admin)
-        .fetch_optional(self.pool)
+        .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| ApiError::not_found("no such chat"))
+        .ok_or_else(|| ApiError::not_found("no such chat"))?;
+        if archived == Some(true) {
+            sqlx::query(
+                "UPDATE turn_commands SET status = 'cancelled', finished_at = now() \
+                 WHERE chat_id = $1 AND finished_at IS NULL AND status IN ('pending','submitted')",
+            )
+            .bind(chat_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(row)
     }
 
     /// Sets (or clears) the chat's machine binding. Called only from the

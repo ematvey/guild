@@ -406,3 +406,69 @@ async fn archiving_a_chat_settles_its_waiting_commands_and_the_dispatcher_never_
         1
     );
 }
+
+/// The archive-vs-accept race: the archive must take the chats row lock in
+/// its own statement BEFORE the settle runs. A send that holds the lock (the
+/// same lock accept holds) and commits its command while the archive waits
+/// must have that command settled — a shared statement snapshot would miss it
+/// and strand it undispatched in the archived chat.
+#[tokio::test]
+async fn archive_sees_a_command_committed_while_it_waited_on_the_row_lock() {
+    let fs = full_state().await;
+    let store = fs.store();
+    // The "send" side: a second connection holds the chats row lock and
+    // inserts its pending command mid-transaction, exactly as acceptance does.
+    let send_pool = sqlx::PgPool::connect(&fs.db.url).await.unwrap();
+    let mut send_tx = send_pool.begin().await.unwrap();
+    let _: (Uuid,) =
+        sqlx::query_as("SELECT id FROM chats WHERE id = $1 AND org_id = $2 FOR UPDATE")
+            .bind(fs.chat_id)
+            .bind(fs.org_id)
+            .fetch_one(&mut *send_tx)
+            .await
+            .unwrap();
+    let command_id = Uuid::now_v7();
+    let check_store = store.clone();
+    sqlx::query(
+        "INSERT INTO turn_commands (id, org_id, user_id, chat_id, request, payload) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(command_id)
+    .bind(fs.org_id)
+    .bind(fs.user_id)
+    .bind(fs.chat_id)
+    .bind(serde_json::json!({}))
+    .bind(serde_json::json!({}))
+    .execute(&mut *send_tx)
+    .await
+    .unwrap();
+
+    // The archive starts while the lock is held: its first statement blocks.
+    let user = store.identity().get_user(fs.user_id).await.unwrap();
+    let archiver = tokio::spawn(async move {
+        store
+            .chats()
+            .update_chat(fs.org_id, fs.chat_id, &user, None, Some(true))
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        !archiver.is_finished(),
+        "archive must block on the chats row lock"
+    );
+
+    // The send commits; the archive proceeds and must settle the fresh
+    // command (a snapshot taken at the settle statement sees it).
+    send_tx.commit().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), archiver)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let status: (String,) = sqlx::query_as("SELECT status FROM turn_commands WHERE id = $1")
+        .bind(command_id)
+        .fetch_one(check_store.pool())
+        .await
+        .unwrap();
+    assert_eq!(status.0, "cancelled");
+}
