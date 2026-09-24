@@ -99,6 +99,7 @@ pub(crate) async fn drive(
 ) -> Result<(), CloudError> {
     let mut stream = std::pin::pin!(stream);
     let mut text = String::new();
+    let mut running = tokio::task::JoinSet::new();
     while let Some(item) = stream.next().await {
         let frame = item?;
         if let StreamEvent::ApprovalRequested {
@@ -107,10 +108,17 @@ pub(crate) async fn drive(
             arguments,
         } = &frame
         {
-            resolve_approval(
-                &cloud, chat_id, &policy, &pending, &events, call_id, name, arguments,
-            )
-            .await;
+            on_approval_requested(
+                &cloud,
+                chat_id,
+                &policy,
+                &pending,
+                &events,
+                &mut running,
+                call_id,
+                name,
+                arguments,
+            );
             continue;
         }
         for (event, payload) in map_frame(&frame, &mut text) {
@@ -118,7 +126,82 @@ pub(crate) async fn drive(
                 .send(serde_json::to_value(Event::new(event, payload)).expect("event serializes"));
         }
     }
+    // Every decision must be posted before drive returns — the waits ran
+    // off-loop so the stream (and the socket's Ping answers) kept being
+    // polled while a human decided.
+    while running.join_next().await.is_some() {}
     Ok(())
+}
+
+/// Handles one approval request: the Ask card is emitted synchronously (event
+/// order tracks the stream), the decision path — wait for the engine
+/// client's answer, or the immediate policy verdict — runs as a detached
+/// task. A human decision can take minutes, and the stream must keep being
+/// polled meanwhile: the socket answers Pings only while polled and the
+/// server drops it after 10 s idle, which would kill the turn mid-approval.
+#[allow(clippy::too_many_arguments)]
+fn on_approval_requested(
+    cloud: &CloudClient,
+    chat_id: Uuid,
+    policy: &ApprovalPolicy,
+    pending: &PendingApprovals,
+    events: &broadcast::Sender<Value>,
+    running: &mut tokio::task::JoinSet<()>,
+    call_id: &str,
+    name: &str,
+    arguments: &str,
+) {
+    enum Path {
+        /// Wait for the engine client's decision on this receiver.
+        Ask(tokio::sync::oneshot::Receiver<guild_core::agent::ApprovalDecision>),
+        Allow,
+        Never,
+    }
+    let path = match policy.for_tool(name, Approval::Ask) {
+        Approval::Allow => Path::Allow,
+        Approval::Never => Path::Never,
+        Approval::Ask => {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            pending.lock().unwrap().insert(call_id.to_string(), tx);
+            let _ = events.send(
+                serde_json::to_value(Event::new(
+                    "agent.approval_request",
+                    json!({ "request_id": call_id, "tool": name, "arguments": arguments }),
+                ))
+                .expect("event serializes"),
+            );
+            Path::Ask(rx)
+        }
+    };
+    let cloud = cloud.clone();
+    let pending = pending.clone();
+    let call_id = call_id.to_string();
+    running.spawn(async move {
+        let (approved, reason) = match path {
+            Path::Ask(rx) => match tokio::time::timeout(APPROVAL_WAIT, rx).await {
+                Ok(Ok(guild_core::agent::ApprovalDecision::Approve)) => (true, None),
+                Ok(Ok(guild_core::agent::ApprovalDecision::Deny { reason })) => {
+                    (false, Some(reason))
+                }
+                // Sender dropped (session closed) or timed out — deny so the
+                // turn proceeds; drop the dead entry.
+                Ok(Err(_)) | Err(_) => {
+                    pending.lock().unwrap().remove(&call_id);
+                    (false, Some("no approval decision in time".to_string()))
+                }
+            },
+            Path::Allow => (true, None),
+            Path::Never => (false, Some("denied by policy".to_string())),
+        };
+        if let Err(e) = cloud
+            .resolve_approval(chat_id, &call_id, approved, reason.as_deref())
+            .await
+        {
+            crate::dtrace::dtrace(&format!(
+                "approval post failed (chat {chat_id}, call {call_id}): {e}"
+            ));
+        }
+    });
 }
 
 /// The plain-completion drive path (`chat.send`): the same workflow frames
@@ -181,52 +264,6 @@ pub(crate) async fn drive_chat(
 /// the wait server-side anyway).
 // Approval dispatch keeps caller context and immutable call data explicit.
 #[allow(clippy::too_many_arguments)]
-async fn resolve_approval(
-    cloud: &CloudClient,
-    chat_id: Uuid,
-    policy: &ApprovalPolicy,
-    pending: &PendingApprovals,
-    events: &broadcast::Sender<Value>,
-    call_id: &str,
-    name: &str,
-    arguments: &str,
-) {
-    let (approved, reason) = match policy.for_tool(name, Approval::Ask) {
-        Approval::Allow => (true, None),
-        Approval::Never => (false, Some("denied by policy".to_string())),
-        Approval::Ask => {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            pending.lock().unwrap().insert(call_id.to_string(), tx);
-            let _ = events.send(
-                serde_json::to_value(Event::new(
-                    "agent.approval_request",
-                    json!({ "request_id": call_id, "tool": name, "arguments": arguments }),
-                ))
-                .expect("event serializes"),
-            );
-            match tokio::time::timeout(APPROVAL_WAIT, rx).await {
-                Ok(Ok(guild_core::agent::ApprovalDecision::Approve)) => (true, None),
-                Ok(Ok(guild_core::agent::ApprovalDecision::Deny { reason })) => {
-                    (false, Some(reason))
-                }
-                // Sender dropped (session closed) or timed out — deny so the
-                // turn proceeds; drop the dead entry.
-                Ok(Err(_)) | Err(_) => {
-                    pending.lock().unwrap().remove(call_id);
-                    (false, Some("no approval decision in time".to_string()))
-                }
-            }
-        }
-    };
-    if let Err(e) = cloud
-        .resolve_approval(chat_id, call_id, approved, reason.as_deref())
-        .await
-    {
-        crate::dtrace::dtrace(&format!(
-            "approval post failed (chat {chat_id}, call {call_id}): {e}"
-        ));
-    }
-}
 
 /// Finds the project for `folder` or creates one bound to `machine_id` —
 /// the workflow dispatches the turn's tools to the machine the project is
@@ -389,14 +426,16 @@ mod tests {
             }),
         ];
         // Approval endpoint: record decisions; both calls must land.
-        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, Value)>::new()));
         let server = wiremock::MockServer::start().await;
         let seen = calls.clone();
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .respond_with(move |_req: &wiremock::Request| {
                 let body: Value =
                     serde_json::from_slice(&_req.body.as_slice()).unwrap_or(Value::Null);
-                seen.lock().unwrap().push(body);
+                seen.lock()
+                    .unwrap()
+                    .push((_req.url.path().to_string(), body));
                 wiremock::ResponseTemplate::new(200).set_body_json(json!({"ok": true}))
             })
             .mount(&server)
@@ -448,11 +487,18 @@ mod tests {
         );
         let decisions = calls.lock().unwrap().clone();
         assert_eq!(decisions.len(), 2, "{decisions:?}");
-        assert_eq!(
-            decisions[0]["approved"], true,
-            "ask1 approved by the engine"
-        );
-        assert_eq!(decisions[1]["approved"], true, "auto policy: read_file");
+        // Posts race between concurrent approval tasks — assert per call
+        // (the call id rides the approval URL path).
+        let ask1 = decisions
+            .iter()
+            .find(|(path, _)| path.ends_with("/approvals/ask1"))
+            .expect("ask1 decision posted");
+        assert_eq!(ask1.1["approved"], true, "ask1 approved by the engine");
+        let auto1 = decisions
+            .iter()
+            .find(|(path, _)| path.ends_with("/approvals/auto1"))
+            .expect("auto1 decision posted");
+        assert_eq!(auto1.1["approved"], true, "auto policy: read_file");
     }
 
     /// drive_chat (chat.send's completion path): deltas accumulate into one
