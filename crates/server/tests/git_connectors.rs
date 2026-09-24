@@ -309,7 +309,7 @@ async fn github_maps_errors_per_family() {
 async fn gitlab_list_projects_happy_path_with_private_token() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/projects"))
+        .and(path("/api/v4/projects"))
         .and(query_param("membership", "true"))
         .and(query_param("search", "api"))
         .and(header("private-token", FAKE_GITLAB_TOKEN))
@@ -322,6 +322,8 @@ async fn gitlab_list_projects_happy_path_with_private_token() {
         .await;
 
     let plugin = integration_by_name("gitlab").unwrap();
+    // A bare origin normalizes to the v4 API root (what the manifest
+    // default now carries), so the call lands on /api/v4/projects.
     let config = json!({ "base_url": server.uri() });
     let out = plugin
         .execute(
@@ -338,11 +340,64 @@ async fn gitlab_list_projects_happy_path_with_private_token() {
     server.verify().await;
 }
 
+/// A base_url saved as a bare instance origin (the natural self-hosted
+/// entry, and the old manifest default) normalizes to the v4 API root —
+/// used as-is it would 404 every call.
+#[tokio::test]
+async fn gitlab_bare_origin_base_url_normalizes_to_api_v4() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let plugin = integration_by_name("gitlab").unwrap();
+    let config = json!({ "base_url": server.uri() });
+    plugin
+        .execute(
+            &config,
+            "list_projects",
+            json!({}),
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
+            None,
+        )
+        .await
+        .unwrap();
+    server.verify().await;
+}
+
+/// A custom-path API root (reverse proxy or a GitLab served under a
+/// subpath) is used as-is — normalization never rewrites a configured path.
+#[tokio::test]
+async fn gitlab_custom_path_api_root_is_used_as_is() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/gl/api/v4/projects"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let plugin = integration_by_name("gitlab").unwrap();
+    let config = json!({ "base_url": format!("{}/gl/api/v4", server.uri()) });
+    plugin
+        .execute(
+            &config,
+            "list_projects",
+            json!({}),
+            &[("token".into(), FAKE_GITLAB_TOKEN.into())],
+            None,
+        )
+        .await
+        .unwrap();
+    server.verify().await;
+}
+
 #[tokio::test]
 async fn gitlab_list_issues_encodes_project_path() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/projects/acme%2Fbackend/issues"))
+        .and(path("/api/v4/projects/acme%2Fbackend/issues"))
         .and(query_param("state", "opened"))
         .and(header("private-token", FAKE_GITLAB_TOKEN))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
@@ -374,7 +429,7 @@ async fn gitlab_list_issues_encodes_project_path() {
 async fn gitlab_list_mrs_renders_branches() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/projects/42/merge_requests"))
+        .and(path("/api/v4/projects/42/merge_requests"))
         .and(query_param("state", "opened"))
         .and(header("private-token", FAKE_GITLAB_TOKEN))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
@@ -408,7 +463,7 @@ async fn gitlab_list_mrs_renders_branches() {
 async fn gitlab_create_issue_posts_payload_and_reports_url() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/projects/42/issues"))
+        .and(path("/api/v4/projects/42/issues"))
         .and(header("private-token", FAKE_GITLAB_TOKEN))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "iid": 11,
@@ -447,7 +502,7 @@ async fn gitlab_maps_errors_per_family() {
 
     // projects family: 401 → auth error.
     Mock::given(method("GET"))
-        .and(path("/projects"))
+        .and(path("/api/v4/projects"))
         .respond_with(ResponseTemplate::new(401))
         .mount(&server)
         .await;
@@ -459,7 +514,7 @@ async fn gitlab_maps_errors_per_family() {
 
     // issues family: 400 → validation rejection.
     Mock::given(method("POST"))
-        .and(path("/projects/42/issues"))
+        .and(path("/api/v4/projects/42/issues"))
         .respond_with(
             ResponseTemplate::new(400)
                 .set_body_json(json!({ "message": { "title": ["can't be blank"] } })),
@@ -480,7 +535,7 @@ async fn gitlab_maps_errors_per_family() {
 
     // mr family: 404 → not found (unknown project).
     Mock::given(method("GET"))
-        .and(path("/projects/999/merge_requests"))
+        .and(path("/api/v4/projects/999/merge_requests"))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
@@ -574,7 +629,7 @@ async fn gitlab_test_connection_tolerates_api_v4_base_suffix() {
         .await;
 
     let plugin = integration_by_name("gitlab").unwrap();
-    let config = json!({ "base_url": format!("{}/api/v4", server.uri()) });
+    let config = json!({ "base_url": server.uri() });
     plugin
         .test_connection(&config, &[("token".into(), FAKE_GITLAB_TOKEN.into())])
         .await
