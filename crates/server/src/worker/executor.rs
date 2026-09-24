@@ -127,14 +127,19 @@ impl RoutineExecutor {
         Ok(resp.json().await?)
     }
 
-    pub async fn start_run(&self, routine_id: Uuid, trigger: &str) -> anyhow::Result<Uuid> {
+    pub async fn start_run(
+        &self,
+        routine_id: Uuid,
+        trigger: &str,
+        invocation_id: &str,
+    ) -> anyhow::Result<Uuid> {
         let url = format!(
             "{}/api/v1/internal/runs",
             self.api_base.trim_end_matches('/')
         );
         let resp = self
             .internal_post(url)
-            .json(&json!({"routine_id": routine_id, "trigger": trigger}))
+            .json(&json!({"routine_id": routine_id, "trigger": trigger, "invocation_id": invocation_id}))
             .send()
             .await?;
         anyhow::ensure!(

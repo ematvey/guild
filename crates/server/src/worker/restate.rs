@@ -106,13 +106,16 @@ macro_rules! journaled_run_body {
         let trigger: &'static str = $trigger;
         let input: Value = $input;
 
-        // Journaled: open the run record.
+        // Journaled: open the run record. The invocation id rides along:
+        // the effect-claim prune rule uses it as the durable terminal
+        // boundary (a claim whose owning invocation finished is prunable).
+        let invocation = $ctx.invocation_id();
         let exec2 = exec.clone();
         let run_id: Uuid = $ctx
             .run(move || {
                 let exec = exec2.clone();
                 async move {
-                    let run_id = exec.start_run(cfg.id, trigger).await?;
+                    let run_id = exec.start_run(cfg.id, trigger, &invocation).await?;
                     Ok(Json(run_id))
                 }
             })
