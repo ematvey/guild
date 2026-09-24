@@ -149,7 +149,7 @@ impl Allowlist {
 /// The allowlist root form: canonicalized when the path exists (symlink
 /// components resolved, verbatim form on Windows), raw otherwise — the same
 /// resolution requests go through, so roots and requests always compare.
-fn canonical_root(path: &Path) -> PathBuf {
+pub(crate) fn canonical_root(path: &Path) -> PathBuf {
     normalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
