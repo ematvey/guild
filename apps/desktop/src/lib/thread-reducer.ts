@@ -81,14 +81,22 @@ export interface ArtifactCard {
   path: string;
 }
 
-/** Narrows meta.card to a well-formed artifact card; every other card
- * shape (string card kinds, malformed objects) renders as its old widget.
- * The discriminator is `card` or `kind` == "artifact" on the card object. */
+/** Narrows meta to a well-formed artifact card; every other card shape
+ * (string card kinds, malformed objects) renders as its old widget. The
+ * server writes the card keys FLAT on meta (`card` is the string
+ * "artifact" alongside id/filename/…); a nested card object is also
+ * accepted for compatibility. */
 export function artifactCardOf(t: { meta?: unknown | null }): ArtifactCard | null {
-  const c = (t.meta as { card?: unknown } | null | undefined)?.card;
-  if (!c || typeof c !== "object") return null;
-  const a = c as Partial<ArtifactCard> & { kind?: unknown };
-  if (a.card !== "artifact" && a.kind !== "artifact") return null;
+  const meta = t.meta as Partial<ArtifactCard> & { card?: unknown; kind?: unknown } | null | undefined;
+  if (!meta || typeof meta !== "object") return null;
+  const nested = (meta.card ?? null) as Partial<ArtifactCard> & { card?: unknown; kind?: unknown } | null;
+  const a =
+    (meta.card === "artifact" || meta.kind === "artifact")
+      ? meta
+      : nested && typeof nested === "object" && (nested.card === "artifact" || nested.kind === "artifact")
+        ? nested
+        : null;
+  if (!a) return null;
   if (typeof a.id !== "string" || !a.id) return null;
   if (typeof a.filename !== "string" || !a.filename) return null;
   if (typeof a.size_bytes !== "number" || !(a.size_bytes >= 0)) return null;

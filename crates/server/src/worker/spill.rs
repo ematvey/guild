@@ -333,6 +333,29 @@ mod tests {
         assert_eq!(obj["status"], 200);
     }
 
+    /// Contract test: the engine's index-rebuild parser reads the meta this
+    /// server writes (flat card keys on meta).
+    #[test]
+    fn the_engines_artifact_parser_reads_the_servers_card() {
+        let meta = artifact_meta(None, &spilled());
+        assert_eq!(
+            guild_core::tools::artifacts::artifact_card_filename(&meta).as_deref(),
+            Some("report.xlsx")
+        );
+        let meta = artifact_meta(Some(serde_json::json!({ "status": 200 })), &spilled());
+        assert_eq!(
+            guild_core::tools::artifacts::artifact_card_filename(&meta).as_deref(),
+            Some("report.xlsx")
+        );
+        // A foreign card is not an artifact card.
+        assert_eq!(
+            guild_core::tools::artifacts::artifact_card_filename(
+                &serde_json::json!({ "card": "web", "kind": "fetch" })
+            ),
+            None
+        );
+    }
+
     #[test]
     fn mime_classification() {
         assert!(is_text_mime("text/plain"));
