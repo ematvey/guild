@@ -681,7 +681,13 @@ pub async fn dispatch_turn_commands(state: &AppState, chat: Option<Uuid>) -> Res
                 )
                 .await
                 .map(|row| row.is_some_and(|row| row.status == "running"))
-                .unwrap_or(false);
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        command = %command.id,
+                        "outbox status read failed; releasing reservation: {error:?}"
+                    );
+                    false
+                });
             if !running {
                 state
                     .generations
