@@ -11,6 +11,20 @@ use protocol::api::{ToolCall, ToolSpec};
 
 pub struct OpenAiProvider;
 
+/// The output-token-limit dialect for a model name: OpenAI reasoning
+/// families (`o1*`, `o3*`, `o4*`, `gpt-5*` — matched on the final path
+/// segment so provider-prefixed names like `openai/o3-mini` count) take
+/// `max_completion_tokens`; every other OpenAI-compatible backend takes
+/// `max_tokens`.
+fn uses_completion_tokens(model: &str) -> bool {
+    let name = model.rsplit(['/', ':']).next().unwrap_or(model);
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("o1")
+        || lower.starts_with("o3")
+        || lower.starts_with("o4")
+        || lower.starts_with("gpt-5")
+}
+
 impl OpenAiProvider {
     pub fn new() -> Self {
         Self
@@ -103,9 +117,19 @@ impl OpenAiProvider {
             "stream_options": {"include_usage": true},
         });
         // 0 = provider default: the field stays absent (the Anthropic
-        // provider makes its own required-max_tokens arrangement).
+        // provider makes its own required-max_tokens arrangement). Exactly
+        // one of the two fields is ever sent: OpenAI's reasoning families
+        // (o-series, gpt-5) reject `max_tokens` with a 400 that asks for
+        // `max_completion_tokens`, while classic chat-completions backends
+        // only know `max_tokens` — the route protocol is "openai" for both,
+        // so the dialect is picked from the model name.
         if req.max_tokens > 0 {
-            body["max_tokens"] = serde_json::json!(req.max_tokens);
+            let field = if uses_completion_tokens(req.model) {
+                "max_completion_tokens"
+            } else {
+                "max_tokens"
+            };
+            body[field] = serde_json::json!(req.max_tokens);
         }
         if let Some(tools) = req.tools {
             body["tools"] = serde_json::Value::Array(
@@ -501,6 +525,32 @@ mod tests {
         };
         let body = OpenAiProvider::body(&req);
         assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn token_limit_field_follows_the_model_dialect() {
+        let msgs = vec![Message::user("hi")];
+        let req = |model: &'static str| ProviderRequest {
+            model,
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+            max_tokens: 512,
+        };
+        // Reasoning families take max_completion_tokens.
+        for model in ["o3-mini", "openai/o1-preview", "gpt-5", "O4-MINI"] {
+            let body = OpenAiProvider::body(&req(model));
+            assert_eq!(body["max_completion_tokens"], 512, "{model}");
+            assert!(body.get("max_tokens").is_none(), "{model}");
+        }
+        // Classic chat-completions backends take max_tokens.
+        for model in ["gpt-4o", "deepseek-chat", "llama-3.3-70b"] {
+            let body = OpenAiProvider::body(&req(model));
+            assert_eq!(body["max_tokens"], 512, "{model}");
+            assert!(body.get("max_completion_tokens").is_none(), "{model}");
+        }
     }
 
     #[test]
