@@ -3,8 +3,8 @@
 //! sent as the `PRIVATE-TOKEN` header.
 
 use super::{
-    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
-    ToolOutcome,
+    api_tool_spec, call_vendor_api, field, in_code_manifest, path_segment, probe, ApiAuth,
+    Category, Integration, ToolOutcome,
 };
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
@@ -51,16 +51,8 @@ fn token(secrets: &[(String, String)]) -> Result<String, String> {
 
 /// Percent-encodes a project reference (numeric id or `group/project` path) —
 /// the slash inside the path must ride encoded inside one path segment.
-fn project_ref(project: &str) -> String {
-    project
-        .bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
+fn project_ref(project: &str) -> Result<String, String> {
+    path_segment(project)
 }
 
 /// Maps an HTTP failure to the tool-error contract: auth errors, missing
@@ -271,7 +263,7 @@ impl Integration for Gitlab {
                         request(
                             &base,
                             &tok,
-                            &format!("/projects/{}/issues", project_ref(project)),
+                            &format!("/projects/{}/issues", project_ref(project)?),
                         )
                         .query(&[("state", state), ("per_page", per_page.as_str())]),
                     )
@@ -304,7 +296,7 @@ impl Integration for Gitlab {
                         request(
                             &base,
                             &tok,
-                            &format!("/projects/{}/merge_requests", project_ref(project)),
+                            &format!("/projects/{}/merge_requests", project_ref(project)?),
                         )
                         .query(&[("state", state), ("per_page", per_page.as_str())]),
                     )
@@ -343,7 +335,7 @@ impl Integration for Gitlab {
                     }
                     let body = send(
                         reqwest::Client::new()
-                            .post(format!("{base}/projects/{}/issues", project_ref(project)))
+                            .post(format!("{base}/projects/{}/issues", project_ref(project)?))
                             .header("PRIVATE-TOKEN", &tok)
                             .timeout(std::time::Duration::from_secs(30))
                             .json(&payload),

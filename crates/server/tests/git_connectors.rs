@@ -686,3 +686,66 @@ async fn github_file_path_segments_are_encoded_and_dotdot_rejected() {
         .unwrap_err();
     assert!(err.contains("not allowed"), "got: {err}");
 }
+
+/// The write-class create_issue encodes its owner/repo segments like the
+/// read tools: special characters cannot split the path, and a dot-segment
+/// owner (`..`) is rejected outright — URL dot-segment normalization would
+/// otherwise resolve `/repos/../<repo>/issues` out of the fixed prefix.
+#[tokio::test]
+async fn github_create_issue_encodes_owner_and_repo_and_rejects_dot_segments() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/repos/octo%2Fx%3Fy/repo/issues"))
+        .and(header(
+            "authorization",
+            format!("Bearer {FAKE_GITHUB_TOKEN}"),
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "number": 7, "html_url": "https://github.com/octo/repo/issues/7"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("github").unwrap();
+    let config = json!({ "api_url": server.uri() });
+    let secrets = vec![("token".to_string(), FAKE_GITHUB_TOKEN.to_string())];
+    let out = plugin
+        .execute(
+            &config,
+            "create_issue",
+            json!({ "owner": "octo/x?y", "repo": "repo", "title": "t" }),
+            &secrets,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(out.content.contains("7"), "{}", out.content);
+    server.verify().await;
+
+    // A `..` owner never reaches the wire.
+    for owner in ["..", "."] {
+        let err = plugin
+            .execute(
+                &config,
+                "create_issue",
+                json!({ "owner": owner, "repo": "repo", "title": "t" }),
+                &secrets,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.contains("not allowed"), "{owner}: {err}");
+    }
+    let err = plugin
+        .execute(
+            &config,
+            "list_issues",
+            json!({ "owner": "..", "repo": "user" }),
+            &secrets,
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("not allowed"), "{err}");
+}

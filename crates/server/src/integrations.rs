@@ -113,11 +113,16 @@ pub trait Integration: Send + Sync {
 
 /// Percent-encodes one URL path segment (unreserved bytes ride as-is).
 /// User- and model-controlled values interpolated into a vendor request
-/// path must not inject `/`, `..`, `?` or `#` — without encoding, a
-/// read-class tool call becomes a general GET on the vendor's public API
-/// with the org credential.
-pub fn path_segment(value: &str) -> String {
-    value
+/// path must not inject `/`, `?` or `#` — without encoding, a read-class
+/// tool call becomes a general GET on the vendor's public API with the org
+/// credential. A dot-segment (`.` / `..`) is rejected: URL dot-segment
+/// normalization would resolve it against the fixed path prefix and escape
+/// it (owner `..` walks out of `/repos/`).
+pub fn path_segment(value: &str) -> Result<String, String> {
+    if matches!(value, "." | "..") {
+        return Err(format!("path segment {value:?} is not allowed"));
+    }
+    Ok(value
         .bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
@@ -125,7 +130,7 @@ pub fn path_segment(value: &str) -> String {
             }
             _ => format!("%{b:02X}"),
         })
-        .collect()
+        .collect())
 }
 
 /// Maps one authenticated probe to a test verdict: 2xx passes, anything
