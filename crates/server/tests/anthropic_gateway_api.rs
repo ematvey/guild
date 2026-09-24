@@ -455,3 +455,87 @@ async fn refusal_stop_reason_reaches_the_client_as_refusal() {
         "the refusal must map through the canonical reason: {text}"
     );
 }
+
+/// A zero (or negative) route cap must not erase the client's positive
+/// limit through the min() in the proxy: a nonpositive route cap is
+/// "no cap" (provider default), and the admin write path rejects it
+/// outright. The config-write rejection is the boundary; this test also
+/// pins the read-side normalization against legacy rows.
+#[tokio::test]
+async fn a_nonpositive_route_cap_never_erases_a_positive_client_limit() {
+    let provider = scripted_provider().await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    // Legacy-shaped row: zero cap (the admin path now refuses to write it).
+    fs.store()
+        .gateway()
+        .upsert_route(
+            fs.org_id,
+            "gpt-test",
+            "openai",
+            true,
+            1.0,
+            2.0,
+            None,
+            false,
+            None,
+            Some(0),
+            &[],
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_user_key(&app, &fs.token).await;
+
+    let (status, _) = post_messages(
+        &app,
+        &key,
+        Some(key.clone()),
+        json!({"model": "gpt-test", "max_tokens": 50, "messages": [{"role": "user", "content": "hi"}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let calls = chat_calls(&provider).await;
+    assert_eq!(calls.len(), 1);
+    let sent: Value = serde_json::from_slice(&calls[0].body).unwrap();
+    assert_eq!(
+        sent["max_tokens"], 50,
+        "the zero route cap must not override the client's positive limit"
+    );
+
+    // The admin write path rejects nonpositive caps outright.
+    let admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/admin/gateway/routes")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "gpt-bad",
+                        "provider": "openai",
+                        "price_in": 1.0,
+                        "price_out": 2.0,
+                        "max_output_tokens": 0
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admin.status(), StatusCode::BAD_REQUEST);
+}

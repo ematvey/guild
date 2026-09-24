@@ -361,6 +361,13 @@ async fn set_route(
     let reasoning = body["reasoning"].as_bool().unwrap_or(false);
     let context_window = body["context_window"].as_i64();
     let max_output_tokens = body["max_output_tokens"].as_i64();
+    if max_output_tokens.is_some_and(|c| c <= 0) {
+        // A nonpositive cap means "no cap" nowhere in the proxy: through
+        // min() it would erase a positive client limit — reject it.
+        return Err(ApiError::bad_request(
+            "max_output_tokens must be a positive integer",
+        ));
+    }
     let price_in = body["price_in"]
         .as_f64()
         .ok_or_else(|| ApiError::bad_request("missing price_in"))?;
