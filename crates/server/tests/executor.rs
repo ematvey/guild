@@ -373,6 +373,13 @@ async fn completion_failures_classify_terminal_vs_transient() {
         r#"{"error":{"code":"provider_rate_limited","message":"provider rate limited"}}"#;
     let quota =
         r#"{"error":{"code":"quota_exceeded","message":"monthly quota for this model reached"}}"#;
+    // A provider 400 with a body far past any display truncation: the
+    // envelope must still parse.
+    let long_upstream_400 = json!({"error": {"code": "provider_upstream",
+        "message": format!("provider error: status 400: {}", "x".repeat(10_000))}})
+    .to_string();
+    // A status-less adapter refusal of an unsupported request.
+    let unsupported = r#"{"error":{"code":"provider_upstream","message":"audio input parts are not supported by this provider"}}"#;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .respond_with(move |_: &wiremock::Request| {
             let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -396,6 +403,8 @@ async fn completion_failures_classify_terminal_vs_transient() {
                 8 => wiremock::ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
                     .set_body_string("data: {\"type\":\"error\",\"code\":\"provider\",\"message\":\"overloaded_error: the upstream is overloaded\"}\n\n"),
+                9 => wiremock::ResponseTemplate::new(502).set_body_string(long_upstream_400.clone()),
+                10 => wiremock::ResponseTemplate::new(502).set_body_string(unsupported),
                 _ => wiremock::ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
                     .set_body_string(concat!(
@@ -424,6 +433,8 @@ async fn completion_failures_classify_terminal_vs_transient() {
         false, // 5xx
         true,  // in-stream permanent rejection
         false, // in-stream throttle
+        true,  // long upstream 400 body
+        true,  // status-less "not supported" adapter refusal
     ] {
         let result = exec
             .completion(
@@ -451,4 +462,114 @@ async fn completion_failures_classify_terminal_vs_transient() {
         .is_ok(),
         "a normal completion succeeds"
     );
+}
+
+/// A tool continuation replays the model's reasoning: turn 1 streams
+/// `reasoning_content` before its tool call; the turn-2 request (through the
+/// real internal completion endpoint) carries it on the assistant message.
+#[tokio::test]
+async fn routine_tool_continuation_replays_reasoning() {
+    let (served, external) = setup().await;
+    let tool_args = json!({"url": format!("{}/data", external.uri()), "method": "GET"}).to_string();
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let c = calls.clone();
+    let first_body = format!(
+        "data: {}\n\ndata: {}\n\ndata: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n",
+        json!({"choices":[{"delta":{"reasoning_content":"fetch the page first"}}]}),
+        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"h1","function":{"name":"http_call","arguments":tool_args}}]}}]})
+    );
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(move |_req: &wiremock::Request| {
+            let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let body = if n == 0 {
+                first_body.clone()
+            } else {
+                "data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\n\ndata: [DONE]\n\n"
+                    .to_string()
+            };
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body)
+        })
+        .mount(&provider)
+        .await;
+    let master = served.full.state.config.master_key().unwrap();
+    served
+        .full
+        .store()
+        .gateway()
+        .upsert_provider_key(
+            served.full.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let store = served.full.store();
+    let creator = store
+        .identity()
+        .create_user(served.full.org_id, "reason@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let routine = store
+        .routines()
+        .create(
+            served.full.org_id,
+            creator.id,
+            "reasoner",
+            "Reasoner",
+            "webhook",
+            json!({}),
+            "You reason.",
+            "gpt-test",
+            json!(["http_call"]),
+            "hook_reason",
+            true,
+        )
+        .await
+        .unwrap();
+    let exec = RoutineExecutor {
+        api_base: served.base_url.clone(),
+        internal_token: "test-internal".into(),
+        allow_http_tool: true,
+        http_tool_allow_hosts: vec!["127.0.0.1".into()],
+    };
+    let summary = run_routine(&exec, routine.id, "webhook", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(summary, "done");
+    let chat_calls: Vec<_> = provider
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.url.path().contains("chat/completions"))
+        .collect();
+    assert_eq!(chat_calls.len(), 2);
+    let second: serde_json::Value = serde_json::from_slice(&chat_calls[1].body).unwrap();
+    let assistant = second["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "assistant")
+        .expect("assistant tool-call message replayed");
+    assert_eq!(
+        assistant["reasoning_content"], "fetch the page first",
+        "reasoning dropped from the continuation: {second}"
+    );
+}
+
+/// Journals written before Completion carried reasoning still deserialize.
+#[test]
+fn completion_journal_without_reasoning_deserializes() {
+    let old =
+        json!({"text": "t", "tool_calls": [], "cost_usd": 0.0, "tokens_in": 1, "tokens_out": 2});
+    let c: guild_server::worker::executor::Completion = serde_json::from_value(old).unwrap();
+    assert!(c.reasoning.is_none());
 }
