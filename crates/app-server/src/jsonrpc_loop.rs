@@ -62,6 +62,10 @@ pub struct Shared {
     /// The machine link's config channel: publish a config to connect the
     /// executor link, `None` to drop it (sign-out). The link task subscribes.
     pub machine_link: Arc<tokio::sync::watch::Sender<Option<MachineLinkConfig>>>,
+    /// The session store's path (token.json). Injected by tests so they
+    /// never touch the developer's real store; the daemon leaves it None
+    /// and the default path applies.
+    pub store_path: Option<PathBuf>,
 }
 
 impl Shared {
@@ -76,6 +80,7 @@ impl Shared {
             artifacts: Arc::new(ArtifactIndex::new()),
             shutdown: Arc::new(shutdown),
             machine_link: Arc::new(machine_link),
+            store_path: None,
         }
     }
 
@@ -449,7 +454,14 @@ fn optional_param(req: &Request, key: &str) -> Option<String> {
 /// Applies one auth transition to the session's auth state, persisting to
 /// the default token.json path. The injectable-store variant is for tests.
 fn auth_change(shared: &Shared, change: AuthChange) -> anyhow::Result<()> {
-    auth_change_with_store(shared, change, crate::session_store::default_path().ok())
+    auth_change_with_store(
+        shared,
+        change,
+        shared
+            .store_path
+            .clone()
+            .or_else(|| crate::session_store::default_path().ok()),
+    )
 }
 
 fn auth_change_with_store(
@@ -463,7 +475,10 @@ fn auth_change_with_store(
 }
 
 async fn machine_identify(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    let path = crate::session_store::default_path().ok();
+    let path = shared
+        .store_path
+        .clone()
+        .or_else(|| crate::session_store::default_path().ok());
     machine_identify_with_store(shared, req, out_tx, path).await;
 }
 
@@ -997,7 +1012,13 @@ mod machine_link_tests {
             ),
             ..Default::default()
         };
-        Shared::new(session)
+        // Store path injected: these tests must never write the developer's
+        // real token.json.
+        let mut shared = Shared::new(session);
+        shared.store_path = Some(
+            std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())),
+        );
+        shared
     }
 
     #[tokio::test]
@@ -1175,7 +1196,10 @@ mod machine_link_tests {
 
     #[tokio::test]
     async fn identify_without_login_parks_the_link_but_keeps_identity() {
-        let shared = Shared::new(Session::default());
+        let mut shared = Shared::new(Session::default());
+        shared.store_path = Some(
+            std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())),
+        );
         let mut link_rx = shared.machine_link.subscribe();
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
 
