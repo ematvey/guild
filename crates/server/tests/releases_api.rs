@@ -363,12 +363,18 @@ async fn same_platform_artifacts_with_different_filenames_coexist() {
                 .unwrap(),
         )
     };
-    let dmg = upload("Guild-0.6.0-macos-aarch64.dmg", b"dmg-bytes").await.unwrap();
+    let dmg = upload("Guild-0.6.0-macos-aarch64.dmg", b"dmg-bytes")
+        .await
+        .unwrap();
     assert_eq!(dmg.status(), StatusCode::OK);
     let tar = upload("Guild-0.6.0-macos-aarch64.app.tar.gz", b"tar-bytes")
         .await
         .unwrap();
-    assert_eq!(tar.status(), StatusCode::OK, "the second artifact must not delete the first");
+    assert_eq!(
+        tar.status(),
+        StatusCode::OK,
+        "the second artifact must not delete the first"
+    );
 
     let list = app
         .clone()
@@ -416,7 +422,13 @@ async fn same_platform_artifacts_with_different_filenames_coexist() {
         .await
         .unwrap();
     assert_eq!(del.status(), StatusCode::OK);
-    assert_eq!(upload("Guild-0.6.0-macos-aarch64.dmg", b"dmg-v2").await.unwrap().status(), StatusCode::OK);
+    assert_eq!(
+        upload("Guild-0.6.0-macos-aarch64.dmg", b"dmg-v2")
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
     let list = app
         .oneshot(
             Request::builder()

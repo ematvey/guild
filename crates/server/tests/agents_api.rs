@@ -229,7 +229,10 @@ async fn workspace_name_conflict_leaves_no_orphan_chat() {
         )
     };
     assert_eq!(create("dup-ws").await.unwrap().status(), StatusCode::OK);
-    assert_eq!(create("dup-ws").await.unwrap().status(), StatusCode::CONFLICT);
+    assert_eq!(
+        create("dup-ws").await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
 
     let chats: i64 = sqlx::query_scalar("SELECT count(*) FROM chats WHERE title = 'dup-ws'")
         .fetch_one(fs.store().pool())

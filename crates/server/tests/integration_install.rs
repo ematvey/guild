@@ -226,7 +226,6 @@ async fn v2_install_creates_disabled_plugin_row_and_routines() {
     assert_eq!(routine["prompt"], "digest it");
     assert_eq!(routine["trigger_kind"], "webhook");
 
-
     // installing again is idempotent for the row
     let res = app
         .clone()
@@ -555,8 +554,7 @@ async fn stub_create_of_registry_mcp_plugin_seeds_the_mcp_config() {
         .expect("stub row listed")
         .clone();
     assert_eq!(
-        row["config"]["mcp"]["url"],
-        "https://mcp.example.com/mcp",
+        row["config"]["mcp"]["url"], "https://mcp.example.com/mcp",
         "stub seeded from the manifest"
     );
     assert_eq!(row["config"]["auth"]["secret_names"][0], "api_key");

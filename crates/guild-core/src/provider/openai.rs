@@ -495,7 +495,10 @@ mod tests {
         };
         let body = OpenAiProvider::body(&req);
         assert_eq!(body["max_tokens"], 512);
-        let req = ProviderRequest { max_tokens: 0, ..req };
+        let req = ProviderRequest {
+            max_tokens: 0,
+            ..req
+        };
         let body = OpenAiProvider::body(&req);
         assert!(body.get("max_tokens").is_none());
     }

@@ -257,14 +257,6 @@ pub(crate) async fn drive_chat(
     ))
 }
 
-/// Resolves one ApprovalRequested frame: policy auto-decides (Allow/Never)
-/// or the engine client does (Ask: emit the request, wait on the pending
-/// oneshot `agent.approve` resolves). The decision posts to the approvals
-/// endpoint; a failed post is logged, not fatal (the journal expiry bounds
-/// the wait server-side anyway).
-// Approval dispatch keeps caller context and immutable call data explicit.
-#[allow(clippy::too_many_arguments)]
-
 /// Finds the project for `folder` or creates one bound to `machine_id` —
 /// the workflow dispatches the turn's tools to the machine the project is
 /// bound to, which must be this daemon's own executor link. A matching folder on another machine remains a separate project.
