@@ -214,9 +214,8 @@ pub fn resolve_scoped_in(
             // checked only on the fully-resolved result — a lexical path
             // that still contains `..` (relative link targets) or an
             // un-followed link chain must not pass.
-            normalize(&joined).ok_or_else(|| {
-                ToolFailure::InvalidInput(format!("path not found: {path_str}"))
-            })?
+            normalize(&joined)
+                .ok_or_else(|| ToolFailure::InvalidInput(format!("path not found: {path_str}")))?
         }
         Err(e) => {
             return Err(ToolFailure::InvalidInput(format!(
@@ -295,15 +294,13 @@ fn normalize(path: &Path) -> Option<PathBuf> {
                 }
                 return Some(real);
             }
-            Err(_) => match probe.file_name() {
-                Some(name) => {
-                    missing.push(name.to_owned());
-                    if !probe.pop() {
-                        return None;
-                    }
+            Err(_) => {
+                let name = probe.file_name()?;
+                missing.push(name.to_owned());
+                if !probe.pop() {
+                    return None;
                 }
-                None => return None,
-            },
+            }
         }
     }
 }
