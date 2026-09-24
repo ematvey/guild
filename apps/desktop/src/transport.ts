@@ -228,19 +228,42 @@ export function wsUrl(): string {
   return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 }
 
+// The refresh in flight and the account it was started for: a response
+// is applied only while that same credential is still installed, so a
+// response delivered after sign-out (or after another account signed in)
+// is discarded instead of overwriting the newer bearer. The single-flight
+// promise is scoped to the same credential — a refresh for a freshly
+// signed-in account starts its own.
 let refreshing: Promise<void> | null = null;
+let refreshingFor: string | null = null;
 export function refreshSession(): Promise<void> {
-  if (!refreshing) refreshing = (async () => {
-    const response = await fetch(apiUrl("/api/v1/auth/refresh"), {
-      method: "POST", headers: { authorization: `Bearer ${getToken()}` },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (response.status === 401 || response.status === 403) throw new SessionExpiredError("Sign in again to reconnect");
-    if (!response.ok) throw new Error("Session refresh is temporarily unavailable");
-    const value = await response.json();
-    if (typeof value.token === "string") setToken(value.token);
-  })().finally(() => { refreshing = null; });
-  return refreshing;
+  const bearer = getToken();
+  if (refreshing && refreshingFor === bearer) return refreshing;
+  const pending = doRefresh(bearer).finally(() => {
+    if (refreshingFor === bearer) {
+      refreshing = null;
+      refreshingFor = null;
+    }
+  });
+  refreshingFor = bearer;
+  refreshing = pending;
+  return pending;
+}
+
+async function doRefresh(bearer: string | null): Promise<void> {
+  const base = serverBase();
+  const response = await fetch(`${base}/api/v1/auth/refresh`, {
+    method: "POST", headers: { authorization: `Bearer ${bearer}` },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (response.status === 401 || response.status === 403) throw new SessionExpiredError("Sign in again to reconnect");
+  if (!response.ok) throw new Error("Session refresh is temporarily unavailable");
+  const value = await response.json();
+  // The bearer (and the paired server) must still be the ones this refresh
+  // was started with — otherwise the response is stale for this session.
+  if (typeof value.token === "string" && getToken() === bearer && serverBase() === base) {
+    setToken(value.token);
+  }
 }
 
 /** Mints a one-use ticket for a WebSocket upgrade. */
