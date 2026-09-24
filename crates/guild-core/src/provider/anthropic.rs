@@ -111,6 +111,18 @@ impl AnthropicProvider {
                 messages.push(serde_json::json!({"role": "assistant", "content": blocks}));
                 continue;
             }
+            // A user turn right after tool results rides in the SAME user
+            // content array, after them — the documented [tool_result…,
+            // text] continuation form; a separate user message following
+            // the tool_use turn carries no result and is rejected by the
+            // strict contract.
+            let follows_tool_results = matches!(
+                messages.last(),
+                Some(last) if last["role"] == "user"
+                    && last["content"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|b| b["type"] == "tool_result"))
+            );
             // Multimodal user turns: image blocks — data URIs ride as
             // base64 sources, remote http(s) URLs as Anthropic url sources
             // (both upstream-supported). Audio has no Anthropic input form:
@@ -144,7 +156,25 @@ impl AnthropicProvider {
                         "audio input parts are not supported by the anthropic protocol (they are accepted only on openai-shape routes)".into(),
                     ));
                 }
-                messages.push(serde_json::json!({"role": m.role, "content": blocks}));
+                if follows_tool_results {
+                    if let Some(last) = messages.last_mut() {
+                        last["content"]
+                            .as_array_mut()
+                            .expect("tool-result user content is an array")
+                            .extend(blocks);
+                    }
+                } else {
+                    messages.push(serde_json::json!({"role": m.role, "content": blocks}));
+                }
+                continue;
+            }
+            if follows_tool_results && !m.content.trim().is_empty() {
+                if let Some(last) = messages.last_mut() {
+                    last["content"]
+                        .as_array_mut()
+                        .expect("tool-result user content is an array")
+                        .push(serde_json::json!({"type": "text", "text": m.content}));
+                }
                 continue;
             }
             messages.push(serde_json::json!({"role": m.role, "content": m.content}));
@@ -455,6 +485,54 @@ mod tests {
         assert_eq!(result["type"], "tool_result");
         assert_eq!(result["tool_use_id"], "c1");
         assert_eq!(result["content"], "contents");
+    }
+
+    /// A continuation whose user turn carries the result and follow-up text
+    /// rides ONE user content array — `[tool_result, text]`, the form the
+    /// strict tool contract requires (a separate user message after the
+    /// tool_use turn would carry no result). Media joins the same array.
+    #[test]
+    fn tool_continuation_rides_one_user_turn_of_results_then_text() {
+        let msgs = vec![
+            Message::user("weather?"),
+            Message {
+                role: "assistant".into(),
+                content: String::new(),
+                images: Vec::new(),
+                audio: Vec::new(),
+                tool_calls: Some(vec![ToolCall {
+                    id: "c1".into(),
+                    name: "get_weather".into(),
+                    arguments: serde_json::json!({"city": "oslo"}),
+                }]),
+                tool_call_id: None,
+                reasoning: None,
+            },
+            Message::tool_result("c1", "snow"),
+            Message::user("and this chart").with_images(vec!["data:image/png;base64,QUJD".into()]),
+        ];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+            max_tokens: 0,
+        };
+        let body = AnthropicProvider::body(&req).unwrap();
+        let arr = body["messages"].as_array().unwrap();
+        assert_eq!(arr.len(), 3, "results + text share one user turn");
+        assert_eq!(arr[1]["role"], "assistant");
+        assert_eq!(arr[1]["content"][0]["type"], "tool_use");
+        assert_eq!(arr[1]["content"][0]["id"], "c1");
+        let turn = arr[2]["content"].as_array().unwrap();
+        assert_eq!(turn[0]["type"], "tool_result");
+        assert_eq!(turn[0]["tool_use_id"], "c1");
+        assert_eq!(turn[1]["type"], "text");
+        assert_eq!(turn[1]["text"], "and this chart");
+        assert_eq!(turn[2]["type"], "image");
+        assert_eq!(turn[2]["source"]["data"], "QUJD");
     }
 
     #[test]

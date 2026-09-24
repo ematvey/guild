@@ -123,7 +123,10 @@ struct AnthropicTool {
 /// proxy's `anthropicToOpenAI`: top-level system, text/image/tool_result
 /// blocks in user turns (tool results keep their text and image parts),
 /// text/tool_use blocks in assistant turns. An image in a form the internal
-/// media contract cannot carry is a 400, never silently dropped.
+/// media contract cannot carry is a 400, never silently dropped. Tool
+/// results are emitted before the turn's accompanying text/image: the
+/// assistant tool_calls they answer must be followed by the results on
+/// both provider shapes, and Claude clients send `[tool_result…, text]`.
 fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>), ApiError> {
     let system = req.system.as_ref().map(|s| match s {
         Value::String(t) => t.clone(),
@@ -175,8 +178,10 @@ fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>),
                 reasoning: None,
             });
         } else {
-            // user turns: text + image parts inline, tool_result blocks
-            // become separate tool messages after the turn.
+            // user turns: tool_result blocks become tool messages FIRST (a
+            // user message between the assistant's tool_calls and the results
+            // is rejected by both provider adapters), then the turn's
+            // accompanying text/image as the user message after them.
             let mut text = String::new();
             let mut images = Vec::new();
             for b in &blocks {
@@ -188,6 +193,7 @@ fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>),
                         text.push_str(b["text"].as_str().unwrap_or_default());
                     }
                     Some("image") => images.push(image_uri(b)?),
+                    Some("tool_result") => out.push(tool_result_message(b)?),
                     _ => {}
                 }
             }
@@ -202,34 +208,32 @@ fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>),
                     reasoning: None,
                 });
             }
-            for b in &blocks {
-                if b["type"] == "tool_result" {
-                    let mut images = Vec::new();
-                    let content = match &b["content"] {
-                        Value::String(s) => s.clone(),
-                        Value::Array(parts) => {
-                            let mut texts = Vec::new();
-                            for p in parts {
-                                match p["type"].as_str() {
-                                    Some("image") => images.push(image_uri(p)?),
-                                    _ => texts.extend(p["text"].as_str()),
-                                }
-                            }
-                            texts.join("\n")
-                        }
-                        _ => String::new(),
-                    };
-                    let mut msg = Message::tool_result(
-                        b["tool_use_id"].as_str().unwrap_or_default(),
-                        content,
-                    );
-                    msg.images = images;
-                    out.push(msg);
-                }
-            }
         }
     }
     Ok((system, out))
+}
+
+/// One `tool_result` block as an internal tool message: the content keeps
+/// its text and image parts (a bare string is the text form).
+fn tool_result_message(b: &Value) -> Result<Message, ApiError> {
+    let mut images = Vec::new();
+    let content = match &b["content"] {
+        Value::String(s) => s.clone(),
+        Value::Array(parts) => {
+            let mut texts = Vec::new();
+            for p in parts {
+                match p["type"].as_str() {
+                    Some("image") => images.push(image_uri(p)?),
+                    _ => texts.extend(p["text"].as_str()),
+                }
+            }
+            texts.join("\n")
+        }
+        _ => String::new(),
+    };
+    let mut msg = Message::tool_result(b["tool_use_id"].as_str().unwrap_or_default(), content);
+    msg.images = images;
+    Ok(msg)
 }
 
 /// An Anthropic image block's source as an internal image part: base64 →
@@ -657,12 +661,42 @@ mod tests {
         })))
         .unwrap();
         assert_eq!(msgs.len(), 2);
-        assert_eq!(msgs[0].role, "user");
-        assert_eq!(msgs[0].content, "look");
-        assert_eq!(msgs[0].images, vec!["data:image/png;base64,AAAA"]);
-        assert_eq!(msgs[1].role, "tool");
-        assert_eq!(msgs[1].tool_call_id.as_deref(), Some("call_x"));
-        assert_eq!(msgs[1].content, "snow");
+        // Tool results precede the accompanying user text: the assistant
+        // tool_calls they answer must be followed by the results upstream.
+        assert_eq!(msgs[0].role, "tool");
+        assert_eq!(msgs[0].tool_call_id.as_deref(), Some("call_x"));
+        assert_eq!(msgs[0].content, "snow");
+        assert_eq!(msgs[1].role, "user");
+        assert_eq!(msgs[1].content, "look");
+        assert_eq!(msgs[1].images, vec!["data:image/png;base64,AAAA"]);
+    }
+
+    /// The standard tool continuation Claude clients send — assistant
+    /// tool_use, then a user turn of `[tool_result…, text]` — keeps the
+    /// results adjacent to the calls: tool messages come before the text.
+    #[test]
+    fn tool_result_then_text_keeps_results_adjacent_to_the_calls() {
+        let (_, msgs) = to_internal(&parse(json!({
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "weather?"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "call_x", "name": "get_weather",
+                     "input": {"city": "oslo"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call_x",
+                     "content": "snow"},
+                    {"type": "text", "text": "What next?"}
+                ]}
+            ],
+        })))
+        .unwrap();
+        let roles: Vec<&str> = msgs.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(roles, vec!["user", "assistant", "tool", "user"]);
+        assert_eq!(msgs[2].tool_call_id.as_deref(), Some("call_x"));
+        assert_eq!(msgs[2].content, "snow");
+        assert_eq!(msgs[3].content, "What next?");
     }
 
     #[test]
