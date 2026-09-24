@@ -386,7 +386,7 @@ mod tests {
             Message::user("hi"),
             Message {
                 role: "assistant".into(),
-                content: String::new(),
+                content: " \n\t".into(),
                 images: Vec::new(),
                 audio: Vec::new(),
                 tool_calls: Some(vec![ToolCall {
