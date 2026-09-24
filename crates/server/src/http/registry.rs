@@ -451,6 +451,7 @@ async fn install_mcp_plugin(
             .allowed_tools
             .clone()
             .unwrap_or_else(|| vec!["http_call".into(), "storage_put".into()]);
+        let webhook_token = new_hook_token();
         let routine = store
             .routines()
             .create(
@@ -463,11 +464,16 @@ async fn install_mcp_plugin(
                 &t.prompt,
                 &t.model,
                 serde_json::to_value(&allowed_tools).expect("tool list serializes"),
-                &new_hook_token(),
+                &webhook_token,
                 false, // disabled until an admin enables it
             )
             .await?;
-        routines.push(serde_json::to_value(&routine).expect("routine serializes"));
+        // The plaintext token is shown once here: only its hash is stored
+        // and no rotate endpoint exists, so dropping it would leave the
+        // webhook trigger permanently unusable.
+        let mut rv = serde_json::to_value(&routine).expect("routine serializes");
+        rv["webhook_token"] = json!(webhook_token);
+        routines.push(rv);
     }
     Ok(Json(json!({
         "integration": serde_json::to_value(&row).expect("row serializes"),

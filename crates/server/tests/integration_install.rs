@@ -179,6 +179,16 @@ async fn v2_install_creates_disabled_plugin_row_and_routines() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+    // The webhook token is returned once at install; only its hash is
+    // stored and no rotate endpoint exists, so a response without it would
+    // leave the webhook trigger permanently unusable.
+    let install_body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let install_v: serde_json::Value = serde_json::from_slice(&install_body).unwrap();
+    assert!(install_v["routines"][0]["webhook_token"]
+        .as_str()
+        .is_some_and(|t| !t.is_empty()));
 
     // the plugin row exists, disabled, with the mcp url in config
     let res = get(&app, "/api/v1/admin/integrations", &token).await;
@@ -215,6 +225,7 @@ async fn v2_install_creates_disabled_plugin_row_and_routines() {
     assert_eq!(routine["enabled"], false);
     assert_eq!(routine["prompt"], "digest it");
     assert_eq!(routine["trigger_kind"], "webhook");
+
 
     // installing again is idempotent for the row
     let res = app
