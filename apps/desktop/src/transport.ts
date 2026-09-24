@@ -131,7 +131,12 @@ export async function rpcCall(
     const orphan = rpcOrphans.get(id);
     if (orphan) {
       rpcOrphans.delete(id);
-      rpcWaiters.get(id)?.resolve(orphan.value);
+      const w = rpcWaiters.get(id);
+      if (orphan.value?.error) {
+        w?.reject(new Error(orphan.value.error?.message ?? String(orphan.value.error)));
+      } else {
+        w?.resolve(orphan.value);
+      }
     }
     if (!rpcPolling) {
       rpcPolling = true;
