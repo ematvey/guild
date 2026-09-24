@@ -247,7 +247,7 @@ fn parses_done_frame_directly() {
     #[derive(serde::Deserialize, Debug)]
     #[serde(tag = "type", rename_all = "snake_case")]
     enum Probe {
-        Done { cost_usd: f64 },
+        Done { _cost_usd: f64 },
         Idle,
     }
     let probe: Result<Probe, _> = serde_json::from_str(r#"{"type":"done","cost_usd":1.5}"#);

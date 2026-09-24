@@ -87,16 +87,18 @@ async fn link_reconnects_after_a_server_side_close() {
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(flaky_server(listener, connects.clone()));
 
-    let mut session = Session::default();
-    session.auth = AuthState::from_parts(
-        Some(CloudClient {
-            base_url: format!("http://127.0.0.1:{port}"),
-            token: "tok".into(),
-        }),
-        None,
-        Some("machine-reconnect".into()),
-        None,
-    );
+    let session = Session {
+        auth: AuthState::from_parts(
+            Some(CloudClient {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "tok".into(),
+            }),
+            None,
+            Some("machine-reconnect".into()),
+            None,
+        ),
+        ..Default::default()
+    };
     let shared = Shared::new(session);
 
     let link_shared = shared.clone();

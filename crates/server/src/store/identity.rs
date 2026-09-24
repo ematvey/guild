@@ -283,7 +283,7 @@ impl<'a> IdentityStore<'a> {
         email: &str,
         password: &str,
     ) -> Result<(UserRow, i64), ApiError> {
-        let row: Option<(
+        type AuthGenRow = (
             Uuid,
             Uuid,
             String,
@@ -293,7 +293,8 @@ impl<'a> IdentityStore<'a> {
             Option<String>,
             Option<String>,
             i64,
-        )> = sqlx::query_as(
+        );
+        let row: Option<AuthGenRow> = sqlx::query_as(
             "SELECT u.id, u.org_id, u.email, u.role, u.identity_type, u.password_hash, u.display_name, u.avatar_url, u.auth_generation \
              FROM users u WHERE u.email = $1",
         )

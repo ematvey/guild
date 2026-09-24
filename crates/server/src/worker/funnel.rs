@@ -190,6 +190,7 @@ pub(crate) struct ExpectedExecutor {
     pub owner: Option<(Uuid, Uuid)>,
 }
 
+#[allow(clippy::too_many_arguments)] // call-site noise beats a param struct
 pub(crate) fn note_pending_tool(
     state: &AppState,
     chat_id: Uuid,
