@@ -184,7 +184,7 @@ pub(crate) fn spawn_stop_approval_watcher(state: &AppState, chat_id: Uuid, call_
 /// current row names a different owner — a freed machine id claimed by
 /// another member never receives another turn's arguments.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct ExpectedExecutor {
+pub struct ExpectedExecutor {
     pub org_id: Option<Uuid>,
     pub project_id: Option<Uuid>,
     pub owner: Option<(Uuid, Uuid)>,

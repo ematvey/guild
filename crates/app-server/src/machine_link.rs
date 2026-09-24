@@ -1031,6 +1031,11 @@ mod tests {
             fixture.org_id,
             fixture.chat_id,
             &machine,
+            guild_server::worker::funnel::ExpectedExecutor {
+                org_id: Some(fixture.org_id),
+                project_id: None,
+                owner: Some((fixture.user_id, fixture.org_id)),
+            },
             &child.to_string_lossy(),
             &artifact,
         );
