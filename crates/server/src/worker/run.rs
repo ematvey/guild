@@ -86,7 +86,7 @@ async fn run_loop(
             audio: Vec::new(),
             tool_calls: Some(c.tool_calls.clone()),
             tool_call_id: None,
-            reasoning: None,
+            reasoning: c.reasoning.clone(),
         });
         for call in &c.tool_calls {
             let result = registry

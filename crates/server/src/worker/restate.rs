@@ -209,7 +209,7 @@ macro_rules! journaled_run_body {
                 audio: Vec::new(),
                 tool_calls: Some(c.tool_calls.clone()),
                 tool_call_id: None,
-                reasoning: None,
+                reasoning: c.reasoning.clone(),
             });
             for (tool_index, call) in c.tool_calls.into_iter().enumerate() {
                 // Journaled: one tool execution; failures become tool results.

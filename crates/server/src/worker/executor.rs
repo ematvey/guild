@@ -72,6 +72,11 @@ pub enum CompletionError {
 pub struct Completion {
     pub text: String,
     pub tool_calls: Vec<ToolCall>,
+    /// The model's reasoning for this step, replayed on the assistant
+    /// message of a tool continuation. Absent in journals written before it
+    /// was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     pub cost_usd: f64,
     pub tokens_in: u32,
     pub tokens_out: u32,
@@ -183,6 +188,9 @@ impl RoutineExecutor {
     /// HTTP status: a provider 400 arrives as 502/provider_upstream, and
     /// both quota exhaustion and provider throttling arrive as
     /// 429-with-different-codes.
+    ///
+    /// The FULL body is parsed (a long provider body must not lose its
+    /// envelope to truncation); only the rendered message is truncated.
     fn classify_internal_failure(status: u16, body: &str) -> CompletionError {
         let parsed: Option<serde_json::Value> = serde_json::from_str(body.trim())
             .ok()
@@ -194,16 +202,20 @@ impl RoutineExecutor {
         let message = parsed
             .as_ref()
             .and_then(|v| v["error"]["message"].as_str())
-            .map(str::to_string);
+            .map(|m| m.chars().take(4096).collect::<String>());
         match (status, code.as_deref(), message.as_deref()) {
             // The provider itself rejected the request (translated to 502):
-            // permanent rejection (4xx except 408/429) is terminal; provider
-            // infrastructure (5xx) stays transient.
+            // permanent rejection (4xx except 408/429, or a status-less
+            // adapter refusal of an unsupported request) is terminal;
+            // provider infrastructure (5xx) stays transient.
             (_, Some("provider_upstream"), Some(message)) => match provider_status(message) {
                 Some(s) if (400..500).contains(&s) && s != 408 && s != 429 => {
                     CompletionError::Terminal(format!(
                         "completion failed: provider rejected the request: {message}"
                     ))
+                }
+                None if message.contains("not supported") => {
+                    CompletionError::Terminal(format!("completion failed: {message}"))
                 }
                 _ => CompletionError::Transient(anyhow::anyhow!("completion failed: {message}")),
             },
@@ -264,11 +276,11 @@ impl RoutineExecutor {
             // translated (see classify_internal_failure), not the HTTP
             // status alone.
             let body = resp.text().await.unwrap_or_default();
-            let truncated: String = body.chars().take(4096).collect();
-            return Err(Self::classify_internal_failure(status.as_u16(), &truncated));
+            return Err(Self::classify_internal_failure(status.as_u16(), &body));
         }
 
         let mut text = String::new();
+        let mut reasoning = String::new();
         let mut tool_calls = Vec::new();
         let mut cost = 0.0f64;
         let mut tokens_in = 0u32;
@@ -298,7 +310,7 @@ impl RoutineExecutor {
                     tokens_out = to;
                 }
                 StreamEvent::ToolCallDelta { .. } => {}
-                StreamEvent::ThinkingDelta { .. } => {}
+                StreamEvent::ThinkingDelta { content } => reasoning.push_str(&content),
                 StreamEvent::ApprovalRequested { .. } | StreamEvent::ApprovalResolved { .. } => {}
                 StreamEvent::Error { code, message } => {
                     // The provider failed mid-answer. Only a PERMANENT
@@ -322,6 +334,7 @@ impl RoutineExecutor {
         Ok(Completion {
             text,
             tool_calls,
+            reasoning: (!reasoning.is_empty()).then_some(reasoning),
             cost_usd: cost,
             tokens_in,
             tokens_out,
