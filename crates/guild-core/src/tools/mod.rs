@@ -206,54 +206,17 @@ pub fn resolve_scoped_in(
     let resolved = match joined.canonicalize() {
         Ok(p) => p,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // Target may not exist yet (write_file): canonicalize the
-            // nearest existing ancestor, then walk the missing tail
-            // component by component. A missing component may be a
-            // dangling symlink whose target would carry the write
-            // outside the workspace, so lexical rejoining is not enough.
-            let mut missing: Vec<std::ffi::OsString> = vec![];
-            let mut probe: &Path = &joined;
-            let existing = loop {
-                match probe.canonicalize() {
-                    Ok(p) => break p,
-                    Err(_) => match probe.parent() {
-                        Some(p) => {
-                            if let Some(name) = probe.file_name() {
-                                missing.push(name.to_os_string());
-                            }
-                            probe = p;
-                        }
-                        None => {
-                            return Err(ToolFailure::InvalidInput(format!(
-                                "path not found: {path_str}"
-                            )))
-                        }
-                    },
-                }
-            };
-            let mut resolved = existing;
-            for part in missing.into_iter().rev() {
-                let candidate = resolved.join(&part);
-                let is_link = std::fs::symlink_metadata(&candidate)
-                    .ok()
-                    .is_some_and(|md| md.file_type().is_symlink());
-                if is_link {
-                    let target = std::fs::read_link(&candidate).map_err(|e| {
-                        ToolFailure::InvalidInput(format!("path resolution failed: {e}"))
-                    })?;
-                    resolved = if target.is_absolute() {
-                        target
-                    } else {
-                        resolved.join(target)
-                    };
-                    if let Ok(real) = resolved.canonicalize() {
-                        resolved = real;
-                    }
-                } else {
-                    resolved = candidate;
-                }
-            }
-            resolved
+            // Target may not exist yet (write_file). Walk the whole path
+            // with a component stack: pop `..`, follow symlinks (the
+            // target's components are pushed back, `..` re-popped, links
+            // capped at 40), then canonicalize the longest existing
+            // ancestor and rejoin the symlink-free lexical tail. Scope is
+            // checked only on the fully-resolved result — a lexical path
+            // that still contains `..` (relative link targets) or an
+            // un-followed link chain must not pass.
+            normalize(&joined).ok_or_else(|| {
+                ToolFailure::InvalidInput(format!("path not found: {path_str}"))
+            })?
         }
         Err(e) => {
             return Err(ToolFailure::InvalidInput(format!(
@@ -274,6 +237,75 @@ pub fn resolve_scoped_in(
     Err(ToolFailure::InvalidInput(format!(
         "path escapes the project directory: {path_str}"
     )))
+}
+
+/// Lexical-then-filesystem walk of a possibly-missing path: `..` pops,
+/// symlinks are followed by pushing the target's components (capped at 40
+/// links), and the longest existing ancestor is canonicalized before the
+/// symlink-free missing tail is rejoined. Returns None on a link loop or a
+/// path with no existing ancestor.
+fn normalize(path: &Path) -> Option<PathBuf> {
+    let mut links = 0;
+    let mut stack: Vec<std::ffi::OsString> = path
+        .components()
+        .map(|c| c.as_os_str().to_owned())
+        .collect();
+    stack.reverse();
+    let mut out = PathBuf::new();
+    while let Some(comp) = stack.pop() {
+        match comp.to_str() {
+            Some("..") => {
+                out.pop();
+            }
+            Some(".") => {}
+            _ => {
+                out.push(&comp);
+                if let Ok(meta) = std::fs::symlink_metadata(&out) {
+                    if meta.file_type().is_symlink() {
+                        links += 1;
+                        if links > 40 {
+                            return None;
+                        }
+                        let target = std::fs::read_link(&out).ok()?;
+                        out.pop(); // the link component is replaced by its target
+                        let tcomps: Vec<_> = Path::new(&target)
+                            .components()
+                            .map(|c| c.as_os_str().to_owned())
+                            .collect();
+                        if Path::new(&target).is_absolute() {
+                            out = PathBuf::new();
+                        }
+                        for c in tcomps.into_iter().rev() {
+                            stack.push(c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // One prefix form: canonicalize the longest existing ancestor and
+    // append the (walk-checked, symlink-free) lexical missing tail.
+    let mut missing: Vec<std::ffi::OsString> = Vec::new();
+    let mut probe = out.clone();
+    loop {
+        match probe.canonicalize() {
+            Ok(mut real) => {
+                for part in missing.into_iter().rev() {
+                    real.push(part);
+                }
+                return Some(real);
+            }
+            Err(_) => match probe.file_name() {
+                Some(name) => {
+                    missing.push(name.to_owned());
+                    if !probe.pop() {
+                        return None;
+                    }
+                }
+                None => return None,
+            },
+        }
+    }
 }
 
 pub fn diff_text(old: &str, new: &str, path: &Path) -> String {
@@ -345,6 +377,18 @@ mod tests {
             resolve_scoped(&dir, "link3").unwrap(),
             dir.join("inner-target")
         );
+        // Relative target with `..`: lexical rejoin still contains `..`, and
+        // `dir/../outside` compares as inside under component-wise
+        // starts_with — only the fully-resolved walk rejects it.
+        std::os::unix::fs::symlink("../outside/rel-esc", dir.join("rel")).unwrap();
+        assert!(resolve_scoped(&dir, "rel").is_err());
+        assert!(!outside.join("rel-esc").exists());
+        // A link chain: the first link resolves lexically into the
+        // workspace but its target is itself a dangling link escaping.
+        std::os::unix::fs::symlink("b", dir.join("a")).unwrap();
+        std::os::unix::fs::symlink(outside.join("chain-esc"), dir.join("b")).unwrap();
+        assert!(resolve_scoped(&dir, "a").is_err());
+        assert!(!outside.join("chain-esc").exists());
         std::fs::remove_dir_all(&base).ok();
     }
 
