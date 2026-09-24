@@ -384,3 +384,111 @@ async fn download_refuses_a_member_who_is_not_the_chat_owner() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+/// An org-shared machine's owner fetches the thread and artifacts of a chat
+/// the machine executes but does not own (spill prefetch and first-touch run
+/// with the machine owner's member token); an unrelated member is still
+/// refused.
+#[tokio::test]
+async fn executor_machine_owner_reads_chat_thread_and_artifacts() {
+    let fs = full_state().await;
+    let org = fs.org_id;
+    let chat = fs.chat_id;
+    let id = Uuid::now_v7();
+    let key = guild_server::store::tool_artifacts::object_key(org, id, "spill.bin");
+    fs.state
+        .objects()
+        .await
+        .unwrap()
+        .put(&key, b"spilled".to_vec())
+        .await
+        .unwrap();
+    fs.db
+        .tool_artifacts()
+        .create(
+            id, org, chat, "spill.bin", "application/octet-stream", 7, &key, "api", "call-9",
+        )
+        .await
+        .unwrap();
+
+    // Member B owns the machine the chat executes on.
+    let machine_owner = fs
+        .db
+        .identity()
+        .create_user(org, "machine-owner@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let (_sid, owner_token) = fs
+        .db
+        .identity()
+        .create_session(machine_owner.id)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO machines (machine_id, org_id, user_id, label) \
+         VALUES ($1, $2, $3, 'shared')",
+    )
+    .bind("mach-exec-1")
+    .bind(org)
+    .bind(machine_owner.id)
+    .execute(fs.db.pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE chats SET machine_id = 'mach-exec-1' WHERE id = $1")
+        .bind(chat)
+        .execute(fs.db.pool())
+        .await
+        .unwrap();
+
+    // An unrelated member with no binding is refused.
+    let outsider = fs
+        .db
+        .identity()
+        .create_user(org, "plain-member@b.c", "hunter226", "member")
+        .await
+        .unwrap();
+    let (_sid, outsider_token) = fs.db.identity().create_session(outsider.id).await.unwrap();
+
+    let app = guild_server::build_router(fs.state.clone());
+    for (token, expected) in [
+        (&owner_token, StatusCode::OK),
+        (&outsider_token, StatusCode::NOT_FOUND),
+    ] {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/tool_artifacts/{id}"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), expected, "artifact download");
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/chats/{chat}/thread"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), expected, "thread fetch");
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/chats/{chat}/tool_artifacts"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), expected, "artifact list");
+    }
+}

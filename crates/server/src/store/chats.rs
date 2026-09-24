@@ -260,6 +260,42 @@ impl<'a> ChatStore<'a> {
         Ok(())
     }
 
+    /// Read access for machine-originated fetches (thread rebuild and tool
+    /// artifact spill prefetch/first-touch): the caller acts as one of its
+    /// machines, and the chat's executor machine — the project row's binding
+    /// when set, else the chat's own binding — may read the chat it runs.
+    /// Ordinary member reads keep the owner/admin gate of `get_chat`.
+    pub async fn readable_by_executor(
+        &self,
+        org_id: Uuid,
+        chat_id: Uuid,
+        caller: &UserRow,
+    ) -> Result<(), ApiError> {
+        let machine: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT COALESCE(pr.machine_id, c.machine_id) FROM chats c \
+             LEFT JOIN projects pr ON pr.id = c.project_id \
+             WHERE c.org_id = $1 AND c.id = $2",
+        )
+        .bind(org_id)
+        .bind(chat_id)
+        .fetch_optional(self.pool)
+        .await?;
+        if let Some((Some(machine_id),)) = machine {
+            let machines = crate::store::machines::MachineStore { pool: self.pool };
+            match machines.owner_of(&machine_id).await {                Ok(Some((owner_id, machine_org)))
+                    if owner_id == caller.id && machine_org == org_id =>
+                {
+                    return Ok(());
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(?error, %machine_id, "machine read gate failed");
+                }
+            }
+        }
+        self.get_chat(org_id, chat_id, caller).await.map(|_| ())
+    }
+
     /// Renames and/or archives the chat (owner-scoped, admin bypass — the
     /// same gate as reads). `None` fields stay unchanged; archiving stamps
     /// `archived_at` and settles every waiting command as cancelled in the
