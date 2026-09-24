@@ -27,9 +27,12 @@ async fn list_for_chat(
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
+    // Machine-originated fetch path: the chat's executor machine (an
+    // org-shared machine serves chats it does not own) reads beside the
+    // owner/admin gate.
     store
         .chats()
-        .get_chat(user.0.org_id, chat_id, &user.0)
+        .readable_by_executor(user.0.org_id, chat_id, &user.0)
         .await?;
     let rows = store
         .tool_artifacts()
@@ -48,10 +51,12 @@ async fn download(
     let row = store.tool_artifacts().get(user.0.org_id, id).await?;
     // The artifact rides a chat, so the chat's owner predicate applies:
     // org scoping alone would let a member pull another member's spilled
-    // tool results (same check as the attachments download).
+    // tool results (same check as the attachments download). The chat's
+    // executor machine also reads — spill prefetch and first-touch fetch
+    // with the machine owner's member token.
     store
         .chats()
-        .get_chat(user.0.org_id, row.chat_id, &user.0)
+        .readable_by_executor(user.0.org_id, row.chat_id, &user.0)
         .await?;
     let key = crate::store::tool_artifacts::object_key(row.org_id, row.id, &row.filename);
     let bytes = state

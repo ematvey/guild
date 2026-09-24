@@ -372,9 +372,12 @@ async fn thread(
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let store = state.store().await?;
+    // The engine's artifact-path rebuild fetches the thread with the
+    // machine owner's token; the chat's executor machine reads beside the
+    // owner/admin gate.
     store
         .chats()
-        .get_chat(user.0.org_id, chat_id, &user.0)
+        .readable_by_executor(user.0.org_id, chat_id, &user.0)
         .await?;
     let events = store.thread().list_events(user.0.org_id, chat_id).await?;
     // Context-usage snapshot for the gauge (dsh-style filling gauge): tokens
