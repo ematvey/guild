@@ -10,6 +10,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { WsServerMsg } from "../../../crates/protocol/bindings/Ws";
 import { browserFs, daemonFs, prepareTurn as assembleTurn } from "./lib/context";
+import { openExternal } from "./lib/open-external";
+
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 import type { Project } from "../../../crates/protocol/bindings/Project";
 import type { CreateProjectRequest } from "../../../crates/protocol/bindings/CreateProjectRequest";
 
@@ -1304,12 +1307,19 @@ export async function downloadRelease(id: string): Promise<void> {
   });
   const v = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(v?.error?.message ?? res.statusText);
-  const a = document.createElement("a");
   // The server returns a root-relative signed path; in the Tauri webview a
   // relative href resolves against tauri://localhost and the download
   // fails. Resolve against the paired server (the page origin in the
-  // browser).
-  a.href = String(v.url).startsWith("/") ? `${serverUrl()}${v.url}` : v.url;
+  // browser). The native app hands the signed URL to the system browser —
+  // a programmatic cross-origin <a download> click either navigates the
+  // webview or does nothing (no download handler).
+  const url = String(v.url).startsWith("/") ? `${serverUrl()}${v.url}` : v.url;
+  if (isTauri) {
+    openExternal(url);
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = url;
   a.download = "";
   document.body.appendChild(a);
   a.click();
