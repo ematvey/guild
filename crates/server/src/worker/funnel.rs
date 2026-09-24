@@ -972,6 +972,21 @@ mod tests {
             .await
             .unwrap();
         let user = store.identity().get_user(user_id).await.unwrap();
+        store
+            .machines()
+            .upsert_connected(
+                user.org_id,
+                user.id,
+                "machine",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
         let project = store
             .projects()
             .create(
