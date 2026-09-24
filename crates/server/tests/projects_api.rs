@@ -395,7 +395,11 @@ async fn editing_a_projects_machine_rebinds_its_chats() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{project}");
-    let project_id = project["id"].as_str().unwrap().parse::<uuid::Uuid>().unwrap();
+    let project_id = project["id"]
+        .as_str()
+        .unwrap()
+        .parse::<uuid::Uuid>()
+        .unwrap();
 
     let (status, chat) = post_json(
         &app,

@@ -144,10 +144,11 @@ impl TurnCommandStore<'_> {
         let Some((status, owner)) = row else {
             return Ok(None);
         };
-        let archived: Option<(bool,)> = sqlx::query_as("SELECT archived_at IS NOT NULL FROM chats WHERE id = $1")
-            .bind(chat)
-            .fetch_optional(&mut *tx)
-            .await?;
+        let archived: Option<(bool,)> =
+            sqlx::query_as("SELECT archived_at IS NOT NULL FROM chats WHERE id = $1")
+                .bind(chat)
+                .fetch_optional(&mut *tx)
+                .await?;
         if archived.is_some_and(|(a,)| a) {
             return Ok(Some(false));
         }

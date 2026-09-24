@@ -823,7 +823,10 @@ async fn handle_client_msg(
                 // check pins the chat to the caller's org without granting
                 // owner-level visibility — an org-shared machine executes
                 // another member's chat and must be able to return results.
-                store.chats().org_contains_chat(user.0.org_id, chat_id).await?;
+                store
+                    .chats()
+                    .org_contains_chat(user.0.org_id, chat_id)
+                    .await?;
                 crate::http::internal::restate_send_one_way(
                     state,
                     "ChatRunner",

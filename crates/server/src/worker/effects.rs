@@ -57,7 +57,11 @@ pub(crate) async fn complete<T: Serialize>(
 ) -> anyhow::Result<()> {
     let value = serde_json::to_string(result)?;
     if value.len() > MAX_RESULT_BYTES {
-        tracing::warn!(key, bytes = value.len(), "effect result over claim bound; replay reports unknown outcome");
+        tracing::warn!(
+            key,
+            bytes = value.len(),
+            "effect result over claim bound; replay reports unknown outcome"
+        );
         return Ok(());
     }
     store
@@ -86,10 +90,20 @@ mod tests {
     async fn stale_effect_claims_are_pruned_and_other_kv_survives() {
         let fixture = crate::test_support::test_state_with_db().await;
         let store = fixture.store();
-        claim::<String>(&store, "plugin_effect:inv-1").await.unwrap();
-        complete(&store, "plugin_effect:inv-1", &"result").await.unwrap();
-        claim::<String>(&store, "routine_effect:inv-2:0:0").await.unwrap();
-        store.kv().put("release_signing_seed", "keep").await.unwrap();
+        claim::<String>(&store, "plugin_effect:inv-1")
+            .await
+            .unwrap();
+        complete(&store, "plugin_effect:inv-1", &"result")
+            .await
+            .unwrap();
+        claim::<String>(&store, "routine_effect:inv-2:0:0")
+            .await
+            .unwrap();
+        store
+            .kv()
+            .put("release_signing_seed", "keep")
+            .await
+            .unwrap();
         sqlx::query("UPDATE server_kv SET updated_at = now() - make_interval(days => $1)")
             .bind(CLAIM_RETENTION_DAYS + 1)
             .execute(store.pool())
@@ -110,12 +124,19 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(
-            store.kv().get("release_signing_seed").await.unwrap().as_deref(),
+            store
+                .kv()
+                .get("release_signing_seed")
+                .await
+                .unwrap()
+                .as_deref(),
             Some("keep")
         );
         // A pruned claim is free again: a fresh claim executes.
         assert!(matches!(
-            claim::<String>(&store, "plugin_effect:inv-1").await.unwrap(),
+            claim::<String>(&store, "plugin_effect:inv-1")
+                .await
+                .unwrap(),
             Claim::Execute
         ));
     }

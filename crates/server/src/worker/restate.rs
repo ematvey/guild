@@ -280,7 +280,14 @@ impl RoutineRunner {
         let routine_id: Uuid = ctx.key().parse().map_err(anyhow::Error::msg)?;
         let exec = self.executor();
         let cfg = journaled_load_config!(ctx, exec, routine_id);
-        journaled_run_body!(ctx, exec, cfg, "webhook", payload.into_inner(), self.state.clone())
+        journaled_run_body!(
+            ctx,
+            exec,
+            cfg,
+            "webhook",
+            payload.into_inner(),
+            self.state.clone()
+        )
     }
 
     /// Start exactly one interval chain for a committed schedule generation.
@@ -3981,9 +3988,7 @@ pub async fn spawn_worker(state: AppState) -> anyhow::Result<()> {
             if let Ok(store) = prune_state.store().await {
                 let sessions = store.identity().prune_expired_sessions().await.unwrap_or(0);
                 let tokens = store.pairing().prune_dead_tokens().await.unwrap_or(0);
-                let effects = crate::worker::effects::prune(&store)
-                    .await
-                    .unwrap_or(0);
+                let effects = crate::worker::effects::prune(&store).await.unwrap_or(0);
                 if sessions + tokens + effects > 0 {
                     tracing::info!(
                         "pruned {sessions} expired sessions, {tokens} dead pairing tokens, {effects} effect claims"
@@ -4085,7 +4090,9 @@ mod tests {
         }
         // Disclosure-only auto tools and unknown names audit nothing.
         assert!(audit_identity(plugin_target(&turns, "crm_guide"), &turns, "crm_guide").is_none());
-        assert!(audit_identity(plugin_target(&turns, "other_thing"), &turns, "other_thing").is_none());
+        assert!(
+            audit_identity(plugin_target(&turns, "other_thing"), &turns, "other_thing").is_none()
+        );
     }
 
     #[test]

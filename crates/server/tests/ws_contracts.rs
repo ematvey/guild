@@ -452,10 +452,24 @@ async fn org_shared_machine_returns_results_to_another_members_chat() {
         .id;
     store
         .machines()
-        .upsert_connected(org, machine_user.id, "shared-1", None, None, None, None, None, None)
+        .upsert_connected(
+            org,
+            machine_user.id,
+            "shared-1",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
-    let (_, machine_token) = store.identity().create_session(machine_user.id).await.unwrap();
+    let (_, machine_token) = store
+        .identity()
+        .create_session(machine_user.id)
+        .await
+        .unwrap();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -489,12 +503,18 @@ async fn org_shared_machine_returns_results_to_another_members_chat() {
         Uuid::now_v7()
     );
     let mut machine = connect_async(url).await.unwrap().0;
-    until(&mut machine, |m| matches!(m, WsServerMsg::ThreadList { .. })).await;
+    until(&mut machine, |m| {
+        matches!(m, WsServerMsg::ThreadList { .. })
+    })
+    .await;
 
     // The turn suspends on a client tool dispatched to the shared machine.
     note_generation(&ts.state, chat);
     note_client_tool(&ts.state, chat, "call-1", "execute", "{}", "shared-1");
-    until(&mut machine, |m| matches!(m, WsServerMsg::ToolDispatch { .. })).await;
+    until(&mut machine, |m| {
+        matches!(m, WsServerMsg::ToolDispatch { .. })
+    })
+    .await;
 
     // The machine posts the result for the member's chat.
     let reply = serde_json::to_string(&json!({
