@@ -15,11 +15,10 @@ const DEFAULT_API: &str = "https://gitlab.com/api/v4";
 pub struct Gitlab;
 
 /// API root for one config: the `base_url` override when set, else gitlab.com's
-/// v4 root. A value saved as a bare instance origin (the manifest's old
-/// default, and the natural `https://gitlab.example.com` entry) gets
-/// `/api/v4` appended — used as an API root every call would 404. A value
-/// that already carries a path (a custom API root, or one ending in
-/// `/api/v4`) is used as-is.
+/// v4 root. A bare instance origin (the natural `https://gitlab.example.com`
+/// entry, as the settings form saves the default) gets `/api/v4` appended —
+/// used as an API root every call would 404. A value that already carries a
+/// path (a custom API root, or one ending in `/api/v4`) is used as-is.
 fn base_url(config: &serde_json::Value) -> String {
     match config["base_url"]
         .as_str()

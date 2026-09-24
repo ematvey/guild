@@ -8,7 +8,7 @@
 //! logs or results.
 
 use crate::integrations::{
-    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
+    api_tool_spec, call_vendor_api, field, in_code_manifest, ApiAuth, Category, Integration,
     ToolOutcome,
 };
 use futures::future::BoxFuture;
@@ -264,12 +264,18 @@ impl Integration for Slack {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    // The cursor and has_more ride the content too: the
+                    // model sees content only, and a multi-page list it
+                    // cannot page is a silently truncated one.
                     let meta = serde_json::json!({
                         "response_metadata": body["response_metadata"]["next_cursor"],
                     });
                     Ok(ToolOutcome {
                         artifact: None,
-                        content: json_text(&serde_json::json!({ "channels": channels })),
+                        content: json_text(&serde_json::json!({
+                            "channels": channels,
+                            "next_cursor": body["response_metadata"]["next_cursor"],
+                        })),
                         meta: Some(meta),
                     })
                 }
@@ -335,7 +341,11 @@ impl Integration for Slack {
                     });
                     Ok(ToolOutcome {
                         artifact: None,
-                        content: json_text(&serde_json::json!({ "messages": messages })),
+                        content: json_text(&serde_json::json!({
+                            "messages": messages,
+                            "has_more": body["has_more"],
+                            "next_cursor": body["response_metadata"]["next_cursor"],
+                        })),
                         meta: Some(meta),
                     })
                 }
@@ -361,12 +371,18 @@ impl Integration for Slack {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    // The cursor rides the content too (the model sees
+                    // content only — a multi-page list it cannot page is a
+                    // silently truncated one).
                     let meta = serde_json::json!({
                         "response_metadata": body["response_metadata"]["next_cursor"],
                     });
                     Ok(ToolOutcome {
                         artifact: None,
-                        content: json_text(&serde_json::json!({ "users": users })),
+                        content: json_text(&serde_json::json!({
+                            "users": users,
+                            "next_cursor": body["response_metadata"]["next_cursor"],
+                        })),
                         meta: Some(meta),
                     })
                 }
@@ -407,13 +423,26 @@ impl Integration for Slack {
         Box::pin(async move {
             let base = base_url(config)?;
             let token = secret(secrets, "bot_token")?;
-            probe(
-                reqwest::Client::new()
-                    .post(format!("{base}/auth.test"))
-                    .bearer_auth(token),
-                "slack",
-            )
-            .await
+            // Slack answers HTTP 200 with {"ok": false, ...} for an
+            // invalid/revoked token: the body verdict decides, not the
+            // status — a bad token must fail the save gate.
+            let resp = reqwest::Client::new()
+                .post(format!("{base}/auth.test"))
+                .bearer_auth(token)
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(|e| format!("slack unreachable: {e}"))?;
+            let status = resp.status();
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            match (status.is_success(), body["ok"].as_bool()) {
+                (true, Some(true)) => Ok(()),
+                (true, _) => Err(format!(
+                    "slack rejected the token ({})",
+                    body["error"].as_str().unwrap_or("ok=false")
+                )),
+                (false, _) => Err(format!("slack rejected the connection ({status})")),
+            }
         })
     }
 }
