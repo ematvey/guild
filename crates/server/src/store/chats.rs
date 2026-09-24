@@ -244,6 +244,22 @@ impl<'a> ChatStore<'a> {
         .ok_or_else(|| ApiError::not_found("no such chat"))
     }
 
+    /// Org-scope check for machine-reply paths: proves the chat lives in the
+    /// caller's org without granting owner-level visibility (an org-shared
+    /// machine returns results for a chat it does not own).
+    pub async fn org_contains_chat(&self, org_id: Uuid, chat_id: Uuid) -> Result<(), ApiError> {
+        let known: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM chats WHERE org_id = $1 AND id = $2")
+                .bind(org_id)
+                .bind(chat_id)
+                .fetch_optional(self.pool)
+                .await?;
+        if known.is_none() {
+            return Err(ApiError::not_found("no such chat"));
+        }
+        Ok(())
+    }
+
     /// Renames and/or archives the chat (owner-scoped, admin bypass — the
     /// same gate as reads). `None` fields stay unchanged; archiving stamps
     /// `archived_at` and settles every waiting command as cancelled in the

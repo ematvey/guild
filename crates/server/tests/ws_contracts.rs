@@ -418,3 +418,110 @@ async fn re_pair_adoption_rekeys_the_row_and_displaces_the_old_socket() {
             .unwrap();
     assert!(old_left.is_none(), "old id must be re-keyed away");
 }
+
+/// An org-shared machine executes another member's chat (the binding is
+/// explicitly permitted) — its connection must be able to return the tool
+/// result to that chat: authorization rides the pending dispatch + org
+/// identity, not chat ownership.
+#[tokio::test]
+async fn org_shared_machine_returns_results_to_another_members_chat() {
+    let (ts, ingress) = test_state_with_mock_ingress().await;
+    let store = ts.store();
+    let org = Uuid::now_v7();
+    sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+        .bind(org)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    // Member B owns the chat; member A owns the org-shared machine.
+    let owner = store
+        .identity()
+        .create_user(org, &format!("b-{org}@ws.test"), "hunter226", "member")
+        .await
+        .unwrap();
+    let machine_user = store
+        .identity()
+        .create_user(org, &format!("a-{org}@ws.test"), "hunter226", "member")
+        .await
+        .unwrap();
+    let chat = store
+        .chats()
+        .create_chat(org, owner.id, Some("b-chat"), None)
+        .await
+        .unwrap()
+        .id;
+    store
+        .machines()
+        .upsert_connected(org, machine_user.id, "shared-1", None, None, None, None, None, None)
+        .await
+        .unwrap();
+    let (_, machine_token) = store.identity().create_session(machine_user.id).await.unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let app = guild_server::build_router(ts.state.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    // The machine's connection, authenticated as its member (not the chat
+    // owner, not an admin).
+    let ticket: Value = reqwest::Client::new()
+        .post(format!("{base}/api/v1/ws/ticket"))
+        .bearer_auth(&machine_token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let url = format!(
+        "{}/api/v1/ws?ticket={}&machine_id=shared-1&instance_id={}&resume=false",
+        base.replace("http:", "ws:"),
+        ticket["ticket"].as_str().unwrap(),
+        Uuid::now_v7()
+    );
+    let mut machine = connect_async(url).await.unwrap().0;
+    until(&mut machine, |m| matches!(m, WsServerMsg::ThreadList { .. })).await;
+
+    // The turn suspends on a client tool dispatched to the shared machine.
+    note_generation(&ts.state, chat);
+    note_client_tool(&ts.state, chat, "call-1", "execute", "{}", "shared-1");
+    until(&mut machine, |m| matches!(m, WsServerMsg::ToolDispatch { .. })).await;
+
+    // The machine posts the result for the member's chat.
+    let reply = serde_json::to_string(&json!({
+        "type": "tool_result",
+        "chat_id": chat,
+        "call_id": "call-1",
+        "content": "done",
+        "is_error": false,
+    }))
+    .unwrap();
+    machine.send(Message::Text(reply.into())).await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if ingress
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(path, body)| path.contains("complete_tool") && body["call_id"] == "call-1")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the shared machine's result reached the chat turn");
+    server.abort();
+}

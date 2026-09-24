@@ -817,10 +817,13 @@ async fn handle_client_msg(
             }
             let result = async {
                 let store = state.store().await?;
-                store
-                    .chats()
-                    .get_chat(user.0.org_id, chat_id, &user.0)
-                    .await?;
+                // The reply is already authorized by the pending dispatch:
+                // owns_pending_tool proves this connection is the one the
+                // call was dispatched to (the chat's bound machine). The org
+                // check pins the chat to the caller's org without granting
+                // owner-level visibility — an org-shared machine executes
+                // another member's chat and must be able to return results.
+                store.chats().org_contains_chat(user.0.org_id, chat_id).await?;
                 crate::http::internal::restate_send_one_way(
                     state,
                     "ChatRunner",
