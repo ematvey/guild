@@ -197,6 +197,7 @@ pub(crate) struct StreamUsageGuard {
     price_out: f64,
     counters: StreamUsageCounters,
     armed: bool,
+    request_id: Uuid,
 }
 
 impl StreamUsageGuard {
@@ -226,7 +227,17 @@ impl StreamUsageGuard {
             price_in,
             price_out,
             armed: true,
+            request_id: Uuid::now_v7(),
         }
+    }
+
+    pub(crate) fn with_request_id(mut self, request_id: Uuid) -> Self {
+        self.request_id = request_id;
+        self
+    }
+
+    pub(crate) fn disarm(mut self) {
+        self.armed = false;
     }
 
     pub(crate) fn counters(&self) -> StreamUsageCounters {
@@ -237,13 +248,16 @@ impl StreamUsageGuard {
     /// completion path, where usage must be durable before the final frame
     /// yields (quota checks and tests read right after the stream ends).
     pub(crate) async fn record_sync(mut self) {
-        self.armed = false;
         let ev = self.event();
-        self.usage.record(ev).await;
+        let usage = self.usage.clone();
+        let recording = tokio::spawn(async move { usage.record(ev).await });
+        self.armed = false;
+        // Dropping the HTTP body detaches this owned task instead of cancelling the insert.
+        let _ = recording.await;
     }
 
     fn event(&self) -> guild_core::usage::UsageEvent {
-        usage_event(
+        let mut event = usage_event(
             self.org_id,
             self.user_id,
             self.session_id,
@@ -257,7 +271,9 @@ impl StreamUsageGuard {
             self.counters
                 .tokens_out
                 .load(std::sync::atomic::Ordering::SeqCst),
-        )
+        );
+        event.request_id = self.request_id;
+        event
     }
 }
 
@@ -289,11 +305,12 @@ impl Drop for StreamUsageGuard {
 /// Drains the provider stream, folding tool-call fragments into complete
 /// calls (the streaming endpoints emit fragments themselves, the
 /// non-streaming ones use this). Returns (text, calls, tokens_in, tokens_out).
-pub async fn accumulate(
+pub(crate) async fn accumulate(
     stream: futures::stream::BoxStream<
         'static,
         Result<ProviderChunk, guild_core::provider::ProviderError>,
     >,
+    counters: StreamUsageCounters,
 ) -> anyhow::Result<(String, Vec<protocol::api::ToolCall>, u32, u32)> {
     let mut text = String::new();
     let mut calls = Vec::new();
@@ -301,7 +318,12 @@ pub async fn accumulate(
     let mut tokens_out = 0u32;
     let mut pinned = Box::pin(stream);
     while let Some(item) = pinned.next().await {
-        match item? {
+        let item = item?;
+        counters.observe();
+        if let ProviderChunk::Text(chunk) = &item {
+            counters.set(chunk.tokens_in, chunk.tokens_out);
+        }
+        match item {
             ProviderChunk::Text(t) => {
                 text.push_str(&t.text_delta);
                 if let Some(n) = t.tokens_in {
@@ -317,4 +339,53 @@ pub async fn accumulate(
         }
     }
     Ok((text, calls, tokens_in, tokens_out))
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod recording_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn completed_recording_survives_caller_cancellation() {
+        let fs = crate::test_support::full_state().await;
+        let usage = fs.state.usage().await.unwrap();
+        let guard = StreamUsageGuard::new(
+            usage,
+            fs.org_id,
+            fs.user_id,
+            fs.chat_id,
+            "test".into(),
+            "fixture".into(),
+            1.0,
+            1.0,
+        );
+        guard.counters().observe();
+        guard.counters().set(Some(5), Some(2));
+        assert_eq!(guard.event().request_id, guard.event().request_id);
+        let store = fs.store();
+        let mut tx = store.pool().begin().await.unwrap();
+        sqlx::query("LOCK TABLE teams IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        // The sink blocks during attribution, after complete totals have transferred
+        // into its recording future. Dropping the caller must not cancel that future.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), guard.record_sync())
+                .await
+                .is_err()
+        );
+        tx.commit().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let (count, _) = crate::test_support::clickhouse_usage_rows(&fs.state).await;
+                if count == 1 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
 }

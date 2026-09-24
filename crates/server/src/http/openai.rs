@@ -3,7 +3,7 @@
 //! persistence; usage is attributed to the key's org/user.
 
 use crate::http::api_keys::ApiKeyUser;
-use crate::http::llm_proxy::{accumulate, dispatch, usage_event};
+use crate::http::llm_proxy::{accumulate, dispatch, StreamUsageGuard};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
@@ -66,7 +66,40 @@ struct OpenAiChatRequest {
     #[serde(default)]
     stream: bool,
     #[serde(default)]
-    tools: Option<Vec<ToolSpec>>,
+    tools: Option<Vec<OpenAiTool>>,
+    max_tokens: Option<u32>,
+    max_completion_tokens: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum OpenAiTool {
+    Function { function: OpenAiFunctionSpec },
+}
+
+#[derive(Deserialize)]
+struct OpenAiFunctionSpec {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "empty_parameters")]
+    parameters: Value,
+}
+
+fn empty_parameters() -> Value {
+    json!({"type": "object", "properties": {}})
+}
+
+impl From<OpenAiTool> for ToolSpec {
+    fn from(tool: OpenAiTool) -> Self {
+        let OpenAiTool::Function { function } = tool;
+        Self {
+            name: function.name,
+            description: function.description,
+            parameters: function.parameters,
+            kind: Default::default(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -213,6 +246,14 @@ async fn chat_completions(
     let user_id = key.0.user_id.unwrap_or(key.0.created_by);
     let session_id = key.0.id;
 
+    let limit = req.max_completion_tokens.or(req.max_tokens);
+    if limit == Some(0) {
+        return Err(openai_error(
+            axum::http::StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "output token limit must be positive",
+        ));
+    }
     let (system, messages) = to_internal_messages(&req.messages);
     let call = dispatch(
         &state,
@@ -220,8 +261,9 @@ async fn chat_completions(
         &req.model,
         system,
         messages,
-        req.tools.clone(),
-        None,
+        req.tools
+            .map(|tools| tools.into_iter().map(Into::into).collect()),
+        limit.map(i64::from),
     )
     .await
     .map_err(|e| openai_error(e.status(), e.openai_type(), e.0.message.clone()))?;
@@ -252,26 +294,26 @@ async fn chat_completions(
             .keep_alive(KeepAlive::default())
             .into_response())
     } else {
-        let (text, calls, tokens_in, tokens_out) = accumulate(prov_stream).await.map_err(|e| {
-            openai_error(
-                axum::http::StatusCode::BAD_GATEWAY,
-                "provider_error",
-                e.to_string(),
-            )
-        })?;
-        usage
-            .record(usage_event(
-                org_id,
-                user_id,
-                session_id,
-                &call_meta.0,
-                &call_meta.1,
-                call_meta.2,
-                call_meta.3,
-                tokens_in,
-                tokens_out,
-            ))
-            .await;
+        let guard = StreamUsageGuard::new(
+            usage,
+            org_id,
+            user_id,
+            session_id,
+            call_meta.0,
+            call_meta.1,
+            call_meta.2,
+            call_meta.3,
+        );
+        let (text, calls, tokens_in, tokens_out) = accumulate(prov_stream, guard.counters())
+            .await
+            .map_err(|e| {
+                openai_error(
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    "provider_error",
+                    e.to_string(),
+                )
+            })?;
+        guard.record_sync().await;
         let finish_reason = if calls.is_empty() {
             "stop"
         } else {
