@@ -177,7 +177,12 @@ fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>),
                         reasoning.push_str(b["thinking"].as_str().unwrap_or_default());
                     }
                     Some("redacted_thinking") => {}
-                    _ => {}
+                    other => {
+                        return Err(ApiError::bad_request(format!(
+                            "unsupported assistant content block type: {}",
+                            other.unwrap_or("(missing)")
+                        )));
+                    }
                 }
             }
             out.push(Message {
@@ -206,7 +211,12 @@ fn to_internal(req: &AnthropicRequest) -> Result<(Option<String>, Vec<Message>),
                     }
                     Some("image") => images.push(image_uri(b)?),
                     Some("tool_result") => out.push(tool_result_message(b)?),
-                    _ => {}
+                    other => {
+                        return Err(ApiError::bad_request(format!(
+                            "unsupported user content block type: {}",
+                            other.unwrap_or("(missing)")
+                        )));
+                    }
                 }
             }
             if !text.is_empty() || !images.is_empty() {
@@ -236,7 +246,13 @@ fn tool_result_message(b: &Value) -> Result<Message, ApiError> {
             for p in parts {
                 match p["type"].as_str() {
                     Some("image") => images.push(image_uri(p)?),
-                    _ => texts.extend(p["text"].as_str()),
+                    Some("text") => texts.push(p["text"].as_str().unwrap_or_default()),
+                    other => {
+                        return Err(ApiError::bad_request(format!(
+                            "unsupported tool result content part type: {}",
+                            other.unwrap_or("(missing)")
+                        )));
+                    }
                 }
             }
             texts.join("\n")
@@ -736,6 +752,35 @@ mod tests {
         assert_eq!(calls[0].name, "get_weather");
         assert_eq!(calls[0].arguments, json!({"city": "oslo"}));
         assert_eq!(msgs[0].content, "checking");
+    }
+
+    #[test]
+    fn unsupported_user_blocks_are_rejected_not_dropped() {
+        // A `document` block the internal media contract cannot carry must
+        // fail the request (400), never vanish silently while the model
+        // answers without the user's content.
+        let err = to_internal(&parse(json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": [
+                {"type": "document", "source": {"type": "base64",
+                 "media_type": "application/pdf", "data": "AAAA"}}
+            ]}]
+        })))
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("document"), "{}", err.message);
+
+        // Non-text/image parts inside a tool result are rejected too.
+        let err = to_internal(&parse(json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "call_x", "content": [
+                    {"type": "document", "source": {"type": "url", "url": "https://x/y.pdf"}}
+                ]}
+            ]}]
+        })))
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
     }
 
     #[test]
