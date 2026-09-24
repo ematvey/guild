@@ -106,8 +106,10 @@ pub async fn test_state_with_db() -> TestState {
     TestState { state, db }
 }
 
-/// Local mock Restate ingress that records one-way sends as
-/// `(path, body)` pairs and answers 200 with an invocation id.
+/// Local mock Restate ingress that records one-way sends (POSTs) as
+/// `(path, body)` pairs and answers 200 with an invocation id. Other
+/// methods are stray loopback probes from other processes on the host and
+/// are not recorded.
 pub struct MockIngress {
     pub url: String,
     pub requests: std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
@@ -123,19 +125,22 @@ pub async fn test_state_with_mock_ingress() -> (TestState, MockIngress) {
     let requests: CapturedRequests = Default::default();
     let app = axum::Router::new()
         .fallback(
-            |uri: axum::http::Uri,
+            |method: axum::http::Method,
+             uri: axum::http::Uri,
              axum::extract::State(captures): axum::extract::State<CapturedRequests>,
              body: axum::body::Bytes| async move {
-                let parsed = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
-                captures
-                    .lock()
-                    .unwrap()
-                    .push((uri.path().to_string(), parsed));
+                if method == axum::http::Method::POST {
+                    let parsed = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+                    captures
+                        .lock()
+                        .unwrap()
+                        .push((uri.path().to_string(), parsed));
+                }
                 axum::Json(serde_json::json!({ "invocationId": "mock" }))
             },
         )
         .with_state(requests.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = standalone_listener().await;
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let mut config = Config::test_config();
