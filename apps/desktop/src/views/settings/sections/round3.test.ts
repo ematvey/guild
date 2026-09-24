@@ -1,11 +1,13 @@
-import { readFileSync } from "node:fs";
+/// <reference types="vite/client" />
+import integrationSource from "./IntegrationsSection.tsx?raw";
+import gatewaySource from "./GatewaySection.tsx?raw";
 import { transpile } from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
 // Execute the production closures with controlled state and deferred transport.
 // This keeps the regression focused without requiring a browser renderer.
 function source(file: string, start: string, end: string): string {
-  const text = readFileSync(new URL(file, import.meta.url), "utf8");
+  const text = file.includes("IntegrationsSection") ? integrationSource : gatewaySource;
   return text.slice(text.indexOf(start), text.indexOf(end, text.indexOf(start)));
 }
 
