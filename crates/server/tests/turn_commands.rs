@@ -577,3 +577,52 @@ async fn archive_race_releases_the_reservation_and_resumes_running_commands() {
     guild_server::worker::restate::release_claim_reservation(&fs.state, chat2, id);
     assert!(fs.state.generations.handle(chat2).is_none());
 }
+
+#[tokio::test]
+async fn finished_command_during_ingress_ack_releases_reservation() {
+    let fs = full_state().await;
+    let ingress = wiremock::MockServer::start().await;
+    let arrived = std::sync::Arc::new(tokio::sync::Notify::new());
+    let notified = arrived.clone();
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(move |_: &wiremock::Request| {
+            notified.notify_one();
+            wiremock::ResponseTemplate::new(202)
+                .set_delay(std::time::Duration::from_millis(200))
+                .set_body_json(json!({"invocationId":"already-finished"}))
+        })
+        .mount(&ingress)
+        .await;
+    let mut config = (*fs.state.config).clone();
+    config.restate_url = ingress.uri();
+    let state = AppState::from_config(config);
+    note_generation(&state, fs.chat_id);
+    let id = Uuid::now_v7();
+    let app = guild_server::build_router(state.clone());
+    assert_eq!(
+        app.oneshot(post(&fs.token, &command(fs.chat_id, id, "finish")))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    state.generations.remove(fs.chat_id);
+    let dispatch_state = state.clone();
+    let dispatch = tokio::spawn(async move {
+        guild_server::http::gateway::dispatch_turn_commands(&dispatch_state, None).await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), arrived.notified())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE turn_commands SET status = 'completed', finished_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(fs.store().pool())
+        .await
+        .unwrap();
+    dispatch.await.unwrap().unwrap();
+    assert!(state.generations.handle(fs.chat_id).is_none());
+    assert!(state
+        .generations
+        .try_begin_with_id(fs.chat_id, Uuid::now_v7())
+        .is_ok());
+}
