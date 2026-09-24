@@ -151,6 +151,96 @@ pub fn usage_event(
     }
 }
 
+/// Usage counters a gateway stream loop updates per frame; the guard reads
+/// them at drop.
+#[derive(Clone)]
+pub(crate) struct StreamUsageCounters {
+    tokens_in: Arc<std::sync::atomic::AtomicU32>,
+    tokens_out: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl StreamUsageCounters {
+    /// Provider usage frames carry absolute totals.
+    pub(crate) fn set(&self, tokens_in: Option<u32>, tokens_out: Option<u32>) {
+        if let Some(n) = tokens_in {
+            self.tokens_in
+                .store(n, std::sync::atomic::Ordering::SeqCst);
+        }
+        if let Some(n) = tokens_out {
+            self.tokens_out
+                .store(n, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// Records a gateway stream's usage on every exit path. A record after the
+/// yield loop only runs when the SSE body is consumed to completion; a
+/// client disconnect drops the body and a provider error returns early —
+/// the drop then records the running counts instead.
+pub(crate) struct StreamUsageGuard {
+    usage: Arc<crate::usage::UsageSink>,
+    org_id: Uuid,
+    user_id: Uuid,
+    session_id: Uuid,
+    model: String,
+    provider: String,
+    price_in: f64,
+    price_out: f64,
+    counters: StreamUsageCounters,
+}
+
+impl StreamUsageGuard {
+    pub(crate) fn new(
+        usage: Arc<crate::usage::UsageSink>,
+        org_id: Uuid,
+        user_id: Uuid,
+        session_id: Uuid,
+        model: String,
+        provider: String,
+        price_in: f64,
+        price_out: f64,
+    ) -> Self {
+        Self {
+            counters: StreamUsageCounters {
+                tokens_in: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                tokens_out: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            },
+            usage,
+            org_id,
+            user_id,
+            session_id,
+            model,
+            provider,
+            price_in,
+            price_out,
+        }
+    }
+
+    pub(crate) fn counters(&self) -> StreamUsageCounters {
+        self.counters.clone()
+    }
+}
+
+impl Drop for StreamUsageGuard {
+    fn drop(&mut self) {
+        let ev = usage_event(
+            self.org_id,
+            self.user_id,
+            self.session_id,
+            &self.model,
+            &self.provider,
+            self.price_in,
+            self.price_out,
+            self.counters.tokens_in.load(std::sync::atomic::Ordering::SeqCst),
+            self.counters.tokens_out.load(std::sync::atomic::Ordering::SeqCst),
+        );
+        let usage = self.usage.clone();
+        tokio::spawn(async move {
+            usage.record(ev).await;
+        });
+    }
+}
+
 /// Drains the provider stream, folding tool-call fragments into complete
 /// calls (the streaming endpoints emit fragments themselves, the
 /// non-streaming ones use this). Returns (text, calls, tokens_in, tokens_out).

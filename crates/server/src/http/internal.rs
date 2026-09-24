@@ -483,6 +483,18 @@ async fn internal_completion(
         let mut text = String::new();
         let mut tokens_in = 0u32;
         let mut tokens_out = 0u32;
+        // Usage records at the guard's drop — also on abort and error exits.
+        let guard = crate::http::llm_proxy::StreamUsageGuard::new(
+            usage,
+            org_id,
+            user_id,
+            Uuid::nil(),
+            model.clone(),
+            provider_name.clone(),
+            price_in,
+            price_out,
+        );
+        let counters = guard.counters();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut pinned = Box::pin(prov_stream);
         while let Some(item) = pinned.next().await {
@@ -494,6 +506,7 @@ async fn internal_completion(
                     }
                     if let Some(t) = chunk.tokens_in { tokens_in = t; }
                     if let Some(t) = chunk.tokens_out { tokens_out = t; }
+                    counters.set(chunk.tokens_in, chunk.tokens_out);
                 }
                 Ok(ProviderChunk::ToolCallDelta { index, id, name, arguments_delta }) => {
                     yield sse_event(StreamEvent::ToolCallDelta { index, id, name, arguments_delta });
@@ -514,14 +527,6 @@ async fn internal_completion(
             }
         }
         let cost = UsageEvent::cost_usd(tokens_in, tokens_out, price_in, price_out);
-        let ev = UsageEvent {
-            ts: chrono::Utc::now(),
-            org_id, user_id, team_id: None, session_id: Uuid::nil(),
-            model, provider: provider_name,
-            tokens_in, tokens_out, cost_usd: cost,
-            request_id: Uuid::now_v7(),
-        };
-        usage.record(ev).await;
         yield sse_event(StreamEvent::Done {
             message_id: Uuid::now_v7(),
             cost_usd: cost,

@@ -363,6 +363,19 @@ fn stream_events(
                 .event(event)
                 .data(data.to_string()))
         };
+        // Created before the first yield: a drop at any suspension point —
+        // including the very first frame — records the running counts.
+        let guard = crate::http::llm_proxy::StreamUsageGuard::new(
+            call.usage.clone(),
+            org_id,
+            user_id,
+            session_id,
+            call.model.clone(),
+            call.provider.clone(),
+            call.price_in,
+            call.price_out,
+        );
+        let counters = guard.counters();
 
         yield send(
             "message_start",
@@ -425,6 +438,7 @@ fn stream_events(
                     }
                     if let Some(n) = t.tokens_in { tokens_in = n; }
                     if let Some(n) = t.tokens_out { tokens_out = n; }
+                    counters.set(t.tokens_in, t.tokens_out);
                 }
                 Ok(ProviderChunk::Thinking(t)) => {
                     if !t.text_delta.is_empty() {
@@ -507,20 +521,6 @@ fn stream_events(
             "usage": {"output_tokens": tokens_out, "input_tokens": tokens_in},
         }));
         yield send("message_stop", &json!({"type": "message_stop"}));
-
-        call.usage
-            .record(usage_event(
-                org_id,
-                user_id,
-                session_id,
-                &call.model,
-                &call.provider,
-                call.price_in,
-                call.price_out,
-                tokens_in,
-                tokens_out,
-            ))
-            .await;
     }
 }
 
