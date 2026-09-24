@@ -194,6 +194,17 @@ impl<'a> MachineStore<'a> {
                 .bind(ip)
                 .fetch_one(&mut *tx)
                 .await?;
+                // Registry identity and all durable execution bindings move together.
+                for table in ["projects", "chats"] {
+                    sqlx::query(&format!(
+                        "UPDATE {table} SET machine_id = $2 WHERE machine_id = $1 AND org_id = $3"
+                    ))
+                    .bind(&old.machine_id)
+                    .bind(machine_id)
+                    .bind(org_id)
+                    .execute(&mut *tx)
+                    .await?;
+                }
                 tx.commit().await?;
                 return Ok(UpsertOutcome {
                     row,
