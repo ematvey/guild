@@ -80,14 +80,14 @@ impl AnthropicProvider {
                     // An empty completion or an interrupted reasoning-only
                     // turn persists no content; Anthropic rejects empty
                     // assistant content.
-                    if m.content.is_empty() {
+                    if m.content.trim().is_empty() {
                         continue;
                     }
                     messages.push(serde_json::json!({"role": m.role, "content": m.content}));
                     continue;
                 };
                 let mut blocks: Vec<serde_json::Value> = Vec::new();
-                if !m.content.is_empty() {
+                if !m.content.trim().is_empty() {
                     blocks.push(serde_json::json!({"type": "text", "text": m.content}));
                 }
                 for c in calls {
@@ -111,7 +111,7 @@ impl AnthropicProvider {
             // parts are skipped on this route shape.
             if m.has_media() {
                 let mut blocks: Vec<serde_json::Value> = Vec::new();
-                if !m.content.is_empty() {
+                if !m.content.trim().is_empty() {
                     blocks.push(serde_json::json!({"type": "text", "text": m.content}));
                 }
                 for uri in &m.images {
@@ -476,12 +476,12 @@ mod tests {
     }
 
     #[test]
-    fn empty_assistant_turns_are_skipped() {
+    fn whitespace_assistant_turns_are_skipped() {
         let msgs = vec![
             Message::user("hi"),
             Message {
                 role: "assistant".into(),
-                content: String::new(),
+                content: " \n\t".into(),
                 images: Vec::new(),
                 audio: Vec::new(),
                 tool_calls: None,
