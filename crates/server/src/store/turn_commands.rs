@@ -115,8 +115,10 @@ impl TurnCommandStore<'_> {
     }
 
     /// Only the oldest unfinished command of each chat may enter Restate.
+    /// Archived chats never dispatch: archiving settles their waiting
+    /// commands, and this guard closes the dispatch/archive race.
     pub async fn pending_heads(&self, chat: Option<Uuid>) -> Result<Vec<TurnCommand>, ApiError> {
-        Ok(sqlx::query_as("SELECT c.* FROM turn_commands c WHERE c.status = 'pending' AND ($1::uuid IS NULL OR c.chat_id = $1) AND NOT EXISTS (SELECT 1 FROM turn_commands older WHERE older.chat_id = c.chat_id AND older.position < c.position AND older.finished_at IS NULL) ORDER BY c.position LIMIT 64")
+        Ok(sqlx::query_as("SELECT c.* FROM turn_commands c WHERE c.status = 'pending' AND ($1::uuid IS NULL OR c.chat_id = $1) AND NOT EXISTS (SELECT 1 FROM turn_commands older WHERE older.chat_id = c.chat_id AND older.position < c.position AND older.finished_at IS NULL) AND NOT EXISTS (SELECT 1 FROM chats ch WHERE ch.id = c.chat_id AND ch.archived_at IS NOT NULL) ORDER BY c.position LIMIT 64")
             .bind(chat).fetch_all(self.pool).await?)
     }
 
@@ -128,6 +130,8 @@ impl TurnCommandStore<'_> {
 
     /// None means a legacy invocation. A duplicate invocation never executes
     /// a completed command, even after Restate's idempotency retention expires.
+    /// An archived chat's command never begins: a delivery that raced the
+    /// archive settles as cancelled without running.
     pub async fn begin(
         &self,
         id: Uuid,
@@ -140,6 +144,13 @@ impl TurnCommandStore<'_> {
         let Some((status, owner)) = row else {
             return Ok(None);
         };
+        let archived: Option<(bool,)> = sqlx::query_as("SELECT archived_at IS NOT NULL FROM chats WHERE id = $1")
+            .bind(chat)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if archived.is_some_and(|(a,)| a) {
+            return Ok(Some(false));
+        }
         if status == "running" {
             return Ok(Some(owner.as_deref() == Some(invocation)));
         }

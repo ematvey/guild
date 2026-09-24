@@ -279,3 +279,69 @@ async fn queue_consumption_ignores_interleaved_assistant_and_tool_events() {
         .unwrap()
         .is_empty());
 }
+
+#[tokio::test]
+async fn archiving_a_chat_settles_its_waiting_commands_and_the_dispatcher_never_claims_them() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    // Two queued commands; the ingress is unreachable in the fixture, so
+    // delivery stays pending exactly as between a send and its dispatch.
+    for text in ["first", "second"] {
+        let id = Uuid::now_v7();
+        let res = app
+            .clone()
+            .oneshot(post(&fs.token, &command(fs.chat_id, id, text)))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+    let store = fs.store();
+    let pending: (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM turn_commands WHERE chat_id = $1 AND status = 'pending'",
+    )
+    .bind(fs.chat_id)
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(pending.0, 2);
+    assert_eq!(
+        store
+            .turn_commands()
+            .pending_heads(Some(fs.chat_id))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // Archiving settles every waiting command in the archive transaction.
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/chats/{}", fs.chat_id))
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"archived": true}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let cancelled: (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM turn_commands WHERE chat_id = $1 AND status = 'cancelled'",
+    )
+    .bind(fs.chat_id)
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(cancelled.0, 2);
+    // The dispatcher cannot claim against an archived chat.
+    assert!(store
+        .turn_commands()
+        .pending_heads(Some(fs.chat_id))
+        .await
+        .unwrap()
+        .is_empty());
+}

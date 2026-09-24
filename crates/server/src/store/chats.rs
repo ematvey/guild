@@ -246,8 +246,11 @@ impl<'a> ChatStore<'a> {
 
     /// Renames and/or archives the chat (owner-scoped, admin bypass — the
     /// same gate as reads). `None` fields stay unchanged; archiving stamps
-    /// `archived_at`, unarchiving clears it. The sidebar list never returns
-    /// archived chats, but direct links still resolve.
+    /// `archived_at` and settles every waiting command as cancelled in the
+    /// same statement — successors of a stopped turn must not run in an
+    /// archived chat. Unarchiving clears the flag without restoring them.
+    /// The sidebar list never returns archived chats, but direct links
+    /// still resolve.
     pub async fn update_chat(
         &self,
         org_id: Uuid,
@@ -258,14 +261,22 @@ impl<'a> ChatStore<'a> {
     ) -> Result<ChatRow, ApiError> {
         let is_admin = caller.role == "admin";
         sqlx::query_as(
-            "UPDATE chats SET \
+            "WITH updated AS ( \
+             UPDATE chats SET \
              title = COALESCE($3, title), \
              archived_at = CASE \
                WHEN $4::bool IS NULL THEN archived_at \
                WHEN $4::bool THEN now() \
                ELSE NULL END \
              WHERE org_id = $1 AND id = $2 AND (user_id = $5 OR $6) \
-             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id, archived_at \
+             ), settled AS ( \
+             UPDATE turn_commands SET status = 'cancelled', finished_at = now() \
+             WHERE chat_id = (SELECT id FROM updated) \
+               AND (SELECT archived_at FROM updated) IS NOT NULL \
+               AND finished_at IS NULL AND status IN ('pending','submitted') \
+             ) \
+             SELECT id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id FROM updated",
         )
         .bind(org_id)
         .bind(chat_id)
