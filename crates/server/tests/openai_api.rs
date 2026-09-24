@@ -85,6 +85,7 @@ async fn openai_non_stream_with_tool_round_trip() {
         "messages": [{"role": "user", "content": "weather in oslo?"}],
         "tools": [{"type":"function", "function":{"name":"get_weather", "parameters":{"type":"object"}}}],
         "max_completion_tokens": 123,
+        "max_tokens": 19,
     });
     let res = app
         .clone()
