@@ -764,7 +764,7 @@ export function createThreadReducer(): ThreadReducer {
           }
           break;
         }
-        case "approval_request":
+        case "approval_requested":
           v.blocks = upsertApproval(v.blocks, {
             callId: frame.call_id ?? "",
             name: frame.name ?? "tool",

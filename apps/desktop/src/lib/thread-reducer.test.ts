@@ -231,9 +231,11 @@ describe("applyState: approval upsert mid-stream", () => {
   it("applyFrame upserts approval cards idempotently per call", () => {
     const r = createThreadReducer();
     r.open("c1");
-    const first = r.applyFrame({ type: "approval_request", call_id: "c1", name: "execute", arguments: "{}" });
+    // The stream frame type is `approval_requested` (the persisted journal
+    // event is `approval_request`).
+    const first = r.applyFrame({ type: "approval_requested", call_id: "c1", name: "execute", arguments: "{}" });
     expect(first.blocks.filter((b) => b.kind === "approval")).toHaveLength(1);
-    const again = r.applyFrame({ type: "approval_request", call_id: "c1", name: "execute", arguments: "{}" });
+    const again = r.applyFrame({ type: "approval_requested", call_id: "c1", name: "execute", arguments: "{}" });
     const cards = again.blocks.filter((b) => b.kind === "approval");
     expect(cards).toHaveLength(1);
     expect(cards[0].key).toBe("approval-c1");
