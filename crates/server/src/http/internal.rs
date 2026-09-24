@@ -188,6 +188,10 @@ async fn update(
         require_admin(&user).await?;
     }
     let store = state.store().await?;
+    let current = store.routines().get(user.0.org_id, id).await?;
+    if user.0.role != "admin" && current.created_by != Some(user.0.id) {
+        return Err(ApiError::forbidden());
+    }
     let (routine, new_schedule) = store
         .routines()
         .update(user.0.org_id, id, &patch, user.0.role == "admin")
@@ -207,6 +211,10 @@ async fn delete_one(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let store = state.store().await?;
+    let current = store.routines().get(user.0.org_id, id).await?;
+    if user.0.role != "admin" && current.created_by != Some(user.0.id) {
+        return Err(ApiError::forbidden());
+    }
     store.routines().delete(user.0.org_id, id).await?;
     Ok(Json(json!({})))
 }

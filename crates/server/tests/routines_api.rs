@@ -490,3 +490,43 @@ async fn routine_crud_hook_auth_and_internal_completion() {
         2
     );
 }
+
+#[tokio::test]
+async fn members_cannot_mutate_another_creators_routine() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let routine = create_routine(&app, &fs.token, json!({"slug":"owned","name":"Owned","trigger_kind":"webhook","prompt":"original","model":"gpt-test","enabled":false})).await;
+    let other = fs
+        .store()
+        .identity()
+        .create_user(fs.org_id, "other@routine.test", "hunter226", "member")
+        .await
+        .unwrap();
+    let (_, token) = fs
+        .store()
+        .identity()
+        .create_session(other.id)
+        .await
+        .unwrap();
+    for method in ["PATCH", "DELETE"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!(
+                        "/api/v1/routines/{}",
+                        routine["id"].as_str().unwrap()
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"enabled":false,"prompt":"changed"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method}");
+    }
+}
