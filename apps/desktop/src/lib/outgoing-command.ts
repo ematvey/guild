@@ -141,11 +141,11 @@ export function restoreCommands(storage: Pick<Storage, "getItem" | "key" | "leng
           || typeof row.prepared?.prompt !== "string" || !Array.isArray(row.prepared?.attachmentIds)
           || !Array.isArray(row.attachments) || !Array.isArray(row.uploaded)) continue;
         const uploaded = new Map<string, MessageAttachmentMeta>(row.uploaded);
-        // Uploaded IDs are the reusable attachment identity after a reload;
-        // browser-local files/object URLs no longer exist.
-        const attachments = (row.attachments as DraftAttachment[]).map(a => uploaded.get(a.id) ?? a);
-        commands.set(row.id, { ...row, attachments,
-          uploaded: new Map(attachments.map(a => [a.id, a])), running: false, accepted: false });
+        // The local attachment ID stays the identity in both stores so the
+        // recovered composer draft still matches on retry (server dedup and
+        // acceptance cleanup keep working); the server ID lives in the
+        // upload map and the prepared payload.
+        commands.set(row.id, { ...row, uploaded, running: false, accepted: false });
       } catch { /* ignore malformed records individually */ }
     }
   } catch { /* storage unavailable */ }
