@@ -269,8 +269,24 @@ pub async fn load_media_map(
             continue;
         }
         let key = crate::store::attachments::object_key(org_id, row.id, &row.filename);
-        let Ok(bytes) = objects.get(&key).await else {
-            continue;
+        // A requested attachment's bytes are part of the immutable user
+        // message: a read failure must fail the send (retryable) — silently
+        // skipping would permanently strip the attachment from history. A
+        // missing object is tolerated (the row exists, the upload does not).
+        let bytes = match objects.get(&key).await {
+            Ok(bytes) => bytes,
+            Err(e)
+                if e.downcast_ref::<object_store::Error>()
+                    .is_some_and(|e| matches!(e, object_store::Error::NotFound { .. })) =>
+            {
+                continue;
+            }
+            Err(e) => {
+                return Err(ApiError::internal(format!(
+                    "attachment {} unreadable: {e}",
+                    row.id
+                )));
+            }
         };
         use base64::Engine as _;
         map.insert(

@@ -225,3 +225,96 @@ async fn attachment_access_is_owner_scoped_with_admin_bypass() {
         .unwrap();
     assert_eq!(&body[..], b"b's bytes");
 }
+
+/// A transient object-store read failure fails the send (retryable) instead
+/// of silently stripping the attachment from the immutable user message —
+/// one S3 error must not turn the attachment into "content not inlined"
+/// forever. The store here is unreachable (closed port), so the read fails
+/// with a non-NotFound error on the REAL submission path.
+#[tokio::test]
+async fn an_object_store_read_failure_fails_the_send() {
+    use guild_server::config::Config;
+    use guild_server::state::AppState;
+    use std::sync::Arc;
+
+    let db = guild_server::store::Store::connect_test().await.unwrap();
+    let mut cfg = Config::test_config();
+    cfg.database_url = db.url.clone();
+    cfg.s3_url = "http://127.0.0.1:1".into();
+    let state = AppState::with_store(Arc::new(db.store.clone()), cfg);
+    let store = db.store.clone();
+
+    let user = store
+        .identity()
+        .ensure_bootstrap_admin("att-fail@example.org", "hunter226")
+        .await
+        .unwrap();
+    let user_row = store.identity().get_user(user).await.unwrap();
+    let (_, token) = store.identity().create_session(user).await.unwrap();
+    let chat = store
+        .chats()
+        .create_chat(user_row.org_id, user, Some("att-fail"), None)
+        .await
+        .unwrap();
+    store
+        .gateway()
+        .upsert_route(
+            user_row.org_id,
+            "gpt-test",
+            "openai",
+            true,
+            1.0,
+            2.0,
+            None,
+            false,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    let att = store
+        .attachments()
+        .create(
+            uuid::Uuid::now_v7(),
+            user_row.org_id,
+            chat.id,
+            "notes.txt",
+            "text/plain",
+            12,
+            &guild_server::store::attachments::object_key(
+                user_row.org_id,
+                uuid::Uuid::now_v7(),
+                "notes.txt",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let app = guild_server::build_router(state);
+    let res = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/v1/gateway/chat")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({
+                        "chat_id": chat.id,
+                        "model": "gpt-test",
+                        "messages": [{"role": "user", "content": "read this"}],
+                        "attachment_ids": [att.id]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        "a failed attachment read must fail the send, not strip the attachment"
+    );
+}
