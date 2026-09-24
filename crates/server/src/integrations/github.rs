@@ -379,7 +379,7 @@ impl Integration for Github {
                     let repo = args["repo"].as_str().ok_or("get_file requires repo")?;
                     let path = args["path"].as_str().ok_or("get_file requires path")?;
                     let entry = send(
-                        request(&api, &tok, &github_file_path(owner, repo, path)?.as_str())
+                        request(&api, &tok, github_file_path(owner, repo, path)?.as_str())
                             .query(&[("ref", args["ref"].as_str().unwrap_or(""))]),
                     )
                     .await?;
