@@ -100,8 +100,18 @@ pub(crate) async fn drive(
     let mut stream = std::pin::pin!(stream);
     let mut text = String::new();
     let mut running = tokio::task::JoinSet::new();
+    let mut result = Ok(());
     while let Some(item) = stream.next().await {
-        let frame = item?;
+        let frame = match item {
+            Ok(frame) => frame,
+            Err(error) => {
+                result = Err(error);
+                break;
+            }
+        };
+        if let StreamEvent::ApprovalResolved { call_id, .. } = &frame {
+            pending.lock().unwrap().remove(call_id);
+        }
         if let StreamEvent::ApprovalRequested {
             call_id,
             name,
@@ -126,11 +136,14 @@ pub(crate) async fn drive(
                 .send(serde_json::to_value(Event::new(event, payload)).expect("event serializes"));
         }
     }
+    // Dropping unanswered senders cancels only decision waits; posts already
+    // in flight still finish before returning.
+    pending.lock().unwrap().clear();
     // Every decision must be posted before drive returns — the waits ran
     // off-loop so the stream (and the socket's Ping answers) kept being
     // polled while a human decided.
     while running.join_next().await.is_some() {}
-    Ok(())
+    result
 }
 
 /// Handles one approval request: the Ask card is emitted synchronously (event
@@ -183,9 +196,9 @@ fn on_approval_requested(
                 Ok(Ok(guild_core::agent::ApprovalDecision::Deny { reason })) => {
                     (false, Some(reason))
                 }
-                // Sender dropped (session closed) or timed out — deny so the
-                // turn proceeds; drop the dead entry.
-                Ok(Err(_)) | Err(_) => {
+                // Resolution elsewhere or stream termination cancels the wait.
+                Ok(Err(_)) => return,
+                Err(_) => {
                     pending.lock().unwrap().remove(&call_id);
                     (false, Some("no approval decision in time".to_string()))
                 }
@@ -463,7 +476,12 @@ mod tests {
             policy,
             pending,
             events_tx,
-            stream::iter(frames),
+            stream::iter(frames).then(|frame| async move {
+                if matches!(frame, Ok(StreamEvent::Done { .. })) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                frame
+            }),
         )
         .await
         .unwrap();
@@ -491,6 +509,53 @@ mod tests {
             .find(|(path, _)| path.ends_with("/approvals/auto1"))
             .expect("auto1 decision posted");
         assert_eq!(auto1.1["approved"], true, "auto policy: read_file");
+    }
+
+    #[tokio::test]
+    async fn externally_resolved_or_terminated_approvals_do_not_post_denials() {
+        for resolved in [false, true] {
+            let server = wiremock::MockServer::start().await;
+            let cloud = CloudClient {
+                base_url: server.uri(),
+                token: "t".into(),
+            };
+            let pending: PendingApprovals = Default::default();
+            let (events, _) = broadcast::channel(16);
+            let mut frames = vec![Ok(StreamEvent::ApprovalRequested {
+                call_id: "ask".into(),
+                name: "execute".into(),
+                arguments: "{}".into(),
+            })];
+            if resolved {
+                frames.push(Ok(StreamEvent::ApprovalResolved {
+                    call_id: "ask".into(),
+                    approved: true,
+                    reason: None,
+                }));
+            }
+            frames.push(Ok(StreamEvent::Done {
+                message_id: Uuid::now_v7(),
+                cost_usd: 0.0,
+                tokens_in: 0,
+                tokens_out: 0,
+            }));
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                drive(
+                    cloud,
+                    Uuid::now_v7(),
+                    ApprovalPolicy::default(),
+                    pending.clone(),
+                    events,
+                    stream::iter(frames),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(pending.lock().unwrap().is_empty());
+            assert!(server.received_requests().await.unwrap().is_empty());
+        }
     }
 
     /// drive_chat (chat.send's completion path): deltas accumulate into one
