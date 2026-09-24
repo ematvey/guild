@@ -13,9 +13,11 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn v2_bundle(slug: &str, version: &str, mcp_url: &str) -> Vec<u8> {
+    // uuid suffix: parallel tests in this file share the pid, and their
+    // cleanup would delete each other's bundle dirs.
     let dir = std::env::temp_dir().join(format!(
         "guild-policy-bundle-{slug}-{version}-{}",
-        std::process::id()
+        uuid::Uuid::now_v7().simple()
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
