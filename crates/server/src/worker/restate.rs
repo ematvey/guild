@@ -2476,6 +2476,12 @@ impl ChatRunner {
                 }
             })
             .await?;
+            // The dispatcher's reservation may have landed after the
+            // unconditional removal above but before this finish commit: the
+            // pump's re-reads still saw the command `running`, so the entry
+            // survived. Release it now — id-checked, so a newer generation's
+            // reservation is untouched.
+            release_claim_reservation(&state, req.chat_id, id);
         }
         outcome.map_err(|error| {
             HandlerError::from(TerminalError::new(format!("turn failed: {error:?}")))
