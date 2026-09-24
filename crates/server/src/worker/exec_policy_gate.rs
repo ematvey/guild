@@ -169,6 +169,9 @@ fn readonly_command_has_effects(argv: &[String]) -> bool {
         Some("date") => argv.iter().skip(1).any(|arg| {
             arg.starts_with("--s")
                 || (arg.starts_with('-') && !arg.starts_with("--") && arg[1..].contains('s'))
+                // An operand (neither flag nor `+format`) is a settime
+                // spec: `date MMDDhhmm` moves the clock.
+                || (!arg.starts_with('-') && !arg.starts_with('+'))
         }),
         Some("git")
             if argv
@@ -178,6 +181,21 @@ fn readonly_command_has_effects(argv: &[String]) -> bool {
             argv.iter().skip(2).any(|arg| {
                 arg.starts_with("--output") || arg == "--ext-diff" || arg == "--textconv"
             })
+        }
+        // Git parses flags ahead of the subcommand, so `git remote -v
+        // set-url origin URL` prefix-matches the read-only `git remote -v`
+        // rule while actually rewriting remotes: after the -v/--verbose flag
+        // only further flags are inspection; a non-flag token (or a `--`
+        // separator hiding one) is a subcommand.
+        Some("git") if argv.get(1).is_some_and(|s| s == "remote") => {
+            match argv.iter().skip(2).position(|arg| arg == "-v" || arg == "--verbose") {
+                Some(i) => argv
+                    .iter()
+                    .skip(2)
+                    .skip(i + 1)
+                    .any(|arg| arg == "--" || !arg.starts_with('-')),
+                None => false,
+            }
         }
         _ => false,
     }
@@ -293,11 +311,41 @@ mod tests {
         for command in [
             "date -u",
             "date +%s",
+            "date -u +%Y",
             "hostname",
             "git diff --stat",
             "git log --oneline",
             "git show HEAD",
         ] {
+            assert_eq!(
+                evaluate_execute(&serde_json::json!({"command": command})),
+                ExecPolicyDecision::Allow,
+                "{command}"
+            );
+        }
+    }
+
+    /// `git remote -v` auto-approves only inspection: git parses the flag
+    /// ahead of the subcommand, so an argument after -v/--verbose is a
+    /// subcommand (set-url, add, remove, …) and rewrites remotes. A `date`
+    /// operand (not a flag, not a `+format`) sets the clock.
+    #[test]
+    fn git_remote_and_date_operands_demote_to_prompt() {
+        for command in [
+            "git remote -v set-url origin https://attacker.example/x.git",
+            "git remote -v add upstream https://attacker.example/x.git",
+            "git remote -v remove origin",
+            "git remote --verbose rename origin upstream",
+            "date 09241000",
+            "date 092410002026",
+        ] {
+            assert_eq!(
+                evaluate_execute(&serde_json::json!({"command": command})),
+                ExecPolicyDecision::Prompt,
+                "{command}"
+            );
+        }
+        for command in ["git remote -v", "git remote -v --verbose"] {
             assert_eq!(
                 evaluate_execute(&serde_json::json!({"command": command})),
                 ExecPolicyDecision::Allow,
