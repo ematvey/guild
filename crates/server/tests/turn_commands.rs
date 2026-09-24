@@ -316,6 +316,7 @@ async fn archiving_a_chat_settles_its_waiting_commands_and_the_dispatcher_never_
 
     // Archiving settles every waiting command in the archive transaction.
     let res = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("PATCH")
@@ -344,4 +345,64 @@ async fn archiving_a_chat_settles_its_waiting_commands_and_the_dispatcher_never_
         .await
         .unwrap()
         .is_empty());
+
+    // A send to an archived chat is rejected (409) and creates no command:
+    // acceptance holds the chats row lock, so it cannot race the settle.
+    let res = app
+        .clone()
+        .oneshot(post(
+            &fs.token,
+            &command(fs.chat_id, Uuid::now_v7(), "after archive"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let total: (i64,) = sqlx::query_as("SELECT count(*) FROM turn_commands WHERE chat_id = $1")
+        .bind(fs.chat_id)
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert_eq!(total.0, 2);
+
+    // Unarchive never resurrects settled commands, and sends work again.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/chats/{}", fs.chat_id))
+                .header("authorization", format!("Bearer {}", fs.token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"archived": false}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = app
+        .clone()
+        .oneshot(post(
+            &fs.token,
+            &command(fs.chat_id, Uuid::now_v7(), "after unarchive"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let waiting: (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM turn_commands WHERE chat_id = $1 AND finished_at IS NULL",
+    )
+    .bind(fs.chat_id)
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(waiting.0, 1);
+    assert_eq!(
+        store
+            .turn_commands()
+            .pending_heads(Some(fs.chat_id))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
 }

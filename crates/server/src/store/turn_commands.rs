@@ -61,8 +61,19 @@ impl TurnCommandStore<'_> {
         event: &protocol::api::ThreadEvent,
     ) -> Result<TurnCommand, ApiError> {
         let mut tx = self.pool.begin().await?;
-        let (project, machine, label): (Option<Uuid>, Option<String>, Option<String>) = sqlx::query_as("SELECT project_id,machine_id,machine_label FROM chats WHERE id = $1 AND org_id = $2 FOR UPDATE")
+        // The row lock serializes acceptance against archiving: a send that
+        // races the archive either sees `archived_at` here (rejected, no
+        // command row) or commits first (the archive then settles it). A
+        // command can therefore never be accepted into an archived chat and
+        // hang undispatched; unarchive never resurrects settled commands.
+        let (project, machine, label, archived): (Option<Uuid>, Option<String>, Option<String>, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as("SELECT project_id,machine_id,machine_label,archived_at FROM chats WHERE id = $1 AND org_id = $2 FOR UPDATE")
             .bind(chat).bind(org).fetch_one(&mut *tx).await?;
+        if archived.is_some() {
+            return Err(ApiError::conflict(
+                "chat_archived",
+                "chat is archived — unarchive it to send",
+            ));
+        }
         if request.get("project_id").is_none_or(|id| id.is_null()) {
             payload["project_id"] = serde_json::json!(project);
             payload["machine_id"] = serde_json::json!(machine);
