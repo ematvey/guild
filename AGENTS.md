@@ -32,9 +32,9 @@ you.
 
 ## Traps
 
-- **Generated TS bindings**: `crates/protocol/ts/**` is generated
-  (`TS_RS_EXPORT_DIR=ts cargo test -p protocol --features ts`). Never edit
-  by hand.
+- **Generated TS bindings**: `crates/protocol/bindings/**` is generated
+  (`cargo test -p protocol --features ts`; check freshness with
+  `scripts/check-bindings.sh`). Never edit by hand.
 - **Default cargo members exclude the Tauri app** (`apps/desktop`): its
   dependency tree dominates compile time. `cargo test/build` skip it —
   target it explicitly with `-p guild-desktop`.
