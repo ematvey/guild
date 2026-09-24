@@ -643,13 +643,16 @@ pub const DEFAULT_APPROVAL_POLICY_PROMPT: &str = "You are the safety gate for an
 
 /// The workspace reference resolved from the chat's project: folder, the
 /// project's machine (the executor — re-derived live so an edited project
-/// never pairs its folder with the chat's cached machine), and the machine's
-/// registry label.
+/// never pairs its folder with the chat's cached machine), the machine's
+/// registry label, and the machine row's durable owner (user, org) — the
+/// executor identity dispatches are validated against.
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub(crate) struct WorkspaceRef {
     pub folder: String,
     pub machine_id: Option<String>,
     pub machine_label: Option<String>,
+    #[serde(default)]
+    pub machine_owner: Option<(Uuid, Uuid)>,
 }
 
 /// Pure helper: a WSL UNC folder (`\\wsl.localhost\<distro>\…`, the legacy
@@ -698,21 +701,31 @@ pub(crate) async fn resolve_workspace(
         return Ok(None);
     };
     let store = state.store().await?;
-    let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT p.folder, p.machine_id, coalesce(m.label, p.machine_id) \
+    let row: Option<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<Uuid>,
+        Option<Uuid>,
+    )> = sqlx::query_as(
+        "SELECT p.folder, p.machine_id, coalesce(m.label, p.machine_id), mu.user_id, mu.org_id \
          FROM projects p \
          LEFT JOIN machines m ON m.machine_id = p.machine_id \
+         LEFT JOIN machines mu ON mu.machine_id = p.machine_id \
          WHERE p.id = $1 AND p.org_id = $2",
     )
     .bind(project_id)
     .bind(org_id)
     .fetch_optional(store.pool())
     .await?;
-    Ok(row.map(|(folder, machine_id, machine_label)| WorkspaceRef {
-        folder,
-        machine_id,
-        machine_label,
-    }))
+    Ok(row.map(
+        |(folder, machine_id, machine_label, owner_user, owner_org)| WorkspaceRef {
+            folder,
+            machine_id,
+            machine_label,
+            machine_owner: owner_user.zip(owner_org),
+        },
+    ))
 }
 
 /// Pure helper: the system-prompt sentence naming the workspace. A WSL UNC
@@ -1622,6 +1635,36 @@ impl ChatRunner {
             Some(w) => w.machine_label.clone(),
             None => req.machine_label.clone(),
         };
+        // The executor identity dispatches must match: the machine row's
+        // durable owner captured at turn start. Project-derived bindings
+        // carry it in the workspace resolution; a payload binding (chat with
+        // a machine but no project) resolves it journaled from the registry.
+        let turn_expected_owner: Option<(Uuid, Uuid)> = match workspace.as_ref() {
+            Some(w) => w.machine_owner,
+            None => match turn_machine_id.as_deref() {
+                Some(mid) => {
+                    let st = state.clone();
+                    let mid = mid.to_string();
+                    ctx.run(move || {
+                        let state = st.clone();
+                        let mid = mid.clone();
+                        async move {
+                            let store = state.store().await.map_err(api_err)?;
+                            let owner = store.machines().owner_of(&mid).await.map_err(api_err)?;
+                            Ok(Json(owner))
+                        }
+                    })
+                    .await?
+                    .into_inner()
+                }
+                None => None,
+            },
+        };
+        let turn_expected = crate::worker::funnel::ExpectedExecutor {
+            org_id: Some(req.org_id),
+            project_id: req.project_id,
+            owner: turn_expected_owner,
+        };
         // Phase 5a (spec 2026-09-18 unification): machine-mediated AGENTS.md
         // fetch. A web chat's caller cannot read files (browser tab), so when
         // no client-assembled chain arrived and the turn runs against a bound
@@ -1631,7 +1674,7 @@ impl ChatRunner {
         // exposes no mtime verb).
         let remote_context = if req.agents_md.is_none() && req.server_workspace.is_none() {
             fetch_context_via_machine(&ctx, &state, req.org_id, req.chat_id, workspace.clone(),
-                turn_machine_id.clone(), turn_no, &req.user_message).await?
+                turn_machine_id.clone(), turn_expected, turn_no, &req.user_message).await?
         } else { protocol::ws::MachineContext::default() };
         let agents_md = req.agents_md.clone().or(remote_context.instructions.clone());
         let skills_index = req.skills_index.as_deref().unwrap_or(&remote_context.skills_index);
@@ -2242,6 +2285,7 @@ impl ChatRunner {
                             turn_machine_id.clone(),
                             turn_machine_label.clone(),
                             workspace.as_ref().map(|w| w.folder.clone()),
+                            turn_expected,
                         )
                         .await?
                     };
@@ -3090,6 +3134,7 @@ async fn fetch_context_via_machine(
     chat_id: Uuid,
     workspace: Option<WorkspaceRef>,
     machine_id: Option<String>,
+    expected: crate::worker::funnel::ExpectedExecutor,
     turn_no: u32,
     prompt: &str,
 ) -> HandlerResult<protocol::ws::MachineContext> {
@@ -3161,9 +3206,10 @@ async fn fetch_context_via_machine(
     }
     // Old executors understand only tool dispatch: retain the bounded,
     // project-root AGENTS.md fallback without asking them to read new paths.
-    let instructions =
-        fetch_agents_md_via_machine(ctx, state, org_id, chat_id, workspace, machine_id, turn_no)
-            .await?;
+    let instructions = fetch_agents_md_via_machine(
+        ctx, state, org_id, chat_id, workspace, machine_id, expected, turn_no,
+    )
+    .await?;
     Ok(protocol::ws::MachineContext {
         instructions,
         ..Default::default()
@@ -3177,6 +3223,7 @@ async fn fetch_agents_md_via_machine(
     chat_id: Uuid,
     workspace: Option<WorkspaceRef>,
     machine_id: Option<String>,
+    expected: crate::worker::funnel::ExpectedExecutor,
     _turn_no: u32,
 ) -> HandlerResult<Option<String>> {
     const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -3239,6 +3286,7 @@ async fn fetch_agents_md_via_machine(
         &arguments,
         Some(&mid),
         Some(&ws.folder),
+        expected,
     );
     let dispatch_state = state.clone();
     let dispatch_id = awakeable_id.clone();
@@ -3322,6 +3370,7 @@ async fn client_tool_step(
     machine_id: Option<String>,
     machine_label: Option<String>,
     workdir: Option<String>,
+    expected: crate::worker::funnel::ExpectedExecutor,
 ) -> HandlerResult<ToolResultPayload> {
     // Resolve the executor machine. Journaled ctx.run snapshots: the result
     // replays deterministically even if the in-memory registry changes
@@ -3392,6 +3441,7 @@ async fn client_tool_step(
             machine_id: mid,
             machine_label: mlabel,
             workdir,
+            expected,
         },
     )
     .await
@@ -4174,6 +4224,7 @@ mod tests {
             folder: "/w".into(),
             machine_id: None,
             machine_label: None,
+            ..Default::default()
         };
         let p = build_system_prompt(
             Some("You are GLaDOS."),
@@ -4347,6 +4398,7 @@ mod tests {
             folder: "/home/u/repo".into(),
             machine_id: None,
             machine_label: Some("box".into()),
+            ..Default::default()
         };
         let p = build_system_prompt(
             None,

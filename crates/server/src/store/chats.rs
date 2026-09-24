@@ -90,6 +90,53 @@ impl<'a> ChatStore<'a> {
         .map_err(Into::into)
     }
 
+    /// Creates a chat bound to its project's machine. The project row is
+    /// locked and its machine binding read inside the same transaction as
+    /// the INSERT, so a concurrent re-pair adoption can never slip a retired
+    /// machine id between the read and the write: adoption re-keys projects
+    /// and chats under the same serialization the lock provides.
+    pub async fn create_chat_for_project(
+        &self,
+        org_id: Uuid,
+        user_id: Uuid,
+        title: Option<&str>,
+        project_id: Uuid,
+    ) -> Result<ChatRow, ApiError> {
+        let mut tx = self.pool.begin().await?;
+        let binding: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT p.machine_id, coalesce(m.label, p.machine_id) \
+             FROM projects p \
+             LEFT JOIN machines m ON m.machine_id = p.machine_id \
+             WHERE p.id = $1 AND p.org_id = $2 AND p.user_id = $3 \
+             FOR UPDATE OF p",
+        )
+        .bind(project_id)
+        .bind(org_id)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((machine_id, machine_label)) = binding else {
+            return Err(ApiError::not_found("no such project"));
+        };
+        let id = Uuid::now_v7();
+        let chat = sqlx::query_as::<_, ChatRow>(
+            "INSERT INTO chats (id, org_id, user_id, title, project_id, machine_id, machine_label) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
+        )
+        .bind(id)
+        .bind(org_id)
+        .bind(user_id)
+        .bind(title)
+        .bind(project_id)
+        .bind(&machine_id)
+        .bind(&machine_label)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(chat)
+    }
+
     /// Shared SELECT/JOIN for the active-chat lists (full and paged): the
     /// unread projection reads the caller's read watermark, the project and
     /// machine joins feed the sidebar's grouping.

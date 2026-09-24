@@ -254,36 +254,26 @@ async fn create(
     Json(req): Json<CreateChatRequest>,
 ) -> Result<Json<Chat>, ApiError> {
     let store = state.store().await?;
-    // The project must exist and belong to the caller — an arbitrary id would
-    // bind a chat to someone else's workspace.
-    let project = match req.project_id {
-        Some(project_id) => Some(
-            store
-                .projects()
-                .get(user.0.org_id, project_id, user.0.id)
-                .await?,
-        ),
-        None => None,
-    };
     // Machine binding is project-derived: the chat runs where its project's
-    // folder lives, so the bound project's machine is the only authority (the
-    // project's label comes from the machines registry). A chat with no
-    // project stays fully unbound — its tools run in the sandbox executor.
-    // INSERT sets project and machine atomically.
-    let machine = project
-        .as_ref()
-        .map(|p| (p.machine_id.clone(), p.machine_label.clone()));
-    let chat = store
-        .chats()
-        .create_chat_with_machine(
-            user.0.org_id,
-            user.0.id,
-            req.title.as_deref(),
-            req.project_id,
-            machine.as_ref().map(|(id, _)| id.as_str()),
-            machine.as_ref().and_then(|(_, label)| label.as_deref()),
-        )
-        .await?;
+    // folder lives, so the bound project's machine is the only authority. The
+    // project row is locked and its binding read inside the INSERT's
+    // transaction, so a concurrent re-pair adoption cannot install a retired
+    // machine id here. A chat with no project stays fully unbound — its
+    // tools run in the sandbox executor.
+    let chat = match req.project_id {
+        Some(project_id) => {
+            store
+                .chats()
+                .create_chat_for_project(user.0.org_id, user.0.id, req.title.as_deref(), project_id)
+                .await?
+        }
+        None => {
+            store
+                .chats()
+                .create_chat(user.0.org_id, user.0.id, req.title.as_deref(), None)
+                .await?
+        }
+    };
     Ok(Json(chat.into()))
 }
 

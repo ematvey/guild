@@ -34,8 +34,36 @@ const ROW_COLUMNS: &str =
 const ROW_FROM: &str = "projects p LEFT JOIN machines m ON m.machine_id = p.machine_id";
 
 impl<'a> ProjectStore<'a> {
+    /// Locks the machine's registry row and proves bindability inside the
+    /// caller's transaction: a fingerprint adoption (which locks the same row
+    /// before re-keying) can never commit between this check and the binding
+    /// write, so a retired id cannot be reinstalled by a paused writer.
+    async fn lock_bindable_machine(
+        tx: &mut sqlx::PgConnection,
+        machine_id: &str,
+        user_id: Uuid,
+        org_id: Uuid,
+    ) -> Result<(), ApiError> {
+        let known: Option<String> = sqlx::query_scalar(
+            "SELECT machine_id FROM machines \
+             WHERE machine_id = $1 AND (user_id = $2 OR org_id = $3) FOR UPDATE",
+        )
+        .bind(machine_id)
+        .bind(user_id)
+        .bind(org_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if known.is_none() {
+            return Err(ApiError::bad_request("unknown machine"));
+        }
+        Ok(())
+    }
+
     /// Creates a project. Names are display labels derived from the chosen
-    /// folder — duplicates are allowed.
+    /// folder — duplicates are allowed. The machine must be registered to
+    /// the caller or their org; the check and the INSERT share one
+    /// transaction with the registry row locked, so adoption cannot commit
+    /// between them.
     pub async fn create(
         &self,
         org_id: Uuid,
@@ -45,6 +73,8 @@ impl<'a> ProjectStore<'a> {
         machine_id: &str,
     ) -> Result<ProjectRow, ApiError> {
         let id = Uuid::now_v7();
+        let mut tx = self.pool.begin().await?;
+        Self::lock_bindable_machine(&mut tx, machine_id, user_id, org_id).await?;
         let result = sqlx::query(
             "INSERT INTO projects (id, org_id, user_id, name, folder, machine_id) \
              VALUES ($1, $2, $3, $4, $5, $6)",
@@ -55,8 +85,9 @@ impl<'a> ProjectStore<'a> {
         .bind(name)
         .bind(folder)
         .bind(machine_id)
-        .execute(self.pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         debug_assert_eq!(result.rows_affected(), 1);
         self.fetch_by_id(id).await
     }
@@ -110,6 +141,9 @@ impl<'a> ProjectStore<'a> {
         archived: Option<bool>,
     ) -> Result<ProjectRow, ApiError> {
         let mut tx = self.pool.begin().await?;
+        if let Some(mid) = machine_id {
+            Self::lock_bindable_machine(&mut tx, mid, user_id, org_id).await?;
+        }
         let updated = sqlx::query_scalar::<_, Uuid>(
             "UPDATE projects SET \
              name = COALESCE($3, name), \
@@ -216,6 +250,23 @@ mod tests {
         let user = store
             .identity()
             .create_user(org, "proj@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        // The default test machine exists in the registry: binding writes
+        // enforce bindability inside their own transaction.
+        store
+            .machines()
+            .upsert_connected(
+                org,
+                user.id,
+                "machine-1",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
         (db, org, user)
@@ -377,6 +428,113 @@ mod tests {
         assert_eq!(
             store.projects().list(org, user.id).await.unwrap()[0].id,
             project.id
+        );
+    }
+
+    /// The binding write enforces bindability inside its own transaction: an
+    /// unregistered machine, another org's machine, and an id retired by a
+    /// re-pair adoption are all refused at the store level — no paused
+    /// writer can reinstall a retired id after adoption commits.
+    #[tokio::test]
+    async fn project_binding_write_refuses_unregistered_and_retired_machine_ids() {
+        let (db, org, user) = fixture().await;
+        let store = &db.store;
+        store
+            .machines()
+            .upsert_connected(org, user.id, "m1", None, None, None, None, None, None)
+            .await
+            .unwrap();
+        let other_org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'other')")
+            .bind(other_org)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let other_user = store
+            .identity()
+            .create_user(other_org, "other@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        store
+            .machines()
+            .upsert_connected(
+                other_org,
+                other_user.id,
+                "m2",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store
+                .projects()
+                .create(org, user.id, "x", r"C:\x", "no-such-machine")
+                .await
+                .unwrap_err()
+                .status,
+            axum::http::StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            store
+                .projects()
+                .create(org, user.id, "x", r"C:\x", "m2")
+                .await
+                .unwrap_err()
+                .status,
+            axum::http::StatusCode::BAD_REQUEST
+        );
+
+        // Adoption re-keys m1's row to a new id: binding m1 afterwards is a
+        // retired-id reinstall and is refused.
+        sqlx::query("UPDATE machines SET hardware_fingerprint = 'fp-x' WHERE machine_id = 'm1'")
+            .execute(store.pool())
+            .await
+            .unwrap();
+        store
+            .machines()
+            .upsert_connected(
+                org,
+                user.id,
+                "m1-new",
+                None,
+                Some("fp-x"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .projects()
+                .create(org, user.id, "x", r"C:\x", "m1")
+                .await
+                .unwrap_err()
+                .status,
+            axum::http::StatusCode::BAD_REQUEST
+        );
+        // The re-keyed id still binds, and the update path enforces the same
+        // rule.
+        let created = store
+            .projects()
+            .create(org, user.id, "x", r"C:\x", "m1-new")
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .projects()
+                .update(org, created.id, user.id, None, None, Some("m1"), None)
+                .await
+                .unwrap_err()
+                .status,
+            axum::http::StatusCode::BAD_REQUEST
         );
     }
 }
