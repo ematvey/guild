@@ -101,3 +101,22 @@ it("reload recovery preserves exact accepted payload and is scoped to the accoun
   forgetCommand(storage, "server/account-a", send.id);
   expect(restoreCommands(storage, "server/account-a").size).toBe(0);
 });
+
+it("a restored command keeps the local attachment ID so a reload retry still matches the draft", async () => {
+  const values = new Map<string, string>();
+  const storage = { get length() { return values.size; }, key: (n: number) => [...values.keys()][n] ?? null,
+    getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); } };
+  const send = command([attachment("local-a")]); const api = io();
+  api.submit = vi.fn(async () => { rememberCommand(storage, "server/account-a", send); throw new Error("lost response"); });
+  await expect(submitCommand(send, api)).rejects.toThrow();
+  const restored = restoreCommands(storage, "server/account-a").get(send.id)!;
+  // The composer draft recovered after the reload keeps the local ID.
+  expect(matchesCommandDraft(restored, "original", [attachment("local-a")])).toBe(true);
+  expect(recoveryDraft(restored, "", []).files[0].id).toBe("local-a");
+  // The prepared payload still carries the server IDs.
+  expect(restored.prepared?.attachmentIds).toEqual(["uploaded-local-a"]);
+  const retry = io(); await submitCommand(restored, retry);
+  expect(retry.upload).not.toHaveBeenCalled();
+  expect(retry.submit).toHaveBeenCalledWith("chat-a", "stable-id", restored.prepared);
+});
