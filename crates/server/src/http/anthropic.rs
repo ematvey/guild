@@ -7,7 +7,7 @@
 //! (`message_start` / `content_block_delta` / `message_stop`).
 
 use crate::http::error::ApiError;
-use crate::http::llm_proxy::{accumulate, dispatch, usage_event, ProxyError};
+use crate::http::llm_proxy::{accumulate, dispatch, ProxyError, StreamUsageGuard};
 use crate::state::AppState;
 use axum::extract::FromRequestParts;
 use axum::extract::State;
@@ -308,22 +308,29 @@ async fn messages(
             .keep_alive(KeepAlive::default())
             .into_response())
     } else {
-        let (text, calls, tokens_in, tokens_out) = accumulate(call.stream).await.map_err(|e| {
-            anthropic_error(
-                StatusCode::BAD_GATEWAY,
-                &ProxyError(ApiError::new(
+        let guard = StreamUsageGuard::new(
+            usage,
+            org_id,
+            user_id,
+            session_id,
+            model.clone(),
+            provider,
+            price_in,
+            price_out,
+        );
+        let (text, calls, tokens_in, tokens_out) = accumulate(call.stream, guard.counters())
+            .await
+            .map_err(|e| {
+                anthropic_error(
                     StatusCode::BAD_GATEWAY,
-                    "provider_error",
-                    e.to_string(),
-                )),
-            )
-        })?;
-        usage
-            .record(usage_event(
-                org_id, user_id, session_id, &model, &provider, price_in, price_out, tokens_in,
-                tokens_out,
-            ))
-            .await;
+                    &ProxyError(ApiError::new(
+                        StatusCode::BAD_GATEWAY,
+                        "provider_error",
+                        e.to_string(),
+                    )),
+                )
+            })?;
+        guard.record_sync().await;
         let stop = if calls.is_empty() {
             "end_turn"
         } else {

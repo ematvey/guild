@@ -83,6 +83,8 @@ async fn openai_non_stream_with_tool_round_trip() {
     let req_body = json!({
         "model": "gpt-test",
         "messages": [{"role": "user", "content": "weather in oslo?"}],
+        "tools": [{"type":"function", "function":{"name":"get_weather", "parameters":{"type":"object"}}}],
+        "max_completion_tokens": 123,
     });
     let res = app
         .clone()
@@ -98,6 +100,11 @@ async fn openai_non_stream_with_tool_round_trip() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+    let requests = provider.received_requests().await.unwrap();
+    let upstream: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(upstream["tools"][0]["function"]["name"], "get_weather");
+    assert_eq!(upstream["max_tokens"], 123);
+
     let body = axum::body::to_bytes(res.into_body(), usize::MAX)
         .await
         .unwrap();
@@ -114,6 +121,7 @@ async fn openai_non_stream_with_tool_round_trip() {
     // turn 2: with tool result content-array + system message
     let req_body = json!({
         "model": "gpt-test",
+        "max_tokens": 77,
         "messages": [
             {"role": "system", "content": "be terse"},
             {"role": "user", "content": "weather?"},
@@ -137,6 +145,10 @@ async fn openai_non_stream_with_tool_round_trip() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+    let requests = provider.received_requests().await.unwrap();
+    let upstream: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(upstream["max_tokens"], 77);
+
     let body = axum::body::to_bytes(res.into_body(), usize::MAX)
         .await
         .unwrap();
@@ -499,4 +511,74 @@ async fn provider_error_before_any_usage_frame_records_nothing() {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let (count, _) = clickhouse_usage_rows(&fs.state).await;
     assert_eq!(count, before, "0-token error rows must not be written");
+}
+
+#[tokio::test]
+async fn non_stream_provider_error_records_observed_usage() {
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\n",
+                    "data: {\"error\": {\"message\": \"mid-stream boom\"}}\n\n",
+                    "data: [DONE]\n\n",
+                )),
+        )
+        .mount(&provider)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_key(&app, &fs.token).await;
+    fs.state.usage().await.unwrap();
+    let (before, _) = clickhouse_usage_rows(&fs.state).await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/openai/v1/chat/completions")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"model":"gpt-test","stream":false,
+                           "messages":[{"role":"user","content":"hi"}]})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::BAD_GATEWAY,
+        "provider failure surfaces in non-streaming mode"
+    );
+    let body_text = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_text = String::from_utf8_lossy(&body_text);
+    assert!(
+        body_text.contains("mid-stream boom"),
+        "the provider error must surface on the stream: {body_text}"
+    );
+    // Allow the detached error-path insert to finish.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let (count, _) = clickhouse_usage_rows(&fs.state).await;
+    assert_eq!(count, before + 1, "observed usage must be written on error");
 }

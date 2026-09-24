@@ -1828,6 +1828,9 @@ impl ChatRunner {
             let mut completion: CompletionOut = loop {
                 let st = state.clone();
                 let org2 = req.org_id;
+                let usage_user = req.user_id;
+                let usage_chat = req.chat_id;
+                let usage_id = durable_event_id(ctx.invocation_id(), &format!("usage:{step}"));
                 let model2 = req.model.clone();
                 let specs = tool_specs.clone();
                 let system2 = system.clone();
@@ -1932,6 +1935,11 @@ impl ChatRunner {
                         *text_buf.write().await = String::new(); // reset per model call
                         *thinking_buf.write().await = String::new();
                         step_persisted.store(false, std::sync::atomic::Ordering::SeqCst);
+                        let usage_guard = state.usage().await.ok().map(|usage| {
+                            crate::http::llm_proxy::StreamUsageGuard::new(usage, org, usage_user, usage_chat,
+                                model.clone(), route.provider.clone(), route.price_in, route.price_out)
+                                .with_request_id(usage_id)
+                        });
                         let mut text = String::new();
                         let mut tokens_in = 0u32;
                         let mut tokens_out = 0u32;
@@ -1963,6 +1971,10 @@ impl ChatRunner {
                             if cancel_loop.load(std::sync::atomic::Ordering::SeqCst) {
                                 stopped = true;
                                 break;
+                            }
+                            if let (Some(guard), Ok(chunk)) = (&usage_guard, &item) {
+                                guard.counters().observe();
+                                if let ProviderChunk::Text(text) = chunk { guard.counters().set(text.tokens_in, text.tokens_out); }
                             }
                             match item {
                                 Ok(ProviderChunk::Text(chunk)) => {
@@ -2020,6 +2032,7 @@ impl ChatRunner {
                                 }
                             }
                         }
+                        if let Some(guard) = usage_guard { guard.disarm(); }
                         Ok(Json(CompletionOut {
                             text,
                             tool_calls,
