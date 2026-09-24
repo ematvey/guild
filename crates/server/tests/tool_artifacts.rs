@@ -406,7 +406,15 @@ async fn executor_machine_owner_reads_chat_thread_and_artifacts() {
     fs.db
         .tool_artifacts()
         .create(
-            id, org, chat, "spill.bin", "application/octet-stream", 7, &key, "api", "call-9",
+            id,
+            org,
+            chat,
+            "spill.bin",
+            "application/octet-stream",
+            7,
+            &key,
+            "api",
+            "call-9",
         )
         .await
         .unwrap();

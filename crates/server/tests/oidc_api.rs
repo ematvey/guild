@@ -111,7 +111,10 @@ async fn oidc_login_provisions_user_and_issues_session() {
     assert!(v.get("client_secret").is_none());
     // The redirect URI the server itself uses (API-URL-derived), for IdP
     // registration.
-    assert!(v["redirect_uri"].as_str().unwrap_or("").ends_with("/api/v1/auth/oidc/callback"));
+    assert!(v["redirect_uri"]
+        .as_str()
+        .unwrap_or("")
+        .ends_with("/api/v1/auth/oidc/callback"));
     assert!(v["redirect_uri"].as_str().unwrap_or("").starts_with("http"));
 
     let nonce = "a".repeat(64);
@@ -275,9 +278,7 @@ async fn blank_client_secret_keeps_the_stored_one() {
     let idp = fake_idp("sso.user@example.org").await;
     let fs = full_state().await;
     let app = guild_server::build_router(fs.state.clone());
-    let config = |secret: Value| {
-        json!({"issuer": idp.uri(), "client_id": "guild-client", "client_secret": secret})
-    };
+    let config = |secret: Value| json!({"issuer": idp.uri(), "client_id": "guild-client", "client_secret": secret});
     let put = |app: axum::Router, body: Value| {
         app.clone().oneshot(
             Request::builder()
@@ -289,7 +290,13 @@ async fn blank_client_secret_keeps_the_stored_one() {
                 .unwrap(),
         )
     };
-    assert_eq!(put(app.clone(), config(json!("s3cret"))).await.unwrap().status(), StatusCode::OK);
+    assert_eq!(
+        put(app.clone(), config(json!("s3cret")))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
 
     let store = fs.store();
     let master = fs.state.config.master_key().unwrap();
@@ -297,7 +304,10 @@ async fn blank_client_secret_keeps_the_stored_one() {
     let len_before = store.oidc().decrypt_secret(&before, &master).unwrap().len();
 
     // A blank secret keeps the stored one.
-    assert_eq!(put(app.clone(), config(json!(""))).await.unwrap().status(), StatusCode::OK);
+    assert_eq!(
+        put(app.clone(), config(json!(""))).await.unwrap().status(),
+        StatusCode::OK
+    );
     let after = store.oidc().get(fs.org_id).await.unwrap().unwrap();
     assert_eq!(
         store.oidc().decrypt_secret(&after, &master).unwrap().len(),

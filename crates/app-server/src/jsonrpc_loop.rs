@@ -1018,9 +1018,8 @@ mod machine_link_tests {
         // Store path injected: these tests must never write the developer's
         // real token.json.
         let mut shared = Shared::new(session);
-        shared.store_path = Some(
-            std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())),
-        );
+        shared.store_path =
+            Some(std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())));
         shared
     }
 
@@ -1200,9 +1199,8 @@ mod machine_link_tests {
     #[tokio::test]
     async fn identify_without_login_parks_the_link_but_keeps_identity() {
         let mut shared = Shared::new(Session::default());
-        shared.store_path = Some(
-            std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())),
-        );
+        shared.store_path =
+            Some(std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())));
         let mut link_rx = shared.machine_link.subscribe();
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
 
@@ -1259,7 +1257,10 @@ mod agent_start_tests {
             "missing prompt is an error: {first}"
         );
         assert!(
-            !first["error"]["message"].as_str().unwrap_or("").contains("already in progress"),
+            !first["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("already in progress"),
             "the flag must not wedge: {first}"
         );
         assert!(!shared.session.lock().unwrap().agent_running);

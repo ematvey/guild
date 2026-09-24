@@ -163,8 +163,7 @@ impl StreamUsageCounters {
     /// Provider usage frames carry absolute totals.
     pub(crate) fn set(&self, tokens_in: Option<u32>, tokens_out: Option<u32>) {
         if let Some(n) = tokens_in {
-            self.tokens_in
-                .store(n, std::sync::atomic::Ordering::SeqCst);
+            self.tokens_in.store(n, std::sync::atomic::Ordering::SeqCst);
         }
         if let Some(n) = tokens_out {
             self.tokens_out
@@ -191,6 +190,7 @@ pub(crate) struct StreamUsageGuard {
 }
 
 impl StreamUsageGuard {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         usage: Arc<crate::usage::UsageSink>,
         org_id: Uuid,
@@ -240,8 +240,12 @@ impl StreamUsageGuard {
             &self.provider,
             self.price_in,
             self.price_out,
-            self.counters.tokens_in.load(std::sync::atomic::Ordering::SeqCst),
-            self.counters.tokens_out.load(std::sync::atomic::Ordering::SeqCst),
+            self.counters
+                .tokens_in
+                .load(std::sync::atomic::Ordering::SeqCst),
+            self.counters
+                .tokens_out
+                .load(std::sync::atomic::Ordering::SeqCst),
         )
     }
 }

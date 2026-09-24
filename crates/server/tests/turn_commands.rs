@@ -560,11 +560,7 @@ async fn archive_race_releases_the_reservation_and_resumes_running_commands() {
     .execute(store.pool())
     .await
     .unwrap();
-    let _reservation = fs
-        .state
-        .generations
-        .try_begin_with_id(chat2, id)
-        .unwrap();
+    let _reservation = fs.state.generations.try_begin_with_id(chat2, id).unwrap();
     store
         .chats()
         .update_chat(fs.org_id, chat2, &user, None, Some(true))

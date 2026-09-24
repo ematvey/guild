@@ -60,10 +60,7 @@ async fn get_config(
     // API URL): IdP registration must match this, so settings shows it
     // instead of a window.location.origin guess that diverges inside the
     // desktop webview.
-    let redirect_uri = format!(
-        "{}/api/v1/auth/oidc/callback",
-        server_origin(&state)
-    );
+    let redirect_uri = format!("{}/api/v1/auth/oidc/callback", server_origin(&state));
     let row = state.store().await?.oidc().get(admin.0.org_id).await?;
     Ok(Json(match row {
         Some(r) => {

@@ -269,12 +269,30 @@ async fn ingress_tool_call_arguments_are_unpacked_to_objects() {
     let master = fs.state.config.master_key().unwrap();
     fs.store()
         .gateway()
-        .upsert_provider_key(fs.org_id, "anthropic", anthropic.uri().as_str(), "sk-test", &master)
+        .upsert_provider_key(
+            fs.org_id,
+            "anthropic",
+            anthropic.uri().as_str(),
+            "sk-test",
+            &master,
+        )
         .await
         .unwrap();
     fs.store()
         .gateway()
-        .upsert_route(fs.org_id, "claude-test", "anthropic", true, 2.0, 4.0, None, false, None, None, &[])
+        .upsert_route(
+            fs.org_id,
+            "claude-test",
+            "anthropic",
+            true,
+            2.0,
+            4.0,
+            None,
+            false,
+            None,
+            None,
+            &[],
+        )
         .await
         .unwrap();
     let app = guild_server::build_router(fs.state.clone());
@@ -309,12 +327,13 @@ async fn ingress_tool_call_arguments_are_unpacked_to_objects() {
     let blocks = body["messages"].as_array().unwrap();
     let tool_use = blocks
         .iter()
-        .flat_map(|m| {
-            m["content"].as_array().cloned().unwrap_or_default()
-        })
+        .flat_map(|m| m["content"].as_array().cloned().unwrap_or_default())
         .find(|b| b["type"] == "tool_use")
         .expect("tool_use block in upstream");
-    assert!(tool_use["input"].is_object(), "input must be an object, got {tool_use}");
+    assert!(
+        tool_use["input"].is_object(),
+        "input must be an object, got {tool_use}"
+    );
     assert_eq!(tool_use["input"]["city"], "oslo");
 }
 
@@ -342,7 +361,13 @@ async fn aborted_stream_still_records_usage() {
     let master = fs.state.config.master_key().unwrap();
     fs.store()
         .gateway()
-        .upsert_provider_key(fs.org_id, "openai", provider.uri().as_str(), "sk-test", &master)
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
         .await
         .unwrap();
     let app = guild_server::build_router(fs.state.clone());
@@ -360,7 +385,8 @@ async fn aborted_stream_still_records_usage() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({"model":"gpt-test","stream":true,
-                           "messages":[{"role":"user","content":"hi"}]}).to_string(),
+                           "messages":[{"role":"user","content":"hi"}]})
+                    .to_string(),
                 ))
                 .unwrap(),
         )

@@ -187,7 +187,8 @@ fn assemble_with(
                     // lexical comparison misses on Windows (\?\ prefix) and
                     // symlinked projects.
                     value == &serde_json::Value::Bool(false)
-                        && fs_bridge::canonical_root(&expanded) == fs_bridge::canonical_root(&s.path)
+                        && fs_bridge::canonical_root(&expanded)
+                            == fs_bridge::canonical_root(&s.path)
                 })
             })
         })
@@ -365,8 +366,7 @@ mod disabled_path_tests {
     #[cfg(unix)]
     #[test]
     fn disabled_entries_match_symlinked_project_paths() {
-        let temp = std::env::temp_dir()
-            .join(format!("guild-remote-off-{}", uuid::Uuid::now_v7()));
+        let temp = std::env::temp_dir().join(format!("guild-remote-off-{}", uuid::Uuid::now_v7()));
         let config = temp.join("config");
         let home = temp.join("home");
         let repo = temp.join("repo");

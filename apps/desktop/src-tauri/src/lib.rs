@@ -1358,7 +1358,9 @@ pub mod commands {
     ) -> Result<(), String> {
         let (update, bytes) = {
             let mut guard = state.pending.lock().unwrap();
-            guard.take().ok_or_else(|| "no pending update".to_string())?
+            guard
+                .take()
+                .ok_or_else(|| "no pending update".to_string())?
         };
         // on Windows the installer exits the app itself; mac/linux restart below
         if let Err(e) = update.install(&bytes) {

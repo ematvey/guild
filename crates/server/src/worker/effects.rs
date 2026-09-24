@@ -5,11 +5,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 /// Claim namespaces (key prefixes in server_kv). Each invocation writes its
 /// own keys, so they are pruned once the invocation can no longer replay.
-pub(crate) const CLAIM_PREFIXES: &[&str] = &[
-    "plugin_effect:",
-    "routine_effect:",
-    "tool_dispatch:",
-];
+pub(crate) const CLAIM_PREFIXES: &[&str] = &["plugin_effect:", "routine_effect:", "tool_dispatch:"];
 
 /// Claims outlive every replay window (Restate's own journal/idempotency
 /// retention is shorter); the hourly loop retires anything older.

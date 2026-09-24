@@ -282,7 +282,8 @@ impl<'a> ChatStore<'a> {
         .await?;
         if let Some((Some(machine_id),)) = machine {
             let machines = crate::store::machines::MachineStore { pool: self.pool };
-            match machines.owner_of(&machine_id).await {                Ok(Some((owner_id, machine_org)))
+            match machines.owner_of(&machine_id).await {
+                Ok(Some((owner_id, machine_org)))
                     if owner_id == caller.id && machine_org == org_id =>
                 {
                     return Ok(());
