@@ -606,6 +606,49 @@ mod tests {
         }
     }
 
+    /// A standard continuation — assistant tool_calls, results, then the
+    /// user's follow-up text — must reach the wire in that order: the tool
+    /// messages directly follow the tool_calls, and the user text comes
+    /// after the run of results.
+    #[test]
+    fn tool_continuation_keeps_user_text_after_the_tool_messages() {
+        let msgs = vec![
+            Message::user("weather?"),
+            Message {
+                role: "assistant".into(),
+                content: String::new(),
+                images: Vec::new(),
+                audio: Vec::new(),
+                tool_calls: Some(vec![ToolCall {
+                    id: "c1".into(),
+                    name: "get_weather".into(),
+                    arguments: serde_json::json!({"city": "oslo"}),
+                }]),
+                tool_call_id: None,
+                reasoning: None,
+            },
+            Message::tool_result("c1", "snow"),
+            Message::user("What next?"),
+        ];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: "http://x",
+            tools: None,
+            max_tokens: 0,
+        };
+        let body = OpenAiProvider::body(&req);
+        let arr = body["messages"].as_array().unwrap();
+        let roles: Vec<&str> = arr.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, vec!["user", "assistant", "tool", "user"]);
+        assert_eq!(arr[1]["tool_calls"][0]["id"], "c1");
+        assert_eq!(arr[2]["tool_call_id"], "c1");
+        assert_eq!(arr[2]["content"], "snow");
+        assert_eq!(arr[3]["content"], "What next?");
+    }
+
     #[test]
     fn tool_result_media_rides_a_following_user_message() {
         let msgs = vec![

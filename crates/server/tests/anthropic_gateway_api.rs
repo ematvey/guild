@@ -709,3 +709,60 @@ async fn a_nonpositive_client_limit_is_rejected_and_never_erases_the_route_cap()
     let sent: Value = serde_json::from_slice(&calls[0].body).unwrap();
     assert_eq!(sent["max_tokens"], 1000, "the route cap applies");
 }
+
+/// A continuation whose user turn carries the tool result AND follow-up
+/// text (the `[tool_result…, text]` form Claude clients send) reaches the
+/// provider with the results directly after the assistant tool_calls — a
+/// user message between them is rejected by both provider protocols.
+#[tokio::test]
+async fn text_alongside_tool_result_keeps_results_adjacent_upstream() {
+    let provider = scripted_provider().await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_user_key(&app, &fs.token).await;
+
+    let (status, v) = post_messages(
+        &app,
+        &key,
+        None,
+        json!({
+            "model": "gpt-test",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": "weather?"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "call_x", "name": "get_weather",
+                     "input": {"city": "oslo"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call_x", "content": "snow"},
+                    {"type": "text", "text": "What next?"}
+                ]}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+
+    let upstream = chat_calls(&provider).await.remove(0);
+    let sent: Value = serde_json::from_slice(&upstream.body).unwrap();
+    let msgs = sent["messages"].as_array().unwrap();
+    let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+    assert_eq!(roles, vec!["user", "assistant", "tool", "user"]);
+    assert_eq!(msgs[1]["tool_calls"][0]["id"], "call_x");
+    assert_eq!(msgs[2]["tool_call_id"], "call_x");
+    assert_eq!(msgs[2]["content"], "snow");
+    assert_eq!(msgs[3]["content"], "What next?");
+}
