@@ -1241,7 +1241,22 @@ mod agent_start_tests {
 
     #[tokio::test]
     async fn missing_prompt_does_not_wedge_the_session_flag() {
-        let shared = Shared::new(Session::default());
+        // Logged in with a machine identity so the closure reaches the
+        // agent_running guard and the prompt check (Session::default fails
+        // earlier, at the login gate, which would make this vacuous).
+        let session = Session {
+            auth: crate::auth_state::AuthState::from_parts(
+                Some(CloudClient {
+                    base_url: "http://srv".into(),
+                    token: "tok".into(),
+                }),
+                Some("a@b".into()),
+                Some("mid".into()),
+                None,
+            ),
+            ..Default::default()
+        };
+        let shared = Shared::new(session);
         let req = |id: u64| Request {
             jsonrpc: "2.0".into(),
             id,
@@ -1252,9 +1267,10 @@ mod agent_start_tests {
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         agent_start_task(shared.clone(), req(1), out_tx.clone()).await;
         let first = out_rx.recv().await.unwrap();
+        let msg = first["error"]["message"].as_str().unwrap_or_default();
         assert!(
-            first.get("error").is_some(),
-            "missing prompt is an error: {first}"
+            msg.contains("missing prompt"),
+            "the start must fail at the prompt check, not earlier: {first}"
         );
         assert!(
             !first["error"]["message"]
