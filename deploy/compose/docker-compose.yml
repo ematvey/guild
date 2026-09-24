@@ -75,6 +75,9 @@ services:
       - "127.0.0.1:${GUILD_RESTATE_ADMIN_PORT:-9070}:9070"
 
   server:
+    # explicit tag: the default (compose-server) collides with other projects
+    # that also use a "compose/compose" layout and steals the tag on rebuild
+    image: guild-server:latest
     build:
       context: ../..
       dockerfile: Dockerfile
