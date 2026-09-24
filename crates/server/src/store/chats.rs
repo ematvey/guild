@@ -60,6 +60,34 @@ impl<'a> ChatStore<'a> {
             .await
     }
 
+    /// The insert on a caller-supplied executor (the create handler runs it
+    /// inside its own transaction, uncommitted until the workspace is ready).
+    pub async fn create_chat_on(
+        &self,
+        ex: impl sqlx::PgExecutor<'_>,
+        org_id: Uuid,
+        user_id: Uuid,
+        title: Option<&str>,
+        project_id: Option<Uuid>,
+    ) -> Result<ChatRow, ApiError> {
+        let id = Uuid::now_v7();
+        sqlx::query_as::<_, ChatRow>(
+            "INSERT INTO chats (id, org_id, user_id, title, project_id, machine_id, machine_label) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
+        )
+        .bind(id)
+        .bind(org_id)
+        .bind(user_id)
+        .bind(title)
+        .bind(project_id)
+        .bind(None::<String>)
+        .bind(None::<String>)
+        .fetch_one(ex)
+        .await
+        .map_err(Into::into)
+    }
+
     /// Creates a chat, binding the machine in the same INSERT as the project
     /// (bind-time machine inheritance: a chat runs where its project's
     /// folder lives). One statement, so the binding is atomic.
