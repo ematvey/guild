@@ -521,3 +521,36 @@ async fn hubspot_api_maps_errors_and_rejects_bad_paths() {
         .unwrap_err();
     assert!(err.contains("not allowed"));
 }
+
+/// A model-controlled prompt name is one encoded path segment — folder
+/// names (`team/summary`) ride encoded, and `?`/`#` cannot split the
+/// request path or inject a query.
+#[tokio::test]
+async fn langfuse_prompt_name_is_a_single_encoded_segment() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/public/prompts/team%2Fsummary%3Fx%3D1%23frag"))
+        .and(header("authorization", "Basic cGs6c2s="))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "name": "team/summary?x=1#frag", "version": 1, "type": "text",
+            "prompt": "hi"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("langfuse").unwrap();
+    let config = json!({ "base_url": server.uri() });
+    let out = plugin
+        .execute(
+            &config,
+            "get_prompt",
+            json!({ "name": "team/summary?x=1#frag" }),
+            &langfuse_secrets("https://cloud.langfuse.com"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(out.content.contains("team/summary?x=1#frag"));
+    server.verify().await;
+}

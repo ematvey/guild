@@ -12,8 +12,8 @@
 //! - `confluence_create_page` (write) — `POST /wiki/rest/api/content`
 
 use super::{
-    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
-    ToolOutcome,
+    api_tool_spec, call_vendor_api, field, in_code_manifest, path_segment, probe, ApiAuth,
+    Category, Integration, ToolOutcome,
 };
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
@@ -343,7 +343,11 @@ impl Integration for Atlassian {
                         .ok_or("jira_get_issue requires issue_key")?;
                     let issue = send_json(
                         client
-                            .get(format!("{}/rest/api/3/issue/{key}", creds.site))
+                            .get(format!(
+                                "{}/rest/api/3/issue/{}",
+                                creds.site,
+                                path_segment(key)
+                            ))
                             .basic_auth(&creds.email, Some(&creds.token))
                             .query(&[("fields", JIRA_FIELDS)]),
                     )
@@ -408,7 +412,11 @@ impl Integration for Atlassian {
                         .ok_or("confluence_get_page requires page_id")?;
                     let page = send_json(
                         client
-                            .get(format!("{}/wiki/rest/api/content/{page_id}", creds.site))
+                            .get(format!(
+                                "{}/wiki/rest/api/content/{}",
+                                creds.site,
+                                path_segment(page_id)
+                            ))
                             .basic_auth(&creds.email, Some(&creds.token))
                             .query(&[("expand", "body.storage")]),
                     )

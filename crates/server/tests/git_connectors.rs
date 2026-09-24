@@ -636,3 +636,53 @@ async fn gitlab_test_connection_tolerates_api_v4_base_suffix() {
         .unwrap();
     server.verify().await;
 }
+
+/// A model-controlled file path is `/`-separated encoded segments — `?`
+/// and `#` cannot split the request path or inject a query — and a `..`
+/// segment is rejected outright: it would traverse to another API path
+/// with the org credential.
+#[tokio::test]
+async fn github_file_path_segments_are_encoded_and_dotdot_rejected() {
+    let server = MockServer::start().await;
+    let encoded = base64::engine::general_purpose::STANDARD.encode("hello\n");
+    Mock::given(method("GET"))
+        .and(path("/repos/octo/repo/contents/src/a%20b%3F%23.rs"))
+        .and(header(
+            "authorization",
+            format!("Bearer {FAKE_GITHUB_TOKEN}"),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "name": "a b?#.rs", "path": "src/a b?#.rs",
+            "encoding": "base64", "content": encoded
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("github").unwrap();
+    let config = json!({ "api_url": server.uri() });
+    let out = plugin
+        .execute(
+            &config,
+            "get_file",
+            json!({ "owner": "octo", "repo": "repo", "path": "src/a b?#.rs" }),
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(out.content.contains("hello"));
+    server.verify().await;
+
+    let err = plugin
+        .execute(
+            &config,
+            "get_file",
+            json!({ "owner": "octo", "repo": "repo", "path": "../other/repo/secrets" }),
+            &[("token".into(), FAKE_GITHUB_TOKEN.into())],
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("not allowed"), "got: {err}");
+}
