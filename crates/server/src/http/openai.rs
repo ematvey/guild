@@ -344,6 +344,7 @@ fn stream_chunks(
         let mut calls: Vec<ToolCall> = Vec::new();
         let mut pinned = Box::pin(prov_stream);
         while let Some(item) = pinned.next().await {
+            counters.observe();
             match item {
                 Ok(ProviderChunk::Text(t)) => {
                     if !t.text_delta.is_empty() {
