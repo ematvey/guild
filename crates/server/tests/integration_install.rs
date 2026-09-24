@@ -44,8 +44,9 @@ fn integration_bundle(slug: &str, version: &str) -> Vec<u8> {
 
 fn v2_bundle(slug: &str, version: &str, auth_kind: &str) -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!(
-        "guild-v2-bundle-{slug}-{version}-{}",
-        std::process::id()
+        "guild-v2-bundle-{slug}-{version}-{}-{}",
+        std::process::id(),
+        uuid::Uuid::now_v7().simple()
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -475,4 +476,77 @@ async fn no_mcp_bundle_over_builtin_slug_keeps_builtin_manifest() {
         "built-in settings schema listed, got {fields:?}"
     );
     assert!(!fields.iter().any(|f| f["name"] == "region"));
+}
+
+/// Adding an MCP plugin from Settings (the create-stub POST with just a
+/// name) seeds the stub with the registry manifest's mcp/auth, so the
+/// settings editor can complete and enable it — an empty stub can never
+/// enable ("mcp plugin needs an mcp.url").
+#[tokio::test]
+async fn stub_create_of_registry_mcp_plugin_seeds_the_mcp_config() {
+    let fs = full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let token = fs.token.clone();
+
+    let bundle = v2_bundle("hubspot", "1.2.0", "org_secret");
+    let bundle_sha = sha256_hex(&bundle);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/registry/integration?slug=hubspot&version=1.2.0")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/gzip")
+                .body(Body::from(bundle))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // The settings flow's create-stub: no config, no enabled, no secrets.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/admin/integrations")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"name": "hubspot"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/admin/integrations")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let rows: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let row = rows["integrations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "hubspot")
+        .expect("stub row listed")
+        .clone();
+    assert_eq!(
+        row["config"]["mcp"]["url"],
+        "https://mcp.example.com/mcp",
+        "stub seeded from the manifest"
+    );
+    assert_eq!(row["config"]["auth"]["secret_names"][0], "api_key");
 }
