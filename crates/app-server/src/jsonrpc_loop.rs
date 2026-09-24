@@ -36,6 +36,11 @@ pub struct Session {
     /// An agent turn is in flight; a second agent.start would double-bind
     /// the session's project.
     pub agent_running: bool,
+    /// Bumped on every principal change (sign-out, account switch): async
+    /// turn tasks capture it at start and discard their session writes
+    /// when it moved — a response that arrives after a clear must not
+    /// restore the previous account's state.
+    pub epoch: u64,
 }
 
 enum Incoming {
@@ -486,6 +491,7 @@ fn auth_change_with_store(
         s.model = String::new();
         s.pending = PendingApprovals::default();
         s.agent_running = false;
+        s.epoch = s.epoch.wrapping_add(1);
     }
     Ok(())
 }
@@ -623,6 +629,17 @@ async fn pair_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<V
     let _ = out_tx.send(response_value(req.id, result));
 }
 
+/// Releases the agent-run flag for a finished run — but only when the
+/// session still belongs to the principal/run that started it (the epoch
+/// is captured at start and bumped by every sign-out/account switch). A
+/// stale run's completion must not clear a NEW principal's in-flight run.
+fn finish_agent_run(shared: &Shared, epoch: u64) {
+    let mut s = shared.session.lock().unwrap();
+    if s.epoch == epoch {
+        s.agent_running = false;
+    }
+}
+
 /// The effective model for a `chat.send`: an explicit `params.model`
 /// overrides the session's current model (same as agent.start); without
 /// one, the session model stands, falling back to the default.
@@ -637,7 +654,7 @@ fn resolve_chat_model(session_model: &str) -> String {
 async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     let result = async {
         let text = param(&req, "text")?.to_string();
-        let (cloud, existing_chat, model) = {
+        let (cloud, existing_chat, model, epoch) = {
             let mut s = shared.session.lock().unwrap();
             let cloud = s
                 .auth
@@ -648,13 +665,19 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
                 s.model = m.to_string();
             }
             s.model = resolve_chat_model(&s.model);
-            (cloud, s.chat_id, s.model.clone())
+            (cloud, s.chat_id, s.model.clone(), s.epoch)
         };
         let chat_id = match existing_chat {
             Some(c) => c,
             None => {
                 let c = cloud.create_chat(None).await?;
-                shared.session.lock().unwrap().chat_id = Some(c);
+                // Principal/epoch guard: a create_chat response released
+                // after a sign-out or account switch must not restore the
+                // old account's chat id on the new (or signed-out) session.
+                let mut s = shared.session.lock().unwrap();
+                if s.epoch == epoch && s.chat_id.is_none() {
+                    s.chat_id = Some(c);
+                }
                 c
             }
         };
@@ -698,7 +721,7 @@ async fn chat_send_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSen
 /// run arrive as agent.error events.
 async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
     // 1. Session state under the lock; context assembly and all HTTP after.
-    let (cloud, project_dir, model, prompt, machine_id) = match (|| {
+    let (cloud, project_dir, model, prompt, machine_id, epoch) = match (|| {
         let mut s = shared.session.lock().unwrap();
         let cloud = s
             .auth
@@ -734,7 +757,14 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         // wedge the session flag (every later start would report "already
         // in progress" until restart).
         s.agent_running = true;
-        Ok((cloud, project_dir, s.model.clone(), prompt, machine_id))
+        Ok((
+            cloud,
+            project_dir,
+            s.model.clone(),
+            prompt,
+            machine_id,
+            s.epoch,
+        ))
     })() {
         Ok(v) => v,
         Err(e) => {
@@ -756,12 +786,20 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         let project =
             crate::agent_start::ensure_project(&cloud, &project_dir.to_string_lossy(), &machine_id)
                 .await?;
-        let chat_id = shared.session.lock().unwrap().chat_id;
+        let (chat_id, epoch) = {
+            let s = shared.session.lock().unwrap();
+            (s.chat_id, s.epoch)
+        };
         let chat_id = match chat_id {
             Some(c) => c,
             None => {
                 let c = cloud.create_chat(Some("agent")).await?;
-                shared.session.lock().unwrap().chat_id = Some(c);
+                // Same principal/epoch guard as chat.send: a response
+                // released after a sign-out/account switch is discarded.
+                let mut s = shared.session.lock().unwrap();
+                if s.epoch == epoch && s.chat_id.is_none() {
+                    s.chat_id = Some(c);
+                }
                 c
             }
         };
@@ -770,7 +808,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
     let (project, chat_id) = match bound.await {
         Ok(v) => v,
         Err(e) => {
-            shared.session.lock().unwrap().agent_running = false;
+            finish_agent_run(&shared, epoch);
             let _ = out_tx.send(response_value(
                 req.id,
                 Err(anyhow::anyhow!("agent start failed: {e:#}")),
@@ -835,7 +873,7 @@ async fn agent_start_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
         }
         Err(e) => Err(e),
     };
-    shared.session.lock().unwrap().agent_running = false;
+    finish_agent_run(&shared, epoch);
     if let Err(e) = run {
         // Surface model/policy/stream failures so the client unblocks
         // instead of waiting for agent.done forever.
@@ -1046,6 +1084,25 @@ mod machine_link_tests {
             method: "machine.identify".into(),
             params: serde_json::json!({ "machine_id": machine_id }),
         }
+    }
+
+    pub(crate) fn logged_in_shared_at(base_url: &str) -> Shared {
+        let session = Session {
+            auth: crate::auth_state::AuthState::from_parts(
+                Some(CloudClient {
+                    base_url: base_url.to_string(),
+                    token: "tok".into(),
+                }),
+                Some("a@b".into()),
+                None,
+                None,
+            ),
+            ..Default::default()
+        };
+        let mut shared = Shared::new(session);
+        shared.store_path =
+            Some(std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())));
+        shared
     }
 
     fn logged_in_shared() -> Shared {
@@ -1421,5 +1478,69 @@ mod agent_start_tests {
             !msg.contains("already in progress"),
             "session wedged by the failed start: {second}"
         );
+    }
+
+    /// The verifier's interleaving against the REAL caller: a chat.send
+    /// whose create_chat response is withheld across a session.clear (or a
+    /// full account switch) must not restore the previous account's chat id
+    /// when the response is finally released. The epoch guard discards the
+    /// stale write; the run itself dies on its revoked bearer.
+    #[tokio::test]
+    async fn a_released_create_chat_response_after_sign_out_restores_nothing() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/api/v1/chats"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({
+                        "id": Uuid::now_v7(),
+                        "org_id": Uuid::now_v7(),
+                        "user_id": Uuid::now_v7(),
+                        "created_at": "2026-01-01T00:00:00Z"
+                    }))
+                    .set_delay(std::time::Duration::from_millis(800)),
+            )
+            .mount(&server)
+            .await;
+        let shared = machine_link_tests::logged_in_shared_at(&server.uri());
+
+        let req = Request {
+            jsonrpc: "2.0".into(),
+            id: 1,
+            protocol: protocol::rpc::PROTOCOL_VERSION,
+            method: "chat.send".into(),
+            params: serde_json::json!({ "text": "hello" }),
+        };
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        tokio::spawn(chat_send_task(shared.clone(), req, out_tx));
+        // The task is now parked inside the withheld create_chat await.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Sign out through the REAL handler: the epoch bumps.
+        let clear = Request {
+            jsonrpc: "2.0".into(),
+            id: 2,
+            protocol: protocol::rpc::PROTOCOL_VERSION,
+            method: "session.clear".into(),
+            params: serde_json::json!({}),
+        };
+        let (clear_tx, mut clear_rx) = mpsc::unbounded_channel();
+        session_clear(shared.clone(), clear, clear_tx).await;
+        let _ = clear_rx.recv().await.unwrap();
+        {
+            let s = shared.session.lock().unwrap();
+            assert!(s.chat_id.is_none());
+            assert!(s.auth.cloud().is_none(), "signed out");
+        }
+        // The old response is released: the stale write must be discarded.
+        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+        {
+            let s = shared.session.lock().unwrap();
+            assert!(
+                s.chat_id.is_none(),
+                "the released create_chat response restored the old chat id"
+            );
+        }
+        let _ = out_rx.try_recv();
     }
 }
