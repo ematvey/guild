@@ -380,8 +380,8 @@ fn stream_chunks(
         }
 
         let finish = if calls.is_empty() { "stop" } else { "tool_calls" };
+        guard.record_sync().await;
         yield Ok(SseEvent::default().data(chunk(json!({}), Some(finish)).to_string()));
         yield Ok(SseEvent::default().data("[DONE]"));
-        // Usage records at the guard's drop — also on abort and error exits.
     }
 }

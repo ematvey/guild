@@ -520,6 +520,7 @@ fn stream_events(
             "delta": {"stop_reason": stop_reason, "stop_sequence": null},
             "usage": {"output_tokens": tokens_out, "input_tokens": tokens_in},
         }));
+        guard.record_sync().await;
         yield send("message_stop", &json!({"type": "message_stop"}));
     }
 }

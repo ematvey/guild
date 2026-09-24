@@ -173,8 +173,8 @@ impl StreamUsageCounters {
     }
 }
 
-/// Records a gateway stream's usage on every exit path. A record after the
-/// yield loop only runs when the SSE body is consumed to completion; a
+/// Records a gateway stream's usage on every exit path. Normal completion
+/// records synchronously (disarming the guard) before the final frame; a
 /// client disconnect drops the body and a provider error returns early —
 /// the drop then records the running counts instead.
 pub(crate) struct StreamUsageGuard {
@@ -187,6 +187,7 @@ pub(crate) struct StreamUsageGuard {
     price_in: f64,
     price_out: f64,
     counters: StreamUsageCounters,
+    armed: bool,
 }
 
 impl StreamUsageGuard {
@@ -213,17 +214,25 @@ impl StreamUsageGuard {
             provider,
             price_in,
             price_out,
+            armed: true,
         }
     }
 
     pub(crate) fn counters(&self) -> StreamUsageCounters {
         self.counters.clone()
     }
-}
 
-impl Drop for StreamUsageGuard {
-    fn drop(&mut self) {
-        let ev = usage_event(
+    /// Records synchronously and disarms the drop-path record — the normal
+    /// completion path, where usage must be durable before the final frame
+    /// yields (quota checks and tests read right after the stream ends).
+    pub(crate) async fn record_sync(mut self) {
+        self.armed = false;
+        let ev = self.event();
+        self.usage.record(ev).await;
+    }
+
+    fn event(&self) -> guild_core::usage::UsageEvent {
+        usage_event(
             self.org_id,
             self.user_id,
             self.session_id,
@@ -233,7 +242,16 @@ impl Drop for StreamUsageGuard {
             self.price_out,
             self.counters.tokens_in.load(std::sync::atomic::Ordering::SeqCst),
             self.counters.tokens_out.load(std::sync::atomic::Ordering::SeqCst),
-        );
+        )
+    }
+}
+
+impl Drop for StreamUsageGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let ev = self.event();
         let usage = self.usage.clone();
         tokio::spawn(async move {
             usage.record(ev).await;
