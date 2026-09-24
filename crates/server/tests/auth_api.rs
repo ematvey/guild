@@ -110,3 +110,56 @@ async fn bootstrap_rejects_a_short_password() {
     .await;
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn logout_revokes_the_bearer_session() {
+    let fs = guild_server::test_support::full_state().await;
+    let app = guild_server::build_router(fs.state.clone());
+    let res = post(
+        app.clone(),
+        "/api/v1/auth/logout",
+        Some(&fs.token),
+        json!({}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/me")
+                .header("authorization", format!("Bearer {}", fs.token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn password_reset_revokes_pairing_codes_and_api_keys() {
+    let fs = guild_server::test_support::full_state().await;
+    let store = fs.store();
+    let pair = store
+        .pairing()
+        .create(fs.org_id, fs.user_id, 60)
+        .await
+        .unwrap();
+    let key = store
+        .api_keys()
+        .create(fs.org_id, fs.user_id, "stolen", Some(fs.user_id))
+        .await
+        .unwrap();
+    store
+        .identity()
+        .update_user(fs.org_id, fs.user_id, None, Some("replacement123"))
+        .await
+        .unwrap();
+    assert!(store.pairing().redeem(&pair.secret).await.is_err());
+    assert!(store
+        .api_keys()
+        .authenticate(&key.plaintext)
+        .await
+        .unwrap()
+        .is_none());
+}

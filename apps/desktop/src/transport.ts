@@ -464,6 +464,16 @@ export async function apiLogin(
   };
 }
 
+export async function apiLogout(): Promise<void> {
+  try {
+    await fetch(apiUrl("/api/v1/auth/logout"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${getToken()}` },
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch { /* Revocation is best effort; local sign-out must finish. */ }
+}
+
 export async function apiMe(): Promise<{
   email: string;
   role: string;

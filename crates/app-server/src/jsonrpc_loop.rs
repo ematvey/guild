@@ -505,6 +505,18 @@ async fn machine_identify_with_store(
 /// machine link (the webview re-identifies on the next login). Thin over
 /// `AuthState::transition`.
 async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+    let cloud = shared.session.lock().unwrap().auth.cloud().cloned();
+    if let Some(cloud) = cloud {
+        let _ = reqwest::Client::new()
+            .post(format!(
+                "{}/api/v1/auth/logout",
+                cloud.base_url.trim_end_matches('/')
+            ))
+            .bearer_auth(&cloud.token)
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await;
+    }
     let result = auth_change(&shared, AuthChange::SignOut)
         .map(|_| Response::ok(req.id, json!({ "ok": true })));
     let _ = out_tx.send(response_value(req.id, result));
