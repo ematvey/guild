@@ -12,22 +12,30 @@ import { Cpu } from "lucide-react";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { listMachines, type MachineInfo } from "../../../transport";
 import { relativeTime } from "../../../lib/relative-time";
+import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
 import { PageHeader } from "../components/page-header";
 
 // Last successful machine list; a remount renders it immediately and
 // refreshes in the background instead of blinking the skeleton.
 let lastMachines: MachineInfo[] | null = null;
+// Generation of the in-flight machine refresh; clearMachinesCache bumps it
+// so a response landing after sign-out is dropped instead of repopulating.
+let machinesEpoch = 0;
 
-/** Drops the cached machine list; sign-out must call this so one user's
- * machine inventory does not leak into the next session. */
+/** Drops the cached machine list and invalidates the in-flight refresh;
+ * sign-out must call this so one user's machine inventory does not leak
+ * into the next session. */
 export function clearMachinesCache(): void {
+  machinesEpoch++;
   lastMachines = null;
 }
 
 export function MachineSection() {
   const [machines, setMachines] = useState<MachineInfo[] | null>(lastMachines);
   useEffect(() => {
+    const epoch = currentCacheEpoch();
     void listMachines().then((m) => {
+      if (cacheEpochChanged(epoch)) return;
       if (m === null) {
         toast.error("Could not load machines");
         return; // keep the last good list on screen
