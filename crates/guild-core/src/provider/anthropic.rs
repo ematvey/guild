@@ -556,9 +556,8 @@ mod tests {
             .and(wiremock::matchers::path("/v1/messages"))
             .respond_with(|req: &wiremock::Request| {
                 let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
-                let sse = format!(
-                    "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"usage\":{{\"input_tokens\":1}}}}}}\n\nevent: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n"
-                );
+                let sse = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+                    .to_string();
                 // Stash the captured body for the assertion below.
                 std::fs::write(
                     std::env::temp_dir().join(format!("anthropic-body-{}.json", std::process::id())),

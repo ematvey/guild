@@ -1065,7 +1065,7 @@ mod tests {
             .await
             .unwrap()
             .org_id;
-        let (conn, mut output) = register_executor(&fixture, "machine", user, org).await;
+        let (_conn, mut output) = register_executor(&fixture, "machine", user, org).await;
         fixture.state.generations.attach(chat);
         note_pending_tool(
             &fixture.state,
