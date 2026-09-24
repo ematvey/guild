@@ -637,7 +637,16 @@ pub(crate) async fn drive_socket(
             if !session_valid(&client_state, &client_session).await {
                 break;
             }
-            handle_client_msg(&client_state, &client_user, &client_member, message).await;
+            let Ok(store) = client_state.store().await else {
+                break;
+            };
+            let Ok(current) = store.identity().get_user(client_user.0.id).await else {
+                break;
+            };
+            if current.org_id != client_user.0.org_id {
+                break;
+            }
+            handle_client_msg(&client_state, &AuthUser(current), &client_member, message).await;
         }
     });
 

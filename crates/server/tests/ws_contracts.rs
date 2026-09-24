@@ -545,3 +545,34 @@ async fn org_shared_machine_returns_results_to_another_members_chat() {
     .expect("the shared machine's result reached the chat turn");
     server.abort();
 }
+
+#[tokio::test]
+async fn demoted_admin_cannot_sync_another_users_chat_on_existing_socket() {
+    let f = Fixture::new().await;
+    let store = f.ts.store();
+    let user = store.identity().get_user(f.user).await.unwrap();
+    let owner = store
+        .identity()
+        .create_user(user.org_id, "owner@ws.test", "test-password", "admin")
+        .await
+        .unwrap();
+    let chat = store
+        .chats()
+        .create_chat(user.org_id, owner.id, Some("private"), None)
+        .await
+        .unwrap();
+    let mut socket = f.socket(None).await;
+    until(&mut socket, |m| matches!(m, WsServerMsg::ThreadList { .. })).await;
+    store
+        .identity()
+        .update_user(user.org_id, f.user, Some("member"), None)
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            json!({"type":"sync", "chat_id":chat.id}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    until(&mut socket, |m| matches!(m, WsServerMsg::Error { .. })).await;
+}
