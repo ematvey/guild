@@ -11,7 +11,6 @@ use axum::response::IntoResponse;
 use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use guild_core::provider::ProviderChunk;
-use guild_core::usage::UsageEvent;
 use protocol::api::{Message, ToolCall, ToolSpec};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -315,6 +314,19 @@ fn stream_chunks(
     completion_id: String,
 ) -> impl Stream<Item = Result<SseEvent, Infallible>> + Send {
     async_stream::stream! {
+        // Created before the first yield: a drop at any suspension point —
+        // including the very first frame — records the running counts.
+        let guard = crate::http::llm_proxy::StreamUsageGuard::new(
+            usage,
+            org_id,
+            user_id,
+            session_id,
+            model.clone(),
+            provider_name,
+            price_in,
+            price_out,
+        );
+        let counters = guard.counters();
         let created = chrono::Utc::now().timestamp();
         let chunk = |delta: Value, finish: Option<&str>| {
             json!({
@@ -329,8 +341,6 @@ fn stream_chunks(
             chunk(json!({"role": "assistant"}), None).to_string(),
         ));
 
-        let mut tokens_in = 0u32;
-        let mut tokens_out = 0u32;
         let mut calls: Vec<ToolCall> = Vec::new();
         let mut pinned = Box::pin(prov_stream);
         while let Some(item) = pinned.next().await {
@@ -339,8 +349,7 @@ fn stream_chunks(
                     if !t.text_delta.is_empty() {
                         yield Ok(SseEvent::default().data(chunk(json!({"content": t.text_delta}), None).to_string()));
                     }
-                    if let Some(n) = t.tokens_in { tokens_in = n; }
-                    if let Some(n) = t.tokens_out { tokens_out = n; }
+                    counters.set(t.tokens_in, t.tokens_out);
                 }
                 Ok(ProviderChunk::ToolCallDelta { .. }) => {
                     // fragments are folded into the Done frame by the adapter layer
@@ -373,14 +382,6 @@ fn stream_chunks(
         let finish = if calls.is_empty() { "stop" } else { "tool_calls" };
         yield Ok(SseEvent::default().data(chunk(json!({}), Some(finish)).to_string()));
         yield Ok(SseEvent::default().data("[DONE]"));
-
-        let cost = UsageEvent::cost_usd(tokens_in, tokens_out, price_in, price_out);
-        usage.record(UsageEvent {
-            ts: chrono::Utc::now(),
-            org_id, user_id, team_id: None, session_id,
-            model, provider: provider_name,
-            tokens_in, tokens_out, cost_usd: cost,
-            request_id: Uuid::now_v7(),
-        }).await;
+        // Usage records at the guard's drop — also on abort and error exits.
     }
 }
