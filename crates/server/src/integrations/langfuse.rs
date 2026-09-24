@@ -3,8 +3,8 @@
 //! public/secret key pair.
 
 use super::{
-    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
-    ToolOutcome,
+    api_tool_spec, call_vendor_api, field, in_code_manifest, path_segment, probe, ApiAuth,
+    Category, Integration, ToolOutcome,
 };
 use futures::future::BoxFuture;
 use guild_core::registry::BundleManifest;
@@ -250,7 +250,7 @@ async fn get_trace(
         .ok_or("get_trace requires trace_id")?;
     let trace = get(
         base,
-        &format!("/api/public/traces/{trace_id}"),
+        &format!("/api/public/traces/{}", path_segment(trace_id)),
         public_key,
         secret_key,
     )
@@ -283,9 +283,11 @@ async fn get_prompt(
         .ok_or("get_prompt requires name")?
         .to_string();
     let version = args["version"].as_u64();
+    // The prompt name is a path segment (folder names carry `/`): encoded,
+    // so it cannot escape the segment or carry `?`/`#` into the request.
     let path = match version {
-        Some(v) => format!("/api/public/prompts/{name}?version={v}"),
-        None => format!("/api/public/prompts/{name}"),
+        Some(v) => format!("/api/public/prompts/{}?version={v}", path_segment(&name)),
+        None => format!("/api/public/prompts/{}", path_segment(&name)),
     };
     let body = get(base, &path, public_key, secret_key).await?;
     let prompt_name = body["name"].as_str().unwrap_or(&name);

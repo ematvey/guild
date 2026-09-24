@@ -4,8 +4,8 @@
 //! mandatory on every GitHub API request.
 
 use super::{
-    api_tool_spec, call_vendor_api, field, in_code_manifest, probe, ApiAuth, Category, Integration,
-    ToolOutcome,
+    api_tool_spec, call_vendor_api, field, in_code_manifest, path_segment, probe, ApiAuth,
+    Category, Integration, ToolOutcome,
 };
 use base64::Engine;
 use futures::future::BoxFuture;
@@ -66,6 +66,30 @@ async fn send(req: reqwest::RequestBuilder) -> Result<serde_json::Value, String>
 
 /// Builds a request against `path` on `api` with the Bearer auth, the
 /// mandatory User-Agent, and the GitHub JSON accept header.
+/// The contents-API path for one file: owner/repo as encoded segments, and
+/// the file path as `/`-separated encoded parts — a `..` segment is
+/// rejected (it traverses to another repo path with the org credential).
+fn github_file_path(owner: &str, repo: &str, path: &str) -> Result<String, String> {
+    let parts: Vec<String> = path
+        .split('/')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            if p == ".." {
+                Err(format!("path segment {p:?} is not allowed"))
+            } else {
+                Ok(path_segment(p))
+            }
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(format!(
+        "/repos/{}/{}/contents/{}",
+        path_segment(owner),
+        path_segment(repo),
+        parts.join("/")
+    ))
+}
+
 fn request(api: &str, token: &str, path: &str) -> reqwest::RequestBuilder {
     reqwest::Client::new()
         .get(format!("{api}{path}"))
@@ -277,8 +301,16 @@ impl Integration for Github {
                     let per_page = args["per_page"].as_u64().unwrap_or(20).clamp(1, 50);
                     let per_page = per_page.to_string();
                     let body = send(
-                        request(&api, &tok, &format!("/repos/{owner}/{repo}/issues"))
-                            .query(&[("state", state), ("per_page", per_page.as_str())]),
+                        request(
+                            &api,
+                            &tok,
+                            &format!(
+                                "/repos/{}/{}/issues",
+                                path_segment(owner),
+                                path_segment(repo)
+                            ),
+                        )
+                        .query(&[("state", state), ("per_page", per_page.as_str())]),
                     )
                     .await?;
                     let mut content = String::new();
@@ -309,8 +341,16 @@ impl Integration for Github {
                     let per_page = args["per_page"].as_u64().unwrap_or(20).clamp(1, 50);
                     let per_page = per_page.to_string();
                     let body = send(
-                        request(&api, &tok, &format!("/repos/{owner}/{repo}/pulls"))
-                            .query(&[("state", state), ("per_page", per_page.as_str())]),
+                        request(
+                            &api,
+                            &tok,
+                            &format!(
+                                "/repos/{}/{}/pulls",
+                                path_segment(owner),
+                                path_segment(repo)
+                            ),
+                        )
+                        .query(&[("state", state), ("per_page", per_page.as_str())]),
                     )
                     .await?;
                     let mut content = String::new();
@@ -339,12 +379,8 @@ impl Integration for Github {
                     let repo = args["repo"].as_str().ok_or("get_file requires repo")?;
                     let path = args["path"].as_str().ok_or("get_file requires path")?;
                     let entry = send(
-                        request(
-                            &api,
-                            &tok,
-                            &format!("/repos/{owner}/{repo}/contents/{path}"),
-                        )
-                        .query(&[("ref", args["ref"].as_str().unwrap_or(""))]),
+                        request(&api, &tok, &github_file_path(owner, repo, path)?.as_str())
+                            .query(&[("ref", args["ref"].as_str().unwrap_or(""))]),
                     )
                     .await?;
                     // GitHub nulls `content` for files above the contents-API

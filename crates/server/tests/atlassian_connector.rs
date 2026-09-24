@@ -350,3 +350,36 @@ async fn atlassian_requires_settings_and_token() {
         "write"
     );
 }
+
+/// A model-controlled issue key is one encoded path segment: traversal or
+/// query injection cannot reach another endpoint of the Jira API with the
+/// org credential.
+#[tokio::test]
+async fn jira_issue_key_is_a_single_encoded_segment() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/rest/api/3/issue/PROJ%2F..%2Frest%2Fapi%2F3%2Fproject",
+        ))
+        .and(header("authorization", basic_auth()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "key": "PROJ", "fields": { "summary": "s" }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let plugin = integration_by_name("atlassian").unwrap();
+    let out = plugin
+        .execute(
+            &config(&server.uri()),
+            "jira_get_issue",
+            json!({ "issue_key": "PROJ/../rest/api/3/project" }),
+            &secrets(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(out.content.contains("PROJ"));
+    server.verify().await;
+}
