@@ -91,6 +91,28 @@ pub fn try_connect() -> anyhow::Result<Pair> {
     try_connect_at(&socket_path()?)
 }
 
+/// Connect + handshake with a bounded wait for the hello response (unix).
+/// The socket's owner may be a hung or silent process: a plain blocking
+/// read never returns, and install's "hung process?" escape below it is
+/// then unreachable. The timeout applies only to the handshake — it is
+/// cleared again on the shared socket before the pair is returned, so a
+/// long-lived reader never sees it.
+#[cfg(unix)]
+pub fn handshake_timed(timeout: std::time::Duration) -> anyhow::Result<()> {
+    use std::os::unix::net::UnixStream;
+    let path = socket_path()?;
+    let s = UnixStream::connect(&path).with_context(|| format!("connect {}", path.display()))?;
+    s.set_read_timeout(Some(timeout))
+        .context("set handshake read timeout")?;
+    // SO_RCVTIMEO is per-socket: every try_clone shares it, so this control
+    // handle clears the timeout for whoever keeps the connection alive.
+    let ctrl = s.try_clone()?;
+    let pair = Pair(Box::new(s.try_clone()?), Box::new(s), None);
+    let res = handshake_with(pair, None);
+    let _ = ctrl.set_read_timeout(None);
+    res.map(|_| ())
+}
+
 /// Asks a running daemon (any build) to exit via `daemon.shutdown`.
 /// Returns true when a daemon was reachable and the request went out.
 /// Used by daemon install (Linux) to retire an unsupervised daemon before
