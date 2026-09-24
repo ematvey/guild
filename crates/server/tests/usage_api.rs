@@ -161,6 +161,17 @@ async fn bad_group_by_is_rejected() {
 async fn replayed_usage_is_counted_once_in_reports_and_quota() {
     use guild_core::usage::UsageEvent;
     let fs = full_state().await;
+    let team = fs
+        .store()
+        .teams()
+        .create_team(fs.org_id, "primary")
+        .await
+        .unwrap();
+    fs.store()
+        .teams()
+        .add_member(fs.org_id, team.id, fs.user_id)
+        .await
+        .unwrap();
     let sink = fs.state.usage().await.unwrap();
     let first_id = Uuid::new_v4();
     for request_id in [first_id, first_id, Uuid::new_v4()] {
@@ -184,6 +195,7 @@ async fn replayed_usage_is_counted_once_in_reports_and_quota() {
     for uri in [
         "/api/v1/usage?group_by=model",
         "/api/v1/usage/series?group_by=model",
+        &format!("/api/v1/usage?group_by=team&team_id={}", team.id),
     ] {
         let response = app
             .clone()
