@@ -498,6 +498,7 @@ async fn internal_completion(
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut pinned = Box::pin(prov_stream);
         while let Some(item) = pinned.next().await {
+            counters.observe();
             match item {
                 Ok(ProviderChunk::Text(chunk)) => {
                     if !chunk.text_delta.is_empty() {

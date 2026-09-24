@@ -393,9 +393,23 @@ async fn aborted_stream_still_records_usage() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    // Read the first SSE frame, then disconnect (drop the body).
+    // Read frames until real content arrives (so the gateway has pulled a
+    // provider chunk — a request was served), then disconnect (drop the
+    // body). An abort before any provider frame is the
+    // provider_error_before_any_usage_frame_records_nothing case.
     let mut stream = res.into_body().into_data_stream();
-    let _frame = futures::StreamExt::next(&mut stream).await;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let frame = futures::StreamExt::next(&mut stream)
+            .await
+            .expect("stream frames")
+            .expect("frame ok");
+        let text = frame;
+        if String::from_utf8_lossy(&text).contains("content") {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "no content frame");
+    }
     drop(stream);
 
     // The guard's drop spawns the record; poll until it lands.
@@ -411,4 +425,56 @@ async fn aborted_stream_still_records_usage() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+}
+
+/// A provider error before any usage frame bills nothing: the guard's
+/// drop path skips the 0-token row (it would inflate per-request counts).
+#[tokio::test]
+async fn provider_error_before_any_usage_frame_records_nothing() {
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(wiremock::ResponseTemplate::new(500))
+        .mount(&provider)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_key(&app, &fs.token).await;
+    fs.state.usage().await.unwrap();
+    let (before, _) = clickhouse_usage_rows(&fs.state).await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/openai/v1/chat/completions")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"model":"gpt-test","stream":true,
+                           "messages":[{"role":"user","content":"hi"}]})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_GATEWAY);
+    // Give any (wrongly) spawned record time to land, then assert absence.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let (count, _) = clickhouse_usage_rows(&fs.state).await;
+    assert_eq!(count, before, "0-token error rows must not be written");
 }

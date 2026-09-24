@@ -425,6 +425,7 @@ fn stream_events(
 
         let mut pinned = Box::pin(call.stream);
         while let Some(item) = pinned.next().await {
+            counters.observe();
             match item {
                 Ok(ProviderChunk::Text(t)) => {
                     if !t.text_delta.is_empty() {

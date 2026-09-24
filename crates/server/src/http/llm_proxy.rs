@@ -157,9 +157,18 @@ pub fn usage_event(
 pub(crate) struct StreamUsageCounters {
     tokens_in: Arc<std::sync::atomic::AtomicU32>,
     tokens_out: Arc<std::sync::atomic::AtomicU32>,
+    /// Provider frames seen — a stream that produced anything counts as a
+    /// billable request even if the usage totals never arrived (abort).
+    frames: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl StreamUsageCounters {
+    /// Marks a provider frame as observed (every chunk, usage or not).
+    pub(crate) fn observe(&self) {
+        self.frames
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Provider usage frames carry absolute totals.
     pub(crate) fn set(&self, tokens_in: Option<u32>, tokens_out: Option<u32>) {
         if let Some(n) = tokens_in {
@@ -175,7 +184,8 @@ impl StreamUsageCounters {
 /// Records a gateway stream's usage on every exit path. Normal completion
 /// records synchronously (disarming the guard) before the final frame; a
 /// client disconnect drops the body and a provider error returns early —
-/// the drop then records the running counts instead.
+/// the drop then records the running counts instead. A stream that produced
+/// nothing (provider error before the first frame) records nothing.
 pub(crate) struct StreamUsageGuard {
     usage: Arc<crate::usage::UsageSink>,
     org_id: Uuid,
@@ -205,6 +215,7 @@ impl StreamUsageGuard {
             counters: StreamUsageCounters {
                 tokens_in: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                 tokens_out: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                frames: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             },
             usage,
             org_id,
@@ -253,6 +264,18 @@ impl StreamUsageGuard {
 impl Drop for StreamUsageGuard {
     fn drop(&mut self) {
         if !self.armed {
+            return;
+        }
+        // A provider error before any frame (or a client disconnect before
+        // the first chunk) observed nothing billable — writing a 0-token
+        // row would inflate per-request counts. An aborted stream that
+        // already produced frames still records (a request was served).
+        if self
+            .counters
+            .frames
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 0
+        {
             return;
         }
         let ev = self.event();
