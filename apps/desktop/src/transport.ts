@@ -79,6 +79,11 @@ const rpcOrphans = new Map<number, { value: any; at: number }>();
 const RPC_ORPHAN_TTL_MS = 10000;
 let rpcPolling = false;
 
+/** Test hook: outstanding rpc waiters — the poll loop runs while this is > 0. */
+export function rpcWaitersOutstanding(): number {
+  return rpcWaiters.size;
+}
+
 async function rpcPollLoop(): Promise<void> {
   while (rpcWaiters.size > 0) {
     try {
@@ -135,6 +140,9 @@ export async function rpcCall(
     if (orphan) {
       rpcOrphans.delete(id);
       const w = rpcWaiters.get(id);
+      // Same as the poll path: remove the waiter before settling, or the
+      // entry lives forever and the poll loop never exits.
+      rpcWaiters.delete(id);
       if (orphan.value?.error) {
         w?.reject(new Error(orphan.value.error?.message ?? String(orphan.value.error)));
       } else {
