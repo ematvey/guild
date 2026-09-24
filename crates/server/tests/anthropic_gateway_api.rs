@@ -367,3 +367,91 @@ async fn openai_models_list_needs_key() {
         .collect();
     assert!(ids.contains(&"gpt-test"));
 }
+
+/// The refusal direction: an Anthropic-protocol upstream that stops with
+/// `refusal` reaches the Anthropic client as stop_reason `refusal` (the
+/// canonical content_filter reason mapped back per direction) — never as a
+/// successful end_turn/stop.
+#[tokio::test]
+async fn refusal_stop_reason_reaches_the_client_as_refusal() {
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/v1/messages"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n",
+                    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\"}}\n\n",
+                    "data: {\"type\":\"message_stop\"}\n\n",
+                )),
+        )
+        .mount(&provider)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "anthropic",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    fs.store()
+        .gateway()
+        .upsert_route(
+            fs.org_id,
+            "gpt-test",
+            "anthropic",
+            true,
+            1.0,
+            2.0,
+            None,
+            false,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_user_key(&app, &fs.token).await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/anthropic/v1/messages")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "gpt-test",
+                        "max_tokens": 64,
+                        "stream": true,
+                        "messages": [{"role": "user", "content": "hi"}],
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(
+        text.contains("\"stop_reason\":\"refusal\""),
+        "the refusal must map through the canonical reason: {text}"
+    );
+}

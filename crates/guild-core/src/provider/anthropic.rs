@@ -31,7 +31,7 @@ impl AnthropicProvider {
         Self
     }
 
-    fn body(req: &ProviderRequest<'_>) -> serde_json::Value {
+    fn body(req: &ProviderRequest<'_>) -> Result<serde_json::Value, ProviderError> {
         // Anthropic conversation shape: assistant tool_use blocks and tool
         // results as user "tool_result" blocks.
         let mut messages: Vec<serde_json::Value> = Vec::new();
@@ -51,6 +51,11 @@ impl AnthropicProvider {
                             blocks.push(serde_json::json!({
                                 "type": "image",
                                 "source": {"type": "base64", "media_type": media_type, "data": data},
+                            }));
+                        } else if uri.starts_with("http://") || uri.starts_with("https://") {
+                            blocks.push(serde_json::json!({
+                                "type": "image",
+                                "source": {"type": "url", "url": uri},
                             }));
                         }
                     }
@@ -106,9 +111,12 @@ impl AnthropicProvider {
                 messages.push(serde_json::json!({"role": "assistant", "content": blocks}));
                 continue;
             }
-            // Multimodal user turns: image blocks (base64 source parsed
-            // from the data URI); Anthropic has no audio input — audio
-            // parts are skipped on this route shape.
+            // Multimodal user turns: image blocks — data URIs ride as
+            // base64 sources, remote http(s) URLs as Anthropic url sources
+            // (both upstream-supported). Audio has no Anthropic input form:
+            // it is REJECTED here, never silently dropped — a text-only
+            // request would look successful while the model never saw the
+            // user's audio.
             if m.has_media() {
                 let mut blocks: Vec<serde_json::Value> = Vec::new();
                 if !m.content.trim().is_empty() {
@@ -120,7 +128,21 @@ impl AnthropicProvider {
                             "type": "image",
                             "source": {"type": "base64", "media_type": media_type, "data": data},
                         }));
+                    } else if uri.starts_with("http://") || uri.starts_with("https://") {
+                        blocks.push(serde_json::json!({
+                            "type": "image",
+                            "source": {"type": "url", "url": uri},
+                        }));
+                    } else {
+                        return Err(ProviderError::Upstream(format!(
+                            "unsupported image reference on an anthropic route: {uri}"
+                        )));
                     }
+                }
+                if !m.audio.is_empty() {
+                    return Err(ProviderError::Upstream(
+                        "audio input parts are not supported by the anthropic protocol (they are accepted only on openai-shape routes)".into(),
+                    ));
                 }
                 messages.push(serde_json::json!({"role": m.role, "content": blocks}));
                 continue;
@@ -152,7 +174,7 @@ impl AnthropicProvider {
                     .collect(),
             );
         }
-        body
+        Ok(body)
     }
 
     /// Parses one SSE data frame into a text or thinking chunk (tool assembly
@@ -228,7 +250,7 @@ impl ModelProvider for AnthropicProvider {
                 .post(&url)
                 .header("x-api-key", req.api_key)
                 .header("anthropic-version", "2023-06-01")
-                .json(&Self::body(&req))
+                .json(&Self::body(&req)?)
                 .send(),
         )
         .await
@@ -275,6 +297,12 @@ impl ModelProvider for AnthropicProvider {
                             reason: match reason {
                                 "tool_use" => "tool_calls".to_string(),
                                 "max_tokens" => "length".to_string(),
+                                // A refusal frame must not reach clients as
+                                // a successful stop: the canonical reason
+                                // keeps the content_filter semantics, which
+                                // both gateway egress shapes map back
+                                // (refusal for Anthropic clients).
+                                "refusal" => "content_filter".to_string(),
                                 _ => "stop".to_string(),
                             },
                         });
@@ -419,7 +447,7 @@ mod tests {
             tools: None,
             max_tokens: 0,
         };
-        let body = AnthropicProvider::body(&req);
+        let body = AnthropicProvider::body(&req).unwrap();
         let blocks = &body["messages"][1]["content"];
         assert_eq!(blocks[0]["type"], "tool_use");
         assert_eq!(blocks[0]["id"], "c1");
@@ -442,7 +470,7 @@ mod tests {
             tools: None,
             max_tokens: 0,
         };
-        let body = AnthropicProvider::body(&req);
+        let body = AnthropicProvider::body(&req).unwrap();
         let result = &body["messages"][0]["content"][0];
         assert_eq!(result["type"], "tool_result");
         assert_eq!(result["content"][0]["type"], "text");
@@ -480,7 +508,7 @@ mod tests {
             tools: None,
             max_tokens: 0,
         };
-        let body = AnthropicProvider::body(&req);
+        let body = AnthropicProvider::body(&req).unwrap();
         let block = &body["messages"][1]["content"][0];
         assert_eq!(block["type"], "tool_use");
         assert_eq!(block["input"], serde_json::json!({}));
@@ -510,9 +538,129 @@ mod tests {
             tools: None,
             max_tokens: 0,
         };
-        let body = AnthropicProvider::body(&req);
+        let body = AnthropicProvider::body(&req).unwrap();
         assert_eq!(body["messages"].as_array().unwrap().len(), 2);
         assert_eq!(body["messages"][1]["role"], "user");
         assert_eq!(body["messages"][1]["content"], "again");
+    }
+
+    /// The REAL provider against a live upstream: the captured HTTP body
+    /// proves the wire shape for each media form, and the adapter SSE
+    /// proves the refusal mapping.
+    #[tokio::test]
+    async fn media_capability_is_explicit_on_the_wire() {
+        // (a) a remote image URL rides as an Anthropic url source (not
+        // silently dropped), next to its text.
+        let upstream = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(|req: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+                let sse = format!(
+                    "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"usage\":{{\"input_tokens\":1}}}}}}\n\nevent: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n"
+                );
+                // Stash the captured body for the assertion below.
+                std::fs::write(
+                    std::env::temp_dir().join(format!("anthropic-body-{}.json", std::process::id())),
+                    body["messages"][0]["content"].to_string(),
+                )
+                .unwrap();
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse)
+            })
+            .mount(&upstream)
+            .await;
+        let msgs =
+            vec![Message::user("look at this")
+                .with_images(vec!["https://example.test/pic.png".into()])];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: &upstream.uri(),
+            tools: None,
+            max_tokens: 0,
+        };
+        use futures::StreamExt as _;
+        let mut stream = AnthropicProvider::new().chat_stream(req).await.unwrap();
+        while let Some(ev) = stream.next().await {
+            let _ = ev.unwrap();
+        }
+        let captured: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                std::env::temp_dir().join(format!("anthropic-body-{}.json", std::process::id())),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(captured[0]["type"], "text");
+        assert_eq!(captured[1]["type"], "image");
+        assert_eq!(captured[1]["source"]["type"], "url");
+        assert_eq!(captured[1]["source"]["url"], "https://example.test/pic.png");
+
+        // (b) audio input is REJECTED before any upstream call — never a
+        // silent text-only request.
+        let msgs = vec![
+            Message::user("listen").with_audio(vec![protocol::api::MessageAudio {
+                data: "QUJD".into(),
+                format: "wav".into(),
+            }]),
+        ];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: &upstream.uri(),
+            tools: None,
+            max_tokens: 0,
+        };
+        let err = match AnthropicProvider::new().chat_stream(req).await {
+            Err(e) => e,
+            Ok(_) => panic!("audio must be rejected on the anthropic route"),
+        };
+        assert!(err.to_string().contains("not supported"), "{err}");
+        assert!(
+            upstream.received_requests().await.unwrap().len() == 1,
+            "the rejected request never reached the upstream"
+        );
+    }
+
+    /// A refusal stop_reason maps to the canonical content_filter reason
+    /// (which the gateway egress translates back to refusal for Anthropic
+    /// clients) — never to a successful stop.
+    #[tokio::test]
+    async fn refusal_stop_reason_maps_to_content_filter() {
+        let sse = "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        let upstream = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse),
+            )
+            .mount(&upstream)
+            .await;
+        let msgs = vec![Message::user("hi")];
+        let req = ProviderRequest {
+            model: "m",
+            system: None,
+            messages: &msgs,
+            api_key: "k",
+            base_url: &upstream.uri(),
+            tools: None,
+            max_tokens: 0,
+        };
+        use futures::StreamExt as _;
+        let mut stream = AnthropicProvider::new().chat_stream(req).await.unwrap();
+        let mut saw = None;
+        while let Some(ev) = stream.next().await {
+            if let ProviderChunk::Finished { reason } = ev.unwrap() {
+                saw = Some(reason);
+            }
+        }
+        assert_eq!(saw.as_deref(), Some("content_filter"));
     }
 }
