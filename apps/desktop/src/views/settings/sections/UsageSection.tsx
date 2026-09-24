@@ -88,9 +88,11 @@ export default function UsageSection() {
   };
 
   // Query paths quantize timestamps to 10-minute buckets so cache keys
-  // repeat across navigations instead of changing every mount.
+  // repeat across navigations instead of changing every mount. The upper
+  // bound quantizes UP: an inclusive `ts <= to` filter must reach into the
+  // current (partial) bucket or the newest events never appear.
   const from = quantizeIso(600_000, Date.now() - PERIOD_MS[period]);
-  const to = quantizeIso(600_000);
+  const to = quantizeIso(600_000, Date.now() + 600_000);
   const breakdownRes = useCachedGet<{ rows: UsageRow[] }>(
     `/api/v1/usage?group_by=${group}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
   );

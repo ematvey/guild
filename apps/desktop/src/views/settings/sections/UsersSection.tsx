@@ -95,9 +95,11 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
   const error = usersRes.error;
   const reload = usersRes.reload;
   // 30-day per-user spend (one series call, pivoted client-side by email).
+  // The upper bound quantizes UP so the inclusive `ts <= to` filter
+  // reaches into the current (partial) bucket.
   const seriesPath = useMemo(() => {
     const from = quantizeIso(600_000, Date.now() - 30 * 24 * 3_600_000);
-    const to = quantizeIso(600_000);
+    const to = quantizeIso(600_000, Date.now() + 600_000);
     return `/api/v1/usage/series?group_by=user&bucket=day&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
   }, []);
   const seriesRes = useCachedGet<{ rows: SeriesRow[] }>(seriesPath);
