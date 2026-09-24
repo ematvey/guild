@@ -9,10 +9,28 @@ import { api } from "./admin-api";
 
 const cache = new Map<string, unknown>();
 
-/** Drops the module cache. Sign-out must call this: the cache otherwise
- * leaks one user's settings data into the next session on the same browser
- * profile. */
+// Session generation for every module cache: each clear bumps it, and async
+// writers verify the generation they started under — a response landing
+// after a sign-out clear belongs to the signed-out account and must not
+// repopulate the cache for the next one.
+let cacheEpoch = 0;
+
+/** The generation in-flight requests should capture at start. */
+export function currentCacheEpoch(): number {
+  return cacheEpoch;
+}
+
+/** True when a request started under `epoch` is stale (a clear happened
+ * since) and its response must be dropped. */
+export function cacheEpochChanged(epoch: number): boolean {
+  return epoch !== cacheEpoch;
+}
+
+/** Drops the module cache and invalidates in-flight writers. Sign-out must
+ * call this: the cache otherwise leaks one user's settings data into the
+ * next session on the same browser profile. */
 export function clearApiCache(): void {
+  cacheEpoch++;
   cache.clear();
 }
 
@@ -51,17 +69,18 @@ export function useCachedGet<T>(path: string | null): {
   const reload = useCallback(() => {
     if (!path) return;
     const mine = ++seq.current;
+    const epoch = currentCacheEpoch();
     setSettled(false);
     api<T>("GET", path)
       .then((r) => {
-        if (seq.current !== mine) return;
+        if (seq.current !== mine || cacheEpochChanged(epoch)) return;
         cache.set(path, r);
         setData(r);
         setError(null);
         setSettled(true);
       })
       .catch((e) => {
-        if (seq.current !== mine) return;
+        if (seq.current !== mine || cacheEpochChanged(epoch)) return;
         // Cached content stays on screen through a failed refresh.
         setError(e instanceof Error ? e.message : String(e));
         setSettled(true);

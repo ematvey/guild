@@ -34,14 +34,20 @@ import {
   revokeMyApiKey,
   type ApiKeyInfo,
 } from "../../../transport";
+import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
 import { relativeTime } from "../../../lib/relative-time";
 import { PageHeader } from "../components/page-header";
 
 let lastKeys: ApiKeyInfo[] | null = null;
+// Generation of the in-flight key refresh; clearGatewayCache bumps it so a
+// response landing after sign-out is dropped instead of repopulating.
+let keysEpoch = 0;
 
-/** Drops the cached key list; sign-out must call this so one user's key
- * inventory does not leak into the next session. */
+/** Drops the cached key list and invalidates the in-flight refresh;
+ * sign-out must call this so one user's key inventory does not leak into
+ * the next session. */
 export function clearGatewayCache(): void {
+  keysEpoch++;
   lastKeys = null;
 }
 
@@ -81,7 +87,9 @@ export function GatewaySection() {
   const [surface, setSurface] = useState<(typeof SURFACES)[number]>("OpenAI");
 
   useEffect(() => {
+    const epoch = currentCacheEpoch();
     void listMyApiKeys().then((k) => {
+      if (cacheEpochChanged(epoch)) return;
       if (k === null) {
         toast.error("Could not load API keys");
         return;
