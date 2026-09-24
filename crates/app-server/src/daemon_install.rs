@@ -163,8 +163,9 @@ fn poll_socket_state(want_reachable: bool, polls: u32, delay: std::time::Duratio
 /// the hello handshake is the identity check. A foreign process squatting
 /// the endpoint is not retired.
 fn verify_guild_daemon() -> anyhow::Result<()> {
-    let pair = crate::daemon::try_connect()?;
-    crate::daemon::handshake(pair).map(|_| ())
+    // Bounded handshake: a silent socket owner (hung daemon, squatter) must
+    // fail fast instead of hanging install forever.
+    crate::daemon::handshake_timed(std::time::Duration::from_secs(10))
 }
 
 /// Installs (or upgrades) the unit and brings the daemon up under it.
@@ -439,6 +440,36 @@ mod tests {
         h.join().unwrap();
 
         let _ = std::fs::remove_file(&path);
+        std::env::remove_var("GUILD_DAEMON_SOCKET");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A socket owner that accepts but never answers AND never closes must
+    /// not hang the handshake: the bounded wait returns an error, which is
+    /// what makes install's "hung process?" escape reachable.
+    #[cfg(unix)]
+    #[test]
+    fn a_silent_socket_owner_cannot_hang_the_handshake_forever() {
+        let dir = std::env::temp_dir().join(format!("guild-dinst-silent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("silent.sock");
+        let _guard = SOCKET_LOCK.lock().unwrap();
+        std::env::set_var("GUILD_DAEMON_SOCKET", &path);
+        let l = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let h = std::thread::spawn(move || {
+            let (conn, _) = l.accept().unwrap();
+            // hold the connection open, never answer, never close
+            std::thread::sleep(std::time::Duration::from_millis(3_000));
+            drop(conn);
+        });
+        let started = std::time::Instant::now();
+        let res = crate::daemon::handshake_timed(std::time::Duration::from_millis(500));
+        assert!(res.is_err(), "a silent owner must fail the handshake");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "the bounded wait must not block on the (still silent) peer"
+        );
+        h.join().unwrap();
         std::env::remove_var("GUILD_DAEMON_SOCKET");
         let _ = std::fs::remove_dir_all(&dir);
     }
