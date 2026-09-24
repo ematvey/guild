@@ -188,15 +188,43 @@ pub async fn install_skill(
             .map(|d| d.subsec_nanos())
             .unwrap_or(0)
     ));
+    // The staging dir never outlives a failure (a leftover would be read as
+    // an installed skill), and the provenance sidecar is written INTO
+    // staging before the swap: the installed dir always carries it, so a
+    // later uninstall never refuses a Guild-installed skill.
     let _ = std::fs::remove_dir_all(&staging);
-    let manifest = registry::extract(&bytes, &staging)
-        .map_err(|e| CloudError::Request(format!("extract failed: {e}")))?;
+    let staged = registry::extract(&bytes, &staging)
+        .map_err(|e| CloudError::Request(format!("extract failed: {e}")))
+        .and_then(|manifest| {
+            let provenance = SkillProvenance {
+                source: "registry".into(),
+                slug: manifest.slug.clone(),
+                version: manifest.version.clone(),
+                review_status: "approved".into(),
+                publisher: publisher.into(),
+                installed_at: chrono::Utc::now().to_rfc3339(),
+                bundle_hash: format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
+                ..Default::default()
+            };
+            crate::registry_client::write_sidecar(&staging, &provenance)
+                .map_err(|e| CloudError::Request(format!("sidecar write failed: {e}")))?;
+            Ok(manifest)
+        });
+    let manifest = match staged {
+        Ok(manifest) => manifest,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+    };
     let previous = parent.join(format!(".{}-previous", slug));
     let _ = std::fs::remove_dir_all(&previous);
     let moved_old = dest.exists();
     if moved_old {
-        std::fs::rename(&dest, &previous)
-            .map_err(|e| CloudError::Request(format!("swap failed: {e}")))?;
+        if let Err(e) = std::fs::rename(&dest, &previous) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(CloudError::Request(format!("swap failed: {e}")));
+        }
     }
     if let Err(e) = std::fs::rename(&staging, &dest) {
         if moved_old {
@@ -206,18 +234,6 @@ pub async fn install_skill(
         return Err(CloudError::Request(format!("swap failed: {e}")));
     }
     let _ = std::fs::remove_dir_all(&previous);
-    let provenance = SkillProvenance {
-        source: "registry".into(),
-        slug: manifest.slug.clone(),
-        version: manifest.version.clone(),
-        review_status: "approved".into(),
-        publisher: publisher.into(),
-        installed_at: chrono::Utc::now().to_rfc3339(),
-        bundle_hash: format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
-        ..Default::default()
-    };
-    crate::registry_client::write_sidecar(&dest, &provenance)
-        .map_err(|e| CloudError::Request(format!("sidecar write failed: {e}")))?;
     Ok(crate::registry_client::SkillEntry {
         name: manifest.slug,
         description: manifest.description,

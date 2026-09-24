@@ -161,6 +161,10 @@ fn assemble_with(
             if examined >= MAX_SKILLS {
                 break;
             }
+            // Dot-entries are never skills (install staging / backup dirs).
+            if entry.name.starts_with('.') {
+                continue;
+            }
             examined += 1;
             let path = if entry.kind == "dir" {
                 dir.join(&entry.name).join("SKILL.md")
@@ -341,6 +345,28 @@ mod tests {
         assert!(ctx.skill_expansions.len() <= MENTION_BUDGET);
         assert!(ctx.skill_expansions.contains("Skill: demo"));
         assert!(ctx.skills_index.len() <= INDEX_BUDGET);
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+    #[test]
+    fn dot_dirs_under_skills_are_not_indexed() {
+        let temp = std::env::temp_dir().join(format!("guild-remote-dot-{}", uuid::Uuid::now_v7()));
+        let config = temp.join("config");
+        let home = temp.join("home");
+        let cwd = temp.join("repo");
+        put(&cwd, ".git", "gitdir: elsewhere");
+        put(
+            &cwd,
+            ".agents/skills/.real-update-123/SKILL.md",
+            "---\nname: staged\ndescription: leftover\n---\nSTAGED",
+        );
+        put(
+            &cwd,
+            ".agents/skills/real/SKILL.md",
+            "---\nname: real\ndescription: live\n---\nbody",
+        );
+        let ctx = prepare_with(&cwd, "hi", &config, &home).unwrap();
+        assert!(ctx.skills_index.contains("real: live"));
+        assert!(!ctx.skills_index.contains("staged"), "{}", ctx.skills_index);
         std::fs::remove_dir_all(temp).unwrap();
     }
     #[cfg(unix)]

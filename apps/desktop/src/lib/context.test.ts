@@ -211,6 +211,16 @@ describe("discoverSkills precedence", () => {
     const skills = await discoverSkills(fs, "/repo/sub", "/cfg/guild", "/home/u");
     expect(skills.map((s) => s.name).sort()).toEqual(["root-skill", "sub-skill"]);
   });
+  it("skips dot-entries (install staging / backup dirs)", async () => {
+    const fs = fakeFs({
+      "/proj/.git/x": "",
+      "/proj/.agents/skills/real/SKILL.md": SKILL("real", "live"),
+      "/proj/.agents/skills/.real-update-1/SKILL.md": SKILL("staged", "leftover"),
+      "/proj/.agents/skills/.real-previous/SKILL.md": SKILL("previous", "backup"),
+    });
+    const skills = await discoverSkills(fs, "/proj", "/cfg/guild", "/home/u");
+    expect(skills.map((s) => s.name)).toEqual(["real"]);
+  });
 });
 
 describe("skills manager listing + toggles", () => {
