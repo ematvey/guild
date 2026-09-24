@@ -280,6 +280,14 @@ pub const SIDECAR_REL: &str = "agents/guild.yaml";
 /// the passed manifest is authoritative. The provenance sidecar is excluded
 /// too: it is engine-private (and carries the previous publish's approval
 /// state — repacking it would make identical re-uploads reset approval).
+/// Whether `rel` (a path relative to a skill root, as produced by the
+/// host's walk — on Windows the separators are `\`) denotes the provenance
+/// sidecar. Compared as a path, not a string: `agents\guild.yaml` and
+/// `agents/guild.yaml` are the same file on their respective platforms.
+pub fn is_sidecar_rel(rel: &str) -> bool {
+    rel.replace('\\', "/") == SIDECAR_REL
+}
+
 pub fn pack(source_dir: &Path, manifest: &BundleManifest) -> anyhow::Result<Vec<u8>> {
     validate_manifest(manifest)?;
     let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -299,7 +307,7 @@ pub fn pack(source_dir: &Path, manifest: &BundleManifest) -> anyhow::Result<Vec<
     for path in files {
         let rel = path.strip_prefix(source_dir).expect("relative");
         let rel = rel.to_str().context("non-utf8 file path in bundle")?;
-        if rel == "manifest.json" || rel == SIDECAR_REL {
+        if rel == "manifest.json" || is_sidecar_rel(rel) {
             continue;
         }
         tar.append_path_with_name(&path, rel)
@@ -513,6 +521,17 @@ mod tests {
         );
         fs::remove_dir_all(&dir).unwrap();
         fs::remove_dir_all(&dest).unwrap();
+    }
+
+    #[test]
+    fn the_sidecar_comparison_accepts_windows_separators() {
+        // The walk on a Windows host yields `\`-separated relative paths;
+        // the exclusion must still fire (platform-independent comparison).
+        assert!(is_sidecar_rel("agents\\guild.yaml"));
+        assert!(is_sidecar_rel("agents/guild.yaml"));
+        assert!(!is_sidecar_rel("agents\\guild.yaml.bak"));
+        assert!(!is_sidecar_rel("agents/guild.yaml/extra"));
+        assert!(!is_sidecar_rel("agents\\other.yaml"));
     }
 
     #[test]
