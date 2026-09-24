@@ -411,7 +411,7 @@ pub static MIGRATIONS_UPTO_0046: [(&str, &str); 46] = [
     ),
 ];
 
-pub static MIGRATIONS_FROM_0047: [(&str, &str); 12] = [
+pub static MIGRATIONS_FROM_0047: [(&str, &str); 13] = [
     (
         "0047_projects",
         include_str!("../../migrations/0047_projects.sql"),
@@ -459,6 +459,10 @@ pub static MIGRATIONS_FROM_0047: [(&str, &str); 12] = [
     (
         "0058_releases_artifact_identity",
         include_str!("../../migrations/0058_releases_artifact_identity.sql"),
+    ),
+    (
+        "0059_auth_generation",
+        include_str!("../../migrations/0059_auth_generation.sql"),
     ),
 ];
 

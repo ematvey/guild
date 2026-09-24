@@ -155,11 +155,16 @@ async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
     let store = state.store().await?;
-    let user = store
+    let (user, auth_generation) = store
         .identity()
-        .authenticate(&req.email, &req.password)
+        .authenticate_with_generation(&req.email, &req.password)
         .await?;
-    let (_sid, token) = store.identity().create_session(user.id).await?;
+    // The session stamps the generation captured at validation: a password
+    // reset that commits before issuance leaves it unable to validate.
+    let (_sid, token) = store
+        .identity()
+        .create_session_for_credential(user.id, auth_generation)
+        .await?;
     Ok(Json(LoginResponse {
         token,
         user: user_info(&user),
@@ -175,9 +180,15 @@ async fn pair(
     let secret = crate::store::pairing::secret_from_code(&req.code)
         .ok_or_else(|| ApiError::unauthorized("malformed pairing code"))?;
     let store = state.store().await?;
-    let (_org_id, user_id) = store.pairing().redeem(secret).await?;
+    let (_org_id, user_id, auth_generation) =
+        store.pairing().redeem_with_generation(secret).await?;
     let user = store.identity().get_user(user_id).await?;
-    let (_sid, token) = store.identity().create_session(user.id).await?;
+    // Same rule as password login: the session stamps the generation captured
+    // at redemption, so a reset between the two cannot leave a live session.
+    let (_sid, token) = store
+        .identity()
+        .create_session_for_credential(user.id, auth_generation)
+        .await?;
     Ok(Json(PairResponse {
         token,
         user: user_info(&user),
