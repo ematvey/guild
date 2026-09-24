@@ -54,11 +54,15 @@ pub fn secret_from_code(code: &str) -> Option<&str> {
 
 impl<'a> PairingStore<'a> {
     /// Creates a one-time token, returning the plaintext secret exactly once.
+    /// `generation` is the minting session's auth generation (`None`: the
+    /// user's current one); the token is stamped with it and the INSERT
+    /// refuses a generation a reset already superseded.
     pub async fn create(
         &self,
         org_id: Uuid,
         user_id: Uuid,
         ttl_minutes: i64,
+        generation: Option<i64>,
     ) -> Result<NewPairingToken, ApiError> {
         let mut bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut bytes);
@@ -66,8 +70,9 @@ impl<'a> PairingStore<'a> {
         let id = Uuid::now_v7();
         let expires_at = Utc::now() + Duration::minutes(ttl_minutes);
         let row: PairingTokenRow = sqlx::query_as(
-            "INSERT INTO pairing_tokens (id, org_id, user_id, secret_hash, expires_at) \
-             VALUES ($1, $2, $3, $4, $5) \
+            "INSERT INTO pairing_tokens (id, org_id, user_id, secret_hash, expires_at, auth_generation) \
+             SELECT $1, $2, $3, $4, $5, u.auth_generation FROM users u \
+             WHERE u.id = $3 AND u.auth_generation = COALESCE($6, u.auth_generation) \
              RETURNING id, org_id, user_id, created_at, expires_at, used_at",
         )
         .bind(id)
@@ -75,15 +80,18 @@ impl<'a> PairingStore<'a> {
         .bind(user_id)
         .bind(hash_secret(&secret))
         .bind(expires_at)
-        .fetch_one(self.pool)
-        .await?;
+        .bind(generation)
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| ApiError::unauthorized("invalid or expired session"))?;
         Ok(NewPairingToken { token: row, secret })
     }
 
     /// Redeems a secret: single-use (used_at must be null) and unexpired.
-    /// Returns the owning user id and the user's auth generation — the
-    /// session issuance stamps it, so a password reset that commits between
-    /// redemption and issuance leaves the created session unable to validate.
+    /// Returns the owning user id and the token's STAMPED auth generation
+    /// (the minting session's) — the session issuance stamps it, so a
+    /// password reset that commits after the mint (or between redemption and
+    /// issuance) leaves the created session unable to validate.
     pub async fn redeem(&self, secret: &str) -> Result<(Uuid, Uuid), ApiError> {
         self.redeem_with_generation(secret)
             .await
@@ -97,8 +105,7 @@ impl<'a> PairingStore<'a> {
         let row: (Uuid, Uuid, i64) = sqlx::query_as(
             "UPDATE pairing_tokens SET used_at = now() \
              WHERE secret_hash = $1 AND used_at IS NULL AND expires_at > now() \
-             RETURNING org_id, user_id, \
-               (SELECT auth_generation FROM users WHERE id = pairing_tokens.user_id)",
+             RETURNING org_id, user_id, auth_generation",
         )
         .bind(hash_secret(secret))
         .fetch_optional(self.pool)

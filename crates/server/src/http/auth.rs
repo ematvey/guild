@@ -207,7 +207,7 @@ async fn create_pairing_token(
     let store = state.store().await?;
     let created = store
         .pairing()
-        .create(user.0.org_id, user.0.id, ttl)
+        .create(user.0.org_id, user.0.id, ttl, user.0.session_generation)
         .await?;
     Ok(Json(PairingTokenResponse {
         id: created.token.id,

@@ -165,7 +165,7 @@ async fn expired_token_rejected() {
     let created = ts
         .store()
         .pairing()
-        .create(user.org_id, user.id, 1)
+        .create(user.org_id, user.id, 1, None)
         .await
         .unwrap();
     let code = format!("g1|https://guild.example|{}", created.secret);

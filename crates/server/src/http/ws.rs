@@ -877,6 +877,7 @@ mod tests {
             identity_type: "managed".into(),
             display_name: None,
             avatar_url: None,
+            session_generation: None,
         })
     }
 

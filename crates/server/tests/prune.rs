@@ -29,7 +29,7 @@ async fn expired_sessions_and_dead_pairing_tokens_are_pruned() {
     // live + dead pairing tokens
     let _t1 = store
         .pairing()
-        .create(admin.org_id, admin_id, 30)
+        .create(admin.org_id, admin_id, 30, None)
         .await
         .unwrap();
     sqlx::query("INSERT INTO pairing_tokens (id, org_id, user_id, secret_hash, expires_at, used_at) VALUES (gen_random_uuid(), (SELECT org_id FROM users WHERE id = $1), $1, 'dead-hash', now() - interval '1 hour', NULL)")
