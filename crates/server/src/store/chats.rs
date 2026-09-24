@@ -423,7 +423,25 @@ impl<'a> ChatStore<'a> {
         machine_id: Option<&str>,
         machine_label: Option<&str>,
     ) -> Result<ChatRow, ApiError> {
-        sqlx::query_as(
+        let mut tx = self.pool.begin().await?;
+        if let Some(mid) = machine_id {
+            // The registry row is locked inside the write tx
+            // (adoption-compatible order): a re-keyed id no longer
+            // resolves under its old name, so a stale cached machine can
+            // never be reinstated over an adopted binding — the write
+            // either sees the row adoption left in place, or fails closed.
+            let known: Option<String> = sqlx::query_scalar(
+                "SELECT machine_id FROM machines WHERE machine_id = $1 AND org_id = $2 FOR UPDATE",
+            )
+            .bind(mid)
+            .bind(org_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if known.is_none() {
+                return Err(ApiError::bad_request("unknown machine"));
+            }
+        }
+        let chat: ChatRow = sqlx::query_as(
             "UPDATE chats SET machine_id = $3, machine_label = $4 \
              WHERE org_id = $1 AND id = $2 \
              RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
@@ -432,9 +450,11 @@ impl<'a> ChatStore<'a> {
         .bind(chat_id)
         .bind(machine_id)
         .bind(machine_label)
-        .fetch_one(self.pool)
+        .fetch_one(&mut *tx)
         .await
-        .map_err(Into::into)
+        .map_err(ApiError::from)?;
+        tx.commit().await?;
+        Ok(chat)
     }
 
     /// Sets (or clears, with `None`) the chat's project. Owner-scoped: the
@@ -448,10 +468,29 @@ impl<'a> ChatStore<'a> {
         chat_id: Uuid,
         caller: &UserRow,
         project_id: Option<Uuid>,
-        machine: Option<(&str, &str)>,
     ) -> Result<ChatRow, ApiError> {
         let is_admin = caller.role == "admin";
-        sqlx::query_as(
+        let mut tx = self.pool.begin().await?;
+        // Machine binding is project-derived and read INSIDE the write tx
+        // with the project row locked: adoption re-keys the binding
+        // atomically, so a split read/write could reinstate the
+        // pre-adoption machine id over the adopted one.
+        let machine: Option<(Option<String>, Option<String>)> = match project_id {
+            Some(pid) => {
+                sqlx::query_as(
+                    "SELECT p.machine_id, m.label FROM projects p \
+                 LEFT JOIN machines m ON m.machine_id = p.machine_id \
+                 WHERE p.org_id = $1 AND p.id = $2 AND p.user_id = $3 FOR UPDATE OF p",
+                )
+                .bind(org_id)
+                .bind(pid)
+                .bind(caller.id)
+                .fetch_optional(&mut *tx)
+                .await?
+            }
+            None => None,
+        };
+        let chat: ChatRow = sqlx::query_as(
             "UPDATE chats SET project_id = $7, machine_id = $5, machine_label = $6 \
              WHERE org_id = $1 AND id = $2 AND (user_id = $3 OR $4) \
              RETURNING id, org_id, user_id, title, created_at, machine_id, machine_label, generating, project_id",
@@ -460,12 +499,14 @@ impl<'a> ChatStore<'a> {
         .bind(chat_id)
         .bind(caller.id)
         .bind(is_admin)
-        .bind(machine.map(|(id, _)| id))
-        .bind(machine.map(|(_, label)| label))
+        .bind(machine.as_ref().and_then(|(id, _)| id.clone()))
+        .bind(machine.as_ref().and_then(|(_, label)| label.clone()))
         .bind(project_id)
-        .fetch_optional(self.pool)
+        .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| ApiError::not_found("no such chat"))
+        .ok_or_else(|| ApiError::not_found("no such chat"))?;
+        tx.commit().await?;
+        Ok(chat)
     }
 
     /// The chat's project (id, name, machine label) for the sidebar and the

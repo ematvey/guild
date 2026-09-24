@@ -3185,6 +3185,20 @@ async fn fetch_context_via_machine(
             let prompt = prompt.clone();
             async move {
                 let result = async {
+                    // Executor-identity validation on the CONTROL channel,
+                    // same rule as tool dispatch: the context requests carry
+                    // the user prompt and project directory, so a same-org
+                    // claimant of a freed/re-keyed id must never receive
+                    // them. A failed validation degrades to no context (the
+                    // turn proceeds without project instructions) — the
+                    // fail-closed outcome.
+                    let Some(machine) = crate::worker::funnel::validate_context_executor(
+                        &state, &machine, &expected, org_id,
+                    )
+                    .await
+                    else {
+                        return None;
+                    };
                     let caps = state
                         .hub
                         .machine_request(
@@ -3288,22 +3302,34 @@ async fn fetch_agents_md_via_machine(
     }
     // Journaled snapshot: dispatch only when the machine is reachable (a
     // replayed turn re-derives this from the hub state at its own time —
-    // both outcomes degrade to None, so replay stays safe).
-    let online: bool = ctx
+    // both outcomes degrade to None, so replay stays safe). The check goes
+    // through the funnel's re-key resolution: a re-pair re-keys the id and
+    // the alias must not be pre-empted by the captured id's absence.
+    let target: Option<String> = ctx
         .run({
             let state = state.clone();
             let mid = mid.clone();
             move || {
                 let state = state.clone();
                 let mid = mid.clone();
-                async move { Ok(Json(state.hub.machine_online(&mid))) }
+                async move {
+                    Ok(Json(
+                        crate::worker::funnel::online_executor_or_alias(
+                            &state,
+                            org_id,
+                            expected.project_id,
+                            &mid,
+                        )
+                        .await,
+                    ))
+                }
             }
         })
         .await?
         .into_inner();
-    if !online {
+    let Some(mid) = target else {
         return Ok(None);
-    }
+    };
     // Deterministic per-turn dispatch id (replay-stable, never collides
     // with real tool-call ids).
     let call_id = format!("agents_md_fetch:{}", ctx.invocation_id());
@@ -3324,7 +3350,7 @@ async fn fetch_agents_md_via_machine(
     let dispatch_state = state.clone();
     let dispatch_id = awakeable_id.clone();
     let dispatch_call = call_id.clone();
-    let dispatched_connection = ctx
+    let dispatched: (Option<Uuid>, Option<String>) = ctx
         .run(move || {
             let state = dispatch_state.clone();
             let dispatch_id = dispatch_id.clone();
@@ -3339,17 +3365,27 @@ async fn fetch_agents_md_via_machine(
         })
         .await?
         .into_inner();
+    let (dispatched_connection, resolved_machine) = dispatched;
     restore_dispatch_connection(state, chat_id, &call_id, dispatched_connection);
+    if let Some(machine) = resolved_machine.clone() {
+        state.generations.update_pending_tool_machine(
+            chat_id,
+            &call_id,
+            Some(machine.clone()),
+            dispatched_connection,
+        );
+    }
     // Executor disappearance mid-fetch resolves with an error after a grace
-    // window (same watcher as client tools). No stop watcher: the internal
-    // fetch resolves on its own within the timeout, and the turn's stop
-    // checks resume right after.
+    // window (same watcher as client tools); it follows the RESOLVED
+    // machine, never the captured id. No stop watcher: the internal fetch
+    // resolves on its own within the timeout, and the turn's stop checks
+    // resume right after.
     spawn_machine_watcher(
         state,
         chat_id,
         call_id.clone(),
         "read_file".to_string(),
-        mid.clone(),
+        resolved_machine.unwrap_or_else(|| mid.clone()),
         label,
         done,
     );
@@ -3438,19 +3474,33 @@ async fn client_tool_step(
         return sandbox_tool_step(ctx, state, tx, org_id, model, chat_id, call).await;
     };
     // Fail fast when the bound machine is offline (journaled snapshot).
-    let online: bool = ctx
+    // The check goes through the funnel's re-key resolution: after a
+    // re-pair the captured id has no registry row, and the pre-keyed alias
+    // (the project's current binding) must not be pre-empted by the old
+    // id's absence.
+    let online: Option<String> = ctx
         .run({
             let state = state.clone();
             let mid = mid.clone();
             move || {
                 let state = state.clone();
                 let mid = mid.clone();
-                async move { Ok(Json(state.hub.machine_online(&mid))) }
+                async move {
+                    Ok(Json(
+                        crate::worker::funnel::online_executor_or_alias(
+                            &state,
+                            org_id,
+                            expected.project_id,
+                            &mid,
+                        )
+                        .await,
+                    ))
+                }
             }
         })
         .await?
         .into_inner();
-    if !online {
+    let Some(mid) = online else {
         return Ok(ToolResultPayload {
             content: format!(
                 "client tool not executed: the bound machine '{mlabel}' is offline — start the Guild desktop app on it, then ask again"
@@ -3459,7 +3509,7 @@ async fn client_tool_step(
             meta: None,
             images: Vec::new(),
         });
-    }
+    };
 
     // Gates, dispatch, watchers and resolution are the funnel's.
     suspend(

@@ -687,7 +687,7 @@ mod tests {
         let gen = ts.state.generations.attach(chat.id);
         let (text, _thinking) = (gen.text.clone(), gen.thinking.clone());
         *text.write().await = "partial".into();
-        note_client_tool(&ts.state, chat.id, "call-1", "read_file", "{}", "m1");
+        note_client_tool(&ts.state, chat.id, "call-1", "read_file", "{}", "m1").await;
 
         let (sink, mut frames) = socket_channel();
         run_sync(&ts.state, &user, chat.id, &sink).await;
@@ -801,6 +801,23 @@ mod tests {
     async fn feed_fans_out_to_all_members() {
         let (ts, user, chat, _ingress) = setup().await;
         let store = ts.store();
+        // The machine must be a registered org machine: binding writes
+        // enforce bindability inside their own transaction.
+        store
+            .machines()
+            .upsert_connected(
+                user.0.org_id,
+                user.0.id,
+                "m1",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
         store
             .chats()
             .set_machine(user.0.org_id, chat.id, Some("m1"), Some("Desk"))
@@ -966,7 +983,7 @@ mod tests {
     async fn dispatch_to_offline_machine_fails_fast_without_a_feed() {
         let (ts, _user, chat, ingress) = setup().await;
         ts.state.generations.attach(chat.id);
-        note_client_tool(&ts.state, chat.id, "call-1", "execute", "{}", "offline");
+        note_client_tool(&ts.state, chat.id, "call-1", "execute", "{}", "offline").await;
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if !ingress.requests.lock().unwrap().is_empty() {

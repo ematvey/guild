@@ -309,34 +309,21 @@ async fn set_project(
     Json(req): Json<Value>,
 ) -> Result<Json<Chat>, ApiError> {
     let store = state.store().await?;
-    let project = match req.get("project_id").and_then(|v| v.as_str()) {
+    let project_id = match req.get("project_id").and_then(|v| v.as_str()) {
         Some(s) if !s.is_empty() => {
             let id: Uuid = s
                 .parse()
                 .map_err(|_| ApiError::bad_request("bad project_id"))?;
-            Some(store.projects().get(user.0.org_id, id, user.0.id).await?)
+            Some(id)
         }
         _ => None,
     };
-    let project_id = project.as_ref().map(|p| p.id);
-    // Machine binding is project-derived: the chat's machine follows the
-    // project's (the project's label comes from the machines registry) in
-    // the same UPDATE as the binding; unbinding the project clears it — a
+    // Machine binding is project-derived and read inside the store's write
+    // tx (project row locked): unbinding the project clears it — a
     // machine-bound chat with no project is not a valid state.
-    let machine = project
-        .as_ref()
-        .map(|p| (p.machine_id.clone(), p.machine_label.clone()));
     let chat = store
         .chats()
-        .set_project(
-            user.0.org_id,
-            chat_id,
-            &user.0,
-            project_id,
-            machine
-                .as_ref()
-                .and_then(|(id, label)| Some((id.as_str(), label.as_deref()?))),
-        )
+        .set_project(user.0.org_id, chat_id, &user.0, project_id)
         .await?;
     // Every device renders the project grouping: push a fresh thread list to
     // the caller's live sockets so the sidebar updates without a reload.

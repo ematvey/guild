@@ -195,7 +195,28 @@ pub fn emit_live_delta(state: &AppState, chat_id: uuid::Uuid, content: &str) {
 /// Mirrors the worker's client-tool dispatch: registers the suspended call
 /// AND broadcasts the ToolStarted frame, so events-stream dispatch tests can
 /// drive the real flow without a Restate runtime.
-pub fn note_client_tool(
+/// The executor identity a pending tool is noted with: the machine
+/// registry row's durable owner (what a real turn start captures). The
+/// dispatch validation is fail-closed on ownerless snapshots, so test
+/// helpers must use the production shape.
+async fn executor_identity(
+    state: &AppState,
+    machine_id: &str,
+) -> crate::worker::funnel::ExpectedExecutor {
+    let Ok(store) = state.store().await else {
+        return Default::default();
+    };
+    match store.machines().owner_of(machine_id).await {
+        Ok(Some((user, org))) => crate::worker::funnel::ExpectedExecutor {
+            org_id: Some(org),
+            project_id: None,
+            owner: Some((user, org)),
+        },
+        _ => Default::default(),
+    }
+}
+
+pub async fn note_client_tool(
     state: &AppState,
     chat_id: uuid::Uuid,
     call_id: &str,
@@ -204,6 +225,7 @@ pub fn note_client_tool(
     machine_id: &str,
 ) {
     use protocol::api::{StreamEvent, ToolExecutor};
+    let expected = executor_identity(state, machine_id).await;
     crate::worker::funnel::note_pending_tool(
         state,
         chat_id,
@@ -212,7 +234,7 @@ pub fn note_client_tool(
         args,
         Some(machine_id),
         None,
-        Default::default(),
+        expected,
     );
     let dispatch_state = state.clone();
     let dispatch_call = call_id.to_string();
@@ -247,7 +269,8 @@ pub fn overload_machine_writer(state: &AppState, machine: &str) {
 }
 
 /// Installs the production liveness watcher for a suspended test call.
-pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machine: &str) {
+pub async fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machine: &str) {
+    let expected = executor_identity(state, machine).await;
     let done = crate::worker::funnel::note_pending_tool(
         state,
         chat,
@@ -256,7 +279,7 @@ pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machin
         "{}",
         Some(machine),
         None,
-        Default::default(),
+        expected,
     );
     let dispatch_state = state.clone();
     let dispatch_call = call.to_string();

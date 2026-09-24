@@ -97,15 +97,39 @@ impl TurnCommandStore<'_> {
                 let project: Uuid = project
                     .parse()
                     .map_err(|_| ApiError::bad_request("invalid project"))?;
-                sqlx::query(
-                    "UPDATE chats SET project_id=$2,machine_id=$3,machine_label=$4 WHERE id=$1",
+                // Machine binding is project-derived and read under the
+                // same tx (project row locked): the payload's machine
+                // snapshot can predate an adoption re-key, and reinstating
+                // it would move the chat back to the pre-adoption id.
+                let binding: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+                    "SELECT p.machine_id, m.label FROM projects p \
+                     LEFT JOIN machines m ON m.machine_id = p.machine_id \
+                     WHERE p.id = $1 AND p.org_id = $2 FOR UPDATE OF p",
                 )
-                .bind(chat)
                 .bind(project)
-                .bind(payload["machine_id"].as_str())
-                .bind(payload["machine_label"].as_str())
-                .execute(&mut *tx)
+                .bind(org)
+                .fetch_optional(&mut *tx)
                 .await?;
+                match binding {
+                    Some((machine_id, label)) => {
+                        sqlx::query(
+                            "UPDATE chats SET project_id=$2,machine_id=$3,machine_label=$4 WHERE id=$1",
+                        )
+                        .bind(chat)
+                        .bind(project)
+                        .bind(machine_id)
+                        .bind(label)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query("UPDATE chats SET project_id=$2 WHERE id=$1")
+                            .bind(chat)
+                            .bind(project)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                }
             }
             let value = serde_json::to_value(event).expect("event serializes");
             let result = sqlx::query("INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1,$2,'user_message',$3) ON CONFLICT (id) DO NOTHING")
