@@ -266,6 +266,37 @@ impl Hub {
             .machine_holder(machine_id)
             .filter(|holder| holder.org_id == org_id)
             .ok_or(MachineRequestError::Offline)?;
+        self.send_machine_request(holder, org_id, op, payload, timeout)
+            .await
+    }
+
+    /// `machine_request` pinned to an already-validated socket holder: the
+    /// request goes out only while `holder` still holds the machine slot (same
+    /// connection); a re-pair or reclaim since validation is `Offline`.
+    pub async fn machine_request_pinned(
+        &self,
+        machine_id: &str,
+        holder: &Member,
+        op: &str,
+        payload: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value, MachineRequestError> {
+        let current = self
+            .machine_holder(machine_id)
+            .filter(|current| current.conn_id == holder.conn_id && current.org_id == holder.org_id)
+            .ok_or(MachineRequestError::Offline)?;
+        self.send_machine_request(current, holder.org_id, op, payload, timeout)
+            .await
+    }
+
+    async fn send_machine_request(
+        &self,
+        holder: Member,
+        org_id: Uuid,
+        op: &str,
+        payload: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value, MachineRequestError> {
         let request_id = Uuid::now_v7().to_string();
         let (tx, rx) = oneshot::channel();
         {
