@@ -793,6 +793,7 @@ fn store_sig(path: &Path) -> Option<(std::time::SystemTime, u64)> {
 /// shutdown.
 pub async fn watch_token_store(
     path: PathBuf,
+    session: Arc<std::sync::Mutex<crate::jsonrpc_loop::Session>>,
     link: Arc<watch::Sender<Option<MachineLinkConfig>>>,
     mut shutdown_rx: watch::Receiver<bool>,
     poll: Duration,
@@ -812,6 +813,18 @@ pub async fn watch_token_store(
         }
         last_sig = sig;
         let cfg = config_from_store(&path);
+        {
+            // The in-memory session follows the store too: the daemon built
+            // Session.auth at boot, and the unit's CLI / agent.start /
+            // registry.* read it — a re-pair must not leave stale auth.
+            // Memory-only: no persist, and the link send below keeps its
+            // dedup.
+            let mut s = session.lock().unwrap();
+            match session_store::load(&path) {
+                Some(stored) => s.auth.adopt_stored(&stored),
+                None => s.auth = crate::auth_state::AuthState::default(),
+            }
+        }
         if *link.borrow() != cfg {
             let _ = link.send(cfg);
         }
@@ -1417,8 +1430,13 @@ mod tests {
         let link = Arc::new(tx);
         let mut rx = link.subscribe();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let session = Arc::new(std::sync::Mutex::new(
+            crate::jsonrpc_loop::Session::default(),
+        ));
+        let watched = session.clone();
         tokio::spawn(watch_token_store(
             path.clone(),
+            watched,
             link.clone(),
             shutdown_rx,
             Duration::from_millis(20),
@@ -1442,9 +1460,15 @@ mod tests {
         // Fresh pair (file appears): the link comes up with the new token.
         session_store::save(&path, &store("t1")).unwrap();
         assert_eq!(next(&mut rx).await.unwrap().token, "t1");
-        // Re-login (token rotates): the link follows.
+        // Re-login (token rotates): the link follows, and the in-memory
+        // session adopts the new token.
         session_store::save(&path, &store("t2")).unwrap();
         assert_eq!(next(&mut rx).await.unwrap().token, "t2");
+        assert_eq!(
+            session.lock().unwrap().auth.cloud().unwrap().token,
+            "t2",
+            "Session.auth follows the reloaded store"
+        );
         // A store change that resolves to the config already held dedups:
         // no publish, the channel stays quiet (mtime re-save of the same
         // session).
@@ -1454,6 +1478,9 @@ mod tests {
         // Sign-out (file removed): the link comes down.
         session_store::clear(&path).unwrap();
         assert_eq!(next(&mut rx).await, None);
+        // The in-memory session followed every store change and the
+        // sign-out cleared it.
+        assert!(session.lock().unwrap().auth.cloud().is_none());
         shutdown_tx.send(true).ok();
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -358,6 +358,7 @@ fn spawn_machine_link(
             let watcher_shared = shared.clone();
             Some(tokio::spawn(crate::machine_link::watch_token_store(
                 path,
+                watcher_shared.session.clone(),
                 watcher_shared.machine_link.clone(),
                 shared.shutdown.subscribe(),
                 std::time::Duration::from_secs(1),
