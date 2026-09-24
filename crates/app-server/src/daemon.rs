@@ -321,7 +321,11 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
     // fast-failing bind piles up an unbounded family of machine-link retry
     // loops (each minting tickets on its own cadence) — the allocation
     // storm that starved the engine and ate the user's sends.
-    let mut link_cycle: Option<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)> = None;
+    let mut link_cycle: Option<(
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<()>,
+    )> = None;
     loop {
         while crate::daemon_install::unit_active() {
             tokio::time::sleep(RECLAIM_POLL).await;
@@ -338,11 +342,15 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
             }
             let _ = shared.shutdown.send(false);
         }
-        if let Some((link, watcher)) = link_cycle.take() {
+        if let Some((link, watcher, reaper)) = link_cycle.take() {
             link.abort();
             watcher.abort();
+            reaper.abort();
         }
-        link_cycle = Some(spawn_machine_link(&shared));
+        link_cycle = {
+            let (link, watcher) = spawn_machine_link(&shared);
+            Some((link, watcher, spawn_reaper(&shared)))
+        };
         if let Err(e) = host_shared_socket(path.clone(), shared.clone()).await {
             // A failed host cycle (a bind race, an accept error) leaves the
             // endpoint to the winner; the loop re-polls and retries instead
@@ -397,28 +405,31 @@ fn spawn_machine_link(
 
 /// Reaps finished agent runs so the JoinSet doesn't grow unbounded, then
 /// runs the accept loop for this platform until shutdown.
-async fn host_shared_socket(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
-    let shutdown_rx = shared.shutdown.subscribe();
-    {
-        let agents = shared.agents.clone();
-        let mut reaper_shutdown = shutdown_rx.clone();
-        tokio::spawn(async move {
-            // Lives for this host cycle; a retired host's reaper must not
-            // linger (a reclaiming host spawns a fresh one).
-            loop {
-                tokio::select! {
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {}
-                    _ = reaper_shutdown.changed() => {
-                        if *reaper_shutdown.borrow_and_update() {
-                            return;
-                        }
+/// Reaps finished agent runs so the JoinSet doesn't grow unbounded. One
+/// reaper per host cycle: the caller aborts it with the link/watcher pair
+/// before the next cycle's spawn — a failed host cycle must not leave a
+/// reaper behind.
+fn spawn_reaper(shared: &Shared) -> tokio::task::JoinHandle<()> {
+    let agents = shared.agents.clone();
+    let mut reaper_shutdown = shared.shutdown.subscribe();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {}
+                _ = reaper_shutdown.changed() => {
+                    if *reaper_shutdown.borrow_and_update() {
+                        return;
                     }
                 }
-                let mut guard = agents.lock().await;
-                while guard.try_join_next().is_some() {}
             }
-        });
-    }
+            let mut guard = agents.lock().await;
+            while guard.try_join_next().is_some() {}
+        }
+    })
+}
+
+async fn host_shared_socket(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
+    let shutdown_rx = shared.shutdown.subscribe();
 
     #[cfg(unix)]
     return unix_accept_loop(&path, shared, shutdown_rx).await;
