@@ -212,6 +212,7 @@ pub fn note_client_tool(
         args,
         Some(machine_id),
         None,
+        Default::default(),
     );
     let dispatch_state = state.clone();
     let dispatch_call = call_id.to_string();
@@ -255,6 +256,7 @@ pub fn note_watched_client_tool(state: &AppState, chat: Uuid, call: &str, machin
         "{}",
         Some(machine),
         None,
+        Default::default(),
     );
     let dispatch_state = state.clone();
     let dispatch_call = call.to_string();

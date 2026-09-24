@@ -35,6 +35,8 @@ impl From<crate::store::projects::ProjectRow> for Project {
 /// Creates a project. The machine must be registered to the caller or their
 /// org — a folder on an unregistered machine can never execute anything.
 /// The name defaults to the folder's basename; the UI never asks for one.
+/// The bindability check shares the store's transaction, so a concurrent
+/// re-pair adoption can never slip between it and the binding write.
 async fn create(
     State(state): State<AppState>,
     user: AuthUser,
@@ -48,12 +50,6 @@ async fn create(
         Some(n) => n.to_string(),
         None => folder_basename(folder),
     };
-    if !state
-        .machine_bindable(&req.machine_id, user.0.id, user.0.org_id)
-        .await
-    {
-        return Err(ApiError::bad_request("unknown machine"));
-    }
     let store = state.store().await?;
     let row = store
         .projects()
@@ -99,7 +95,7 @@ async fn update(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if let Some(mid) = &req.machine_id {
-        if !state.machine_bindable(mid, user.0.id, user.0.org_id).await {
+        if mid.is_empty() {
             return Err(ApiError::bad_request("unknown machine"));
         }
     }

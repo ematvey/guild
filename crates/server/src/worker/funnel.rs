@@ -177,6 +177,19 @@ pub(crate) fn spawn_stop_approval_watcher(state: &AppState, chat_id: Uuid, call_
 
 /// Registers a suspended client tool call for late-attaching clients and
 /// returns the watcher's completion signal.
+/// The executor identity a machine dispatch is allowed to reach, captured at
+/// turn start from journaled data: the turn's org, the chat's project (the
+/// alias source when a re-pair re-keyed the machine id), and the machine
+/// row's durable owner at turn start. Dispatch refuses any machine whose
+/// current row names a different owner — a freed machine id claimed by
+/// another member never receives another turn's arguments.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ExpectedExecutor {
+    pub org_id: Option<Uuid>,
+    pub project_id: Option<Uuid>,
+    pub owner: Option<(Uuid, Uuid)>,
+}
+
 pub(crate) fn note_pending_tool(
     state: &AppState,
     chat_id: Uuid,
@@ -185,6 +198,7 @@ pub(crate) fn note_pending_tool(
     args: &str,
     machine_id: Option<&str>,
     workdir: Option<&str>,
+    expected: ExpectedExecutor,
 ) -> Arc<tokio::sync::Notify> {
     let done = Arc::new(tokio::sync::Notify::new());
     let holder = machine_id.and_then(|id| state.hub.machine_holder(id));
@@ -197,10 +211,59 @@ pub(crate) fn note_pending_tool(
             machine_id: machine_id.map(str::to_string),
             workdir: workdir.map(str::to_string),
             connection_id: holder.as_ref().map(|m| m.conn_id),
+            org_id: expected.org_id,
+            project_id: expected.project_id,
+            expected_owner: expected.owner,
             done: done.clone(),
         },
     );
     done
+}
+
+/// Dispatches once inside the worker's journaled operation. The returned
+/// connection identity is replayed, not the side effect itself.
+/// Resolves the machine a dispatch may target. A re-pair (fingerprint
+/// adoption) re-keys the registry row to a new id under the SAME owner; the
+/// journaled turn id then has no row, and the project's current binding is
+/// the alias — the same re-resolution rule the queued-command path applies
+/// at turn start. Returns `(machine_id, durable_owner)`.
+async fn resolve_dispatch_target(
+    store: &crate::store::Store,
+    tool: &crate::state::PendingTool,
+) -> Result<(Option<String>, Option<(Uuid, Uuid)>), crate::http::error::ApiError> {
+    let mut machine_id = tool.machine_id.clone();
+    let mut owner = match machine_id.as_deref() {
+        Some(id) => store.machines().owner_of(id).await.ok().flatten(),
+        None => None,
+    };
+    let owner_matches = |owner: &Option<(Uuid, Uuid)>| {
+        match tool.expected_owner {
+            Some(expected) => owner.as_ref() == Some(&expected),
+            // No captured owner (legacy journal): the org check below still
+            // applies.
+            None => true,
+        }
+    };
+    if !owner_matches(&owner) {
+        if let (Some(project_id), Some(org_id)) = (tool.project_id, tool.org_id) {
+            let alias: Option<(Option<String>,)> =
+                sqlx::query_as("SELECT machine_id FROM projects WHERE id = $1 AND org_id = $2")
+                    .bind(project_id)
+                    .bind(org_id)
+                    .fetch_optional(store.pool())
+                    .await?;
+            if let Some((Some(alias),)) = alias {
+                if Some(&alias) != machine_id.as_ref() {
+                    let alias_owner = store.machines().owner_of(&alias).await.ok().flatten();
+                    if owner_matches(&alias_owner) {
+                        machine_id = Some(alias);
+                        owner = alias_owner;
+                    }
+                }
+            }
+        }
+    }
+    Ok((machine_id, owner))
 }
 
 /// Dispatches once inside the worker's journaled operation. The returned
@@ -211,20 +274,45 @@ pub(crate) async fn dispatch_pending_tool(
     call_id: &str,
     dispatch_id: &str,
 ) -> Result<Option<Uuid>, crate::http::error::ApiError> {
-    let tool = state.generations.pending_tool(chat_id, call_id).map(|t| {
-        (
-            t.connection_id,
-            t.machine_id,
-            t.name,
-            t.arguments,
-            t.workdir,
-        )
-    });
-    let Some((connection, machine, name, arguments, workdir)) = tool else {
+    let tool = state.generations.pending_tool(chat_id, call_id);
+    let Some(tool) = tool else {
         return Ok(None);
     };
     let store = state.store().await?;
     let key = format!("tool_dispatch:{chat_id}:{dispatch_id}");
+
+    // Executor-identity validation: the dispatch goes only to a machine
+    // whose durable registry row still names the owner captured at turn
+    // start (and the turn's own org). A re-pair keeps the owner and is
+    // followed through the project row's re-keyed binding; a foreign claim
+    // of the freed id never matches, and the call fails closed instead of
+    // sending arguments and the workspace path to another member's socket.
+    let (machine, owner) = resolve_dispatch_target(&store, &tool).await?;
+    let holder = machine
+        .as_deref()
+        .and_then(|id| state.hub.machine_holder(id));
+    let mut identity_ok = match (&tool.expected_owner, &owner) {
+        (Some(expected), Some(current)) => expected == current,
+        (Some(_), None) => false,
+        // Legacy turn without a captured owner: the org boundary still holds.
+        (None, owner) => match (owner, &holder) {
+            (Some((_, org)), Some(member)) => *org == member.org_id,
+            (Some((_, org)), None) => tool.org_id == Some(*org),
+            (None, _) => true,
+        },
+    };
+    if let (Some(member), Some((owner_user, owner_org))) = (holder.as_ref(), owner.as_ref()) {
+        if member.user_id != *owner_user || member.org_id != *owner_org {
+            identity_ok = false;
+        }
+    }
+    if !identity_ok {
+        restate_send_one_way(state, "ChatRunner", &format!("{chat_id}/complete_tool"),
+            json!({"call_id": call_id, "content": "tool not dispatched: the bound machine's pairing changed; the executor identity no longer matches the turn", "is_error": true})).await?;
+        return Ok(None);
+    }
+
+    let connection = holder.as_ref().map(|m| m.conn_id);
     if !store
         .kv()
         .claim(
@@ -238,21 +326,29 @@ pub(crate) async fn dispatch_pending_tool(
             json!({"call_id": call_id, "content": "Dispatch was already reserved; execution outcome is unknown. Check effects before retrying.", "is_error": true})).await?;
         return Ok(recorded);
     }
-    let holder = machine
-        .as_deref()
-        .and_then(|id| state.hub.machine_holder(id));
-    if let Some(holder) = holder.filter(|h| Some(h.conn_id) == connection) {
+    if let Some(holder) = holder {
         if holder
             .sink
             .try_send(protocol::ws::WsServerMsg::ToolDispatch {
                 chat_id,
                 call_id: call_id.into(),
-                name,
-                arguments,
-                workdir,
+                name: tool.name.clone(),
+                arguments: tool.arguments.clone(),
+                workdir: tool.workdir.clone(),
             })
             .is_ok()
         {
+            if machine != tool.machine_id {
+                // The dispatch followed a re-pair to the re-keyed id: keep
+                // the pending call's machine identity in step so the
+                // watcher and the ownership checks track the live executor.
+                state.generations.update_pending_tool_machine(
+                    chat_id,
+                    call_id,
+                    machine,
+                    Some(holder.conn_id),
+                );
+            }
             return Ok(Some(holder.conn_id));
         }
     }
@@ -297,6 +393,8 @@ pub(crate) enum Executor {
         machine_label: String,
         /// Workspace folder the tool runs in (from the chat's project).
         workdir: Option<String>,
+        /// The executor identity dispatches are validated against.
+        expected: ExpectedExecutor,
     },
     /// The per-chat server sandbox: the same gates as client tools, no hub
     /// round trip.
@@ -345,6 +443,7 @@ pub(crate) async fn suspend(
             machine_id,
             machine_label,
             workdir,
+            expected,
         } => {
             // ---- Static exec policy (codex model): Starlark prefix rules
             // decide before the interactive gate. An `allow` rule runs the
@@ -375,6 +474,7 @@ pub(crate) async fn suspend(
                 &args_json,
                 Some(&machine_id),
                 workdir.as_deref(),
+                expected,
             );
             let tx2 = tx.clone();
             let call_id = call.id.clone();
@@ -751,6 +851,7 @@ mod tests {
             "{}",
             Some("machine"),
             None,
+            Default::default(),
         );
         assert_eq!(
             dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
@@ -788,6 +889,7 @@ mod tests {
             "{}",
             Some("machine"),
             None,
+            Default::default(),
         );
         assert_eq!(
             dispatch_pending_tool(&restarted, chat, "call", "durable-awakeable")
@@ -836,6 +938,7 @@ mod tests {
             "{}",
             Some("machine"),
             Some(r"\\wsl.localhost\Ubuntu-22.04\home\u\repo"),
+            Default::default(),
         );
         dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
             .await
@@ -920,6 +1023,7 @@ mod tests {
             "{}",
             Some("machine"),
             Some(&workspace.folder),
+            Default::default(),
         );
         dispatch_pending_tool(&fixture.state, chat_row.id, "call", "durable-awakeable")
             .await
@@ -950,6 +1054,9 @@ mod tests {
                 machine_id: Some("m".into()),
                 workdir: None,
                 connection_id: None,
+                org_id: None,
+                project_id: None,
+                expected_owner: None,
                 done: Arc::new(tokio::sync::Notify::new()),
             },
         );
@@ -1015,6 +1122,7 @@ mod tests {
             "{}",
             Some("machine"),
             None,
+            Default::default(),
         );
         assert_eq!(
             dispatch_pending_tool(&fixture.state, chat, "call", "durable-awakeable")
@@ -1037,5 +1145,220 @@ mod tests {
             .expect("done signal fires")
             .unwrap();
         assert!(!fixture.state.generations.has_pending_tool(chat, "call"));
+    }
+
+    /// A machine id freed by a re-pair and claimed by another member never
+    /// receives another turn's dispatch: the executor identity captured at
+    /// turn start no longer matches the reclaimed row's owner, so the call
+    /// fails closed instead of sending arguments and the workspace path to
+    /// the claimant's socket.
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn reclaimed_machine_id_never_receives_dispatches() {
+        let (fixture, ingress) = test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let admin = store
+            .identity()
+            .ensure_bootstrap_admin("a@b.c", "hunter226")
+            .await
+            .unwrap();
+        let a = store.identity().get_user(admin).await.unwrap();
+        let b = store
+            .identity()
+            .create_user(a.org_id, "b@b.c", "hunter226", "member")
+            .await
+            .unwrap();
+        store
+            .machines()
+            .upsert_connected(a.org_id, a.id, "m", None, None, None, None, None, None)
+            .await
+            .unwrap();
+        let conn_a = Uuid::now_v7();
+        let (sink_a, _out_a) = socket_channel();
+        fixture
+            .state
+            .hub
+            .register_machine(
+                Member {
+                    conn_id: conn_a,
+                    user_id: a.id,
+                    org_id: a.org_id,
+                    sink: sink_a,
+                    label: None,
+                },
+                "m",
+            )
+            .await
+            .unwrap();
+        let chat = Uuid::now_v7();
+        fixture.state.generations.attach(chat);
+        let expected = ExpectedExecutor {
+            org_id: Some(a.org_id),
+            project_id: None,
+            owner: Some((a.id, a.org_id)),
+        };
+        note_pending_tool(
+            &fixture.state,
+            chat,
+            "call1",
+            "execute",
+            "{}",
+            Some("m"),
+            None,
+            expected,
+        );
+        assert_eq!(
+            dispatch_pending_tool(&fixture.state, chat, "call1", "d1")
+                .await
+                .unwrap(),
+            Some(conn_a)
+        );
+
+        // A re-pairs away from the id (the row is re-keyed, so "m" has no
+        // registry row) and member B claims the freed id.
+        fixture.state.hub.unregister_machine("m", conn_a);
+        sqlx::query("DELETE FROM machines WHERE machine_id = 'm'")
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let conn_b = Uuid::now_v7();
+        let (sink_b, mut out_b) = socket_channel();
+        fixture
+            .state
+            .hub
+            .register_machine(
+                Member {
+                    conn_id: conn_b,
+                    user_id: b.id,
+                    org_id: a.org_id,
+                    sink: sink_b,
+                    label: None,
+                },
+                "m",
+            )
+            .await
+            .unwrap();
+        note_pending_tool(
+            &fixture.state,
+            chat,
+            "call2",
+            "execute",
+            "{\"cmd\":\"secret\"}",
+            Some("m"),
+            None,
+            expected,
+        );
+        assert_eq!(
+            dispatch_pending_tool(&fixture.state, chat, "call2", "d2")
+                .await
+                .unwrap(),
+            None
+        );
+        assert!(
+            out_b.try_recv().is_err(),
+            "no dispatch reaches the claimant"
+        );
+        assert!(ingress
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, body)| { body["call_id"] == "call2" && body["is_error"] == true }));
+    }
+
+    /// A re-pair (fingerprint adoption) re-keys the registry row to a new id
+    /// under the same owner: the active turn's dispatch follows the project
+    /// row's re-keyed binding and executes on the re-paired connection.
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn dispatch_follows_a_repair_to_the_rekeyed_id() {
+        let (fixture, _ingress) = test_state_with_mock_ingress().await;
+        let store = fixture.store();
+        let admin = store
+            .identity()
+            .ensure_bootstrap_admin("a@b.c", "hunter226")
+            .await
+            .unwrap();
+        let a = store.identity().get_user(admin).await.unwrap();
+        store
+            .machines()
+            .upsert_connected(
+                a.org_id,
+                a.id,
+                "old",
+                None,
+                Some("fp-1"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let project = store
+            .projects()
+            .create(a.org_id, a.id, "repo", r"C:\\code\\repo", "old")
+            .await
+            .unwrap();
+        // The re-pair: same fingerprint, new pairing identity — the row is
+        // re-keyed to "new".
+        store
+            .machines()
+            .upsert_connected(
+                a.org_id,
+                a.id,
+                "new",
+                Some("new-box"),
+                Some("fp-1"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let conn_new = Uuid::now_v7();
+        let (sink_new, mut out_new) = socket_channel();
+        fixture
+            .state
+            .hub
+            .register_machine(
+                Member {
+                    conn_id: conn_new,
+                    user_id: a.id,
+                    org_id: a.org_id,
+                    sink: sink_new,
+                    label: None,
+                },
+                "new",
+            )
+            .await
+            .unwrap();
+        let chat = Uuid::now_v7();
+        fixture.state.generations.attach(chat);
+        note_pending_tool(
+            &fixture.state,
+            chat,
+            "call1",
+            "execute",
+            "{}",
+            Some("old"),
+            Some(r"C:\\code\\repo"),
+            ExpectedExecutor {
+                org_id: Some(a.org_id),
+                project_id: Some(project.id),
+                owner: Some((a.id, a.org_id)),
+            },
+        );
+        assert_eq!(
+            dispatch_pending_tool(&fixture.state, chat, "call1", "d1")
+                .await
+                .unwrap(),
+            Some(conn_new)
+        );
+        assert!(matches!(
+            out_new.try_recv().unwrap(),
+            SocketOutput::Message(protocol::ws::WsServerMsg::ToolDispatch { .. })
+        ));
     }
 }

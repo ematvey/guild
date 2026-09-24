@@ -644,7 +644,10 @@ async fn post_finish_release_drops_a_pump_reservation_that_landed_mid_finish() {
     assert!(state.generations.handle(fs.chat_id).is_none());
     // A stale release never removes a newer generation's entry.
     let newer = Uuid::now_v7();
-    assert!(state.generations.try_begin_with_id(fs.chat_id, newer).is_ok());
+    assert!(state
+        .generations
+        .try_begin_with_id(fs.chat_id, newer)
+        .is_ok());
     guild_server::worker::restate::release_claim_reservation(&state, fs.chat_id, id);
     assert!(state.generations.handle(fs.chat_id).is_some());
     guild_server::worker::restate::release_claim_reservation(&state, fs.chat_id, newer);

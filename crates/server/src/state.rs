@@ -135,6 +135,15 @@ pub struct PendingTool {
     /// Workspace folder the tool runs in (from the chat's project).
     pub workdir: Option<String>,
     pub connection_id: Option<Uuid>,
+    /// The turn's org — dispatch never crosses an org boundary.
+    pub org_id: Option<Uuid>,
+    /// The chat's project, when the machine binding is project-derived —
+    /// the alias source when a re-pair re-keyed the journaled machine id.
+    pub project_id: Option<Uuid>,
+    /// The executor identity captured at turn start: the machine row's
+    /// durable (user_id, org_id). Dispatch refuses any machine whose
+    /// current row names a different owner.
+    pub expected_owner: Option<(Uuid, Uuid)>,
     /// Fired when the tool is resolved so the presence watcher stops.
     pub done: Arc<tokio::sync::Notify>,
 }
@@ -147,6 +156,9 @@ impl Clone for PendingTool {
             machine_id: self.machine_id.clone(),
             workdir: self.workdir.clone(),
             connection_id: self.connection_id,
+            org_id: self.org_id,
+            project_id: self.project_id,
+            expected_owner: self.expected_owner,
             done: self.done.clone(),
         }
     }
@@ -459,6 +471,25 @@ impl GenerationTable {
         }
     }
 
+    /// Moves a suspended call to the machine id a dispatch actually used —
+    /// a re-pair re-keyed the journaled id and the dispatch followed the
+    /// project row's alias. The watcher and ownership checks then track the
+    /// live executor.
+    pub fn update_pending_tool_machine(
+        &self,
+        chat_id: Uuid,
+        call_id: &str,
+        machine_id: Option<String>,
+        connection_id: Option<Uuid>,
+    ) {
+        if let Some(g) = self.map.lock().unwrap().get(&chat_id) {
+            if let Some(tool) = g.pending_tools.lock().unwrap().get_mut(call_id) {
+                tool.machine_id = machine_id;
+                tool.connection_id = connection_id;
+            }
+        }
+    }
+
     /// (chat, call) pairs suspended on the given machine whose recorded
     /// connection differs from the machine's live one — a connection change
     /// makes their execution outcome unknown.
@@ -615,6 +646,9 @@ mod generation_table_tests {
             machine_id: machine.map(str::to_string),
             workdir: None,
             connection_id: connection,
+            org_id: None,
+            project_id: None,
+            expected_owner: None,
             done: Arc::new(tokio::sync::Notify::new()),
         }
     }
