@@ -1300,7 +1300,11 @@ export async function downloadRelease(id: string): Promise<void> {
   const v = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(v?.error?.message ?? res.statusText);
   const a = document.createElement("a");
-  a.href = v.url;
+  // The server returns a root-relative signed path; in the Tauri webview a
+  // relative href resolves against tauri://localhost and the download
+  // fails. Resolve against the paired server (the page origin in the
+  // browser).
+  a.href = String(v.url).startsWith("/") ? `${serverUrl()}${v.url}` : v.url;
   a.download = "";
   document.body.appendChild(a);
   a.click();
