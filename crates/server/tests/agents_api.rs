@@ -285,7 +285,12 @@ async fn an_orphaned_workspace_dir_is_reclaimed_on_recreate() {
         .await
         .unwrap();
     let next_token = {
-        let (_sid, token) = fs.store().identity().create_session(other.id).await.unwrap();
+        let (_sid, token) = fs
+            .store()
+            .identity()
+            .create_session(other.id)
+            .await
+            .unwrap();
         token
     };
     let res = app

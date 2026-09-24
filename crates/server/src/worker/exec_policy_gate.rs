@@ -188,7 +188,11 @@ fn readonly_command_has_effects(argv: &[String]) -> bool {
         // only further flags are inspection; a non-flag token (or a `--`
         // separator hiding one) is a subcommand.
         Some("git") if argv.get(1).is_some_and(|s| s == "remote") => {
-            match argv.iter().skip(2).position(|arg| arg == "-v" || arg == "--verbose") {
+            match argv
+                .iter()
+                .skip(2)
+                .position(|arg| arg == "-v" || arg == "--verbose")
+            {
                 Some(i) => argv
                     .iter()
                     .skip(2)
