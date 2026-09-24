@@ -195,7 +195,32 @@ fn normalize(path: &Path) -> anyhow::Result<PathBuf> {
             }
         }
     }
-    Ok(out.canonicalize().unwrap_or(out))
+    // One prefix form for roots and requests: `canonicalize` yields the
+    // verbatim form on Windows (\\?\C:\…), which a lexically-kept missing
+    // tail would never match — canonicalize the longest existing ancestor
+    // and append the (symlink-free, walk-checked) lexical tail instead.
+    let mut missing: Vec<std::ffi::OsString> = Vec::new();
+    let mut probe = out.clone();
+    loop {
+        match probe.canonicalize() {
+            Ok(mut real) => {
+                for part in missing.into_iter().rev() {
+                    real.push(part);
+                }
+                return Ok(real);
+            }
+            Err(_) => match probe.file_name() {
+                Some(name) => {
+                    missing.push(name.to_owned());
+                    if !probe.pop() {
+                        break;
+                    }
+                }
+                None => break,
+            },
+        }
+    }
+    Ok(out)
 }
 
 /// fs.read_text: the file's text, gated by the read roots.
@@ -519,5 +544,45 @@ mod tests {
             )
             .is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::*;
+
+    /// Roots and requests share one prefix form for EXISTING paths
+    /// (canonicalize) and for MISSING paths (existing-ancestor
+    /// canonicalize + lexical tail). On Windows the canonicalized form is
+    /// verbatim (\\?\C:\…); before the tail join, a write to a
+    /// not-yet-existing file stayed lexical and failed every root check —
+    /// the production case is settings.json on a fresh install.
+    #[test]
+    fn missing_paths_match_the_canonical_root_prefix() {
+        let tmp = std::env::temp_dir().join(format!(
+            "guild-fs-norm-{}-{}",
+            std::process::id(),
+            uuid::Uuid::now_v7().simple()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("deep/nested")).unwrap();
+
+        let root = canonical_root(&tmp);
+        // Existing file: unchanged contract.
+        let existing = normalize(&tmp.join("deep/nested/file.txt")).unwrap();
+        assert!(existing.starts_with(&root));
+        // Missing file one level deep.
+        let missing = normalize(&tmp.join("deep/missing.txt")).unwrap();
+        assert!(
+            missing.starts_with(&root),
+            "missing path {missing:?} must share root prefix {root:?}"
+        );
+        // Missing file under a missing directory.
+        let deep_missing = normalize(&tmp.join("deep/newdir/f.txt")).unwrap();
+        assert!(deep_missing.starts_with(&root));
+        // The tail is preserved exactly.
+        assert!(missing.ends_with("missing.txt"));
+        assert!(deep_missing.ends_with("newdir/f.txt"));
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 }
