@@ -67,7 +67,7 @@ impl<'a> KvStore<'a> {
         let mut query = String::from(
             "DELETE FROM server_kv WHERE updated_at < now() - make_interval(days => $1) AND (",
         );
-        for (i, prefix) in prefixes.iter().enumerate() {
+        for i in 0..prefixes.len() {
             if i > 0 {
                 query.push_str(" OR ");
             }

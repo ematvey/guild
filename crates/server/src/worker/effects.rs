@@ -75,11 +75,11 @@ pub(crate) async fn complete<T: Serialize>(
 /// Retires claim entries (and their stored results) older than the
 /// retention bound. Called from the hourly maintenance loop.
 pub(crate) async fn prune(store: &Store) -> anyhow::Result<u64> {
-    Ok(store
+    store
         .kv()
         .prune_older_than(CLAIM_PREFIXES, CLAIM_RETENTION_DAYS)
         .await
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?)
+        .map_err(|e| anyhow::anyhow!("{e:?}"))
 }
 
 #[cfg(all(test, feature = "test-support"))]
