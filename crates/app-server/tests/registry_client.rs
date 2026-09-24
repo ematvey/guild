@@ -167,3 +167,93 @@ async fn mcp_item_publishes_without_skill_md() {
         .unwrap();
     assert_eq!(r.slug, "my-mcp");
 }
+
+/// An upgrade over an existing install replaces the whole dir: files the
+/// new bundle drops must not survive from the previous version, and a
+/// failed extract must not leave a mixed tree.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
+    let srv = guild_server::test_support::serve_full().await;
+    let (token, user) = CloudClient::login(&srv.base_url, "a@b.c", "hunter226")
+        .await
+        .unwrap();
+    let cloud = CloudClient {
+        base_url: srv.base_url.clone(),
+        token,
+    };
+    let source = scratch("upsrc");
+    let skill_dir = make_skill(&source, "upgradable");
+    std::fs::write(skill_dir.join("old-helper.txt"), "v1 only").unwrap();
+    registry_client::publish(&cloud, "skill", &skill_dir, "1.0.0")
+        .await
+        .unwrap();
+
+    let project = scratch("upproj");
+    let store = srv.store();
+    let dest = project.join(".agents/skills/upgradable");
+
+    // admin-approve-and-install helper
+    async fn approve_and_install(
+        store: &guild_server::store::Store,
+        org: uuid::Uuid,
+        cloud: &CloudClient,
+        project: &Path,
+        version: &str,
+    ) {
+        let stored = store
+            .registry()
+            .get_version(org, "skill", "upgradable", version)
+            .await
+            .unwrap();
+        store
+            .registry()
+            .set_review(
+                org,
+                "skill",
+                "upgradable",
+                "approved",
+                Some(version),
+                stored.bundle_sha256.as_deref(),
+            )
+            .await
+            .unwrap();
+        registry_client::install_skill(
+            cloud,
+            project,
+            "upgradable",
+            Some(version.into()),
+            false,
+            "a@b.c",
+        )
+        .await
+        .unwrap();
+    }
+    approve_and_install(&store, user.org_id, &cloud, &project, "1.0.0").await;
+    assert!(dest.join("old-helper.txt").is_file());
+    assert_eq!(
+        guild_app_server::registry_client::read_sidecar(&dest)
+            .unwrap()
+            .version,
+        "1.0.0"
+    );
+
+    // v1.1.0 drops old-helper.txt and adds new-helper.txt
+    std::fs::remove_file(skill_dir.join("old-helper.txt")).unwrap();
+    std::fs::write(skill_dir.join("new-helper.txt"), "v2").unwrap();
+    registry_client::publish(&cloud, "skill", &skill_dir, "1.1.0")
+        .await
+        .unwrap();
+    approve_and_install(&store, user.org_id, &cloud, &project, "1.1.0").await;
+
+    assert!(
+        !dest.join("old-helper.txt").exists(),
+        "the previous version's file must not survive the upgrade"
+    );
+    assert!(dest.join("new-helper.txt").is_file());
+    assert_eq!(
+        guild_app_server::registry_client::read_sidecar(&dest)
+            .unwrap()
+            .version,
+        "1.1.0"
+    );
+}

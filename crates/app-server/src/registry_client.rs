@@ -174,8 +174,38 @@ pub async fn install_skill(
     } else {
         project_dir.join(".agents").join("skills").join(slug)
     };
-    let manifest = registry::extract(&bytes, &dest)
+    // Extract into a sibling temp dir and swap only after a clean extract:
+    // extracting in place would leave the previous version's files behind
+    // (and a partial failure a mixed tree) when the new bundle drops files.
+    let parent = dest
+        .parent()
+        .ok_or_else(|| CloudError::Request("skill dir has no parent".into()))?;
+    let staging = parent.join(format!(
+        ".{}-update-{}",
+        slug,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&staging);
+    let manifest = registry::extract(&bytes, &staging)
         .map_err(|e| CloudError::Request(format!("extract failed: {e}")))?;
+    let previous = parent.join(format!(".{}-previous", slug));
+    let _ = std::fs::remove_dir_all(&previous);
+    let moved_old = dest.exists();
+    if moved_old {
+        std::fs::rename(&dest, &previous)
+            .map_err(|e| CloudError::Request(format!("swap failed: {e}")))?;
+    }
+    if let Err(e) = std::fs::rename(&staging, &dest) {
+        if moved_old {
+            let _ = std::fs::rename(&previous, &dest);
+        }
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(CloudError::Request(format!("swap failed: {e}")));
+    }
+    let _ = std::fs::remove_dir_all(&previous);
     let provenance = SkillProvenance {
         source: "registry".into(),
         slug: manifest.slug.clone(),
@@ -273,8 +303,9 @@ pub struct SkillProvenance {
     pub bundle_hash: String,
 }
 
-/// Sidecar path relative to the skill dir.
-pub const SIDECAR_REL: &str = "agents/guild.yaml";
+/// Sidecar path relative to the skill dir (single source of truth in
+/// guild-core, which is what `pack` excludes).
+pub use guild_core::registry::SIDECAR_REL;
 
 /// Writes the flat sidecar as `key: value` YAML (all fields are plain
 /// scalars; no nesting, no quoting needed).

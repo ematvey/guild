@@ -271,9 +271,15 @@ pub fn parse_frontmatter(body: &str, fallback_name: &str) -> (String, String) {
     (name, description)
 }
 
+/// Provenance sidecar path inside a skill dir — engine-private, never
+/// packed into a bundle.
+pub const SIDECAR_REL: &str = "agents/guild.yaml";
+
 /// Packs `source_dir` into a tar.gz: `manifest.json` first, then every file
 /// (sorted, relative paths). `manifest.json` inside the dir is ignored —
-/// the passed manifest is authoritative.
+/// the passed manifest is authoritative. The provenance sidecar is excluded
+/// too: it is engine-private (and carries the previous publish's approval
+/// state — repacking it would make identical re-uploads reset approval).
 pub fn pack(source_dir: &Path, manifest: &BundleManifest) -> anyhow::Result<Vec<u8>> {
     validate_manifest(manifest)?;
     let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -293,7 +299,7 @@ pub fn pack(source_dir: &Path, manifest: &BundleManifest) -> anyhow::Result<Vec<
     for path in files {
         let rel = path.strip_prefix(source_dir).expect("relative");
         let rel = rel.to_str().context("non-utf8 file path in bundle")?;
-        if rel == "manifest.json" {
+        if rel == "manifest.json" || rel == SIDECAR_REL {
             continue;
         }
         tar.append_path_with_name(&path, rel)
@@ -504,6 +510,31 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dest.join("assets/logo.txt")).unwrap(),
             "logo"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&dest).unwrap();
+    }
+
+    #[test]
+    fn pack_excludes_the_provenance_sidecar() {
+        let dir = scratch("sidecar");
+        fs::create_dir_all(dir.join("deploy-check/agents")).unwrap();
+        fs::write(
+            dir.join("deploy-check/SKILL.md"),
+            "---\nname: deploy-check\ndescription: d\n---\nbody",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("deploy-check/agents/guild.yaml"),
+            "review_status: approved\n",
+        )
+        .unwrap();
+        let (bytes, _) = pack_skill(&dir.join("deploy-check"), "0.1.0").unwrap();
+        let dest = scratch("sidecar-x");
+        extract(&bytes, &dest).unwrap();
+        assert!(
+            !dest.join("agents/guild.yaml").exists(),
+            "the previous publish's provenance must not ride along"
         );
         fs::remove_dir_all(&dir).unwrap();
         fs::remove_dir_all(&dest).unwrap();
