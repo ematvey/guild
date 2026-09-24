@@ -3,6 +3,7 @@
 //! persistence; usage is attributed to the key's org/user.
 
 use crate::http::api_keys::ApiKeyUser;
+use crate::http::error::ApiError;
 use crate::http::llm_proxy::{accumulate, dispatch, StreamUsageGuard};
 use crate::state::AppState;
 use axum::extract::State;
@@ -111,6 +112,11 @@ struct OpenAiMessage {
     tool_calls: Option<Vec<OpenAiToolCall>>,
     #[serde(default)]
     tool_call_id: Option<String>,
+    /// The model's chain-of-thought on replayed assistant turns (DeepSeek
+    /// convention, also exposed on this endpoint's output). Replay keeps it
+    /// — reasoning is never dropped from context.
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -133,41 +139,87 @@ struct OpenAiFunction {
     arguments: Value,
 }
 
-/// Flattens string-or-parts content into plain text.
-fn content_to_text(content: &Option<Value>) -> String {
+/// One message's content after decoding the wire parts.
+struct DecodedContent {
+    text: String,
+    images: Vec<String>,
+    audio: Vec<protocol::api::MessageAudio>,
+}
+
+/// Decodes string-or-parts content. Image (`image_url`) and audio
+/// (`input_audio`) parts become the internal media fields on user turns;
+/// any other part type is rejected explicitly instead of silently dropped.
+fn decode_content(role: &str, content: &Option<Value>) -> Result<DecodedContent, ApiError> {
+    let mut out = DecodedContent {
+        text: String::new(),
+        images: Vec::new(),
+        audio: Vec::new(),
+    };
     match content {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Array(parts)) => parts
-            .iter()
-            .filter_map(|p| p["text"].as_str())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
+        None | Some(Value::Null) => {}
+        Some(Value::String(s)) => out.text = s.clone(),
+        Some(Value::Array(parts)) => {
+            let mut texts: Vec<&str> = Vec::new();
+            for part in parts {
+                match part["type"].as_str().unwrap_or_default() {
+                    "text" => {
+                        texts.push(part["text"].as_str().ok_or_else(|| {
+                            ApiError::bad_request("text content part is missing its text")
+                        })?);
+                    }
+                    "image_url" if role == "user" => {
+                        let url = part["image_url"]["url"]
+                            .as_str()
+                            .or_else(|| part["image_url"].as_str())
+                            .ok_or_else(|| {
+                                ApiError::bad_request("image_url content part is missing its url")
+                            })?;
+                        out.images.push(url.to_string());
+                    }
+                    "input_audio" if role == "user" => {
+                        let data = part["input_audio"]["data"].as_str().ok_or_else(|| {
+                            ApiError::bad_request("input_audio content part is missing its data")
+                        })?;
+                        let format = part["input_audio"]["format"].as_str().ok_or_else(|| {
+                            ApiError::bad_request("input_audio content part is missing its format")
+                        })?;
+                        out.audio.push(protocol::api::MessageAudio {
+                            data: data.to_string(),
+                            format: format.to_string(),
+                        });
+                    }
+                    other => {
+                        return Err(ApiError::bad_request(&format!(
+                            "unsupported content part type: {other}"
+                        )));
+                    }
+                }
+            }
+            out.text = texts.join("\n");
+        }
+        Some(_) => {
+            return Err(ApiError::bad_request(
+                "message content must be a string or an array of parts",
+            ));
+        }
     }
+    Ok(out)
 }
 
-/// OpenAI clients send tool-call `arguments` as a JSON-encoded string; the
-/// internal Message carries a parsed object (the Anthropic wire requires an
-/// object and the OpenAI replay path re-encodes). Unparseable strings stay
-/// raw — the provider replay handles non-objects.
-fn parse_tool_arguments(v: &Value) -> Value {
-    match v {
-        Value::String(s) => serde_json::from_str(s).unwrap_or_else(|_| v.clone()),
-        other => other.clone(),
-    }
-}
-
-fn to_internal_messages(msgs: &[OpenAiMessage]) -> (Option<String>, Vec<Message>) {
+fn to_internal_messages(
+    msgs: &[OpenAiMessage],
+) -> Result<(Option<String>, Vec<Message>), ApiError> {
     let mut system_parts: Vec<String> = Vec::new();
     let mut out = Vec::new();
     for m in msgs {
+        let decoded = decode_content(&m.role, &m.content)?;
         match m.role.as_str() {
-            "system" | "developer" => system_parts.push(content_to_text(&m.content)),
+            "system" | "developer" => system_parts.push(decoded.text),
             "user" | "assistant" => out.push(Message {
                 role: m.role.clone(),
-                content: content_to_text(&m.content),
-                images: Vec::new(),
-                audio: Vec::new(),
+                content: decoded.text,
+                images: decoded.images,
+                audio: decoded.audio,
                 tool_calls: m.tool_calls.as_ref().map(|calls| {
                     calls
                         .iter()
@@ -179,15 +231,15 @@ fn to_internal_messages(msgs: &[OpenAiMessage]) -> (Option<String>, Vec<Message>
                         .collect()
                 }),
                 tool_call_id: None,
-                reasoning: None,
+                reasoning: m.reasoning_content.clone().filter(|r| !r.is_empty()),
             }),
             "tool" => out.push(Message::tool_result(
                 m.tool_call_id.clone().unwrap_or_default(),
-                content_to_text(&m.content),
+                decoded.text,
             )),
             other => out.push(Message {
                 role: other.to_string(),
-                content: content_to_text(&m.content),
+                content: decoded.text,
                 images: Vec::new(),
                 audio: Vec::new(),
                 tool_calls: None,
@@ -201,7 +253,39 @@ fn to_internal_messages(msgs: &[OpenAiMessage]) -> (Option<String>, Vec<Message>
     } else {
         Some(system_parts.join("\n\n"))
     };
-    (system, out)
+    Ok((system, out))
+}
+
+/// OpenAI clients send tool-call `arguments` as a JSON-encoded string; the
+/// internal Message carries a parsed object (the Anthropic wire requires an
+/// object and the OpenAI replay path re-encodes). Unparseable strings stay
+/// raw — the provider replay handles non-objects.
+fn parse_tool_arguments(v: &Value) -> Value {
+    match v {
+        Value::String(s) => serde_json::from_str(s).unwrap_or_else(|_| v.clone()),
+        other => other.clone(),
+    }
+}
+
+/// Renders the provider's canonical finish reason (or the shape-derived
+/// fallback) — `length`/`content_filter` terminations must reach the client
+/// as what they are, not as a normal stop.
+fn gateway_finish_reason(reported: Option<&str>, has_calls: bool) -> &'static str {
+    match reported {
+        Some("tool_calls") | Some("function_call") => "tool_calls",
+        Some("length") => "length",
+        Some("content_filter") => "content_filter",
+        Some("stop") => "stop",
+        // Unknown reason or none reported: fall back to the shape-derived
+        // verdict (today's behavior).
+        _ => {
+            if has_calls {
+                "tool_calls"
+            } else {
+                "stop"
+            }
+        }
+    }
 }
 
 fn to_openai_tool_calls(calls: &[ToolCall]) -> Value {
@@ -214,7 +298,14 @@ fn to_openai_tool_calls(calls: &[ToolCall]) -> Value {
                     "type": "function",
                     "function": {
                         "name": c.name,
-                        "arguments": serde_json::to_string(&c.arguments).unwrap_or_default(),
+                        "arguments": match &c.arguments {
+                            // A raw (unparseable upstream) argument buffer is
+                            // preserved verbatim — re-encoding it as a JSON
+                            // string literal would hand the client a quoted
+                            // string instead of the original bytes.
+                            Value::String(raw) => raw.clone(),
+                            value => serde_json::to_string(value).unwrap_or_default(),
+                        },
                     },
                 })
             })
@@ -254,7 +345,13 @@ async fn chat_completions(
             "output token limit must be positive",
         ));
     }
-    let (system, messages) = to_internal_messages(&req.messages);
+    let (system, messages) = to_internal_messages(&req.messages).map_err(|e| {
+        openai_error(
+            axum::http::StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            e.message.clone(),
+        )
+    })?;
     let call = dispatch(
         &state,
         org_id,
@@ -304,7 +401,7 @@ async fn chat_completions(
             call_meta.2,
             call_meta.3,
         );
-        let (text, calls, tokens_in, tokens_out) = accumulate(prov_stream, guard.counters())
+        let acc = accumulate(prov_stream, guard.counters())
             .await
             .map_err(|e| {
                 openai_error(
@@ -314,14 +411,14 @@ async fn chat_completions(
                 )
             })?;
         guard.record_sync().await;
-        let finish_reason = if calls.is_empty() {
-            "stop"
-        } else {
-            "tool_calls"
-        };
-        let mut message = json!({"role": "assistant", "content": text});
-        if !calls.is_empty() {
-            message["tool_calls"] = to_openai_tool_calls(&calls);
+        let finish_reason =
+            gateway_finish_reason(acc.finish_reason.as_deref(), !acc.calls.is_empty());
+        let mut message = json!({"role": "assistant", "content": acc.text});
+        if !acc.calls.is_empty() {
+            message["tool_calls"] = to_openai_tool_calls(&acc.calls);
+        }
+        if !acc.reasoning.is_empty() {
+            message["reasoning_content"] = Value::String(acc.reasoning);
         }
         Ok(Json(json!({
             "id": completion_id,
@@ -330,9 +427,9 @@ async fn chat_completions(
             "model": model,
             "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
             "usage": {
-                "prompt_tokens": tokens_in,
-                "completion_tokens": tokens_out,
-                "total_tokens": tokens_in + tokens_out,
+                "prompt_tokens": acc.tokens_in,
+                "completion_tokens": acc.tokens_out,
+                "total_tokens": acc.tokens_in + acc.tokens_out,
             },
         }))
         .into_response())
@@ -384,6 +481,7 @@ fn stream_chunks(
         ));
 
         let mut calls: Vec<ToolCall> = Vec::new();
+        let mut finish_reason: Option<String> = None;
         let mut pinned = Box::pin(prov_stream);
         while let Some(item) = pinned.next().await {
             // Only Ok items count as served frames: an in-stream provider
@@ -412,10 +510,18 @@ fn stream_chunks(
                 Ok(ProviderChunk::ToolCallDone { call }) => {
                     yield Ok(SseEvent::default().data(chunk(
                         json!({"tool_calls": [{"index": calls.len(), "id": call.id, "type": "function",
-                            "function": {"name": call.name, "arguments": serde_json::to_string(&call.arguments).unwrap_or_default()}}]}),
+                            "function": {"name": call.name, "arguments": match &call.arguments {
+                                // Raw argument buffers go out verbatim (see
+                                // to_openai_tool_calls — no double encoding).
+                                Value::String(raw) => raw.clone(),
+                                value => serde_json::to_string(value).unwrap_or_default(),
+                            }}}]}),
                         None,
                     ).to_string()));
                     calls.push(call);
+                }
+                Ok(ProviderChunk::Finished { reason }) => {
+                    finish_reason = Some(reason);
                 }
                 Err(e) => {
                     yield Ok(SseEvent::default().data(
@@ -426,7 +532,7 @@ fn stream_chunks(
             }
         }
 
-        let finish = if calls.is_empty() { "stop" } else { "tool_calls" };
+        let finish = gateway_finish_reason(finish_reason.as_deref(), !calls.is_empty());
         guard.record_sync().await;
         yield Ok(SseEvent::default().data(chunk(json!({}), Some(finish)).to_string()));
         yield Ok(SseEvent::default().data("[DONE]"));

@@ -583,3 +583,377 @@ async fn non_stream_provider_error_records_observed_usage() {
     let (count, _) = clickhouse_usage_rows(&fs.state).await;
     assert_eq!(count, before + 1, "observed usage must be written on error");
 }
+
+/// Reasoning streams through to non-stream clients (they must be able to
+/// preserve it), and a replayed assistant reasoning_content reaches the
+/// upstream provider instead of being dropped from context.
+#[tokio::test]
+async fn reasoning_is_preserved_on_non_stream_responses_and_replays_upstream() {
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let c = calls.clone();
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(move |_req: &wiremock::Request| {
+            let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if n == 0 {
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"pondering\"}}]}\n\n",
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n\n",
+                        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                        "data: [DONE]\n\n",
+                    ))
+            } else {
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"again\"}}]}\n\n",
+                        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                        "data: [DONE]\n\n",
+                    ))
+            }
+        })
+        .mount(&provider)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_key(&app, &fs.token).await;
+
+    let post = |body: Value| {
+        let app = app.clone();
+        let key = key.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/openai/v1/chat/completions")
+                    .header("authorization", format!("Bearer {key}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let res = post(json!({
+        "model": "gpt-test",
+        "messages": [{"role": "user", "content": "hi"}],
+    }))
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["choices"][0]["message"]["reasoning_content"], "pondering");
+    assert_eq!(v["choices"][0]["finish_reason"], "stop");
+
+    // Replay: the preserved reasoning goes back upstream.
+    let res = post(json!({
+        "model": "gpt-test",
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "answer", "reasoning_content": "pondering"}
+        ],
+    }))
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let upstream = provider.received_requests().await.unwrap();
+    let sent: Value = serde_json::from_slice(&upstream[1].body).unwrap();
+    assert_eq!(sent["messages"][1]["reasoning_content"], "pondering");
+}
+
+/// A provider-side output-limit truncation (`finish_reason: "length"`)
+/// reaches clients as `length`, not as a normal stop, on both response
+/// modes.
+#[tokio::test]
+async fn length_finish_reason_survives_both_response_modes() {
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"truncat\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                )),
+        )
+        .mount(&provider)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_key(&app, &fs.token).await;
+
+    let non_stream = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/openai/v1/chat/completions")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"model": "gpt-test", "messages": [{"role": "user", "content": "hi"}]})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(non_stream.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(non_stream.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["choices"][0]["finish_reason"], "length");
+
+    let stream = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/openai/v1/chat/completions")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"model": "gpt-test", "stream": true, "messages": [{"role": "user", "content": "hi"}]})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(stream.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(
+        text.contains("\"finish_reason\":\"length\""),
+        "finish_reason length must reach the stream: {text}"
+    );
+}
+
+/// Image and audio content parts decode into the internal media fields and
+/// reach the upstream provider; an unsupported part type is rejected
+/// explicitly instead of silently dropped.
+#[tokio::test]
+async fn media_parts_reach_upstream_and_unsupported_parts_are_rejected() {
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                )),
+        )
+        .mount(&provider)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_key(&app, &fs.token).await;
+
+    let req_body = json!({
+        "model": "gpt-test",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is this?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                {"type": "input_audio", "input_audio": {"data": "QUFB", "format": "wav"}}
+            ]
+        }],
+    });
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/openai/v1/chat/completions")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(req_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let upstream = provider.received_requests().await.unwrap();
+    let sent: Value = serde_json::from_slice(&upstream[0].body).unwrap();
+    let parts = sent["messages"][0]["content"]
+        .as_array()
+        .expect("array content");
+    assert!(
+        parts
+            .iter()
+            .any(|p| p["type"] == "image_url"
+                && p["image_url"]["url"] == "data:image/png;base64,AAAA")
+    );
+    assert!(parts.iter().any(|p| p["type"] == "input_audio"
+        && p["input_audio"]["data"] == "QUFB"
+        && p["input_audio"]["format"] == "wav"));
+    assert!(parts
+        .iter()
+        .any(|p| p["type"] == "text" && p["text"] == "what is this?"));
+
+    let bad = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/openai/v1/chat/completions")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "gpt-test",
+                        "messages": [{
+                            "role": "user",
+                            "content": [{"type": "file", "file": {"file_id": "x"}}]
+                        }],
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Raw (unparseable upstream) tool arguments are preserved verbatim in both
+/// response modes — not re-encoded as a quoted JSON string literal.
+#[tokio::test]
+async fn raw_tool_arguments_are_preserved_verbatim_in_responses() {
+    let provider = wiremock::MockServer::builder()
+        .listener(standalone_listener().await.into_std().unwrap())
+        .start()
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_raw\",\"function\":{\"name\":\"edit\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                )),
+        )
+        .mount(&provider)
+        .await;
+    let fs = full_state().await;
+    let master = fs.state.config.master_key().unwrap();
+    fs.store()
+        .gateway()
+        .upsert_provider_key(
+            fs.org_id,
+            "openai",
+            provider.uri().as_str(),
+            "sk-test",
+            &master,
+        )
+        .await
+        .unwrap();
+    let app = guild_server::build_router(fs.state.clone());
+    let key = issue_key(&app, &fs.token).await;
+
+    let non_stream = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/openai/v1/chat/completions")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"model": "gpt-test", "messages": [{"role": "user", "content": "hi"}]})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(non_stream.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(non_stream.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    let args = v["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+        .as_str()
+        .expect("arguments stay a string");
+    assert_eq!(args, "{\"path\":");
+
+    let stream = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/openai/v1/chat/completions")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"model": "gpt-test", "stream": true, "messages": [{"role": "user", "content": "hi"}]})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(stream.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(
+        text.contains("\\\"path\\\":") && !text.contains("'{\"path\":"),
+        "raw arguments must ride verbatim: {text}"
+    );
+}

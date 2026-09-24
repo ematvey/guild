@@ -269,6 +269,17 @@ impl ModelProvider for AnthropicProvider {
                     yield Err(ProviderError::Upstream(format!("{etype}: {msg}")));
                     return;
                 }
+                if v["type"].as_str() == Some("message_delta") {
+                    if let Some(reason) = v["delta"]["stop_reason"].as_str() {
+                        yield Ok(ProviderChunk::Finished {
+                            reason: match reason {
+                                "tool_use" => "tool_calls".to_string(),
+                                "max_tokens" => "length".to_string(),
+                                _ => "stop".to_string(),
+                            },
+                        });
+                    }
+                }
                 if v["type"].as_str() == Some("message_stop") {
                     completed = true;
                     break;

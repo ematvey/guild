@@ -27,18 +27,6 @@ pub struct UserListRow {
     pub created_at: chrono::DateTime<Utc>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct AuthRow {
-    id: Uuid,
-    org_id: Uuid,
-    email: String,
-    role: String,
-    identity_type: String,
-    password_hash: String,
-    display_name: Option<String>,
-    avatar_url: Option<String>,
-}
-
 pub struct IdentityStore<'a> {
     pub(crate) pool: &'a sqlx::PgPool,
 }
