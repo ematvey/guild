@@ -2142,8 +2142,14 @@ impl ChatRunner {
                             // gets exactly one compaction + re-derivation +
                             // retry per turn; every other error propagates
                             // unchanged.
+                            // Prefer the structured message: the SDK
+                            // Display prepends "Terminal error [code]: ",
+                            // which is not the provider's own wording. The
+                            // wrapped classifier covers shapes that only
+                            // exist in the display string.
                             if compacted_this_turn
-                                || !is_context_overflow_wrapped(&e.to_string())
+                                || !(is_context_overflow(e.message())
+                                    || is_context_overflow_wrapped(&e.to_string()))
                             {
                                 return Err(HandlerError::from(e));
                             }

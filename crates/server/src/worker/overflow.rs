@@ -87,6 +87,11 @@ pub fn is_context_overflow_wrapped(msg: &str) -> bool {
         let stripped = inner
             .strip_prefix("provider error: ")
             .or_else(|| inner.strip_prefix("turn failed: "))
+            // The SDK's TerminalError Display wraps every journaled run
+            // failure: `Terminal error [<code>]: <message>` (restate-sdk
+            // errors.rs). Code-independent: the wrapper's code is the
+            // handler's HTTP mapping, not the provider's status.
+            .or_else(|| TERMINAL_ERROR_PREFIX.find(inner).map(|m| &inner[m.end()..]))
             .unwrap_or(inner);
         if stripped.len() == inner.len() {
             break;
@@ -96,9 +101,32 @@ pub fn is_context_overflow_wrapped(msg: &str) -> bool {
     is_context_overflow(inner)
 }
 
+static TERMINAL_ERROR_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^terminal error \[\d+\]: ").expect("terminal-error prefix pattern is valid")
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sdk_terminal_error_wrapper_is_transparent_to_the_classifier() {
+        // The exact Display shape restate-sdk 0.12 produces for a journaled
+        // run failure (TerminalErrorInner: "Terminal error [{}]: {}") — the
+        // catch site in restate.rs passes e.to_string() (and e.message()).
+        let sdk = restate_sdk::errors::TerminalError::new_with_code(500, "status 413: ");
+        assert!(is_context_overflow_wrapped(&sdk.to_string()));
+        assert!(is_context_overflow(sdk.message()));
+        // Code-agnostic: the wrapper's code is the handler's HTTP mapping,
+        // not the provider status.
+        assert!(is_context_overflow_wrapped(
+            &restate_sdk::errors::TerminalError::new_with_code(
+                502,
+                "prompt is too long: 300000 tokens > 200000 maximum",
+            )
+            .to_string()
+        ));
+    }
 
     #[test]
     fn anthropic_prompt_too_long() {
