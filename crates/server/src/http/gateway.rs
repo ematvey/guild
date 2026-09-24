@@ -621,6 +621,24 @@ pub async fn dispatch_turn_commands(state: &AppState, chat: Option<Uuid>) -> Res
             continue;
         };
         let result: Result<(), ApiError> = async {
+            let current = store
+                .turn_commands()
+                .existing(
+                    command.id,
+                    command.org_id,
+                    command.user_id,
+                    command.chat_id,
+                    &command.request,
+                )
+                .await?;
+            if !current.is_some_and(|row| {
+                matches!(row.status.as_str(), "pending" | "submitted" | "running")
+            }) {
+                state
+                    .generations
+                    .remove_if_id(command.chat_id, reservation.id);
+                return Ok(());
+            }
             let user = store.identity().get_user(command.user_id).await?;
             crate::http::feed::prepare_generation(state, &AuthUser(user)).await?;
             let url = format!(
@@ -651,6 +669,23 @@ pub async fn dispatch_turn_commands(state: &AppState, chat: Option<Uuid>) -> Res
                 .turn_commands()
                 .submitted(command.id, invocation)
                 .await?;
+            let current = store
+                .turn_commands()
+                .existing(
+                    command.id,
+                    command.org_id,
+                    command.user_id,
+                    command.chat_id,
+                    &command.request,
+                )
+                .await?;
+            if !current.is_some_and(|row| {
+                matches!(row.status.as_str(), "pending" | "submitted" | "running")
+            }) {
+                state
+                    .generations
+                    .remove_if_id(command.chat_id, reservation.id);
+            }
             Ok(())
         }
         .await;
