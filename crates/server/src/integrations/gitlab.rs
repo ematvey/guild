@@ -14,12 +14,31 @@ const DEFAULT_API: &str = "https://gitlab.com/api/v4";
 
 pub struct Gitlab;
 
-/// API root for one config: the `base_url` override when set, else gitlab.com.
+/// API root for one config: the `base_url` override when set, else gitlab.com's
+/// v4 root. A value saved as a bare instance origin (the manifest's old
+/// default, and the natural `https://gitlab.example.com` entry) gets
+/// `/api/v4` appended — used as an API root every call would 404. A value
+/// that already carries a path (a custom API root, or one ending in
+/// `/api/v4`) is used as-is.
 fn base_url(config: &serde_json::Value) -> String {
-    config["base_url"]
+    match config["base_url"]
         .as_str()
-        .map(|s| s.trim_end_matches('/').to_string())
-        .unwrap_or_else(|| DEFAULT_API.to_string())
+        .map(|s| s.trim().trim_end_matches('/'))
+        .filter(|s| !s.is_empty())
+    {
+        Some(v) if !has_url_path(v) => format!("{v}/api/v4"),
+        Some(v) => v.to_string(),
+        None => DEFAULT_API.to_string(),
+    }
+}
+
+/// True when the URL carries a path beyond the authority (`scheme://host/x`):
+/// a bare origin cannot be a working API root.
+fn has_url_path(u: &str) -> bool {
+    match u.split_once("://") {
+        Some((_, rest)) => rest.contains('/'),
+        None => true,
+    }
 }
 
 /// The stored `token` secret; the connector requires it.
@@ -107,8 +126,8 @@ impl Integration for Gitlab {
             ],
             &[
                 guild_core::registry::FieldSpec {
-                    default: Some(serde_json::json!("https://gitlab.com")),
-                    help: Some("Override for self-hosted GitLab".into()),
+                    default: Some(serde_json::json!("https://gitlab.com/api/v4")),
+                    help: Some("Override for self-hosted GitLab (API root)".into()),
                     ..field("base_url", "string")
                 },
                 guild_core::registry::FieldSpec {
