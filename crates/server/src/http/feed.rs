@@ -923,6 +923,7 @@ mod tests {
             identity_type: "managed".into(),
             display_name: None,
             avatar_url: None,
+            session_generation: None,
         });
         let receiver = feed_of(&state, &user);
         let broadcast = state

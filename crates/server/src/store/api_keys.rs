@@ -35,13 +35,18 @@ pub fn hash_key(plaintext: &str) -> String {
 }
 
 impl<'a> ApiKeyStore<'a> {
-    /// Creates a key and returns it in plaintext exactly once.
+    /// Creates a key and returns it in plaintext exactly once. `generation`
+    /// is the minting session's auth generation (`None`: the creator's
+    /// current one); the key is stamped with it, the INSERT refuses a
+    /// superseded generation, and authentication requires the creator's
+    /// current generation to still match.
     pub async fn create(
         &self,
         org_id: Uuid,
         created_by: Uuid,
         name: &str,
         user_id: Option<Uuid>,
+        generation: Option<i64>,
     ) -> Result<NewApiKey, ApiError> {
         use rand::RngCore;
         let mut bytes = [0u8; 24];
@@ -50,8 +55,9 @@ impl<'a> ApiKeyStore<'a> {
         let prefix: String = plaintext.chars().take(10).collect();
         let id = Uuid::now_v7();
         let row = sqlx::query_as::<_, ApiKeyRow>(
-            "INSERT INTO api_keys (id, org_id, created_by, name, prefix, key_hash, user_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+            "INSERT INTO api_keys (id, org_id, created_by, name, prefix, key_hash, user_id, auth_generation) \
+             SELECT $1, $2, $3, $4, $5, $6, $7, u.auth_generation FROM users u \
+             WHERE u.id = $3 AND u.auth_generation = COALESCE($8, u.auth_generation) \
              RETURNING id, org_id, created_by, name, prefix, created_at, revoked_at, user_id",
         )
         .bind(id)
@@ -61,8 +67,10 @@ impl<'a> ApiKeyStore<'a> {
         .bind(&prefix)
         .bind(hash_key(&plaintext))
         .bind(user_id)
-        .fetch_one(self.pool)
-        .await?;
+        .bind(generation)
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| ApiError::unauthorized("invalid or expired session"))?;
         Ok(NewApiKey {
             key: row,
             plaintext,
@@ -122,11 +130,13 @@ impl<'a> ApiKeyStore<'a> {
         Ok(())
     }
 
-    /// Resolves a bearer token to its key row (None if unknown/revoked).
+    /// Resolves a bearer token to its key row (None if unknown, revoked, or
+    /// minted at an auth generation the creator's password reset superseded).
     pub async fn authenticate(&self, token: &str) -> Result<Option<ApiKeyRow>, ApiError> {
         let row = sqlx::query_as::<_, ApiKeyRow>(
-            "SELECT id, org_id, created_by, name, prefix, created_at, revoked_at, user_id \
-             FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL",
+            "SELECT k.id, k.org_id, k.created_by, k.name, k.prefix, k.created_at, k.revoked_at, k.user_id \
+             FROM api_keys k JOIN users u ON u.id = k.created_by \
+             WHERE k.key_hash = $1 AND k.revoked_at IS NULL AND k.auth_generation = u.auth_generation",
         )
         .bind(hash_key(token))
         .fetch_optional(self.pool)

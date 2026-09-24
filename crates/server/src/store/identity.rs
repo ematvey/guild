@@ -16,6 +16,11 @@ pub struct UserRow {
     pub identity_type: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
+    /// The auth generation of the session this row was validated through
+    /// (`None` for rows read any other way). Credentials minted by the
+    /// request are stamped with it.
+    #[sqlx(default)]
+    pub session_generation: Option<i64>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
@@ -336,6 +341,7 @@ impl<'a> IdentityStore<'a> {
                 identity_type,
                 display_name,
                 avatar_url,
+                session_generation: None,
             },
             auth_generation,
         ))
@@ -388,7 +394,8 @@ impl<'a> IdentityStore<'a> {
 
     pub async fn validate_session(&self, token: &str) -> Result<UserRow, ApiError> {
         sqlx::query_as(
-            "SELECT u.id, u.org_id, u.email, u.role, u.identity_type, u.display_name, u.avatar_url FROM sessions s \
+            "SELECT u.id, u.org_id, u.email, u.role, u.identity_type, u.display_name, u.avatar_url, \
+               s.auth_generation AS session_generation FROM sessions s \
              JOIN users u ON u.id = s.user_id \
              WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() \
                AND s.auth_generation = u.auth_generation",
@@ -747,7 +754,11 @@ mod tests {
             .await
             .unwrap();
         // Pairing redemption captures the same generation.
-        let code = store.pairing().create(org, member.id, 30).await.unwrap();
+        let code = store
+            .pairing()
+            .create(org, member.id, 30, None)
+            .await
+            .unwrap();
         let (_o, _u, redeemed_generation) = store
             .pairing()
             .redeem_with_generation(&code.secret)
@@ -774,5 +785,100 @@ mod tests {
         // Issuance from a post-reset validation is unaffected.
         let (_sid, fresh) = store.identity().create_session(member.id).await.unwrap();
         assert!(store.identity().validate_session(&fresh).await.is_ok());
+    }
+
+    /// A session validated before a password reset cannot mint a surviving
+    /// credential: the mint path (validate_session → session_generation →
+    /// create, as the HTTP handlers do) refuses the superseded generation,
+    /// and a mint whose INSERT raced past the reset's cleanup is stamped
+    /// with the old generation — redemption issues a dead session and the
+    /// API key never authenticates.
+    #[tokio::test]
+    async fn credentials_minted_by_a_pre_reset_session_do_not_survive_the_reset() {
+        let db = Store::connect_test().await.unwrap();
+        let store = &db.store;
+        let org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+            .bind(org)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let member = store
+            .identity()
+            .create_user(org, "mint@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let (_sid, token) = store.identity().create_session(member.id).await.unwrap();
+        let validated = store.identity().validate_session(&token).await.unwrap();
+        assert_eq!(validated.session_generation, Some(0));
+
+        // The reset commits after validation, before the mint.
+        store
+            .identity()
+            .update_user(org, member.id, None, Some("newpass99"))
+            .await
+            .unwrap();
+        assert!(store
+            .pairing()
+            .create(org, member.id, 30, validated.session_generation)
+            .await
+            .is_err());
+        assert!(store
+            .api_keys()
+            .create(
+                org,
+                member.id,
+                "k",
+                Some(member.id),
+                validated.session_generation
+            )
+            .await
+            .is_err());
+
+        // The mint's INSERT lands at generation 1, then a second reset's
+        // generation bump commits without seeing it (the cleanup ran first).
+        let gen1 = Some(1);
+        let code = store
+            .pairing()
+            .create(org, member.id, 30, gen1)
+            .await
+            .unwrap();
+        let key = store
+            .api_keys()
+            .create(org, member.id, "k", Some(member.id), gen1)
+            .await
+            .unwrap();
+        assert!(store
+            .api_keys()
+            .authenticate(&key.plaintext)
+            .await
+            .unwrap()
+            .is_some());
+        sqlx::query("UPDATE users SET auth_generation = auth_generation + 1 WHERE id = $1")
+            .bind(member.id)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let (_o, _u, stamped) = store
+            .pairing()
+            .redeem_with_generation(&code.secret)
+            .await
+            .unwrap();
+        assert_eq!(stamped, 1, "redeem returns the STAMPED generation");
+        let (_sid, session) = store
+            .identity()
+            .create_session_for_credential(member.id, stamped)
+            .await
+            .unwrap();
+        assert!(store.identity().validate_session(&session).await.is_err());
+        assert!(
+            store
+                .api_keys()
+                .authenticate(&key.plaintext)
+                .await
+                .unwrap()
+                .is_none(),
+            "a key stamped at a superseded generation never authenticates"
+        );
     }
 }

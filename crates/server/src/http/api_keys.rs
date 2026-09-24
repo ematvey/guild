@@ -35,7 +35,13 @@ async fn create(
     let store = state.store().await?;
     let new = store
         .api_keys()
-        .create(admin.0.org_id, admin.0.id, name, None)
+        .create(
+            admin.0.org_id,
+            admin.0.id,
+            name,
+            None,
+            admin.0.session_generation,
+        )
         .await?;
     Ok(Json(json!({
         "key": serde_json::to_value(&new.key).expect("key serializes"),
@@ -71,7 +77,13 @@ async fn create_own(
     let store = state.store().await?;
     let new = store
         .api_keys()
-        .create(user.0.org_id, user.0.id, name, Some(user.0.id))
+        .create(
+            user.0.org_id,
+            user.0.id,
+            name,
+            Some(user.0.id),
+            user.0.session_generation,
+        )
         .await?;
     Ok(Json(json!({
         "key": serde_json::to_value(&new.key).expect("key serializes"),

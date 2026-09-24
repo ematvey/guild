@@ -142,12 +142,12 @@ async fn password_reset_revokes_pairing_codes_and_api_keys() {
     let store = fs.store();
     let pair = store
         .pairing()
-        .create(fs.org_id, fs.user_id, 60)
+        .create(fs.org_id, fs.user_id, 60, None)
         .await
         .unwrap();
     let key = store
         .api_keys()
-        .create(fs.org_id, fs.user_id, "stolen", Some(fs.user_id))
+        .create(fs.org_id, fs.user_id, "stolen", Some(fs.user_id), None)
         .await
         .unwrap();
     store
