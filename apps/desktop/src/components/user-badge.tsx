@@ -22,8 +22,8 @@ export function UserBadge({
   children?: React.ReactNode;
 }) {
   const initials = (displayName ?? email).slice(0, 2).toUpperCase();
-  // The CSP allows no remote img hosts (IdP avatar URLs are blocked), so a
-  // failed load falls back to initials instead of a broken image.
+  // A remote avatar URL may fail to load (network, IdP outage), so a failed
+  // load falls back to initials instead of a broken image.
   const [avatarBroken, setAvatarBroken] = useState(false);
   // A changed URL may load fine — clear the broken flag for the new source.
   useEffect(() => setAvatarBroken(false), [avatarUrl]);

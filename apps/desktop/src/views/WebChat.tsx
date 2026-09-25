@@ -428,8 +428,8 @@ function AttachmentFileChip({
 
 /// Anchor for markdown content: every link routes through `openExternal`.
 /// Images never load from model/tool-controlled URLs: injected markdown
-/// could otherwise exfiltrate via the image request (the CSP only allows
-/// local schemes); a rendered placeholder links out instead.
+/// could otherwise exfiltrate via the image request; a rendered placeholder
+/// links out instead.
 const mdComponents: Components = {
   a: ({ node: _node, href, children, ...rest }) => (
     <a
