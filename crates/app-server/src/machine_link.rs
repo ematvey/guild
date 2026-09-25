@@ -677,6 +677,7 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
         .await
         {
             LinkEnd::Displaced => {
+                crate::dtrace::dtrace("machine link ended: displaced");
                 // A newer connection took the slot — often the same
                 // install's GUI-embedded daemon. Parking here stranded the
                 // machine forever once that displacer closed (GUI quit):
@@ -689,6 +690,7 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 }
             }
             LinkEnd::AuthRequired => {
+                crate::dtrace::dtrace("machine link ended: auth_required");
                 // The session token was rejected — could be a transient
                 // 401 during a server deploy just as well as a revoked
                 // token. Retry on a slow cadence; a real sign-out republishes
@@ -699,6 +701,7 @@ pub async fn run(shared: Shared, mut cfg_rx: watch::Receiver<Option<MachineLinkC
                 }
             }
             LinkEnd::Closed => {
+                crate::dtrace::dtrace("machine link ended: closed");
                 // Clean close — config change (handled at loop top), the
                 // server dropping us, or daemon shutdown: brief backoff,
                 // then reconnect unless the host was retired.
