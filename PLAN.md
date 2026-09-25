@@ -18,12 +18,14 @@ Updated 2026-09-24.
   (126 findings fixed across auth/session, machines/executor identity, turn
   queue, provider contracts, engine session lifecycle, integrations, and
   desktop transport). Live-bundle and migration state verified per deploy.
-- **Clients:** desktop 0.5.20 released 2026-09-24 (all four platforms, both
+- **Clients:** desktop 0.5.21 released 2026-09-25 (all four platforms, both
   installers and updater bundles, sha256-verified downloads, updater manifest
-  serving it with minisign signatures). Running clients pick it up via the
-  auto-updater on relaunch; the devbox install (0.5.18) must be relaunched
-  (or updated in place) to reconnect — 0.5.18 cannot talk to the current
-  server. Client releases remain dev-controlled and deliberate.
+  serving it with minisign signatures). 0.5.21 ships the CSP removal —
+  avatars (IdP pictures) now render in the desktop and web clients. Running
+  clients pick it up via the auto-updater on relaunch; the devbox install
+  (0.5.18) must be relaunched (or updated in place) to reconnect — 0.5.18
+  cannot talk to the current server. Client releases remain dev-controlled
+  and deliberate.
 - **Quality baseline:** six review rounds with adversarial verification; the
   last two fix-diff audits found no regressions. Full gates at merge time:
   workspace cargo test (705+ tests), frontend vitest, strict clippy,
