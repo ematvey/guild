@@ -342,6 +342,7 @@ async fn watch_session(
         if chrono::Utc::now() >= expires - chrono::Duration::seconds(60)
             || !session_valid(state, hash).await
         {
+            tracing::warn!("ws link: session expired or revoked, requesting re-auth");
             let _ = sink.send(WsServerMsg::AuthRequired).await;
             tokio::time::sleep(TERMINAL_WRITE_TIMEOUT * 2).await;
             return;
@@ -475,34 +476,37 @@ async fn write_socket<W>(
     }
 }
 
+/// Why a socket's supervisor exited. Logged per connection so link churn
+/// (flapping clients, displacement fights, dead heartbeats) names itself
+/// in the server log without needing client-side access.
+enum SocketExit {
+    Displaced,
+    Reader,
+    Writer,
+}
+
 async fn supervise_socket(
     reader: impl std::future::Future<Output = ()>,
     mut writer: tokio::task::JoinHandle<()>,
     mut shutdown: Option<watch::Receiver<bool>>,
-) {
-    enum Exit {
-        Displaced,
-        Reader,
-        Writer,
-    }
-    // Cancellation covers bootstrap, client-queue sends, and reader control
-    // ops, not just the wait for the next incoming WebSocket frame.
+) -> SocketExit {
     let exit = tokio::select! {
         biased;
-        _ = wait_for_shutdown(&mut shutdown) => Exit::Displaced,
-        _ = &mut writer => Exit::Writer,
-        _ = reader => Exit::Reader,
+        _ = wait_for_shutdown(&mut shutdown) => SocketExit::Displaced,
+        _ = &mut writer => SocketExit::Writer,
+        _ = reader => SocketExit::Reader,
     };
     match exit {
-        Exit::Displaced => {
+        SocketExit::Displaced => {
             let _ = writer.await;
         }
-        Exit::Reader => {
+        SocketExit::Reader => {
             writer.abort();
             let _ = writer.await;
         }
-        Exit::Writer => {}
+        SocketExit::Writer => {}
     }
+    exit
 }
 
 // Socket lifecycle receives the already authenticated connection context explicitly.
@@ -527,6 +531,7 @@ pub(crate) async fn drive_socket(
     } = identity;
     let (mut ws_tx, mut ws_rx) = socket.split();
     let conn_id = Uuid::now_v7();
+    let connected_at = std::time::Instant::now();
     let member = Member {
         conn_id,
         user_id: user.0.id,
@@ -560,8 +565,15 @@ pub(crate) async fn drive_socket(
                 .await
             {
                 Ok(registration) => {
-                    register_machine_record(&state, &user.0, machine_id, &machine_meta, peer_ip)
-                        .await;
+                    register_machine_record(
+                        &state,
+                        &user.0,
+                        machine_id,
+                        &machine_meta,
+                        peer_ip,
+                        &_client_id,
+                    )
+                    .await;
                     Some(registration.shutdown)
                 }
                 Err(crate::http::hub::MachineRejected::ForeignOwner) => {
@@ -673,6 +685,9 @@ pub(crate) async fn drive_socket(
         loop {
             match ws_rx.next().await {
                 Some(Ok(axum::extract::ws::Message::Text(text))) => {
+                    if machine_id.is_some() {
+                        tracing::info!(conn_id = %conn_id, bytes = text.len(), first = &text[..text.len().min(80)], "ws inbound");
+                    }
                     let Ok(message) = serde_json::from_str::<WsClientMsg>(&text) else {
                         continue;
                     };
@@ -705,7 +720,19 @@ pub(crate) async fn drive_socket(
             _ = watch_session(&state, &session_hash, expires_at, &tx) => {},
         }
     };
-    supervise_socket(bounded_reader, writer, machine_shutdown).await;
+    let exit = supervise_socket(bounded_reader, writer, machine_shutdown).await;
+    tracing::info!(
+        conn_id = %conn_id,
+        machine_id = machine_id.as_deref().unwrap_or(""),
+        instance_id = %instance_id,
+        elapsed_s = connected_at.elapsed().as_secs_f32(),
+        reason = match exit {
+            SocketExit::Displaced => "displaced",
+            SocketExit::Reader => "reader_closed",
+            SocketExit::Writer => "writer_failed",
+        },
+        "ws link ended"
+    );
 
     client_task.abort();
     if let Some(feed_forwarder) = feed_forwarder {
@@ -751,7 +778,16 @@ async fn register_machine_record(
     machine_id: &str,
     meta: &MachineConnectMeta,
     peer_ip: Option<std::net::IpAddr>,
+    client_id: &str,
 ) {
+    tracing::info!(
+        machine_id = %machine_id,
+        app_version = meta.app_version.as_deref().unwrap_or(""),
+        label = meta.label.as_deref().unwrap_or(""),
+        fingerprint = meta.fingerprint.as_deref().unwrap_or(""),
+        client_id = %client_id,
+        "ws machine connect"
+    );
     let Ok(store) = state.store().await else {
         tracing::warn!(%machine_id, "machine registry unavailable: no store");
         return;
