@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState,
+  type ErrorInfo, type ReactNode, type RefObject } from "react";
 import { applyMention, detectMention } from "../lib/skill-mention";
 import { daemonFs, listSkills } from "../lib/context";
 import { openExternal } from "../lib/open-external";
@@ -1370,8 +1371,35 @@ type WebChatProps = {
   avatarUrl?: string | null;
   onSignOut: () => void;
 };
+
+/** A render exception anywhere in the chat view must never unmount the app:
+ * without this boundary the user is left on a bare background (there is no
+ * other boundary above this subtree). */
+class ChatErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Chat view crashed:", error, info.componentStack);
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-3 bg-background px-6 text-center text-foreground">
+        <p className="font-medium">The chat view crashed.</p>
+        <p className="max-w-md text-sm text-muted-foreground">{String(this.state.error.message || this.state.error)}</p>
+        <Button variant="outline" size="sm" onClick={() => window.location.reload()}>Reload</Button>
+      </div>
+    );
+  }
+}
+
 export default function WebChat(props: WebChatProps) {
-  return <WebChatAccount key={`${apiUrl("")}\n${props.email}`} {...props} />;
+  const scope = `${apiUrl("")}\n${props.email}`;
+  return (
+    <ChatErrorBoundary key={scope}>
+      <WebChatAccount key={scope} {...props} />
+    </ChatErrorBoundary>
+  );
 }
 function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSignOut }: WebChatProps) {
   const outgoingScope = `${apiUrl("")}\n${email}`;
@@ -1381,15 +1409,16 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const [filesReady, setFilesReady] = useState(false);
   const deliveringRef = useRef(new Set<string>());
   const observedUserIdsRef = useRef(new Set<string>());
-  const storageFailure = () => {
+  const storageFailure = (reason?: unknown) => {
+    console.error("Browser send storage write failed:", reason);
     if (!storageWarningRef.current && mountedRef.current) {
       storageWarningRef.current = true;
-      toast.error("Files could not be saved for reloads in this browser");
+      toast.error("Attachments won't survive a reload on this browser");
     }
   };
   const persistCommand = async (command: OutgoingCommand) => {
     if (!mountedRef.current) throw new Error("Chat session closed");
-    try { await fileStore.saveCommand(command); } catch { storageFailure(); }
+    try { await fileStore.saveCommand(command); } catch (e) { storageFailure(e); }
   };
   const persistFiles = (target: string | null, files: readonly DraftAttachment[]) => {
     void fileStore.saveDraft(target, files).catch(storageFailure);
@@ -1642,6 +1671,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // keyboard is up (see useVisualViewportPin) so the header stays visible.
   const shell = useRef<HTMLDivElement>(null);
   useVisualViewportPin(shell);
+  // Only surfaces marked `data-scrollable` scroll by touch. Anywhere else a
+  // drag must not pan the page over the fixed shell — iOS Safari pans the
+  // visual viewport even under a `position: fixed` root (header, composer
+  // and banners would all move with the content).
+  useEffect(() => {
+    const el = shell.current;
+    if (!el) return;
+    const block = (e: TouchEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest?.("[data-scrollable]")) return;
+      e.preventDefault();
+    };
+    el.addEventListener("touchmove", block, { passive: false });
+    return () => el.removeEventListener("touchmove", block);
+  }, []);
   const loadSeq = useRef(0); // guards against stale chat switches landing last
   const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
 
@@ -2466,13 +2510,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             )}
           </div>
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-32 py-8">
+            <div className="flex flex-1 flex-col items-center justify-center px-4 pb-32 py-8">
               <p className="text-muted-foreground">No messages in this thread yet.</p>
             </div>
           )
         ) : (
           <div
             ref={pane}
+            data-scrollable
             className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain"
             onScroll={() => {
               const el = pane.current;
@@ -2580,9 +2625,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               }}
             />
             {[...outgoingRef.current.values()].filter(c => c.error && (c.chatId ?? c.originChatId) === chatId).map(command => (
-              <div key={command.id} className="flex items-center gap-2 px-2 pb-2 text-sm text-muted-foreground">
-                <span className="min-w-0 flex-1 truncate" title={command.text}>Send needs retry: {command.text || "attachments"}</span>
-                <Button variant="outline" size="sm" disabled={command.running} onClick={() => void deliverOutgoing(command)}>Retry send</Button>
+              <div key={command.id} className="px-2 pb-2 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate" title={command.text}>Send needs retry: {command.text || "attachments"}</span>
+                  <Button variant="outline" size="sm" disabled={command.running} onClick={() => void deliverOutgoing(command)}>Retry send</Button>
+                </div>
+                {command.error && (
+                  <div className="truncate text-xs text-muted-foreground/80" title={command.error}>{command.error}</div>
+                )}
               </div>
             ))}
             {pending.length > 0 && (
@@ -2620,7 +2670,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               </div>
             )}
             {mentionMatches.length > 0 && (
-              <div className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-md">
+              <div data-scrollable className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-md">
                 {mentionMatches.map((sk, i) => (
                   <button
                     key={sk.name}
@@ -2701,14 +2751,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               }}
               rows={1}
               placeholder={models === null || model ? "Message Guild…" : "No model available"}
+              data-scrollable
               // Not disabled while streaming: a disabled focused element
               // blurs to body, and the composer must keep focus/caret
               // during generation (send is guarded by `busy` anyway).
               disabled={models !== null && !model}
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none"
             />
-            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-1 pt-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-1">
+            {/* One line, never wrapping: on narrow screens the labeled badges
+                collapse to their icons (text stays in the title tooltip). */}
+            <div className="flex flex-nowrap items-center justify-between gap-x-2 px-1 pt-1">
+              <div className="flex min-w-0 flex-nowrap items-center gap-1">
                 <Button
                   size="icon"
                   variant="ghost"
@@ -2734,9 +2787,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                       : projects?.find((p) => p.id === currentProject?.id)?.machine_id;
                   const remoteMachine =
                     !!chipMachineId && (!isTauri || chipMachineId !== machineId());
+                  // The chat row may be absent right after a create (route
+                  // pushed before the refetched list lands) — the chip then
+                  // renders without a live socket state instead of crashing.
                   const machineOnline: boolean | undefined = remoteMachine
                     ? chatId
-                      ? row!.machine_online
+                      ? row?.machine_online
                       : machines?.find((m) => m.machine_id === chipMachineId)?.connected
                     : undefined;
                   const showMachine = remoteMachine && machineOnline !== undefined;
@@ -2766,20 +2822,24 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                           // start — a bound project shows as a read-only
                           // label; a projectless existing chat renders no
                           // chip at all (outer guard above).
-                          <span className="flex max-w-44 items-center gap-1 px-2">
+                          <span className="flex h-7 items-center gap-1 px-2">
                             <FolderOpen className="size-3.5 shrink-0" />
-                            <FadeTitle text={projectChipLabel(currentProject)} />
+                            <span className="hidden min-w-0 sm:block sm:flex-1">
+                              <FadeTitle text={projectChipLabel(currentProject)} />
+                            </span>
                           </span>
                         ) : (
                           <>
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 max-w-44 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground"
+                              className="h-7 max-w-44 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground sm:max-w-40"
                               onClick={() => setProjectPickerOpen(true)}
                             >
-                              <FolderOpen className="size-3.5" />
-                              <FadeTitle text={projectChipLabel(currentProject)} />
+                              <FolderOpen className="size-3.5 shrink-0" />
+                              <span className="hidden min-w-0 sm:block sm:flex-1">
+                                <FadeTitle text={projectChipLabel(currentProject)} />
+                              </span>
                             </Button>
                             {currentProject && (
                               <button
@@ -2809,8 +2869,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                       }`}
                       title="How tool actions are approved in this chat"
                     >
-                      <ShieldCheck className="size-3.5" />
-                      {approvalMode === "default" ? accountDefault : APPROVAL_MODE_LABELS[approvalMode]}
+                      <ShieldCheck className="size-3.5 shrink-0" />
+                      <span className="hidden sm:inline">
+                        {approvalMode === "default" ? accountDefault : APPROVAL_MODE_LABELS[approvalMode]}
+                      </span>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-72">
@@ -2842,7 +2904,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               <div className="flex shrink-0 items-center gap-2">
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
-                    <SelectTrigger className="h-7 w-auto min-w-0 max-w-40 gap-1 border-none bg-secondary px-2 shadow-none">
+                    <SelectTrigger className="h-7 w-auto min-w-0 max-w-28 gap-1 border-none bg-secondary px-2 shadow-none sm:max-w-40">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
