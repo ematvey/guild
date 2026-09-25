@@ -1674,17 +1674,29 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // Only surfaces marked `data-scrollable` scroll by touch. Anywhere else a
   // drag must not pan the page over the fixed shell — iOS Safari pans the
   // visual viewport even under a `position: fixed` root (header, composer
-  // and banners would all move with the content).
+  // and banners would all move with the content). A scroller already at its
+  // edge in the drag direction is blocked too: WebKit turns that surplus
+  // drag into pull-to-refresh / rubber-band, which pans the whole shell.
   useEffect(() => {
     const el = shell.current;
     if (!el) return;
+    let startY: number | null = null;
+    const touchStart = (e: TouchEvent) => { startY = e.touches[0]?.clientY ?? null; };
     const block = (e: TouchEvent) => {
       const target = e.target as Element | null;
-      if (target?.closest?.("[data-scrollable]")) return;
-      e.preventDefault();
+      const scroller = target?.closest?.("[data-scrollable]") as HTMLElement | null;
+      if (!scroller) { e.preventDefault(); return; }
+      const dy = startY === null ? 0 : (e.touches[0]?.clientY ?? 0) - startY;
+      const atTop = scroller.scrollTop <= 0;
+      const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
+      if ((dy > 0 && atTop) || (dy < 0 && atBottom)) e.preventDefault();
     };
+    el.addEventListener("touchstart", touchStart, { passive: true });
     el.addEventListener("touchmove", block, { passive: false });
-    return () => el.removeEventListener("touchmove", block);
+    return () => {
+      el.removeEventListener("touchstart", touchStart);
+      el.removeEventListener("touchmove", block);
+    };
   }, []);
   const loadSeq = useRef(0); // guards against stale chat switches landing last
   const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
@@ -2612,7 +2624,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
         {/* composer: floats over the chat content; the scroll pane runs
             full-height behind it */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:p-4">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4">
           <div className="pointer-events-auto mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm">
             <input
               ref={fileInput}
@@ -2869,7 +2881,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                       }`}
                       title="How tool actions are approved in this chat"
                     >
-                      <ShieldCheck className="size-3.5 shrink-0" />
+                      {(() => {
+                        // Icon-only on narrow screens: the icon must say
+                        // which mode is active, not always the shield.
+                        const ActiveIcon = approvalMode === "default" ? ShieldCheck : APPROVAL_MODES[approvalMode].icon;
+                        return <ActiveIcon className="size-3.5 shrink-0" />;
+                      })()}
                       <span className="hidden sm:inline">
                         {approvalMode === "default" ? accountDefault : APPROVAL_MODE_LABELS[approvalMode]}
                       </span>
