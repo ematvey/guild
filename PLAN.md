@@ -9,7 +9,7 @@ recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
-Updated 2026-09-24.
+Updated 2026-09-26.
 
 ## Where things stand
 
@@ -18,14 +18,18 @@ Updated 2026-09-24.
   (126 findings fixed across auth/session, machines/executor identity, turn
   queue, provider contracts, engine session lifecycle, integrations, and
   desktop transport). Live-bundle and migration state verified per deploy.
-- **Clients:** desktop 0.5.21 released 2026-09-25 (all four platforms, both
-  installers and updater bundles, sha256-verified downloads, updater manifest
-  serving it with minisign signatures). 0.5.21 ships the CSP removal —
-  avatars (IdP pictures) now render in the desktop and web clients. Running
-  clients pick it up via the auto-updater on relaunch; the devbox install
-  (0.5.18) must be relaunched (or updated in place) to reconnect — 0.5.18
-  cannot talk to the current server. Client releases remain dev-controlled
-  and deliberate.
+- **Clients:** desktop 0.5.22 released 2026-09-26 (all four platforms,
+  installers + updater bundles, sha256-verified, updater manifest serving it
+  with minisign signatures). 0.5.22 ships the mobile-chat fixes: the
+  project-chat send crash (uncaught render error bricked the view — analysis
+  and repro in docs/plans/2026-09-24-mobile-chat-ux.md), chat error boundary,
+  icon-only composer badges on narrow screens, touch-drag containment
+  (pull-to-refresh no longer pans the shell), top-center toasts on phones.
+  0.5.21 (2026-09-25) shipped the CSP removal — avatars render in desktop
+  and web clients. Running clients pick releases up via the auto-updater on
+  relaunch; the devbox install (0.5.18) must be relaunched (or updated in
+  place) to reconnect — 0.5.18 cannot talk to the current server. Client
+  releases remain dev-controlled and deliberate.
 - **Quality baseline:** six review rounds with adversarial verification; the
   last two fix-diff audits found no regressions. Full gates at merge time:
   workspace cargo test (705+ tests), frontend vitest, strict clippy,
