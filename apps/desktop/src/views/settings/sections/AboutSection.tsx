@@ -4,9 +4,15 @@
 
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { Button } from "@guild/ui/components/button";
 import { PageHeader } from "../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
 import { IS_TAURI, serverBase } from "../../../transport";
+import {
+  setTelemetryEnabled,
+  startTelemetry,
+  telemetryEnabled,
+} from "../../../lib/telemetry";
 
 async function fetchJson(url: string): Promise<unknown | null> {
   try {
@@ -22,6 +28,7 @@ export function AboutSection() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [serverVersion, setServerVersion] = useState<string | null>(null);
   const [latestRelease, setLatestRelease] = useState<string | null>(null);
+  const [telemetry, setTelemetry] = useState(telemetryEnabled());
 
   useEffect(() => {
     void fetchJson(`${serverBase()}/api/v1/health`).then((h) => {
@@ -67,6 +74,26 @@ export function AboutSection() {
           server; a browser reload always picks up its current build.
         </p>
       )}
+      <FactCard label="Telemetry">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-muted-foreground">
+            {telemetry
+              ? "On — anonymous app diagnostics (errors, performance) sent to this server's Faro collector."
+              : "Off. Nothing is collected or sent."}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setTelemetryEnabled(!telemetry);
+              setTelemetry(!telemetry);
+              if (!telemetry) void startTelemetry();
+            }}
+          >
+            {telemetry ? "Disable" : "Enable"}
+          </Button>
+        </div>
+      </FactCard>
     </div>
   );
 }

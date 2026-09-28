@@ -9,7 +9,7 @@ recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
-Updated 2026-09-26.
+Updated 2026-09-28.
 
 ## Where things stand
 
@@ -19,6 +19,12 @@ Updated 2026-09-26.
   queue, provider contracts, engine session lifecycle, integrations, and
   desktop transport). Live-bundle and migration state verified per deploy.
 - **Clients:** desktop 0.5.22 released 2026-09-26 (all four platforms,
+- **Telemetry (opt-in):** the server proxies `POST /faro/collect` to the
+  shared Faro collector (Alloy+Loki in `/srv/faro`, `GUILD_FARO_URL`); the
+  client ships a Settings → About toggle (off by default, localStorage
+  `guild.faro.enabled`) that lazy-loads `@grafana/faro-web-sdk` and sends
+  app diagnostics through the paired server. Collector receives app_name
+  `guild`; logs land in Loki (`/srv/faro`), traces forward to Laminar.
   installers + updater bundles, sha256-verified, updater manifest serving it
   with minisign signatures). 0.5.22 ships the mobile-chat fixes: the
   project-chat send crash (uncaught render error bricked the view — analysis

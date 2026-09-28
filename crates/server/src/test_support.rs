@@ -558,6 +558,7 @@ pub async fn full_state() -> FullState {
         role: "all".into(),
         data_dir: "./data-test".into(),
         allow_shell_tools: false,
+        faro_url: "http://placeholder:12347/collect".into(),
         internal_token: Some("test-internal".into()),
         worker_bind: "127.0.0.1:0".into(),
         worker_advertised_url: "http://localhost:9080".into(),
