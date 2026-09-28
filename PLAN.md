@@ -11,6 +11,20 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 Updated 2026-09-28.
 
+## Latest decisions
+
+- **0.5.23 — daemon trace behind a settings toggle (WORKSTATION offline hunt).**
+  WORKSTATION's machine link connects and the client closes it ~3 ms later
+  (server telemetry: `reader_closed`, zero frames), then no retry for
+  minutes — the retired-socket-host path, not the 1 s backoff. Same
+  signature as DEVBOX-2's flap; Linux daemon links live. The client
+  trace that names the end reason was env-gated only, which is useless on
+  a user machine. dtrace now has a runtime gate (`dtrace::set_enabled`),
+  the desktop app persists the choice (`daemon-trace.enabled` marker in the
+  guild config dir, seeded at launch) and exposes it in Settings → About
+  with the trace file path shown. The env var still works for headless
+  daemons. Trace file now size-capped (1 MiB, same as the IPC trace).
+
 ## Where things stand
 
 - **Server** runs on :18080 (compose, embedded web bundles). It carries the
