@@ -64,6 +64,10 @@ Two different "Guild" stacks exist on this host. **Don't confuse them.**
 
 ### The stale one: legacy Node stack on :9330
 
+The Cloudflare tunnel ingress for `guild.example.com` targets `localhost:18080`
+(`/etc/cloudflared/config.yml`); it previously targeted :9330 and produced 502s
+once the legacy stack stopped.
+
 - Containers `guild-web-1` (Next-ish web on :3000), `guild-api-1`
   (`npm run start -w @guild/api` on :4000), `guild-nginx-1` (:9330),
   `guild-db-1`, `guild-cli-releases-1` — running since 2026-09-02.
