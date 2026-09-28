@@ -7,6 +7,7 @@ pub mod auth;
 pub mod chats;
 pub mod error;
 pub mod events;
+pub mod faro;
 pub mod feed;
 pub mod gateway;
 pub mod hub;
@@ -67,6 +68,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(attachments::routes())
         .merge(tool_artifacts::routes())
         .merge(events::routes())
+        .merge(faro::routes())
         .merge(oidc::routes())
         .merge(api_keys::routes())
         .merge(openai::routes())

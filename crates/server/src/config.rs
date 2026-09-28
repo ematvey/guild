@@ -27,6 +27,9 @@ pub struct Config {
     pub data_dir: String,
     /// Allow execute in server-side agent sessions (default: off).
     pub allow_shell_tools: bool,
+    /// Upstream Faro receiver for browser telemetry proxying
+    /// (/faro/collect). Empty disables the endpoint.
+    pub faro_url: String,
     /// Static bearer token for /api/v1/internal/* (worker -> server).
     pub internal_token: Option<String>,
     pub worker_bind: String,
@@ -67,6 +70,10 @@ impl Config {
             data_dir: env_or("GUILD_DATA_DIR", "./data"),
             allow_shell_tools: std::env::var("GUILD_ALLOW_SHELL_TOOLS")
                 .is_ok_and(|v| v == "1" || v == "true"),
+            faro_url: env_or(
+                "GUILD_FARO_URL",
+                "http://host.docker.internal:12347/collect",
+            ),
             internal_token: std::env::var("GUILD_INTERNAL_TOKEN").ok(),
             worker_bind: env_or("GUILD_WORKER_BIND", "0.0.0.0:9080"),
             worker_advertised_url: env_or("GUILD_WORKER_ADVERTISED_URL", "http://localhost:9080"),
@@ -85,6 +92,7 @@ impl Config {
             clickhouse_user: String::new(),
             clickhouse_password: String::new(),
             master_key_hex: "00".repeat(32),
+            faro_url: "http://placeholder:12347/collect".into(),
             jwt_secret: "test-secret".into(),
             s3_url: "http://placeholder:9000".into(),
             s3_bucket: "guild".into(),
