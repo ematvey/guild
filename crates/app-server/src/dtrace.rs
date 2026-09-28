@@ -1,15 +1,40 @@
-//! Env-gated daemon-side trace (GUILD_DAEMON_TRACE=1 appends to
-//! %TEMP%/guild-daemon-trace.log). Thread-safe, never panics, zero cost when
-//! unset. Exists to localize the Windows named-pipe wedge in situ.
+//! Daemon-side trace (appends to %TEMP%/guild-daemon-trace.log). Two gates,
+//! either enables: the GUILD_DAEMON_TRACE=1 env var (headless daemons,
+//! debugging) or the runtime flag the desktop app sets from
+//! Settings → About. Thread-safe, never panics, zero cost when off. Exists
+//! to localize the Windows named-pipe wedge in situ.
 
 use std::io::Write as _;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// Runtime gate, flipped by the desktop settings toggle; the env var stays
+/// independent so a headless daemon needs no settings surface.
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Size cap for the trace: past it the file is truncated and restarted (a
+/// forgotten toggle must not grow the temp file without bound).
+const TRACE_MAX_BYTES: u64 = 1 << 20;
+
+pub fn set_enabled(on: bool) {
+    ENABLED.store(on, Ordering::Relaxed);
+}
+
+/// Effective gate: the runtime flag OR the env var.
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+        || std::env::var("GUILD_DAEMON_TRACE").unwrap_or_default() == "1"
+}
+
+/// Where the trace lands, for the settings UI to show the user.
+pub fn trace_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("guild-daemon-trace.log")
+}
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 pub fn dtrace(msg: &str) {
-    if std::env::var("GUILD_DAEMON_TRACE").unwrap_or_default() != "1" {
+    if !enabled() {
         return;
     }
     let ts = SystemTime::now()
@@ -18,10 +43,14 @@ pub fn dtrace(msg: &str) {
         .unwrap_or(0);
     let n = SEQ.fetch_add(1, Ordering::SeqCst);
     let line = format!("{ts} #{n} T[{:?}] {msg}\n", std::thread::current().id());
-    let path = std::env::temp_dir().join("guild-daemon-trace.log");
+    let path = trace_path();
+    let truncate = std::fs::metadata(&path)
+        .map(|m| m.len() > TRACE_MAX_BYTES)
+        .unwrap_or(false);
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
-        .append(true)
+        .append(!truncate)
+        .truncate(truncate)
         .open(&path)
     {
         let _ = f.write_all(line.as_bytes());
@@ -87,6 +116,19 @@ mod tests {
         let frame = r#"{"result":{"token":"sess-abc123"}}"#;
         let out = redacted_frame_summary(frame, 500);
         assert!(!out.contains("sess-abc123"), "{out}");
+    }
+
+    #[test]
+    fn runtime_toggle_gates_the_trace_without_the_env_var() {
+        if std::env::var("GUILD_DAEMON_TRACE").unwrap_or_default() == "1" {
+            return; // env gate is process-global; this test owns the flag only
+        }
+        set_enabled(false);
+        assert!(!enabled());
+        set_enabled(true);
+        assert!(enabled());
+        set_enabled(false);
+        assert!(!enabled());
     }
 
     #[test]

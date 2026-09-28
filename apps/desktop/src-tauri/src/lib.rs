@@ -1026,6 +1026,46 @@ pub mod commands {
         Ok(())
     }
 
+    /// Daemon-side trace (Settings → About toggle): effective on/off and
+    /// where the log lands. The trace localizes machine-link wedges (e.g.
+    /// the Windows instant-close) without an env var set at launch.
+    #[tauri::command]
+    pub fn daemon_trace_state() -> Value {
+        serde_json::json!({
+            "enabled": guild_app_server::dtrace::enabled(),
+            "path": guild_app_server::dtrace::trace_path().to_string_lossy(),
+        })
+    }
+
+    /// Flips the runtime trace gate and persists the choice as a marker file
+    /// in the guild config dir, so the next launch restores it. Applies to
+    /// the app-hosted daemon (single-process design); a systemd-unit daemon
+    /// is a separate process and still uses GUILD_DAEMON_TRACE=1.
+    #[tauri::command]
+    pub fn set_daemon_trace(on: bool) -> Result<(), String> {
+        guild_app_server::dtrace::set_enabled(on);
+        let marker = guild_app_server::fs_bridge::guild_config_dir()
+            .join("daemon-trace.enabled");
+        if on {
+            std::fs::create_dir_all(marker.parent().expect("config dir has a parent"))
+                .map_err(|e| e.to_string())?;
+            std::fs::write(&marker, b"1").map_err(|e| e.to_string())?;
+        } else {
+            let _ = std::fs::remove_file(&marker);
+        }
+        Ok(())
+    }
+
+    /// Restores the persisted trace toggle at launch: the marker file wins
+    /// over nothing; the env var needs no seeding (checked per call).
+    pub fn seed_daemon_trace() {
+        let marker = guild_app_server::fs_bridge::guild_config_dir()
+            .join("daemon-trace.enabled");
+        if marker.exists() {
+            guild_app_server::dtrace::set_enabled(true);
+        }
+    }
+
     /// The webview hands over its machine identity (localStorage, stable per
     /// install — it keys existing chat bindings). Starts/refreshes the
     /// server link.
@@ -1580,6 +1620,7 @@ fn show_main_window(app: &AppHandle) {
 }
 
 pub fn run() {
+    commands::seed_daemon_trace();
     tauri::Builder::default()
         // single-instance must be the first plugin: a second launch focuses
         // the running one instead of forking a second engine/session.
@@ -1606,6 +1647,8 @@ pub fn run() {
             commands::list_dir,
             commands::chat_snapshot,
             commands::machine_presence,
+            commands::daemon_trace_state,
+            commands::set_daemon_trace,
             commands::install_update,
             commands::pending_update_version
         ])

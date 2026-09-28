@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@guild/ui/components/button";
 import { PageHeader } from "../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
@@ -29,6 +30,18 @@ export function AboutSection() {
   const [serverVersion, setServerVersion] = useState<string | null>(null);
   const [latestRelease, setLatestRelease] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState(telemetryEnabled());
+  const [trace, setTrace] = useState<{
+    enabled: boolean;
+    path: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (IS_TAURI) {
+      void invoke<{ enabled: boolean; path: string }>("daemon_trace_state")
+        .then(setTrace)
+        .catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     void fetchJson(`${serverBase()}/api/v1/health`).then((h) => {
@@ -94,6 +107,33 @@ export function AboutSection() {
           </Button>
         </div>
       </FactCard>
+      {IS_TAURI && trace && (
+        <FactCard label="Daemon trace">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-muted-foreground">
+              {trace.enabled
+                ? `On — machine-link diagnostics append to ${trace.path}.`
+                : `Off. When on, machine-link diagnostics append to ${trace.path} (useful when this machine keeps dropping offline).`}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const on = !trace.enabled;
+                void invoke("set_daemon_trace", { on })
+                  .then(() =>
+                    invoke<{ enabled: boolean; path: string }>("daemon_trace_state").then(
+                      setTrace,
+                    ),
+                  )
+                  .catch(() => {});
+              }}
+            >
+              {trace.enabled ? "Disable" : "Enable"}
+            </Button>
+          </div>
+        </FactCard>
+      )}
     </div>
   );
 }
