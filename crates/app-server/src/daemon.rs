@@ -337,22 +337,39 @@ const RECLAIM_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 /// this process (the webview keeps dispatching), so each new host cycle
 /// relatches it to false before hosting again.
 pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyhow::Result<()> {
-    // One live link + watcher pair at a time: a failed host cycle aborts the
-    // previous cycle's tasks before the next spawn. Without this, a
-    // fast-failing bind piles up an unbounded family of machine-link retry
-    // loops (each minting tickets on its own cadence) — the allocation
-    // storm that starved the engine and ate the user's sends.
+    // One live link + watcher pair at a time, tied to HOSTING, not to cycle
+    // attempts: the link is spawned when this process starts hosting and
+    // torn down when it parks or retires. A failed host cycle (a bind race,
+    // an accept error) must neither respawn nor tear the link down — the
+    // link is independent of the CLI socket. The old shape (abort + respawn
+    // every cycle) turned a persistently failing bind into a link kill per
+    // cycle: with the Windows pipe bind broken (os error 87, 2026-09-23 →
+    // 09-29) every Windows machine's link died within a second of
+    // connecting, forever — WORKSTATION/DEVBOX-2 permanently offline.
     let mut link_cycle: Option<(
         tokio::task::JoinHandle<()>,
         tokio::task::JoinHandle<()>,
         tokio::task::JoinHandle<()>,
     )> = None;
-    loop {
-        while crate::daemon_install::unit_active() {
-            tokio::time::sleep(RECLAIM_POLL).await;
+    let teardown = |link_cycle: &mut Option<(
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<()>,
+    )>| {
+        if let Some((link, watcher, reaper)) = link_cycle.take() {
+            link.abort();
+            watcher.abort();
+            reaper.abort();
         }
-        while try_connect_at(&path).is_ok() {
-            tokio::time::sleep(RECLAIM_POLL).await;
+    };
+    loop {
+        // Park while the unit or another daemon owns the executor — the
+        // owner runs the link, so ours goes down for the park's duration.
+        if crate::daemon_install::unit_active() || try_connect_at(&path).is_ok() {
+            teardown(&mut link_cycle);
+            while crate::daemon_install::unit_active() || try_connect_at(&path).is_ok() {
+                tokio::time::sleep(RECLAIM_POLL).await;
+            }
         }
         if *shared.shutdown.borrow() {
             // This host was retired (shutdown latched): hold off through the
@@ -363,28 +380,27 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
             }
             let _ = shared.shutdown.send(false);
         }
-        if let Some((link, watcher, reaper)) = link_cycle.take() {
-            link.abort();
-            watcher.abort();
-            reaper.abort();
+        if link_cycle.is_none() {
+            link_cycle = {
+                let (link, watcher) = spawn_machine_link(&shared);
+                Some((link, watcher, spawn_reaper(&shared)))
+            };
         }
-        link_cycle = {
-            let (link, watcher) = spawn_machine_link(&shared);
-            Some((link, watcher, spawn_reaper(&shared)))
-        };
-        if let Err(e) = host_shared_socket(path.clone(), shared.clone()).await {
-            // A failed host cycle (a bind race, an accept error) leaves the
-            // endpoint to the winner; the loop re-polls and retries instead
-            // of ending — the CLI socket must not go permanently unhosted.
-            // The failure must not spin: a fast-failing bind respawns the
-            // link + watcher + reaper tasks every few milliseconds, and
-            // nothing cancels them — hundreds of concurrent machine-link
-            // loops each minting tickets were observed pegging the CPU and
-            // leaking gigabytes of commit per minute (Windows GUI,
-            // 2026-09-23). Sleep between cycles and trace the error.
-            crate::dtrace::dtrace(&format!("daemon host cycle failed: {e}"));
-            eprintln!("guild: daemon host cycle failed: {e}");
-            tokio::time::sleep(RECLAIM_POLL).await;
+        match host_shared_socket(path.clone(), shared.clone()).await {
+            Ok(()) => {
+                // A hosted spell ended (daemon.shutdown retire): the link
+                // goes with the socket; the reclaim cycle respawns both.
+                teardown(&mut link_cycle);
+            }
+            Err(e) => {
+                // The bind failed; keep the link and the reaper alive and
+                // retry the host. Respawning here was the 2026-09-23
+                // allocation storm; tearing down here kept every link dead
+                // while the bind kept failing.
+                crate::dtrace::dtrace(&format!("daemon host cycle failed: {e}"));
+                eprintln!("guild: daemon host cycle failed: {e}");
+                tokio::time::sleep(RECLAIM_POLL).await;
+            }
         }
     }
 }
@@ -603,15 +619,22 @@ fn create_pipe_server_instance(
         bInheritHandle: 0,
     };
     let name_wide: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
-    let mut open_mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | PIPE_REJECT_REMOTE_CLIENTS;
+    // PIPE_REJECT_REMOTE_CLIENTS is a dwPipeMode flag: in dwOpenMode the bit
+    // is unassigned and CreateNamedPipeW rejects the whole call with
+    // ERROR_INVALID_PARAMETER (87) — every Windows pipe host failed to bind
+    // until this moved (2026-09-29), and the host cycle churned the machine
+    // link every second (WORKSTATION/DEVBOX-2 permanently offline).
+    let mut open_mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED;
     if first {
         open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
     }
+    let pipe_mode =
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS;
     let handle = unsafe {
         CreateNamedPipeW(
             name_wide.as_ptr(),
             open_mode,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            pipe_mode,
             PIPE_UNLIMITED_INSTANCES,
             65536,
             65536,
