@@ -51,6 +51,7 @@ pub fn dtrace(msg: &str) {
         .create(true)
         .append(!truncate)
         .truncate(truncate)
+        .write(true)
         .open(&path)
     {
         let _ = f.write_all(line.as_bytes());
