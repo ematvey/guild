@@ -590,6 +590,11 @@ pub(crate) async fn drive_socket(
                     return;
                 }
                 Err(crate::http::hub::MachineRejected::Displaced) => {
+                    tracing::info!(
+                        machine_id = %machine_id,
+                        instance_id = %instance_id,
+                        "ws machine connect rejected: slot held by a live link"
+                    );
                     let _ = tokio::time::timeout(
                         TERMINAL_WRITE_TIMEOUT,
                         ws_tx.send(axum::extract::ws::Message::text(
@@ -1070,7 +1075,14 @@ mod tests {
             sink: sink.clone(),
             label: None,
         };
-        let registration = futures::executor::block_on(hub.register_machine(old, "busy")).unwrap();
+        let instance = Uuid::now_v7();
+        let registration = futures::executor::block_on(hub.register_machine_instance(
+            old,
+            "busy",
+            instance,
+            false,
+        ))
+        .unwrap();
         for _ in 0..257 {
             futures::executor::block_on(sink.send(WsServerMsg::Hello)).unwrap();
         }
@@ -1099,9 +1111,12 @@ mod tests {
         let register = std::thread::spawn(move || {
             register_barrier.wait();
             registered_tx
-                .send(futures::executor::block_on(
-                    hub.register_machine(replacement, "busy"),
-                ))
+                .send(futures::executor::block_on(hub.register_machine_instance(
+                    replacement,
+                    "busy",
+                    instance,
+                    false,
+                )))
                 .unwrap();
         });
         barrier.wait();
@@ -1216,7 +1231,11 @@ mod tests {
             sink: sink.clone(),
             label: None,
         };
-        let registration = hub.register_machine(old, "stalled").await.unwrap();
+        let instance = Uuid::now_v7();
+        let registration = hub
+            .register_machine_instance(old, "stalled", instance, false)
+            .await
+            .unwrap();
         let wire = Arc::new(WireState::default());
         wire.stalled.store(true, Ordering::SeqCst);
         sink.send(WsServerMsg::Hello).await.unwrap();
@@ -1262,7 +1281,7 @@ mod tests {
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(100),
-                hub.register_machine(replacement, "stalled")
+                hub.register_machine_instance(replacement, "stalled", instance, false)
             )
             .await
             .unwrap()
