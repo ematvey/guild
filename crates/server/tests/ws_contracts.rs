@@ -224,18 +224,34 @@ async fn reconnect_fails_unknown_execution_with_member_keeping_feed_alive() {
 }
 
 #[tokio::test]
-async fn displacement_is_terminal_on_stale_resume() {
+async fn a_foreign_instance_connect_is_rejected_and_the_holder_keeps_the_slot() {
     let f = Fixture::new().await;
     let first = Uuid::now_v7();
     let mut old = f.socket(Some(("singleton", first, false))).await;
     until(&mut old, |m| matches!(m, WsServerMsg::ThreadList { .. })).await;
-    let mut new = f.socket(Some(("singleton", Uuid::now_v7(), false))).await;
-    until(&mut new, |m| matches!(m, WsServerMsg::ThreadList { .. })).await;
-    until(&mut old, |m| matches!(m, WsServerMsg::Displaced)).await;
     let holder = f.ts.state.hub.machine_connection("singleton");
-    let mut stale = f.socket(Some(("singleton", first, true))).await;
+    // A second instance connecting while the holder is live is REJECTED, not
+    // displaced: it receives the Displaced notice (the client's retry
+    // signal) and the holder keeps the slot — a displaced link never learns
+    // it lost the slot (its leftover server conn keeps heartbeating), so
+    // the machine would show offline until the daemon restarts.
+    let mut new = f.socket(Some(("singleton", Uuid::now_v7(), false))).await;
+    until(&mut new, |m| matches!(m, WsServerMsg::Displaced)).await;
+    assert_eq!(f.ts.state.hub.machine_connection("singleton"), holder);
+    // A stale resume from yet another old instance is likewise rejected.
+    let mut stale = f.socket(Some(("singleton", Uuid::now_v7(), true))).await;
     until(&mut stale, |m| matches!(m, WsServerMsg::Displaced)).await;
     assert_eq!(f.ts.state.hub.machine_connection("singleton"), holder);
+    // A reconnect of the holder's own instance replaces its slot (the
+    // same-incarnation reconnect path — the daemon's own retry after a
+    // network blip):
+    let mut self_reconnect = f.socket(Some(("singleton", first, false))).await;
+    until(
+        &mut self_reconnect,
+        |m| matches!(m, WsServerMsg::ThreadList { .. }),
+    )
+    .await;
+    assert_ne!(f.ts.state.hub.machine_connection("singleton"), holder);
 }
 
 #[tokio::test]

@@ -13,6 +13,21 @@ Updated 2026-09-29.
 
 ## Latest decisions
 
+- **0.5.25 — a live machine slot is held, not displaced.** Root cause of the
+  recurring devbox outages: any locally-run guild binary (dev sessions on
+  this box — which IS devbox) loads the real token.json and connects a
+  machine link as the same row; the hub's newest-wins displacement handed
+  the slot to the thief, and the displaced link never learns it lost the
+  slot — its leftover server conn keeps heartbeating, so the daemon sits
+  "connected" while the machine shows offline until the daemon restarts.
+  The hub now REJECTS a connect from a different instance while a live slot
+  exists (same-instance reconnects still replace their own zombie slot —
+  that's the blip-heal path); clients of every deployed version already
+  park 300s on the Displaced notice and retry. Rejections are logged with
+  machine + instance. Known limit: instance_id is client-claimed, so a
+  determined spoofer could still bypass — real defense would need
+  per-instance credentials. Server-only change; no client release needed.
+
 - **0.5.24 — the Windows machines were offline because of one misplaced
   flag.** WORKSTATION's daemon trace (the 0.5.23 toggle earning its keep) showed
   `daemon host cycle failed: os error 87` once per second: the Sep 23 pipe

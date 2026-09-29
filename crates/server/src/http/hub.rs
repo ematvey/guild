@@ -168,6 +168,27 @@ impl Hub {
                 // its user — newest-wins applies within one user only).
                 return Err(MachineRejected::ForeignOwner);
             }
+            // A live slot means a live machine link: its holder's heartbeat
+            // dies with the socket and the teardown unregisters within ~10s.
+            // A second instance connecting while one holds the slot is a
+            // duplicate daemon or an identity thief — reject it instead of
+            // displacing a healthy link: the displaced link never learns it
+            // lost the slot (its leftover server conn keeps exchanging
+            // heartbeats with it), so the client sits "connected" while the
+            // machine shows offline until the daemon restarts (devbox,
+            // 2026-09-28/29). A reconnect of the SAME instance replaces its
+            // own zombie slot below — note instance_id is client-claimed, so
+            // this heals honest blips and the observed thief pattern (fresh
+            // instance), not a determined spoofer; real defense would need
+            // per-instance credentials.
+            if old.is_some()
+                && guard
+                    .owners
+                    .get(machine_id)
+                    .is_some_and(|owner| *owner != instance)
+            {
+                return Err(MachineRejected::Displaced);
+            }
             let replacing_existing_machine = old
                 .as_ref()
                 .is_some_and(|holder| holder.user_id == m.user_id);
@@ -507,7 +528,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn machine_singleton_newest_wins_and_notifies_displaced() {
+    async fn machine_singleton_rejects_a_foreign_instance_and_replaces_its_own() {
         let hub = Hub::default();
         let (old_sink, mut old_rx) = socket_channel();
         let old = Member {
@@ -518,18 +539,39 @@ mod tests {
             label: None,
         };
         let user_id = old.user_id;
-        let first_registration = hub.register_machine(old, "m1").await.unwrap();
+        let instance = Uuid::now_v7();
+        let first_registration = hub
+            .register_machine_instance(old, "m1", instance, false)
+            .await
+            .unwrap();
         assert!(!first_registration.displaced);
         assert!(hub.machine_online("m1"));
 
-        let mut new = member();
-        new.label = Some("Desk".into());
-        new.user_id = user_id; // same owner: newest-wins displacement applies
-        let new_user_id = new.user_id;
-        assert!(hub.register_machine(new, "m1").await.unwrap().displaced);
+        // A different instance connecting while the slot is live is rejected:
+        // the holder keeps the slot and no Displaced notice goes out.
+        let mut thief = member();
+        thief.label = Some("Thief".into());
+        thief.user_id = user_id; // same owner: the rejection is instance-based
+        assert!(matches!(
+            hub.register_machine_instance(thief, "m1", Uuid::now_v7(), false)
+                .await,
+            Err(MachineRejected::Displaced)
+        ));
+        assert!(hub.machine_online("m1"));
+        assert!(old_rx.try_recv().is_err());
+
+        // The SAME instance reconnecting replaces its own zombie slot.
+        let mut reconnected = member();
+        reconnected.label = Some("Desk".into());
+        reconnected.user_id = user_id;
+        let re_registration = hub
+            .register_machine_instance(reconnected, "m1", instance, false)
+            .await
+            .unwrap();
+        assert!(re_registration.displaced);
         assert!(hub.machine_online("m1"));
         assert_eq!(
-            hub.machines_of_user(new_user_id),
+            hub.machines_of_user(user_id),
             vec![("m1".into(), "Desk".into())]
         );
         assert!(matches!(
@@ -537,8 +579,7 @@ mod tests {
             SocketOutput::Message(WsServerMsg::Displaced)
         ));
         assert!(old_rx.try_recv().is_err());
-        // The displaced holder's sink is gone; only the replacement remains
-        // (both sockets belong to the same owner in this test).
+        // The replaced holder's sink is gone; only the replacement remains.
         assert_eq!(hub.sinks_of_user(user_id).len(), 1);
     }
 
@@ -655,7 +696,11 @@ mod tests {
             sink: socket_channel().0,
             label: None,
         };
-        let first_registration = hub.register_machine(first, "replaceable").await.unwrap();
+        let instance = Uuid::now_v7();
+        let first_registration = hub
+            .register_machine_instance(first, "replaceable", instance, false)
+            .await
+            .unwrap();
         drop(first_registration);
         let replacement = Member {
             conn_id: Uuid::now_v7(),
@@ -664,8 +709,11 @@ mod tests {
             sink: socket_channel().0,
             label: None,
         };
+        // A same-instance reconnect replaces the slot and keeps exactly one
+        // machine budget slot busy; a foreign instance would be rejected
+        // outright under the no-displacement rule.
         assert!(
-            hub.register_machine(replacement, "replaceable")
+            hub.register_machine_instance(replacement, "replaceable", instance, false)
                 .await
                 .unwrap()
                 .displaced
@@ -694,12 +742,16 @@ mod tests {
             label: None,
         };
         let old_user_id = old.user_id;
-        let registration = hub.register_machine(old, "full-queue").await.unwrap();
+        let instance = Uuid::now_v7();
+        let registration = hub
+            .register_machine_instance(old, "full-queue", instance, false)
+            .await
+            .unwrap();
         let mut shutdown = registration.shutdown;
         let mut new = member();
-        new.user_id = old_user_id; // same owner: displacement is same-user
+        new.user_id = old_user_id; // same owner; same instance: reconnect replaces
         assert!(
-            hub.register_machine(new, "full-queue")
+            hub.register_machine_instance(new, "full-queue", instance, false)
                 .await
                 .unwrap()
                 .displaced
@@ -727,8 +779,9 @@ mod tests {
         };
         let old_conn_id = old.conn_id;
         let user_id = old.user_id;
+        let instance = Uuid::now_v7();
         let mut shutdown = hub
-            .register_machine(old, "blocked-reader")
+            .register_machine_instance(old, "blocked-reader", instance, false)
             .await
             .unwrap()
             .shutdown;
@@ -747,7 +800,7 @@ mod tests {
         };
         let registration = tokio::time::timeout(
             std::time::Duration::from_millis(100),
-            hub.register_machine(replacement, "blocked-reader"),
+            hub.register_machine_instance(replacement, "blocked-reader", instance, false),
         )
         .await
         .expect("registration must not wait for the old reader or writer")
