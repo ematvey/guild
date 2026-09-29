@@ -9,7 +9,23 @@ recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
-Updated 2026-09-28.
+Updated 2026-09-29.
+
+## Latest decisions
+
+- **0.5.24 — the Windows machines were offline because of one misplaced
+  flag.** WORKSTATION's daemon trace (the 0.5.23 toggle earning its keep) showed
+  `daemon host cycle failed: os error 87` once per second: the Sep 23 pipe
+  rewrite passed `PIPE_REJECT_REMOTE_CLIENTS` in `dwOpenMode` where the bit
+  is unassigned, so `CreateNamedPipeW` failed on every call and the host
+  cycle aborted + respawned the machine link once a second — no Windows
+  client could hold a link past ~1s (WORKSTATION, DEVBOX-2), while the
+  Linux daemon path never runs this code. Flag moved to `dwPipeMode`; the
+  reclaiming host also no longer tears the link down on a failed bind (the
+  link is independent of the CLI socket — the Sep 23 abort+respawn shape
+  was the storm's other half). Lesson that keeps paying: the Sep 25
+  instrumentation + the 0.5.23 trace toggle turned "why is it offline"
+  into a one-line answer without touching the user's machine.
 
 ## Latest decisions
 
