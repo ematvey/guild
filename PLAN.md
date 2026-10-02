@@ -13,6 +13,15 @@ Updated 2026-09-30.
 
 ## Latest decisions
 
+- **Prod is a separate checkout** (`~/guild-live`, branch master, compose
+  stack on :18081, public at guild.example.org). Deploy to prod by
+  fast-forwarding its master from ~/guild's develop (fetch the local path,
+  merge --ff-only — its docker-compose.yml carries prod-local edits, so
+  never rebase it) and `docker compose build server && up -d` there. First
+  multi-workspace deploy: 0.5.32 on 2026-09-30. The 0.5.22→0.5.32 jump
+  exposed that an untracked migration file breaks the tree — migrations
+  must be committed with their store/mod.rs entries.
+
 - **Multi-workspace auth — the daemon holds N live sessions, one per
   server.** The desktop client can now be signed into two guild servers
   (different domains) at once and switch between them: both servers see the
