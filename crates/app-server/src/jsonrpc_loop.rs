@@ -9,7 +9,7 @@
 use crate::agent_session::PendingApprovals;
 use crate::auth_state::{AuthChange, AuthState};
 use crate::cloud::CloudClient;
-use crate::machine_link::MachineLinkConfig;
+use crate::machine_link::LinkRegistry;
 use anyhow::Context as _;
 use guild_core::agent::policy::ApprovalPolicy;
 use guild_core::tools::artifacts::ArtifactIndex;
@@ -64,9 +64,14 @@ pub struct Shared {
     pub artifacts: Arc<ArtifactIndex>,
     /// Set true by `daemon.shutdown`; the daemon's accept loop watches it.
     pub shutdown: Arc<tokio::sync::watch::Sender<bool>>,
-    /// The machine link's config channel: publish a config to connect the
-    /// executor link, `None` to drop it (sign-out). The link task subscribes.
-    pub machine_link: Arc<tokio::sync::watch::Sender<Option<MachineLinkConfig>>>,
+    /// The machine-link registry: one config channel per live workspace.
+    /// Publish a config to connect that workspace's executor link, `None`
+    /// (or `drop_link`) to tear it down. The supervisor task subscribes.
+    pub links: LinkRegistry,
+    /// The registry's spawn feed — the supervisor takes it once per host
+    /// cycle. `None` after the first taker (a second, parked supervisor is
+    /// harmless; the registry never feeds it).
+    pub link_spawn_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>>,
     /// The session store's path (token.json). Injected by tests so they
     /// never touch the developer's real store; the daemon leaves it None
     /// and the default path applies.
@@ -77,28 +82,25 @@ impl Shared {
     pub fn new(session: Session) -> Self {
         let (events, _) = broadcast::channel(256);
         let (shutdown, _) = watch::channel(false);
-        let (machine_link, _) = watch::channel(None);
+        let (links, link_spawn_rx) = crate::machine_link::new_registry();
         Self {
             session: Arc::new(Mutex::new(session)),
             events,
             agents: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
             artifacts: Arc::new(ArtifactIndex::new()),
             shutdown: Arc::new(shutdown),
-            machine_link: Arc::new(machine_link),
+            links,
+            link_spawn_rx: Arc::new(Mutex::new(Some(link_spawn_rx))),
             store_path: None,
         }
     }
 
-    /// Republishes the machine link config from the session's auth state.
-    /// A link exists when the daemon is logged in AND the webview reported
-    /// its machine identity. Called after every auth transition (inside
-    /// `AuthState::transition`) and at boot.
+    /// Republishes every workspace's machine-link config from the session's
+    /// auth state. A workspace connects when it is logged in AND the webview
+    /// reported its machine identity. Called after every auth transition
+    /// (inside `AuthState::transition`) and at boot.
     pub fn publish_machine_link(&self) {
-        self.session
-            .lock()
-            .unwrap()
-            .auth
-            .publish(&self.machine_link);
+        self.session.lock().unwrap().auth.publish(&self.links);
     }
 }
 
@@ -326,6 +328,12 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
         "session.clear" => {
             session_clear(shared.clone(), req, out_tx).await;
         }
+        "workspace.list" => {
+            let _ = out_tx.send(response_value(req.id, workspace_list(&shared)));
+        }
+        "workspace.switch" => {
+            workspace_switch(shared.clone(), req, out_tx).await;
+        }
         "machine.identify" => {
             tokio::spawn(machine_identify(shared.clone(), req, out_tx));
         }
@@ -478,9 +486,7 @@ fn auth_change_with_store(
     let previous = principal_of(&s);
     // The in-memory transition applies even when persistence fails, so the
     // account-state reset runs before the persistence error propagates.
-    let result = s
-        .auth
-        .transition(change, store.as_deref(), &shared.machine_link);
+    let result = s.auth.transition(change, store.as_deref(), &shared.links);
     reset_if_principal_changed(&mut s, previous);
     result
 }
@@ -536,13 +542,20 @@ async fn machine_identify_with_store(
     let _ = out_tx.send(response_value(req.id, result));
 }
 
-/// Full sign-out: drop the cloud session and machine identity in memory and
-/// the persisted token (token.json), so the next restore shows the
-/// pair/sign-in screen instead of re-logging in silently — and drop the
-/// machine link (the webview re-identifies on the next login). Thin over
-/// `AuthState::transition`.
+/// Sign-out: drop the cloud session (target = the optional `base_url`
+/// param, else the ACTIVE workspace) in memory and the persisted store, so
+/// the next restore shows the pair/sign-in screen instead of re-logging in
+/// silently — and drop the machine link (the webview re-identifies on the
+/// next login). Thin over `AuthState::transition`.
 async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
-    let cloud = shared.session.lock().unwrap().auth.cloud().cloned();
+    let target = optional_param(&req, "base_url").map(|b| crate::session_store::normalize_base(&b));
+    let cloud = {
+        let s = shared.session.lock().unwrap();
+        match target.as_deref() {
+            Some(base) => s.auth.cloud_of(base).cloned(),
+            None => s.auth.cloud().cloned(),
+        }
+    };
     if let Some(cloud) = cloud {
         let _ = reqwest::Client::new()
             .post(format!(
@@ -554,8 +567,46 @@ async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSend
             .send()
             .await;
     }
-    let result = auth_change(&shared, AuthChange::SignOut)
-        .map(|_| Response::ok(req.id, json!({ "ok": true })));
+    let change = match target {
+        Some(base_url) => AuthChange::SignOutWorkspace { base_url },
+        None => AuthChange::SignOut,
+    };
+    let result = auth_change(&shared, change).map(|_| Response::ok(req.id, json!({ "ok": true })));
+    let _ = out_tx.send(response_value(req.id, result));
+}
+
+/// Every live workspace plus the active pointer (the switcher's data).
+fn workspace_list(shared: &Shared) -> anyhow::Result<Response> {
+    let s = shared.session.lock().unwrap();
+    let (active, rows) = s.auth.workspaces();
+    Ok(Response::ok(
+        0,
+        json!({
+            "active": active,
+            "workspaces": rows,
+        }),
+    ))
+}
+
+/// Makes an existing workspace active. Thin over `AuthState::transition`
+/// (the principal-change guard resets the account-owned execution state);
+/// answers with the same shape as `session.info` so the webview can mirror
+/// the new active session in one step.
+async fn workspace_switch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Value>) {
+    let result = (|| -> anyhow::Result<Response> {
+        let base_url = param(&req, "base_url")?.to_string();
+        auth_change(&shared, AuthChange::Switch { base_url })?;
+        let s = shared.session.lock().unwrap();
+        let cloud = s.auth.cloud().context("switch left no active session")?;
+        Ok(Response::ok(
+            req.id,
+            json!({
+                "base_url": cloud.base_url,
+                "token": cloud.token,
+                "email": s.auth.email(),
+            }),
+        ))
+    })();
     let _ = out_tx.send(response_value(req.id, result));
 }
 
@@ -1110,8 +1161,7 @@ mod machine_link_tests {
             ..Default::default()
         };
         let mut shared = Shared::new(session);
-        shared.store_path =
-            Some(std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())));
+        shared.store_path = Some(tmp_token_dir());
         shared
     }
 
@@ -1128,18 +1178,24 @@ mod machine_link_tests {
             ),
             ..Default::default()
         };
-        // Store path injected: these tests must never write the developer's
-        // real token.json.
         let mut shared = Shared::new(session);
-        shared.store_path =
-            Some(std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())));
+        shared.store_path = Some(tmp_token_dir());
         shared
+    }
+
+    /// A token path in a UNIQUE temp directory — workspaces.json is a
+    /// sibling of the token path, so flat filenames would share one
+    /// /tmp/workspaces.json across every test and run.
+    fn tmp_token_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("guild-rpc-{}", uuid::Uuid::now_v7().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("token.json")
     }
 
     #[tokio::test]
     async fn identify_stores_identity_and_publishes_link_config() {
         let shared = logged_in_shared();
-        let mut link_rx = shared.machine_link.subscribe();
+        let mut link_rx = shared.links.subscribe_or_create("http://srv");
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
 
         machine_identify(shared.clone(), identify_req(1, "machine-1"), out_tx).await;
@@ -1165,7 +1221,7 @@ mod machine_link_tests {
     #[tokio::test]
     async fn login_with_machine_id_brings_the_link_up_in_one_step() {
         let shared = logged_in_shared();
-        let mut link_rx = shared.machine_link.subscribe();
+        let mut link_rx = shared.links.subscribe_or_create("http://srv");
 
         adopt_login_with_identity(
             &shared,
@@ -1186,8 +1242,8 @@ mod machine_link_tests {
     #[tokio::test]
     async fn headless_login_persists_and_reuses_the_machine_identity() {
         let shared = logged_in_shared();
-        let _rx = shared.machine_link.subscribe();
-        let path = std::env::temp_dir().join(format!("guild-headless-{}.json", Uuid::now_v7()));
+        let _rx = shared.links.subscribe_or_create("http://srv");
+        let path = tmp_token_dir();
         for token in ["first", "second"] {
             adopt_login_with_identity(
                 &shared,
@@ -1231,7 +1287,7 @@ mod machine_link_tests {
     #[tokio::test]
     async fn login_without_machine_id_generates_an_identity() {
         let shared = logged_in_shared();
-        let mut link_rx = shared.machine_link.subscribe();
+        let mut link_rx = shared.links.subscribe_or_create("http://srv");
 
         adopt_login_with_identity(
             &shared,
@@ -1252,7 +1308,7 @@ mod machine_link_tests {
     #[tokio::test]
     async fn login_with_blank_machine_id_generates_an_identity() {
         let shared = logged_in_shared();
-        let mut link_rx = shared.machine_link.subscribe();
+        let mut link_rx = shared.links.subscribe_or_create("http://srv");
 
         adopt_login_with_identity(
             &shared,
@@ -1273,11 +1329,7 @@ mod machine_link_tests {
     #[tokio::test]
     async fn identify_persists_identity_into_the_session_store() {
         let shared = logged_in_shared();
-        let path = std::env::temp_dir().join(format!(
-            "guild-identify-{}-{}.json",
-            std::process::id(),
-            uuid::Uuid::now_v7().simple()
-        ));
+        let path = tmp_token_dir();
         // Seed the store the way login left it.
         crate::session_store::save(
             &path,
@@ -1314,7 +1366,7 @@ mod machine_link_tests {
         let mut shared = Shared::new(Session::default());
         shared.store_path =
             Some(std::env::temp_dir().join(format!("guild-test-token-{}.json", Uuid::now_v7())));
-        let mut link_rx = shared.machine_link.subscribe();
+        let mut link_rx = shared.links.subscribe_or_create("http://srv");
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
 
         machine_identify(shared.clone(), identify_req(3, "machine-3"), out_tx).await;
@@ -1332,7 +1384,7 @@ mod machine_link_tests {
     #[tokio::test]
     async fn signing_out_drops_the_link() {
         let shared = logged_in_shared();
-        let mut link_rx = shared.machine_link.subscribe();
+        let mut link_rx = shared.links.subscribe_or_create("http://srv");
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         machine_identify(shared.clone(), identify_req(4, "machine-4"), out_tx).await;
         let _ = out_rx.recv().await.unwrap();
