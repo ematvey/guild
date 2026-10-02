@@ -4,7 +4,10 @@
 //! path a fresh launch takes.
 
 import { useEffect, useState } from "react";
-import { DropdownMenuItem } from "@guild/ui/components/dropdown-menu";
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@guild/ui/components/dropdown-menu";
 import { Plus, X } from "lucide-react";
 import {
   IS_TAURI,
@@ -107,23 +110,7 @@ export function WorkspaceMenuItems({
                   </span>
                 )}
                 <span className="min-w-0 flex-1 truncate">{label}</span>
-                {isActive ? (
-                  <>
-                    <span className="text-xs text-muted-foreground">current</span>
-                    <span
-                      role="button"
-                      aria-label={`Sign out ${label}`}
-                      title={`Sign out ${label}`}
-                      className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void signOutWs(w.base_url);
-                      }}
-                    >
-                      <X className="size-3.5" />
-                    </span>
-                  </>
-                ) : w.has_token ? (
+                {w.has_token ? (
                   <span
                     role="button"
                     aria-label={`Sign out ${label}`}
@@ -142,6 +129,7 @@ export function WorkspaceMenuItems({
               </DropdownMenuItem>
             );
           })}
+      <DropdownMenuSeparator />
     </>
   );
 }

@@ -26,9 +26,9 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@guild/ui
 import { apiMe } from "../../transport";
 import {
   DropdownMenuItem,
-  DropdownMenuSeparator,
 } from "@guild/ui/components/dropdown-menu";
 import { UserBadge } from "../../components/user-badge";
+import { WorkspaceMenuItems } from "../workspace-menu";
 import type { SectionDetailProps } from "./section-nav";
 import { useTheme } from "../../theme";
 import { PageHeader } from "./components/page-header";
@@ -80,7 +80,7 @@ export function SettingsWindow({
   displayName,
   avatarUrl,
   onOpenDevice,
-  onSignOut,
+  onAddWorkspace,
   section,
   detail,
   onSectionChange,
@@ -94,7 +94,8 @@ export function SettingsWindow({
   avatarUrl?: string | null;
   /** Opens the device-setup dialog (replaces this overlay). */
   onOpenDevice: () => void;
-  onSignOut: () => void;
+  /** Desktop multi-workspace: opens the add-workspace card. */
+  onAddWorkspace?: () => void;
   /** Active section, driven by the URL (/settings/<section>); null = default. */
   section: string | null;
   /** Sub-page inside the section (/settings/<section>/<detail>); null = list. */
@@ -225,13 +226,13 @@ export function SettingsWindow({
             })}
           </div>
           <div className="border-t border-border/60 p-2">
-            {/* same account badge as the chat sidebar */}
+            {/* same account menu as the chat sidebar */}
             <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
+              <WorkspaceMenuItems
+                onAddWorkspace={onAddWorkspace}
+                onReload={() => window.location.reload()}
+              />
               <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
-                Sign out
-              </DropdownMenuItem>
             </UserBadge>
           </div>
           <div

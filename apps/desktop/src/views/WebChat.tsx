@@ -3099,7 +3099,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         displayName={displayName}
         avatarUrl={avatarUrl}
         onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
-        onSignOut={signOut}
+        onAddWorkspace={onAddWorkspace}
       />
     </div>
   );
