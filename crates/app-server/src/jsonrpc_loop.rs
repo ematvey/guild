@@ -329,7 +329,7 @@ async fn dispatch(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<Va
             session_clear(shared.clone(), req, out_tx).await;
         }
         "workspace.list" => {
-            let _ = out_tx.send(response_value(req.id, workspace_list(&shared)));
+            let _ = out_tx.send(response_value(req.id, workspace_list(&shared, req.id)));
         }
         "workspace.switch" => {
             workspace_switch(shared.clone(), req, out_tx).await;
@@ -576,11 +576,11 @@ async fn session_clear(shared: Shared, req: Request, out_tx: mpsc::UnboundedSend
 }
 
 /// Every live workspace plus the active pointer (the switcher's data).
-fn workspace_list(shared: &Shared) -> anyhow::Result<Response> {
+fn workspace_list(shared: &Shared, req_id: u64) -> anyhow::Result<Response> {
     let s = shared.session.lock().unwrap();
     let (active, rows) = s.auth.workspaces();
     Ok(Response::ok(
-        0,
+        req_id,
         json!({
             "active": active,
             "workspaces": rows,
@@ -1397,6 +1397,27 @@ mod machine_link_tests {
             link_rx.borrow_and_update().is_none(),
             "sign-out drops the link"
         );
+    }
+
+    /// workspace.list must answer with the REQUEST's id: the webview's rpc
+    /// waiter matches on it — a hardcoded id would time out every call and
+    /// silently hide the switcher. This goes through the real dispatch.
+    #[tokio::test]
+    async fn workspace_list_correlates_the_response_id() {
+        let shared = logged_in_shared();
+        let req = Request {
+            jsonrpc: "2.0".into(),
+            id: 77,
+            protocol: protocol::rpc::PROTOCOL_VERSION,
+            method: "workspace.list".into(),
+            params: serde_json::json!({}),
+        };
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        dispatch(shared.clone(), req, out_tx).await;
+        let resp = out_rx.recv().await.unwrap();
+        assert_eq!(resp["id"], serde_json::json!(77));
+        assert_eq!(resp["result"]["active"], serde_json::json!("http://srv"));
+        assert_eq!(resp["result"]["workspaces"].as_array().unwrap().len(), 1);
     }
 
     /// `chat.send --model X` applies even when the session already has a
