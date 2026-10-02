@@ -3079,7 +3079,7 @@ dependencies = [
 
 [[package]]
 name = "guild-app-server"
-version = "0.5.32"
+version = "0.5.33"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3112,7 +3112,7 @@ dependencies = [
 
 [[package]]
 name = "guild-core"
-version = "0.5.32"
+version = "0.5.33"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3139,7 +3139,7 @@ dependencies = [
 
 [[package]]
 name = "guild-desktop"
-version = "0.5.32"
+version = "0.5.33"
 dependencies = [
  "anyhow",
  "axum",
@@ -3173,7 +3173,7 @@ dependencies = [
 
 [[package]]
 name = "guild-server"
-version = "0.5.32"
+version = "0.5.33"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -5627,7 +5627,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.5.32"
+version = "0.5.33"
 dependencies = [
  "chrono",
  "serde",
