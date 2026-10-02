@@ -155,6 +155,7 @@ export default function GeneralSection() {
           <Input
             id="workspace-name"
             value={name}
+            autoComplete="off"
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && name.trim() !== org?.name && void saveName()}
             placeholder="e.g. Acme"
