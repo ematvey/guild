@@ -20,6 +20,10 @@ use std::path::Path;
 struct WorkspaceAuth {
     cloud: Option<CloudClient>,
     email: Option<String>,
+    /// Display name + logo URL fetched from the server (the switcher's
+    /// identity data; refreshed at login and restore).
+    org_name: Option<String>,
+    org_logo_url: Option<String>,
 }
 
 /// A workspace row as the RPC layer and UI see it: identity plus whether a
@@ -29,6 +33,8 @@ pub struct WorkspaceInfo {
     pub base_url: String,
     pub email: Option<String>,
     pub has_token: bool,
+    pub name: Option<String>,
+    pub logo_url: Option<String>,
 }
 
 /// The `Session`'s auth fields. The struct is public, its fields are
@@ -103,6 +109,7 @@ impl AuthState {
                         token: cloud.token,
                     }),
                     email,
+                    ..Default::default()
                 },
             );
             state.active = Some(base);
@@ -156,6 +163,8 @@ impl AuthState {
                 base_url: base.clone(),
                 email: w.email.clone(),
                 has_token: w.cloud.is_some(),
+                name: w.org_name.clone(),
+                logo_url: w.org_logo_url.clone(),
             })
             .collect();
         (self.active.clone(), rows)
@@ -188,6 +197,8 @@ impl AuthState {
                             token,
                         }),
                         email: Some(email),
+                        org_name: None,
+                        org_logo_url: None,
                     },
                 );
                 self.active = Some(base);
@@ -246,6 +257,26 @@ impl AuthState {
         }
         self.publish(links);
         persisted
+    }
+
+    /// Fetches one workspace's display name + logo from its server and
+    /// stores the result (persisting the workspace store). Best-effort on
+    /// the network — a failure keeps whatever identity is already known.
+    /// Called after login/pair and by the restore path.
+    pub async fn refresh_org_identity(&mut self, base_url: &str, store: Option<&Path>) {
+        let base = session_store::normalize_base(base_url);
+        let Some(cloud) = self.workspaces.get(&base).and_then(|w| w.cloud.clone()) else {
+            return;
+        };
+        if let Ok((name, logo)) = cloud.org_settings().await {
+            if let Some(w) = self.workspaces.get_mut(&base) {
+                w.org_name = Some(name);
+                w.org_logo_url = logo;
+            }
+            if let Some(path) = store {
+                let _ = self.persist(path);
+            }
+        }
     }
 
     /// Removes one workspace, returning its normalized base_url (the
@@ -330,6 +361,8 @@ impl AuthState {
                     token: stored.token.clone(),
                 }),
                 email: stored.email.clone(),
+                org_name: stored.org_name.clone(),
+                org_logo_url: stored.org_logo_url.clone(),
             },
         );
         self.machine_id = stored.machine_id.clone().or(self.machine_id.clone());
@@ -365,6 +398,8 @@ impl AuthState {
                     machine_id: self.machine_id.clone(),
                     client_id: self.client_id.clone(),
                     machine_name: Some(hostname_label()),
+                    org_name: w.org_name.clone(),
+                    org_logo_url: w.org_logo_url.clone(),
                 })
                 .collect(),
         }
@@ -391,6 +426,16 @@ impl AuthState {
                     machine_id: self.machine_id.clone(),
                     client_id: self.client_id.clone(),
                     machine_name: Some(hostname_label()),
+                    org_name: self
+                        .active
+                        .as_ref()
+                        .and_then(|b| self.workspaces.get(b))
+                        .and_then(|w| w.org_name.clone()),
+                    org_logo_url: self
+                        .active
+                        .as_ref()
+                        .and_then(|b| self.workspaces.get(b))
+                        .and_then(|w| w.org_logo_url.clone()),
                 },
             ),
             None => session_store::clear(token_path),
@@ -410,6 +455,8 @@ impl AuthState {
                 WorkspaceAuth {
                     cloud: None,
                     email: row.email.clone(),
+                    org_name: row.org_name.clone(),
+                    org_logo_url: row.org_logo_url.clone(),
                 }
             } else {
                 let cloud = CloudClient {
@@ -417,18 +464,32 @@ impl AuthState {
                     token: row.token.clone(),
                 };
                 match cloud.me().await {
-                    Ok(user) => WorkspaceAuth {
-                        cloud: Some(cloud),
-                        email: Some(user.email),
-                    },
+                    Ok(user) => {
+                        // The switcher's identity data (name + logo):
+                        // best-effort — a fetch failure keeps the row usable.
+                        let (org_name, org_logo_url) = match cloud.org_settings().await {
+                            Ok(v) => (Some(v.0), v.1),
+                            Err(_) => (None, None),
+                        };
+                        WorkspaceAuth {
+                            cloud: Some(cloud),
+                            email: Some(user.email),
+                            org_name,
+                            org_logo_url,
+                        }
+                    }
                     Err(CloudError::Unauthorized) => WorkspaceAuth {
                         cloud: None,
                         email: row.email.clone(),
+                        org_name: row.org_name.clone(),
+                        org_logo_url: row.org_logo_url.clone(),
                     },
                     Err(_) => WorkspaceAuth {
                         // offline or server briefly down: keep the token
                         cloud: Some(cloud),
                         email: row.email.clone(),
+                        org_name: row.org_name.clone(),
+                        org_logo_url: row.org_logo_url.clone(),
                     },
                 }
             };

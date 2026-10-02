@@ -1362,6 +1362,8 @@ mod tests {
             machine_id: None,
             client_id: None,
             machine_name: None,
+            org_name: None,
+            org_logo_url: None,
         };
         let first = adopt_identity(&mut stored, "m-1");
         assert_eq!(first.machine_id, "m-1");
@@ -1563,6 +1565,8 @@ mod tests {
                 machine_id: None,
                 client_id: None,
                 machine_name: None,
+                org_name: None,
+                org_logo_url: None,
             },
         )
         .unwrap();
@@ -1617,6 +1621,8 @@ mod tests {
             machine_id: Some("m-1".into()),
             client_id: Some("c-1".into()),
             machine_name: Some("box".into()),
+            org_name: None,
+            org_logo_url: None,
         };
         // Fresh pair (file appears): the link comes up with the new token.
         session_store::save(&path, &store("t1")).unwrap();
@@ -1661,6 +1667,8 @@ mod tests {
             machine_id: Some("m-1".into()),
             client_id: Some("c-1".into()),
             machine_name: Some("box".into()),
+            org_name: None,
+            org_logo_url: None,
         };
         session_store::save(&path, &store("ta", "a@b")).unwrap();
         let mut initial = crate::jsonrpc_loop::Session::default();

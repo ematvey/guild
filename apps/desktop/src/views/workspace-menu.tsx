@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@guild/ui/components/dropdown-menu";
-import { Plus } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import {
   IS_TAURI,
   workspaceList,
@@ -71,36 +71,58 @@ export function WorkspaceMenuItems({
           <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
             Workspaces
           </div>
-          {rows.map((w) => (
-            <DropdownMenuItem
-              key={w.base_url}
-              disabled={!w.has_token || w.base_url === active}
-              onClick={() => void switchTo(w.base_url)}
-              title={w.has_token ? w.base_url : "Sign in again to use this workspace"}
-            >
-              <span className="min-w-0 flex-1 truncate">
-                {shortOrigin(w.base_url)}
-                {w.email ? ` · ${w.email}` : ""}
-              </span>
-              {w.base_url === active && (
-                <span className="text-xs text-muted-foreground">current</span>
-              )}
-              {!w.has_token && (
-                <span className="text-xs text-destructive">sign in again</span>
-              )}
-            </DropdownMenuItem>
-          ))}
-          {rows
-            .filter((w) => w.has_token && w.base_url !== active)
-            .map((w) => (
+          {rows.map((w) => {
+            const label = w.name || shortOrigin(w.base_url);
+            const isActive = w.base_url === active;
+            return (
               <DropdownMenuItem
-                key={`out-${w.base_url}`}
-                onClick={() => void signOutWs(w.base_url)}
-                className="text-xs text-muted-foreground focus:text-destructive"
+                key={w.base_url}
+                disabled={!w.has_token || isActive}
+                onClick={() => void switchTo(w.base_url)}
+                title={
+                  w.has_token
+                    ? w.base_url
+                    : "Sign in again to use this workspace"
+                }
               >
-                Sign out {shortOrigin(w.base_url)}
+                {w.logo_url ? (
+                  <img
+                    src={`${w.base_url.replace(/\/$/, "")}${w.logo_url}`}
+                    alt=""
+                    className="size-4 shrink-0 rounded object-contain"
+                  />
+                ) : (
+                  <span className="flex size-4 shrink-0 items-center justify-center rounded bg-muted text-[9px] font-semibold text-muted-foreground">
+                    {label.slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate">
+                  {label}
+                  {w.email ? (
+                    <span className="text-muted-foreground"> · {w.email}</span>
+                  ) : null}
+                </span>
+                {isActive ? (
+                  <span className="text-xs text-muted-foreground">current</span>
+                ) : w.has_token ? (
+                  <span
+                    role="button"
+                    aria-label={`Sign out ${label}`}
+                    title={`Sign out ${label}`}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void signOutWs(w.base_url);
+                    }}
+                  >
+                    <X className="size-3.5" />
+                  </span>
+                ) : (
+                  <span className="text-xs text-destructive">sign in again</span>
+                )}
               </DropdownMenuItem>
-            ))}
+            );
+          })}
         </>
       )}
       {onAddWorkspace && (

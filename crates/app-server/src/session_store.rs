@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct StoredSession {
     pub base_url: String,
     pub token: String,
@@ -26,6 +26,13 @@ pub struct StoredSession {
     /// Human-facing machine label reported at connect (hostname).
     #[serde(default)]
     pub machine_name: Option<String>,
+    /// The workspace's display name and logo URL (server-relative), fetched
+    /// from the server at login/restore — the switcher's identity data.
+    /// None on rows from older stores.
+    #[serde(default)]
+    pub org_name: Option<String>,
+    #[serde(default)]
+    pub org_logo_url: Option<String>,
 }
 
 pub fn default_path() -> anyhow::Result<PathBuf> {
@@ -197,6 +204,8 @@ mod tests {
             machine_id: Some("m".into()),
             client_id: Some("c".into()),
             machine_name: Some("box".into()),
+            org_name: None,
+            org_logo_url: None,
         };
         save(&path, &s).unwrap();
         // The token file must be owner-only.
@@ -253,6 +262,8 @@ mod tests {
                 machine_id: Some("m".into()),
                 client_id: Some("c".into()),
                 machine_name: Some("box".into()),
+                org_name: None,
+                org_logo_url: None,
             },
         )
         .unwrap();
@@ -275,6 +286,8 @@ mod tests {
             machine_id: None,
             client_id: None,
             machine_name: None,
+            org_name: None,
+            org_logo_url: None,
         });
         store.active = Some("http://b.example.com".into());
         save_store(&dir.join("workspaces.json"), &store).unwrap();

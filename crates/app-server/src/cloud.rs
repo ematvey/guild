@@ -114,6 +114,38 @@ impl CloudClient {
     }
 
     /// Validates the stored token and returns the user (GET /api/v1/auth/me).
+    /// The workspace's display name and logo URL (GET /api/v1/org). The
+    /// switcher shows these per workspace; logo_url is server-relative.
+    pub async fn org_settings(&self) -> Result<(String, Option<String>), CloudError> {
+        let url = format!("{}/api/v1/org", self.base_url.trim_end_matches('/'));
+        let resp = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| CloudError::Request(e.to_string()))?
+            .get(&url)
+            .header("authorization", format!("Bearer {}", self.token))
+            .send()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(CloudError::Unauthorized);
+        }
+        if !resp.status().is_success() {
+            return Err(CloudError::Request(format!(
+                "org failed: {}",
+                resp.status()
+            )));
+        }
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| CloudError::Request(e.to_string()))?;
+        Ok((
+            v["name"].as_str().unwrap_or_default().to_string(),
+            v["logo_url"].as_str().map(str::to_string),
+        ))
+    }
+
     pub async fn me(&self) -> Result<UserInfo, CloudError> {
         let url = format!("{}/api/v1/auth/me", self.base_url.trim_end_matches('/'));
         let resp = reqwest::Client::builder()
