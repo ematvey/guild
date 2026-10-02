@@ -9,9 +9,30 @@ recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
-Updated 2026-09-29.
+Updated 2026-09-30.
 
 ## Latest decisions
+
+- **Multi-workspace auth — the daemon holds N live sessions, one per
+  server.** The desktop client can now be signed into two guild servers
+  (different domains) at once and switch between them: both servers see the
+  machine online and either can dispatch tools. Design spec:
+  `docs/plans/2026-09-30-multi-workspace-auth-design.md` (approved:
+  "both live simultaneously", not Slack-style single-active switching).
+  Mechanics: `workspaces.json` (session list + active pointer) beside
+  `token.json`, which stays the ACTIVE session's mirror so the watcher,
+  CLI logins, and every reader keep working. The single machine-link
+  channel became a registry (one link task per live workspace, supervisor
+  per host cycle). New RPC: `workspace.list`, `workspace.switch`;
+  `session.clear` gained an optional `base_url` (per-workspace sign-out).
+  Webview: workspace switcher in the account menu, "Add workspace" shows
+  the pair/sign-in card over the running app; switching re-mirrors
+  `session.info` and reloads (the existing restore path). Accepted
+  consequence: one machine's executor serves two servers concurrently —
+  dispatches are independent requests, the executor processes them one at
+  a time. Machine slots are per-server, so the 0.5.25 live-slot rule is
+  unaffected. A dead token in one workspace keeps its row listed as "sign
+  in again" instead of vanishing.
 
 - **0.5.25 — a live machine slot is held, not displaced.** Root cause of the
   recurring devbox outages: any locally-run guild binary (dev sessions on
