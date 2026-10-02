@@ -213,6 +213,10 @@ function DesktopApp() {
   // the restore is still in flight.
   const [user, setUser] = useState<string | null | undefined>(undefined);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  // Multi-workspace: showing the pair/sign-in card over the running app to
+  // add a second server. The card's success path reloads (the new workspace
+  // is active; the restore path re-points everything).
+  const [addWorkspace, setAddWorkspace] = useState(false);
 
   // Surface the build the webview is actually running — pairing hangs are
   // almost always a stale binary or stale background daemon; make the
@@ -303,6 +307,11 @@ function DesktopApp() {
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
       const res = await rpcCall("pair", { code: code.trim(), machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "pairing failed");
+      if (addWorkspace) {
+        setBusy(false);
+        window.location.reload();
+        return;
+      }
       await afterAuth(res.result?.user?.email ?? "");
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
@@ -319,6 +328,11 @@ function DesktopApp() {
         "could not attach to the local Guild service. Quit every Guild process (Task Manager, incl. background ones) and reopen the app.");
       const res = await rpcCall("login", { base_url: url, email, password, machine_id: machineId() }, 45_000);
       if (res.error) throw new Error(res.error.message ?? "login failed");
+      if (addWorkspace) {
+        setBusy(false);
+        window.location.reload();
+        return;
+      }
       await afterAuth(res.result?.user?.email ?? email);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
@@ -348,7 +362,7 @@ function DesktopApp() {
   };
 
   if (user === undefined) return <Splash />;
-  if (user) {
+  if (user && !addWorkspace) {
     // Unified shell: the desktop webview runs the same chat UI as the
     // browser, talking HTTP to the same server; only machine-tool execution
     // (and the executor registration that makes it possible) is desktop-
@@ -361,6 +375,7 @@ function DesktopApp() {
           displayName={displayName}
           avatarUrl={avatarUrl}
           onSignOut={signOut}
+          onAddWorkspace={() => setAddWorkspace(true)}
         />
         <UpdateToast />
       </>
@@ -371,7 +386,7 @@ function DesktopApp() {
       <UpdateToast />
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-xl">Guild</CardTitle>
+          <CardTitle className="text-xl">{addWorkspace ? "Add workspace" : "Guild"}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {mode === "pair" ? (
@@ -433,6 +448,17 @@ function DesktopApp() {
           )}
           {appVersion && (
             <p className="text-center text-[11px] text-muted-foreground/70">Guild v{appVersion}</p>
+          )}
+          {addWorkspace && (
+            <button
+              className="text-xs text-muted-foreground outline-none hover:text-foreground"
+              onClick={() => {
+                setAddWorkspace(false);
+                setError(null);
+              }}
+            >
+              back to the current workspace
+            </button>
           )}
         </CardContent>
       </Card>

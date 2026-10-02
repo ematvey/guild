@@ -461,6 +461,46 @@ export function clearToken(): void {
   }
 }
 
+// ---- Multi-workspace (desktop only — the browser is single-server) ----
+
+/** One live session: server origin + its signed-in email + whether a
+ * usable token survived the last restore (false = "sign in again"). */
+export type WorkspaceRow = {
+  base_url: string;
+  email?: string | null;
+  has_token: boolean;
+};
+export type WorkspaceList = {
+  active: string | null;
+  workspaces: WorkspaceRow[];
+};
+
+/** Every live session plus the active pointer (the switcher's data). */
+export async function workspaceList(): Promise<WorkspaceList | null> {
+  if (!IS_TAURI) return null;
+  const res = await rpcCall("workspace.list", {}, 20_000);
+  if (res.error) throw new Error(res.error.message ?? "workspace.list failed");
+  return res.result as WorkspaceList;
+}
+
+/** Makes another live workspace active. The caller mirrors the returned
+ * session.info shape into localStorage and reloads. */
+export async function workspaceSwitch(baseUrl: string): Promise<void> {
+  const res = await rpcCall("workspace.switch", { base_url: baseUrl }, 30_000);
+  if (res.error) throw new Error(res.error.message ?? "workspace.switch failed");
+}
+
+/** Signs one workspace out (active when omitted) — full engine sign-out,
+ * not the webview-token-only default. */
+export async function workspaceSignOut(baseUrl?: string): Promise<void> {
+  const res = await rpcCall(
+    "session.clear",
+    baseUrl ? { base_url: baseUrl } : {},
+    30_000,
+  );
+  if (res.error) throw new Error(res.error.message ?? "sign-out failed");
+}
+
 export async function apiLogin(
   url: string,
   email: string,
@@ -938,9 +978,11 @@ export async function sendChatNoStream(
 }
 
 /// Stops the chat's in-flight turn. The delivered prefix stays in history
-/// (persisted as an interrupted assistant event). 409 (nothing generating)
-/// resolves silently — the turn already ended.
-export async function stopChat(chatId: string): Promise<void> {
+/// (persisted as an interrupted assistant event). Resolves false on 409
+/// (nothing generating — the turn already ended between the caller's
+/// render and the click) so the caller lifts its optimistic stopping state
+/// at once; true when the server accepted the stop.
+export async function stopChat(chatId: string): Promise<boolean> {
   const token = getToken();
   const res = await fetch(apiUrl(`/api/v1/gateway/chat/${encodeURIComponent(chatId)}/stop`), {
     method: "POST",
@@ -949,11 +991,12 @@ export async function stopChat(chatId: string): Promise<void> {
       "x-guild-client-id": clientId(),
     },
   });
-  if (res.status === 409) return;
+  if (res.status === 409) return false;
   if (!res.ok) {
     const v = await res.json().catch(() => ({}));
     throw new Error(v?.error?.message ?? res.statusText);
   }
+  return true;
 }
 
 /// Compacts the thread manually (the /compact composer command): one
