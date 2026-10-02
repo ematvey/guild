@@ -414,19 +414,28 @@ pub async fn run_daemon_shared_reclaiming(path: PathBuf, shared: Shared) -> anyh
 fn spawn_machine_link(
     shared: &Shared,
 ) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
-    let link_shared = shared.clone();
-    let link_rx = shared.machine_link.subscribe();
-    let link = tokio::spawn(crate::machine_link::run(link_shared, link_rx));
+    // One supervisor runs one link task per live workspace (fed by the
+    // registry's spawn feed); the token.json watcher re-seeds the ACTIVE
+    // session from auth performed by another process.
+    let supervisor = tokio::spawn(crate::machine_link::run_link_supervisor(
+        shared.clone(),
+        shared
+            .link_spawn_rx
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_else(|| tokio::sync::mpsc::unbounded_channel().1),
+    ));
     // Auth performed by another process (the GUI while a unit daemon owns
     // the link, or a CLI verb) lands only in token.json: the watcher
-    // re-seeds the link config from it, sign-out included.
+    // re-seeds the active workspace's link config from it, sign-out included.
     let watcher = match crate::session_store::store_watch_path() {
         Ok(path) => {
             let watcher_shared = shared.clone();
             Some(tokio::spawn(crate::machine_link::watch_token_store(
                 path,
                 watcher_shared.session.clone(),
-                watcher_shared.machine_link.clone(),
+                watcher_shared.links.clone(),
                 shared.shutdown.subscribe(),
                 std::time::Duration::from_secs(1),
             )))
@@ -435,7 +444,7 @@ fn spawn_machine_link(
     };
     shared.publish_machine_link();
     (
-        link,
+        supervisor,
         watcher.unwrap_or_else(|| tokio::spawn(std::future::pending())),
     )
 }
@@ -628,8 +637,7 @@ fn create_pipe_server_instance(
     if first {
         open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
     }
-    let pipe_mode =
-        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS;
+    let pipe_mode = PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS;
     let handle = unsafe {
         CreateNamedPipeW(
             name_wide.as_ptr(),

@@ -731,6 +731,141 @@ async fn shutdown_backoff(shutdown_rx: &mut watch::Receiver<bool>, secs: u64) ->
     }
 }
 
+/// The link registry: one config channel per live workspace. Every auth
+/// transition publishes per-workspace configs through it; the supervisor
+/// spawns one link task per channel, and a channel closing tears the
+/// task's link down.
+#[derive(Clone)]
+pub struct LinkRegistry {
+    channels: Arc<std::sync::Mutex<std::collections::HashMap<String, ChannelEntry>>>,
+    /// Spawn requests for the supervisor: a key whose channel gained a
+    /// config (new or reseeded link). Dedup is the supervisor's job.
+    spawns: Arc<tokio::sync::mpsc::UnboundedSender<String>>,
+}
+
+/// One workspace's config channel. The keepalive receiver stays alive for
+/// the channel's whole life: a watch channel with zero receivers closes —
+/// sends fail and later subscribers would see stale values forever.
+struct ChannelEntry {
+    tx: watch::Sender<Option<MachineLinkConfig>>,
+    _keepalive: watch::Receiver<Option<MachineLinkConfig>>,
+}
+
+/// Creates a registry and its spawn feed. The supervisor owns the receiver
+/// for exactly one host cycle.
+pub fn new_registry() -> (LinkRegistry, tokio::sync::mpsc::UnboundedReceiver<String>) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    (
+        LinkRegistry {
+            channels: Default::default(),
+            spawns: Arc::new(tx),
+        },
+        rx,
+    )
+}
+
+impl LinkRegistry {
+    /// Publishes one workspace's link config, creating the channel on first
+    /// publish. Sends unconditionally (the link task dedups configs
+    /// itself); `Some` also queues a spawn request for the supervisor;
+    /// `None` parks the link task (it reconnects when a config returns).
+    pub fn publish(&self, base_url: &str, cfg: Option<MachineLinkConfig>) {
+        let key = session_store::normalize_base(base_url);
+        let tx = {
+            let mut map = self.channels.lock().unwrap();
+            map.entry(key.clone())
+                .or_insert_with(|| {
+                    let (tx, rx) = watch::channel(None);
+                    ChannelEntry { tx, _keepalive: rx }
+                })
+                .tx
+                .clone()
+        };
+        let _ = tx.send(cfg);
+        if tx.borrow().is_some() {
+            let _ = self.spawns.send(key);
+        }
+    }
+
+    /// The config a workspace's channel currently holds (the watcher's
+    /// file-noise dedup compares against this).
+    pub fn current(&self, base_url: &str) -> Option<MachineLinkConfig> {
+        let key = session_store::normalize_base(base_url);
+        self.channels
+            .lock()
+            .unwrap()
+            .get(&key)
+            .map(|e| e.tx.borrow().clone())
+            .unwrap_or(None)
+    }
+
+    /// Tears one workspace's link down: a `None` publish (an in-flight
+    /// reconnect stops) followed by removing the channel — the closed
+    /// channel makes a parked link task exit.
+    pub fn drop_link(&self, base_url: &str) {
+        let key = session_store::normalize_base(base_url);
+        let sender = self.channels.lock().unwrap().remove(&key);
+        if let Some(entry) = sender {
+            let _ = entry.tx.send(None);
+        }
+    }
+
+    /// Subscribes to one workspace's config channel, creating the channel
+    /// when absent (tests, and callers that need a receiver before any
+    /// publish).
+    pub fn subscribe_or_create(
+        &self,
+        base_url: &str,
+    ) -> watch::Receiver<Option<MachineLinkConfig>> {
+        let key = session_store::normalize_base(base_url);
+        let tx = {
+            let mut map = self.channels.lock().unwrap();
+            map.entry(key)
+                .or_insert_with(|| {
+                    let (tx, rx) = watch::channel(None);
+                    ChannelEntry { tx, _keepalive: rx }
+                })
+                .tx
+                .clone()
+        };
+        tx.subscribe()
+    }
+
+    /// Subscribes to one workspace's config channel (the supervisor hands
+    /// the receiver to a fresh link task).
+    pub fn subscribe(&self, base_url: &str) -> Option<watch::Receiver<Option<MachineLinkConfig>>> {
+        let key = session_store::normalize_base(base_url);
+        self.channels
+            .lock()
+            .unwrap()
+            .get(&key)
+            .map(|e| e.tx.subscribe())
+    }
+}
+
+/// The link supervisor: spawns one [`run`] task per registry entry and
+/// follows the registry's spawn feed. Lives exactly one host cycle (the
+/// caller aborts its handle at teardown — the JoinSet aborts every child
+/// link task with it). The spawn feed may repeat a key; the supervisor
+/// spawns only the first request per key (the channel dedups configs).
+pub async fn run_link_supervisor(
+    shared: Shared,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+) {
+    let mut spawned: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut set = tokio::task::JoinSet::new();
+    while let Some(base) = rx.recv().await {
+        if spawned.contains(&base) {
+            continue;
+        }
+        if let Some(cfg_rx) = shared.links.subscribe(&base) {
+            let handle = set.spawn(run(shared.clone(), cfg_rx));
+            spawned.insert(base);
+            let _ = handle; // the JoinSet aborts children on drop
+        }
+    }
+}
+
 /// Waits for the link config to actually change, but no longer than
 /// `backoff_secs`: a stale config still retries once the backoff elapses,
 /// so neither displacement nor a transient auth failure can park the
@@ -788,8 +923,9 @@ fn store_sig(path: &Path) -> Option<(std::time::SystemTime, u64)> {
 
 /// Watches token.json for auth transitions performed by ANOTHER process
 /// (the GUI while a unit daemon owns the link, or a CLI verb): on every
-/// change the store is reloaded and the implied config — or `None` for a
-/// sign-out — is published onto the link's watch channel, unless it already
+/// change the active session is re-adopted (the token file is the ACTIVE
+/// session's mirror) and its link config — or `None` for a sign-out — is
+/// published onto that workspace's registry channel, unless it already
 /// holds that exact config (in-process transitions publish it themselves).
 /// Runs in the daemon process, so both GUI-hosted and unit-hosted daemons
 /// self-heal regardless of who performed the auth action. Exits on daemon
@@ -797,7 +933,7 @@ fn store_sig(path: &Path) -> Option<(std::time::SystemTime, u64)> {
 pub async fn watch_token_store(
     path: PathBuf,
     session: Arc<std::sync::Mutex<crate::jsonrpc_loop::Session>>,
-    link: Arc<watch::Sender<Option<MachineLinkConfig>>>,
+    links: LinkRegistry,
     mut shutdown_rx: watch::Receiver<bool>,
     poll: Duration,
 ) {
@@ -828,13 +964,26 @@ pub async fn watch_token_store(
             let mut s = session.lock().unwrap();
             let previous = crate::jsonrpc_loop::principal_of(&s);
             match session_store::load(&path) {
-                Some(stored) => s.auth.adopt_stored(&stored),
-                None => s.auth = crate::auth_state::AuthState::default(),
+                Some(stored) => {
+                    s.auth.adopt_stored(&stored);
+                    // The mtime/length signature already filtered repeated
+                    // polls; publish only when the implied config changed.
+                    if links.current(&stored.base_url) != cfg {
+                        links.publish(&stored.base_url, cfg);
+                    }
+                }
+                None => {
+                    // The active session's mirror vanished (external
+                    // sign-out): drop that workspace's link; the store
+                    // file is the source and it no longer holds it.
+                    let dropped = s.auth.active_base().map(str::to_owned);
+                    s.auth.adopt_cleared_active();
+                    if let Some(base) = dropped {
+                        links.drop_link(&base);
+                    }
+                }
             }
             crate::jsonrpc_loop::reset_if_principal_changed(&mut s, previous);
-        }
-        if *link.borrow() != cfg {
-            let _ = link.send(cfg);
         }
     }
 }
@@ -1439,9 +1588,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("token.json");
-        let (tx, _) = watch::channel(None);
-        let link = Arc::new(tx);
-        let mut rx = link.subscribe();
+        let (links, _) = new_registry();
+        let mut rx = links.subscribe_or_create("http://x");
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let session = Arc::new(std::sync::Mutex::new(
             crate::jsonrpc_loop::Session::default(),
@@ -1450,7 +1598,7 @@ mod tests {
         tokio::spawn(watch_token_store(
             path.clone(),
             watched,
-            link.clone(),
+            links.clone(),
             shutdown_rx,
             Duration::from_millis(20),
         ));
@@ -1520,14 +1668,13 @@ mod tests {
         initial.chat_id = Some(uuid::Uuid::now_v7());
         initial.model = "m".into();
         let session = Arc::new(std::sync::Mutex::new(initial));
-        let (tx, _) = watch::channel(None);
-        let link = Arc::new(tx);
-        let mut rx = link.subscribe();
+        let (links, _) = new_registry();
+        let mut rx = links.subscribe_or_create("http://x");
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         tokio::spawn(watch_token_store(
             path.clone(),
             session.clone(),
-            link.clone(),
+            links.clone(),
             shutdown_rx,
             Duration::from_millis(20),
         ));

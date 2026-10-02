@@ -94,6 +94,95 @@ pub fn clear(path: &Path) -> anyhow::Result<()> {
     }
 }
 
+/// The multi-workspace store: every live session plus the active pointer.
+/// Lives beside token.json, which remains the mirror of the ACTIVE session
+/// for the watcher and CLI readers.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct WorkspaceStore {
+    /// base_url (normalized: no trailing slash) of the active session.
+    #[serde(default)]
+    pub active: Option<String>,
+    #[serde(default)]
+    pub workspaces: Vec<StoredSession>,
+}
+
+/// Canonical store key for a server: trimmed of the trailing slash, so the
+/// same server is always one map entry regardless of how it was entered.
+pub fn normalize_base(base: &str) -> String {
+    base.trim().trim_end_matches('/').to_string()
+}
+
+/// The workspace store's path: a sibling of the token path, same directory,
+/// same permissions discipline.
+pub fn workspaces_path(token_path: &Path) -> PathBuf {
+    token_path.with_file_name("workspaces.json")
+}
+
+fn write_json_atomic(path: &Path, json: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    // Write a sibling tmp (owner-only) and rename over the target: an
+    // in-place write truncated by a crash or a full disk would fail to
+    // parse on the next boot and silently drop the session to the pairing
+    // screen. rename replaces an existing destination on every platform.
+    // Unique sibling tmp per save: parallel writers (tests, GUI + CLI in one
+    // process) must not collide on the tmp file; the rename itself is atomic.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let tmp = path.with_extension(format!(
+        "json.tmp.{}.{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp)?;
+    // Owner-only permissions — the file holds the bearer token. The rename
+    // also replaces any pre-existing world-readable file with a 0600 one.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = f.metadata()?.permissions();
+        perms.set_mode(0o600);
+        f.set_permissions(perms)?;
+    }
+    f.write_all(json)?;
+    f.sync_all()?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Saves the whole workspace store atomically (0600, tmp+rename).
+pub fn save_store(path: &Path, store: &WorkspaceStore) -> anyhow::Result<()> {
+    write_json_atomic(path, &serde_json::to_vec(store)?)
+}
+
+/// Loads the workspace store, migrating a legacy single-session token.json
+/// on first read: a token file without a workspaces.json becomes the sole
+/// entry and the active session, and the migrated store is persisted.
+/// No token.json and no workspaces.json → an empty store, no file created.
+pub fn load_store(token_path: &Path) -> WorkspaceStore {
+    let ws_path = workspaces_path(token_path);
+    if let Ok(bytes) = std::fs::read(&ws_path) {
+        if let Ok(store) = serde_json::from_slice(&bytes) {
+            return store;
+        }
+        // Unparseable store: fall through to migration rather than lose
+        // the token mirror — same failure posture as token.json itself.
+    }
+    match load(token_path) {
+        Some(s) => {
+            let store = WorkspaceStore {
+                active: Some(normalize_base(&s.base_url)),
+                workspaces: vec![s],
+            };
+            let _ = save_store(&ws_path, &store);
+            store
+        }
+        None => WorkspaceStore::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +227,71 @@ mod tests {
         clear(&path).unwrap();
         assert!(load(&path).is_none());
         let _ = default_path(); // smoke: builds on this OS
+    }
+
+    #[test]
+    fn workspace_store_roundtrip_and_migration() {
+        let dir = std::env::temp_dir().join(format!("guild-ws-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let token_path = dir.join("token.json");
+        let _ = clear(&token_path);
+        let _ = clear(&dir.join("workspaces.json"));
+
+        // No files at all: an empty store, and no workspaces.json created.
+        let empty = load_store(&token_path);
+        assert!(empty.workspaces.is_empty() && empty.active.is_none());
+        assert!(!dir.join("workspaces.json").exists());
+
+        // Legacy single-session token.json migrates into the store and is
+        // persisted on first load.
+        save(
+            &token_path,
+            &StoredSession {
+                base_url: "http://a.example.com/".into(),
+                token: "ta".into(),
+                email: Some("a@b".into()),
+                machine_id: Some("m".into()),
+                client_id: Some("c".into()),
+                machine_name: Some("box".into()),
+            },
+        )
+        .unwrap();
+        let migrated = load_store(&token_path);
+        assert_eq!(migrated.active.as_deref(), Some("http://a.example.com"));
+        assert_eq!(migrated.workspaces.len(), 1);
+        assert_eq!(migrated.workspaces[0].token, "ta");
+        // The migration persisted: a second load reads the store file.
+        let again = load_store(&token_path);
+        assert_eq!(again.active, migrated.active);
+        assert_eq!(again.workspaces.len(), migrated.workspaces.len());
+        assert_eq!(again.workspaces[0].token, migrated.workspaces[0].token);
+
+        // A full store round-trips with 0600 permissions.
+        let mut store = migrated.clone();
+        store.workspaces.push(StoredSession {
+            base_url: "http://b.example.com".into(),
+            token: "tb".into(),
+            email: None,
+            machine_id: None,
+            client_id: None,
+            machine_name: None,
+        });
+        store.active = Some("http://b.example.com".into());
+        save_store(&dir.join("workspaces.json"), &store).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join("workspaces.json"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let loaded = load_store(&token_path);
+        assert_eq!(loaded.active.as_deref(), Some("http://b.example.com"));
+        assert_eq!(loaded.workspaces.len(), 2);
+        assert_eq!(loaded.workspaces[1].base_url, "http://b.example.com");
+        // Normalize: trailing slash and whitespace collapse to one key.
+        assert_eq!(normalize_base(" http://x/ "), "http://x");
     }
 }
