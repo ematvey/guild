@@ -464,11 +464,14 @@ export function clearToken(): void {
 // ---- Multi-workspace (desktop only — the browser is single-server) ----
 
 /** One live session: server origin + its signed-in email + whether a
- * usable token survived the last restore (false = "sign in again"). */
+ * usable token survived the last restore (false = "sign in again"), plus
+ * the workspace's display name and logo URL (server-relative). */
 export type WorkspaceRow = {
   base_url: string;
   email?: string | null;
   has_token: boolean;
+  name?: string | null;
+  logo_url?: string | null;
 };
 export type WorkspaceList = {
   active: string | null;

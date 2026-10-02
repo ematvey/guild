@@ -459,6 +459,8 @@ async fn switch_rejects_unknown_and_tokenless_entries() {
                 machine_id: None,
                 client_id: None,
                 machine_name: None,
+                org_name: None,
+                org_logo_url: None,
             }],
         },
     )
@@ -499,6 +501,8 @@ async fn restore_keeps_a_dead_token_row_and_falls_back_to_the_live_one() {
                 machine_id: Some("m-1".into()),
                 client_id: Some("c-1".into()),
                 machine_name: Some("box".into()),
+                org_name: None,
+                org_logo_url: None,
             },
             StoredSession {
                 base_url: live.uri(),
@@ -507,6 +511,8 @@ async fn restore_keeps_a_dead_token_row_and_falls_back_to_the_live_one() {
                 machine_id: Some("m-1".into()),
                 client_id: Some("c-1".into()),
                 machine_name: Some("box".into()),
+                org_name: Some("Live Workspace".into()),
+                org_logo_url: Some("/api/v1/orgs/x/logo".into()),
             },
         ],
     };
@@ -541,4 +547,58 @@ async fn restore_keeps_a_dead_token_row_and_falls_back_to_the_live_one() {
 
     std::fs::remove_file(&token_path).unwrap();
     let _ = std::fs::remove_file(&ws_path);
+}
+
+/// Login refreshes the workspace's identity (name + logo) into the state
+/// and the store — the switcher shows it without touching the network.
+#[tokio::test]
+async fn login_refreshes_org_identity_into_the_store() {
+    let server = fake_cloud().await;
+    let user = json!({
+        "id": uuid::Uuid::now_v7(),
+        "email": "a@b.c",
+        "org_id": uuid::Uuid::now_v7(),
+        "role": "member",
+        "display_name": null,
+        "avatar_url": null,
+    });
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/api/v1/org"))
+        .respond_with(move |_: &wiremock::Request| {
+            wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "name": "Acme Rockets",
+                "logo_url": "/api/v1/orgs/x/logo",
+            }))
+        })
+        .mount(&server)
+        .await;
+
+    let store = tmp_store("org-identity");
+    let (links, _) = new_registry();
+    let mut state = AuthState::default();
+    let (token, user) = CloudClient::login(&server.uri(), "a@b.c", "pw")
+        .await
+        .unwrap();
+    state
+        .transition(
+            AuthChange::Login {
+                base_url: server.uri(),
+                token,
+                email: user.email,
+            },
+            Some(&store),
+            &links,
+        )
+        .unwrap();
+    state
+        .refresh_org_identity(server.uri().as_str(), Some(&store))
+        .await;
+
+    let (_, rows) = state.workspaces();
+    assert_eq!(rows[0].name.as_deref(), Some("Acme Rockets"));
+    assert_eq!(rows[0].logo_url.as_deref(), Some("/api/v1/orgs/x/logo"));
+    // Persisted: a fresh restore shows the identity without re-fetching.
+    let row = &session_store::load_store(&store).workspaces[0];
+    assert_eq!(row.org_name.as_deref(), Some("Acme Rockets"));
+    assert_eq!(row.org_logo_url.as_deref(), Some("/api/v1/orgs/x/logo"));
 }

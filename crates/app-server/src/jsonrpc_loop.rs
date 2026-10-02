@@ -616,7 +616,7 @@ async fn workspace_switch(shared: Shared, req: Request, out_tx: mpsc::UnboundedS
 /// one), so the executor link comes up in the same step as the login — no
 /// gap in which a project create can race the not-yet-registered machine
 /// and fail with "unknown machine". Shells that omit the field reuse the stored identity or generate one.
-fn adopt_login_with_identity(
+async fn adopt_login_with_identity(
     shared: &Shared,
     base_url: String,
     token: String,
@@ -627,7 +627,7 @@ fn adopt_login_with_identity(
     auth_change_with_store(
         shared,
         AuthChange::Login {
-            base_url,
+            base_url: base_url.clone(),
             token,
             email,
         },
@@ -645,7 +645,16 @@ fn adopt_login_with_identity(
                 .map(str::to_owned)
         })
         .unwrap_or_else(|| Uuid::now_v7().to_string());
-    auth_change_with_store(shared, AuthChange::Identify { machine_id }, store)?;
+    auth_change_with_store(shared, AuthChange::Identify { machine_id }, store.clone())?;
+    // The switcher's identity data (name + logo) rides the fresh token;
+    // best-effort, after the session is fully adopted.
+    shared
+        .session
+        .lock()
+        .unwrap()
+        .auth
+        .refresh_org_identity(&base_url, store.as_deref())
+        .await;
     Ok(())
 }
 
@@ -662,7 +671,8 @@ async fn login_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<
             user.email.clone(),
             optional_param(&req, "machine_id"),
             crate::session_store::default_path().ok(),
-        )?;
+        )
+        .await?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
     }
     .await;
@@ -682,7 +692,8 @@ async fn pair_task(shared: Shared, req: Request, out_tx: mpsc::UnboundedSender<V
             user.email.clone(),
             optional_param(&req, "machine_id"),
             crate::session_store::default_path().ok(),
-        )?;
+        )
+        .await?;
         Ok(Response::ok(req.id, json!({"ok": true, "user": user})))
     }
     .await;
@@ -1231,6 +1242,7 @@ mod machine_link_tests {
             Some("machine-9".into()),
             None,
         )
+        .await
         .unwrap();
 
         let cfg = link_rx.borrow_and_update().clone().expect("link published");
@@ -1253,6 +1265,7 @@ mod machine_link_tests {
                 None,
                 Some(path.clone()),
             )
+            .await
             .unwrap();
             let stored = crate::session_store::load(&path).unwrap();
             let cfg = crate::machine_link::config_from_store(&path)
@@ -1272,6 +1285,7 @@ mod machine_link_tests {
                     None,
                     Some(path.clone()),
                 )
+                .await
                 .unwrap();
                 assert_eq!(
                     crate::machine_link::config_from_store(&path)
@@ -1297,6 +1311,7 @@ mod machine_link_tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         assert!(link_rx
@@ -1318,6 +1333,7 @@ mod machine_link_tests {
             Some("".into()),
             None,
         )
+        .await
         .unwrap();
 
         assert!(link_rx
@@ -1340,6 +1356,8 @@ mod machine_link_tests {
                 machine_id: None,
                 client_id: None,
                 machine_name: None,
+                org_name: None,
+                org_logo_url: None,
             },
         )
         .unwrap();
@@ -1480,6 +1498,7 @@ mod machine_link_tests {
             Some("machine-4".into()),
             None,
         )
+        .await
         .unwrap();
         let s = shared.session.lock().unwrap();
         assert!(s.chat_id.is_none());
@@ -1501,6 +1520,7 @@ mod machine_link_tests {
             Some("machine-4".into()),
             None,
         )
+        .await
         .unwrap();
         assert_eq!(shared.session.lock().unwrap().chat_id, Some(chat));
     }
