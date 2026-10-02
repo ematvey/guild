@@ -30,16 +30,16 @@ export function WorkspaceMenuItems({
   onReload: () => void;
 }) {
   const [list, setList] = useState<WorkspaceList | null>(null);
-  const [failed, setFailed] = useState(false);
 
   // Fetch on first open (when this section actually mounts — the dropdown
-  // content renders lazily).
+  // content renders lazily). A failure just means no rows: the header with
+  // the "+" stays.
   useEffect(() => {
     if (!IS_TAURI) return;
     let cancelled = false;
     workspaceList()
       .then((v) => !cancelled && setList(v))
-      .catch(() => !cancelled && setFailed(true));
+      .catch(() => !cancelled && setList({ active: null, workspaces: [] }));
     return () => {
       cancelled = true;
     };
