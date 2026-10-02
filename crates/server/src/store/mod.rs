@@ -11,6 +11,7 @@ pub mod kv;
 pub mod machines;
 pub mod oidc;
 pub mod org_kv;
+pub mod orgs;
 pub mod pairing;
 pub mod projects;
 pub mod registry;
@@ -187,6 +188,10 @@ impl Store {
 
     pub fn org_kv(&self) -> org_kv::OrgKvStore<'_> {
         org_kv::OrgKvStore { pool: &self.pool }
+    }
+
+    pub fn orgs(&self) -> orgs::OrgStore<'_> {
+        orgs::OrgStore { pool: &self.pool }
     }
 
     pub fn releases(&self) -> releases::ReleaseStore<'_> {
@@ -411,7 +416,7 @@ pub static MIGRATIONS_UPTO_0046: [(&str, &str); 46] = [
     ),
 ];
 
-pub static MIGRATIONS_FROM_0047: [(&str, &str); 17] = [
+pub static MIGRATIONS_FROM_0047: [(&str, &str); 19] = [
     (
         "0047_projects",
         include_str!("../../migrations/0047_projects.sql"),
@@ -479,6 +484,14 @@ pub static MIGRATIONS_FROM_0047: [(&str, &str); 17] = [
     (
         "0063_routine_run_invocation_unique",
         include_str!("../../migrations/0063_routine_run_invocation_unique.sql"),
+    ),
+    (
+        "0064_project_machine_folder_uniq",
+        include_str!("../../migrations/0064_project_machine_folder_uniq.sql"),
+    ),
+    (
+        "0065_org_workspace",
+        include_str!("../../migrations/0065_org_workspace.sql"),
     ),
 ];
 

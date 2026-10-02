@@ -16,6 +16,7 @@ pub mod internal;
 pub mod llm_proxy;
 pub mod oidc;
 pub mod openai;
+pub mod org;
 pub mod projects;
 pub mod registry;
 pub mod releases;
@@ -58,6 +59,7 @@ pub fn build_router(state: AppState) -> Router {
             }),
         )
         .merge(auth::routes())
+        .merge(crate::http::org::routes())
         .merge(crate::http::ws::routes())
         .merge(chats::routes())
         .merge(projects::routes())
