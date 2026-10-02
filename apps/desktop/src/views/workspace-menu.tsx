@@ -77,8 +77,11 @@ export function WorkspaceMenuItems({
             return (
               <DropdownMenuItem
                 key={w.base_url}
-                disabled={!w.has_token || isActive}
-                onClick={() => void switchTo(w.base_url)}
+                disabled={!w.has_token}
+                onClick={() => {
+                  if (isActive) return; // switching to the current one is a no-op
+                  void switchTo(w.base_url);
+                }}
                 title={
                   w.has_token
                     ? w.base_url
@@ -103,7 +106,21 @@ export function WorkspaceMenuItems({
                   ) : null}
                 </span>
                 {isActive ? (
-                  <span className="text-xs text-muted-foreground">current</span>
+                  <>
+                    <span className="text-xs text-muted-foreground">current</span>
+                    <span
+                      role="button"
+                      aria-label={`Sign out ${label}`}
+                      title={`Sign out ${label}`}
+                      className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void signOutWs(w.base_url);
+                      }}
+                    >
+                      <X className="size-3.5" />
+                    </span>
+                  </>
                 ) : w.has_token ? (
                   <span
                     role="button"

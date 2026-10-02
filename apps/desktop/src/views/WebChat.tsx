@@ -81,6 +81,7 @@ import {
   attachmentBlobUrl,
   toolArtifactBlobUrl,
   rpcCall,
+  IS_TAURI,
   machineId,
   postApproval,
   sendChatNoStream,
@@ -3801,13 +3802,14 @@ function SidebarContent({
           <WorkspaceMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
           <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
           <DropdownMenuItem onClick={onOpenSettings}>Settings</DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
-            {/* Desktop: the engine keeps its session and restore re-logs-in,
-                so this clears this window's token only (full engine sign-out
-                needs an engine logout RPC that does not exist yet). */}
-            Sign out
-          </DropdownMenuItem>
+          {/* Browser only: the desktop sign-out lives on the workspace rows
+              (inline ×) — a second button below duplicated it. */}
+          {!IS_TAURI && <DropdownMenuSeparator />}
+          {!IS_TAURI && (
+            <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
+              Sign out
+            </DropdownMenuItem>
+          )}
         </UserBadge>
       </div>
     </div>
