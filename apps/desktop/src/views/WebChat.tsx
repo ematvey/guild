@@ -129,6 +129,7 @@ import {
   readDraft,
   writeDraft,
 } from "../lib/drafts";
+import { WorkspaceMenuItems } from "./workspace-menu";
 import { BrowserSendStore } from "../lib/browser-send-store";
 import { clearCommands, detachCommandDraft, selectRestoredCommand, captureCommand, forgetCommand, matchesCommandDraft, prepareOnSendingMachine, recoveryDraft, rememberCommand, restoreCommands, submitCommand,
   type DraftAttachment, type OutgoingCommand } from "../lib/outgoing-command";
@@ -196,6 +197,34 @@ export function busyAfterThreadPush(
 ): boolean {
   if (sendInFlight) return true;
   return !!chats.find((c) => c.id === openChatId)?.generating;
+}
+
+/** Drops a chat's cancellation-in-progress flag once that chat's own
+ * generating state settled to false in a server-truth source — the
+ * chat-status map (thread-state frames) or the pushed list. The stop
+ * click flags the chat optimistically; the server's stop is cooperative
+ * (journaled step checks), so the authoritative generating=false push
+ * trails the click by the epilogue's round trips. Undefined generating
+ * (chat unknown to both sources) keeps the flag: no evidence is no
+ * clearance. Returns null when nothing changed — the caller bails out
+ * of the state update instead of re-rendering on every push. */
+export function pruneStopping(
+  stopping: Record<string, true>,
+  chatStatus: Record<string, { generating: boolean; unread: boolean }>,
+  chats: ChatSummary[] | null,
+): Record<string, true> | null {
+  let changed = false;
+  const next: Record<string, true> = {};
+  for (const cid of Object.keys(stopping)) {
+    const generating =
+      chatStatus[cid]?.generating ?? chats?.find((c) => c.id === cid)?.generating;
+    if (generating === false) {
+      changed = true;
+      continue;
+    }
+    next[cid] = true;
+  }
+  return changed ? next : null;
 }
 
 
@@ -1370,6 +1399,9 @@ type WebChatProps = {
   displayName?: string | null;
   avatarUrl?: string | null;
   onSignOut: () => void;
+  /** Desktop multi-workspace: shows the pair/sign-in card over the running
+   * app; the login activates the new workspace. Absent on the web. */
+  onAddWorkspace?: () => void;
 };
 
 /** A render exception anywhere in the chat view must never unmount the app:
@@ -1401,7 +1433,7 @@ export default function WebChat(props: WebChatProps) {
     </ChatErrorBoundary>
   );
 }
-function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSignOut }: WebChatProps) {
+function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSignOut, onAddWorkspace }: WebChatProps) {
   const outgoingScope = `${apiUrl("")}\n${email}`;
   const draftStorage = useMemo(() => scopedDraftStorage(localStorage, outgoingScope), [outgoingScope]);
   const [fileStore] = useState(() => new BrowserSendStore(outgoingScope));
@@ -1440,6 +1472,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // reconciles the rest. mark-read happens on thread load for the visible
   // open chat; a hidden tab never swallows its own dot.
   const [chatStatus, setChatStatus] = useState<Record<string, { generating: boolean; unread: boolean }>>({});
+  // Cancellation-in-progress, per chat: a stop click flags the chat the
+  // moment it lands so the composer's Stop button and the feed's shimmer
+  // acknowledge it immediately. The server's stop is cooperative — the
+  // runner observes the flag inside journaled steps — so the authoritative
+  // generating=false push trails the click by the epilogue's round trips;
+  // pruneStopping lifts the flag when that push (or the list push) lands,
+  // requestStop on a rejected/failed stop.
+  const [stopping, setStopping] = useState<Record<string, true>>({});
   const chatsRef = useRef<ChatSummary[] | null>(null);
   chatsRef.current = chats;
   // URL-driven navigation state (see parseChatRoute above): everything the
@@ -2344,15 +2384,40 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   // Stop the chat's in-flight turn. 409 (nothing generating) resolves
   // silently — the turn already ended between the render and the click.
+  // The optimistic stopping flag rides the click: the button's Stop state
+  // flips to "stopping" at once, and lifts when the server's own
+  // generating=false lands (pruneStopping) — a rejected (409) or failed
+  // stop lifts it here, so the button stays retryable.
   const requestStop = async () => {
     const cid = chatId;
-    if (!cid) return;
+    if (!cid || stopping[cid]) return;
+    setStopping((prev) => (prev[cid] ? prev : { ...prev, [cid]: true }));
     try {
-      await stopChat(cid);
+      if (!(await stopChat(cid))) {
+        setStopping((prev) => {
+          if (!prev[cid]) return prev;
+          const next = { ...prev };
+          delete next[cid];
+          return next;
+        });
+      }
     } catch {
-      // the turn already ended; the feed's own state settles the spinner
+      // the turn already ended or the stop failed; the feed's own state
+      // settles the spinner
+      setStopping((prev) => {
+        if (!prev[cid]) return prev;
+        const next = { ...prev };
+        delete next[cid];
+        return next;
+      });
     }
   };
+
+  // Cancellation flags resolve into server truth: every push that moves a
+  // chat's generating state gets a chance to lift its stopping flag.
+  useEffect(() => {
+    setStopping((prev) => pruneStopping(prev, chatStatus, chats) ?? prev);
+  }, [chats, chatStatus]);
 
   const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
@@ -2377,6 +2442,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       onOpenChat={openChat}
       onNewProject={() => openCreateProject("sidebar")}
       onSignOut={signOut}
+      onAddWorkspace={onAddWorkspace}
       onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
       onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
       onCollapse={isMobile ? undefined : () => setCollapsed(true)}
@@ -2614,7 +2680,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     blocks[blocks.length - 1].kind === "reasoning")
                 ) && (
                   <div className="max-w-none py-1">
-                    <WorkingIndicator />
+                    <WorkingIndicator
+                      label={chatId && stopping[chatId] ? "Stopping" : "Working"}
+                    />
                   </div>
                 )}
               <div ref={bottom} />
@@ -2936,10 +3004,15 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 {(() => {
                   // While a turn generates the composer stays usable: with
                   // content the send queues (Ctrl/Cmd+Enter steers); empty,
-                  // the button turns into Stop.
+                  // the button turns into Stop. A clicked stop shows its own
+                  // state (pulsing square, "Stopping…") until the server's
+                  // generating=false lands — the stop is cooperative
+                  // server-side, so this is the only immediate feedback the
+                  // click can honestly get.
                   const generating = busy || openGenerating;
                   const hasContent = !!prompt.trim() || pending.length > 0;
                   const stopMode = generating && !hasContent;
+                  const stoppingMode = stopMode && !!chatId && !!stopping[chatId];
                   return (
                     <Button
                       size="icon"
@@ -2947,16 +3020,24 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                       onClick={() =>
                         stopMode ? void requestStop() : void send(generating ? "queue" : "normal")
                       }
-                      disabled={stopMode ? false : !model || !hasContent}
+                      disabled={stoppingMode ? true : stopMode ? false : !model || !hasContent}
                       title={
-                        stopMode
-                          ? "Stop"
-                          : generating
-                            ? "Queue (Ctrl+Enter sends immediately)"
-                            : "Send"
+                        stoppingMode
+                          ? "Stopping…"
+                          : stopMode
+                            ? "Stop"
+                            : generating
+                              ? "Queue (Ctrl+Enter sends immediately)"
+                              : "Send"
                       }
                     >
-                      {stopMode ? <Square className="size-3.5 fill-current" /> : <ArrowUp />}
+                      {stopMode ? (
+                        <Square
+                          className={`size-3.5 fill-current ${stoppingMode ? "animate-pulse" : ""}`}
+                        />
+                      ) : (
+                        <ArrowUp />
+                      )}
                     </Button>
                   );
                 })()}
@@ -3492,6 +3573,7 @@ function SidebarContent({
   onOpenChat,
   onNewProject,
   onSignOut,
+  onAddWorkspace,
   onOpenSettings,
   onOpenDevice,
   onCollapse,
@@ -3516,6 +3598,8 @@ function SidebarContent({
   onOpenChat: (id: string) => void;
   onNewProject: () => void;
   onSignOut: () => void;
+  /** Desktop multi-workspace: “Add workspace” entry in the account menu. */
+  onAddWorkspace?: () => void;
   onOpenSettings: () => void;
   onOpenDevice: () => void;
   /** Desktop only: collapse the sidebar from within its own header. */
@@ -3714,6 +3798,7 @@ function SidebarContent({
       <Separator />
       <div className="p-2">
         <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
+          <WorkspaceMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
           <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
           <DropdownMenuItem onClick={onOpenSettings}>Settings</DropdownMenuItem>
           <DropdownMenuSeparator />
