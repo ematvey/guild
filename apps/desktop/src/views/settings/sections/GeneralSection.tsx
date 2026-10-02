@@ -9,7 +9,7 @@ import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { PageHeader } from "../components/page-header";
 import { api, ApiError, getToken } from "../admin-api";
-import { apiUrl } from "../../../transport";
+import { apiUrl, serverUrl } from "../../../transport";
 
 interface OrgSettings {
   name: string;
@@ -165,6 +165,15 @@ export default function GeneralSection() {
         </div>
         <p className="text-xs text-muted-foreground">
           Shown wherever the workspace is named; the server address stays unchanged.
+        </p>
+      </div>
+      <div className="max-w-md space-y-2">
+        <label className="text-sm font-medium" htmlFor="workspace-url">
+          Workspace URL
+        </label>
+        <Input id="workspace-url" value={serverUrl()} readOnly disabled />
+        <p className="text-xs text-muted-foreground">
+          Where this workspace's server lives — fixed at sign-in, not changeable here.
         </p>
       </div>
     </div>
