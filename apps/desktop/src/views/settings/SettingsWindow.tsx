@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Bot,
+  Building2,
   Cpu,
   Info,
   KeyRound,
@@ -49,6 +50,7 @@ type SectionId =
   | "machine"
   | "gateway"
   | "approvals"
+  | "general"
   | "usage"
   | "assistant"
   | "users"
@@ -115,6 +117,7 @@ export function SettingsWindow({
       icon: <ShieldCheck className="size-4" />,
       group: "user",
     },
+    { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "org", admin: true },
     { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "org", admin: true },
     { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "org", admin: true },
     { id: "users", label: "Users", icon: <Users className="size-4" />, group: "org", admin: true },
@@ -138,7 +141,7 @@ export function SettingsWindow({
 
   const groups: { key: "user" | "org"; label: string }[] = [
     { key: "user", label: "User" },
-    ...(isAdmin ? [{ key: "org" as const, label: "Organization" }] : []),
+    ...(isAdmin ? [{ key: "org" as const, label: "Workspace" }] : []),
   ];
 
   // same resizable sidebar as the chat, sharing its stored width
@@ -288,6 +291,15 @@ function SectionBody({
   onDetailChange: (detail: string | null) => void;
 }) {
   switch (id) {
+    case "general":
+      return (
+        <LazySection
+          load={() => import("./sections/GeneralSection")}
+          name="GeneralSection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
     case "account":
       return <AccountSection email={email} />;
     case "appearance":
@@ -424,7 +436,7 @@ function AccountSection({ email }: { email: string }) {
     <div className="space-y-5">
       <PageHeader
         title="Account"
-        description="Your sign-in and role in this organization."
+        description="Your sign-in and role in this workspace."
       />
       <FactGrid>
         <FactCard label="Email">
@@ -436,8 +448,8 @@ function AccountSection({ email }: { email: string }) {
       </FactGrid>
       <p className="text-sm text-muted-foreground">
         {role === "admin"
-          ? "You can configure the organization: users, teams, models, integrations and registry."
-          : "Ask an org admin for model or integration changes."}
+          ? "You can configure the workspace: users, teams, models, integrations and registry."
+          : "Ask a workspace admin for model or integration changes."}
       </p>
     </div>
   );

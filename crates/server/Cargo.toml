@@ -186,6 +186,10 @@ name = "migrations"
 required-features = ["test-support"]
 
 [[test]]
+name = "org_api"
+required-features = ["test-support"]
+
+[[test]]
 name = "prune"
 required-features = ["test-support"]
 
