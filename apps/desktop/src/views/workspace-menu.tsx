@@ -4,10 +4,7 @@
 //! path a fresh launch takes.
 
 import { useEffect, useState } from "react";
-import {
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from "@guild/ui/components/dropdown-menu";
+import { DropdownMenuItem } from "@guild/ui/components/dropdown-menu";
 import { Plus, X } from "lucide-react";
 import {
   IS_TAURI,
@@ -63,15 +60,24 @@ export function WorkspaceMenuItems({
   const rows = list?.workspaces ?? [];
   const active = list?.active ?? null;
 
+  // The section header is always present on desktop (the "+" rides on it);
+  // rows follow when the list resolved.
   return (
     <>
-      {failed || rows.length === 0 ? null : (
-        <>
-          <DropdownMenuSeparator />
-          <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
-            Workspaces
-          </div>
-          {rows.map((w) => {
+      <div className="flex items-center justify-between px-2 pb-1 pt-1.5">
+        <span className="text-xs font-medium text-muted-foreground">Workspaces</span>
+        {onAddWorkspace && (
+          <button
+            onClick={onAddWorkspace}
+            title="Add workspace"
+            aria-label="Add workspace"
+            className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        )}
+      </div>
+      {rows.map((w) => {
             const label = w.name || shortOrigin(w.base_url);
             const isActive = w.base_url === active;
             return (
@@ -87,6 +93,7 @@ export function WorkspaceMenuItems({
                     ? w.base_url
                     : "Sign in again to use this workspace"
                 }
+                className={isActive ? "bg-accent/40" : undefined}
               >
                 {w.logo_url ? (
                   <img
@@ -99,12 +106,7 @@ export function WorkspaceMenuItems({
                     {label.slice(0, 1).toUpperCase()}
                   </span>
                 )}
-                <span className="min-w-0 flex-1 truncate">
-                  {label}
-                  {w.email ? (
-                    <span className="text-muted-foreground"> · {w.email}</span>
-                  ) : null}
-                </span>
+                <span className="min-w-0 flex-1 truncate">{label}</span>
                 {isActive ? (
                   <>
                     <span className="text-xs text-muted-foreground">current</span>
@@ -140,17 +142,6 @@ export function WorkspaceMenuItems({
               </DropdownMenuItem>
             );
           })}
-        </>
-      )}
-      {onAddWorkspace && (
-        <>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={onAddWorkspace}>
-            <Plus className="size-4" />
-            Add workspace
-          </DropdownMenuItem>
-        </>
-      )}
     </>
   );
 }
