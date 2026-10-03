@@ -207,4 +207,26 @@ export class IdentityStore {
       sha256Hex(token),
     ]);
   }
+
+  /** The (session_hash, expires_at) a live bearer token maps to — the ws
+   *  ticket mints this identity (crates/server/src/store/identity.rs
+   *  session_grant). Only a still-valid session resolves. */
+  async sessionGrant(token: string): Promise<[string, Date]> {
+    const hash = sha256Hex(token);
+    return [hash, await this.sessionExpiry(hash)];
+  }
+
+  /** The expiry of a still-valid session row by token hash; invalid/expired
+   *  or generation-superseded rows are unauthorized. */
+  async sessionExpiry(hash: string): Promise<Date> {
+    const res = await this.pool.query<{ expires_at: Date }>(
+      `SELECT s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id
+       WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
+         AND s.auth_generation = u.auth_generation`,
+      [hash],
+    );
+    const row = res.rows[0];
+    if (!row) throw ApiError.unauthorized("invalid or expired session");
+    return new Date(row.expires_at);
+  }
 }
