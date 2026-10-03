@@ -101,6 +101,16 @@ describe("health route (native)", () => {
       "/api/v1/chats/*/attachments",
       "/api/v1/auth/oidc/*",
       "/api/v1/admin/oidc",
+      "/api/v1/gateway/models",
+      "/api/v1/admin/gateway/*",
+      "/api/v1/api-keys",
+      "/api/v1/api-keys/*",
+      "/api/v1/admin/api-keys",
+      "/api/v1/admin/api-keys/*",
+      "/api/v1/usage",
+      "/api/v1/usage/*",
+      "/openai/v1/*",
+      "/anthropic/v1/*",
     ]);
   });
 });
