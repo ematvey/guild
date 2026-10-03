@@ -17,6 +17,11 @@ describe("loadConfig", () => {
       s3AccessKeyId: "minioadmin",
       s3SecretAccessKey: "minioadmin",
       apiUrl: "http://localhost:8080",
+      clickhouseUrl: "http://localhost:8123",
+      clickhouseDatabase: "guild",
+      clickhouseUser: "",
+      clickhousePassword: "",
+      internalKey: null,
     });
     expect(DEFAULT_BIND_ADDR).toBe("0.0.0.0:8080");
     expect(DEFAULT_UPSTREAM_URL).toBe("http://server-rust:8080");

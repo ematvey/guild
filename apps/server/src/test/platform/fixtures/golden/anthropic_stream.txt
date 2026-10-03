@@ -1,0 +1,27 @@
+event: message_start
+data: {"message":{"content":[],"id":"msg_01a103e3-e389-743d-acca-4ed791bff525","model":"GLM-5.3-Flash","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":0,"output_tokens":0}},"type":"message_start"}
+
+event: content_block_start
+data: {"content_block":{"thinking":"","type":"thinking"},"index":0,"type":"content_block_start"}
+
+event: content_block_delta
+data: {"delta":{"thinking":"The","type":"thinking_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_delta
+data: {"delta":{"thinking":" user is asking me to say","type":"thinking_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_delta
+data: {"delta":{"thinking":" exactly \"hello gateway\". This","type":"thinking_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_delta
+data: {"delta":{"thinking":" is a simple","type":"thinking_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_stop
+data: {"index":0,"type":"content_block_stop"}
+
+event: message_delta
+data: {"delta":{"stop_reason":"max_tokens","stop_sequence":null},"type":"message_delta","usage":{"input_tokens":17,"output_tokens":16}}
+
+event: message_stop
+data: {"type":"message_stop"}
+

@@ -182,14 +182,21 @@ export function sortedJson(value: unknown): unknown {
   return value;
 }
 
-/** Installs the platform error handling on the encapsulated scope. */
-export function installErrorHandling(app: FastifyInstance): void {
+/** Installs the error handling on the encapsulated scope. `renderApiError`
+ *  lets non-/api/v1 scopes (the LLM gateway surfaces) render failures in
+ *  their own wire contracts; default is the /api/v1 envelope. */
+export function installErrorHandling(
+  app: FastifyInstance,
+  renderApiError: (error: ApiError, path: string) => { status: number; body: string } = (error) => ({
+    status: error.status,
+    body: JSON.stringify({ error: { code: error.code, message: error.message } }),
+  }),
+): void {
   app.setErrorHandler((error: unknown, req, reply) => {
     if (error instanceof ApiError) {
       if (error.status === 500) req.log.error(error);
-      return reply
-        .status(error.status)
-        .send({ error: { code: error.code, message: error.message } });
+      const rendered = renderApiError(error, req.url ?? "");
+      return reply.status(rendered.status).type("application/json").send(rendered.body);
     }
     if (error instanceof TextError) {
       return reply.status(error.status).type("text/plain; charset=utf-8").send(error.body);
@@ -205,9 +212,8 @@ export function installErrorHandling(app: FastifyInstance): void {
         .send(`${JSON_REJECTION_PREFIX}${(error as Error).message}`);
     }
     req.log.error(error);
-    return reply
-      .status(500)
-      .send({ error: { code: "internal", message: "internal server error" } });
+    const rendered = renderApiError(new ApiError(500, "internal", "internal server error"), req.url ?? "");
+    return reply.status(rendered.status).type("application/json").send(rendered.body);
   });
   // No custom not-found handler: unmatched methods/paths inside the native
   // route groups must keep falling through to the proxy catch-all (Rust 404
