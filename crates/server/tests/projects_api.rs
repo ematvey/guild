@@ -92,6 +92,19 @@ async fn projects_crud_roundtrip_with_delete_unlink() {
     assert_eq!(body["machine_label"], "WORKSTATION");
     assert_eq!(body["folder"], r"\\wsl.localhost\Ubuntu-22.04\home\u\repo");
 
+    // The same folder on the same machine is refused (one live project per
+    // machine+folder — the executor would drive one tree from two projects).
+    let (status, body) = post_json(
+        &app,
+        &fs,
+        "POST",
+        "/api/v1/projects",
+        json!({"folder": r"\\wsl.localhost\Ubuntu-22.04\home\u\repo\", "machine_id": "machine-1"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "folder_taken");
+
     // Duplicate name is fine now (names are folder-derived labels); an
     // omitted name defaults to the folder's basename; machine must be
     // registered.

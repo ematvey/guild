@@ -2301,10 +2301,10 @@ impl ChatRunner {
                     })
                 };
                 // Tool-carried artifacts and oversized results spill inside
-                // server_tool_step; the spilled descriptor rides to the
-                // event's artifact_id and claims the meta card.
-                let mut spilled: Option<crate::worker::spill::SpilledArtifact> = None;
-                let (content, is_error, meta, tool_images) = if is_client_tool {
+                // server_tool_step (integration tools) and spill_machine_outcome
+                // (machine tools); the spilled descriptor rides to the event's
+                // artifact_id and claims the meta card.
+                let (content, is_error, meta, tool_images, spilled) = if is_client_tool {
                     let payload = if let Some(ws_name) = req.server_workspace.clone() {
                         // Server-local executor (batch workspace backend):
                         // the server itself runs the tool in the org
@@ -2339,12 +2339,25 @@ impl ChatRunner {
                         )
                         .await?
                     };
-                    (
-                        payload.content,
-                        payload.is_error,
-                        payload.meta,
-                        payload.images,
-                    )
+                    // Machine tools follow the same large-result pattern (tool
+                    // artifacts design): an oversized result spills into a
+                    // downloadable artifact and the model-facing content
+                    // becomes the pointer text. The spill rides its own
+                    // journaled run between the awakeable resolution and the
+                    // event append — a replay restores the recorded
+                    // descriptor; spill failure degrades to the inline
+                    // result, so the outcome is never lost.
+                    let (content2, spilled2) =
+                        spill_machine_outcome(&ctx, &state, req.org_id, req.chat_id, call, &payload)
+                            .await?;
+                    // Spilled results claim the meta card for the download
+                    // card (exact keys: card/id/filename/content_type/
+                    // size_bytes/path); tool-owned meta keys ride along.
+                    let meta2 = match &spilled2 {
+                        Some(s) => Some(crate::worker::spill::artifact_meta(payload.meta, s)),
+                        None => payload.meta,
+                    };
+                    (content2, payload.is_error, meta2, payload.images, spilled2)
                 } else {
                     let (content3, is_error3, meta3, spilled3) = server_tool_step(
                         &ctx,
@@ -2368,8 +2381,7 @@ impl ChatRunner {
                         Some(s) => Some(crate::worker::spill::artifact_meta(meta3, s)),
                         None => meta3,
                     };
-                    spilled = spilled3;
-                    (content3, is_error3, meta3, Vec::new())
+                    (content3, is_error3, meta3, Vec::new(), spilled3)
                 };
 
                 // Journaled: persist the tool_result event with turn/step and
@@ -3140,6 +3152,61 @@ async fn sandbox_tool_step(
     .await
 }
 
+/// Oversized machine-tool result spill (tool artifacts design): the journaled
+/// run between the awakeable resolution and the event append. Returns the
+/// model-facing content (pointer text when spilled) and the descriptor; a
+/// `None` descriptor keeps the inline result on spill failure — the outcome
+/// is never lost (same fallback as the integration path). Machine tools carry
+/// no artifact payloads, so the decision is content-size only; the client
+/// caps `output_for_model` at the same 64 KiB the threshold uses, so the
+/// results that spill are exactly the ones that hit the client's cap.
+async fn spill_machine_outcome(
+    ctx: &ObjectContext<'_>,
+    state: &AppState,
+    org_id: Uuid,
+    chat_id: Uuid,
+    call: &ToolCall,
+    payload: &ToolResultPayload,
+) -> HandlerResult<(String, Option<crate::worker::spill::SpilledArtifact>)> {
+    if !crate::worker::spill::should_spill(&payload.content) {
+        return Ok((payload.content.clone(), None));
+    }
+    let st = state.clone();
+    let (org, chat, call_id, tool_name, raw) = (
+        org_id,
+        chat_id,
+        call.id.clone(),
+        call.name.clone(),
+        payload.content.clone(),
+    );
+    // The journaled result carries the spill outcome itself — a spill
+    // failure is recorded (replay restores it) but must not fail the turn.
+    let outcome: Result<(crate::worker::spill::SpilledArtifact, String), String> = ctx
+        .run(move || {
+            let state = st.clone();
+            async move {
+                let res = crate::worker::spill::spill_oversized_result(
+                    &state, org, chat, &call_id, &tool_name, &raw,
+                )
+                .await
+                .map_err(|e| format!("{e:#}"));
+                Ok(Json(res))
+            }
+        })
+        .await?
+        .into_inner();
+    Ok(match outcome {
+        Ok((spilled, pointer)) => (pointer, Some(spilled)),
+        Err(e) => {
+            tracing::warn!(
+                tool = %call.name,
+                "oversized machine result spill failed, keeping inline: {e}"
+            );
+            (payload.content.clone(), None)
+        }
+    })
+}
+
 /// One server-local tool call (spec 2026-09-18 unification §4 phase 4): the
 /// batch backend — the server executes the client-tool in-process against
 /// the org workspace dir, pre-approved by contract. Everything below the
@@ -3774,30 +3841,19 @@ async fn server_tool_step(
                                     }
                                 }
                                 None if crate::worker::spill::should_spill(&outcome.content) => {
-                                    match crate::worker::spill::spill_artifact(
+                                    // Spill failure must not lose the result:
+                                    // fall back to the inline content.
+                                    match crate::worker::spill::spill_oversized_result(
                                         &state,
                                         org,
                                         chat,
                                         &call.id,
                                         raw,
-                                        &format!("{raw}_result.txt"),
-                                        "text/plain; charset=utf-8",
-                                        outcome.content.as_bytes(),
+                                        &outcome.content,
                                     )
                                     .await
                                     {
-                                        // Spill failure must not lose the
-                                        // result: fall back to the inline
-                                        // content.
-                                        Ok(spilled) => {
-                                            let pointer = crate::worker::spill::pointer_text(
-                                                raw,
-                                                &spilled,
-                                                "text/plain; charset=utf-8",
-                                                Some(&outcome.content),
-                                            );
-                                            Some((spilled, pointer))
-                                        }
+                                        Ok((spilled, pointer)) => Some((spilled, pointer)),
                                         Err(e) => {
                                             tracing::warn!(
                                                 tool = raw,

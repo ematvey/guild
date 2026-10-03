@@ -1076,12 +1076,9 @@ mod tests {
             label: None,
         };
         let instance = Uuid::now_v7();
-        let registration = futures::executor::block_on(hub.register_machine_instance(
-            old,
-            "busy",
-            instance,
-            false,
-        ))
+        let registration = futures::executor::block_on(
+            hub.register_machine_instance(old, "busy", instance, false),
+        )
         .unwrap();
         for _ in 0..257 {
             futures::executor::block_on(sink.send(WsServerMsg::Hello)).unwrap();
