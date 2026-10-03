@@ -124,7 +124,20 @@ export async function createM2TestEnv(
     if (withClickhouse) await dropClickhouseDatabase(clickhouseDatabase);
     const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
     try {
-      await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+      // WITH (FORCE) can transiently fail ("permission denied to terminate
+      // process") when a backend exits as the signal lands under parallel
+      // load — retry.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+          break;
+        } catch (error) {
+          if (attempt >= 4) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes("terminate process")) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        }
+      }
     } finally {
       await dropper.end();
     }
@@ -358,7 +371,17 @@ export async function setupM2Stack(configOverrides: Record<string, string> = {})
       if (!res.ok) throw new Error(`usage seed failed: ${await res.text()}`);
     },
     async drain() {
+      // Wait for the usage sink's async inserts to land: fixed sleeps race
+      // under parallel-suite load — poll until the org's row count is
+      // stable across two consecutive reads (bounded).
       await new Promise((resolve) => setTimeout(resolve, 400));
+      let last = -1;
+      for (let i = 0; i < 20; i++) {
+        const rows = await this.usageRows();
+        if (rows.length === last) return;
+        last = rows.length;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
     },
     async usageRows() {
       const res = await fetch(`${TEST_CLICKHOUSE_URL}/?database=${env.clickhouseDatabase}`, {

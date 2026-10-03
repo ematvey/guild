@@ -58,7 +58,18 @@ beforeAll(async () => {
     await pool.end();
     const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
     try {
-      await dropper.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+      // Same WITH (FORCE) transient as the shared harness cleanup — retry.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await dropper.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+          break;
+        } catch (error) {
+          if (attempt >= 4) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes("terminate process")) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        }
+      }
     } finally {
       await dropper.end();
     }
