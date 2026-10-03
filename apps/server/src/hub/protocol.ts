@@ -8,6 +8,9 @@
 // build plain objects with keys inserted in exactly that order —
 // JSON.stringify preserves string-key insertion order.
 
+import { threadEventRowWire } from "../chats/thread-events.js";
+import { rustFloatText } from "../platform/provider/sse.js";
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Server → client. Returns the exact bytes serde_json::to_string would
@@ -49,9 +52,112 @@ export type WsServerMsg =
       generation_id: string;
       seq: number;
       machine_id: string | null;
-      event: unknown;
+      event: StreamWireEvent | unknown;
     }
   | { type: "org_event"; event: unknown };
+
+/** The StreamEvent variants the server streams inside live_frame frames
+ *  (protocol::api::StreamEvent, serde internally-tagged snake_case). */
+export type StreamWireEvent =
+  | { type: "delta"; content: string }
+  | { type: "thinking_delta"; content: string }
+  | { type: "tool_started"; call_id: string; name: string; arguments: string; executor: "client" | "server"; kind?: string }
+  | { type: "tool_completed"; call_id: string; name: string; content: string; is_error: boolean }
+  | { type: "done"; message_id: string; cost_usd: number; tokens_in: number; tokens_out: number }
+  | { type: "error"; code: string; message: string };
+
+function rawJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "null";
+  } catch {
+    return "null";
+  }
+}
+
+/** Marks an already-encoded JSON fragment so wireObject splices it in
+ *  verbatim (nested enum values and pre-rendered rows). */
+function raw(json: string): { __raw: string } {
+  return { __raw: json };
+}
+
+/** Renders one wire field value: pre-rendered fragments verbatim, floats
+ *  through serde's ryu rules, everything else plain. */
+function wireValue(value: unknown): string {
+  if (value !== null && typeof value === "object") {
+    if ("__raw" in value) return (value as { __raw: string }).__raw;
+    if ("__rustFloat" in value) return rustFloatText((value as { __rustFloat: number }).__rustFloat);
+    return rawJson(value);
+  }
+  return JSON.stringify(value);
+}
+
+function wireObject(fields: [string, unknown][]): string {
+  const parts: string[] = [];
+  for (const [key, value] of fields) {
+    if (value === undefined) continue;
+    parts.push(`${JSON.stringify(key)}:${wireValue(value)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+/** Byte-exact StreamEvent rendering: `cost_usd` keeps serde's ryu `.0`
+ *  style (rustFloat), fields ride variant declaration order. Unknown
+ *  variants fall back to plain stringify (the bridge never emits them). */
+export function streamEventWire(event: StreamWireEvent | unknown): string {
+  switch ((event as StreamWireEvent).type) {
+    case "delta":
+      return wireObject([
+        ["type", "delta"],
+        ["content", (event as { content: string }).content],
+      ]);
+    case "thinking_delta":
+      return wireObject([
+        ["type", "thinking_delta"],
+        ["content", (event as { content: string }).content],
+      ]);
+    case "tool_started": {
+      const started = event as { call_id: string; name: string; arguments: string; executor: string; kind?: string };
+      return wireObject([
+        ["type", "tool_started"],
+        ["call_id", started.call_id],
+        ["name", started.name],
+        ["arguments", started.arguments],
+        ["executor", started.executor],
+        ["kind", started.kind],
+      ]);
+    }
+    case "tool_completed": {
+      const completed = event as { call_id: string; name: string; content: string; is_error: boolean };
+      return wireObject([
+        ["type", "tool_completed"],
+        ["call_id", completed.call_id],
+        ["name", completed.name],
+        ["content", completed.content],
+        ["is_error", completed.is_error],
+      ]);
+    }
+    case "done": {
+      const done = event as { message_id: string; cost_usd: number; tokens_in: number; tokens_out: number };
+      return wireObject([
+        ["type", "done"],
+        ["message_id", done.message_id],
+        ["cost_usd", raw(rustFloatText(done.cost_usd))],
+        ["tokens_in", done.tokens_in],
+        ["tokens_out", done.tokens_out],
+      ]);
+    }
+    case "error": {
+      const error = event as { code: string; message: string };
+      return wireObject([
+        ["type", "error"],
+        ["code", error.code],
+        ["message", error.message],
+      ]);
+    }
+    default:
+      return rawJson(event);
+  }
+}
 
 /** Builds a frame object with serde's key order. Fields are applied in the
  *  exact declaration order of each Rust variant; `undefined` values are
@@ -103,33 +209,44 @@ export function serializeServerMsg(msg: WsServerMsg): string {
       );
     case "sync_begin":
       return JSON.stringify(frame("sync_begin", [["chat_id", msg.chat_id]]));
-    case "thread_state":
-      return JSON.stringify(
-        frame("thread_state", [
-          ["chat_id", msg.chat_id],
-          ["seq", msg.seq],
-          ["events", msg.events],
-          ["text", msg.text],
-          ["thinking", msg.thinking],
-          ["generating", msg.generating],
-          ["project_id", msg.project_id],
-          ["project_name", msg.project_name],
-          ["project_machine_label", msg.project_machine_label],
-          ["has_more_events", msg.has_more_events],
-        ]),
-      );
+    case "thread_state": {
+      // The event rows render through the byte-exact row renderer (serde
+      // Value rows: sorted keys, ryu floats) — a plain stringify would lose
+      // both (the M3 live-capture finding).
+      const rows = (msg.events as unknown[])
+        .map((row) => {
+          try {
+            return threadEventRowWire(row as Parameters<typeof threadEventRowWire>[0]);
+          } catch {
+            return JSON.stringify(row);
+          }
+        })
+        .join(",");
+      return wireObject([
+        ["type", "thread_state"],
+        ["chat_id", msg.chat_id],
+        ["seq", msg.seq],
+        ["events", raw(`[${rows}]`)],
+        ["text", msg.text],
+        ["thinking", msg.thinking],
+        ["generating", msg.generating],
+        ["project_id", msg.project_id],
+        ["project_name", msg.project_name],
+        ["project_machine_label", msg.project_machine_label],
+        ["has_more_events", msg.has_more_events],
+      ]);
+    }
     case "sync_done":
       return JSON.stringify(frame("sync_done", [["chat_id", msg.chat_id]]));
     case "live_frame":
-      return JSON.stringify(
-        frame("live_frame", [
-          ["chat_id", msg.chat_id],
-          ["generation_id", msg.generation_id],
-          ["seq", msg.seq],
-          ["machine_id", msg.machine_id],
-          ["event", msg.event],
-        ]),
-      );
+      return wireObject([
+        ["type", "live_frame"],
+        ["chat_id", msg.chat_id],
+        ["generation_id", msg.generation_id],
+        ["seq", msg.seq],
+        ["machine_id", msg.machine_id],
+        ["event", raw(streamEventWire(msg.event))],
+      ]);
     case "org_event":
       return JSON.stringify(frame("org_event", [["event", msg.event]]));
   }

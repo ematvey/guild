@@ -19,10 +19,11 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { PlatformContext } from "../platform/context.js";
 import { ApiError, requireUser } from "../platform/http/error.js";
 import type { UserRow } from "../platform/store/identity.js";
-import { pgTimestampToRfc3339, uuidv7 } from "../platform/time.js";
+import { uuidv7 } from "../platform/time.js";
 import { LiveHub, type LiveMember } from "../hub/live.js";
 import { SocketSink } from "../hub/sink.js";
 import { parseClientMsg, serializeServerMsg, type WsServerMsg } from "../hub/protocol.js";
+import { threadListSnapshot } from "../hub/feed.js";
 import { TicketStore, type TicketIdentity } from "../hub/tickets.js";
 void TicketStore;
 
@@ -659,69 +660,4 @@ async function runSyncStarted(
     });
   }
   sink.send({ type: "sync_done", chat_id: chatId });
-}
-
-/** The same thread-list payload as GET /api/v1/chats (Rust
- *  feed::thread_list_filtered), computed at socket connect: every active
- *  (non-archived) chat of the caller with the hub's live machine state. */
-async function threadListSnapshot(ctx: PlatformContext, user: UserRow): Promise<unknown[]> {
-  const res = await ctx.pool.query<{
-    id: string;
-    org_id: string;
-    user_id: string;
-    title: string | null;
-    created_at: string;
-    machine_id: string | null;
-    machine_label: string | null;
-    generating: boolean;
-    unread: boolean;
-    project_id: string | null;
-    project_name: string | null;
-    project_machine_label: string | null;
-  }>(
-    `SELECT c.id, c.org_id, c.user_id, c.title,
-            to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
-            c.machine_id, c.machine_label, c.generating, c.project_id, pr.name AS project_name,
-            m.label AS project_machine_label,
-            c.generating = false AND EXISTS (
-              SELECT 1 FROM thread_events e
-              WHERE e.chat_id = c.id AND e.type = 'assistant_message'
-                AND (r.last_read_event_id IS NULL OR e.id > r.last_read_event_id)) AS unread
-     FROM chats c
-     LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
-     LEFT JOIN projects pr ON pr.id = c.project_id
-     LEFT JOIN machines m ON m.machine_id = pr.machine_id
-     WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL
-     ORDER BY c.created_at DESC, c.id DESC`,
-    [user.org_id, user.id],
-  );
-  return res.rows.map((chat) => {
-    const online = chat.machine_id !== null && ctx.hub.machineOnline(chat.machine_id);
-    // Old chats stored the raw machine id as their label; the live hub label
-    // (the machine's hostname) is the truth when the slot is up.
-    const label =
-      online && chat.machine_id !== null
-        ? (ctx.hub.machineLabel(chat.machine_id) ?? chat.machine_id)
-        : chat.machine_label;
-    // Key order: the Rust handler serializes each chat through
-    // serde_json::Value (json! BTreeMap), so the wire order is ALPHABETICAL —
-    // verified against the Rust server's captured frames (ws-golden.json).
-    return {
-      created_at: pgTimestampToRfc3339(chat.created_at),
-      generating: chat.generating,
-      id: chat.id,
-      ...(chat.machine_id !== null ? { machine_id: chat.machine_id } : {}),
-      ...(label !== null ? { machine_label: label } : {}),
-      machine_online: online,
-      org_id: chat.org_id,
-      ...(chat.project_id !== null ? { project_id: chat.project_id } : {}),
-      ...(chat.project_name !== null ? { project_name: chat.project_name } : {}),
-      ...(chat.project_machine_label !== null
-        ? { project_machine_label: chat.project_machine_label }
-        : {}),
-      ...(chat.title !== null ? { title: chat.title } : {}),
-      unread: chat.unread,
-      user_id: chat.user_id,
-    };
-  });
 }

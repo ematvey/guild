@@ -34,30 +34,44 @@ export class NotifyHub {
     };
   }
 
+  /** Connects (or reconnects) the shared LISTEN client. The loop retries
+   *  forever while the hub is open — a dead notify connection would silence
+   *  every consumer (SSE thread streams, the member-socket feed) with no
+   *  other error signal. */
   private async ensureListening(): Promise<void> {
     if (this.client !== undefined || this.connecting !== undefined || this.closed) return;
     this.connecting = (async () => {
-      for (let attempt = 1; attempt <= 3 && !this.closed; attempt++) {
+      let backoffMs = 250;
+      while (!this.closed) {
         const client = new pg.Client({ connectionString: this.connectionString });
         try {
+          const owned = { current: true };
+          const drop = (): void => {
+            if (!owned.current || this.client !== client) return;
+            owned.current = false;
+            this.client = undefined;
+            // The handlers still hold their subscriptions: come back.
+            if (!this.closed) void this.ensureListening();
+          };
           client.on("notification", (msg) => {
             if (msg.channel === undefined) return;
             for (const handler of this.handlers) handler(msg.channel, msg.payload ?? "");
           });
           client.on("error", (error) => {
             this.log.warn(`notify connection error: ${String(error)}`);
+            drop();
           });
+          client.on("end", drop);
           await client.connect();
           for (const channel of NOTIFY_CHANNELS) await client.query(`LISTEN ${channel}`);
           this.client = client;
+          backoffMs = 250;
           return;
         } catch (error) {
           await client.end().catch(() => {});
-          if (attempt === 3) {
-            this.log.warn(`notify hub could not connect: ${String(error)}`);
-            return;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+          this.log.warn(`notify hub could not connect: ${String(error)}`);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          backoffMs = Math.min(backoffMs * 2, 5_000);
         }
       }
     })();
