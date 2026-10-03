@@ -173,12 +173,14 @@ export function approvalDecisionEvent(
 // Wire rendering (byte-compat with the Rust serde_json output)
 // ---------------------------------------------------------------------------
 
-/** Serializes one ThreadEvent the way serde renders the enum (variant fields
- *  in declaration order, snake_case tag first, skip_serializing_if honored,
- *  f64 values in ryu style). The input may be a parsed legacy row payload —
- *  unknown extra fields are dropped, exactly as a closed serde enum drops
- *  them (deny_unknown_fields is not set, but re-serialization never carries
- *  them either). */
+/** Serializes one ThreadEvent the way serde renders the Value-interpolated
+ *  wire (serde_json Value maps are BTreeMap-sorted at EVERY level — the
+ *  live :18080 capture confirms rows and event objects both come out in
+ *  byte-sorted key order; skip_serializing_if honored, f64 values in ryu
+ *  style). The input may be a parsed legacy row payload — unknown extra
+ *  fields are dropped, exactly as a closed serde enum drops them
+ *  (deny_unknown_fields is not set, but re-serialization never carries them
+ *  either). */
 export function threadEventWire(event: ThreadEvent): string {
   switch (event.type) {
     case "user_message":
@@ -191,7 +193,7 @@ export function threadEventWire(event: ThreadEvent): string {
         turn: event.turn,
         step: event.step,
         blocks: event.blocks,
-        usage: usageWire(event.usage),
+        usage: raw(usageWire(event.usage)),
         model: event.model,
         interrupted: event.interrupted,
       });
@@ -216,7 +218,7 @@ export function threadEventWire(event: ThreadEvent): string {
         tokens_before: event.tokens_before,
         keep_last: event.keep_last,
         model: event.model,
-        usage: event.usage ? usageWire(event.usage) : undefined,
+        usage: event.usage ? raw(usageWire(event.usage)) : undefined,
       });
     case "approval_request":
       return obj({ type: "approval_request", call_id: event.call_id, name: event.name, arguments: event.arguments });
@@ -233,8 +235,8 @@ export function threadEventWire(event: ThreadEvent): string {
   }
 }
 
-/** One persisted row in ThreadEventRow declaration order (the GET /thread
- *  list item and the ThreadState frame's event payloads). */
+/** One persisted row as serde_json renders the Value (sorted keys: the GET
+ *  /thread list item and the ThreadState frame's event payloads). */
 export function threadEventRowWire(row: ThreadEventRow): string {
   return obj({
     id: row.id,
@@ -245,7 +247,8 @@ export function threadEventRowWire(row: ThreadEventRow): string {
   });
 }
 
-/** UsagePayload wire form: all three fields are Option + skip_serializing_if. */
+/** UsagePayload wire form: all three fields are Option + skip_serializing_if
+ *  (sorted: cost_usd, tokens_in, tokens_out). */
 function usageWire(usage: UsagePayload | undefined): string {
   return obj({
     tokens_in: usage?.tokens_in,
@@ -270,7 +273,8 @@ function rustJsonTextRaw(value: unknown): string {
   if (isRaw(value)) return value.__raw;
   if (Array.isArray(value)) return `[${value.map(rustJsonTextRaw).join(",")}]`;
   if (value !== null && typeof value === "object" && !("__rustFloat" in value)) {
-    const keys = Object.keys(value);
+    // serde_json Value maps are BTreeMaps: byte-sorted keys at every level.
+    const keys = Object.keys(value).sort();
     return `{${keys.map((k) => `${JSON.stringify(k)}:${rustJsonTextRaw((value as Record<string, unknown>)[k])}`).join(",")}}`;
   }
   return rustJsonText(value);
