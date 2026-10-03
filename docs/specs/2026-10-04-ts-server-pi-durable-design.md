@@ -91,6 +91,20 @@ web UI/admin dist embedded at build time as today.
   anywhere. The "JWT session tokens" compat requirement above means: the TS
   server must accept/issue the same opaque-token + `sessions`-row +
   auth-generation mechanism, identically.
+- **2026-10-04 (M3 storage core): pi-durable 1.0.1 gaps worked around
+  Guild-side** (all in `apps/server/src/storage/postgres/`, no forking):
+  (a) `idFromNumber`/`seqFromNumber` not exported → branded-type casts at
+  trusted boundaries; (b) JSONB can't hold lone surrogates → records and
+  document revisions stored as JSON text, parsed in the core (matches the
+  pinned SQLite reference); (c) node-postgres returns BIGINT as strings →
+  global INT8 type parser returning `Number` (durable ids/seqs stay in
+  safe-integer range; no other BIGINT consumers yet); (d) runtime dep
+  `@earendil-works/chord ^1.0.1` added for document-delta application, same
+  as pi-durable's own backends; (e) commits additionally take `FOR UPDATE`
+  on the `durable_metadata` row so two storage instances over one DB can
+  never interleave (belt-and-braces on top of decision 9's single-owner
+  rule). Evidence: 23/23 conformance cases, reopen-across-restart tests,
+  benchmarks in `apps/server/M3-STORAGE-REPORT.md`.
 
 ## Process model
 
