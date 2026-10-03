@@ -22,6 +22,7 @@ describe("loadConfig", () => {
       clickhouseUser: "",
       clickhousePassword: "",
       internalKey: null,
+      selfBaseUrl: "http://127.0.0.1:8080",
     });
     expect(DEFAULT_BIND_ADDR).toBe("0.0.0.0:8080");
     expect(DEFAULT_UPSTREAM_URL).toBe("http://server-rust:8080");

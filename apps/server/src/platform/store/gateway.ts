@@ -178,6 +178,16 @@ export class GatewayStore {
     return res.rows.map((r) => r.model);
   }
 
+  /** The model's context window (thread gauge); null when no route or the
+   *  column is unset. */
+  async contextWindow(orgId: string, model: string): Promise<number | null> {
+    const res = await this.pool.query<{ context_window: number | null }>(
+      "SELECT context_window FROM model_routes WHERE org_id = $1 AND model = $2",
+      [orgId, model],
+    );
+    return res.rows[0]?.context_window ?? null;
+  }
+
   /** Full route rows for the org's admin settings (no secrets: the
    *  provider key itself is never returned). */
   async listRoutes(orgId: string): Promise<AdminRouteRow[]> {

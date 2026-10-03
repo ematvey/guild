@@ -19,10 +19,16 @@ import { TicketStore } from "../hub/tickets.js";
 import type { SocketSink } from "../hub/sink.js";
 import type { WsServerMsg } from "../hub/protocol.js";
 import type { LiveMember } from "../hub/live.js";
+import { ChatStore } from "./store/chats.js";
+import { ThreadStore } from "./store/thread.js";
+import { TurnCommandStore } from "./store/turn_commands.js";
+import { GuildRuntime } from "../harness/runtime.js";
+import { NotifyHub } from "./notify.js";
 import { ClickhouseClient } from "./clickhouse.js";
 import { UsageSink } from "./usage.js";
 import { ApiError } from "./http/error.js";
 import type { GatewayCredential } from "./http/llm.js";
+import type { Logger } from "pino";
 
 // Fixed identities for the config-minted internal gateway key (spec
 // decision 7). Usage rows for internal calls stay distinct through them:
@@ -51,6 +57,16 @@ export class PlatformContext {
   readonly hub: LiveHub;
   readonly wsTickets: TicketStore;
   readonly usage: UsageSink;
+  /** M3: the chat-side stores and the agent runtime (the harness is owned
+   *  by this process, decision 9; it starts lazily — durable migrations run
+   *  idempotently on first use and at server startup). */
+  readonly chats: ChatStore;
+  readonly threads: ThreadStore;
+  readonly turnCommands: TurnCommandStore;
+  /** Postgres LISTEN hub (guild_thread_committed / guild_chat_status /
+   *  guild_events) — one dedicated connection shared by all subscribers. */
+  readonly notify: NotifyHub;
+  readonly runtime: GuildRuntime;
 
   /** Seams for lanes that land after M5-hub-core (all optional, no-op when
    *  unset):
@@ -66,7 +82,10 @@ export class PlatformContext {
   wsMachineReconcile?: (machineId: string, connId: string) => Promise<void>;
   wsLog?: (message: string) => void;
 
-  constructor(readonly config: Config) {
+  constructor(
+    readonly config: Config,
+    log: Logger = { warn() {}, error() {}, info() {} } as never,
+  ) {
     this.pool = createPlatformPool(config.databaseUrl);
     this.objects = new ObjectStore(config);
     this.identity = new IdentityStore(this.pool);
@@ -81,6 +100,11 @@ export class PlatformContext {
     this.hub = new LiveHub();
     this.wsTickets = new TicketStore();
     this.usage = new UsageSink(this.clickhouse());
+    this.chats = new ChatStore(this.pool);
+    this.threads = new ThreadStore(this.pool);
+    this.turnCommands = new TurnCommandStore(this.pool);
+    this.notify = new NotifyHub(config.databaseUrl, log);
+    this.runtime = new GuildRuntime(config, this.pool, log);
   }
 
   masterKey(): Buffer {
@@ -140,6 +164,8 @@ export class PlatformContext {
   }
 
   async close(): Promise<void> {
+    await this.runtime.close();
+    await this.notify.close();
     this.objects.destroy();
     await this.pool.end();
   }

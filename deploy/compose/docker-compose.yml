@@ -60,20 +60,6 @@ services:
       mc mb --ignore-existing local/guild
       "
 
-  restate:
-    image: docker.io/restatedev/restate@sha256:6893750bdd261030529a507e9e0fd9df00ac0af8b24e650026b0b2df9ae34cbe
-    restart: unless-stopped
-    environment:
-      RESTATE_NODE_NAME: ${GUILD_RESTATE_NODE_NAME:-guild-restate}
-    volumes:
-      - restate_data:/restate-data
-    # Ingress stays internal (worker role talks to it over the compose
-    # network); the admin/UI port is published loopback-only — it can
-    # register deployments, kill invocations and read journals, so it must
-    # never be reachable off-host. Operators tunnel in.
-    ports:
-      - "127.0.0.1:${GUILD_RESTATE_ADMIN_PORT:-9070}:9070"
-
   server-rust:
     # explicit tag: the default (compose-server-rust) collides with other
     # projects that also use a "compose/compose" layout and steals the tag
@@ -92,8 +78,8 @@ services:
     volumes:
       - guild_data:/data
     depends_on:
-      restate:
-        condition: service_started
+      minio:
+        condition: service_healthy
 
   server:
     # TS server (M0 shell): owns the public port, serves /api/v1/health
@@ -118,4 +104,3 @@ volumes:
   chdata:
   miniodata:
   guild_data:
-  restate_data:
