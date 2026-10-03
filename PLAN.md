@@ -13,6 +13,19 @@ Updated 2026-10-04.
 
 ## Latest decisions
 
+- **M2 LLM gateway landed (2026-10-04).** `apps/server` serves the OpenAI
+  and Anthropic completion surfaces natively (`/openai/v1/*`,
+  `/anthropic/v1/*`) with byte-compatible SSE (verified against 12
+  live-capture golden fixtures, both streaming dialects), org API keys
+  (`gk_*`, sha256-at-rest, auth_generation stamping), month-to-date quota
+  enforcement via ClickHouse `usage_events`, usage/series/summary
+  endpoints, gateway admin providers/routes CRUD, and the env-minted
+  `GUILD_INTERNAL_KEY` loopback key (org scoping via `x-guild-org-id`,
+  synthetic internal uuids for usage attribution — no schema change).
+  `/api/v1/gateway/chat*` stays proxied until the M3 chats cutover.
+  81/81 tests green on disposable `guild_m2_test_*` databases; report in
+  `apps/server/M2-REPORT.md`.
+
 - **M3 storage core landed early (2026-10-04).** The pi-durable Postgres
   storage backend (`apps/server/src/storage/postgres/`: durable_\* tables
   per design decision 5, portable core + pg adapter) passes pi-durable's
