@@ -77,9 +77,6 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - guild_data:/data
-    depends_on:
-      minio:
-        condition: service_healthy
 
   server:
     # TS server (M0 shell): owns the public port, serves /api/v1/health
