@@ -12,10 +12,15 @@ import { OrgStore } from "./store/orgs.js";
 import { OidcStore } from "./store/oidc.js";
 import { ApiKeyStore } from "./store/api_keys.js";
 import { GatewayStore } from "./store/gateway.js";
+import { ChatStore } from "./store/chats.js";
+import { ThreadStore } from "./store/thread.js";
+import { TurnCommandStore } from "./store/turn_commands.js";
+import { GuildRuntime } from "../harness/runtime.js";
 import { ClickhouseClient } from "./clickhouse.js";
 import { UsageSink } from "./usage.js";
 import { ApiError } from "./http/error.js";
 import type { GatewayCredential } from "./http/llm.js";
+import type { Logger } from "pino";
 
 // Fixed identities for the config-minted internal gateway key (spec
 // decision 7). Usage rows for internal calls stay distinct through them:
@@ -38,8 +43,18 @@ export class PlatformContext {
   readonly apiKeys: ApiKeyStore;
   readonly gatewayStore: GatewayStore;
   readonly usage: UsageSink;
+  /** M3: the chat-side stores and the agent runtime (the harness is owned
+   *  by this process, decision 9; it starts lazily — durable migrations run
+   *  idempotently on first use and at server startup). */
+  readonly chats: ChatStore;
+  readonly threads: ThreadStore;
+  readonly turnCommands: TurnCommandStore;
+  readonly runtime: GuildRuntime;
 
-  constructor(readonly config: Config) {
+  constructor(
+    readonly config: Config,
+    log: Logger = { warn() {}, error() {}, info() {} } as never,
+  ) {
     this.pool = createPlatformPool(config.databaseUrl);
     this.objects = new ObjectStore(config);
     this.identity = new IdentityStore(this.pool);
@@ -51,6 +66,10 @@ export class PlatformContext {
     this.apiKeys = new ApiKeyStore(this.pool);
     this.gatewayStore = new GatewayStore(this.pool);
     this.usage = new UsageSink(this.clickhouse());
+    this.chats = new ChatStore(this.pool);
+    this.threads = new ThreadStore(this.pool);
+    this.turnCommands = new TurnCommandStore(this.pool);
+    this.runtime = new GuildRuntime(config, this.pool, log);
   }
 
   masterKey(): Buffer {
@@ -110,6 +129,7 @@ export class PlatformContext {
   }
 
   async close(): Promise<void> {
+    await this.runtime.close();
     this.objects.destroy();
     await this.pool.end();
   }

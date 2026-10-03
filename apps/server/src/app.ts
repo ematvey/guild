@@ -46,7 +46,12 @@ export async function buildApp(config: Config) {
     bodyLimit: BODY_LIMIT_BYTES,
   });
 
-  const platform = new PlatformContext(config);
+  const platform = new PlatformContext(config, logger);
+
+  // Bootstrap the agent runtime (decision 9: one owning process): applies
+  // the durable_* migrations + the chat-conversation mapping idempotently
+  // and opens the harness. Turn submission paths reuse it (lazy no-op).
+  await platform.runtime.start();
 
   // Native health route — same shape as the Rust one
   // (crates/server/src/http/mod.rs): {"status":"ok","version":...}.
