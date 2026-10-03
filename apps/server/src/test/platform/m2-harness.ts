@@ -64,7 +64,11 @@ async function dropClickhouseDatabase(name: string): Promise<void> {
   }
 }
 
-export async function createM2TestEnv(withClickhouse = true, logLevel = "error"): Promise<M2TestEnv> {
+export async function createM2TestEnv(
+  withClickhouse = true,
+  logLevel = "error",
+  configOverrides: Record<string, string> = {},
+): Promise<M2TestEnv> {
   const suffix = randomSuffix();
   const databaseName = `guild_m2_test_${suffix}`;
   const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
@@ -107,6 +111,7 @@ export async function createM2TestEnv(withClickhouse = true, logLevel = "error")
     GUILD_CLICKHOUSE_USER: TEST_CLICKHOUSE_USER,
     GUILD_CLICKHOUSE_PASSWORD: TEST_CLICKHOUSE_PASSWORD,
     GUILD_INTERNAL_KEY: `gk_internal_${suffix}`,
+    ...configOverrides,
   });
   const app = await buildApp(config);
 
@@ -119,7 +124,20 @@ export async function createM2TestEnv(withClickhouse = true, logLevel = "error")
     if (withClickhouse) await dropClickhouseDatabase(clickhouseDatabase);
     const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
     try {
-      await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+      // WITH (FORCE) can transiently fail ("permission denied to terminate
+      // process") when a backend exits as the signal lands under parallel
+      // load — retry.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+          break;
+        } catch (error) {
+          if (attempt >= 4) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes("terminate process")) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        }
+      }
     } finally {
       await dropper.end();
     }
@@ -231,9 +249,10 @@ export interface M2Stack {
 }
 
 /** Full stack: disposable PG + CH + app + org/users/session/key + mock
- *  provider. The provider row is registered against the mock upstream. */
-export async function setupM2Stack(): Promise<M2Stack> {
-  const env = await createM2TestEnv();
+ *  provider. The provider row is registered against the mock upstream.
+ *  `configOverrides` pass through to loadConfig (e.g. GUILD_SELF_BASE_URL). */
+export async function setupM2Stack(configOverrides: Record<string, string> = {}): Promise<M2Stack> {
+  const env = await createM2TestEnv(true, "error", configOverrides);
   const db = env.db;
   const orgId = crypto.randomUUID();
   const adminEmail = `m2-admin-${randomSuffix()}@example.test`;
@@ -352,7 +371,17 @@ export async function setupM2Stack(): Promise<M2Stack> {
       if (!res.ok) throw new Error(`usage seed failed: ${await res.text()}`);
     },
     async drain() {
+      // Wait for the usage sink's async inserts to land: fixed sleeps race
+      // under parallel-suite load — poll until the org's row count is
+      // stable across two consecutive reads (bounded).
       await new Promise((resolve) => setTimeout(resolve, 400));
+      let last = -1;
+      for (let i = 0; i < 20; i++) {
+        const rows = await this.usageRows();
+        if (rows.length === last) return;
+        last = rows.length;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
     },
     async usageRows() {
       const res = await fetch(`${TEST_CLICKHOUSE_URL}/?database=${env.clickhouseDatabase}`, {

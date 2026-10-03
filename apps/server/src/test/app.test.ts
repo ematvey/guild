@@ -116,6 +116,10 @@ describe("health route (native)", () => {
       "/api/v1/machines",
       "/api/v1/machines/*",
       "/api/v1/ws/ticket",
+      "/api/v1/chats",
+      "/api/v1/chats/*",
+      "/api/v1/gateway/chat",
+      "/api/v1/gateway/chat/*",
     ]);
   });
 });

@@ -37,7 +37,21 @@ export async function createDisposableDatabase(): Promise<DisposableDatabase> {
 export async function dropDisposableDatabase(name: string): Promise<void> {
   const admin = new pg.Pool({ connectionString: DURABLE_TEST_ADMIN_URL, max: 1 });
   try {
-    await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    // WITH (FORCE) terminates blocking backends; under parallel-suite load a
+    // backend can exit while the signal lands — the drop then fails with
+    // "permission denied to terminate process" once. Retry, then force
+    // terminate + drop explicitly.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+        return;
+      } catch (error) {
+        if (attempt >= 4) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("terminate process")) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+      }
+    }
   } finally {
     await admin.end();
   }

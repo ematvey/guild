@@ -40,6 +40,10 @@ export interface Config {
    *  Internal calls are org-scoped via the x-guild-org-id request header
    *  and metered like external clients (platform/usage.ts). */
   internalKey: string | null;
+  /** Base URL this process reaches ITSELF at (GUILD_SELF_BASE_URL, default
+   *  http://127.0.0.1:<bindPort>) — the model provider's loopback target
+   *  (spec decision 7). */
+  selfBaseUrl: string;
 }
 
 export const DEFAULT_BIND_ADDR = "0.0.0.0:8080";
@@ -118,8 +122,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const jwtSecret = requireEnv(env, "GUILD_JWT_SECRET");
   const apiUrl = (env.GUILD_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, "");
   const internalKey = env.GUILD_INTERNAL_KEY ?? null;
+  const selfBaseUrl = parseUrl(env.GUILD_SELF_BASE_URL ?? `http://127.0.0.1:${bind.port}`, "GUILD_SELF_BASE_URL");
   return {
     internalKey,
+    selfBaseUrl,
     clickhouseUrl,
     clickhouseDatabase: env.GUILD_CLICKHOUSE_DATABASE ?? DEFAULT_CLICKHOUSE_DATABASE,
     clickhouseUser: env.GUILD_CLICKHOUSE_USER ?? "",
