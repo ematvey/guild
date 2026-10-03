@@ -13,6 +13,32 @@ Updated 2026-10-04.
 
 ## Latest decisions
 
+- **M3 harness + chats cutover landed (2026-10-04).** `apps/server` now runs
+  the durable agent engine itself: pi-durable 1.0.1 over the M3 Postgres
+  storage (one owning process, `GUILD_SANDBOX_ROOT` exec env), model access
+  as an OpenAI-compatible client looped back through the server's own
+  gateway (`GUILD_SELF_BASE_URL`, internal key + `x-guild-org-id`, so
+  harness turns are metered exactly like external calls; the gateway honors
+  `stream_options.include_usage` — additive, default streams stay
+  byte-identical). Chat CRUD / thread read+append / turn submission
+  (`POST /api/v1/gateway/chat`) / stop / approval / compact / mark-read
+  routes are native with serde-rejection + wire parity; `chat_conversations`
+  maps each chat 1:1 to an ownerless durable conversation; the bridge
+  persists run output as `thread_events` (ThreadState-byte-compatible rows)
+  and settles `turn_commands`. New additive SSE surface
+  `GET /api/v1/chats/{id}/thread/stream` pushes byte-exact ThreadState
+  frames (verified against live Rust member-socket captures); the member WS
+  itself stays proxied until M5. The re-runnable thread importer
+  (`npm run import-threads`, `apps/server/src/importer/`) truncates +
+  rebuilds `durable_*` + the mapping from `thread_events` — tested against
+  real anonymized captures (314 events / 4 chats incl. approvals, tool
+  loops, a compaction, an empty chat), idempotent rerun verified, CLI
+  smoke-run done. Restate is removed from the compose stack
+  (`server-rust` runs `GUILD_ROLE=api`). Machines routes stay proxied and
+  `machine_online` stays false until M5 (documented deviations).
+  95/95 tests green on disposable `guild_m3_test_*` databases; report in
+  `apps/server/M3-REPORT.md`.
+
 - **M2 LLM gateway landed (2026-10-04).** `apps/server` serves the OpenAI
   and Anthropic completion surfaces natively (`/openai/v1/*`,
   `/anthropic/v1/*`) with byte-compatible SSE (verified against 12
