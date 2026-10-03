@@ -1,10 +1,9 @@
 // Hub seam — the in-process machine/member socket registry and dispatch API.
 //
-// This skeleton mirrors the public surface of the Rust hub
-// (crates/server/src/http/hub.rs) so parallel lanes can code against one
-// contract. The M5 hub lane replaces InMemoryHub with the real WS-backed
-// implementation (byte-compatible frames, live-slot rules); the M3 harness
-// lane only imports the types and injects fakes in tests.
+// This module mirrors the public surface of the Rust hub
+// (crates/server/src/http/hub.rs). The M5 hub lane replaced InMemoryHub with
+// the real WS-backed implementation (`LiveHub` + `SocketSink`); the M3
+// harness lane only imports the types and injects fakes in tests.
 //
 // Ownership note (design decision 9): one Node process owns the hub.
 
@@ -15,7 +14,7 @@ export interface Member {
 }
 
 export interface MachineRequestError {
-  kind: "offline" | "timeout" | "socket_limit";
+  kind: "offline" | "timeout" | "socket_limit" | "send_failed" | "rejected";
   message?: string;
 }
 
@@ -50,7 +49,8 @@ export interface Hub {
   machineLabel(machineId: string): string | undefined;
 }
 
-/** Test/dev placeholder: no transport, every request resolves `offline`. */
+/** Test/dev placeholder: no transport, every request resolves `offline`.
+ *  Kept for the M3 harness lane's fakes; production uses `LiveHub`. */
 export class InMemoryHub implements Hub {
   private members = new Map<string, Member>();
   private machines = new Map<string, { orgId: string; userId: string; connId: string; label?: string }>();
@@ -86,3 +86,11 @@ export class InMemoryHub implements Hub {
     return this.machines.get(machineId)?.label;
   }
 }
+
+export { LiveHub } from "./live.js";
+export type { LiveMember, MachineRegistration, MachineRejected } from "./live.js";
+export { MAX_SOCKETS_PER_USER } from "./live.js";
+export { SocketSink, SOCKET_HIGH_WATER } from "./sink.js";
+export type { SocketOutput } from "./sink.js";
+export { serializeServerMsg, parseClientMsg } from "./protocol.js";
+export type { WsServerMsg, WsClientMsg } from "./protocol.js";

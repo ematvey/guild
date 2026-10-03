@@ -1,0 +1,174 @@
+{
+  "_comment": "Golden hub-WS fixtures captured from the Rust server (crates/server @ this commit), disposable database, scripted ws client (apps/server ws-driver). Frames byte-compared in replay; dynamic values masked with the same normalizer.",
+  "base_commit": "unknown",
+  "steps": [
+    {
+      "name": "member-connect",
+      "frames": [
+        {
+          "socket": 0,
+          "kind": "text",
+          "data": "{\"type\":\"hello\"}"
+        },
+        {
+          "socket": 0,
+          "kind": "text",
+          "data": "{\"type\":\"thread_list\",\"chats\":[]}"
+        },
+        {
+          "socket": 0,
+          "kind": "closed",
+          "data": ""
+        }
+      ]
+    },
+    {
+      "name": "machine-connect",
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"machines\":[{\"app_version\":\"0.5.34\",\"connected\":true,\"first_connected_at\":\"__TS__\",\"last_connected_at\":\"__TS__\",\"last_ip\":\"127.0.0.1\",\"last_seen_at\":\"__TS__\",\"machine_id\":\"__UUID__\",\"name\":\"CAPBOX\",\"os\":\"Linux\",\"os_version\":\"6.1\"}]}"
+        }
+      ],
+      "frames": [
+        {
+          "socket": 0,
+          "kind": "text",
+          "data": "{\"type\":\"hello\"}"
+        },
+        {
+          "socket": 0,
+          "kind": "text",
+          "data": "{\"type\":\"thread_list\",\"chats\":[]}"
+        }
+      ]
+    },
+    {
+      "name": "machine-heartbeat",
+      "frames": [
+        {
+          "socket": 0,
+          "kind": "ping",
+          "data": "__UUIDBYTES_v7__"
+        }
+      ]
+    },
+    {
+      "name": "fs-roundtrip",
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"ok\":true,\"result\":{\"home\":\"/home/capture\"}}"
+        }
+      ],
+      "frames": [
+        {
+          "socket": 0,
+          "kind": "text",
+          "data": "{\"type\":\"machine_request\",\"request_id\":\"__UUID__\",\"op\":\"fs_home\",\"payload\":null}"
+        }
+      ]
+    },
+    {
+      "name": "fs-unknown-op",
+      "http": [
+        {
+          "status": 400,
+          "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"unknown op\"}}"
+        }
+      ],
+      "frames": []
+    },
+    {
+      "name": "fs-unknown-machine",
+      "http": [
+        {
+          "status": 404,
+          "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no such machine\"}}"
+        }
+      ],
+      "frames": []
+    },
+    {
+      "name": "foreign-instance-rejected",
+      "frames": [
+        {
+          "socket": 1,
+          "kind": "text",
+          "data": "{\"type\":\"displaced\"}"
+        },
+        {
+          "socket": 1,
+          "kind": "closed",
+          "data": ""
+        }
+      ]
+    },
+    {
+      "name": "stale-resume-rejected",
+      "frames": [
+        {
+          "socket": 2,
+          "kind": "text",
+          "data": "{\"type\":\"displaced\"}"
+        },
+        {
+          "socket": 2,
+          "kind": "closed",
+          "data": ""
+        }
+      ]
+    },
+    {
+      "name": "same-instance-reconnect",
+      "frames": [
+        {
+          "socket": 0,
+          "kind": "text",
+          "data": "{\"type\":\"displaced\"}"
+        },
+        {
+          "socket": 0,
+          "kind": "closed",
+          "data": ""
+        },
+        {
+          "socket": 1,
+          "kind": "text",
+          "data": "{\"type\":\"hello\"}"
+        },
+        {
+          "socket": 1,
+          "kind": "text",
+          "data": "{\"type\":\"thread_list\",\"chats\":[]}"
+        }
+      ]
+    },
+    {
+      "name": "bad-ticket",
+      "upgradeFailure": {
+        "code": 401,
+        "message": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"invalid or expired ticket\"}}"
+      },
+      "frames": []
+    },
+    {
+      "name": "machine-without-instance",
+      "upgradeFailure": {
+        "code": 400,
+        "message": "{\"error\":{\"code\":\"bad_request\",\"message\":\"machine connections require instance_id\"}}"
+      },
+      "frames": []
+    },
+    {
+      "name": "chat-thread-list",
+      "frames": [
+        {
+          "socket": 0,
+          "kind": "text",
+          "data": "{\"type\":\"thread_list\",\"chats\":[{\"created_at\":\"__TS__\",\"generating\":false,\"id\":\"__UUID__\",\"machine_online\":false,\"org_id\":\"__UUID__\",\"title\":\"capture\",\"unread\":false,\"user_id\":\"__UUID__\"}]}"
+        }
+      ]
+    }
+  ]
+}
