@@ -9,10 +9,21 @@ recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
-Updated 2026-09-30.
+Updated 2026-10-04.
 
 ## Latest decisions
 
+- **TS server rebuild on pi-durable starts (2026-10-04).** The cloud server
+  is rebuilt in TypeScript on `@earendil-works/pi-durable` (pinned `1.0.1`,
+  never forked, no upstream fix loop); Restate is dropped; the public API,
+  platform schema (existing Postgres tables verbatim), and concepts stay the
+  same. Staged cutover with the TS server in front proxying un-ported routes
+  to the Rust server; Rust retires at parity. Thread history imports into
+  durable storage via a re-runnable importer; model access always goes
+  through the gateway over loopback. Routines are deferred (unused today).
+  Design: `docs/specs/2026-10-04-ts-server-pi-durable-design.md`; milestones:
+  `docs/plans/2026-10-04-ts-server-pi-durable-plan.md`. Work branch:
+  `agent-plane` (worktree `~/guild-wt-agent-plane`).
 - **Prod is a separate checkout** (`~/guild-prod`, branch master, compose
   stack on :18081, public at guild.example.org). Deploy to prod by
   fast-forwarding its master from ~/guild's develop (fetch the local path,
