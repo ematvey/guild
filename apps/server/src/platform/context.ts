@@ -12,6 +12,13 @@ import { OrgStore } from "./store/orgs.js";
 import { OidcStore } from "./store/oidc.js";
 import { ApiKeyStore } from "./store/api_keys.js";
 import { GatewayStore } from "./store/gateway.js";
+import { MachineStore } from "./store/machines.js";
+import type { UserRow } from "./store/identity.js";
+import { LiveHub } from "../hub/live.js";
+import { TicketStore } from "../hub/tickets.js";
+import type { SocketSink } from "../hub/sink.js";
+import type { WsServerMsg } from "../hub/protocol.js";
+import type { LiveMember } from "../hub/live.js";
 import { ClickhouseClient } from "./clickhouse.js";
 import { UsageSink } from "./usage.js";
 import { ApiError } from "./http/error.js";
@@ -37,7 +44,27 @@ export class PlatformContext {
   readonly oidc: OidcStore;
   readonly apiKeys: ApiKeyStore;
   readonly gatewayStore: GatewayStore;
+  readonly machines: MachineStore;
+  /** The real machine/member socket registry (M5 hub core). The M3 harness
+   *  lane injects fakes typed against the seam `Hub` interface in hub/index.ts
+   *  and casts here in its own tests. */
+  readonly hub: LiveHub;
+  readonly wsTickets: TicketStore;
   readonly usage: UsageSink;
+
+  /** Seams for lanes that land after M5-hub-core (all optional, no-op when
+   *  unset):
+   *  - wsSync: the chats lane's state-sync capture, called inside the socket
+   *    reader's sync bracket (SyncBegin … SyncDone).
+   *  - wsToolResult: the dispatch lane's tool-result completion (owns_pending_tool
+   *    + turn completion).
+   *  - wsMachineReconcile: the dispatch lane's uncertain-execution sweep at
+   *    machine connect (Rust reconcile_machine_tools).
+   *  - wsLog: trace sink for the socket supervisor (server log in Rust). */
+  wsSync?: (args: { chatId: string; user: UserRow; sink: SocketSink }) => Promise<WsServerMsg | null>;
+  wsToolResult?: (args: { member: LiveMember; user: UserRow; frame: { type: "tool_result"; chat_id: string; call_id: string; content: string; is_error: boolean; meta: unknown; images: string[] } }) => Promise<void>;
+  wsMachineReconcile?: (machineId: string, connId: string) => Promise<void>;
+  wsLog?: (message: string) => void;
 
   constructor(readonly config: Config) {
     this.pool = createPlatformPool(config.databaseUrl);
@@ -50,6 +77,9 @@ export class PlatformContext {
     this.oidc = new OidcStore(this.pool);
     this.apiKeys = new ApiKeyStore(this.pool);
     this.gatewayStore = new GatewayStore(this.pool);
+    this.machines = new MachineStore(this.pool);
+    this.hub = new LiveHub();
+    this.wsTickets = new TicketStore();
     this.usage = new UsageSink(this.clickhouse());
   }
 

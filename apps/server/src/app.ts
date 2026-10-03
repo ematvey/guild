@@ -10,6 +10,7 @@ import proxy from "@fastify/http-proxy";
 import type { Config } from "./config.js";
 import { PlatformContext } from "./platform/context.js";
 import { NATIVE_ROUTE_GROUPS, registerPlatformRoutes } from "./platform/http/register.js";
+import { attachWsUpgrade } from "./http/ws.js";
 
 const require = createRequire(import.meta.url);
 
@@ -60,19 +61,24 @@ export async function buildApp(config: Config) {
   // catch-all underneath keeps every un-ported path working.
   await registerPlatformRoutes(app as unknown as FastifyInstance, platform);
 
+  // Native M5 hub core: the /api/v1/ws upgrade listener + the ws-ticket and
+  // machine-registry HTTP routes (the latter registered inside the platform
+  // plugin, see register.ts, so the M1 error envelope and content parsers
+  // apply). The upgrade listener is the server's ONLY 'upgrade' handler: the
+  // proxy below no longer passes `websocket: true`, because two listeners
+  // double-assign the upgrade socket (ERR_HTTP_SOCKET_ASSIGNED — the M0 trap
+  // note). Rust has no other WS endpoint, so no upgrade needs forwarding
+  // anymore. Rollback = restore `websocket: true` and delete the
+  // attachWsUpgrade call.
+  platform.wsLog = (message) => logger.info({ ws: message }, "ws");
+  attachWsUpgrade(app.server, platform);
+
   // Proxy everything else — HTTP bodies (streamed through), status codes,
-  // response headers, and WS upgrades (the hub route is /api/v1/ws,
-  // crates/server/src/http/ws.rs; daemons use no subprotocols, so the
-  // proxy's first-subprotocol-only limitation does not bite).
-  //
-  // @fastify/websocket is deliberately NOT registered: the proxy's
-  // `websocket: true` mode installs the server's sole 'upgrade' listener
-  // (it routes upgrades through the wildcard route itself); a second
-  // listener from @fastify/websocket would double-assign the socket and
-  // crash the upgrade (ERR_HTTP_SOCKET_ASSIGNED).
+  // and response headers. WS upgrades are NOT proxied anymore: the hub route
+  // (/api/v1/ws) flipped native above and the Rust server has no other WS
+  // endpoint.
   await app.register(proxy, {
     upstream: config.upstreamUrl,
-    websocket: true,
   });
 
   app.addHook("onClose", async () => {

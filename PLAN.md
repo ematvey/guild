@@ -13,6 +13,27 @@ Updated 2026-10-04.
 
 ## Latest decisions
 
+- **M5 hub core landed (2026-10-04).** The `InMemoryHub` seam became the
+  real `LiveHub` (`apps/server/src/hub/`): member/machine registries, 32
+  socket caps, the 0.5.25 live-slot rule (a live machine slot is held —
+  foreign-instance connects are rejected 409, same-instance reconnects
+  displace only their own zombie), displacement on re-pair, and
+  `machine_request`/`machine_request_pinned` with exact
+  `MachineRequestError` semantics. `GET /api/v1/ws` flipped native
+  (single 'upgrade' listener; proxy `websocket:true` removed — rollback
+  restores the flag + deletes `attachWsUpgrade`) with `POST
+  /api/v1/ws/ticket` (`gst_`, 30s TTL, single-use), member + machine
+  socket loops (heartbeat 5s/10s, session watch → AuthRequired, sink
+  high-water 4096, 30s last_seen throttle), and `GET /api/v1/machines` +
+  `POST /api/v1/machines/{id}/fs` over the durable machine registry
+  (fingerprint adoption re-pair re-keying incl. `projects`/`chats`
+  machine_id moves). Golden WS frames captured from a locally built Rust
+  0.5.34 (disposable synthetic DB, not the live stack) and replayed
+  byte-compared; 113/113 tests green; report in
+  `apps/server/M5-REPORT.md`. Remaining for later lanes: feed forwarder,
+  sync frames, tool-result completion, `reconcile_machine_tools` (all
+  behind `ctx` seams).
+
 - **M2 LLM gateway landed (2026-10-04).** `apps/server` serves the OpenAI
   and Anthropic completion surfaces natively (`/openai/v1/*`,
   `/anthropic/v1/*`) with byte-compatible SSE (verified against 12
