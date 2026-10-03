@@ -47,6 +47,8 @@ export async function buildApp(config: Config) {
   });
 
   const platform = new PlatformContext(config, logger);
+  // Test/diagnostic surface (buildApp's consumers read the wiring).
+  (app as unknown as { platform: PlatformContext }).platform = platform;
 
   // Bootstrap the agent runtime (decision 9: one owning process): applies
   // the durable_* migrations + the chat-conversation mapping idempotently

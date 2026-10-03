@@ -151,6 +151,20 @@ export class ChatBridge {
       case "message_end": {
         state.buffers.text = "";
         state.buffers.thinking = "";
+        // The finalized entry rides the event (assistant messages; tool
+        // results arrive via tool_execution_end). entry_appended events do
+        // not repeat run-generated entries.
+        if (event.entry && !state.handledEntries.has(String(event.entry.id))) {
+          state.handledEntries.add(String(event.entry.id));
+          await this.handleEntry(state, event.entry);
+        }
+        return;
+      }
+      case "tool_execution_end": {
+        if (event.entry && !state.handledEntries.has(String(event.entry.id))) {
+          state.handledEntries.add(String(event.entry.id));
+          await this.handleEntry(state, event.entry);
+        }
         return;
       }
       case "entry_appended": {

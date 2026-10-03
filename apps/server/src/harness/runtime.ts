@@ -68,6 +68,10 @@ export class GuildRuntime {
   private readonly chatToConversation = new Map<string, number>();
   private storage: PostgresDurableStorage | undefined;
   private harness: Harness | undefined;
+  /** Test/diagnostic access to the owned harness (read-only usage). */
+  harnessForTest(): Harness | undefined {
+    return this.harness;
+  }
   private starting: Promise<void> | undefined;
   private stopped = false;
 
@@ -264,6 +268,8 @@ export class GuildRuntime {
         reasoning: route.reasoning,
         context_window: route.context_window,
         max_output_tokens: route.max_output_tokens,
+        price_in: route.price_per_mtok_in_usd,
+        price_out: route.price_per_mtok_out_usd,
       }));
     ensureOrgProvider(
       this.models,
