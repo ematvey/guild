@@ -28,6 +28,18 @@ export interface Config {
   /** API base other components call back to (GUILD_API_URL) — shapes the
    *  OIDC redirect_uri and post-login app redirect. */
   apiUrl: string;
+  /** ClickHouse HTTP interface (GUILD_CLICKHOUSE_URL/DATABASE/USER/PASSWORD)
+   *  — usage_events sink and usage/quota queries. Empty user = no auth. */
+  clickhouseUrl: string;
+  clickhouseDatabase: string;
+  clickhouseUser: string;
+  clickhousePassword: string;
+  /** Static internal API key accepted by the gateway auth path (both LLM
+   *  endpoint shapes). Never issued or returned by the public API; the
+   *  pi-durable harness (M3) calls /openai/v1 over loopback with it.
+   *  Internal calls are org-scoped via the x-guild-org-id request header
+   *  and metered like external clients (platform/usage.ts). */
+  internalKey: string | null;
 }
 
 export const DEFAULT_BIND_ADDR = "0.0.0.0:8080";
@@ -39,6 +51,8 @@ export const DEFAULT_S3_BUCKET = "guild";
 export const DEFAULT_S3_ACCESS_KEY_ID = "minioadmin";
 export const DEFAULT_S3_SECRET_ACCESS_KEY = "minioadmin";
 export const DEFAULT_API_URL = "http://localhost:8080";
+export const DEFAULT_CLICKHOUSE_URL = "http://localhost:8123";
+export const DEFAULT_CLICKHOUSE_DATABASE = "guild";
 
 function parseBindAddr(addr: string): { host: string; port: number } {
   // Split at the last colon: works for 0.0.0.0:8080 and [::]:8080.
@@ -69,6 +83,18 @@ function parseUpstreamUrl(raw: string): string {
   return url.origin;
 }
 
+function parseUrl(raw: string, label: string): string {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error(`must be http(s), got "${url.protocol}"`);
+    }
+    return url.origin;
+  } catch (error) {
+    throw new Error(`${label}: not a valid URL: "${raw}"`);
+  }
+}
+
 function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (value === undefined || value === "") {
@@ -87,10 +113,17 @@ function parseMasterKey(raw: string): string {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const bind = parseBindAddr(env.GUILD_BIND_ADDR ?? DEFAULT_BIND_ADDR);
   const upstreamUrl = parseUpstreamUrl(env.GUILD_UPSTREAM_URL ?? DEFAULT_UPSTREAM_URL);
+  const clickhouseUrl = parseUrl(env.GUILD_CLICKHOUSE_URL ?? DEFAULT_CLICKHOUSE_URL, "GUILD_CLICKHOUSE_URL");
   const masterKeyHex = parseMasterKey(requireEnv(env, "GUILD_MASTER_KEY_HEX"));
   const jwtSecret = requireEnv(env, "GUILD_JWT_SECRET");
   const apiUrl = (env.GUILD_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, "");
+  const internalKey = env.GUILD_INTERNAL_KEY ?? null;
   return {
+    internalKey,
+    clickhouseUrl,
+    clickhouseDatabase: env.GUILD_CLICKHOUSE_DATABASE ?? DEFAULT_CLICKHOUSE_DATABASE,
+    clickhouseUser: env.GUILD_CLICKHOUSE_USER ?? "",
+    clickhousePassword: env.GUILD_CLICKHOUSE_PASSWORD ?? "",
     bindHost: bind.host,
     bindPort: bind.port,
     upstreamUrl,

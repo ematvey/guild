@@ -1,0 +1,1 @@
+{"content":[{"thinking":"The user is asking me to say exactly \"hello gateway\". This is a simple","type":"thinking"}],"id":"msg_01a103e3-e304-7414-8058-20c029b95b1f","model":"GLM-5.3-Flash","role":"assistant","stop_reason":"max_tokens","stop_sequence":null,"type":"message","usage":{"input_tokens":17,"output_tokens":16}}
