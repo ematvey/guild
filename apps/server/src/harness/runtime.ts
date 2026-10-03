@@ -23,7 +23,6 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { createModels, type MutableModels, type UserMessage } from "@earendil-works/pi-ai";
 import type { Logger } from "pino";
 import { applyPostgresMigrations, PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
-import type { PostgresDatabase } from "../storage/postgres/index.js";
 import type { PlatformPool } from "../platform/db.js";
 import { GatewayStore } from "../platform/store/gateway.js";
 import { ChatStore } from "../platform/store/chats.js";
@@ -329,15 +328,11 @@ function sandboxRoot(): string {
 
 /** PgPoolDatabase whose close() does not end the shared platform pool (the
  *  pool's lifetime belongs to the PlatformContext). */
-class SharedPoolDatabase extends PgPoolDatabase {
-  constructor(pool: SharedPoolDatabase extends never ? never : import("pg").Pool) {
-    super(pool);
-  }
+export class SharedPoolDatabase extends PgPoolDatabase {
   override async close(): Promise<void> {
-    // Storage close seals the session; the platform pool stays open.
+    // Storage close seals the session; the shared platform pool (owned by
+    // PlatformContext) stays open.
   }
 }
-
-export type { PostgresDatabase };
 
 export type { Context };
