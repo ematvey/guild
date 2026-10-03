@@ -109,7 +109,7 @@ async function threadBody(ctx: PlatformContext, user: UserRow, chatId: string): 
       ? DEFAULT_CONTEXT_WINDOW
       : ((await ctx.gatewayStore.contextWindow(user.org_id, model)) ?? DEFAULT_CONTEXT_WINDOW);
   // serde_json::json! renders the outer + context maps sorted (BTreeMap);
-  // each event row is a typed struct (declaration order) — pre-rendered.
+  // each event row interpolates as a Value — sorted keys at every level.
   const contextModel = model === null ? "null" : JSON.stringify(model);
   return `{"context":{"max":${max},"model":${contextModel},"tokens":${tokens}},"events":[${events
     .map(threadEventRowWire)

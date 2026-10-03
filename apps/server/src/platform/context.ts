@@ -16,6 +16,7 @@ import { ChatStore } from "./store/chats.js";
 import { ThreadStore } from "./store/thread.js";
 import { TurnCommandStore } from "./store/turn_commands.js";
 import { GuildRuntime } from "../harness/runtime.js";
+import { NotifyHub } from "./notify.js";
 import { ClickhouseClient } from "./clickhouse.js";
 import { UsageSink } from "./usage.js";
 import { ApiError } from "./http/error.js";
@@ -49,6 +50,9 @@ export class PlatformContext {
   readonly chats: ChatStore;
   readonly threads: ThreadStore;
   readonly turnCommands: TurnCommandStore;
+  /** Postgres LISTEN hub (guild_thread_committed / guild_chat_status /
+   *  guild_events) — one dedicated connection shared by all subscribers. */
+  readonly notify: NotifyHub;
   readonly runtime: GuildRuntime;
 
   constructor(
@@ -69,6 +73,7 @@ export class PlatformContext {
     this.chats = new ChatStore(this.pool);
     this.threads = new ThreadStore(this.pool);
     this.turnCommands = new TurnCommandStore(this.pool);
+    this.notify = new NotifyHub(config.databaseUrl, log);
     this.runtime = new GuildRuntime(config, this.pool, log);
   }
 
@@ -130,6 +135,7 @@ export class PlatformContext {
 
   async close(): Promise<void> {
     await this.runtime.close();
+    await this.notify.close();
     this.objects.destroy();
     await this.pool.end();
   }

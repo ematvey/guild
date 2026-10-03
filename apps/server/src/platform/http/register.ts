@@ -16,6 +16,7 @@ import { registerGatewayAdminRoutes } from "./gateway.js";
 import { registerApiKeyRoutes } from "./api_keys.js";
 import { registerUsageRoutes } from "./usage.js";
 import { registerChatsRoutes } from "./chats.js";
+import { registerThreadStreamRoute } from "./thread-stream.js";
 import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
 import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
 
@@ -79,6 +80,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerApiKeyRoutes(scope, ctx);
     registerUsageRoutes(scope, ctx);
     registerChatsRoutes(scope, ctx);
+    registerThreadStreamRoute(scope, ctx);
   });
 
   // The LLM gateway surfaces (/openai/v1, /anthropic/v1) render errors in
