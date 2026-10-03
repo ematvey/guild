@@ -13,6 +13,13 @@ Updated 2026-10-04.
 
 ## Latest decisions
 
+- **M3 storage core landed early (2026-10-04).** The pi-durable Postgres
+  storage backend (`apps/server/src/storage/postgres/`: durable_\* tables
+  per design decision 5, portable core + pg adapter) passes pi-durable's
+  full conformance suite (23/23), reopen-across-restart tests, and
+  benchmarks. pi-durable 1.0.1 gaps found so far are recorded as a dated
+  spec amendment. The rest of M3 (harness wiring, chats routes + SSE,
+  importer, restate removal) follows M2's internal gateway key.
 - **M0 — TS server shell cutover landed (2026-10-04).** `apps/server`
   (Fastify) serves `/api/v1/health` natively and proxy-everything (HTTP + WS
   upgrade) to the Rust server on the compose network; TS container
