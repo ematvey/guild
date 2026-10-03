@@ -89,7 +89,7 @@ describe("health route (native)", () => {
     await app.close();
   });
 
-  it("NATIVE_ROUTES covers the health path and the M1 platform groups", () => {
+  it("NATIVE_ROUTES covers the health path and the platform groups", () => {
     expect(NATIVE_ROUTES).toEqual([
       "/api/v1/health",
       "/api/v1/auth/*",
@@ -111,6 +111,11 @@ describe("health route (native)", () => {
       "/api/v1/usage/*",
       "/openai/v1/*",
       "/anthropic/v1/*",
+      // M5 hub core (the ws upgrade itself is a server-level 'upgrade'
+      // listener, not an HTTP route).
+      "/api/v1/machines",
+      "/api/v1/machines/*",
+      "/api/v1/ws/ticket",
     ]);
   });
 });
@@ -152,20 +157,34 @@ describe("proxy-everything (HTTP)", () => {
   });
 });
 
-describe("proxy-everything (WebSocket upgrade)", () => {
-  it("proxies WS upgrades on the hub path end-to-end", async () => {
+describe("hub WS upgrade (native since M5)", () => {
+  it("the upgrade is native now: an upgrade without a ticket is rejected by the hub itself", async () => {
     const app = await makeApp();
     await app.listen({ host: "127.0.0.1", port: 0 });
     const port = (app.server.address() as AddressInfo).port;
 
     const client = new WebSocket(`ws://127.0.0.1:${port}/api/v1/ws`);
-    const echoed = await new Promise<string>((resolve, reject) => {
-      client.on("open", () => client.send("hello-hub"));
-      client.on("message", (data) => resolve(data.toString()));
-      client.on("error", reject);
+    client.on("error", () => {}); // the rejection below is the expected path
+    const failure = await new Promise<{ code: number; message: string }>((resolve) => {
+      client.on("unexpected-response", (_req, res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () =>
+          resolve({
+            code: res.statusCode ?? 0,
+            message: Buffer.concat(chunks).toString("utf8"),
+          }),
+        );
+      });
+      client.on("open", () => resolve({ code: 0, message: "unexpectedly opened" }));
     });
-    expect(echoed).toBe("echo:hello-hub");
-    client.close();
+    expect(failure.code).toBe(400);
+    expect(failure.message).toContain("missing query parameter: ticket");
+    try {
+      client.terminate();
+    } catch {
+      // The ws client may already be tearing down the rejected connection.
+    }
     await app.close();
   });
 });

@@ -17,6 +17,8 @@ import { registerApiKeyRoutes } from "./api_keys.js";
 import { registerUsageRoutes } from "./usage.js";
 import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
 import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
+import { registerMachineRoutes } from "../../http/machines.js";
+import { registerWsRoutes } from "../../http/ws.js";
 
 export interface NativeRouteGroup {
   /** Route group name (for the report / rollback notes). */
@@ -36,6 +38,8 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "api-keys", paths: ["/api/v1/api-keys", "/api/v1/api-keys/*", "/api/v1/admin/api-keys", "/api/v1/admin/api-keys/*"] },
   { name: "usage", paths: ["/api/v1/usage", "/api/v1/usage/*"] },
   { name: "llm-gateway", paths: ["/openai/v1/*", "/anthropic/v1/*"] },
+  { name: "machines", paths: ["/api/v1/machines", "/api/v1/machines/*"] },
+  { name: "hub-ws", paths: ["/api/v1/ws/ticket"] },
 ];
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
@@ -76,6 +80,10 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerGatewayAdminRoutes(scope, ctx);
     registerApiKeyRoutes(scope, ctx);
     registerUsageRoutes(scope, ctx);
+    // M5 hub core: machine registry routes + the ws-ticket mint (the /api/v1/ws
+    // upgrade itself is a server-level 'upgrade' listener, not an HTTP route).
+    registerMachineRoutes(scope, ctx);
+    registerWsRoutes(scope, ctx);
   });
 
   // The LLM gateway surfaces (/openai/v1, /anthropic/v1) render errors in
