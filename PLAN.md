@@ -13,6 +13,22 @@ Updated 2026-10-04.
 
 ## Latest decisions
 
+- **M0 — TS server shell cutover landed (2026-10-04).** `apps/server`
+  (Fastify) serves `/api/v1/health` natively and proxy-everything (HTTP + WS
+  upgrade) to the Rust server on the compose network; TS container
+  (`guild-server-ts`, tsc at build time) owns the public port :18080, Rust
+  service renamed `server-rust` (internal only). Verified on the dev stack:
+  login + a real GLM-5.3-Flash turn end-to-end through the proxy via the
+  headless client, and real desktop daemons (WORKSTATION 0.5.33, devbox 0.5.25)
+  reconnected and working through it. Trap found: renaming the Rust service
+  must move `GUILD_WORKER_ADVERTISED_URL` to `http://server-rust:9080` or
+  restate's deployment discovery 500-loops and every ChatRunner turn hangs;
+  the stale `http://server:9080/` deployment had to be force-deleted from
+  restate. Spec amendment recorded: sessions are opaque tokens in the
+  `sessions` table, not JWTs. Design:
+  `docs/specs/2026-10-04-ts-server-pi-durable-design.md`; milestones:
+  `docs/plans/2026-10-04-ts-server-pi-durable-plan.md`. Work branch:
+  `agent-plane` (worktree `~/guild-wt-agent-plane`).
 - **TS server rebuild on pi-durable starts (2026-10-04).** The cloud server
   is rebuilt in TypeScript on `@earendil-works/pi-durable` (pinned `1.0.1`,
   never forked, no upstream fix loop); Restate is dropped; the public API,
