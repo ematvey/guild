@@ -66,6 +66,7 @@ interface OpenAiChatRequest {
   model: string;
   messages: OpenAiMessage[];
   stream?: boolean;
+  stream_options?: { include_usage?: boolean } | null;
   tools?: { type?: string; function: { name: string; description?: string; parameters?: unknown } }[] | null;
   max_tokens?: number;
   max_completion_tokens?: number;
@@ -314,6 +315,7 @@ async function handleChatCompletions(
 
   if (req0.stream === true) {
     streamChunks(gateway, credential, reply, call.stream, {
+      includeUsage: req0.stream_options?.include_usage === true,
       model,
       providerName,
       priceIn: call.priceIn,
@@ -361,6 +363,13 @@ interface StreamMeta {
   priceOut: number;
   usage: UsageSink;
   completionId: string;
+  /** stream_options.include_usage (OpenAI semantics): the final usage chunk
+   *  (empty choices) rides before [DONE]. Only clients that ask for it see
+   *  the extra frame — the default stream stays byte-identical to the Rust
+   *  gateway's. The internal agent always asks (pi-ai sends
+   *  stream_options.include_usage), so usage reaches the durable thread
+   *  events through the loopback gateway (decision 7). */
+  includeUsage: boolean;
 }
 
 /** The provider stream → OpenAI SSE chunks. The usage guard exists before
@@ -449,6 +458,22 @@ function streamChunks(
       );
       settled = true;
       yield sseDataFrame(chunk({}, finish));
+      if (meta.includeUsage) {
+        yield sseDataFrame(
+          rustJsonText({
+            id: meta.completionId,
+            object: "chat.completion.chunk",
+            created,
+            model: meta.model,
+            choices: [],
+            usage: {
+              prompt_tokens: counters.tokensIn,
+              completion_tokens: counters.tokensOut,
+              total_tokens: counters.tokensIn + counters.tokensOut,
+            },
+          }),
+        );
+      }
       yield sseDataFrame("[DONE]");
     } finally {
       if (!settled) {

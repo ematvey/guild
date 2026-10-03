@@ -488,9 +488,9 @@ function commandAck(command: { id: string; status: string; invocation_id: string
 function canonicalChatRequest(body: Record<string, unknown>, chatId: string, model: string, commandId: string): unknown {
   const messages = (body["messages"] as unknown[] | undefined)?.map((m) => sortedJson(m)) ?? [];
   const out: Record<string, unknown> = {};
-  if (body["user_message_id"] !== undefined && body["user_message_id"] !== null) {
-    out.user_message_id = String(body["user_message_id"]).toLowerCase();
-  }
+  // Rust: user_message_id.get_or_insert_with(now_v7) happens BEFORE the
+  // canonical to_value — the resolved id always rides the material.
+  out.user_message_id = commandId;
   out.chat_id = chatId;
   out.model = model;
   out.messages = messages;
@@ -508,7 +508,6 @@ function canonicalChatRequest(body: Record<string, unknown>, chatId: string, mod
   }
   if (body["skills_index"] !== undefined && body["skills_index"] !== null) out.skills_index = body["skills_index"];
   if (body["agents_md"] !== undefined && body["agents_md"] !== null) out.agents_md = body["agents_md"];
-  void commandId;
   return sortedJson(out);
 }
 

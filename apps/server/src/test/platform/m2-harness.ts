@@ -64,7 +64,11 @@ async function dropClickhouseDatabase(name: string): Promise<void> {
   }
 }
 
-export async function createM2TestEnv(withClickhouse = true, logLevel = "error"): Promise<M2TestEnv> {
+export async function createM2TestEnv(
+  withClickhouse = true,
+  logLevel = "error",
+  configOverrides: Record<string, string> = {},
+): Promise<M2TestEnv> {
   const suffix = randomSuffix();
   const databaseName = `guild_m2_test_${suffix}`;
   const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
@@ -107,6 +111,7 @@ export async function createM2TestEnv(withClickhouse = true, logLevel = "error")
     GUILD_CLICKHOUSE_USER: TEST_CLICKHOUSE_USER,
     GUILD_CLICKHOUSE_PASSWORD: TEST_CLICKHOUSE_PASSWORD,
     GUILD_INTERNAL_KEY: `gk_internal_${suffix}`,
+    ...configOverrides,
   });
   const app = await buildApp(config);
 
@@ -231,9 +236,10 @@ export interface M2Stack {
 }
 
 /** Full stack: disposable PG + CH + app + org/users/session/key + mock
- *  provider. The provider row is registered against the mock upstream. */
-export async function setupM2Stack(): Promise<M2Stack> {
-  const env = await createM2TestEnv();
+ *  provider. The provider row is registered against the mock upstream.
+ *  `configOverrides` pass through to loadConfig (e.g. GUILD_SELF_BASE_URL). */
+export async function setupM2Stack(configOverrides: Record<string, string> = {}): Promise<M2Stack> {
+  const env = await createM2TestEnv(true, "error", configOverrides);
   const db = env.db;
   const orgId = crypto.randomUUID();
   const adminEmail = `m2-admin-${randomSuffix()}@example.test`;

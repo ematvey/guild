@@ -7,7 +7,7 @@
 
 import { ApiError } from "../http/error.js";
 import type { PlatformPool } from "../db.js";
-import { pgTimestampToRfc3339 } from "../time.js";
+import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../../chats/thread-events.js";
 
 interface EventRowDb {
@@ -38,6 +38,7 @@ export class ThreadStore {
   async appendEvent(chatId: string, event: ThreadEvent, id?: string): Promise<ThreadEventRow> {
     const payload = JSON.stringify(event);
     const eventType = event.type;
+    const eventId = id ?? uuidv7();
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -46,7 +47,7 @@ export class ThreadStore {
          ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
          WHERE thread_events.chat_id = EXCLUDED.chat_id AND thread_events.payload = EXCLUDED.payload
          RETURNING id, chat_id, seq, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
-        [id, chatId, eventType, payload],
+        [eventId, chatId, eventType, payload],
       );
       const row = res.rows[0];
       if (!row) throw new ApiError(500, "internal", "thread event append returned no row");

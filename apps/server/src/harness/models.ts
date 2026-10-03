@@ -20,6 +20,10 @@ export interface GuildRouteInfo {
   reasoning: boolean;
   context_window: number | null;
   max_output_tokens: number | null;
+  /** Route prices ($/Mtok) — the durable assistant usage carries the cost
+   *  exactly like the Rust worker's route-priced events. */
+  price_in: number;
+  price_out: number;
 }
 
 export interface GuildModelsConfig {
@@ -55,7 +59,17 @@ export function ensureOrgProvider(
     auth: {
       apiKey: {
         name: "Guild internal key",
-        resolve: async () => ({ auth: { headers: {} } }),
+        resolve: async () => ({
+          auth: {
+            // The stream call builds its own `Authorization: Bearer <apiKey>`
+            // from the resolved key; the org scoping rides as a request
+            // header resolved alongside it (applyAuth merges auth.headers
+            // into every request — provider-level static headers do not
+            // reach the stream path).
+            apiKey: config.internalKey ?? "missing",
+            headers: { "x-guild-org-id": orgId },
+          },
+        }),
       },
     },
     api: openAiCompletionsApi(),
@@ -66,7 +80,7 @@ export function ensureOrgProvider(
       provider: id,
       baseUrl,
       input: ["text", "image"] as ("text" | "image")[],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: { input: route.price_in, output: route.price_out, cacheRead: 0, cacheWrite: 0 },
       reasoning: route.reasoning,
       contextWindow: route.context_window ?? 128_000,
       maxTokens: route.max_output_tokens ?? 8_192,
