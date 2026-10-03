@@ -31,7 +31,7 @@ import { TurnCommandStore } from "../platform/store/turn_commands.js";
 import type { Config } from "../config.js";
 import { createGuildExtension, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
-import { ChatBridge } from "../chats/bridge.js";
+import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 
 /** Guild-side chat ↔ durable-conversation mapping (spec decision 6). Kept
@@ -302,6 +302,12 @@ export class GuildRuntime {
     if (!conversation) return false;
     await conversation.compact(undefined, BACKGROUND_CONTEXT);
     return true;
+  }
+
+  /** Wires the live-frame fan-out (the member-socket feed forwarder). The
+   *  bridge emits into it; without a sink the frames are simply dropped. */
+  setStreamSink(sink: GenerationStreamSink | null): void {
+    this.bridge.setStream(sink);
   }
 
   /** Live streaming buffers of a conversation (the ThreadState frame's

@@ -11,6 +11,8 @@
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import type { Logger } from "pino";
+import type { StreamWireEvent } from "../hub/protocol.js";
+import { uuidv7 } from "../platform/time.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import type { TurnCommandStore } from "../platform/store/turn_commands.js";
@@ -29,6 +31,23 @@ export interface LiveBuffers {
    *  ThreadState frame's text/thinking fields; empty when idle). */
   text: string;
   thinking: string;
+}
+
+/** The live generation fan-out the member-socket feed implements: the
+ *  bridge's model deltas and terminals leave the process as live_frame
+ *  frames (Rust: state.generations broadcast + feed::drain_events). */
+export interface GenerationStreamSink {
+  /** Registers the chat's active generation identity — the command id the
+   *  turn ack carries as generation_id (Rust attach_with_id). Untracked
+   *  runs keep an already-open identity (Rust attach semantics). */
+  open(chatId: string, generationId: string): void;
+  /** One StreamEvent inside the chat's open generation. */
+  event(chatId: string, event: StreamWireEvent): void;
+  /** The chat's streaming buffers moved — the feed's view republish poll
+   *  must capture (Rust publish_views' signature tick). */
+  dirty(chatId: string): void;
+  /** The generation ended (Rust generations.remove). */
+  close(chatId: string): void;
 }
 
 export interface BridgeDeps {
@@ -50,6 +69,16 @@ interface BridgeState {
   handledEntries: Set<string>;
   currentModel: string | null;
   buffers: LiveBuffers;
+  /** The open generation's identity (live_frame generation_id) — the run's
+   *  originating command id; null until a run starts. */
+  generationId: string | null;
+  /** One terminal (Done/Error) per generation: sent or already impossible. */
+  doneSent: boolean;
+  /** The run's failure message (pi.generation task_failed) — Error terminal
+   *  at run end. */
+  failure: string | null;
+  /** Last appended assistant row id (the stop epilogue's Done message_id). */
+  lastEventId: string | null;
 }
 
 function invocationOf(submissionId: number): string {
@@ -58,8 +87,15 @@ function invocationOf(submissionId: number): string {
 
 export class ChatBridge {
   private readonly states = new Map<string, BridgeState>();
+  private streamSink: GenerationStreamSink | null = null;
 
   constructor(private readonly deps: BridgeDeps) {}
+
+  /** Wires the live-frame fan-out (the feed forwarder; unset = frames are
+   *  dropped — sinks-less deployments still persist everything). */
+  setStream(sink: GenerationStreamSink | null): void {
+    this.streamSink = sink;
+  }
 
   state(conversationId: string): BridgeState {
     let state = this.states.get(conversationId);
@@ -72,6 +108,10 @@ export class ChatBridge {
         handledEntries: new Set(),
         currentModel: null,
         buffers: { text: "", thinking: "" },
+        generationId: null,
+        doneSent: false,
+        failure: null,
+        lastEventId: null,
       };
       this.states.set(conversationId, state);
     }
@@ -113,14 +153,28 @@ export class ChatBridge {
       case "run_start": {
         state.turn = (await this.deps.threads.latestTurn(state.chatId)) + 1;
         state.step = 0;
+        state.doneSent = false;
+        state.failure = null;
+        state.lastEventId = null;
         await this.deps.chats.setGenerating(state.orgId, state.chatId, true);
+        let generationId: string | null = null;
+        let oldestPosition: number | null = null;
         for (const input of event.inputs) {
           const commands = await this.deps.turnCommands.byInvocation(invocationOf(Number(input)));
           for (const command of commands) {
             const claimed = await this.deps.turnCommands.begin(command.id, state.chatId, invocationOf(Number(input)));
             void claimed;
+            if (generationId === null || (command.position !== null && command.position < (oldestPosition ?? Number.MAX_SAFE_INTEGER))) {
+              generationId = command.id;
+              oldestPosition = command.position;
+            }
           }
         }
+        // Untracked runs keep an already-open generation identity (Rust
+        // attach semantics); a cold untracked run streams under a fresh id
+        // no client matches, exactly like Rust's fresh attach.
+        state.generationId = generationId ?? state.generationId ?? uuidv7();
+        if (this.streamSink && state.chatId) this.streamSink.open(state.chatId, state.generationId);
         return;
       }
       case "run_end": {
@@ -131,21 +185,87 @@ export class ChatBridge {
             await this.deps.turnCommands.finish(command.id, invocationOf(Number(input)), false);
           }
         }
+        this.finishGeneration(state);
+        return;
+      }
+      case "task_failed": {
+        // The run's own failure (Rust: StreamEvent::Error at the failure
+        // point + the registry removal). Tool/compaction task failures are
+        // the executor paths' own surface.
+        if (event.kind !== "pi.generation" || state.generationId === null || state.doneSent) return;
+        state.doneSent = true;
+        state.failure = event.message;
+        this.emitStream(state, { type: "error", code: "provider", message: event.message });
         return;
       }
       case "message_start": {
         state.buffers.text = "";
         state.buffers.thinking = "";
-        if (event.message.role === "assistant") state.currentModel = event.message.model;
+        if (event.message.role === "assistant") {
+          state.currentModel = (event.message as { model?: string }).model ?? state.currentModel;
+          // The first partial commit arrives as message_start with the
+          // content streamed so far (Rust: the first ProviderChunk::Text
+          // already emits its Delta) — seed the buffers and stream it.
+          let moved = false;
+          for (const block of (event.message as { content: { type: string; text?: string; thinking?: string }[] }).content) {
+            if (block.type === "text" && block.text) {
+              state.buffers.text += block.text;
+              this.emitStream(state, { type: "delta", content: block.text });
+              moved = true;
+            } else if (block.type === "thinking" && block.thinking) {
+              state.buffers.thinking += block.thinking;
+              this.emitStream(state, { type: "thinking_delta", content: block.thinking });
+              moved = true;
+            }
+          }
+          if (moved && this.streamSink && state.chatId) this.streamSink.dirty(state.chatId);
+        }
         return;
       }
       case "message_update": {
+        let moved = false;
         for (const change of event.changes) {
-          if (change.type === "text_delta") state.buffers.text += change.delta;
-          else if (change.type === "thinking_delta") state.buffers.thinking += change.delta;
-          else if (change.type === "block" && change.block.type === "text") state.buffers.text += change.block.text;
-          else if (change.type === "block" && change.block.type === "thinking") state.buffers.thinking += change.block.thinking;
+          if (change.type === "text_delta") {
+            state.buffers.text += change.delta;
+            this.emitStream(state, { type: "delta", content: change.delta });
+            moved = true;
+          } else if (change.type === "thinking_delta") {
+            state.buffers.thinking += change.delta;
+            this.emitStream(state, { type: "thinking_delta", content: change.delta });
+            moved = true;
+          } else if (change.type === "text_start") {
+            // A block inserted whole holds its text so far (the first chunk
+            // of the block rides the insert).
+            const block = change.block as { text?: string };
+            state.buffers.text += block.text ?? "";
+            if (block.text) this.emitStream(state, { type: "delta", content: block.text });
+            moved = true;
+          } else if (change.type === "thinking_start") {
+            const block = change.block as { thinking?: string };
+            state.buffers.thinking += block.thinking ?? "";
+            if (block.thinking) this.emitStream(state, { type: "thinking_delta", content: block.thinking });
+            moved = true;
+          } else if (change.type === "block" && change.block.type === "text") {
+            state.buffers.text += change.block.text;
+            this.emitStream(state, { type: "delta", content: change.block.text });
+            moved = true;
+          } else if (change.type === "block" && change.block.type === "thinking") {
+            state.buffers.thinking += change.block.thinking;
+            this.emitStream(state, { type: "thinking_delta", content: change.block.thinking });
+            moved = true;
+          } else if (change.type === "message") {
+            // The whole partial was replaced: resync the buffers (the stream
+            // frames already delivered the prefix; the view poll corrects).
+            state.buffers.text = "";
+            state.buffers.thinking = "";
+            for (const block of (change.message as { content: { type: string; text?: string; thinking?: string }[] }).content) {
+              if (block.type === "text") state.buffers.text += block.text ?? "";
+              else if (block.type === "thinking") state.buffers.thinking += block.thinking ?? "";
+            }
+            moved = true;
+          }
         }
+        if (moved && this.streamSink && state.chatId) this.streamSink.dirty(state.chatId);
         return;
       }
       case "message_end": {
@@ -160,10 +280,35 @@ export class ChatBridge {
         }
         return;
       }
+      case "tool_execution_start": {
+        // The tool-call card (Rust: ToolStarted into the generation stream;
+        // the durable harness's tools execute server-side).
+        if (state.generationId === null) return;
+        this.emitStream(state, {
+          type: "tool_started",
+          call_id: event.toolCallId,
+          name: event.toolName,
+          arguments: canonicalJson(event.args),
+          executor: "server",
+        });
+        return;
+      }
       case "tool_execution_end": {
         if (event.entry && !state.handledEntries.has(String(event.entry.id))) {
           state.handledEntries.add(String(event.entry.id));
+          const result = event.entry.model?.find((m) => m.role === "toolResult");
           await this.handleEntry(state, event.entry);
+          // The result card rides after the persisted row (Rust
+          // ToolCompleted carries the finished tool's content).
+          if (result && result.role === "toolResult" && state.generationId !== null) {
+            this.emitStream(state, {
+              type: "tool_completed",
+              call_id: result.toolCallId,
+              name: result.toolName,
+              content: result.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
+              is_error: result.isError,
+            });
+          }
         }
         return;
       }
@@ -218,19 +363,38 @@ export class ChatBridge {
         if (reasoning !== "") blocks.push({ type: "reasoning", text: reasoning });
         if (text !== "") blocks.push({ type: "text", text });
         for (const call of toolCalls) blocks.push({ type: "tool_call", ...call });
+        const usage = {
+          tokens_in: message.usage.input,
+          tokens_out: message.usage.output,
+          cost_usd: message.usage.cost.total,
+        };
         const ev = assistantMessageEvent(
           state.turn,
           state.step,
           blocks,
-          {
-            tokens_in: message.usage.input,
-            tokens_out: message.usage.output,
-            cost_usd: message.usage.cost.total,
-          },
+          usage,
           message.model,
           message.stopReason === "aborted" ? true : undefined,
         );
-        await this.append(state, ev);
+        const row = await this.append(state, ev);
+        state.lastEventId = row.id;
+        if (this.streamSink && state.chatId && state.generationId !== null) {
+          if (message.stopReason === "aborted") {
+            // The stop epilogue owns this generation's terminal: a
+            // zero-usage Done at run end (Rust's cancelled path).
+          } else if (toolCalls.length === 0) {
+            // The final step: the turn ends — Rust sends Done inline at the
+            // final persist (route-priced usage).
+            state.doneSent = true;
+            this.emitStream(state, {
+              type: "done",
+              message_id: row.id,
+              cost_usd: usage.cost_usd ?? 0,
+              tokens_in: usage.tokens_in ?? 0,
+              tokens_out: usage.tokens_out ?? 0,
+            });
+          }
+        }
         return;
       }
       case "pi.tool-result": {
@@ -271,8 +435,34 @@ export class ChatBridge {
     }
   }
 
-  private async append(state: BridgeState, ev: ThreadEvent): Promise<void> {
-    await this.deps.threads.appendEvent(state.chatId, ev);
+  /** The generation's terminal bookkeeping at run end: an unsent terminal
+   *  rides here (failure → Error, stop → zero-usage Done with the last
+   *  event id), then the registry entry clears (Rust's turn epilogue). */
+  private finishGeneration(state: BridgeState): void {
+    if (!this.streamSink || !state.chatId || state.generationId === null) return;
+    if (state.failure !== null && !state.doneSent) {
+      state.doneSent = true;
+      this.emitStream(state, { type: "error", code: "provider", message: state.failure });
+    } else if (!state.doneSent) {
+      state.doneSent = true;
+      this.emitStream(state, {
+        type: "done",
+        message_id: state.lastEventId ?? uuidv7(),
+        cost_usd: 0,
+        tokens_in: 0,
+        tokens_out: 0,
+      });
+    }
+    this.streamSink.close(state.chatId);
+  }
+
+  private emitStream(state: BridgeState, event: StreamWireEvent): void {
+    if (!this.streamSink || !state.chatId || state.generationId === null) return;
+    this.streamSink.event(state.chatId, event);
+  }
+
+  private async append(state: BridgeState, ev: ThreadEvent): Promise<ThreadEventRow> {
+    return this.deps.threads.appendEvent(state.chatId, ev);
   }
 }
 
