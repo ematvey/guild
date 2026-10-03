@@ -74,16 +74,17 @@ services:
     ports:
       - "127.0.0.1:${GUILD_RESTATE_ADMIN_PORT:-9070}:9070"
 
-  server:
-    # explicit tag: the default (compose-server) collides with other projects
-    # that also use a "compose/compose" layout and steals the tag on rebuild
+  server-rust:
+    # explicit tag: the default (compose-server-rust) collides with other
+    # projects that also use a "compose/compose" layout and steals the tag
+    # on rebuild
     image: guild-server:latest
     build:
       context: ../..
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "${GUILD_HTTP_PORT:-8080}:8080"
+    # No host port publish: the TS server owns the public port and proxies
+    # un-ported routes to this one over the compose network (GUILD_UPSTREAM_URL).
     env_file: config.env
     extra_hosts:
       # reach the host-published shared services (postgres/clickhouse/rustfs)
@@ -92,6 +93,24 @@ services:
       - guild_data:/data
     depends_on:
       restate:
+        condition: service_started
+
+  server:
+    # TS server (M0 shell): owns the public port, serves /api/v1/health
+    # natively, proxies everything else (HTTP + WS) to server-rust.
+    image: guild-server-ts:latest
+    build:
+      context: ../..
+      dockerfile: Dockerfile.server-ts
+    restart: unless-stopped
+    ports:
+      - "${GUILD_HTTP_PORT:-8080}:8080"
+    env_file: config.env
+    extra_hosts:
+      # TS will reach host services (gateway etc.) in later milestones
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      server-rust:
         condition: service_started
 
 volumes:
