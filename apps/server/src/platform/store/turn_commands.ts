@@ -17,6 +17,9 @@ export interface TurnCommand {
   payload: unknown;
   status: string;
   invocation_id: string | null;
+  /** Arrival order (BIGSERIAL) — the queue order and the run's originating
+   *  delivery (the earliest position = the generation identity). */
+  position: number | null;
 }
 
 export class TurnCommandStore {
@@ -246,7 +249,7 @@ export class TurnCommandStore {
    *  run_start/run_end carry submission ids). */
   async byInvocation(invocation: string): Promise<TurnCommand[]> {
     const res = await this.pool.query<TurnCommand>(
-      "SELECT id, org_id, user_id, chat_id, request, payload, status, invocation_id FROM turn_commands WHERE invocation_id = $1",
+      "SELECT id, org_id, user_id, chat_id, request, payload, status, invocation_id, position FROM turn_commands WHERE invocation_id = $1",
       [invocation],
     );
     return res.rows;

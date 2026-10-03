@@ -24,6 +24,7 @@ import { ThreadStore } from "./store/thread.js";
 import { TurnCommandStore } from "./store/turn_commands.js";
 import { GuildRuntime } from "../harness/runtime.js";
 import { NotifyHub } from "./notify.js";
+import { FeedForwarder } from "../hub/feed.js";
 import { ClickhouseClient } from "./clickhouse.js";
 import { UsageSink } from "./usage.js";
 import { ApiError } from "./http/error.js";
@@ -67,6 +68,10 @@ export class PlatformContext {
    *  guild_events) — one dedicated connection shared by all subscribers. */
   readonly notify: NotifyHub;
   readonly runtime: GuildRuntime;
+  /** The member-socket feed forwarder (M5/ws-feed lane): notify fan-in →
+   *  ThreadState views, LiveFrame generation streams, ChatStatus, org
+   *  events, presence-driven ThreadList — all to the chat owner's sinks. */
+  readonly feed: FeedForwarder;
 
   /** Seams for lanes that land after M5-hub-core (all optional, no-op when
    *  unset):
@@ -105,6 +110,9 @@ export class PlatformContext {
     this.turnCommands = new TurnCommandStore(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);
     this.runtime = new GuildRuntime(config, this.pool, log);
+    this.feed = new FeedForwarder(this);
+    this.feed.start();
+    this.runtime.setStreamSink(this.feed);
   }
 
   masterKey(): Buffer {
@@ -164,6 +172,7 @@ export class PlatformContext {
   }
 
   async close(): Promise<void> {
+    this.feed.stop();
     await this.runtime.close();
     await this.notify.close();
     this.objects.destroy();
