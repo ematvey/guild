@@ -62,8 +62,14 @@ afterAll(async () => {
   await new Promise<void>((resolve) => upstream.close(() => resolve()));
 });
 
+const TEST_ENV = {
+  GUILD_UPSTREAM_URL: "",
+  GUILD_MASTER_KEY_HEX: "00".repeat(32),
+  GUILD_JWT_SECRET: "test-secret",
+};
+
 function makeApp() {
-  return buildApp(loadConfig({ GUILD_UPSTREAM_URL: upstreamUrl, GUILD_LOG_LEVEL: "silent" }));
+  return buildApp(loadConfig({ ...TEST_ENV, GUILD_UPSTREAM_URL: upstreamUrl, GUILD_LOG_LEVEL: "silent" }));
 }
 
 describe("health route (native)", () => {
@@ -83,8 +89,19 @@ describe("health route (native)", () => {
     await app.close();
   });
 
-  it("NATIVE_ROUTES only contains the health path", () => {
-    expect(NATIVE_ROUTES).toEqual(["/api/v1/health"]);
+  it("NATIVE_ROUTES covers the health path and the M1 platform groups", () => {
+    expect(NATIVE_ROUTES).toEqual([
+      "/api/v1/health",
+      "/api/v1/auth/*",
+      "/api/v1/org",
+      "/api/v1/org/logo",
+      "/api/v1/orgs/*/logo",
+      "/api/v1/events",
+      "/api/v1/attachments/*",
+      "/api/v1/chats/*/attachments",
+      "/api/v1/auth/oidc/*",
+      "/api/v1/admin/oidc",
+    ]);
   });
 });
 

@@ -1,13 +1,15 @@
-// Fastify app shell: native health route + proxy-everything to the Rust
-// server (HTTP + WebSocket upgrade), per the M0 design (decision 3: TS in
-// front, un-ported routes reverse-proxied; each ported route flips to
-// native TS, rollback = delete the TS route).
+// Fastify app shell: native platform routes (health, M1 platform core) +
+// proxy-everything to the Rust server (HTTP + WebSocket upgrade), per the
+// M0 design (decision 3: TS in front, un-ported routes reverse-proxied;
+// each ported route flips to native TS, rollback = delete the TS route).
 
 import { createRequire } from "node:module";
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
 import proxy from "@fastify/http-proxy";
 import type { Config } from "./config.js";
+import { PlatformContext } from "./platform/context.js";
+import { NATIVE_ROUTE_GROUPS, registerPlatformRoutes } from "./platform/http/register.js";
 
 const require = createRequire(import.meta.url);
 
@@ -20,11 +22,14 @@ export const GUILD_TS_SERVER_VERSION: string = (() => {
   }
 })();
 
-// Native (non-proxied) routes. Anything listed here is served by this
-// process; every other path is forwarded to the Rust upstream. To flip a
-// route group to native TS, register it here; to roll back, delete the
-// route and the proxy resumes.
-export const NATIVE_ROUTES = ["/api/v1/health"];
+// Native (non-proxied) route groups. Anything listed here is served by this
+// process; every other path is forwarded to the Rust upstream. To roll a
+// group back, delete its registration in registerPlatformRoutes and the
+// proxy resumes.
+export const NATIVE_ROUTES = [
+  "/api/v1/health",
+  ...NATIVE_ROUTE_GROUPS.flatMap((g) => g.paths),
+];
 
 // Body limit mirrors the largest Rust limit (releases: 512 MiB,
 // attachments: 64 MiB — crates/server/src/http/releases.rs / attachments.rs).
@@ -41,12 +46,19 @@ export async function buildApp(config: Config) {
     bodyLimit: BODY_LIMIT_BYTES,
   });
 
+  const platform = new PlatformContext(config);
+
   // Native health route — same shape as the Rust one
   // (crates/server/src/http/mod.rs): {"status":"ok","version":...}.
   app.get("/api/v1/health", async () => ({
     status: "ok",
     version: GUILD_TS_SERVER_VERSION,
   }));
+
+  // Native M1 platform routes (auth, org, events, attachments, OIDC),
+  // registered before the proxy so they win route matching; the proxy
+  // catch-all underneath keeps every un-ported path working.
+  await registerPlatformRoutes(app as unknown as FastifyInstance, platform);
 
   // Proxy everything else — HTTP bodies (streamed through), status codes,
   // response headers, and WS upgrades (the hub route is /api/v1/ws,
@@ -61,6 +73,10 @@ export async function buildApp(config: Config) {
   await app.register(proxy, {
     upstream: config.upstreamUrl,
     websocket: true,
+  });
+
+  app.addHook("onClose", async () => {
+    await platform.close();
   });
 
   return app;
