@@ -1,0 +1,29 @@
+# TS server (apps/server) image — M0 shell: Fastify app with a native health
+# route that reverse-proxies everything else (HTTP + WS upgrade) to the Rust
+# server on the compose network. TypeScript is compiled at build time; the
+# runtime runs plain `node dist/index.js` (no transpile at runtime).
+
+# Build stage: npm workspaces install (root package.json/lockfile), compile
+# apps/server with tsc.
+FROM node:22 AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+# npm ci validates every workspace listed in the root package.json.
+COPY apps/desktop/package.json apps/desktop/
+COPY apps/server/package.json apps/server/
+COPY packages/ui/package.json packages/ui/
+RUN npm ci --workspace apps/server --no-audit --no-fund
+COPY apps/server/src ./apps/server/src
+COPY apps/server/tsconfig.json apps/server/tsconfig.json
+RUN npm run build --workspace apps/server
+
+# Runtime stage: production deps (hoisted into /app/node_modules) + dist.
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/server/dist ./apps/server/dist
+COPY --from=build /app/apps/server/package.json ./apps/server/package.json
+WORKDIR /app/apps/server
+EXPOSE 8080
+CMD ["node", "dist/index.js"]

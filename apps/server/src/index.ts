@@ -1,9 +1,28 @@
-// Placeholder entrypoint — replaced by the M0 shell milestone.
-// Keeps the scaffold buildable/typecheckable before the Fastify app lands.
-import { createServer } from "node:http";
+// Entry point: load config, start Fastify, shut down gracefully on
+// SIGTERM/SIGINT (docker stop sends SIGTERM).
 
-const port = Number(process.env.PORT ?? 8080);
-createServer((_req, res) => {
-  res.writeHead(503, { "content-type": "text/plain" });
-  res.end("guild TS server: scaffold only\n");
-}).listen(port, "0.0.0.0");
+import { loadConfig } from "./config.js";
+import { buildApp } from "./app.js";
+
+async function main(): Promise<void> {
+  const config = loadConfig();
+  const app = await buildApp(config);
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      app.log.info({ signal }, "shutting down");
+      app.close().catch((err) => {
+        app.log.error(err, "error during shutdown");
+        process.exit(1);
+      });
+    });
+  }
+
+  await app.listen({ host: config.bindHost, port: config.bindPort });
+}
+
+main().catch((err) => {
+  // Logger may not exist yet (config errors) — fall back to stderr.
+  console.error(err);
+  process.exit(1);
+});
