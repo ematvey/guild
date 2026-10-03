@@ -15,6 +15,7 @@ import { registerOidcRoutes } from "./oidc.js";
 import { registerGatewayAdminRoutes } from "./gateway.js";
 import { registerApiKeyRoutes } from "./api_keys.js";
 import { registerUsageRoutes } from "./usage.js";
+import { registerChatsRoutes } from "./chats.js";
 import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
 import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
 
@@ -36,6 +37,7 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "api-keys", paths: ["/api/v1/api-keys", "/api/v1/api-keys/*", "/api/v1/admin/api-keys", "/api/v1/admin/api-keys/*"] },
   { name: "usage", paths: ["/api/v1/usage", "/api/v1/usage/*"] },
   { name: "llm-gateway", paths: ["/openai/v1/*", "/anthropic/v1/*"] },
+  { name: "chats", paths: ["/api/v1/chats", "/api/v1/chats/*", "/api/v1/gateway/chat", "/api/v1/gateway/chat/*"] },
 ];
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
@@ -76,6 +78,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerGatewayAdminRoutes(scope, ctx);
     registerApiKeyRoutes(scope, ctx);
     registerUsageRoutes(scope, ctx);
+    registerChatsRoutes(scope, ctx);
   });
 
   // The LLM gateway surfaces (/openai/v1, /anthropic/v1) render errors in
