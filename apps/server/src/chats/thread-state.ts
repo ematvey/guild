@@ -7,6 +7,7 @@
 
 import { threadEventRowWire, type ThreadEventRow } from "./thread-events.js";
 import type { PlatformContext } from "../platform/context.js";
+import type { WsServerMsg } from "../hub/protocol.js";
 import { ApiError } from "../platform/http/error.js";
 import type { UserRow } from "../platform/store/identity.js";
 
@@ -71,4 +72,23 @@ export function threadStateWire(capture: ThreadStateCapture): string {
     `,"has_more_events":${capture.hasMoreEvents}}`,
   ];
   return parts.filter((part) => part !== undefined).join("");
+}
+
+/** The ThreadState frame as a WsServerMsg object — the member-socket sync
+ *  bracket and the feed's view broadcasts (serializeServerMsg renders it
+ *  byte-identically to threadStateWire). */
+export function threadStateMsg(capture: ThreadStateCapture): WsServerMsg {
+  return {
+    type: "thread_state",
+    chat_id: capture.chatId,
+    seq: capture.seq,
+    events: capture.events,
+    text: capture.text,
+    thinking: capture.thinking,
+    generating: capture.generating,
+    project_id: capture.projectId,
+    project_name: capture.projectName,
+    project_machine_label: capture.projectMachineLabel,
+    has_more_events: capture.hasMoreEvents,
+  };
 }

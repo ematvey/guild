@@ -11,6 +11,7 @@ import type { Config } from "./config.js";
 import { PlatformContext } from "./platform/context.js";
 import { NATIVE_ROUTE_GROUPS, registerPlatformRoutes } from "./platform/http/register.js";
 import { attachWsUpgrade } from "./http/ws.js";
+import { wireWsSync } from "./chats/ws-sync.js";
 
 const require = createRequire(import.meta.url);
 
@@ -79,6 +80,9 @@ export async function buildApp(config: Config) {
   // attachWsUpgrade call.
   platform.wsLog = (message) => logger.info({ ws: message }, "ws");
   attachWsUpgrade(app.server, platform);
+
+  // The chats lane's sync capture (SyncBegin … ThreadState … SyncDone).
+  wireWsSync(platform);
 
   // Proxy everything else — HTTP bodies (streamed through), status codes,
   // and response headers. WS upgrades are NOT proxied anymore: the hub route

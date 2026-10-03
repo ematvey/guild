@@ -35,8 +35,8 @@ export interface M2TestEnv {
 }
 
 /** Creates a disposable ClickHouse database and returns its name. */
-async function createClickhouseDatabase(): Promise<string> {
-  const name = `guild_m2_test_${randomSuffix()}`;
+async function createClickhouseDatabase(dbPrefix: string): Promise<string> {
+  const name = `${dbPrefix}${randomSuffix()}`;
   const res = await fetch(TEST_CLICKHOUSE_URL, {
     method: "POST",
     headers: {
@@ -68,9 +68,10 @@ export async function createM2TestEnv(
   withClickhouse = true,
   logLevel = "error",
   configOverrides: Record<string, string> = {},
+  dbPrefix = "guild_m2_test_",
 ): Promise<M2TestEnv> {
   const suffix = randomSuffix();
-  const databaseName = `guild_m2_test_${suffix}`;
+  const databaseName = `${dbPrefix}${suffix}`;
   const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
   await adminPool.query(`CREATE DATABASE "${databaseName}"`);
   const databaseUrl = new URL(TEST_ADMIN_URL);
@@ -86,7 +87,7 @@ export async function createM2TestEnv(
   }
   await migrationPool.end();
 
-  const clickhouseDatabase = withClickhouse ? await createClickhouseDatabase() : "guild";
+  const clickhouseDatabase = withClickhouse ? await createClickhouseDatabase(dbPrefix) : "guild";
 
   // The usage_events table: created eagerly in the disposable database with
   // the same DDL the sink issues on connect (the Rust sink creates it on
@@ -168,11 +169,23 @@ export interface MockUpstream {
   stop(): Promise<void>;
 }
 
+export interface MockUpstreamResponse {
+  status?: number;
+  contentType?: string;
+  /** The whole body in one write. */
+  body?: string;
+  /** Body pieces written with `chunkDelayMs` between them — a slow stream
+   *  (the durable partial commits at most every 100 ms, so a fast mock
+   *  never produces an in-flight partial). */
+  chunks?: string[];
+  chunkDelayMs?: number;
+}
+
 /** A scripted provider upstream: each POST to any path is answered with the
  *  next response (SSE bodies passed verbatim); request bodies are recorded.
  *  GETs (stray loopback probes) get a 404. */
 export async function startMockUpstream(
-  responses: { status?: number; contentType?: string; body: string }[],
+  responses: MockUpstreamResponse[],
 ): Promise<MockUpstream> {
   const requests: MockUpstreamRequest[] = [];
   let call = 0;
@@ -197,6 +210,21 @@ export async function startMockUpstream(
       res.writeHead(scripted.status ?? 200, {
         "content-type": scripted.contentType ?? "text/event-stream",
       });
+      if (scripted.chunks !== undefined) {
+        const delay = scripted.chunkDelayMs ?? 150;
+        let index = 0;
+        const writeNext = (): void => {
+          if (index >= scripted.chunks!.length) {
+            res.end();
+            return;
+          }
+          res.write(scripted.chunks![index]!);
+          index += 1;
+          setTimeout(writeNext, delay);
+        };
+        writeNext();
+        return;
+      }
       res.end(scripted.body);
     });
   });
@@ -251,8 +279,11 @@ export interface M2Stack {
 /** Full stack: disposable PG + CH + app + org/users/session/key + mock
  *  provider. The provider row is registered against the mock upstream.
  *  `configOverrides` pass through to loadConfig (e.g. GUILD_SELF_BASE_URL). */
-export async function setupM2Stack(configOverrides: Record<string, string> = {}): Promise<M2Stack> {
-  const env = await createM2TestEnv(true, "error", configOverrides);
+export async function setupM2Stack(
+  configOverrides: Record<string, string> = {},
+  opts: { dbPrefix?: string } = {},
+): Promise<M2Stack> {
+  const env = await createM2TestEnv(true, "error", configOverrides, opts.dbPrefix);
   const db = env.db;
   const orgId = crypto.randomUUID();
   const adminEmail = `m2-admin-${randomSuffix()}@example.test`;
