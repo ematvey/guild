@@ -83,6 +83,15 @@ Forced compat requirements (not decisions): hub WS frames byte-compatible
 (existing daemons never update), JWT session tokens verify/issue identically,
 web UI/admin dist embedded at build time as today.
 
+## Amendments
+
+- **2026-10-04 (M0): session tokens are opaque, not JWT.** The Rust server
+  issues random bearer tokens stored only as sha256 hashes in the
+  `sessions` table (with `auth_generation` stamping) — there is no JWT
+  anywhere. The "JWT session tokens" compat requirement above means: the TS
+  server must accept/issue the same opaque-token + `sessions`-row +
+  auth-generation mechanism, identically.
+
 ## Process model
 
 Single Node process per stack. Owns: Fastify HTTP, hub WS server, gateway,
