@@ -102,7 +102,9 @@ async fn link_reconnects_after_a_server_side_close() {
     let shared = Shared::new(session);
 
     let link_shared = shared.clone();
-    let rx = shared.machine_link.subscribe();
+    let rx = shared
+        .links
+        .subscribe_or_create(&format!("http://127.0.0.1:{port}"));
     tokio::spawn(run(link_shared, rx));
     eprintln!("[test] publishing link config");
     shared.publish_machine_link();

@@ -12,6 +12,7 @@ import {
   parseChatRoute,
   parseSearchResults,
   reconcilePendingSend,
+  pruneStopping,
   threadStateBlocks,
   statusFromThreads,
   offlineMachine,
@@ -432,6 +433,30 @@ describe("busyAfterThreadPush (a list push cannot un-busy an in-flight send)", (
     expect(busyAfterThreadPush([row(true)], "chat-1", false)).toBe(true);
     expect(busyAfterThreadPush([row(false)], "chat-1", false)).toBe(false);
     expect(busyAfterThreadPush([row(false)], null, false)).toBe(false);
+  });
+});
+
+describe("pruneStopping (a stop click lifts when the chat's own generating settles)", () => {
+  const status = (generating: boolean) => ({ generating, unread: false });
+
+  it("keeps the flag while every server-truth source still says generating (or is silent)", () => {
+    // Regression: the stop click flagged the chat but nothing lifted it —
+    // the button stayed in its pre-click state for the whole epilogue.
+    expect(pruneStopping({ "chat-1": true }, { "chat-1": status(true) }, null)).toBeNull();
+    // No evidence is no clearance: unknown chat keeps the flag.
+    expect(pruneStopping({ "chat-1": true }, {}, null)).toBeNull();
+    expect(pruneStopping({ "chat-1": true }, {}, [ { id: "chat-2" } as any ])).toBeNull();
+  });
+
+  it("lifts when the thread-state frame or the pushed list says false", () => {
+    const viaFrame = pruneStopping({ "chat-1": true }, { "chat-1": status(false) }, null);
+    expect(viaFrame).toEqual({});
+    const viaList = pruneStopping(
+      { "chat-1": true, "chat-2": true },
+      {},
+      [ { id: "chat-1", generating: false }, { id: "chat-2", generating: true } ] as any,
+    );
+    expect(viaList).toEqual({ "chat-2": true });
   });
 });
 

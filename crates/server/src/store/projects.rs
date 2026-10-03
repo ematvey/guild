@@ -60,10 +60,13 @@ impl<'a> ProjectStore<'a> {
     }
 
     /// Creates a project. Names are display labels derived from the chosen
-    /// folder — duplicates are allowed. The machine must be registered to
-    /// the caller or their org; the check and the INSERT share one
+    /// folder — duplicate names are allowed. The machine must be registered
+    /// to the caller or their org; the check and the INSERT share one
     /// transaction with the registry row locked, so adoption cannot commit
-    /// between them.
+    /// between them. One live project per (machine, folder): the unique
+    /// index is the guard (it covers a cross-device race and a second user
+    /// of a shared machine); a violation is a 409. Archived projects step
+    /// aside and free the folder.
     pub async fn create(
         &self,
         org_id: Uuid,
@@ -75,7 +78,7 @@ impl<'a> ProjectStore<'a> {
         let id = Uuid::now_v7();
         let mut tx = self.pool.begin().await?;
         Self::lock_bindable_machine(&mut tx, machine_id, user_id, org_id).await?;
-        let result = sqlx::query(
+        match sqlx::query(
             "INSERT INTO projects (id, org_id, user_id, name, folder, machine_id) \
              VALUES ($1, $2, $3, $4, $5, $6)",
         )
@@ -86,9 +89,18 @@ impl<'a> ProjectStore<'a> {
         .bind(folder)
         .bind(machine_id)
         .execute(&mut *tx)
-        .await?;
+        .await
+        {
+            Ok(result) => debug_assert_eq!(result.rows_affected(), 1),
+            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+                return Err(ApiError::conflict(
+                    "folder_taken",
+                    "a project for this folder already exists on this machine",
+                ));
+            }
+            Err(e) => return Err(ApiError::from(e)),
+        }
         tx.commit().await?;
-        debug_assert_eq!(result.rows_affected(), 1);
         self.fetch_by_id(id).await
     }
 
@@ -125,9 +137,11 @@ impl<'a> ProjectStore<'a> {
         .ok_or_else(|| ApiError::not_found("no such project"))
     }
 
-    /// Updates the editable fields (`None` = keep). A duplicate name is a 409.
-    /// `archived` soft-hides: archived projects drop out of `list` but direct
-    /// fetches still resolve.
+    /// Updates the editable fields (`None` = keep). Duplicate names are
+    /// allowed; moving the project onto a machine+folder another live
+    /// project holds is a 409. `archived` soft-hides: archived projects drop
+    /// out of `list` but direct fetches still resolve, and archiving frees
+    /// the folder for a new project.
     // This scoped update accepts independent optional project fields.
     #[allow(clippy::too_many_arguments)]
     pub async fn update(
@@ -144,7 +158,7 @@ impl<'a> ProjectStore<'a> {
         if let Some(mid) = machine_id {
             Self::lock_bindable_machine(&mut tx, mid, user_id, org_id).await?;
         }
-        let updated = sqlx::query_scalar::<_, Uuid>(
+        let updated = match sqlx::query_scalar::<_, Uuid>(
             "UPDATE projects SET \
              name = COALESCE($3, name), \
              folder = COALESCE($4, folder), \
@@ -164,8 +178,17 @@ impl<'a> ProjectStore<'a> {
         .bind(archived)
         .bind(user_id)
         .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(|| ApiError::not_found("no such project"))?;
+        .await
+        {
+            Ok(row) => row.ok_or_else(|| ApiError::not_found("no such project"))?,
+            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+                return Err(ApiError::conflict(
+                    "folder_taken",
+                    "a project for this folder already exists on this machine",
+                ));
+            }
+            Err(e) => return Err(ApiError::from(e)),
+        };
         // The chat machine binding is project-derived: bound chats follow
         // the project's machine (registry label, machine-id fallback — the
         // same rule the acceptance path writes) in the same transaction, so
@@ -342,6 +365,117 @@ mod tests {
         assert_eq!(
             admin_get.unwrap_err().status,
             axum::http::StatusCode::NOT_FOUND
+        );
+    }
+
+    /// One live project per (machine, folder): a duplicate create is a 409
+    /// — same user, another user of the shared machine, a case variant, or
+    /// a trailing-separator variant alike — while the same folder on another
+    /// machine and another folder on the same machine bind fine. Archiving
+    /// the holder frees the folder, and an update onto a held folder is a
+    /// 409 too.
+    #[tokio::test]
+    async fn project_folder_unique_per_live_machine_binding() {
+        let (db, org, user) = fixture().await;
+        let store = &db.store;
+        store
+            .machines()
+            .upsert_connected(
+                org,
+                user.id,
+                "machine-2",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let projects = store.projects();
+        let folder = r"C:\code\web";
+        let created = projects
+            .create(org, user.id, "web", folder, "machine-1")
+            .await
+            .unwrap();
+
+        let conflict = |status: axum::http::StatusCode| {
+            assert_eq!(status, axum::http::StatusCode::CONFLICT);
+        };
+        // Exact duplicate, same user.
+        conflict(
+            projects
+                .create(org, user.id, "web again", folder, "machine-1")
+                .await
+                .unwrap_err()
+                .status,
+        );
+        // Case-folded and trailing-separator variants are the same folder.
+        conflict(
+            projects
+                .create(org, user.id, "web", r"c:\CODE\web\", "machine-1")
+                .await
+                .unwrap_err()
+                .status,
+        );
+        // A second user of the shared machine is guarded the same way —
+        // the executor would drive one working tree from two projects.
+        let other = store
+            .identity()
+            .create_user(org, "proj-dup@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        conflict(
+            projects
+                .create(org, other.id, "theirs", folder, "machine-1")
+                .await
+                .unwrap_err()
+                .status,
+        );
+        // A different folder on the same machine and the same folder on a
+        // different machine both bind.
+        projects
+            .create(org, user.id, "api", r"C:\code\api", "machine-1")
+            .await
+            .unwrap();
+        projects
+            .create(org, user.id, "web-2", folder, "machine-2")
+            .await
+            .unwrap();
+        // An update onto a held folder is refused; a free folder updates.
+        conflict(
+            projects
+                .update(
+                    org,
+                    created.id,
+                    user.id,
+                    None,
+                    Some(r"C:\code\api"),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err()
+                .status,
+        );
+        // Archiving the holder frees the folder for a fresh project.
+        projects
+            .update(org, created.id, user.id, None, None, None, Some(true))
+            .await
+            .unwrap();
+        let rebound = projects
+            .create(org, user.id, "web", folder, "machine-1")
+            .await
+            .unwrap();
+        assert_ne!(rebound.id, created.id);
+        // …and the archived project still cannot take a live binding back.
+        conflict(
+            projects
+                .update(org, created.id, user.id, None, None, None, Some(false))
+                .await
+                .unwrap_err()
+                .status,
         );
     }
 

@@ -103,7 +103,9 @@ async fn link_breaks_and_reconnects_when_the_route_goes_silent() {
     );
     let shared = Shared::new(session);
     let link_shared = shared.clone();
-    let rx = shared.machine_link.subscribe();
+    let rx = shared
+        .links
+        .subscribe_or_create(&format!("http://127.0.0.1:{port}"));
     tokio::spawn(run(link_shared, rx));
     shared.publish_machine_link();
 

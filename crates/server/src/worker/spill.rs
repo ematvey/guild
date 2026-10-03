@@ -1,10 +1,20 @@
 //! Spill of oversized tool results into tool artifacts (tool artifacts
-//! design). One choke point: when a server-side tool outcome becomes a
-//! `ThreadEvent::ToolResult`, the worker either spills a huge result or a
-//! tool-carried artifact payload into a `tool_artifacts` row + object
-//! storage bytes, and replaces the model-facing content with a short
-//! pointer text naming the materialized path `.guild/artifacts/<chat>/
-//! <filename>`.
+//! design). Two choke points share this module's machinery, both replacing
+//! the model-facing content with a short pointer text naming the
+//! materialized path `.guild/artifacts/<chat>/<filename>`:
+//!
+//! - integration/plugin tools: inside the journaled tool-execution run
+//!   (`server_tool_step`), where the spilled descriptor rides the run's
+//!   recorded result;
+//! - machine/client tools (`read_file`, `execute`, `edit_file`, `write_file`
+//!   — desktop executor, server-local workspace, or sandbox): in their own
+//!   journaled run between the awakeable resolution and the
+//!   `ThreadEvent::ToolResult` append (`spill_machine_outcome`).
+//!
+//! In both, a huge result or a tool-carried artifact payload becomes a
+//! `tool_artifacts` row + object storage bytes; `spill_artifact` is
+//! idempotent (deterministic uuid v5 + ON CONFLICT DO NOTHING), so replays
+//! and re-executions reuse the row.
 
 use crate::state::AppState;
 use guild_core::tools::ToolArtifact;
@@ -237,6 +247,34 @@ pub async fn spill_tool_artifact(
     .await?;
     let text = pointer_text(tool_name, &spilled, &artifact.content_type, None);
     Ok((spilled, text))
+}
+
+/// Spills an oversized plain-text tool result and returns the descriptor plus
+/// the pointer text (2 KiB head excerpt inline, full result at the
+/// materialized path). Shared by both choke points: integration tools spill
+/// inside the journaled tool-execution run, machine tools at the
+/// event-append boundary.
+pub async fn spill_oversized_result(
+    state: &AppState,
+    org_id: Uuid,
+    chat_id: Uuid,
+    call_id: &str,
+    tool_name: &str,
+    raw: &str,
+) -> anyhow::Result<(SpilledArtifact, String)> {
+    let spilled = spill_artifact(
+        state,
+        org_id,
+        chat_id,
+        call_id,
+        tool_name,
+        &format!("{tool_name}_result.txt"),
+        "text/plain; charset=utf-8",
+        raw.as_bytes(),
+    )
+    .await?;
+    let pointer = pointer_text(tool_name, &spilled, "text/plain; charset=utf-8", Some(raw));
+    Ok((spilled, pointer))
 }
 
 fn spilled_from_row(row: &crate::store::tool_artifacts::ToolArtifactRow) -> SpilledArtifact {
@@ -589,5 +627,59 @@ mod prefetch_validation_tests {
             }
             other => panic!("expected prefetch MachineRequest, got {other:?}"),
         }
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod oversized_result_tests {
+    use super::*;
+
+    /// The oversized-result spill (both choke points) materializes the
+    /// artifact row + object bytes, keeps the 2 KiB head excerpt inline in
+    /// the pointer text, and is idempotent — a replay or re-executed run
+    /// resolves to the same artifact, never a duplicate row.
+    #[tokio::test]
+    async fn oversized_result_spills_pointer_and_replays_to_the_same_row() {
+        let f = crate::test_support::full_state().await;
+        let raw = "x".repeat(SPILL_THRESHOLD_BYTES + 4096);
+
+        let (spilled, pointer) = spill_oversized_result(
+            &f.state,
+            f.org_id,
+            f.chat_id,
+            "call-spill-1",
+            "execute",
+            &raw,
+        )
+        .await
+        .expect("spill succeeds");
+        assert_eq!(spilled.filename, "execute_result.txt");
+        assert_eq!(spilled.size_bytes as usize, raw.len());
+        assert!(pointer.contains(&spilled.path));
+        assert!(pointer.contains("First 2 KiB"));
+        // Model-facing content stays bounded: header + 2 KiB excerpt.
+        assert!(pointer.len() < EXCERPT_BYTES + 400);
+
+        // Replay / re-execution: same artifact id, same pointer, one row.
+        let (again, pointer2) = spill_oversized_result(
+            &f.state,
+            f.org_id,
+            f.chat_id,
+            "call-spill-1",
+            "execute",
+            &raw,
+        )
+        .await
+        .expect("re-spill reuses the row");
+        assert_eq!(again.artifact_id, spilled.artifact_id);
+        assert_eq!(pointer2, pointer);
+        let rows = f
+            .store()
+            .tool_artifacts()
+            .list_for_chat(f.org_id, f.chat_id)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].tool_name, "execute");
     }
 }

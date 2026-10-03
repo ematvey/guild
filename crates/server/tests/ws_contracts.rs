@@ -246,10 +246,9 @@ async fn a_foreign_instance_connect_is_rejected_and_the_holder_keeps_the_slot() 
     // same-incarnation reconnect path — the daemon's own retry after a
     // network blip):
     let mut self_reconnect = f.socket(Some(("singleton", first, false))).await;
-    until(
-        &mut self_reconnect,
-        |m| matches!(m, WsServerMsg::ThreadList { .. }),
-    )
+    until(&mut self_reconnect, |m| {
+        matches!(m, WsServerMsg::ThreadList { .. })
+    })
     .await;
     assert_ne!(f.ts.state.hub.machine_connection("singleton"), holder);
 }
