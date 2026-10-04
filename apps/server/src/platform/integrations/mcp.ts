@@ -1,9 +1,9 @@
 // Minimal MCP streamable-HTTP client (crates/server/src/worker/mcp_pool.rs
 // + rmcp): exactly the surface the integration routes need — the initialize
-// handshake with the identity envelope and secret headers, and tools/list.
-// Tool CALLS are not ported: the integrations runtime is deferred (spec
-// decision 8), and a validated execute call fails before any MCP peer is
-// contacted.
+// handshake with the identity envelope and secret headers, tools/list, and
+// tools/call (the tool call maps the peer's content blocks to the
+// integration outcome contract, crates/server/src/integrations.rs
+// mcp_call_tool).
 
 type Json = Record<string, unknown>;
 
@@ -18,8 +18,18 @@ export interface McpTool {
   inputSchema: unknown;
 }
 
+export interface McpToolResult {
+  /** The joined text of the result's text content blocks. */
+  content: string;
+  isError: boolean;
+}
+
 export interface McpPeer {
   listTools(): Promise<McpTool[]>;
+  /** tools/call with the raw (un-namespaced) tool name; the result maps
+   *  through the mcp_call_tool contract (text blocks joined with \n; an
+   *  error flag surfaces as isError, never as a thrown transport error). */
+  callTool(tool: string, args: Json): Promise<McpToolResult>;
 }
 
 function parseSseData(chunk: string): Json[] {
@@ -130,7 +140,38 @@ export async function mcpConnect(url: string, headers: Record<string, string>): 
   // Drain the body so the socket is reusable.
   await initializedRes.text().catch(() => "");
 
+  let nextId = 2;
   return {
+    async callTool(tool: string, args: Json): Promise<McpToolResult> {
+      const id = nextId++;
+      const params: Json = { name: tool };
+      if (args !== null && typeof args === "object" && !Array.isArray(args) && Object.keys(args).length > 0) {
+        params["arguments"] = args;
+      }
+      let res: Response;
+      try {
+        res = await post(rpcRequest(id, "tools/call", params));
+      } catch (error) {
+        const cause = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
+        throw new Error(`mcp tool call failed: ${cause}`);
+      }
+      if (!res.ok) {
+        throw new Error(`mcp tool call failed: server returned ${res.status}`);
+      }
+      const result = await readRpcResponse(res, id);
+      // Content blocks: text blocks join with \n (mcp_call_tool); non-text
+      // blocks carry no model-facing text here.
+      const blocks = result["content"];
+      const text = Array.isArray(blocks)
+        ? blocks
+            .map((b) => (b !== null && typeof b === "object" && (b as Json)["type"] === "text" ? String((b as Json)["text"] ?? "") : null))
+            .filter((t): t is string => t !== null)
+            .join("\n")
+        : "";
+      const isError = result["isError"] === true;
+      return { content: text, isError };
+    },
+
     async listTools(): Promise<McpTool[]> {
       const res = await post(rpcRequest(1, "tools/list", {}));
       if (!res.ok) {

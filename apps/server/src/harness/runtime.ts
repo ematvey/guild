@@ -31,11 +31,15 @@ import { ThreadStore } from "../platform/store/thread.js";
 import { TurnCommandStore } from "../platform/store/turn_commands.js";
 import { AgentSessionStore } from "../platform/store/agentSessions.js";
 import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
+import { EventStore } from "../platform/store/events.js";
+import { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
+import { RegistryStore } from "../platform/store/registry.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { MachineExecutionEnv, machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
 import { createGuildExtension, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
+import { IntegrationsRuntime } from "./integrations.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import type { LiveBuffers } from "../chats/bridge.js";
@@ -94,6 +98,12 @@ export class GuildRuntime {
 
   private readonly agentSessions: AgentSessionStore;
   readonly toolArtifacts: ToolArtifactStore;
+  /** The integrations chat runtime (M8): per-turn plugin resolution, the
+   *  dynamic per-org tool registration, execution + audit. */
+  readonly integrationsRuntime: IntegrationsRuntime;
+  /** The guild extension object (the per-conversation selection carries
+   *  it, resolved by name against the registry). */
+  private readonly guildExtension: ReturnType<typeof createGuildExtension>;
 
   constructor(
     private readonly config: Config,
@@ -110,6 +120,23 @@ export class GuildRuntime {
     this.gateway = new GatewayStore(pool);
     this.agentSessions = new AgentSessionStore(pool);
     this.toolArtifacts = new ToolArtifactStore(pool);
+    this.integrationsRuntime = new IntegrationsRuntime(
+      {
+        gateway: {
+          integrations: new IntegrationStore(pool),
+          integrationSecrets: new IntegrationSecretStore(pool),
+          registry: new RegistryStore(pool),
+          masterKey: () => this.masterKey(),
+        },
+        events: new EventStore(pool),
+        artifacts: this.toolArtifacts,
+        objects,
+        pool,
+        log,
+        chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
+      },
+      this.registry,
+    );
     this.bridge = new ChatBridge({
       threads: this.threads,
       chats: this.chats,
@@ -128,7 +155,8 @@ export class GuildRuntime {
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
     // tools (spec decision 12: built-in coding tools enabled).
-    this.registry.install(createGuildExtension(this.extensionDeps()));
+    this.guildExtension = createGuildExtension(this.extensionDeps());
+    this.registry.install(this.guildExtension);
     this.registry.install(CodingTools);
   }
 
@@ -163,6 +191,7 @@ export class GuildRuntime {
       allowShellTools: this.config.allowShellTools,
       chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
       executorKind: (conversationId) => this.executorKind(conversationId),
+      integrations: this.integrationsRuntime,
       currentModel: async (conversationId) => {
         await this.start();
         const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
@@ -329,6 +358,23 @@ export class GuildRuntime {
   async submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
     const conversation = await this.conversationForChat(chatId, orgId);
     await this.refreshOrgModels(orgId);
+    // Integrations (M8): per turn the org's enabled plugins resolve into a
+    // snapshot, the per-org extension carries their tools, and the
+    // conversation's agent selection + tool allow-list are refreshed
+    // (role-filtered like the Rust disclosure filter). Orgs without
+    // integrations leave the conversation untouched.
+    const prepared = await this.integrationsRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
+    if (prepared.action === "configure") {
+      await conversation.configure(
+        {
+          extensions: [this.guildExtension, CodingTools, ...prepared.extensions],
+          tools: [...(CodingTools.tools ?? []), ...prepared.tools],
+        },
+        BACKGROUND_CONTEXT,
+      );
+    } else if (prepared.action === "clear") {
+      await conversation.configure({ extensions: null, tools: null }, BACKGROUND_CONTEXT);
+    }
     if (input.model !== null) {
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const current = agent.model;

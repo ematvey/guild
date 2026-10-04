@@ -67,6 +67,16 @@ beforeAll(async () => {
       res.end("{}");
       return;
     }
+    if ((req.url ?? "").startsWith("/search")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        results: [
+          { title: "First result", url: "https://example.com/a", content: "snippet a" },
+          { title: "Second result", url: "https://example.com/b", content: "snippet b" },
+        ],
+      }));
+      return;
+    }
     if ((req.url ?? "").startsWith("/v1/fetch")) {
       res.writeHead(200, { "content-type": "text/markdown" }); // superproxy shape
       res.end("# page");
@@ -97,6 +107,18 @@ beforeAll(async () => {
       if (msg.method === "notifications/initialized") {
         res.writeHead(202);
         res.end();
+        return;
+      }
+      if (msg.method === "tools/call") {
+        const args = (msg as { params?: { arguments?: { text?: string } } }).params?.arguments ?? {};
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { content: [{ type: "text", text: `echo:${args.text ?? ""}` }], isError: false },
+          }),
+        );
         return;
       }
       if (msg.method === "tools/list") {
@@ -291,18 +313,34 @@ describe("GET /api/v1/integrations + /{slug}/tools", () => {
 
 describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
   beforeAll(async () => {
+    // Port 1 is closed: a real connector dispatch fails at the transport.
     await seedIntegration("searxng", { base_url: "http://127.0.0.1:1" }, true);
   });
 
-  it("fails with the connector-unreachable result shape (200, ok:false) — the runtime is deferred", async () => {
+  it("a connector transport failure is a result (200, ok:false), never an HTTP error", async () => {
     const res = await call("POST", "/api/v1/integrations/searxng/tools/web_search", e.adminToken, { query: "test" });
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body) as { ok: boolean; error: string };
     expect(parsed.ok).toBe(false);
-    // Same failure shape as the Rust capture; the transport text differs
-    // (Node fetch vs reqwest) — documented in the M7 report.
-    expect(parsed.error).toMatch(/^searxng unreachable: connector runtime is not available/);
+    expect(parsed.error).toMatch(/^searxng unreachable: /);
     expect(res.body.indexOf('"error"')).toBeLessThan(res.body.indexOf('"ok"')); // sorted keys
+  });
+
+  it("executes a connector tool through the runtime against the fake backend (real dispatch)", async () => {
+    // Row names are the connector slugs (org-unique): the live-backend test
+    // re-points the searxng row at the fake server.
+    await seedIntegration("searxng", { base_url: connectorBase() }, true);
+    const res = await call("POST", "/api/v1/integrations/searxng/tools/web_search", e.adminToken, { query: "guild", count: 1 });
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body) as { ok: boolean; content: string; meta: Record<string, unknown> | null };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.content).toContain("1. First result");
+    expect(parsed.content).not.toContain("Second result");
+    expect(parsed.meta).toMatchObject({ card: "web", kind: "search", truncated: true });
+    const audit = await e.env.db.query(
+      "SELECT payload FROM events WHERE kind = 'integration.tool_called' AND payload->>'slug' = 'searxng' ORDER BY created_at DESC LIMIT 1",
+    );
+    expect((audit.rows[0]!.payload as Record<string, unknown>)["ok"]).toBe(true);
   });
 
   it("404 shapes for unknown integration and unknown tool, exactly like Rust", async () => {
@@ -342,7 +380,11 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
     expect(member.statusCode).toBe(403);
     const adminRaw = await call("POST", "/api/v1/integrations/github/tools/api", e.adminToken, { path: "/x" });
     expect(adminRaw.statusCode).toBe(200);
-    expect(JSON.parse(adminRaw.body).ok).toBe(false);
+    // Real dispatch: the fake backend answers GET /x with {"ok": true}.
+    const adminParsed = JSON.parse(adminRaw.body) as { ok: boolean; content: string; meta: Record<string, unknown> | null };
+    expect(adminParsed.ok).toBe(true);
+    expect(adminParsed.content).toBe('{"ok": true}');
+    expect(adminParsed.meta).toMatchObject({ card: "api", status: 200 });
   });
 
   it("a member with a mapped email passes the impersonating-connector gate (acts as themselves)", async () => {
@@ -587,13 +629,14 @@ describe("MCP plugin rows", () => {
     const list = await call("GET", "/api/v1/integrations", e.memberToken);
     const item = (JSON.parse(list.body).items as { slug: string; tool_count: number }[]).find((i) => i.slug === "test-mcp-m7b");
     expect(item!.tool_count).toBe(1);
-    // Execute: auth + validation pass identically, then the deferred
-    // runtime boundary fails with the unreachable shape.
+    // Execute: the runtime dispatches through the MCP peer with the
+    // identity envelope; the fake server echoes the arguments.
     const exec = await call("POST", "/api/v1/integrations/test-mcp-m7b/tools/echo", e.adminToken, { text: "hi" });
     expect(exec.statusCode).toBe(200);
-    const parsed = JSON.parse(exec.body) as { ok: boolean; error: string };
-    expect(parsed.ok).toBe(false);
-    expect(parsed.error).toMatch(/^integration test-mcp-m7b unreachable: /);
+    const parsed = JSON.parse(exec.body) as { ok: boolean; content: string; meta: unknown };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.content).toBe("echo:hi");
+    expect(parsed.meta).toBeNull();
   });
 });
 

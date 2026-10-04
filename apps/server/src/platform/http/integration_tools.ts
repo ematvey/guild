@@ -1,20 +1,17 @@
 // Script-facing integration tool API (crates/server/src/http/
 // integration_tools.rs): the same policy-filtered plugin tools the chat loop
 // uses — built-in and MCP plugins alike — reachable over HTTPS so scripts
-// can call them with session or org-API-key auth.
-//
-// The tool RUNTIME (execute) is not ported (spec decision 8 defers the
-// integrations runtime): the execute route authenticates and validates
-// identically, then fails the way the Rust connector fails with its backend
-// unreachable — HTTP 200 with `{"ok": false, "error": "…"}` (a connector
-// failure is a result, not an HTTP error). The error text names the slug as
-// unreachable; the validation-only prefix of the call (auth, curation,
-// acting-as, body shape) never reaches that point unless it passed.
+// can call them with session or org-API-key auth. The execute route
+// dispatches through the connector runtime (platform/integrations/
+// execute.ts): a connector failure is a result (HTTP 200, ok:false), never
+// an HTTP error. The validation prefix of the call (auth, curation,
+// acting-as, body shape) is identical to the Rust route.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { GatewayCtx, IdentityCtx } from "../contexts.js";
 import { ApiError } from "../errors.js";
 import { rustJsonText } from "../provider/sse.js";
+import { callPlugin } from "../integrations/execute.js";
 import {
   resolveActingAs,
   resolvePlugins,
@@ -164,39 +161,63 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, auth: Identi
     // The body is the JSON arguments object (empty body = {}); any JSON
     // value that is not an object is refused, as in Rust. The route's scope
     // parses every content type as raw bytes (axum Bytes semantics).
-    const rawBody = req.body as Buffer | undefined;
+    // The body arrives as the route scope's raw buffer for unknown content
+    // types, and as the platform parser's already-parsed JSON value for
+    // application/json — both shapes carry the arguments object.
+    const rawBody: unknown = req.body;
     let args: unknown = {};
-    if (rawBody !== undefined && rawBody.length > 0) {
-      try {
-        args = JSON.parse(rawBody.toString("utf8"));
-      } catch {
-        throw ApiError.badRequest("body must be a JSON object");
+    if (rawBody !== undefined && rawBody !== null) {
+      const text = typeof rawBody === "string"
+        ? rawBody
+        : Buffer.isBuffer(rawBody)
+          ? rawBody.toString("utf8")
+          : null;
+      if (text === null) {
+        args = rawBody;
+      } else if (text.length > 0) {
+        try {
+          args = JSON.parse(text);
+        } catch {
+          throw ApiError.badRequest("body must be a JSON object");
+        }
       }
     }
     if (args === null || typeof args !== "object" || Array.isArray(args)) {
       throw ApiError.badRequest("body must be a JSON object");
     }
-    // Runtime boundary (spec decision 8): the connector runtime is not
-    // ported. Every validated call fails exactly the way the Rust server
-    // fails with the connector's backend unreachable — HTTP 200 with
-    // `{"ok": false, "error": "…"}` — journaled as a failed script call.
-    const errorText = turn.executor === "mcp"
-      ? `integration ${turn.slug} unreachable: mcp handshake failed`
-      : `${turn.slug} unreachable: connector runtime is not available in this deployment`;    // Journaled audit (spec §8): the identity record for the script call.
+    // Runtime dispatch (M8): the same connector runtime the chat loop
+    // uses — secrets re-resolved at call time, the identity envelope, and
+    // a connector failure surfaces as the ok:false result (never an HTTP
+    // error), exactly like Rust call_plugin.
+    const callId = crypto.randomUUID();
+    let body: Record<string, unknown>;
+    try {
+      const outcome = await callPlugin(
+        gateway,
+        turn,
+        raw,
+        args as Record<string, unknown>,
+        { orgId: caller.org, callerId: caller.userId, callId, actingAs },
+      );
+      body = { ok: true, content: outcome.content, meta: outcome.meta ?? null };
+    } catch (error) {
+      body = { ok: false, error: (error as Error).message };
+    }
+    // Journaled audit (spec §8): the identity record for the script call.
     try {
       await auth.events.emit(caller.org, "integration.tool_called", {
         slug: turn.slug,
-        call_id: crypto.randomUUID(),
+        call_id: callId,
         tool: raw,
         caller: caller.userId,
         acting_as: actingAs,
-        ok: false,
+        ok: body["ok"] === true,
         via: "script",
       });
     } catch {
       // Best-effort, as in Rust.
     }
-    sendJson(reply, { ok: false, error: errorText });
+    sendJson(reply, body);
     return reply;
   });
 }
