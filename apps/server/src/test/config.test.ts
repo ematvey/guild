@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 import { DEFAULT_BIND_ADDR, DEFAULT_LOG_LEVEL, DEFAULT_UPSTREAM_URL, loadConfig } from "../config.js";
 
 describe("loadConfig", () => {
@@ -23,6 +24,12 @@ describe("loadConfig", () => {
       clickhousePassword: "",
       internalKey: null,
       selfBaseUrl: "http://127.0.0.1:8080",
+      poolMax: 10,
+      dataDir: path.resolve("./data"),
+      allowShellTools: false,
+      approvalTimeoutMs: 300_000,
+      clientToolTimeoutMs: 300_000,
+      execPolicyRulesPath: null,
     });
     expect(DEFAULT_BIND_ADDR).toBe("0.0.0.0:8080");
     expect(DEFAULT_UPSTREAM_URL).toBe("http://server-rust:8080");

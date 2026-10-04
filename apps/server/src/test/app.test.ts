@@ -120,6 +120,11 @@ describe("health route (native)", () => {
       "/api/v1/chats/*",
       "/api/v1/gateway/chat",
       "/api/v1/gateway/chat/*",
+      // M4: workspace agent sessions + tool artifacts.
+      "/api/v1/agents/sessions",
+      "/api/v1/agents/sessions/*",
+      "/api/v1/tool_artifacts/*",
+      "/api/v1/chats/*/tool_artifacts",
     ]);
   });
 });
