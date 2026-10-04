@@ -5,7 +5,18 @@
 import { randomToken, sha256Hex, verifyPassword, hashPassword } from "../crypto.js";
 import { ApiError } from "../http/error.js";
 import type { PlatformPool } from "../db.js";
-import { uuidv7 } from "../time.js";
+import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
+import { EventStore } from "./events.js";
+
+/** UserListRow (crates/server/src/store/identity.rs declaration order) —
+ *  the admin user list and team-member lists share this shape. */
+export interface UserListRow {
+  id: string;
+  email: string;
+  role: string;
+  identity_type: string;
+  created_at: string;
+}
 
 export interface UserRow {
   id: string;
@@ -100,6 +111,34 @@ export class IdentityStore {
     );
     if (res.rows.length === 0) throw ApiError.notFound("no such user");
     return res.rows[0]!;
+  }
+
+  /** Creates a managed user (admin console): email + password + role. A
+   *  duplicate email is a 409; the org event "member.joined" is
+   *  best-effort. */
+  async createUserManaged(orgId: string, email: string, password: string, role: string): Promise<UserRow> {
+    const hash = await hashPassword(password);
+    try {
+      const res = await this.pool.query<UserRow>(
+        `INSERT INTO users (id, org_id, email, password_hash, role, identity_type)
+         VALUES ($1, $2, $3, $4, $5, 'managed')
+         RETURNING ${USER_COLUMNS}`,
+        [uuidv7(), orgId, email, hash, role],
+      );
+      const user = res.rows[0]!;
+      // org event: member joined; best-effort
+      try {
+        await new EventStore(this.pool).emit(orgId, "member.joined", { email, user_id: user.id });
+      } catch {
+        // best-effort
+      }
+      return user;
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") {
+        throw ApiError.conflict("email_taken", "a user with this email already exists");
+      }
+      throw error;
+    }
   }
 
   /** Provisions an OIDC user (random unusable password, member role). */
@@ -228,5 +267,121 @@ export class IdentityStore {
     const row = res.rows[0];
     if (!row) throw ApiError.unauthorized("invalid or expired session");
     return new Date(row.expires_at);
+  }
+
+  /** Admin user list (UserListRow: id, email, role, identity_type,
+   *  created_at). */
+  async listUsers(orgId: string): Promise<UserListRow[]> {
+    const res = await this.pool.query(
+      "SELECT id, email, role, identity_type, " +
+      "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at " +
+      "FROM users WHERE org_id = $1 ORDER BY created_at",
+      [orgId],
+    );
+    return res.rows.map((r: Record<string, unknown>) => ({
+      id: r.id as string,
+      email: r.email as string,
+      role: r.role as string,
+      identity_type: r.identity_type as string,
+      created_at: pgTimestampToRfc3339(r.created_at as string),
+    }));
+  }
+
+  /** Updates a managed user (role change and/or password reset); omitted
+   *  fields stay unchanged. The user must belong to the org. A password
+   *  reset revokes the user's sessions, pairing tokens, and api keys — the
+   *  old credentials must not keep working. Demoting the org's last admin
+   *  is a 409. */
+  async updateUser(
+    orgId: string,
+    userId: string,
+    role: string | null,
+    password: string | null,
+  ): Promise<UserListRow> {
+    const hash = password === null ? null : await hashPassword(password);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // All admin removals serialize on the same org row, including deletes.
+      await client.query("SELECT id FROM orgs WHERE id = $1 FOR UPDATE", [orgId]);
+      const targetRes = await client.query("SELECT role FROM users WHERE id = $1 AND org_id = $2", [userId, orgId]);
+      const targetRole = (targetRes.rows[0]?.role as string | undefined) ?? null;
+      if (targetRole === "admin" && role !== null && role !== "admin") {
+        const othersRes = await client.query(
+          "SELECT count(*) FROM users WHERE org_id = $1 AND role = 'admin' AND id <> $2",
+          [orgId, userId],
+        );
+        if (Number(othersRes.rows[0].count) === 0) {
+          throw ApiError.conflict("last_admin", "cannot demote the last admin");
+        }
+      }
+      const res = await client.query(
+        "UPDATE users SET role = COALESCE($2::text, role), " +
+        "password_hash = COALESCE($3::text, password_hash), " +
+        "auth_generation = CASE WHEN $3::text IS NOT NULL THEN auth_generation + 1 ELSE auth_generation END " +
+        "WHERE id = $1 AND org_id = $4 " +
+        "RETURNING id, email, role, identity_type, " +
+        "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at",
+        [userId, role, hash, orgId],
+      );
+      if (res.rows.length === 0) throw ApiError.notFound("no such user");
+      if (password !== null) {
+        await client.query("DELETE FROM pairing_tokens WHERE user_id = $1 AND used_at IS NULL", [userId]);
+        await client.query(
+          "UPDATE api_keys SET revoked_at = now() WHERE (user_id = $1 OR created_by = $1) AND revoked_at IS NULL",
+          [userId],
+        );
+        await client.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1", [userId]);
+      }
+      await client.query("COMMIT");
+      const r = res.rows[0] as Record<string, unknown>;
+      return {
+        id: r.id as string,
+        email: r.email as string,
+        role: r.role as string,
+        identity_type: r.identity_type as string,
+        created_at: pgTimestampToRfc3339(r.created_at as string),
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Deletes a user inside one transaction; refuses to remove the org's
+   *  last admin. The org lock serializes all removals and demotions. */
+  async deleteUser(orgId: string, userId: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT id FROM orgs WHERE id = $1 FOR UPDATE", [orgId]);
+      const targetRes = await client.query(
+        "SELECT role FROM users WHERE org_id = $1 AND id = $2 FOR UPDATE",
+        [orgId, userId],
+      );
+      const role = targetRes.rows[0]?.role as string | undefined;
+      if (role === undefined) throw ApiError.notFound("no such user");
+      const deleted =
+        role === "admin"
+          ? (
+              await client.query(
+                "DELETE FROM users WHERE id = $1 AND (role <> 'admin' OR " +
+                "(SELECT COUNT(*) FROM users WHERE org_id = $2 AND role = 'admin' AND id <> $1) > 0)",
+                [userId, orgId],
+              )
+            ).rowCount ?? 0
+          : (await client.query("DELETE FROM users WHERE id = $1", [userId])).rowCount ?? 0;
+      if (deleted === 0) {
+        throw ApiError.conflict("last_admin", "cannot delete the last admin");
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }

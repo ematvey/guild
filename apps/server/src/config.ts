@@ -44,6 +44,13 @@ export interface Config {
    *  http://127.0.0.1:<bindPort>) — the model provider's loopback target
    *  (spec decision 7). */
   selfBaseUrl: string;
+  /** Upstream Faro receiver for browser telemetry proxying (/faro/collect)
+   *  (GUILD_FARO_URL). Empty disables the endpoint. */
+  faroUrl: string;
+  /** Directory the web UI bundle is served from (GUILD_WEB_DIST; default
+   *  apps/desktop/dist next to the server package). Null = no dist
+   *  directory configured — pages answer with the 503 hint. */
+  webDistDir: string | null;
 }
 
 export const DEFAULT_BIND_ADDR = "0.0.0.0:8080";
@@ -57,6 +64,15 @@ export const DEFAULT_S3_SECRET_ACCESS_KEY = "minioadmin";
 export const DEFAULT_API_URL = "http://localhost:8080";
 export const DEFAULT_CLICKHOUSE_URL = "http://localhost:8123";
 export const DEFAULT_CLICKHOUSE_DATABASE = "guild";
+export const DEFAULT_FARO_URL = "http://host.docker.internal:12347/collect";
+
+/** The web UI dist directory the server serves the SPA from. Conventional
+ *  default: apps/desktop/dist, one level up from apps/server. */
+export function defaultWebDistDir(): string | null {
+  return path.resolve(process.cwd(), "../desktop/dist");
+}
+
+import path from "node:path";
 
 function parseBindAddr(addr: string): { host: string; port: number } {
   // Split at the last colon: works for 0.0.0.0:8080 and [::]:8080.
@@ -123,7 +139,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const apiUrl = (env.GUILD_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, "");
   const internalKey = env.GUILD_INTERNAL_KEY ?? null;
   const selfBaseUrl = parseUrl(env.GUILD_SELF_BASE_URL ?? `http://127.0.0.1:${bind.port}`, "GUILD_SELF_BASE_URL");
+  const faroUrl = env.GUILD_FARO_URL ?? DEFAULT_FARO_URL;
+  const webDistDir = env.GUILD_WEB_DIST === undefined || env.GUILD_WEB_DIST === ""
+    ? defaultWebDistDir()
+    : env.GUILD_WEB_DIST;
   return {
+    faroUrl,
+    webDistDir,
     internalKey,
     selfBaseUrl,
     clickhouseUrl,
