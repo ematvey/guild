@@ -5,7 +5,7 @@
 // (M7 wiring; connector catalogs live in src/platform/integrations/).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { GatewayCtx, IdentityCtx } from "../contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
@@ -46,7 +46,7 @@ function jsonRecord(body: unknown): Record<string, unknown> {
     : {};
 }
 
-async function requireAdmin(ctx: PlatformContext, req: FastifyRequest) {
+async function requireAdmin(ctx: IdentityCtx, req: FastifyRequest) {
   const user = await requireUser(ctx, req);
   if (user.role !== "admin") throw ApiError.forbidden();
   return user;
@@ -54,7 +54,7 @@ async function requireAdmin(ctx: PlatformContext, req: FastifyRequest) {
 
 // ---------- users ----------
 
-export function registerAdminUserRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerAdminUserRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   app.get("/api/v1/admin/users", async (req, reply) => {
     const admin = await requireAdmin(ctx, req);
     const users = await ctx.identity.listUsers(admin.org_id);
@@ -129,7 +129,7 @@ function ensureMinPasswordLen(password: string): void {
 
 // ---------- org prompts (org_kv) ----------
 
-export function registerAdminPromptRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerAdminPromptRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   app.get("/api/v1/admin/assistant-prompt", async (req, reply) => {
     const admin = await requireAdmin(ctx, req);
     const prompt = await ctx.orgKv.get(admin.org_id, ASSISTANT_PROMPT_KEY);
@@ -161,7 +161,7 @@ export function registerAdminPromptRoutes(app: FastifyInstance, ctx: PlatformCon
 
 /** Sets an org prompt. An empty string resets to the built-in default. */
 async function setOrgPrompt(
-  ctx: PlatformContext,
+  ctx: IdentityCtx,
   orgId: string,
   key: string,
   req: FastifyRequest,
@@ -197,31 +197,31 @@ function connectorMetadata(m: ConnectorManifest): {
 
 /** Currently approved manifest of one registry integration item, if any. */
 async function latestIntegrationManifest(
-  ctx: PlatformContext,
+  gateway: GatewayCtx,
   orgId: string,
   slug: string,
 ): Promise<Record<string, unknown> | null> {
-  const approved = await ctx.registry.approvedBundle(orgId, "integration", slug);
+  const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
   if (approved === null) return null;
-  const stored = await ctx.registry.getVersion(orgId, "integration", slug, approved[0]);
+  const stored = await gateway.registry.getVersion(orgId, "integration", slug, approved[0]);
   const manifest = stored.manifest;
   return manifest !== null && typeof manifest === "object" && !Array.isArray(manifest)
     ? (manifest as Record<string, unknown>)
     : null;
 }
 
-export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: GatewayCtx, identity: IdentityCtx): void {
   // Lists this org's integration plugins (configured and unconfigured).
   // `available` holds the compiled-in kinds plus approved registry v2
   // plugins that have no configured row yet.
   app.get("/api/v1/admin/integrations", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
-    const rows = await ctx.integrations.list(admin.org_id);
+    const admin = await requireAdmin(identity, req);
+    const rows = await gateway.integrations.list(admin.org_id);
     const rowValues: unknown[] = [];
     for (const row of rows) {
       const rowConfig = (row.config ?? {}) as Record<string, unknown>;
       const mcpUrl = readMcpUrl(rowConfig);
-      const manifest = await latestIntegrationManifest(ctx, admin.org_id, row.name);
+      const manifest = await latestIntegrationManifest(gateway, admin.org_id, row.name);
       const mcpClaimed = (manifest !== null && manifest["mcp"] !== null && manifest["mcp"] !== undefined) || mcpUrl !== null;
       // A compiled-in kind reports its own categories; a registry v2 MCP
       // plugin shadows the compiled-in kind of the same slug.
@@ -254,9 +254,9 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
         settings: connectorMetadata(connector).settings,
       });
     }
-    for (const item of await ctx.registry.listItems(admin.org_id, "integration")) {
+    for (const item of await gateway.registry.listItems(admin.org_id, "integration")) {
       if (item.review_status !== "approved" || rows.some((r) => r.name === item.slug)) continue;
-      const manifest = await latestIntegrationManifest(ctx, admin.org_id, item.slug);
+      const manifest = await latestIntegrationManifest(gateway, admin.org_id, item.slug);
       if (manifest === null || manifest["mcp"] === null || manifest["mcp"] === undefined) continue;
       const auth = (manifest["auth"] ?? null) as Record<string, unknown> | null;
       const secretNames = Array.isArray(auth?.["secret_names"]) ? (auth?.["secret_names"] as string[]) : [];
@@ -275,11 +275,11 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
   // compiled-in kind or an installed registry v2 MCP plugin. The new row's
   // stable id is the object's address from here on.
   app.post("/api/v1/admin/integrations", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdmin(identity, req);
     const body = requireJsonBody(req);
     const name = body["name"];
     if (typeof name !== "string") throw ApiError.badRequest("missing name");
-    const rows = await ctx.integrations.list(admin.org_id);
+    const rows = await gateway.integrations.list(admin.org_id);
     if (rows.some((r) => r.name === name)) {
       throw ApiError.conflict("already_configured", `integration ${name} already has a configuration`);
     }
@@ -287,10 +287,10 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
     // bundle whose manifest declares an MCP server.
     const known =
       builtinConnectorByName(name) !== undefined ||
-      (await latestIntegrationManifest(ctx, admin.org_id, name))?.["mcp"] != null;
+      (await latestIntegrationManifest(gateway, admin.org_id, name))?.["mcp"] != null;
     if (!known) throw ApiError.notFound(`unknown integration ${name}`);
-    await saveIntegration(ctx, admin.org_id, name, null, body);
-    const created = await ctx.integrations.getByName(admin.org_id, name);
+    await saveIntegration(gateway, admin.org_id, name, null, body);
+    const created = await gateway.integrations.getByName(admin.org_id, name);
     sendJson(reply, {
       id: created!.id,
       org_id: created!.org_id,
@@ -304,11 +304,11 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
   // Lists one integration's secret names, timestamps and masked previews —
   // never values.
   app.get("/api/v1/admin/integrations/:id/secrets", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdmin(identity, req);
     const id = parseUuidParam(req, "id");
-    const integrationRow = await ctx.integrations.get(admin.org_id, id);
+    const integrationRow = await gateway.integrations.get(admin.org_id, id);
     if (integrationRow === null) throw ApiError.notFound("unknown integration");
-    const secrets = await ctx.integrationSecrets.list(admin.org_id, integrationRow.name, ctx.masterKey());
+    const secrets = await gateway.integrationSecrets.list(admin.org_id, integrationRow.name, gateway.masterKey());
     sendJson(reply, { secrets });
     return reply;
   });
@@ -317,7 +317,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
   // the stored config is the source of truth, so selections survive bundle
   // republishes and settings saves.
   app.put("/api/v1/admin/integrations/:id/tools/:tool", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdmin(identity, req);
     const id = parseUuidParam(req, "id");
     const tool = param(req, "tool");
     // The name becomes a JSON object key and a URL path segment: URL-safe
@@ -332,9 +332,9 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
     if (approval !== "default" && approval !== "always_ask") {
       throw ApiError.badRequest("approval must be default or always_ask");
     }
-    const name = await ctx.integrations.curateTool(admin.org_id, id, tool, enabled, approval);
+    const name = await gateway.integrations.curateTool(admin.org_id, id, tool, enabled, approval);
     // Durable, org-queryable audit of the governance change.
-    await ctx.events.emit(admin.org_id, "integration.tool_curated", {
+    await identity.events.emit(admin.org_id, "integration.tool_curated", {
       integration: name,
       tool,
       enabled,
@@ -352,9 +352,9 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
   // without connecting; a broken plugin reports the resolution error — never
   // a silent empty list.
   app.get("/api/v1/admin/integrations/:id/tools", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdmin(identity, req);
     const id = parseUuidParam(req, "id");
-    const integrationRow = await ctx.integrations.get(admin.org_id, id);
+    const integrationRow = await gateway.integrations.get(admin.org_id, id);
     if (integrationRow === null) throw ApiError.notFound("unknown integration");
     const rowConfig = (integrationRow.config ?? {}) as Record<string, unknown>;
     const mcpUrl = readMcpUrl(rowConfig);
@@ -392,7 +392,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
     }
     let manifest: Record<string, unknown>;
     try {
-      manifest = await registryManifest(ctx, admin.org_id, integrationRow.name);
+      manifest = await registryManifest(gateway, admin.org_id, integrationRow.name);
     } catch (error) {
       throw ApiError.badRequest(`no registry manifest: ${(error as Error).message}`);
     }
@@ -405,7 +405,7 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
         : [];
     let secrets: [string, string][];
     try {
-      secrets = await ctx.integrationSecrets.resolve(admin.org_id, integrationRow.name, secretNames, ctx.masterKey());
+      secrets = await gateway.integrationSecrets.resolve(admin.org_id, integrationRow.name, secretNames, gateway.masterKey());
     } catch (error) {
       throw ApiError.conflict("missing_secrets", (error as Error).message);
     }
@@ -439,9 +439,9 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
   // Removes an integration's configuration by id (the connector can be
   // re-added later as a fresh row with a fresh id).
   app.delete("/api/v1/admin/integrations/:id", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdmin(identity, req);
     const id = parseUuidParam(req, "id");
-    await ctx.integrations.delete(admin.org_id, id);
+    await gateway.integrations.delete(admin.org_id, id);
     sendJson(reply, {});
     return reply;
   });
@@ -450,12 +450,12 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
   // credential values, validated and connection-tested before anything is
   // persisted. The connector slug comes from the row.
   app.put("/api/v1/admin/integrations/:id", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdmin(identity, req);
     const id = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
-    const existing = await ctx.integrations.get(admin.org_id, id);
+    const existing = await gateway.integrations.get(admin.org_id, id);
     if (existing === null) throw ApiError.notFound("unknown integration");
-    await saveIntegration(ctx, admin.org_id, existing.name, existing, body);
+    await saveIntegration(gateway, admin.org_id, existing.name, existing, body);
     sendJson(reply, { ok: true });
     return reply;
   });
@@ -558,13 +558,13 @@ async function mcpTestConnection(
  *  (config, secrets, enabled) only on success — a broken connection is
  *  never stored. */
 async function saveIntegration(
-  ctx: PlatformContext,
+  gateway: GatewayCtx,
   orgId: string,
   name: string,
   existing: { config: unknown; enabled: boolean } | null,
   body: Record<string, unknown>,
 ): Promise<void> {
-  const master = ctx.masterKey();
+  const master = gateway.masterKey();
   const existingConfig = (existing?.config ?? {}) as Record<string, unknown>;
   // A create-stub (POST with just a name) registers the row disabled and
   // empty: the completeness check and connection test apply to every real
@@ -575,15 +575,15 @@ async function saveIntegration(
     // An MCP plugin from the registry seeds its stub with the manifest's
     // mcp/auth blocks (as registry install does): the settings editor can
     // then complete and enable it — an empty stub can never enable.
-    const manifest = await latestIntegrationManifest(ctx, orgId, name);
+    const manifest = await latestIntegrationManifest(gateway, orgId, name);
     const config: Record<string, unknown> =
       manifest !== null && manifest["mcp"] != null
         ? { mcp: manifest["mcp"], auth: manifest["auth"] ?? { kind: "org_secret", secret_names: [], identity_key: "email" }, tool_policy: {} }
         : {};
-    await ctx.integrations.upsert(orgId, name, config, false);
+    await gateway.integrations.upsert(orgId, name, config, false);
     return;
   }
-  const registryManifestValue = await latestIntegrationManifest(ctx, orgId, name);
+  const registryManifestValue = await latestIntegrationManifest(gateway, orgId, name);
   const v2Claimed =
     (registryManifestValue !== null && registryManifestValue["mcp"] != null) ||
     readMcpUrl(existingConfig) !== null;
@@ -620,10 +620,10 @@ async function saveIntegration(
     // test the connection before anything is written. A save that neither
     // enables nor writes credentials touches neither.
     if (declared.length > 0 || submitted.length > 0) {
-      let secrets = await ctx.integrationSecrets.resolve(
+      let secrets = await gateway.integrationSecrets.resolve(
         orgId,
         name,
-        await ctx.integrationSecrets.names(orgId, name),
+        await gateway.integrationSecrets.names(orgId, name),
         master,
       );
       for (const [k, v] of submitted) {
@@ -639,9 +639,9 @@ async function saveIntegration(
       }
     }
     for (const [k, v] of submitted) {
-      await ctx.integrationSecrets.upsert(orgId, name, k, v, master);
+      await gateway.integrationSecrets.upsert(orgId, name, k, v, master);
     }
-    await ctx.integrations.upsert(orgId, name, config, enabled);
+    await gateway.integrations.upsert(orgId, name, config, enabled);
     return;
   }
   const connector = builtinConnectorByName(name);
@@ -684,10 +684,10 @@ async function saveIntegration(
   // Merge stored + submitted credentials in memory and test before anything
   // is written.
   const declared = schemaFields.filter((f) => f.kind === "secret").map((f) => f.name);
-  let secrets = await ctx.integrationSecrets.resolve(
+  let secrets = await gateway.integrationSecrets.resolve(
     orgId,
     name,
-    await ctx.integrationSecrets.names(orgId, name),
+    await gateway.integrationSecrets.names(orgId, name),
     master,
   );
   for (const [k, v] of submitted) {
@@ -706,9 +706,9 @@ async function saveIntegration(
     throw ApiError.badRequest((error as Error).message);
   }
   for (const [k, v] of submitted) {
-    await ctx.integrationSecrets.upsert(orgId, name, k, v, master);
+    await gateway.integrationSecrets.upsert(orgId, name, k, v, master);
   }
-  await ctx.integrations.upsert(orgId, name, config, enabled);
+  await gateway.integrations.upsert(orgId, name, config, enabled);
 }
 
 /** One declared/served tool with its stored per-tool curation, as the admin

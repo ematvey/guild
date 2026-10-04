@@ -7,7 +7,7 @@
 // errors.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { Config } from "../../config.js";
 
 /** Upstream timeout: telemetry is best-effort; never hold a browser long. */
 const UPSTREAM_TIMEOUT_MS = 5_000;
@@ -21,7 +21,7 @@ function rawBody(req: FastifyRequest): Buffer {
   return Buffer.alloc(0);
 }
 
-export function registerFaroRoute(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerFaroRoute(app: FastifyInstance, config: Config): void {
   void app.register(async (scope) => {
     // Encapsulated raw-body parsers: the Rust route forwards the exact
     // request bytes (bytes::Bytes). Both parsers are needed — an inherited
@@ -29,7 +29,7 @@ export function registerFaroRoute(app: FastifyInstance, ctx: PlatformContext): v
     scope.addContentTypeParser("application/json", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
     scope.post("/faro/collect", { bodyLimit: MAX_BODY }, async (req, reply: FastifyReply) => {
-      const url = ctx.config.faroUrl.trim();
+      const url = config.faroUrl.trim();
       if (url === "") {
         // Telemetry disabled at the server: accept and drop quietly.
         return reply.status(202).send();

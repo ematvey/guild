@@ -6,7 +6,7 @@
 // unpairing is registry adoption (re-pair) or manual row surgery.
 
 import type { FastifyInstance } from "fastify";
-import type { PlatformContext } from "../platform/context.js";
+import type { ChatsCtx, IdentityCtx } from "../platform/contexts.js";
 import { ApiError } from "../platform/errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "../platform/http/error.js";
 import type { MachineRow } from "../platform/store/machines.js";
@@ -29,13 +29,13 @@ function machineInfo(row: MachineRow, connected: boolean): Record<string, unknow
   };
 }
 
-export function registerMachineRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerMachineRoutes(app: FastifyInstance, chats: ChatsCtx, ctx: IdentityCtx): void {
   /** Lists the calling user's machines: every durable registry row plus the
    *  hub's live socket flag, connected machines first, then by last seen. */
   app.get("/api/v1/machines", async (req) => {
     const user = await requireUser(ctx, req);
-    const rows = await ctx.machines.listForUser(user.org_id, user.id);
-    const list = rows.map((row) => machineInfo(row, ctx.hub.machineOnline(row.machine_id)));
+    const rows = await chats.machines.listForUser(user.org_id, user.id);
+    const list = rows.map((row) => machineInfo(row, chats.hub.machineOnline(row.machine_id)));
     list.sort((a, b) => {
       const connectedCmp = (b.connected as boolean ? 1 : 0) - (a.connected as boolean ? 1 : 0);
       if (connectedCmp !== 0) return connectedCmp;
@@ -53,7 +53,7 @@ export function registerMachineRoutes(app: FastifyInstance, ctx: PlatformContext
     const user = await requireUser(ctx, req);
     const machineId = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
-    const owned = (await ctx.machines.listForUser(user.org_id, user.id)).some(
+    const owned = (await chats.machines.listForUser(user.org_id, user.id)).some(
       (m) => m.machine_id === machineId,
     );
     if (!owned) throw ApiError.notFound("no such machine");
@@ -62,7 +62,7 @@ export function registerMachineRoutes(app: FastifyInstance, ctx: PlatformContext
     if (op !== "fs_list" && op !== "fs_home") {
       throw ApiError.badRequest("unknown op");
     }
-    const result = await ctx.hub.machineRequest(machineId, user.org_id, op, payload, 10_000);
+    const result = await chats.hub.machineRequest(machineId, user.org_id, op, payload, 10_000);
     if (result.ok) return { ok: true, result: result.value };
     const error = result.error;
     if (error.kind === "rejected") throw ApiError.internal(error.message ?? "machine refused");

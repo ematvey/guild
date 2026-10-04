@@ -4,7 +4,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { IdentityCtx } from "../contexts.js";
 import { decryptSecret, maskSecretLen } from "../crypto.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { requireJsonBody, requireUser } from "./error.js";
@@ -28,7 +28,7 @@ function b64url(input: Buffer | string): string {
 }
 
 /** HS256 JWT in the jsonwebtoken default shape (the Rust state token). */
-function signStateJwt(ctx: PlatformContext, claims: OidcStateClaims): string {
+function signStateJwt(ctx: IdentityCtx, claims: OidcStateClaims): string {
   const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = b64url(JSON.stringify(claims));
   const signingInput = `${header}.${payload}`;
@@ -36,7 +36,7 @@ function signStateJwt(ctx: PlatformContext, claims: OidcStateClaims): string {
   return `${signingInput}.${b64url(signature)}`;
 }
 
-function verifyStateJwt(ctx: PlatformContext, token: string): OidcStateClaims {
+function verifyStateJwt(ctx: IdentityCtx, token: string): OidcStateClaims {
   const parts = token.split(".");
   if (parts.length !== 3) throw ApiError.unauthorized("bad state");
   const [header, payload, signature] = parts as [string, string, string];
@@ -74,7 +74,7 @@ function verifyStateJwt(ctx: PlatformContext, token: string): OidcStateClaims {
  *  configured API base URL — raw Host/X-Forwarded-Proto headers are
  *  attacker-controlled on the direct-HTTP deployment and must not shape
  *  security-relevant URLs. */
-function serverOrigin(ctx: PlatformContext): string {
+function serverOrigin(ctx: IdentityCtx): string {
   return ctx.config.apiUrl.replace(/\/+$/, "");
 }
 
@@ -112,7 +112,7 @@ function validNonce(nonce: string): boolean {
   return nonce.length === 64 && /^[0-9a-fA-F]+$/.test(nonce);
 }
 
-function nonceCookie(ctx: PlatformContext, nonce: string, maxAge: number): string {
+function nonceCookie(ctx: IdentityCtx, nonce: string, maxAge: number): string {
   const secure = ctx.config.apiUrl.startsWith("https://") ? "; Secure" : "";
   return `${NONCE_COOKIE}=${nonce}; Path=/api/v1/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
@@ -166,7 +166,7 @@ function urlencode(s: string): string {
  *  it to OIDC requires an explicit admin flow, otherwise anyone whose IdP
  *  asserts an arbitrary email could take over that account. */
 export async function resolveOidcUser(
-  ctx: PlatformContext,
+  ctx: IdentityCtx,
   org: string,
   email: string,
   emailVerified: boolean,
@@ -193,7 +193,7 @@ export async function resolveOidcUser(
   return ctx.identity.createOidcUser(org, email, displayName, avatarUrl);
 }
 
-export function registerOidcRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerOidcRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   // ---------- admin config ----------
 
   app.put("/api/v1/admin/oidc", async (req, reply) => {

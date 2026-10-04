@@ -10,24 +10,26 @@
 // same events the Rust feed's listener consumes.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { ChatsCtx, IdentityCtx } from "../contexts.js";
+import type { PlatformPool } from "../db.js";
 import { requireUser } from "./error.js";
 import { sseReply } from "./sse-writer.js";
 import { captureThreadState, threadStateWire } from "../../chats/thread-state.js";
 
 async function* stateFrames(
-  ctx: PlatformContext,
+  chats: ChatsCtx,
+  pool: PlatformPool,
   orgId: string,
   chatId: string,
   userId: string,
   closed: () => boolean,
 ): AsyncGenerator<string> {
-  const initial = await captureThreadState(ctx, orgId, chatId, undefined);
+  const initial = await captureThreadState(chats, pool, orgId, chatId, undefined);
   yield `data: ${threadStateWire(initial)}\n\n`;
 
   const queue: string[] = [];
   let wake: (() => void) | undefined = undefined;
-  const unsubscribe = ctx.notify.subscribe((channel, payload) => {
+  const unsubscribe = chats.notify.subscribe((channel, payload) => {
     let relevant = false;
     if (channel === "guild_thread_committed") {
       relevant = payload === chatId;
@@ -56,7 +58,7 @@ async function* stateFrames(
       // A committed log or a status flip both republish the full atomic
       // view; the watermark is reserved per capture, so every frame is
       // strictly newer.
-      const capture = await captureThreadState(ctx, orgId, chatId, undefined);
+      const capture = await captureThreadState(chats, pool, orgId, chatId, undefined);
       yield `data: ${threadStateWire(capture)}\n\n`;
     }
   } finally {
@@ -65,16 +67,21 @@ async function* stateFrames(
   void userId;
 }
 
-export function registerThreadStreamRoute(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerThreadStreamRoute(
+  app: FastifyInstance,
+  chats: ChatsCtx,
+  auth: IdentityCtx,
+  pool: PlatformPool,
+): void {
   app.get("/api/v1/chats/:id/thread/stream", async (req: FastifyRequest, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = (req.params as { id: string }).id;
     // Owner/admin gate (404 for strangers), same as GET /thread.
-    await ctx.chats.getChat(user.org_id, chatId, user);
+    await chats.chats.getChat(user.org_id, chatId, user);
     let clientGone = false;
     reply.raw.on("close", () => {
       clientGone = true;
     });
-    sseReply(reply, stateFrames(ctx, user.org_id, chatId, user.id, () => clientGone));
+    sseReply(reply, stateFrames(chats, pool, user.org_id, chatId, user.id, () => clientGone));
   });
 }

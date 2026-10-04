@@ -10,6 +10,8 @@
 // thread list so the connection dot moves live.
 
 import type { PlatformContext } from "../platform/context.js";
+import type { ChatsCtx } from "../platform/contexts.js";
+import type { PlatformPool } from "../platform/db.js";
 import type { UserRow } from "../platform/store/identity.js";
 import { pgTimestampToRfc3339 } from "../platform/time.js";
 import type { NotifyHandler } from "../platform/notify.js";
@@ -188,7 +190,7 @@ export class FeedForwarder implements GenerationStreamSink {
   private async publishView(chatId: string, orgId: string, userId: string): Promise<void> {
     let capture;
     try {
-      capture = await captureThreadState(this.ctx, orgId, chatId);
+      capture = await captureThreadState(this.ctx, this.ctx.pool, orgId, chatId);
     } catch {
       return;
     }
@@ -297,7 +299,7 @@ export class FeedForwarder implements GenerationStreamSink {
       if (!changed) continue;
       let list;
       try {
-        list = await threadListSnapshot(this.ctx, { org_id: bindings.orgId, id: userId } as UserRow);
+        list = await threadListSnapshot(this.ctx, this.ctx.pool, { org_id: bindings.orgId, id: userId } as UserRow);
       } catch {
         continue;
       }
@@ -339,8 +341,8 @@ export class FeedForwarder implements GenerationStreamSink {
 /** The same thread-list payload as GET /api/v1/chats (Rust
  *  feed::thread_list_filtered), computed for a push: every active
  *  (non-archived) chat of the caller with the hub's live machine state. */
-export async function threadListSnapshot(ctx: PlatformContext, user: Pick<UserRow, "org_id" | "id">): Promise<unknown[]> {
-  const res = await ctx.pool.query<{
+export async function threadListSnapshot(chats: ChatsCtx, pool: PlatformPool, user: Pick<UserRow, "org_id" | "id">): Promise<unknown[]> {
+  const res = await pool.query<{
     id: string;
     org_id: string;
     user_id: string;
@@ -371,12 +373,12 @@ export async function threadListSnapshot(ctx: PlatformContext, user: Pick<UserRo
     [user.org_id, user.id],
   );
   return res.rows.map((chat) => {
-    const online = chat.machine_id !== null && ctx.hub.machineOnline(chat.machine_id);
+    const online = chat.machine_id !== null && chats.hub.machineOnline(chat.machine_id);
     // Old chats stored the raw machine id as their label; the live hub label
     // (the machine's hostname) is the truth when the slot is up.
     const label =
       online && chat.machine_id !== null
-        ? (ctx.hub.machineLabel(chat.machine_id) ?? chat.machine_id)
+        ? (chats.hub.machineLabel(chat.machine_id) ?? chat.machine_id)
         : chat.machine_label;
     // Key order: the Rust handler serializes each chat through
     // serde_json::Value (json! BTreeMap), so the wire order is ALPHABETICAL —

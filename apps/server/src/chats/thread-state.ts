@@ -6,7 +6,8 @@
 // fields skipped, `has_more_events` always present.
 
 import { threadEventRowWire, type ThreadEventRow } from "../platform/domain/thread-events.js";
-import type { PlatformContext } from "../platform/context.js";
+import type { ChatsCtx } from "../platform/contexts.js";
+import type { PlatformPool } from "../platform/db.js";
 import type { WsServerMsg } from "../hub/protocol.js";
 import { ApiError } from "../platform/errors.js";
 import type { UserRow } from "../platform/store/identity.js";
@@ -29,17 +30,17 @@ export interface ThreadStateCapture {
  *  newer than every row it carries). `caller` omitted = the notify-driven
  *  org-scoped republish path (Rust capture_thread's Option<&AuthUser>::None
  *  — no per-user gate; the payload is org-gated by construction). */
-export async function captureThreadState(ctx: PlatformContext, orgId: string, chatId: string, caller?: UserRow): Promise<ThreadStateCapture> {
-  if (caller !== undefined) await ctx.chats.getChat(orgId, chatId, caller);
-  const events = await ctx.threads.listEvents(orgId, chatId);
-  const seq = await ctx.threads.watermark();
-  const buffers = ctx.runtime.liveBuffers(chatId);
-  const generatingRow = await ctx.pool.query<{ generating: boolean }>(
+export async function captureThreadState(chats: ChatsCtx, pool: PlatformPool, orgId: string, chatId: string, caller?: UserRow): Promise<ThreadStateCapture> {
+  if (caller !== undefined) await chats.chats.getChat(orgId, chatId, caller);
+  const events = await chats.threads.listEvents(orgId, chatId);
+  const seq = await chats.threads.watermark();
+  const buffers = chats.runtime.liveBuffers(chatId);
+  const generatingRow = await pool.query<{ generating: boolean }>(
     "SELECT generating FROM chats WHERE id = $1 AND org_id = $2",
     [chatId, orgId],
   );
   if (generatingRow.rows.length === 0) throw new ApiError(404, "not_found", "chat not found");
-  const project = await ctx.chats.projectOf(orgId, chatId);
+  const project = await chats.chats.projectOf(orgId, chatId);
   return {
     chatId,
     seq,

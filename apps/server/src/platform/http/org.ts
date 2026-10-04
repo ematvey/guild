@@ -3,7 +3,8 @@
 // tags cannot send bearer tokens, and a logo is not sensitive.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { IdentityCtx } from "../contexts.js";
+import type { ObjectStore } from "../s3.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 
@@ -25,17 +26,17 @@ function rawBody(req: FastifyRequest): Buffer {
   return Buffer.from(JSON.stringify(body));
 }
 
-export function registerOrgRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerOrgRoutes(app: FastifyInstance, identity: IdentityCtx, objects: ObjectStore): void {
   app.get("/api/v1/org", async (req, reply) => {
-    const user = await requireUser(ctx, req);
-    const org = await ctx.orgs.get(user.org_id);
+    const user = await requireUser(identity, req);
+    const org = await identity.orgs.get(user.org_id);
     return reply
       .status(200)
       .send(sortedJson({ name: org.name, logo_url: org.logo_url }));
   });
 
   app.put("/api/v1/org", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(identity, req);
     requireAdminRole(user);
     const body = requireJsonBody(req);
     const name = typeof body["name"] === "string" ? body["name"].trim() : "";
@@ -43,12 +44,12 @@ export function registerOrgRoutes(app: FastifyInstance, ctx: PlatformContext): v
     if (Buffer.byteLength(name, "utf8") > 100) {
       throw ApiError.badRequest("name too long (max 100 chars)");
     }
-    await ctx.orgs.setName(user.org_id, name);
+    await identity.orgs.setName(user.org_id, name);
     return reply.status(200).send(sortedJson({ ok: true, name }));
   });
 
   app.put("/api/v1/org/logo", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(identity, req);
     requireAdminRole(user);
     const contentType = queryOne(req, "content_type") ?? "image/png";
     const ext = LOGO_TYPES.find(([ct]) => ct === contentType)?.[1];
@@ -60,19 +61,19 @@ export function registerOrgRoutes(app: FastifyInstance, ctx: PlatformContext): v
     if (bytes.length > LOGO_MAX_BYTES) throw ApiError.badRequest("logo too large (max 2 MiB)");
     const key = `orgs/${user.org_id}/logo.${ext}`;
     try {
-      await ctx.objects.put(key, bytes);
+      await objects.put(key, bytes);
     } catch (error) {
       throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
     }
     const url = `/api/v1/orgs/${user.org_id}/logo`;
-    await ctx.orgs.setLogoUrl(user.org_id, url);
+    await identity.orgs.setLogoUrl(user.org_id, url);
     return reply.status(200).send(sortedJson({ ok: true, logo_url: url }));
   });
 
   app.delete("/api/v1/org/logo", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(identity, req);
     requireAdminRole(user);
-    await ctx.orgs.setLogoUrl(user.org_id, null);
+    await identity.orgs.setLogoUrl(user.org_id, null);
     return reply.status(200).send({ ok: true });
   });
 
@@ -81,13 +82,13 @@ export function registerOrgRoutes(app: FastifyInstance, ctx: PlatformContext): v
   // stable, so <img> tags never need refreshing.
   app.get("/api/v1/orgs/:orgId/logo", async (req, reply) => {
     const orgId = parseUuidParam(req, "orgId");
-    const org = await ctx.orgs.get(orgId);
+    const org = await identity.orgs.get(orgId);
     if (org.logo_url === null) throw ApiError.notFound("no logo set");
     for (const [, ext] of LOGO_TYPES) {
       const key = `orgs/${orgId}/logo.${ext}`;
       let bytes: Buffer;
       try {
-        bytes = await ctx.objects.get(key);
+        bytes = await objects.get(key);
       } catch {
         continue;
       }
