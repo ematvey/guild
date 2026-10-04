@@ -4,7 +4,7 @@
 // own wire contract (OpenAI `{"error": …}` vs Anthropic `{"type":"error",…}`)
 // and records usage against the key's owner.
 
-import { ApiError } from "./error.js";
+import { ApiError } from "../errors.js";
 import { forProtocol, ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec } from "../provider/types.js";
 import { enforceQuota, newRequestId, UsageEvent, UsageSink, usageCostUsd, errorText } from "../usage.js";
 import type { GatewayStore } from "../store/gateway.js";

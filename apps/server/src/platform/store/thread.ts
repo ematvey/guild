@@ -5,10 +5,10 @@
 // here so GET /thread, the member WS (M5), and unread derivation keep their
 // exact contracts.
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
-import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../../chats/thread-events.js";
+import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../domain/thread-events.js";
 
 interface EventRowDb {
   id: string;

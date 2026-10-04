@@ -13,7 +13,7 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { ApiError } from "./error.js";
+import { ApiError } from "../errors.js";
 import { rustJsonText } from "../provider/sse.js";
 import {
   resolveActingAs,

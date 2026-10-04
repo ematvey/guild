@@ -4,7 +4,8 @@
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { ApiError, parseUuidParam, requireJsonBody, requireUser, sortedJson } from "./error.js";
+import { ApiError, sortedJson } from "../errors.js";
+import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 
 /** Accepted logo content types → file extension in the object key. */
 const LOGO_TYPES: ReadonlyArray<readonly [string, string]> = [

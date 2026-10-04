@@ -3,7 +3,8 @@
 // turn-submission routes stay proxied until the M3 cutover).
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { ApiError, requireJsonBody, requireUser } from "./error.js";
+import { ApiError } from "../errors.js";
+import { requireJsonBody, requireUser } from "./error.js";
 import { rustFloat, rustJsonText } from "../provider/sse.js";
 import type { PlatformContext } from "../context.js";
 import { PROTOCOLS, providerSlug } from "../store/gateway.js";

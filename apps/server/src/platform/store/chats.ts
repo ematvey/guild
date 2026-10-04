@@ -4,7 +4,7 @@
 // machine binding, the approval-mode override, and the generating flag with
 // its same-transaction `guild_chat_status` notify.
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";

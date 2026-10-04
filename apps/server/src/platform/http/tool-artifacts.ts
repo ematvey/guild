@@ -5,7 +5,8 @@
 
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { ApiError, parseUuidParam, requireUser, sortedJson } from "./error.js";
+import { ApiError, sortedJson } from "../errors.js";
+import { parseUuidParam, requireUser } from "./error.js";
 
 export function registerToolArtifactRoutes(app: FastifyInstance, ctx: PlatformContext): void {
   /** Lists a chat's artifacts: the machine-originated fetch path (the chat's

@@ -42,7 +42,7 @@ import { SharedPoolDatabase, applyChatMappingMigration } from "../harness/runtim
 import type { PlatformPool } from "../platform/db.js";
 import { ObjectStore } from "../platform/s3.js";
 import { attachmentObjectKey } from "../platform/store/attachments.js";
-import { normalizeThreadEvent, type ThreadEventRow } from "../chats/thread-events.js";
+import { normalizeThreadEvent, type ThreadEventRow } from "../platform/domain/thread-events.js";
 
 export interface ImportCounts {
   chats: number;

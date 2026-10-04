@@ -8,11 +8,12 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { ApiError, parseUuidParam, requireJsonBody, requireUser, sortedJson } from "./error.js";
+import { ApiError, sortedJson } from "../errors.js";
+import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 import type { UserRow } from "../store/identity.js";
 import { uuidv7 } from "../time.js";
 import { validWorkspaceName } from "../store/agentSessions.js";
-import { threadEventRowWire } from "../../chats/thread-events.js";
+import { threadEventRowWire } from "../domain/thread-events.js";
 
 export function workspaceRoot(ctx: PlatformContext, orgId: string): string {
   return path.join(ctx.config.dataDir, "workspaces", orgId);
@@ -37,41 +38,34 @@ export function registerAgentSessionRoutes(app: FastifyInstance, ctx: PlatformCo
     const name = body["workspace_name"];
     if (typeof name !== "string") throw ApiError.badRequest("missing workspace_name");
     const dir = workspaceDir(ctx, user.org_id, name);
-    const client = await ctx.pool.connect();
-    try {
-      await client.query("BEGIN");
-      // The chat's title is the workspace name (the Rust create_chat_on call).
-      const chat = await ctx.chats.createChatOn(
-        client,
-        user.org_id,
-        user.id,
-        name,
-        null,
-      );
-      const session = await ctx.agentSessions.createOn(client, user.org_id, user.id, chat.id, name);
-      // No committed session holds the name, so any dir still on disk is an
-      // orphan a deleted account left behind. Reclaim it — the next user of
-      // the same workspace name must not inherit its files. A reclaim that
-      // cannot run must fail the request loudly: silently inheriting a
-      // foreign directory is the failure this reclaim exists to prevent.
-      try {
-        await rm(dir, { recursive: true, force: true });
-      } catch (error) {
-        throw ApiError.internal(`orphan workspace dir reclaim failed: ${String(error)}`);
-      }
-      try {
-        await mkdir(dir, { recursive: true });
-      } catch (error) {
-        throw ApiError.internal(`workspace dir create failed: ${String(error)}`);
-      }
-      await client.query("COMMIT");
-      return reply.status(200).send(JSON.stringify(sortedJson(session)));
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    // The rows become visible only after the orphan reclaim and dir create
+    // succeeded — the transaction is the store method's.
+    const session = await ctx.agentSessions.createWithChat(
+      user.org_id,
+      user.id,
+      name,
+      (client) =>
+        // The chat's title is the workspace name (the Rust create_chat_on call).
+        ctx.chats.createChatOn(client, user.org_id, user.id, name, null),
+      async () => {
+        // No committed session holds the name, so any dir still on disk is an
+        // orphan a deleted account left behind. Reclaim it — the next user of
+        // the same workspace name must not inherit its files. A reclaim that
+        // cannot run must fail the request loudly: silently inheriting a
+        // foreign directory is the failure this reclaim exists to prevent.
+        try {
+          await rm(dir, { recursive: true, force: true });
+        } catch (error) {
+          throw ApiError.internal(`orphan workspace dir reclaim failed: ${String(error)}`);
+        }
+        try {
+          await mkdir(dir, { recursive: true });
+        } catch (error) {
+          throw ApiError.internal(`workspace dir create failed: ${String(error)}`);
+        }
+      },
+    );
+    return reply.status(200).send(JSON.stringify(sortedJson(session)));
   });
 
   app.get("/api/v1/agents/sessions", async (req, reply) => {

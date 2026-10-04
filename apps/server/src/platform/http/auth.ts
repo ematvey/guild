@@ -5,16 +5,8 @@
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { PlatformContext } from "../context.js";
-import {
-  ApiError,
-  RAW_BODY,
-  TextError,
-  requireJsonBody,
-  requireStringFields,
-  requireUser,
-  parseUuidParam,
-  sortedJson,
-} from "./error.js";
+import { ApiError, RAW_BODY, TextError, sortedJson } from "../errors.js";
+import { requireJsonBody, requireStringFields, requireUser, parseUuidParam } from "./error.js";
 import { secretFromCode } from "../store/pairing.js";
 import { rustJsonText } from "../provider/sse.js";
 import type { UserRow } from "../store/identity.js";

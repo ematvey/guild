@@ -14,8 +14,8 @@
 // Events written by the OLD Rust server carry the same shapes; the renderer
 // normalizes both eras to one wire form.
 
-import { rustFloat, rustJsonText } from "../platform/provider/sse.js";
-export { uuidv7 } from "../platform/time.js";
+import { rustFloat, rustJsonText } from "../provider/sse.js";
+export { uuidv7 } from "../time.js";
 
 // ---------------------------------------------------------------------------
 // Event value types (all optional-carrying fields exactly like the Rust enum)

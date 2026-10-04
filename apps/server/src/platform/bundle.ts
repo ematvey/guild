@@ -6,7 +6,7 @@
 
 import { gunzipSync } from "node:zlib";
 import { Parser } from "tar";
-import { ApiError } from "./http/error.js";
+import { ApiError } from "./errors.js";
 
 /** A decompressed bundle may not exceed this total size (bundle-bomb guard). */
 const MAX_BUNDLE_TOTAL = 256 * 1024 * 1024;
