@@ -67,7 +67,7 @@ services:
     # admin, integrations, web UI. Deferred surfaces (routines, hooks,
     # internal) answer a clean 404. Host services (postgres/clickhouse/
     # rustfs) are external — no compose service deps.
-    image: guild-server-ts:latest
+    image: ${GUILD_TS_SERVER_IMAGE:-guild-server-ts:latest}
     build:
       context: ../..
       dockerfile: Dockerfile.server-ts
