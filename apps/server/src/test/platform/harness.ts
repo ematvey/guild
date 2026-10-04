@@ -50,17 +50,18 @@ export async function createM1TestEnv(logLevel = "error"): Promise<M1TestEnv> {
   const databaseName = `guild_m1_test_${suffix}`;
   const bucketName = `guild-m1-test-${suffix}`;
 
-  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
+  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
   await adminPool.query(`CREATE DATABASE "${databaseName}"`);
+  await adminPool.end();
   const databaseUrl = new URL(TEST_ADMIN_URL);
   databaseUrl.pathname = `/${databaseName}`;
 
   // Seeding/preparation pool on the disposable database — never on the
   // shared guild database the admin URL points at.
-  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2 });
+  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
 
   // Apply the verbatim Rust migrations in order (plain SQL files).
-  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2 });
+  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
   for (const file of readdirSync(MIGRATIONS_DIR).sort()) {
     if (!file.endsWith(".sql")) continue;
     await migrationPool.query(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
@@ -83,6 +84,7 @@ export async function createM1TestEnv(logLevel = "error"): Promise<M1TestEnv> {
     GUILD_S3_SECRET_ACCESS_KEY: TEST_S3_SECRET_ACCESS_KEY,
     GUILD_MASTER_KEY_HEX: "11".repeat(32),
     GUILD_JWT_SECRET: "m1-test-jwt-secret",
+    GUILD_POOL_MAX: "5",
     GUILD_API_URL: "http://localhost:18080",
     GUILD_LOG_LEVEL: logLevel,
   });
@@ -105,13 +107,25 @@ export async function createM1TestEnv(logLevel = "error"): Promise<M1TestEnv> {
       // cleanup is best-effort; the DB drop below is the important part
     }
     s3.destroy();
-    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
+    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
     try {
-      await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+      // WITH (FORCE) can transiently fail ("permission denied to terminate
+      // process") when a backend exits as the signal lands under load —
+      // retry (the m2-harness cleanup does the same).
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+          break;
+        } catch (error) {
+          if (attempt >= 4) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes("terminate process")) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        }
+      }
     } finally {
       await dropper.end();
     }
-    await adminPool.end();
   };
 
   return { databaseName, databaseUrl: databaseUrl.toString(), bucketName, db: dbPool, app, config, cleanup };

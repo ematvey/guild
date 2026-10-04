@@ -31,16 +31,17 @@ export async function createM5TestEnv(_logLevel = "error"): Promise<M5TestEnv> {
   const suffix = randomSuffix();
   const databaseName = `guild_m5_test_${suffix}`;
 
-  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
+  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
   await adminPool.query(`CREATE DATABASE "${databaseName}"`);
+  await adminPool.end();
   const databaseUrl = new URL(TEST_ADMIN_URL);
   databaseUrl.pathname = `/${databaseName}`;
 
   // Seeding/preparation pool on the disposable database — never on the
   // shared guild database the admin URL points at.
-  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 4 });
+  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 4, idleTimeoutMillis: 2000 });
 
-  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2 });
+  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
   for (const file of readdirSync(MIGRATIONS_DIR).sort()) {
     if (!file.endsWith(".sql")) continue;
     await migrationPool.query(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
@@ -51,6 +52,7 @@ export async function createM5TestEnv(_logLevel = "error"): Promise<M5TestEnv> {
     GUILD_DATABASE_URL: databaseUrl.toString(),
     GUILD_MASTER_KEY_HEX: "33".repeat(32),
     GUILD_JWT_SECRET: "m5-test-jwt-secret",
+    GUILD_POOL_MAX: "5",
     GUILD_API_URL: "http://localhost:18080",
     GUILD_LOG_LEVEL: process.env.M5_TEST_LOG ?? "warn",
   });
@@ -62,13 +64,25 @@ export async function createM5TestEnv(_logLevel = "error"): Promise<M5TestEnv> {
     done = true;
     await app.close();
     await dbPool.end();
-    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
+    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
     try {
-      await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+      // WITH (FORCE) can transiently fail ("permission denied to terminate
+      // process") when a backend exits as the signal lands under load —
+      // retry (the m2-harness cleanup does the same).
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await dropper.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+          break;
+        } catch (error) {
+          if (attempt >= 4) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes("terminate process")) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        }
+      }
     } finally {
       await dropper.end();
     }
-    await adminPool.end();
   };
 
   return {

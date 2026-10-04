@@ -18,6 +18,9 @@ COPY packages/ui/package.json packages/ui/
 RUN npm ci --workspace apps/server --no-audit --no-fund
 COPY apps/server/src ./apps/server/src
 COPY apps/server/tsconfig.json apps/server/tsconfig.json
+# The static exec-policy rules: the TS matcher loads the same asset the Rust
+# server ships.
+COPY crates/server/assets/exec_policy_base.rules crates/server/assets/exec_policy_base.rules
 RUN npm run build --workspace apps/server
 
 # Frontend stage: build the chat SPA (apps/desktop) for the TS server to
@@ -46,6 +49,10 @@ COPY --from=build /app/apps/server/package.json ./apps/server/package.json
 # The chat SPA: GUILD_WEB_DIST's default (../desktop/dist from the server
 # cwd) resolves here.
 COPY --from=webui /app/apps/desktop/dist ./apps/desktop/dist
+# The static exec-policy rules (M4): the matcher loads the SAME file the
+# Rust server ships — no TS fork of the rule set. The default path resolves
+# relative to the server's cwd: <cwd>/../../crates/server/assets/.
+COPY --from=build crates/server/assets/exec_policy_base.rules /app/crates/server/assets/exec_policy_base.rules
 WORKDIR /app/apps/server
 EXPOSE 8080
 CMD ["node", "dist/index.js"]

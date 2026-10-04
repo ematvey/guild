@@ -21,6 +21,7 @@ import {
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { createModels, type MutableModels, type UserMessage } from "@earendil-works/pi-ai";
+import { mkdir } from "node:fs/promises";
 import type { Logger } from "pino";
 import { applyPostgresMigrations, PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
 import type { PlatformPool } from "../platform/db.js";
@@ -28,6 +29,11 @@ import { GatewayStore } from "../platform/store/gateway.js";
 import { ChatStore } from "../platform/store/chats.js";
 import { ThreadStore } from "../platform/store/thread.js";
 import { TurnCommandStore } from "../platform/store/turn_commands.js";
+import { AgentSessionStore } from "../platform/store/agentSessions.js";
+import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
+import type { ObjectStore } from "../platform/s3.js";
+import { MachineExecutionEnv, machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
+import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
 import { createGuildExtension, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
@@ -72,14 +78,29 @@ export class GuildRuntime {
   harnessForTest(): Harness | undefined {
     return this.harness;
   }
+  /** The hub-backed dispatch registry (one per process, keyed by the hub). */
+  dispatch(): ReturnType<typeof machineDispatch> | undefined {
+    return this.hub === undefined ? undefined : machineDispatch(this.hub);
+  }
+  /** The process-wide exec policy (the base rules asset + local layer). */
+  execPolicy(): ExecPolicy {
+    this.policyInstance ??= loadExecPolicy(this.config.execPolicyRulesPath ?? undefined);
+    return this.policyInstance;
+  }
+  private policyInstance: ExecPolicy | undefined;
   private starting: Promise<void> | undefined;
   private stopped = false;
 
+
+  private readonly agentSessions: AgentSessionStore;
+  readonly toolArtifacts: ToolArtifactStore;
 
   constructor(
     private readonly config: Config,
     private readonly pool: PlatformPool,
     private readonly log: Logger,
+    objects?: ObjectStore,
+    private readonly hub?: MachineDispatchHost,
   ) {
     this.models = createModels();
     this.registry = createRegistry();
@@ -87,6 +108,8 @@ export class GuildRuntime {
     this.chats = new ChatStore(pool);
     this.turnCommands = new TurnCommandStore(pool);
     this.gateway = new GatewayStore(pool);
+    this.agentSessions = new AgentSessionStore(pool);
+    this.toolArtifacts = new ToolArtifactStore(pool);
     this.bridge = new ChatBridge({
       threads: this.threads,
       chats: this.chats,
@@ -100,6 +123,7 @@ export class GuildRuntime {
           return false;
         }
       },
+      ...(objects !== undefined ? { spill: { artifacts: this.toolArtifacts, objects } } : {}),
       log,
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
@@ -122,15 +146,58 @@ export class GuildRuntime {
         return res.rows[0]?.value ?? null;
       },
       orgOfConversation: async (conversationId) => {
-        for (const [chatId, id] of this.chatToConversation) {
-          if (id === conversationId) {
-            const res = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-            return res.rows[0]?.org_id ?? null;
-          }
-        }
-        return null;
+        const chatId = await this.chatOfConversation(conversationId);
+        if (chatId === null) return null;
+        const res = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
+        return res.rows[0]?.org_id ?? null;
+      },
+      // The approval gate (M4): exec policy + approvals over the chat
+      // mapping and the executor resolution below.
+      pool: this.pool,
+      threads: this.threads,
+      log: this.log,
+      execPolicy: this.execPolicy(),
+      approvalTimeoutMs: this.config.approvalTimeoutMs,
+      selfBaseUrl: this.config.selfBaseUrl,
+      internalKey: this.config.internalKey,
+      allowShellTools: this.config.allowShellTools,
+      chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
+      executorKind: (conversationId) => this.executorKind(conversationId),
+      currentModel: async (conversationId) => {
+        await this.start();
+        const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
+        if (!conversation) return null;
+        const agent = await conversation.agent(BACKGROUND_CONTEXT);
+        return agent.model?.modelId ?? null;
       },
     };
+  }
+
+  /** The conversation's chat id (the reverse of the chat→conversation
+   *  mapping; unmapped conversations — e.g. the root — have none). */
+  async chatOfConversation(conversationId: number): Promise<string | null> {
+    for (const [chatId, id] of this.chatToConversation) {
+      if (id === conversationId) return chatId;
+    }
+    return null;
+  }
+
+  /** Where this conversation's tools execute — the env factory and the
+   *  approval gate both resolve through this: the chat's bound machine
+   *  (machine dispatch), an agent session's workspace dir, or the per-
+   *  conversation sandbox (regular chats). */
+  async executorKind(conversationId: number): Promise<ExecutorKind> {
+    const chatId = await this.chatOfConversation(conversationId);
+    if (chatId === null) return null;
+    const chat = await this.pool.query<{ machine_id: string | null; org_id: string }>(
+      "SELECT machine_id, org_id FROM chats WHERE id = $1",
+      [chatId],
+    );
+    const row = chat.rows[0];
+    if (!row) return null;
+    if (row.machine_id !== null) return "machine";
+    const workspace = await this.agentSessions.workspaceForChat(row.org_id, chatId);
+    return workspace !== null ? "server" : null;
   }
   /** Idempotent start: migrations, harness open, watches for every mapped
    *  conversation. The one owning process (decision 9) is the server. */
@@ -158,11 +225,40 @@ export class GuildRuntime {
         steeringMode: "one-at-a-time",
         followUpMode: "one-at-a-time",
       },
-      env: (target) => {
-        // M3: a per-conversation local sandbox env rooted at the workspace
-        // root. M4 replaces this with per-conversation server-side
-        // workspaces; M5 adds hub-proxying envs for machine-bound chats.
-        return new NodeExecutionEnv({ cwd: `${sandboxRoot()}/${target.conversationId}` });
+      env: async (target) => {
+        // M4 executor selection: the chat's bound machine (machine dispatch
+        // over the hub), an agent session's workspace dir
+        // (workspaces/<org>/<name>), or the per-conversation sandbox the M3
+        // runtime used for regular chats.
+        const kind = await this.executorKind(Number(target.conversationId));
+        if (kind === "machine") {
+          const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
+          const chat = await this.pool.query<{ machine_id: string; machine_label: string | null; org_id: string; project_folder: string | null }>(
+            `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
+             FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.id = $1`,
+            [chatId],
+          );
+          const row = chat.rows[0]!;
+          return new MachineExecutionEnv({
+            machineId: row.machine_id,
+            orgId: row.org_id,
+            chatId,
+            workdir: row.project_folder,
+            timeoutMs: this.config.clientToolTimeoutMs,
+            dispatch: this.dispatch()!,
+          });
+        }
+        if (kind === "server") {
+          const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
+          const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
+          const workspace = await this.agentSessions.workspaceForChat(chat.rows[0]!.org_id, chatId);
+          return new NodeExecutionEnv({ cwd: `${this.config.dataDir}/workspaces/${chat.rows[0]!.org_id}/${workspace}` });
+        }
+        const sandboxDir = `${sandboxRoot()}/${target.conversationId}`;
+        // NodeExecutionEnv.exec requires an existing cwd; the sandbox is
+        // created lazily on first tool use.
+        await mkdir(sandboxDir, { recursive: true });
+        return new NodeExecutionEnv({ cwd: sandboxDir });
       },
       onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
     }, BACKGROUND_CONTEXT);
