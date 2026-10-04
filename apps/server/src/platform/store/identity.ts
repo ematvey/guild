@@ -113,6 +113,26 @@ export class IdentityStore {
     return res.rows[0]!;
   }
 
+  /** The user's approval policy (crates/server/src/store/identity.rs
+   *  approval): "no such user" (404) is distinct from "user with NULL
+   *  policy" — the latter is the normal server-default case. */
+  async approval(userId: string): Promise<unknown> {
+    const res = await this.pool.query<{ approval: unknown }>(
+      "SELECT approval FROM users WHERE id = $1",
+      [userId],
+    );
+    if (res.rows.length === 0) throw ApiError.notFound("no such user");
+    return res.rows[0]!.approval;
+  }
+
+  /** Stores (or with null, clears) the user's approval policy. */
+  async setApproval(userId: string, approval: unknown): Promise<void> {
+    await this.pool.query(
+      "UPDATE users SET approval = $2 WHERE id = $1",
+      [userId, approval],
+    );
+  }
+
   /** Creates a managed user (admin console): email + password + role. A
    *  duplicate email is a 409; the org event "member.joined" is
    *  best-effort. */

@@ -16,6 +16,7 @@ import {
   sortedJson,
 } from "./error.js";
 import { secretFromCode } from "../store/pairing.js";
+import { rustJsonText } from "../provider/sse.js";
 import type { UserRow } from "../store/identity.js";
 
 /** UserInfo in protocol::api field order (direct struct serialization). */
@@ -155,4 +156,79 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: PlatformContext): 
     await ctx.pairing.revoke(user.id, id);
     return reply.status(200).send({});
   });
+
+  // The signed-in user's approval policy (migration 0026: user-scoped).
+  // NULL = the server default (default Ask, read Allow).
+  app.get("/api/v1/me/approval", async (req, reply) => {
+    const user = await requireUser(ctx, req);
+    const approval = await ctx.identity.approval(user.id);
+    return reply.status(200).type("application/json").send(rustJsonText({ approval }));
+  });
+
+  // Saves (or with `{"approval": null}`, clears) the user's approval
+  // policy. The stored JSON must deserialize as guild-core ApprovalPolicy —
+  // invalid policies are rejected with 400 before touching the row.
+  // Accepts the bare policy JSON, an `{"approval": …}` wrapper, or
+  // `{"approval": null}`.
+  app.put("/api/v1/me/approval", async (req, reply) => {
+    const user = await requireUser(ctx, req);
+    const body = requireJsonBody(req);
+    let value: unknown;
+    if ("approval" in body) {
+      if (body["approval"] === null) {
+        value = null;
+      } else {
+        validateApprovalPolicy(body["approval"]);
+        value = body["approval"];
+      }
+    } else {
+      validateApprovalPolicy(body);
+      value = body;
+    }
+    await ctx.identity.setApproval(user.id, value);
+    return reply.status(200).type("application/json").send(rustJsonText({ approval: value }));
+  });
+}
+
+/** serde-shaped check of a guild-core ApprovalPolicy: `{ default?:
+ *  "allow"|"ask"|"never", overrides?: Record<string, same> }` — unknown
+ *  fields are ignored, as serde does without deny_unknown_fields. The
+ *  rejection texts match the captured serde strings (fixtures/
+ *  m7-rust-capture.json). */
+function validateApprovalPolicy(value: unknown): void {
+  const reject = (detail: string): ApiError =>
+    ApiError.badRequest(`invalid approval policy: ${detail}`);
+  const serdeKind = (v: unknown): string => {
+    if (v === null) return "null";
+    if (typeof v === "number") return Number.isInteger(v) ? `integer \`${v}\`` : `floating point \`${v}\``;
+    if (typeof v === "boolean") return `boolean \`${v}\``;
+    if (typeof v === "string") return `string "${v}"`;
+    if (Array.isArray(v)) return "sequence";
+    return "map";
+  };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw reject(`invalid type: ${serdeKind(value)}, expected struct ApprovalPolicy`);
+  }
+  const record = value as Record<string, unknown>;
+  const approval = (v: unknown): void => {
+    if (typeof v !== "string" || (v !== "allow" && v !== "ask" && v !== "never")) {
+      throw reject(
+        typeof v === "string"
+          ? `unknown variant \`${v}\`, expected one of \`allow\`, \`ask\`, \`never\``
+          : `invalid type: ${serdeKind(v)}, expected string or map`,
+      );
+    }
+  };
+  if (record["default"] !== undefined && record["default"] !== null) {
+    approval(record["default"]);
+  }
+  const overrides = record["overrides"];
+  if (overrides !== undefined) {
+    if (overrides === null || typeof overrides !== "object" || Array.isArray(overrides)) {
+      throw reject(`invalid type: ${serdeKind(overrides)}, expected a map`);
+    }
+    for (const v of Object.values(overrides as Record<string, unknown>)) {
+      approval(v);
+    }
+  }
 }
