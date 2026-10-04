@@ -9,9 +9,36 @@ recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
-Updated 2026-10-04.
+Updated 2026-10-04 (post R1/R2 refactor).
 
 ## Latest decisions
+
+- **TS server architecture refactor: layers + narrow contexts (2026-10-04).**
+  Two subagent lanes on `agent-plane` (prompt files + report verdicts, per
+  the orchestration loop), dispatched on user instruction, fully autonomous:
+  **R1 DAL separation** (`refactor/dal-layers`, commit `f559ef1`) — domain
+  errors moved to neutral `platform/errors.ts` (wire shapes byte-identical),
+  shared protocol code to `platform/domain/thread-events.ts`,
+  `identity`→`EventStore` store-to-store import replaced by an injected
+  `EmitOrgEvent` capability, raw route-level `BEGIN` transactions in
+  `admin.ts`/`agents.ts` hoisted into store methods, and a new
+  `src/test/arch-layers.test.ts` enforcing the import graph (stores must not
+  import hub/harness/machines/chats/http/fastify; services must not import
+  fastify). **R2 context decomposition** (`refactor/contexts`, commit
+  `e72db91`) — `PlatformContext` demoted to composition root; route groups
+  now receive narrow slices from `platform/contexts.ts` (Infra, IdentityCtx,
+  ChatsCtx, GatewayCtx), cross-group stores passed explicitly; the
+  `(app as any).platform` test-seam cast replaced by Fastify
+  `app.decorate("platform")`; arch test also bans `PlatformContext` imports
+  in `platform/http/*` outside `register.ts`. Both lanes verified
+  independently after merge: typecheck clean, **236/236 tests** (was 230,
+  +6 arch rules), suite run 3× green (one non-reproducing hub-test flake
+  during lane R2 did not recur), dev stack rebuilt from the merged tree
+  (`guild-server-ts:latest`), live smoke green: login + chats list + CORS
+  preflight 204, 0 error lines in server logs. Lane reports:
+  `apps/server/R1-REFACTOR-REPORT.md`, `apps/server/R2-REFACTOR-REPORT.md`.
+  Layer rule now: http → services (harness/chats/hub/machines) → DAL
+  (platform/store) → infra (db/crypto/time/s3/clickhouse).
 
 - **M7 dev retirement complete — the ladder is DONE on the dev stack
   (2026-10-04).** The compose stack is TS-only (`compose-server-1`, image
