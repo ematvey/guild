@@ -21,6 +21,11 @@ import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
 import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
 import { registerMachineRoutes } from "../../http/machines.js";
 import { registerWsRoutes } from "../../http/ws.js";
+import { registerRegistryRoutes } from "./registry.js";
+import { registerReleaseRoutes } from "./releases.js";
+import { registerProjectRoutes } from "./projects.js";
+import { registerTeamRoutes } from "./teams.js";
+import { registerAdminUserRoutes, registerAdminPromptRoutes, registerAdminIntegrationRoutes } from "./admin.js";
 
 export interface NativeRouteGroup {
   /** Route group name (for the report / rollback notes). */
@@ -43,6 +48,17 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "machines", paths: ["/api/v1/machines", "/api/v1/machines/*"] },
   { name: "hub-ws", paths: ["/api/v1/ws/ticket"] },
   { name: "chats", paths: ["/api/v1/chats", "/api/v1/chats/*", "/api/v1/gateway/chat", "/api/v1/gateway/chat/*"] },
+  // M6 long tail. admin-integrations is a partial flip: the GET list, the
+  // secrets list, the per-tool curation PUT and the row DELETE are native;
+  // the save path (POST/PUT with connection tests) and the tools listing
+  // stay proxied until the connector ports land.
+  { name: "registry", paths: ["/api/v1/registry/*"] },
+  { name: "releases", paths: ["/api/v1/releases", "/api/v1/releases/*", "/api/v1/admin/releases", "/api/v1/admin/releases/*", "/api/v1/updates/latest.json"] },
+  { name: "projects", paths: ["/api/v1/projects", "/api/v1/projects/*"] },
+  { name: "teams", paths: ["/api/v1/admin/teams", "/api/v1/admin/teams/*"] },
+  { name: "admin-users", paths: ["/api/v1/admin/users", "/api/v1/admin/users/*"] },
+  { name: "admin-prompts", paths: ["/api/v1/admin/assistant-prompt", "/api/v1/admin/approval-policy-prompt"] },
+  { name: "admin-integrations", paths: ["GET /api/v1/admin/integrations", "GET /api/v1/admin/integrations/*/secrets", "PUT /api/v1/admin/integrations/*/tools/*", "DELETE /api/v1/admin/integrations/*"] },
 ];
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
@@ -89,6 +105,14 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerWsRoutes(scope, ctx);
     registerChatsRoutes(scope, ctx);
     registerThreadStreamRoute(scope, ctx);
+    // M6 long tail.
+    registerRegistryRoutes(scope, ctx);
+    registerReleaseRoutes(scope, ctx);
+    registerProjectRoutes(scope, ctx);
+    registerTeamRoutes(scope, ctx);
+    registerAdminUserRoutes(scope, ctx);
+    registerAdminPromptRoutes(scope, ctx);
+    registerAdminIntegrationRoutes(scope, ctx);
   });
 
   // The LLM gateway surfaces (/openai/v1, /anthropic/v1) render errors in
