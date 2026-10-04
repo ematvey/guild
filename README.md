@@ -6,11 +6,15 @@ level. Orgs own their data and their LLM resources.
 - **Desktop client** — Tauri v2 (`apps/desktop`): minimal codex/cowork-style UI.
 - **Local engine** — `guild-app-server` (`crates/app-server`): agent loop,
   tools, MCP; talks to the UI over stdio JSON-RPC and to the cloud over HTTPS.
-- **Cloud server** — `guild-server` (`crates/server`): auth (managed + OIDC),
-  LLM gateway (OpenAI-shaped + Anthropic-shaped), chat history, org registry,
-  integrations runtime (Restate), web UI.
+- **Cloud server** — TypeScript Fastify app (`apps/server`) on
+  `@earendil-works/pi-durable`: auth (managed + OIDC), LLM gateway
+  (OpenAI-shaped + Anthropic-shaped), chats/turns (durable conversations),
+  hub machine links, org registry, releases, integrations tool API, web UI.
+  The historical Rust implementation (`crates/server`) remains in the repo
+  as a buildable record.
 
-Spec: `docs/specs/2026-09-09-guild-design.md`.
+Spec: `docs/specs/2026-09-09-guild-design.md`, TS-server rebuild design:
+`docs/specs/2026-10-04-ts-server-pi-durable-design.md`.
 
 ## Layout
 
@@ -18,7 +22,8 @@ Spec: `docs/specs/2026-09-09-guild-design.md`.
 crates/protocol     shared types (JSON-RPC + cloud API)
 crates/guild-core   agent loop, tools, provider clients
 crates/app-server   local engine binary
-crates/server       cloud server (api + worker roles)
+crates/server       historical Rust cloud server (retired from the dev stack)
+apps/server         TS cloud server (Fastify + pi-durable)
 apps/desktop        Tauri desktop client
 apps/webui          web UI (later milestone)
 deploy/compose      docker compose bundle
@@ -37,8 +42,8 @@ cargo clippy --workspace -- -D warnings
 
 ## Run the stack
 
-See `deploy/README.md` (docker compose: guild-server, Postgres, ClickHouse,
-MinIO, Restate).
+See `deploy/README.md` (docker compose: the TS server, Postgres,
+ClickHouse, rustfs).
 
 ## Headless client
 
