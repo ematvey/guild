@@ -16,6 +16,8 @@ import { registerGatewayAdminRoutes } from "./gateway.js";
 import { registerApiKeyRoutes } from "./api_keys.js";
 import { registerUsageRoutes } from "./usage.js";
 import { registerChatsRoutes } from "./chats.js";
+import { registerAgentSessionRoutes } from "./agents.js";
+import { registerToolArtifactRoutes } from "./tool-artifacts.js";
 import { registerThreadStreamRoute } from "./thread-stream.js";
 import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
 import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
@@ -43,6 +45,9 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "machines", paths: ["/api/v1/machines", "/api/v1/machines/*"] },
   { name: "hub-ws", paths: ["/api/v1/ws/ticket"] },
   { name: "chats", paths: ["/api/v1/chats", "/api/v1/chats/*", "/api/v1/gateway/chat", "/api/v1/gateway/chat/*"] },
+  // M4: workspace agent sessions + tool artifacts (the spill surface).
+  { name: "agents", paths: ["/api/v1/agents/sessions", "/api/v1/agents/sessions/*"] },
+  { name: "tool-artifacts", paths: ["/api/v1/tool_artifacts/*", "/api/v1/chats/*/tool_artifacts"] },
 ];
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
@@ -88,6 +93,8 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerMachineRoutes(scope, ctx);
     registerWsRoutes(scope, ctx);
     registerChatsRoutes(scope, ctx);
+    registerAgentSessionRoutes(scope, ctx);
+    registerToolArtifactRoutes(scope, ctx);
     registerThreadStreamRoute(scope, ctx);
   });
 
