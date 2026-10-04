@@ -5,14 +5,8 @@
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { PlatformContext } from "../context.js";
-import {
-  ApiError,
-  invalidTypeError,
-  missingFieldError,
-  parseUuidParam,
-  requireUser,
-  RAW_BODY,
-} from "./error.js";
+import { ApiError, invalidTypeError, missingFieldError, RAW_BODY } from "../errors.js";
+import { parseUuidParam, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
 import type { ProjectRow } from "../store/projects.js";
 

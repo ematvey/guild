@@ -5,7 +5,7 @@
 // flips running/completed from run_start/run_end — no outbox pump, the
 // admission is synchronous and durable).
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 
 export interface TurnCommand {

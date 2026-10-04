@@ -3,7 +3,7 @@
 // users download via short-lived signed URLs (bearer auth also accepted).
 
 import { createHash } from "node:crypto";
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import type { PlatformPool } from "../db.js";
 

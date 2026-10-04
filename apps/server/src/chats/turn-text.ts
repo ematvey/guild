@@ -5,7 +5,7 @@
 
 import { attachmentObjectKey, type AttachmentRow } from "../platform/store/attachments.js";
 import type { ObjectStore } from "../platform/s3.js";
-import type { MessageAttachment } from "./thread-events.js";
+import type { MessageAttachment } from "../platform/domain/thread-events.js";
 
 /** Loaded attachment bytes for the current turn, wire-ready: base64 plus
  *  the content type (data URIs are derived at use time, gated by the

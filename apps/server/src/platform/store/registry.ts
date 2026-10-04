@@ -2,7 +2,7 @@
 // integrations (crates/server/src/store/registry.rs over the existing
 // registry_items/registry_versions tables).
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import { uuidv7 } from "../time.js";
 import type { PlatformPool } from "../db.js";

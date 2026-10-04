@@ -37,7 +37,7 @@ import { NotifyHub } from "./notify.js";
 import { FeedForwarder } from "../hub/feed.js";
 import { ClickhouseClient } from "./clickhouse.js";
 import { UsageSink } from "./usage.js";
-import { ApiError } from "./http/error.js";
+import { ApiError } from "./errors.js";
 import type { GatewayCredential } from "./http/llm.js";
 import type { Logger } from "pino";
 
@@ -119,7 +119,8 @@ export class PlatformContext {
   ) {
     this.pool = createPlatformPool(config.databaseUrl, config.poolMax);
     this.objects = new ObjectStore(config);
-    this.identity = new IdentityStore(this.pool);
+    this.identity = new IdentityStore(this.pool, (orgId, kind, payload) =>
+      this.events.emit(orgId, kind, payload));
     this.pairing = new PairingStore(this.pool);
     this.events = new EventStore(this.pool);
     this.attachments = new AttachmentStore(this.pool);

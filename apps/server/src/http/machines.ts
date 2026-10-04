@@ -7,7 +7,8 @@
 
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../platform/context.js";
-import { ApiError, parseUuidParam, requireJsonBody, requireUser } from "../platform/http/error.js";
+import { ApiError } from "../platform/errors.js";
+import { parseUuidParam, requireJsonBody, requireUser } from "../platform/http/error.js";
 import type { MachineRow } from "../platform/store/machines.js";
 
 /** MachineInfo wire shape. The Rust handler serializes each row through

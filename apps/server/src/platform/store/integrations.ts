@@ -3,7 +3,7 @@
 // AES-256-GCM encrypted per-integration secrets that never leave the store
 // in plaintext except through resolve.
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import { decryptSecret, encryptSecret, maskSecretLen } from "../crypto.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 import type { PlatformPool } from "../db.js";
@@ -52,6 +52,53 @@ export class IntegrationStore {
       [orgId, name, JSON.stringify(config), enabled],
     );
     return res.rows[0]!.id as string;
+  }
+
+  /** Sets one tool's per-tool curation (`enabled`, `approval`) under a row
+   *  lock: the read-modify-write of `config.tools` runs in one transaction —
+   *  two concurrent PUTs (or a racing settings save) must never drop each
+   *  other's curation entry. Entries for not-currently-declared tools are
+   *  allowed — they are how a preset survives a bundle republish. Returns
+   *  the integration row's name (for the caller's org audit event). */
+  async curateTool(
+    orgId: string,
+    id: string,
+    tool: string,
+    enabled: boolean,
+    approval: string,
+  ): Promise<string> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const rowRes = await client.query(
+        "SELECT config, name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
+        [orgId, id],
+      );
+      const stored = rowRes.rows[0];
+      if (stored === undefined) throw ApiError.notFound("unknown integration");
+      const name = stored.name as string;
+      const config =
+        stored.config !== null && typeof stored.config === "object" && !Array.isArray(stored.config)
+          ? { ...(stored.config as Record<string, unknown>) }
+          : {};
+      const tools =
+        config["tools"] !== null && typeof config["tools"] === "object" && !Array.isArray(config["tools"])
+          ? { ...(config["tools"] as Record<string, unknown>) }
+          : {};
+      tools[tool] = { enabled, approval };
+      config["tools"] = tools;
+      await client.query(
+        "UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3",
+        [orgId, JSON.stringify(config), id],
+      );
+      await client.query("COMMIT");
+      return name;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async get(orgId: string, id: string): Promise<IntegrationRow | null> {

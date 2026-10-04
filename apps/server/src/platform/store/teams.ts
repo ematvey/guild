@@ -2,7 +2,7 @@
 // (crates/server/src/store/teams.rs). Members carry the org's user list
 // shape (UserListRow, same as admin users).
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 import type { PlatformPool } from "../db.js";
 import type { UserListRow } from "./identity.js";

@@ -5,10 +5,10 @@
 // snake_case enum, fields in variant declaration order, `None` project
 // fields skipped, `has_more_events` always present.
 
-import { threadEventRowWire, type ThreadEventRow } from "./thread-events.js";
+import { threadEventRowWire, type ThreadEventRow } from "../platform/domain/thread-events.js";
 import type { PlatformContext } from "../platform/context.js";
 import type { WsServerMsg } from "../hub/protocol.js";
-import { ApiError } from "../platform/http/error.js";
+import { ApiError } from "../platform/errors.js";
 import type { UserRow } from "../platform/store/identity.js";
 
 export interface ThreadStateCapture {

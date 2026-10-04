@@ -1,7 +1,7 @@
 // Chat attachments (spec §4.3/§5, crates/server/src/store/attachments.rs):
 // metadata in Postgres, bytes in object storage under the object key.
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 

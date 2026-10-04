@@ -7,7 +7,7 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { normalizeThreadEvent, threadEventRowWire } from "../chats/thread-events.js";
+import { normalizeThreadEvent, threadEventRowWire } from "../platform/domain/thread-events.js";
 import { threadStateWire } from "../chats/thread-state.js";
 
 const FINAL_FRAME = readFileSync(new URL("./fixtures/m3-live/final-thread-state.txt", import.meta.url), "utf8").trim();
