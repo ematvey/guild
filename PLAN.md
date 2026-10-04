@@ -13,6 +13,29 @@ Updated 2026-10-04.
 
 ## Latest decisions
 
+- **M7 dev retirement complete — the ladder is DONE on the dev stack
+  (2026-10-04).** The compose stack is TS-only (`compose-server-1`, image
+  `guild-server-ts`); the Rust `server-rust` service and the
+  proxy-everything layer are removed (routines/hooks/internal answer the
+  clean 404 envelope — deferred per decision 8). Final verification:
+  227 tests green (22 suites), headless client login + a real
+  GLM-5.3-Flash turn through the all-TS stack (M7-SMOKE-OK), and the real
+  shipped desktop daemon (WORKSTATION 0.5.33) linked through the TS hub with
+  zero errors. Prod ladder (`~/guild-prod`, :18081) is the remaining step —
+  held until maintainer validates dev (the plan gates prod on "after dev
+  stabilizes"). Backup of the dev DB taken before the importer's final
+  run: `/tmp/guild-backup/guild-2026-10-04-0332.sql`.
+- **M1 platform core + M4 workspace sessions landed (2026-10-04).** M1:
+  native auth (opaque sessions/argon2id/OIDC), org, events, attachments
+  with 64 golden Rust fixtures replaying byte-semantically. M4: workspace
+  agent sessions rooted at `workspaces/<org>/<name>` under `GUILD_DATA_DIR`,
+  the exec-policy matcher at asset parity (32 rules), durable approval
+  gates (block/resume), machine-tool dispatch over the hub (fake-daemon
+  round-trip + real-daemon link verified), tool-artifact spill. Verified
+  live: an agent-session turn wrote a file into the workspace sandbox and
+  read it back; the policy correctly blocked shell tools with
+  `GUILD_ALLOW_SHELL_TOOLS` unset (Rust parity). Reports:
+  `apps/server/M1-REPORT.md`, `apps/server/M4-REPORT.md`.
 - **M7 retirement landed (2026-10-04).** `apps/server` ported the last
   proxied surfaces on `m7/retire`: integration tool API (list, tools
   listing, execute with the Rust error/audit shapes; built-in connector
