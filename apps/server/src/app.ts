@@ -14,6 +14,7 @@ import { attachWsUpgrade } from "./http/ws.js";
 import { wireWsSync } from "./chats/ws-sync.js";
 import { registerWebRoutes } from "./http/web.js";
 import { registerFaroRoute } from "./platform/http/faro.js";
+import { registerCors } from "./http/cors.js";
 
 const require = createRequire(import.meta.url);
 
@@ -57,6 +58,10 @@ export async function buildApp(config: Config) {
   // the durable_* migrations + the chat-conversation mapping idempotently
   // and opens the harness. Turn submission paths reuse it (lazy no-op).
   await platform.runtime.start();
+
+  // CORS: the tower-http layer's port — preflights answered before routing,
+  // ACAO rides for the allow-listed webview origins (crates/server/src/http/mod.rs).
+  registerCors(app as unknown as Parameters<typeof registerCors>[0]);
 
   // Native health route — same shape as the Rust one
   // (crates/server/src/http/mod.rs): {"status":"ok","version":...}.
