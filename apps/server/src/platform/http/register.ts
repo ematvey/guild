@@ -6,6 +6,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../context.js";
+import type { ChatsCtx, GatewayCtx, IdentityCtx, InfraContext } from "../contexts.js";
 import { RAW_BODY, JSON_REJECTION_PREFIX, TextError } from "../errors.js";
 import { installErrorHandling } from "./error.js";
 import { registerAuthRoutes } from "./auth.js";
@@ -71,6 +72,13 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
 ];
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
+  // Composition glue: the full context is sliced here and each route group
+  // receives only the collaborators it uses.
+  const infra: InfraContext = ctx;
+  const auth: IdentityCtx = ctx;
+  const chats: ChatsCtx = ctx;
+  const gateway: GatewayCtx = ctx;
+
   await app.register(async (scope) => {
     installErrorHandling(scope);
 
@@ -100,30 +108,30 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
       done(null, body);
     });
 
-    registerAuthRoutes(scope, ctx);
-    registerOrgRoutes(scope, ctx);
-    registerEventRoutes(scope, ctx);
-    registerAttachmentRoutes(scope, ctx);
-    registerOidcRoutes(scope, ctx);
-    registerGatewayAdminRoutes(scope, ctx);
-    registerApiKeyRoutes(scope, ctx);
-    registerUsageRoutes(scope, ctx);
+    registerAuthRoutes(scope, auth, ctx.pool);
+    registerOrgRoutes(scope, auth, ctx.objects);
+    registerEventRoutes(scope, auth);
+    registerAttachmentRoutes(scope, auth, infra);
+    registerOidcRoutes(scope, auth);
+    registerGatewayAdminRoutes(scope, gateway, auth);
+    registerApiKeyRoutes(scope, auth);
+    registerUsageRoutes(scope, auth, infra);
     // M5 hub core: machine registry routes + the ws-ticket mint (the /api/v1/ws
     // upgrade itself is a server-level 'upgrade' listener, not an HTTP route).
-    registerMachineRoutes(scope, ctx);
-    registerWsRoutes(scope, ctx);
-    registerChatsRoutes(scope, ctx);
-    registerAgentSessionRoutes(scope, ctx);
-    registerToolArtifactRoutes(scope, ctx);
-    registerThreadStreamRoute(scope, ctx);
+    registerMachineRoutes(scope, chats, auth);
+    registerWsRoutes(scope, chats, auth);
+    registerChatsRoutes(scope, chats, gateway, auth, ctx.objects);
+    registerAgentSessionRoutes(scope, chats, gateway, auth, ctx.config);
+    registerToolArtifactRoutes(scope, chats, auth, infra);
+    registerThreadStreamRoute(scope, chats, auth, ctx.pool);
     // M6 long tail.
-    registerRegistryRoutes(scope, ctx);
-    registerReleaseRoutes(scope, ctx);
-    registerProjectRoutes(scope, ctx);
-    registerTeamRoutes(scope, ctx);
-    registerAdminUserRoutes(scope, ctx);
-    registerAdminPromptRoutes(scope, ctx);
-    registerAdminIntegrationRoutes(scope, ctx);
+    registerRegistryRoutes(scope, gateway, auth, ctx.objects);
+    registerReleaseRoutes(scope, gateway, auth, ctx.objects);
+    registerProjectRoutes(scope, gateway, auth);
+    registerTeamRoutes(scope, auth);
+    registerAdminUserRoutes(scope, auth);
+    registerAdminPromptRoutes(scope, auth);
+    registerAdminIntegrationRoutes(scope, gateway, auth);
   });
 
   // The script-facing integration tool API accepts ANY content type as raw
@@ -136,7 +144,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
       done(null, body);
     });
-    registerIntegrationToolRoutes(scope, ctx);
+    registerIntegrationToolRoutes(scope, auth, gateway);
   });
 
   // The LLM gateway surfaces (/openai/v1, /anthropic/v1) render errors in
@@ -164,7 +172,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
       done(null, body);
     });
-    registerOpenAiRoutes(scope, ctx, ctx);
-    registerAnthropicRoutes(scope, ctx, ctx);
+    registerOpenAiRoutes(scope, gateway);
+    registerAnthropicRoutes(scope, gateway);
   });
 }

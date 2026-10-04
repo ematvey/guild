@@ -12,7 +12,8 @@
 // frame builders for the byte-compat member socket.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { ChatsCtx, GatewayCtx, IdentityCtx } from "../contexts.js";
+import type { ObjectStore } from "../s3.js";
 import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError, sortedJson } from "../errors.js";
 import { parseUuidParam, queryParam, requireJsonBody, requireUser } from "./error.js";
 import { uuidv7 } from "../time.js";
@@ -60,9 +61,9 @@ export function chatWire(row: {
 
 /** The thread list rows (http/feed.rs thread_list): hub-aware online flags
  *  stay false until M5 owns the hub. */
-async function threadList(ctx: PlatformContext, orgId: string, userId: string, archived: boolean): Promise<unknown[]> {
-  const chats = archived ? await ctx.chats.listArchivedChats(orgId, userId) : await ctx.chats.listChats(orgId, userId);
-  return chats.map((row) =>
+async function threadList(chats: ChatsCtx, orgId: string, userId: string, archived: boolean): Promise<unknown[]> {
+  const rows = archived ? await chats.chats.listArchivedChats(orgId, userId) : await chats.chats.listChats(orgId, userId);
+  return rows.map((row) =>
     chatWire({
       id: row.id,
       org_id: row.org_id,
@@ -83,8 +84,8 @@ async function threadList(ctx: PlatformContext, orgId: string, userId: string, a
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 
 /** GET /api/v1/chats/{id}/thread body: serde_json::json! → sorted keys. */
-async function threadBody(ctx: PlatformContext, user: UserRow, chatId: string): Promise<string> {
-  const events = await ctx.threads.listEvents(user.org_id, chatId);
+async function threadBody(chats: ChatsCtx, gateway: GatewayCtx, user: UserRow, chatId: string): Promise<string> {
+  const events = await chats.threads.listEvents(user.org_id, chatId);
   let tokens = 0;
   let model: string | null = null;
   for (let i = events.length - 1; i >= 0; i--) {
@@ -98,7 +99,7 @@ async function threadBody(ctx: PlatformContext, user: UserRow, chatId: string): 
   const max =
     model === null
       ? DEFAULT_CONTEXT_WINDOW
-      : ((await ctx.gatewayStore.contextWindow(user.org_id, model)) ?? DEFAULT_CONTEXT_WINDOW);
+      : ((await gateway.gatewayStore.contextWindow(user.org_id, model)) ?? DEFAULT_CONTEXT_WINDOW);
   // serde_json::json! renders the outer + context maps sorted (BTreeMap);
   // each event row interpolates as a Value — sorted keys at every level.
   const contextModel = model === null ? "null" : JSON.stringify(model);
@@ -116,9 +117,15 @@ export function rawRows(events: readonly ThreadEventRow[]): { __raw: string }[] 
 // Route registration
 // ---------------------------------------------------------------------------
 
-export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerChatsRoutes(
+  app: FastifyInstance,
+  chats: ChatsCtx,
+  gateway: GatewayCtx,
+  auth: IdentityCtx,
+  objects: ObjectStore,
+): void {
   app.post("/api/v1/chats", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
     const rawTitle = body["title"];
     if (rawTitle !== undefined && rawTitle !== null && typeof rawTitle !== "string") {
@@ -127,39 +134,39 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
     const title = typeof rawTitle === "string" && rawTitle.trim() !== "" ? rawTitle.trim() : null;
     const projectId = optionalUuidField(body, "project_id");
     const chat = projectId
-      ? await ctx.chats.createChatForProject(user.org_id, user.id, title, projectId)
-      : await ctx.chats.createChat(user.org_id, user.id, title, null);
+      ? await chats.chats.createChatForProject(user.org_id, user.id, title, projectId)
+      : await chats.chats.createChat(user.org_id, user.id, title, null);
     return reply.status(200).send(chatWire({ ...chat, unread: false }));
   });
 
   app.get("/api/v1/chats", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const archived = ["1", "true"].includes(queryParam(req, "archived") ?? "");
-    const chats = await threadList(ctx, user.org_id, user.id, archived);
-    return reply.status(200).send(JSON.stringify({ chats }));
+    const list = await threadList(chats, user.org_id, user.id, archived);
+    return reply.status(200).send(JSON.stringify({ chats: list }));
   });
 
   app.get("/api/v1/chats/:id/thread", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    await ctx.chats.getChat(user.org_id, chatId, user);
-    return reply.status(200).type("application/json").send(await threadBody(ctx, user, chatId));
+    await chats.chats.getChat(user.org_id, chatId, user);
+    return reply.status(200).type("application/json").send(await threadBody(chats, gateway, user, chatId));
   });
 
   app.post("/api/v1/chats/:id/thread", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    await ctx.chats.getChat(user.org_id, chatId, user);
+    await chats.chats.getChat(user.org_id, chatId, user);
     const body = requireJsonBody(req);
     const event = coerceThreadEvent(body);
     // Engine-path turn join: `turn: 0` means "join the latest turn"; the
     // server assigns the real turn number.
     let resolved = event;
     if (event.type === "tool_result" && event.turn === 0) {
-      const turn = await ctx.threads.latestTurn(chatId);
+      const turn = await chats.threads.latestTurn(chatId);
       resolved = { ...event, turn: Math.max(1, turn) } as typeof event;
     }
-    const row = await ctx.threads.appendEvent(chatId, resolved);
+    const row = await chats.threads.appendEvent(chatId, resolved);
     // json! → sorted outer keys; the event keeps its serde variant order.
     return reply
       .status(200)
@@ -167,24 +174,24 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
   });
 
   app.post("/api/v1/chats/:id/project", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     const raw = body["project_id"];
     const projectId = typeof raw === "string" && raw !== "" ? validateUuid(raw) : null;
-    const chat = await ctx.chats.setProject(user.org_id, chatId, user, projectId);
+    const chat = await chats.chats.setProject(user.org_id, chatId, user, projectId);
     return reply.status(200).send(chatWire({ ...chat }));
   });
 
   app.get("/api/v1/chats/:id/approval", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    const approval = await ctx.chats.approval(user.org_id, user.id, chatId);
+    const approval = await chats.chats.approval(user.org_id, user.id, chatId);
     return reply.status(200).send(JSON.stringify({ default: approval?.default ?? null }));
   });
 
   app.post("/api/v1/chats/:id/approval", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     const mode = body["default"];
@@ -201,19 +208,19 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
         `unknown approval mode ${String(mode)} — expected ask, approve_for_me, full_access, or default`,
       );
     }
-    await ctx.chats.setApproval(user.org_id, user.id, chatId, policy);
+    await chats.chats.setApproval(user.org_id, user.id, chatId, policy);
     return reply.status(200).send(JSON.stringify({ default: responseMode }));
   });
 
   app.post("/api/v1/chats/:id/read", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    await ctx.chats.markRead(user.org_id, chatId, user);
+    await chats.chats.markRead(user.org_id, chatId, user);
     return reply.status(200).send(JSON.stringify({ ok: true }));
   });
 
   app.patch("/api/v1/chats/:id", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     const rawTitle = body["title"];
@@ -223,12 +230,12 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
     const title = typeof rawTitle === "string" ? rawTitle.trim() : undefined;
     const effectiveTitle = title !== undefined && title !== "" ? title : title === "" ? null : undefined;
     const archived = typeof body["archived"] === "boolean" ? body["archived"] : undefined;
-    const chat = await ctx.chats.updateChat(user.org_id, chatId, user, effectiveTitle ?? undefined, archived ?? null);
+    const chat = await chats.chats.updateChat(user.org_id, chatId, user, effectiveTitle ?? undefined, archived ?? null);
     if (archived === true) {
       // Archiving must also end any in-flight generation, or an archived
       // chat keeps spinning where the user can no longer reach it.
-      await ctx.runtime.stopChat(chatId).catch(() => {});
-      await ctx.turnCommands.cancelAllWaiting(chatId);
+      await chats.runtime.stopChat(chatId).catch(() => {});
+      await chats.turnCommands.cancelAllWaiting(chatId);
     }
     return reply.status(200).send(chatWire({ ...chat, unread: false }));
   });
@@ -236,25 +243,25 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
   // --- Gateway chat commands (the M3 flip of gateway.rs's chat half) ---
 
   app.post("/api/v1/gateway/chat", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
-    return reply.status(200).type("application/json").send(await submitTurn(ctx, user, req, body));
+    return reply.status(200).type("application/json").send(await submitTurn(chats, gateway, auth, objects, user, req, body));
   });
 
   app.post("/api/v1/gateway/chat/:id/stop", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    await ctx.chats.getChat(user.org_id, chatId, user);
-    await ctx.turnCommands.cancelWaitingHead(chatId);
-    await ctx.runtime.stopChat(chatId);
+    await chats.chats.getChat(user.org_id, chatId, user);
+    await chats.turnCommands.cancelWaitingHead(chatId);
+    await chats.runtime.stopChat(chatId);
     return reply.status(200).send(JSON.stringify({ stopped: true }));
   });
 
   app.post("/api/v1/gateway/chat/:id/approvals/:callId", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const callId = (req.params as Record<string, string>)["callId"] ?? "";
-    await ctx.chats.getChat(user.org_id, chatId, user);
+    await chats.chats.getChat(user.org_id, chatId, user);
     const body = requireJsonBody(req);
     if (typeof body["approved"] !== "boolean") {
       throw ApiError.badRequest("missing approved");
@@ -265,7 +272,7 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
     void reason; // live-gate forwarding arrives with the M4 approval lane
 
     // Recorded decision: echo it verbatim (late clicks are idempotent).
-    const events = await ctx.threads.listEvents(user.org_id, chatId);
+    const events = await chats.threads.listEvents(user.org_id, chatId);
     for (let i = events.length - 1; i >= 0; i--) {
       const ev = events[i]!.event;
       if (ev.type === "approval_decision" && ev.call_id === callId) {
@@ -286,9 +293,9 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
     // Live turn: the M4 approval gate's tool task polls the journaled
     // decision (the block/resume contract) — appending it here resolves the
     // suspended gate within the poll interval.
-    const generating = await ctx.chats.isGenerating(user.org_id, chatId);
+    const generating = await chats.chats.isGenerating(user.org_id, chatId);
     if (generating) {
-      await ctx.threads.appendEvent(chatId, {
+      await chats.threads.appendEvent(chatId, {
         type: "approval_decision",
         call_id: callId,
         approved,
@@ -300,7 +307,7 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
     // Orphaned call (no recorded decision, no live turn): journal the
     // expired marker so a reload shows the settled card.
     const APPROVAL_EXPIRED_REASON = "expired — no turn was waiting for this approval";
-    await ctx
+    await chats
       .threads
       .appendEvent(chatId, { type: "approval_decision", call_id: callId, approved: false, reason: APPROVAL_EXPIRED_REASON, expired: true });
     return reply.status(200).send(
@@ -317,10 +324,10 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
   });
 
   app.post("/api/v1/gateway/chat/:id/compact", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    await ctx.chats.getChat(user.org_id, chatId, user);
-    await ctx.runtime.compactChat(chatId);
+    await chats.chats.getChat(user.org_id, chatId, user);
+    await chats.runtime.compactChat(chatId);
     return reply.status(200).send(JSON.stringify({ ok: true }));
   });
 }
@@ -330,7 +337,10 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
 // ---------------------------------------------------------------------------
 
 async function submitTurn(
-  ctx: PlatformContext,
+  chats: ChatsCtx,
+  gateway: GatewayCtx,
+  auth: IdentityCtx,
+  objects: ObjectStore,
   user: UserRow,
   req: FastifyRequest,
   body: Record<string, unknown>,
@@ -362,14 +372,14 @@ async function submitTurn(
   }
 
   // Org scoping: the chat must belong to the caller's org.
-  const chat = await ctx.chats.getChat(user.org_id, chatId, user);
+  const chat = await chats.chats.getChat(user.org_id, chatId, user);
 
   const commandId =
     body["user_message_id"] === undefined || body["user_message_id"] === null ? uuidv7() : validateUuid(String(body["user_message_id"]));
   // The canonical re-serialization of ChatCompletionRequest (struct order,
   // defaults filled, None skipped) — the idempotency key material.
   const request = canonicalChatRequest(body, chatId, model, commandId);
-  const existing = await ctx.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
+  const existing = await chats.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
   if (existing) {
     // A duplicate delivery must not change the project binding or steer
     // another running command.
@@ -391,17 +401,17 @@ async function submitTurn(
   let machineLabel = chat.machine_label;
   let projectId = optionalUuidField(body, "project_id");
   if (projectId !== null) {
-    const project = await ctx.chats.projectForBinding(user.org_id, projectId, user.id);
+    const project = await chats.chats.projectForBinding(user.org_id, projectId, user.id);
     if (project === undefined) throw ApiError.notFound("no such project");
     machineLabel = project.machine_label;
     machineId = project.machine_id;
   } else if (chat.project_id !== null) {
-    const project = await ctx.chats.projectForBinding(user.org_id, chat.project_id, user.id);
+    const project = await chats.chats.projectForBinding(user.org_id, chat.project_id, user.id);
     if (project !== undefined) {
       machineLabel = project.machine_label;
       machineId = project.machine_id;
       if (chat.machine_id !== project.machine_id) {
-        await ctx.chats.setMachine(user.org_id, chatId, project.machine_id, machineLabel);
+        await chats.chats.setMachine(user.org_id, chatId, project.machine_id, machineLabel);
       }
       projectId = chat.project_id;
     }
@@ -412,14 +422,14 @@ async function submitTurn(
   const attachmentIds = optionalUuidArrayField(body, "attachment_ids");
   let routeModalities: string[] = [];
   try {
-    const route = await ctx.gatewayStore.resolveRoute(user.org_id, model, ctx.masterKey());
+    const route = await gateway.gatewayStore.resolveRoute(user.org_id, model, gateway.masterKey());
     routeModalities = route.modalities;
   } catch {
     // A missing route fails later at submission time; the visible echo must
     // not depend on it.
   }
-  const attachmentRows = await ctx.attachments.list(user.org_id, chatId);
-  const media = await loadMediaMap(ctx.objects, user.org_id, attachmentRows, [], attachmentIds);
+  const attachmentRows = await auth.attachments.list(user.org_id, chatId);
+  const media = await loadMediaMap(objects, user.org_id, attachmentRows, [], attachmentIds);
   const { chips, inline } = buildTurnText(attachmentIds, media, attachmentRows, routeModalities);
   const content = [userMessageText, inline].filter((part) => part !== "").join("\n\n");
   const { images } = mediaPartsFor(routeModalities, chips, media);
@@ -437,19 +447,19 @@ async function submitTurn(
     machine_label: machineLabel,
     attachment_ids: attachmentIds,
   };
-  const command = await ctx
+  const command = await chats
     .turnCommands
     .accept(commandId, user.org_id, user.id, chatId, request, payload, { content, attachments: chips });
-  const submissionId = await ctx.runtime.submitTurn(chatId, user.org_id, {
+  const submissionId = await chats.runtime.submitTurn(chatId, user.org_id, {
     orgId: user.org_id,
     requestId: commandId,
     content,
     images,
     model,
   });
-  await ctx.turnCommands.submitted(commandId, `sub:${submissionId}`);
-  await ctx.chats.setGenerating(user.org_id, chatId, true);
-  const refreshed = await ctx.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
+  await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
+  await chats.chats.setGenerating(user.org_id, chatId, true);
+  const refreshed = await chats.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
   return commandAck(refreshed ?? command);
 }
 

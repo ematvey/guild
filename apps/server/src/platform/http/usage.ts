@@ -6,7 +6,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { queryParam, requireUser } from "./error.js";
-import type { PlatformContext } from "../context.js";
+import type { IdentityCtx } from "../contexts.js";
+import type { InfraContext } from "../contexts.js";
 import { errorText, startOfDayUtc, startOfMonthUtc } from "../usage.js";
 import { rustFloat, rustJsonText } from "../provider/sse.js";
 import { isUuid } from "../time.js";
@@ -56,7 +57,7 @@ function parseDate(s: string, field: string): Date {
  *  groups to team names (unknown ids — e.g. deleted rows — keep the raw
  *  value rather than disappearing from the breakdown). */
 async function resolveGroupNames(
-  ctx: PlatformContext,
+  infra: InfraContext,
   orgId: string,
   kind: string,
   rows: Record<string, unknown>[],
@@ -64,13 +65,13 @@ async function resolveGroupNames(
   if (kind !== "user" && kind !== "team") return rows;
   let byId: Map<string, string>;
   if (kind === "user") {
-    const res = await ctx.pool.query<{ id: string; email: string }>(
+    const res = await infra.pool.query<{ id: string; email: string }>(
       "SELECT id, email FROM users WHERE org_id = $1",
       [orgId],
     );
     byId = new Map(res.rows.map((u) => [u.id, u.email]));
   } else {
-    const res = await ctx.pool.query<{ id: string; name: string }>(
+    const res = await infra.pool.query<{ id: string; name: string }>(
       "SELECT id, name FROM teams WHERE org_id = $1",
       [orgId],
     );
@@ -86,7 +87,7 @@ async function resolveGroupNames(
   });
 }
 
-export function registerUsageRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerUsageRoutes(app: FastifyInstance, ctx: IdentityCtx, infra: InfraContext): void {
   app.get("/api/v1/usage", async (req) => {
     const user = await requireUser(ctx, req);
     const q = readQuery(req);
@@ -124,7 +125,7 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: PlatformContext):
 
     let rows: Record<string, unknown>[];
     try {
-      rows = await ctx.usage.client.query(sql, binds);
+      rows = await infra.usage.client.query(sql, binds);
     } catch (error) {
       const err = error as { unknownTable?: boolean; body?: string };
       if (err.unknownTable || (err.body ?? "").includes("UNKNOWN_TABLE")) {
@@ -133,7 +134,7 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: PlatformContext):
         throw ApiError.internal(`usage query failed: ${errorText(error)}`);
       }
     }
-    rows = await resolveGroupNames(ctx, user.org_id, kind, rows);
+    rows = await resolveGroupNames(infra, user.org_id, kind, rows);
     // cost_usd is an f64 column: serde renders integral floats with a
     // ".0" tail.
     rows = rows.map((r) => ({ ...r, cost_usd: rustFloat(Number(r["cost_usd"] ?? 0)) }));
@@ -185,7 +186,7 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: PlatformContext):
 
     let rows: Record<string, unknown>[];
     try {
-      rows = await ctx.usage.client.query(sql, binds);
+      rows = await infra.usage.client.query(sql, binds);
     } catch (error) {
       const err = error as { unknownTable?: boolean; body?: string };
       if (err.unknownTable || (err.body ?? "").includes("UNKNOWN_TABLE")) {
@@ -204,7 +205,7 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: PlatformContext):
       cost_usd: rustFloat(Number(r["cost_usd"] ?? 0)),
       requests: r["requests"],
     }));
-    rows = await resolveGroupNames(ctx, user.org_id, kind, rows);
+    rows = await resolveGroupNames(infra, user.org_id, kind, rows);
     return rustJsonText({ rows });
   });
 
@@ -219,7 +220,7 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: PlatformContext):
     const binds = (tsBound: number): (string | number)[] =>
       memberScoped ? [user.org_id, user.id, tsBound] : [user.org_id, tsBound];
     const sumSql = (tsBound: number) =>
-      ctx.usage.client
+      infra.usage.client
         .query(
           `SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events WHERE ${scope} ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE ts >= toDateTime(?)`,
           binds(tsBound),

@@ -2,7 +2,8 @@
 // upload bytes into object storage and reference them from a chat.
 
 import type { FastifyInstance } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { IdentityCtx } from "../contexts.js";
+import type { InfraContext } from "../contexts.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
 import { attachmentObjectKey, safeFilename } from "../store/attachments.js";
@@ -15,7 +16,7 @@ function queryOne(req: { url: string }, name: string): string | undefined {
   return value === null ? undefined : value;
 }
 
-export function registerAttachmentRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx, infra: InfraContext): void {
   app.post("/api/v1/chats/:chatId/attachments", async (req, reply) => {
     const user = await requireUser(ctx, req);
     const chatId = parseUuidParam(req, "chatId");
@@ -24,14 +25,14 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: PlatformCont
     if (filename === null) throw ApiError.badRequest("bad filename");
     const contentType = queryOne(req, "content_type") ?? "application/octet-stream";
     // chat must belong to the caller's org
-    const chat = await getChatOwned(ctx.pool, user.org_id, chatId, user);
+    const chat = await getChatOwned(infra.pool, user.org_id, chatId, user);
     const id = uuidv7();
     const key = attachmentObjectKey(user.org_id, id, filename);
     const bytes = Buffer.isBuffer(req.body)
       ? req.body
       : Buffer.from(typeof req.body === "string" ? req.body : []);
     try {
-      await ctx.objects.put(key, bytes);
+      await infra.objects.put(key, bytes);
     } catch (error) {
       throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
     }
@@ -50,7 +51,7 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: PlatformCont
   app.get("/api/v1/chats/:chatId/attachments", async (req, reply) => {
     const user = await requireUser(ctx, req);
     const chatId = parseUuidParam(req, "chatId");
-    await getChatOwned(ctx.pool, user.org_id, chatId, user);
+    await getChatOwned(infra.pool, user.org_id, chatId, user);
     const rows = await ctx.attachments.list(user.org_id, chatId);
     return reply
       .status(200)
@@ -63,11 +64,11 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: PlatformCont
     const row = await ctx.attachments.get(user.org_id, id);
     // The attachment rides a chat, so the chat's owner predicate applies:
     // org scoping alone would let a member pull another member's uploads.
-    await getChatOwned(ctx.pool, user.org_id, row.chat_id, user);
+    await getChatOwned(infra.pool, user.org_id, row.chat_id, user);
     const key = attachmentObjectKey(row.org_id, row.id, row.filename);
     let bytes: Buffer;
     try {
-      bytes = await ctx.objects.get(key);
+      bytes = await infra.objects.get(key);
     } catch (error) {
       throw ApiError.internal(`object store read failed: ${(error as Error).message}`);
     }

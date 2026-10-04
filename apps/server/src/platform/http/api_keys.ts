@@ -5,17 +5,17 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
-import type { PlatformContext } from "../context.js";
+import type { IdentityCtx } from "../contexts.js";
 import { rustJsonText } from "../provider/sse.js";
 
 /** The authenticated user from the session table, requiring the admin role. */
-async function requireAdminUser(ctx: PlatformContext, req: FastifyRequest) {
+async function requireAdminUser(ctx: IdentityCtx, req: FastifyRequest) {
   const user = await requireUser(ctx, req);
   if (user.role !== "admin") throw ApiError.forbidden();
   return user;
 }
 
-export function registerApiKeyRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerApiKeyRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   app.post("/api/v1/admin/api-keys", async (req) => {
     const admin = await requireAdminUser(ctx, req);
     const body = requireJsonBody(req);

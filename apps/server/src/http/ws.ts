@@ -16,7 +16,8 @@ import type { FastifyInstance } from "fastify";
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { PlatformContext } from "../platform/context.js";
+import type { ChatsCtx, IdentityCtx } from "../platform/contexts.js";
+import type { PlatformPool } from "../platform/db.js";
 import { ApiError } from "../platform/errors.js";
 import { requireUser } from "../platform/http/error.js";
 import type { UserRow } from "../platform/store/identity.js";
@@ -90,7 +91,7 @@ function sleep(ms: number): Promise<void> {
 // ---------------------------------------------------------------------------
 // HTTP side
 
-export function registerWsRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerWsRoutes(app: FastifyInstance, chats: ChatsCtx, ctx: IdentityCtx): void {
   app.post("/api/v1/ws/ticket", async (req, reply) => {
     const header = req.headers.authorization;
     if (typeof header !== "string" || !header.startsWith("Bearer ")) {
@@ -101,7 +102,7 @@ export function registerWsRoutes(app: FastifyInstance, ctx: PlatformContext): vo
     // the hash + expiry the ticket identity carries into the upgrade.
     const user = await requireUser(ctx, req);
     const [sessionHash, expiresAt] = await ctx.identity.sessionGrant(token);
-    const ticket = ctx.wsTickets.mint({ user, session_hash: sessionHash, expires_at: expiresAt });
+    const ticket = chats.wsTickets.mint({ user, session_hash: sessionHash, expires_at: expiresAt });
     return reply.status(200).send({ ticket });
   });
 }
@@ -114,7 +115,7 @@ export function registerWsRoutes(app: FastifyInstance, ctx: PlatformContext): vo
  *  is removed in app.ts, because two listeners double-assign the socket
  *  (ERR_HTTP_SOCKET_ASSIGNED, the M0 trap note). Rollback = re-enable the
  *  proxy flag and delete this attach call. */
-export function attachWsUpgrade(server: Server, ctx: PlatformContext): void {
+export function attachWsUpgrade(server: Server, chats: ChatsCtx, auth: IdentityCtx, pool: PlatformPool): void {
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     let query: UpgradeQuery;
@@ -124,12 +125,12 @@ export function attachWsUpgrade(server: Server, ctx: PlatformContext): void {
       rejectUpgrade(socket, 400, error instanceof Error ? error.message : "bad request");
       return;
     }
-    const identity = ctx.wsTickets.consume(query.ticket);
+    const identity = chats.wsTickets.consume(query.ticket);
     if (identity === null) {
       rejectUpgrade(socket, 401, "invalid or expired ticket");
       return;
     }
-    void sessionValid(ctx, identity.session_hash).then((valid) => {
+    void sessionValid(auth, identity.session_hash).then((valid) => {
       if (!valid) {
         rejectUpgrade(socket, 401, "session expired or revoked");
         return;
@@ -140,7 +141,7 @@ export function attachWsUpgrade(server: Server, ctx: PlatformContext): void {
       }
       const peerIp = ipOf(req);
       wss.handleUpgrade(req, socket, head, (ws) => {
-        void driveSocket(ctx, identity, query, peerIp, ws);
+        void driveSocket(chats, auth, pool, identity, query, peerIp, ws);
       });
     });
   });
@@ -206,10 +207,10 @@ type SocketExitReason = "displaced" | "reader" | "writer" | "heartbeat" | "sessi
 
 /** Each challenge has a unique payload. Unrelated traffic cannot renew
  *  liveness. (Rust `session_valid` — 2s timeout on the DB check.) */
-async function sessionValid(ctx: PlatformContext, hash: string): Promise<boolean> {
+async function sessionValid(auth: IdentityCtx, hash: string): Promise<boolean> {
   try {
     const result = await Promise.race([
-      ctx.identity.sessionExpiry(hash),
+      auth.identity.sessionExpiry(hash),
       new Promise<"timeout">((resolve) => {
         const timer = setTimeout(() => resolve("timeout"), 2_000);
         timer.unref?.();
@@ -225,12 +226,12 @@ async function sessionValid(ctx: PlatformContext, hash: string): Promise<boolean
  *  only by its owning user (the registry row is the durable identity; the
  *  hub enforces the same rule against a live slot). An unregistered id is a
  *  new pairing and passes. Registry unavailability fails closed. */
-async function machineSlotOwned(ctx: PlatformContext, user: UserRow, machineId: string): Promise<boolean> {
+async function machineSlotOwned(chats: ChatsCtx, user: UserRow, machineId: string): Promise<boolean> {
   try {
-    const owner = await ctx.machines.ownerOf(machineId);
+    const owner = await chats.machines.ownerOf(machineId);
     return owner === null || owner[0] === user.id;
   } catch (error) {
-    ctx.wsLog?.(`machine ownership gate failed for ${machineId}: ${errorMessage(error)}`);
+    chats.wsLog?.(`machine ownership gate failed for ${machineId}: ${errorMessage(error)}`);
     return false;
   }
 }
@@ -243,7 +244,7 @@ function errorMessage(error: unknown): string {
  *  fingerprint-matched row (re-pair) or inserts a new one. Registry failure
  *  never blocks the socket — the hub slot remains the liveness truth. */
 async function registerMachineRecord(
-  ctx: PlatformContext,
+  chats: ChatsCtx,
   user: UserRow,
   machineId: string,
   meta: MachineConnectMeta,
@@ -251,11 +252,11 @@ async function registerMachineRecord(
   clientId: string,
   hub: LiveHub,
 ): Promise<void> {
-  ctx.wsLog?.(
+  chats.wsLog?.(
     `ws machine connect machine_id=${machineId} app_version=${meta.app_version ?? ""} label=${meta.label ?? ""} fingerprint=${meta.fingerprint ?? ""} client_id=${clientId}`,
   );
   try {
-    const outcome = await ctx.machines.upsertConnected(
+    const outcome = await chats.machines.upsertConnected(
       user.org_id,
       user.id,
       machineId,
@@ -270,12 +271,12 @@ async function registerMachineRecord(
       // The re-key left any live registration under the old id without a
       // registry identity: displace it per the singleton rule.
       const displaced = hub.displaceMachine(outcome.adopted_from);
-      ctx.wsLog?.(
+      chats.wsLog?.(
         `machine re-pair adoption machine_id=${machineId} old_machine_id=${outcome.adopted_from} displaced=${displaced}`,
       );
     }
   } catch (error) {
-    ctx.wsLog?.(`machine registry upsert failed for ${machineId}: ${errorMessage(error)}`);
+    chats.wsLog?.(`machine registry upsert failed for ${machineId}: ${errorMessage(error)}`);
   }
 }
 
@@ -317,14 +318,16 @@ class SocketGate {
  *  reader + writer + heartbeat + session-watch all racing; the first to end
  *  tears the socket down. */
 async function driveSocket(
-  ctx: PlatformContext,
+  chats: ChatsCtx,
+  auth: IdentityCtx,
+  pool: PlatformPool,
   identity: TicketIdentity,
   query: UpgradeQuery,
   peerIp: string | null,
   socket: WebSocket,
 ): Promise<void> {
   const { user, session_hash: sessionHash, expires_at: expiresAt } = identity;
-  const hub = ctx.hub;
+  const hub = chats.hub;
   const sink = new SocketSink();
   const connId = uuidv7();
   const meta = metaFromQuery(query);
@@ -343,7 +346,7 @@ async function driveSocket(
     // connects only as its owning user (the registry row is the durable
     // identity; the hub enforces the same rule for a live slot). No row yet
     // = a new pairing, allowed.
-    if (!(await machineSlotOwned(ctx, user, machineId))) {
+    if (!(await machineSlotOwned(chats, user, machineId))) {
       await sendTerminal(socket, { type: "error", message: "machine belongs to another user" });
       return;
     }
@@ -357,7 +360,7 @@ async function driveSocket(
       if (registration.kind === "foreign_owner") {
         await sendTerminal(socket, { type: "error", message: "machine belongs to another user" });
       } else if (registration.kind === "displaced") {
-        ctx.wsLog?.(
+        chats.wsLog?.(
           `ws machine connect rejected: slot held by a live link machine_id=${machineId} instance_id=${query.instance_id}`,
         );
         await sendTerminal(socket, { type: "displaced" });
@@ -367,7 +370,7 @@ async function driveSocket(
       return;
     }
     machineRegistered = true;
-    await registerMachineRecord(ctx, user, machineId, meta, peerIp, query.client_id ?? "", hub);
+    await registerMachineRecord(chats, user, machineId, meta, peerIp, query.client_id ?? "", hub);
   } else {
     if (!hub.registerMember(member)) {
       await sendTerminal(socket, { type: "error", message: "too many connections" });
@@ -387,7 +390,7 @@ async function driveSocket(
   const finish = (reason: SocketExitReason): void => {
     if (finished) return;
     finished = true;
-    ctx.wsLog?.(
+    chats.wsLog?.(
       `ws link ended conn_id=${connId} machine_id=${machineId ?? ""} instance_id=${query.instance_id ?? ""} reason=${reason}`,
     );
     unregister();
@@ -453,17 +456,17 @@ async function driveSocket(
       if (finished) return;
       // Per-message revalidation (Rust client_task): an expired or revoked
       // session, a deleted user, or an org switch ends processing.
-      if (!(await sessionValid(ctx, sessionHash))) return;
+      if (!(await sessionValid(auth, sessionHash))) return;
       let current: UserRow;
       try {
-        current = await ctx.identity.getUser(user.id);
+        current = await auth.identity.getUser(user.id);
       } catch {
         return;
       }
       if (current.org_id !== user.org_id) return;
 
       if (message.type === "sync") {
-        if (message.chat_id !== null) await runSyncStarted(ctx, current, message.chat_id, sink);
+        if (message.chat_id !== null) await runSyncStarted(chats, current, message.chat_id, sink);
         return;
       }
       if (message.type === "machine_response") {
@@ -480,7 +483,7 @@ async function driveSocket(
         // The owns_pending_tool + complete_tool path is the dispatch lane's;
         // without the handler wired, results are dropped (Rust's behavior
         // when this connection owns no pending call).
-        await ctx.wsToolResult?.({ member, user: current, frame: message });
+        await chats.wsToolResult?.({ member, user: current, frame: message });
       }
     });
   };
@@ -503,19 +506,19 @@ async function driveSocket(
   socket.on("pong", (data: Buffer) => {
     sink.notifyPong(data);
   });
-  socket.on("close", (code, reason) => { ctx.wsLog?.(`ws close frame code=${code} reason=${String(reason)}`); finish("reader"); });
-  socket.on("error", (err) => { ctx.wsLog?.(`ws socket error: ${err.message}`); finish("reader"); });
+  socket.on("close", (code, reason) => { chats.wsLog?.(`ws close frame code=${code} reason=${String(reason)}`); finish("reader"); });
+  socket.on("error", (err) => { chats.wsLog?.(`ws socket error: ${err.message}`); finish("reader"); });
 
   // --- connect bootstrap (Rust reader prologue) ------------------------------
   sink.send({ type: "hello" });
   if (machineId !== null) {
     // reconcile_machine_tools (the uncertain-execution sweep) is the
     // dispatch lane's; a no-op until wired.
-    await ctx.wsMachineReconcile?.(machineId, connId);
+    await chats.wsMachineReconcile?.(machineId, connId);
   }
   try {
-    const chats = await threadListSnapshot(ctx, user);
-    sink.send({ type: "thread_list", chats });
+    const list = await threadListSnapshot(chats, pool, user);
+    sink.send({ type: "thread_list", chats: list });
   } catch (error) {
 
     sink.send({
@@ -534,9 +537,9 @@ async function driveSocket(
       if (!matched || finished) return;
       if (machineId !== null && Date.now() - lastRefresh >= LAST_SEEN_REFRESH_MS) {
         try {
-          await ctx.machines.lastSeen(machineId);
+          await chats.machines.lastSeen(machineId);
         } catch (error) {
-          ctx.wsLog?.(`last_seen refresh failed for ${machineId}: ${errorMessage(error)}`);
+          chats.wsLog?.(`last_seen refresh failed for ${machineId}: ${errorMessage(error)}`);
         }
         lastRefresh = Date.now();
       }
@@ -548,8 +551,8 @@ async function driveSocket(
   // --- session watch (Rust watch_session) ------------------------------------
   const sessionLoop = (async (): Promise<void> => {
     while (!finished) {
-      if (Date.now() >= expiresAt.getTime() - 60_000 || !(await sessionValid(ctx, sessionHash))) {
-        ctx.wsLog?.("ws link: session expired or revoked, requesting re-auth");
+      if (Date.now() >= expiresAt.getTime() - 60_000 || !(await sessionValid(auth, sessionHash))) {
+        chats.wsLog?.("ws link: session expired or revoked, requesting re-auth");
         sink.send({ type: "auth_required" });
         await sleep(TERMINAL_WRITE_TIMEOUT_MS * 2);
         return;
@@ -642,16 +645,16 @@ async function pongMatch(sink: SocketSink, challenge: Buffer): Promise<boolean> 
  *  authoritative snapshot (the chats lane's capture via the ctx seam), then
  *  SyncDone — errors ride an Error frame inside the bracket. */
 async function runSyncStarted(
-  ctx: PlatformContext,
+  chats: ChatsCtx,
   user: UserRow,
   chatId: string,
   sink: SocketSink,
 ): Promise<void> {
   sink.send({ type: "sync_begin", chat_id: chatId });
   try {
-    const snapshot = await ctx.wsSync?.({ chatId, user, sink });
+    const snapshot = await chats.wsSync?.({ chatId, user, sink });
     if (snapshot !== undefined && snapshot !== null) sink.send(snapshot);
-    else if (ctx.wsSync === undefined) {
+    else if (chats.wsSync === undefined) {
       sink.send({ type: "error", message: "sync unavailable" });
     }
   } catch (error) {
