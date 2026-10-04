@@ -26,7 +26,12 @@ Updated 2026-10-04.
   browser preflights (`/api/v1/ws/ticket`, `/faro/collect`) 404'd once it
   went away and the desktop web UI retry-looped; the layer is now ported
   natively (`src/http/cors.ts`, 230 tests incl. the CORS suite) with
-  live-verified 204/ACAO behavior. Prod ladder (`~/guild-prod`, :18081)
+  live-verified 204/ACAO behavior. The importer's re-runnability was
+  additionally verified LIVE (2026-10-04, post-cutover): a second full run
+  against the dev DB rebuilt 90 chats → 90 conversations, 3446 events →
+  3446 entries exactly, documents preserved, turns healthy after
+  (RERUN-SMOKE-OK); pre-rerun backup:
+  `/tmp/guild-backup/guild-pre-rerun-0552.sql`. Prod ladder (`~/guild-prod`, :18081)
   is the remaining step — held until maintainer validates dev (the plan
   gates prod on "after dev stabilizes"). Backup of the dev DB taken
   before the importer's final run:
