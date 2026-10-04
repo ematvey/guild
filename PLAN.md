@@ -21,10 +21,16 @@ Updated 2026-10-04.
   227 tests green (22 suites), headless client login + a real
   GLM-5.3-Flash turn through the all-TS stack (M7-SMOKE-OK), and the real
   shipped desktop daemon (WORKSTATION 0.5.33) linked through the TS hub with
-  zero errors. Prod ladder (`~/guild-prod`, :18081) is the remaining step —
-  held until maintainer validates dev (the plan gates prod on "after dev
-  stabilizes"). Backup of the dev DB taken before the importer's final
-  run: `/tmp/guild-backup/guild-2026-10-04-0332.sql`.
+  zero errors. Post-retirement trap fixed the same day: the Rust CORS
+  layer (tauri-webview origin allow-list) had been riding the proxy —
+  browser preflights (`/api/v1/ws/ticket`, `/faro/collect`) 404'd once it
+  went away and the desktop web UI retry-looped; the layer is now ported
+  natively (`src/http/cors.ts`, 230 tests incl. the CORS suite) with
+  live-verified 204/ACAO behavior. Prod ladder (`~/guild-prod`, :18081)
+  is the remaining step — held until maintainer validates dev (the plan
+  gates prod on "after dev stabilizes"). Backup of the dev DB taken
+  before the importer's final run:
+  `/tmp/guild-backup/guild-2026-10-04-0332.sql`.
 - **M1 platform core + M4 workspace sessions landed (2026-10-04).** M1:
   native auth (opaque sessions/argon2id/OIDC), org, events, attachments
   with 64 golden Rust fixtures replaying byte-semantically. M4: workspace
