@@ -91,6 +91,23 @@ web UI/admin dist embedded at build time as today.
   anywhere. The "JWT session tokens" compat requirement above means: the TS
   server must accept/issue the same opaque-token + `sessions`-row +
   auth-generation mechanism, identically.
+- **2026-10-04 (M4/M6): parity deviations accepted at the harness seam.**
+  (a) pi-durable's CodingTools tail-cap tool output at 50 KiB, so the
+  64 KiB oversized-result spill is ported (store + routes + bridge) but not
+  reachable end-to-end through the built-in tool set — machine-tool results
+  still hit it; (b) model-facing durable context keeps full tool content
+  (Rust compacts it too) — spill affects only the journaled event +
+  download route; (c) the approval gate waits by polling journaled
+  decisions rather than a literal pi-durable child task — same
+  block/resume/recovery semantics; (d) live deltas are event-driven
+  (pi-durable partial commits ≤100 ms) instead of Rust's 100 ms poll — same
+  cadence floor; no ToolCallDelta/Done stream frames (pi-durable streams
+  argument growth as JSON-path patches — shapes don't map; tool calls
+  surface as Started/Completed); (e) disconnect settle of pending machine
+  dispatches is immediate (Rust: 15s grace watcher); (f) web dist is served
+  from the TS image at runtime (Dockerfile stage) instead of Rust's
+  include_dir embed; asset hashes differ per build (fresh SPA build),
+  serving semantics match. Evidence: reports M4/M6.
 - **2026-10-04 (M3 storage core): pi-durable 1.0.1 gaps worked around
   Guild-side** (all in `apps/server/src/storage/postgres/`, no forking):
   (a) `idFromNumber`/`seqFromNumber` not exported → branded-type casts at
