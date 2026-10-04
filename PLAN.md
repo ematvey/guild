@@ -13,6 +13,24 @@ Updated 2026-10-04.
 
 ## Latest decisions
 
+- **M6 long tail landed (2026-10-04).** The remaining M6 surfaces run
+  natively in `apps/server` on `m6/longtail`: registry (S3-backed publish/
+  review/install with the Rust bundle caps and manifest-validation error
+  strings), releases (admin upload + ed25519 signing, signed download
+  URLs, semver-exact updater `latest.json`), projects (the 0.5.34
+  one-live-project-per-(machine,folder) rule with `folder_taken` 409,
+  archive-frees-folder, chat machine-binding unlink), teams, admin users
+  (last-admin guard + credential revocation on reset), org prompts
+  (org_kv), admin integration reads + per-tool curation (row-lock RMW),
+  faro ingest (exact-byte forward), and the chat-SPA serving (dist now
+  built inside `Dockerfile.server-ts` stage `webui`, served from disk;
+  golden byte check against the live stack is byte- and header-identical,
+  `apps/server/scripts/m6-web-golden.ts`). Deferred still proxied with
+  reasons in `apps/server/M6-REPORT.md` §3: routines CRUD/internal API
+  (spec decision 8), the integration save path + tools listing and the
+  script-side `/api/v1/integrations/*` (need the connector ports + MCP
+  client; unreachable at M7). 160/160 tests green (sequential file mode —
+  parallel lanes exhaust Postgres max_connections on the shared host DB).
 - **M5 hub core landed (2026-10-04).** The `InMemoryHub` seam became the
   real `LiveHub` (`apps/server/src/hub/`): member/machine registries, 32
   socket caps, the 0.5.25 live-slot rule (a live machine slot is held —
