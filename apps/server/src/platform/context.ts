@@ -22,6 +22,9 @@ import type { LiveMember } from "../hub/live.js";
 import { ChatStore } from "./store/chats.js";
 import { ThreadStore } from "./store/thread.js";
 import { TurnCommandStore } from "./store/turn_commands.js";
+import { AgentSessionStore } from "./store/agentSessions.js";
+import { ToolArtifactStore } from "./store/toolArtifacts.js";
+import { machineDispatch } from "../machines/dispatch.js";
 import { GuildRuntime } from "../harness/runtime.js";
 import { NotifyHub } from "./notify.js";
 import { FeedForwarder } from "../hub/feed.js";
@@ -64,6 +67,9 @@ export class PlatformContext {
   readonly chats: ChatStore;
   readonly threads: ThreadStore;
   readonly turnCommands: TurnCommandStore;
+  /** M4: agent-session metadata rows + the tool-artifact spill store. */
+  readonly agentSessions: AgentSessionStore;
+  readonly toolArtifacts: ToolArtifactStore;
   /** Postgres LISTEN hub (guild_thread_committed / guild_chat_status /
    *  guild_events) — one dedicated connection shared by all subscribers. */
   readonly notify: NotifyHub;
@@ -91,7 +97,7 @@ export class PlatformContext {
     readonly config: Config,
     log: Logger = { warn() {}, error() {}, info() {} } as never,
   ) {
-    this.pool = createPlatformPool(config.databaseUrl);
+    this.pool = createPlatformPool(config.databaseUrl, config.poolMax);
     this.objects = new ObjectStore(config);
     this.identity = new IdentityStore(this.pool);
     this.pairing = new PairingStore(this.pool);
@@ -108,8 +114,21 @@ export class PlatformContext {
     this.chats = new ChatStore(this.pool);
     this.threads = new ThreadStore(this.pool);
     this.turnCommands = new TurnCommandStore(this.pool);
+    this.agentSessions = new AgentSessionStore(this.pool);
+    this.toolArtifacts = new ToolArtifactStore(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);
-    this.runtime = new GuildRuntime(config, this.pool, log);
+    this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub);
+    // The machine dispatch registry settles pending tool waiters when a
+    // machine's slot dies (the unknown-outcome sweep).
+    this.hub.onMachineDisconnected = (_machineId, connId) => machineDispatch(this.hub).unregisterConnection(connId);
+    // The dispatch lane's tool-result completion + connect sweep (the
+    // ws.ts seams; no-op until a test/lane sets richer behavior).
+    this.wsToolResult = async ({ member, frame }) => {
+      machineDispatch(this.hub).resolveToolResult(member, frame);
+    };
+    this.wsMachineReconcile = async (machineId, connId) => {
+      machineDispatch(this.hub).reconcileMachine(machineId, connId);
+    };
     this.feed = new FeedForwarder(this);
     this.feed.start();
     this.runtime.setStreamSink(this.feed);

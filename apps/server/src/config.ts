@@ -3,6 +3,8 @@
 // the platform-core settings: Postgres, the secret master key, the OIDC
 // state-signing secret, and S3 object storage.
 
+import path from "node:path";
+
 export interface Config {
   /** Address the Fastify server binds, e.g. 0.0.0.0:8080 (GUILD_BIND_ADDR). */
   bindHost: string;
@@ -44,6 +46,26 @@ export interface Config {
    *  http://127.0.0.1:<bindPort>) — the model provider's loopback target
    *  (spec decision 7). */
   selfBaseUrl: string;
+  /** Platform Postgres pool cap (GUILD_POOL_MAX, default 10). Test
+   *  harnesses set it lower so the shared dev server's connection budget
+   *  fits several suites. */
+  poolMax: number;
+  /** Server-side data dir (GUILD_DATA_DIR, default ./data): the workspace
+   *  session root (workspaces/<org>/<name>) lives under it. */
+  dataDir: string;
+  /** Whether server-side executors may run shell tools at all
+   *  (GUILD_ALLOW_SHELL_TOOLS=1; the trap note in AGENTS.md: disabled by
+   *  default, machine `execute` calls ride the exec policy instead). */
+  allowShellTools: boolean;
+  /** Approval card deadline (GUILD_APPROVAL_TIMEOUT_MS, default 5 min — the
+   *  Rust APPROVAL_TIMEOUT); the gate auto-denies when it lapses. */
+  approvalTimeoutMs: number;
+  /** Machine-tool dispatch deadline (GUILD_CLIENT_TOOL_TIMEOUT_MS, default
+   *  5 min — the Rust CLIENT_TOOL_TIMEOUT). */
+  clientToolTimeoutMs: number;
+  /** Exec-policy base rules file (GUILD_EXEC_POLICY_RULES). Default: the
+   *  Rust tree's static asset. */
+  execPolicyRulesPath: string | null;
 }
 
 export const DEFAULT_BIND_ADDR = "0.0.0.0:8080";
@@ -123,6 +145,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const apiUrl = (env.GUILD_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, "");
   const internalKey = env.GUILD_INTERNAL_KEY ?? null;
   const selfBaseUrl = parseUrl(env.GUILD_SELF_BASE_URL ?? `http://127.0.0.1:${bind.port}`, "GUILD_SELF_BASE_URL");
+  const allowShellTools = env.GUILD_ALLOW_SHELL_TOOLS === "1";
+  const approvalTimeoutMs = Number(env.GUILD_APPROVAL_TIMEOUT_MS ?? 300_000);
+  const clientToolTimeoutMs = Number(env.GUILD_CLIENT_TOOL_TIMEOUT_MS ?? 300_000);
+  // Absolute: the workspace root and sandbox root must not depend on the
+  // server process's cwd (pi-durable re-resolves tool cwds against it).
+  const poolMax = Number(env.GUILD_POOL_MAX ?? 10);
+  const dataDir = path.resolve(env.GUILD_DATA_DIR ?? "./data");
   return {
     internalKey,
     selfBaseUrl,
@@ -142,5 +171,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     s3AccessKeyId: env.GUILD_S3_ACCESS_KEY_ID ?? DEFAULT_S3_ACCESS_KEY_ID,
     s3SecretAccessKey: env.GUILD_S3_SECRET_ACCESS_KEY ?? DEFAULT_S3_SECRET_ACCESS_KEY,
     apiUrl,
+    poolMax,
+    dataDir,
+    allowShellTools,
+    approvalTimeoutMs,
+    clientToolTimeoutMs,
+    execPolicyRulesPath: env.GUILD_EXEC_POLICY_RULES ?? null,
   };
 }

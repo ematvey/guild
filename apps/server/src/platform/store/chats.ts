@@ -74,6 +74,27 @@ function rowToChat(r: Record<string, unknown>): ChatRow {
 export class ChatStore {
   constructor(private readonly pool: PlatformPool) {}
 
+  /** Creates a chat on a caller-supplied executor (the agent-session create
+   *  handler runs it inside its own transaction, uncommitted until the
+   *  workspace is ready). */
+  async createChatOn(
+    client: { query: (text: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> },
+    orgId: string,
+    userId: string,
+    title: string | null,
+    projectId: string | null,
+  ): Promise<ChatRow> {
+    const id = uuidv7();
+    const res = await client.query(
+      `INSERT INTO chats (id, org_id, user_id, title, project_id, machine_id, machine_label)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, org_id, user_id, title,
+         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+         machine_id, machine_label, generating, project_id`,
+      [id, orgId, userId, title, projectId, null, null],
+    );
+    return rowToChat(res.rows[0]!);
+  }
+
   async createChat(orgId: string, userId: string, title: string | null, projectId: string | null): Promise<ChatRow> {
     const id = uuidv7();
     const res = await this.pool.query<Record<string, unknown>>(
@@ -346,6 +367,15 @@ export class ChatStore {
   /** Flips the generating flag and notifies the status channel in the same
    *  transaction, so no observer sees the flag and the notification
    *  disagree. Silent no-op when the flag already holds the target value. */
+  /** The chat's generating flag (the approval route's live-turn check). */
+  async isGenerating(orgId: string, chatId: string): Promise<boolean> {
+    const res = await this.pool.query<{ generating: boolean }>(
+      "SELECT generating FROM chats WHERE org_id = $1 AND id = $2",
+      [orgId, chatId],
+    );
+    return res.rows[0]?.generating ?? false;
+  }
+
   async setGenerating(orgId: string, chatId: string, generating: boolean): Promise<void> {
     const res = await this.pool.query<{ user_id: string }>(
       "UPDATE chats SET generating = $3 WHERE org_id = $1 AND id = $2 AND generating IS DISTINCT FROM $3 RETURNING user_id",

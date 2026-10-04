@@ -6,6 +6,7 @@
 import { uuidv7 } from "../platform/time.js";
 import { SocketSink } from "./sink.js";
 import type { MachineRequestError } from "./index.js";
+import type { WsServerMsg } from "./protocol.js";
 
 export const MAX_SOCKETS_PER_USER = 32;
 
@@ -51,6 +52,9 @@ export class LiveHub {
   private owners = new Map<string, string>();
   private members = new Map<string, Map<string, LiveMember>>();
   private machineRequests = new Map<string, PendingMachineRequest>();
+  /** The dispatch lane's disconnect hook (M4: pending machine tools settle
+   *  as unknown-outcome when their connection dies). */
+  onMachineDisconnected?: (machineId: string, connId: string) => void;
 
   /** Registers a browser socket, rejecting a new connection over the limit.
    *  (Rust `Hub::register_member`.) */
@@ -169,6 +173,15 @@ export class LiveHub {
     }
     const isCurrent = this.machines.get(machineId)?.holder.conn_id === connId;
     if (isCurrent) this.machines.delete(machineId);
+    this.onMachineDisconnected?.(machineId, connId);
+  }
+
+  /** Sends one tool-dispatch frame to the machine's executor socket. False
+   *  when there is no live slot for the org or the sink refused (offline). */
+  sendMachineToolDispatch(machineId: string, orgId: string, msg: WsServerMsg & { type: "tool_dispatch" }): boolean {
+    const holder = this.machineHolder(machineId);
+    if (holder === null || holder.org_id !== orgId) return false;
+    return holder.sink.send(msg);
   }
 
   /** Displaces a machine's live socket without a replacement: registry
