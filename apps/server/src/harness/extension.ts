@@ -4,6 +4,7 @@
 
 import { defineExtension, type ConversationId, type PromptSection, type ToolRegistration } from "@earendil-works/pi-durable";
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
+import type { IntegrationGate } from "./integrations.js";
 
 export const ASSISTANT_PROMPT_KEY = "assistant_system_prompt";
 
@@ -22,6 +23,9 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   orgPrompt(orgId: string): Promise<string | null>;
   /** conversationId → org id (the chat mapping). */
   orgOfConversation(conversationId: ConversationId): Promise<string | null>;
+  /** The integrations chat runtime (M8): the approval gate consults it for
+   *  the integration tool envelope (absent: the generic policy applies). */
+  integrations?: IntegrationGate;
 }
 
 export function createGuildExtension(deps: GuildExtensionDeps) {

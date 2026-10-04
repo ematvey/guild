@@ -415,6 +415,13 @@ export class ChatBridge {
         const content = result.content
           .map((part) => (part.type === "text" ? part.text : ""))
           .join("");
+        // The tool-owned widget payload rides the result details' reserved
+        // `guild_meta` key (integration tools, spec C.2); other tools carry
+        // no meta, so the wire contract stays untouched for them.
+        const details = result.details;
+        const toolMeta = details !== null && typeof details === "object" && !Array.isArray(details)
+          ? (details as Record<string, unknown>)["guild_meta"]
+          : undefined;
         // Image parts ride only when the route supports the image modality
         // (gated at persist time, like the Rust path — keeps replay identical).
         const supported = await this.deps.routeSupportsImages(state.orgId, state.currentModel);
@@ -430,6 +437,7 @@ export class ChatBridge {
           result.toolName,
           content,
           result.isError,
+          toolMeta,
         );
         if (eventImages.length > 0) (ev as { images: string[] }).images = eventImages;
         // Oversized-result spill (M4): the persisted event carries the
@@ -448,7 +456,9 @@ export class ChatBridge {
             );
             state.spilled.set(result.toolCallId, pointer);
             (ev as { content: string }).content = pointer;
-            const meta = artifactMeta(undefined, spilled);
+            // The spilled card claims the meta (existing tool meta keys
+            // preserved — the Rust artifact_meta merge).
+            const meta = artifactMeta(toolMeta, spilled);
             (ev as { meta?: unknown }).meta = meta;
           } catch (error) {
             this.deps.log.error({ err: error, chatId: state.chatId }, "oversized result spill failed, keeping inline");
