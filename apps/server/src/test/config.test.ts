@@ -1,5 +1,6 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BIND_ADDR, DEFAULT_LOG_LEVEL, DEFAULT_UPSTREAM_URL, loadConfig } from "../config.js";
+import { DEFAULT_BIND_ADDR, DEFAULT_FARO_URL, DEFAULT_LOG_LEVEL, DEFAULT_UPSTREAM_URL, loadConfig } from "../config.js";
 
 describe("loadConfig", () => {
   it("uses defaults on empty env", () => {
@@ -23,6 +24,8 @@ describe("loadConfig", () => {
       clickhousePassword: "",
       internalKey: null,
       selfBaseUrl: "http://127.0.0.1:8080",
+      faroUrl: DEFAULT_FARO_URL,
+      webDistDir: path.resolve(process.cwd(), "../desktop/dist"),
     });
     expect(DEFAULT_BIND_ADDR).toBe("0.0.0.0:8080");
     expect(DEFAULT_UPSTREAM_URL).toBe("http://server-rust:8080");

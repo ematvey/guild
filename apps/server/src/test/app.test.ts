@@ -120,6 +120,26 @@ describe("health route (native)", () => {
       "/api/v1/chats/*",
       "/api/v1/gateway/chat",
       "/api/v1/gateway/chat/*",
+      // M6 long tail. admin-integrations is a partial flip (see the group's
+      // comment in register.ts).
+      "/api/v1/registry/*",
+      "/api/v1/releases",
+      "/api/v1/releases/*",
+      "/api/v1/admin/releases",
+      "/api/v1/admin/releases/*",
+      "/api/v1/updates/latest.json",
+      "/api/v1/projects",
+      "/api/v1/projects/*",
+      "/api/v1/admin/teams",
+      "/api/v1/admin/teams/*",
+      "/api/v1/admin/users",
+      "/api/v1/admin/users/*",
+      "/api/v1/admin/assistant-prompt",
+      "/api/v1/admin/approval-policy-prompt",
+      "GET /api/v1/admin/integrations",
+      "GET /api/v1/admin/integrations/*/secrets",
+      "PUT /api/v1/admin/integrations/*/tools/*",
+      "DELETE /api/v1/admin/integrations/*",
     ]);
   });
 });
@@ -150,13 +170,13 @@ describe("proxy-everything (HTTP)", () => {
     await app.close();
   });
 
-  it("proxies non-API paths too (embedded frontend routes)", async () => {
+  it("non-API GET paths are the SPA fallback now (M6 web serving): 503 without a dist", async () => {
     last = undefined;
     const app = await makeApp();
     const res = await app.inject({ method: "GET", url: "/thread/abc123" });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ upstream: true, path: "/thread/abc123" });
-    expect(getLast()?.url).toBe("/thread/abc123");
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toContain("chat app not built");
+    expect(getLast()).toBeUndefined();
     await app.close();
   });
 });

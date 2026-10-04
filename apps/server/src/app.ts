@@ -12,6 +12,8 @@ import { PlatformContext } from "./platform/context.js";
 import { NATIVE_ROUTE_GROUPS, registerPlatformRoutes } from "./platform/http/register.js";
 import { attachWsUpgrade } from "./http/ws.js";
 import { wireWsSync } from "./chats/ws-sync.js";
+import { registerWebRoutes } from "./http/web.js";
+import { registerFaroRoute } from "./platform/http/faro.js";
 
 const require = createRequire(import.meta.url);
 
@@ -83,6 +85,13 @@ export async function buildApp(config: Config) {
 
   // The chats lane's sync capture (SyncBegin … ThreadState … SyncDone).
   wireWsSync(platform);
+
+  // M6: the web UI (SPA fallback from the dist on disk) as an onRequest
+  // hook — it short-circuits before the proxy for non-API GET/HEAD paths;
+  // everything it skips keeps flowing to the native routes or the proxy.
+  // And the Faro telemetry ingest (unauthenticated, fire-and-forget).
+  registerWebRoutes(app as unknown as FastifyInstance, config);
+  registerFaroRoute(app as unknown as FastifyInstance, platform);
 
   // Proxy everything else — HTTP bodies (streamed through), status codes,
   // and response headers. WS upgrades are NOT proxied anymore: the hub route
