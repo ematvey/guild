@@ -78,6 +78,16 @@ export class IntegrationStore {
     return res.rows.map((r: Record<string, unknown>) => row(r));
   }
 
+  /** Enabled rows only, in name order (crates/server/src/store/
+   *  integrations.rs list_enabled) — the plugin resolver's input. */
+  async listEnabled(orgId: string): Promise<IntegrationRow[]> {
+    const res = await this.pool.query(
+      "SELECT id, org_id, name, config, enabled FROM integrations WHERE org_id = $1 AND enabled ORDER BY name",
+      [orgId],
+    );
+    return res.rows.map((r: Record<string, unknown>) => row(r));
+  }
+
   /** Removes one integration by id — the config row AND its stored
    *  secrets, transactionally (secrets are keyed by slug with no FK, so a
    *  re-added integration with the same slug must not silently revive the

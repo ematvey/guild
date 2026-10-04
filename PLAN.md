@@ -13,6 +13,25 @@ Updated 2026-10-04.
 
 ## Latest decisions
 
+- **M7 retirement landed (2026-10-04).** `apps/server` ported the last
+  proxied surfaces on `m7/retire`: integration tool API (list, tools
+  listing, execute with the Rust error/audit shapes; built-in connector
+  tool manifests + test_connection; a minimal MCP streamable-HTTP client
+  for plugin integrations — connect timeout 10s, MCP tool curation
+  absent=disabled), the admin integration save path (create 409-on-dup /
+  stub-create, update with secret merge + missing_secrets 409,
+  test-then-persist; MCP config validation + live tools listing), and
+  `GET/PUT /api/v1/me/approval` (desktop-client user approval policy, serde-
+  exact validation texts). Secrets stay AES-256-GCM hex(nonce‖ct+tag) —
+  all 9 live `integration_secrets` rows decrypt with the TS implementation.
+  The proxy is gone: `GUILD_UPSTREAM_URL`, `@fastify/http-proxy` and the
+  `server-rust` compose service removed; deferred routes (routines, hooks,
+  internal — spec decision 8) answer the Rust 404 envelope; compose now
+  runs the TS server only (with the `guild_data` volume for
+  `$GUILD_DATA_DIR` workspaces). Full evidence + unported-route list +
+  cutover runbook in `apps/server/M7-REPORT.md`. 227 tests green (22
+  suites) on disposable `guild_m7_test_*` databases.
+
 - **M6 long tail landed (2026-10-04).** The remaining M6 surfaces run
   natively in `apps/server` on `m6/longtail`: registry (S3-backed publish/
   review/install with the Rust bundle caps and manifest-validation error
@@ -76,7 +95,6 @@ Updated 2026-10-04.
   `machine_online` stays false until M5 (documented deviations).
   95/95 tests green on disposable `guild_m3_test_*` databases; report in
   `apps/server/M3-REPORT.md`.
->>>>>>> m3/harness
 
 - **M2 LLM gateway landed (2026-10-04).** `apps/server` serves the OpenAI
   and Anthropic completion surfaces natively (`/openai/v1/*`,

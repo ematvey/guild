@@ -804,13 +804,12 @@ describe("M6 web serving", () => {
         const manifest = await env.app.inject({ method: "GET", url: "/manifest.webmanifest" });
         expect(manifest.headers["content-type"]).toBe("application/manifest+json");
 
-        // Unmatched /api routes keep flowing to the Rust proxy (that's
-        // where the golden 404 `{"error":{"code":"not_found",…}}`
-        // envelope comes from); without an upstream the proxy answers 503,
-        // but never with the SPA index.
+        // Unmatched /api routes answer the Rust not-found envelope natively
+        // (M7: the proxy and the upstream are retired — a clean 404, never
+        // a connection error).
         const api = await env.app.inject({ method: "GET", url: "/api/v1/does-not-exist" });
-        expect(api.statusCode).toBe(503);
-        expect(api.body).not.toBe("<html>index</html>");
+        expect(api.statusCode).toBe(404);
+        expect(JSON.parse(api.body)).toEqual({ error: { code: "not_found", message: "no such route" } });
 
         // A traversal attempt is not a bundled file → index.html.
         const escape = await env.app.inject({ method: "GET", url: "/assets/../../etc/passwd" });

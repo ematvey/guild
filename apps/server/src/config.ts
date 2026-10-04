@@ -9,9 +9,6 @@ export interface Config {
   /** Address the Fastify server binds, e.g. 0.0.0.0:8080 (GUILD_BIND_ADDR). */
   bindHost: string;
   bindPort: number;
-  /** Base URL of the Rust server every non-native route proxies to
-   *  (GUILD_UPSTREAM_URL, e.g. http://server-rust:8080). */
-  upstreamUrl: string;
   /** pino log level (GUILD_LOG_LEVEL). */
   logLevel: string;
   /** Platform Postgres (GUILD_DATABASE_URL) — the same database the Rust
@@ -76,7 +73,6 @@ export interface Config {
 }
 
 export const DEFAULT_BIND_ADDR = "0.0.0.0:8080";
-export const DEFAULT_UPSTREAM_URL = "http://server-rust:8080";
 export const DEFAULT_LOG_LEVEL = "info";
 export const DEFAULT_DATABASE_URL = "postgres://guild:guild@localhost:5432/guild";
 export const DEFAULT_S3_URL = "http://localhost:9000";
@@ -108,21 +104,6 @@ function parseBindAddr(addr: string): { host: string; port: number } {
   return { host, port };
 }
 
-function parseUpstreamUrl(raw: string): string {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error(`GUILD_UPSTREAM_URL: not a valid URL: "${raw}"`);
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`GUILD_UPSTREAM_URL: must be http(s), got "${url.protocol}"`);
-  }
-  // Normalize: no trailing slash, no path suffix — the proxy forwards the
-  // full request path onto the upstream origin.
-  return url.origin;
-}
-
 function parseUrl(raw: string, label: string): string {
   try {
     const url = new URL(raw);
@@ -152,7 +133,6 @@ function parseMasterKey(raw: string): string {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const bind = parseBindAddr(env.GUILD_BIND_ADDR ?? DEFAULT_BIND_ADDR);
-  const upstreamUrl = parseUpstreamUrl(env.GUILD_UPSTREAM_URL ?? DEFAULT_UPSTREAM_URL);
   const clickhouseUrl = parseUrl(env.GUILD_CLICKHOUSE_URL ?? DEFAULT_CLICKHOUSE_URL, "GUILD_CLICKHOUSE_URL");
   const masterKeyHex = parseMasterKey(requireEnv(env, "GUILD_MASTER_KEY_HEX"));
   const jwtSecret = requireEnv(env, "GUILD_JWT_SECRET");
@@ -181,7 +161,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     clickhousePassword: env.GUILD_CLICKHOUSE_PASSWORD ?? "",
     bindHost: bind.host,
     bindPort: bind.port,
-    upstreamUrl,
     logLevel: env.GUILD_LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
     databaseUrl: env.GUILD_DATABASE_URL ?? DEFAULT_DATABASE_URL,
     masterKeyHex,

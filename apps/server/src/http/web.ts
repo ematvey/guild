@@ -4,10 +4,10 @@
 // frontend hasn't been built, API routes still work and pages answer with
 // a 503 hint.
 //
-// The fallback runs as an onRequest hook (not a route) because the proxy
-// catch-all already owns the GET /* route; a hook that replies short-
-// circuits before routing, and every path it skips keeps flowing to the
-// native routes or the proxy exactly as before.
+// The fallback runs as an onRequest hook (not a route) so it short-circuits
+// before routing without conflicting with the native API routes; every path
+// it skips falls through to routing — the native routes, then the not-found
+// handler (the Rust `not_found` envelope).
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -94,17 +94,15 @@ export function registerWebRoutes(app: FastifyInstance, cfg: Pick<Config, "webDi
   const hint = "chat app not built — run `npm --prefix apps/desktop run build`";
   const fallback = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     // The Rust fallback covers every method, but only GET/HEAD reach it in
-    // practice from browsers; every other method keeps proxying (the Rust
-    // fallback then answers the same way through the proxy).
+    // practice from browsers; other methods answer the not-found handler.
     if (req.method !== "GET" && req.method !== "HEAD") return;
     const path = (req.url.split("?")[0] ?? "/").replace(/^\/+$/, "/");
-    // Unmatched /api routes answer the 404 envelope — both natively
-    // registered API routes and the proxy's forwarding keep working; the
-    // Rust fallback's API 404 arrives through the proxy.
+    // Unmatched /api routes answer the not-found handler (the Rust 404
+    // envelope).
     if (path === "/api" || path.startsWith("/api/")) return;
-    // The LLM gateway surfaces have native GET routes; unmatched paths
-    // under them keep proxying (the Rust fallback serves index.html there
-    // too, same bytes either way).
+    // The LLM gateway surfaces have native routes; unmatched paths under
+    // them fall through the same way (the Rust fallback serves index.html
+    // there too, same bytes either way).
     if (path.startsWith("/openai/v1") || path.startsWith("/anthropic/v1")) return;
     // A real bundled file wins; every other non-API path is an SPA route
     // and serves index.html — including paths with dots (model ids,
