@@ -4,7 +4,8 @@
 // `{param_N:Type}` URL params); the SELECT statements are ported verbatim.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { ApiError, queryParam, requireUser } from "./error.js";
+import { ApiError } from "../errors.js";
+import { queryParam, requireUser } from "./error.js";
 import type { PlatformContext } from "../context.js";
 import { errorText, startOfDayUtc, startOfMonthUtc } from "../usage.js";
 import { rustFloat, rustJsonText } from "../provider/sse.js";

@@ -6,7 +6,8 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { ApiError, parseUuidParam, requireJsonBody, requireUser } from "./error.js";
+import { ApiError } from "../errors.js";
+import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
 import { CONNECTORS, connectorByName, type ConnectorManifest } from "../integration-catalog.js";
 import { builtinConnectorByName, manifestToolClass, toolClassOf } from "../integrations/connectors.js";
@@ -331,50 +332,15 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
     if (approval !== "default" && approval !== "always_ask") {
       throw ApiError.badRequest("approval must be default or always_ask");
     }
-    // Read-modify-write under a row lock in one transaction: two concurrent
-    // PUTs (or a racing settings save) must never drop each other's
-    // curation entry. Entries for not-currently-declared tools are allowed
-    // — they are how a preset survives a bundle republish.
-    const client = await ctx.pool.connect();
-    let name: string;
-    try {
-      await client.query("BEGIN");
-      const rowRes = await client.query(
-        "SELECT config, name FROM integrations WHERE org_id = $1 AND id = $2 FOR UPDATE",
-        [admin.org_id, id],
-      );
-      const stored = rowRes.rows[0];
-      if (stored === undefined) throw ApiError.notFound("unknown integration");
-      name = stored.name as string;
-      const config =
-        stored.config !== null && typeof stored.config === "object" && !Array.isArray(stored.config)
-          ? { ...(stored.config as Record<string, unknown>) }
-          : {};
-      const tools =
-        config["tools"] !== null && typeof config["tools"] === "object" && !Array.isArray(config["tools"])
-          ? { ...(config["tools"] as Record<string, unknown>) }
-          : {};
-      tools[tool] = { enabled, approval };
-      config["tools"] = tools;
-      await client.query(
-        "UPDATE integrations SET config = $2, updated_at = now() WHERE org_id = $1 AND id = $3",
-        [admin.org_id, JSON.stringify(config), id],
-      );
-      await client.query("COMMIT");
-      // Durable, org-queryable audit of the governance change.
-      await ctx.events.emit(admin.org_id, "integration.tool_curated", {
-        integration: name,
-        tool,
-        enabled,
-        approval,
-        by: admin.id,
-      });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    const name = await ctx.integrations.curateTool(admin.org_id, id, tool, enabled, approval);
+    // Durable, org-queryable audit of the governance change.
+    await ctx.events.emit(admin.org_id, "integration.tool_curated", {
+      integration: name,
+      tool,
+      enabled,
+      approval,
+      by: admin.id,
+    });
     sendJson(reply, { name: tool, enabled, approval });
     return reply;
   });

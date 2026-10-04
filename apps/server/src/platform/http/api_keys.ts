@@ -3,7 +3,8 @@
 // every member manages from their own settings.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { ApiError, parseUuidParam, requireJsonBody, requireUser } from "./error.js";
+import { ApiError } from "../errors.js";
+import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 import type { PlatformContext } from "../context.js";
 import { rustJsonText } from "../provider/sse.js";
 

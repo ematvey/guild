@@ -27,7 +27,7 @@ import type { ExecutorKind } from "../machines/dispatch.js";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
-import { approvalDecisionEvent, approvalRequestEvent } from "../chats/thread-events.js";
+import { approvalDecisionEvent, approvalRequestEvent } from "../platform/domain/thread-events.js";
 import { uuidv5 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
 

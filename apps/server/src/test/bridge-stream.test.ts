@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { ChatBridge, type BridgeDeps, type GenerationStreamSink } from "../chats/bridge.js";
-import type { ThreadEventRow } from "../chats/thread-events.js";
+import type { ThreadEventRow } from "../platform/domain/thread-events.js";
 import { streamEventWire, type StreamWireEvent } from "../hub/protocol.js";
 import { uuidv7 } from "../platform/time.js";
 

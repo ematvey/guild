@@ -3,7 +3,7 @@
 // key.
 
 import { encryptSecret } from "../crypto.js";
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { uuidv7 } from "../time.js";
 

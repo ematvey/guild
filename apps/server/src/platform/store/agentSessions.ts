@@ -2,7 +2,7 @@
 // port): one row per workspace execution-backend session; the run state
 // lives in the durable conversation, the row stays metadata.
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { uuidv7, pgTimestampToRfc3339 } from "../time.js";
 
@@ -20,6 +20,13 @@ export function validWorkspaceName(name: string): boolean {
   return name.length > 0 && name.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(name);
 }
 
+/** Minimal transactional executor (a pg pool client) — enough for the
+ *  sibling-store inserts the session-create transaction composes. */
+export interface TxExecutor {
+  query: (text: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+  release: () => void;
+}
+
 const ROW_COLUMNS = "id, org_id, user_id, chat_id, workspace_name, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at";
 
 export class AgentSessionStore {
@@ -28,7 +35,7 @@ export class AgentSessionStore {
   /** Inserts the session row on a caller-supplied transaction (the create
    *  handler runs it uncommitted until the workspace is ready). */
   async createOn(
-    client: { query: (...args: unknown[]) => unknown },
+    client: TxExecutor,
     orgId: string,
     userId: string,
     chatId: string,
@@ -61,6 +68,34 @@ export class AgentSessionStore {
       [orgId, userId],
     );
     return res.rows.map((r) => ({ ...(r as unknown as AgentSessionRow), created_at: pgTimestampToRfc3339(r.created_at) }));
+  }
+
+  /** Creates a session end to end in one transaction: the chat insert
+   *  (injected capability — the chat store stays independent of this one),
+   *  the session insert, and the workspace preparation (injected callback)
+   *  run uncommitted until the orphan reclaim and dir create succeeded.
+   *  A failing rollback is swallowed; the failure itself propagates. */
+  async createWithChat(
+    orgId: string,
+    userId: string,
+    workspaceName: string,
+    createChat: (client: TxExecutor) => Promise<{ id: string }>,
+    prepareWorkspace: () => Promise<void>,
+  ): Promise<AgentSessionRow> {
+    const client = (await this.pool.connect()) as TxExecutor;
+    try {
+      await client.query("BEGIN");
+      const chat = await createChat(client);
+      const session = await this.createOn(client, orgId, userId, chat.id, workspaceName);
+      await prepareWorkspace();
+      await client.query("COMMIT");
+      return session;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /** Fetches one session the caller owns (admins bypass) — an org-scoped

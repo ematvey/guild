@@ -4,7 +4,7 @@
 // bypass — a user, including an admin, sees and touches only their own
 // projects.
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 import type { PlatformPool, PoolClient } from "../db.js";
 
