@@ -2,7 +2,7 @@
 // spilled oversized tool results — metadata in Postgres, bytes in object
 // storage, org-scoped reads.
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { uuidv5 } from "../time.js";
 import { pgTimestampToRfc3339 } from "../time.js";

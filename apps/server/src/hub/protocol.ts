@@ -8,7 +8,7 @@
 // build plain objects with keys inserted in exactly that order —
 // JSON.stringify preserves string-key insertion order.
 
-import { threadEventRowWire } from "../chats/thread-events.js";
+import { threadEventRowWire } from "../platform/domain/thread-events.js";
 import { rustFloatText } from "../platform/provider/sse.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

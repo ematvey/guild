@@ -4,7 +4,7 @@
 // checks read. Writes happen at socket connect (upsert with fingerprint
 // adoption) and on a 30s-throttled ping heartbeat (last_seen).
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339 } from "../time.js";
 

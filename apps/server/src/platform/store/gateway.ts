@@ -2,7 +2,7 @@
 // (crates/server/src/store/gateway.rs port).
 
 import { decryptSecret, encryptSecret } from "../crypto.js";
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import { uuidv7 } from "../time.js";
 import type { PlatformPool } from "../db.js";
 

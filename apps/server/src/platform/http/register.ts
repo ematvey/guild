@@ -6,7 +6,8 @@
 
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { installErrorHandling, RAW_BODY, JSON_REJECTION_PREFIX, TextError } from "./error.js";
+import { RAW_BODY, JSON_REJECTION_PREFIX, TextError } from "../errors.js";
+import { installErrorHandling } from "./error.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerOrgRoutes } from "./org.js";
 import { registerEventRoutes } from "./events.js";

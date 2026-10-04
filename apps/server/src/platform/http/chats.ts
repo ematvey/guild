@@ -13,19 +13,10 @@
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { PlatformContext } from "../context.js";
-import {
-  ApiError,
-  DESERIALIZE_PREFIX,
-  RAW_BODY,
-  TextError,
-  parseUuidParam,
-  queryParam,
-  requireJsonBody,
-  requireUser,
-  sortedJson,
-} from "./error.js";
+import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError, sortedJson } from "../errors.js";
+import { parseUuidParam, queryParam, requireJsonBody, requireUser } from "./error.js";
 import { uuidv7 } from "../time.js";
-import { threadEventRowWire, threadEventWire, type MessageAttachment, type ThreadEventRow } from "../../chats/thread-events.js";
+import { threadEventRowWire, threadEventWire, type MessageAttachment, type ThreadEventRow } from "../domain/thread-events.js";
 import { buildTurnText, loadMediaMap } from "../../chats/turn-text.js";
 import type { UserRow } from "../store/identity.js";
 import { modalityOf } from "../../chats/turn-text.js";

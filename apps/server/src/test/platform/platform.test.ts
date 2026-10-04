@@ -13,7 +13,7 @@ import { hashPassword, verifyPassword } from "../../platform/crypto.js";
 import { pgTimestampToRfc3339, uuidv7, isUuid } from "../../platform/time.js";
 import { safeFilename } from "../../platform/store/attachments.js";
 import { resolveOidcUser } from "../../platform/http/oidc.js";
-import { ApiError } from "../../platform/http/error.js";
+import { ApiError } from "../../platform/errors.js";
 
 const PASSWORD = "hunter226";
 

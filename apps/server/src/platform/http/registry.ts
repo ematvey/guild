@@ -8,7 +8,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { ApiError, requireUser } from "./error.js";
+import { ApiError } from "../errors.js";
+import { requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
 import { parseBundle, readBundleFile, type ParsedBundle } from "../bundle.js";
 import { validateManifest, validateV2, type Manifest } from "../registry-manifest.js";

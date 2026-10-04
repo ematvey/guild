@@ -1,7 +1,7 @@
 // The event bridge: pi-durable `watchEvents()` streams → thread_events rows
 // + generating flag + turn-command settlement, with the EXACT frame contract
 // the Rust ChatRunner wrote (turn/step numbering, UsagePayload fields,
-// serde-ordered wire rows — see chats/thread-events.ts).
+// serde-ordered wire rows — see platform/domain/thread-events.ts).
 //
 // Turn semantics: one Guild turn = one client request = one pi-durable run
 // (turn number derived from the log at each run_start, so restarts cannot
@@ -27,7 +27,7 @@ import {
   type Block,
   type ThreadEvent,
   type ThreadEventRow,
-} from "./thread-events.js";
+} from "../platform/domain/thread-events.js";
 
 export interface LiveBuffers {
   /** Unpersisted streaming buffers of the current generation attempt (the

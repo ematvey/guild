@@ -2,7 +2,7 @@
 // server/src/store/orgs.rs). The logo bytes live in object storage under
 // `orgs/{org_id}/logo.{ext}`; the row carries the serving URL.
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 
 export interface OrgSettings {

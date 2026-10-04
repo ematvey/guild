@@ -4,7 +4,8 @@
 
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { requireUser, sortedJson } from "./error.js";
+import { sortedJson } from "../errors.js";
+import { requireUser } from "./error.js";
 
 export function registerEventRoutes(app: FastifyInstance, ctx: PlatformContext): void {
   app.get("/api/v1/events", async (req, reply) => {

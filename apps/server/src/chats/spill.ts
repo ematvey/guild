@@ -8,7 +8,7 @@
 // and re-executions reuse the row. A spill failure keeps the inline result:
 // the outcome is never lost (same fallback as the Rust integration path).
 
-import { ApiError } from "../platform/http/error.js";
+import { ApiError } from "../platform/errors.js";
 import type { ObjectStore } from "../platform/s3.js";
 import { safeFilename } from "../platform/store/attachments.js";
 import { artifactUuid, ToolArtifactStore, toolArtifactObjectKey, type ToolArtifactRow } from "../platform/store/toolArtifacts.js";

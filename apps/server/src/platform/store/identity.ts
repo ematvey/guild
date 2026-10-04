@@ -3,10 +3,14 @@
 // Column meanings are verbatim from crates/server/migrations/*.sql.
 
 import { randomToken, sha256Hex, verifyPassword, hashPassword } from "../crypto.js";
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
-import { EventStore } from "./events.js";
+
+/** Minimal org-event capability injected by the composition root — the
+ *  store must not depend on the events store directly (DAL stays flat:
+ *  store-to-store wiring is the context's job). */
+export type EmitOrgEvent = (orgId: string, kind: string, payload: unknown) => Promise<unknown>;
 
 /** UserListRow (crates/server/src/store/identity.rs declaration order) —
  *  the admin user list and team-member lists share this shape. */
@@ -41,7 +45,10 @@ interface UserAuthGenDbRow extends UserRow {
 }
 
 export class IdentityStore {
-  constructor(readonly pool: PlatformPool) {}
+  constructor(
+    readonly pool: PlatformPool,
+    private readonly emitOrgEvent?: EmitOrgEvent,
+  ) {}
 
   /** Creates the first org + admin user. No-op if the email already has a
    *  user (reconnect flow); refuses new emails once users exist. The
@@ -148,7 +155,7 @@ export class IdentityStore {
       const user = res.rows[0]!;
       // org event: member joined; best-effort
       try {
-        await new EventStore(this.pool).emit(orgId, "member.joined", { email, user_id: user.id });
+        await this.emitOrgEvent?.(orgId, "member.joined", { email, user_id: user.id });
       } catch {
         // best-effort
       }

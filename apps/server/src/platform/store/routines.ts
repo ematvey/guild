@@ -4,7 +4,7 @@
 // here stay disabled until an owner enables them, and execution remains
 // unreachable.
 
-import { ApiError } from "../http/error.js";
+import { ApiError } from "../errors.js";
 import { sha256Hex } from "../crypto.js";
 import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
 import type { PlatformPool } from "../db.js";

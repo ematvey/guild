@@ -6,7 +6,8 @@
 import { createHmac, createPrivateKey, createPublicKey, randomBytes, sign as cryptoSign, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { ApiError, parseUuidParam, requireUser } from "./error.js";
+import { ApiError } from "../errors.js";
+import { parseUuidParam, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
 import { sha256Hex, safeFilename, validPlatform, type ReleaseRow } from "../store/releases.js";
 import { SIGNING_SEED_KV } from "../store/org_kv.js";

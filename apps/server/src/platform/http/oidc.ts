@@ -6,7 +6,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../context.js";
 import { decryptSecret, maskSecretLen } from "../crypto.js";
-import { ApiError, requireJsonBody, requireUser, sortedJson } from "./error.js";
+import { ApiError, sortedJson } from "../errors.js";
+import { requireJsonBody, requireUser } from "./error.js";
 import { isUuid } from "../time.js";
 import type { UserRow } from "../store/identity.js";
 

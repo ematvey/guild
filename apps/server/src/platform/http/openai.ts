@@ -5,7 +5,8 @@
 // (serde_json BTreeMap key order, `data: …\n\n` frames, `[DONE]` end).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, requireJsonBody, TextError } from "./error.js";
+import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError } from "../errors.js";
+import { requireJsonBody } from "./error.js";
 import type { PlatformContext } from "../context.js";
 import {
   accumulate,

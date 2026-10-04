@@ -3,7 +3,8 @@
 
 import type { FastifyInstance } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { ApiError, parseUuidParam, requireUser, sortedJson } from "./error.js";
+import { ApiError, sortedJson } from "../errors.js";
+import { parseUuidParam, requireUser } from "./error.js";
 import { attachmentObjectKey, safeFilename } from "../store/attachments.js";
 import { getChatOwned } from "../store/chats.js";
 import { uuidv7 } from "../time.js";
