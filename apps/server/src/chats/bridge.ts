@@ -13,6 +13,9 @@ import type { EntryRecord } from "@earendil-works/pi-durable";
 import type { Logger } from "pino";
 import type { StreamWireEvent } from "../hub/protocol.js";
 import { uuidv7 } from "../platform/time.js";
+import type { ObjectStore } from "../platform/s3.js";
+import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
+import { artifactMeta, shouldSpill, spillOversizedResult } from "./spill.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import type { TurnCommandStore } from "../platform/store/turn_commands.js";
@@ -58,6 +61,9 @@ export interface BridgeDeps {
    *  current model (gates tool-result image parts at persist time, like the
    *  Rust persist path). */
   routeSupportsImages(orgId: string, model: string | null): Promise<boolean>;
+  /** Spill machinery (M4): oversized tool results become artifacts. Absent
+   *  (tests without an object store) = no spill, inline results only. */
+  spill?: { artifacts: ToolArtifactStore; objects: ObjectStore };
   log: Logger;
 }
 
@@ -79,6 +85,9 @@ interface BridgeState {
   failure: string | null;
   /** Last appended assistant row id (the stop epilogue's Done message_id). */
   lastEventId: string | null;
+  /** Spilled pointer text per tool call id (the ToolCompleted stream card
+   *  carries the pointer, like the Rust post-spill payload). */
+  spilled: Map<string, string>;
 }
 
 function invocationOf(submissionId: number): string {
@@ -112,6 +121,7 @@ export class ChatBridge {
         doneSent: false,
         failure: null,
         lastEventId: null,
+        spilled: new Map(),
       };
       this.states.set(conversationId, state);
     }
@@ -299,13 +309,15 @@ export class ChatBridge {
           const result = event.entry.model?.find((m) => m.role === "toolResult");
           await this.handleEntry(state, event.entry);
           // The result card rides after the persisted row (Rust
-          // ToolCompleted carries the finished tool's content).
+          // ToolCompleted carries the finished tool's content — the spilled
+          // pointer when the result spilled).
           if (result && result.role === "toolResult" && state.generationId !== null) {
+            const raw = result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
             this.emitStream(state, {
               type: "tool_completed",
               call_id: result.toolCallId,
               name: result.toolName,
-              content: result.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
+              content: state.spilled.get(result.toolCallId) ?? raw,
               is_error: result.isError,
             });
           }
@@ -420,6 +432,28 @@ export class ChatBridge {
           result.isError,
         );
         if (eventImages.length > 0) (ev as { images: string[] }).images = eventImages;
+        // Oversized-result spill (M4): the persisted event carries the
+        // pointer text + the artifact card meta; the durable entry keeps the
+        // full content (pi-durable owns model context — the M3 split).
+        if (this.deps.spill !== undefined && shouldSpill(content)) {
+          try {
+            const { spilled, pointer } = await spillOversizedResult(
+              this.deps.spill.artifacts,
+              this.deps.spill.objects,
+              state.orgId,
+              state.chatId,
+              result.toolCallId,
+              result.toolName,
+              content,
+            );
+            state.spilled.set(result.toolCallId, pointer);
+            (ev as { content: string }).content = pointer;
+            const meta = artifactMeta(undefined, spilled);
+            (ev as { meta?: unknown }).meta = meta;
+          } catch (error) {
+            this.deps.log.error({ err: error, chatId: state.chatId }, "oversized result spill failed, keeping inline");
+          }
+        }
         await this.append(state, ev);
         return;
       }
