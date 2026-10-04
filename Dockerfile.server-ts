@@ -1,7 +1,7 @@
-# TS server (apps/server) image — native Fastify app (health, chats/turns,
-# registry, releases, projects, teams, admin reads, faro) proxying the
-# remaining routes (internal, routines CRUD, integration save paths) to the
-# Rust server. TypeScript is compiled at build time; the runtime runs plain
+# TS server (apps/server) image — the Fastify app serving the full public
+# surface (health, auth, chats/turns on pi-durable, hub WS, gateway,
+# registry, releases, projects, teams, admin, integrations, faro, web UI).
+# TypeScript is compiled at build time; the runtime runs plain
 # `node dist/index.js`. The chat SPA is built in a `webui` stage and served
 # by the TS server from apps/desktop/dist (GUILD_WEB_DIST default resolves
 # there — see apps/server/src/http/web.ts).
