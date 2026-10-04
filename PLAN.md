@@ -9,9 +9,31 @@ recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
-Updated 2026-10-04 (post R1/R2 refactor).
+Updated 2026-10-04 (post M8 integrations runtime).
 
 ## Latest decisions
+
+- **M8: integrations chat runtime ported — the missing-tools regression fixed (2026-10-04).**
+  The chat-loop integrations runtime was deferred (old decision 8) while the
+  user's patent workflow runs on gmail/jira tools through chats, so after the
+  M7 flip every turn answered `Tool google_workspace_gmail_search is not
+  available`. Lane M8 (`feat/integrations-runtime`, commit `d233e8f`) ported
+  the runtime from Rust (`crates/server/src/integrations/*.rs` ~3.4k lines +
+  `restate.rs` chat flow): per-turn `{slug}_list_tools`/`{slug}_guide`
+  registration with on-demand tool discovery and the system-prompt index,
+  execute for all 7 built-in connectors (google_workspace incl. RS256 JWT
+  service-account impersonation, atlassian, github, gitlab, slack, hubspot,
+  langfuse, firecrawl, searxng), MCP `tools/call`, `always_ask` curation
+  riding the approval-card gate, acting-as identity, `integration.tool_called`
+  audit events, and the script API switched from the stub to real dispatch.
+  pi-durable stays pinned 1.0.1. Verified: 264/264 tests (236 baseline + 28
+  new, mock-server based — no external API calls in tests), typecheck clean,
+  dev stack redeployed, LIVE check: `atlassian_jira_search` through the
+  script API returned a real Jira issue (`ok:true`) with the audit event
+  journaled; google_workspace left for the user to exercise with their own
+  workspace identity. Spec decision 8 revised by this entry (dated
+  amendment: integrations runtime in scope). Report:
+  `apps/server/M8-REPORT.md`.
 
 - **TS server architecture refactor: layers + narrow contexts (2026-10-04).**
   Two subagent lanes on `agent-plane` (prompt files + report verdicts, per
