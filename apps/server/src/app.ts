@@ -1,12 +1,12 @@
-// Fastify app shell: native platform routes (health, M1 platform core) +
-// proxy-everything to the Rust server (HTTP + WebSocket upgrade), per the
-// M0 design (decision 3: TS in front, un-ported routes reverse-proxied;
-// each ported route flips to native TS, rollback = delete the TS route).
+// Fastify app shell: the native platform routes (health, auth, chats/turns,
+// gateway, hub, registry, releases, projects, integrations, faro, web UI).
+// The Rust upstream and the M0 proxy-everything are retired: this process
+// serves the whole public surface; un-ported routes (routines, hooks,
+// internal — spec decision 8) answer the Rust not-found envelope.
 
 import { createRequire } from "node:module";
 import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
-import proxy from "@fastify/http-proxy";
 import type { Config } from "./config.js";
 import { PlatformContext } from "./platform/context.js";
 import { NATIVE_ROUTE_GROUPS, registerPlatformRoutes } from "./platform/http/register.js";
@@ -26,10 +26,9 @@ export const GUILD_TS_SERVER_VERSION: string = (() => {
   }
 })();
 
-// Native (non-proxied) route groups. Anything listed here is served by this
-// process; every other path is forwarded to the Rust upstream. To roll a
-// group back, delete its registration in registerPlatformRoutes and the
-// proxy resumes.
+// Native route groups. Anything listed here is served by this process;
+// everything else answers the not-found handler below (deferred routes are
+// unreachable by design — spec decision 8).
 export const NATIVE_ROUTES = [
   "/api/v1/health",
   ...NATIVE_ROUTE_GROUPS.flatMap((g) => g.paths),
@@ -66,39 +65,36 @@ export async function buildApp(config: Config) {
     version: GUILD_TS_SERVER_VERSION,
   }));
 
-  // Native M1 platform routes (auth, org, events, attachments, OIDC),
-  // registered before the proxy so they win route matching; the proxy
-  // catch-all underneath keeps every un-ported path working.
+  // Native platform routes (auth, org, events, attachments, OIDC, gateway,
+  // chats, hub, registry, integrations, …), registered in one encapsulated
+  // plugin so the error envelope and content parsers stay scoped.
   await registerPlatformRoutes(app as unknown as FastifyInstance, platform);
 
-  // Native M5 hub core: the /api/v1/ws upgrade listener + the ws-ticket and
+  // Hub core: the /api/v1/ws upgrade listener + the ws-ticket and
   // machine-registry HTTP routes (the latter registered inside the platform
   // plugin, see register.ts, so the M1 error envelope and content parsers
-  // apply). The upgrade listener is the server's ONLY 'upgrade' handler: the
-  // proxy below no longer passes `websocket: true`, because two listeners
-  // double-assign the upgrade socket (ERR_HTTP_SOCKET_ASSIGNED — the M0 trap
-  // note). Rust has no other WS endpoint, so no upgrade needs forwarding
-  // anymore. Rollback = restore `websocket: true` and delete the
-  // attachWsUpgrade call.
+  // apply). The upgrade listener is the server's ONLY 'upgrade' handler.
   platform.wsLog = (message) => logger.info({ ws: message }, "ws");
   attachWsUpgrade(app.server, platform);
 
   // The chats lane's sync capture (SyncBegin … ThreadState … SyncDone).
   wireWsSync(platform);
 
-  // M6: the web UI (SPA fallback from the dist on disk) as an onRequest
-  // hook — it short-circuits before the proxy for non-API GET/HEAD paths;
-  // everything it skips keeps flowing to the native routes or the proxy.
-  // And the Faro telemetry ingest (unauthenticated, fire-and-forget).
+  // The web UI (SPA fallback from the dist on disk) as an onRequest hook —
+  // it short-circuits for non-API GET/HEAD paths; everything it skips flows
+  // to the native routes or the not-found handler. And the Faro telemetry
+  // ingest (unauthenticated, fire-and-forget).
   registerWebRoutes(app as unknown as FastifyInstance, config);
   registerFaroRoute(app as unknown as FastifyInstance, platform);
 
-  // Proxy everything else — HTTP bodies (streamed through), status codes,
-  // and response headers. WS upgrades are NOT proxied anymore: the hub route
-  // (/api/v1/ws) flipped native above and the Rust server has no other WS
-  // endpoint.
-  await app.register(proxy, {
-    upstream: config.upstreamUrl,
+  // Unmatched routes answer the Rust not-found envelope
+  // (crates/server/src/http/error.rs not_found()): deferred surfaces
+  // (routines, hooks, internal — spec decision 8) are unreachable, cleanly.
+  app.setNotFoundHandler(async (_req, reply) => {
+    void reply.status(404).type("application/json").send(
+      JSON.stringify({ error: { code: "not_found", message: "no such route" } }),
+    );
+    return reply;
   });
 
   app.addHook("onClose", async () => {
