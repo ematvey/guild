@@ -13,6 +13,7 @@ function installBigintNumberParser(): void {
 }
 
 export type PlatformPool = pg.Pool;
+export type PoolClient = pg.PoolClient;
 
 export function createPlatformPool(databaseUrl: string): pg.Pool {
   installBigintNumberParser();

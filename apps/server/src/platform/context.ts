@@ -13,6 +13,13 @@ import { OidcStore } from "./store/oidc.js";
 import { ApiKeyStore } from "./store/api_keys.js";
 import { GatewayStore } from "./store/gateway.js";
 import { MachineStore } from "./store/machines.js";
+import { RegistryStore } from "./store/registry.js";
+import { ReleaseStore } from "./store/releases.js";
+import { ProjectStore } from "./store/projects.js";
+import { TeamStore } from "./store/teams.js";
+import { OrgKvStore, KvStore } from "./store/org_kv.js";
+import { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
+import { RoutineStore } from "./store/routines.js";
 import type { UserRow } from "./store/identity.js";
 import { LiveHub } from "../hub/live.js";
 import { TicketStore } from "../hub/tickets.js";
@@ -52,6 +59,19 @@ export class PlatformContext {
   readonly apiKeys: ApiKeyStore;
   readonly gatewayStore: GatewayStore;
   readonly machines: MachineStore;
+  /** M6 long-tail stores (registry, releases, projects, teams, admin
+   *  settings, integration config rows). */
+  readonly registry: RegistryStore;
+  readonly releases: ReleaseStore;
+  readonly projects: ProjectStore;
+  readonly teams: TeamStore;
+  readonly orgKv: OrgKvStore;
+  readonly kv: KvStore;
+  readonly integrations: IntegrationStore;
+  readonly integrationSecrets: IntegrationSecretStore;
+  /** Only the creation path (registry install); full routine CRUD is
+   *  deferred with the routines feature (spec decision 8). */
+  readonly routines: RoutineStore;
   /** The real machine/member socket registry (M5 hub core). The M3 harness
    *  lane injects fakes typed against the seam `Hub` interface in hub/index.ts
    *  and casts here in its own tests. */
@@ -102,6 +122,15 @@ export class PlatformContext {
     this.apiKeys = new ApiKeyStore(this.pool);
     this.gatewayStore = new GatewayStore(this.pool);
     this.machines = new MachineStore(this.pool);
+    this.registry = new RegistryStore(this.pool);
+    this.releases = new ReleaseStore(this.pool);
+    this.projects = new ProjectStore(this.pool);
+    this.teams = new TeamStore(this.pool);
+    this.orgKv = new OrgKvStore(this.pool);
+    this.kv = new KvStore(this.pool);
+    this.integrations = new IntegrationStore(this.pool);
+    this.integrationSecrets = new IntegrationSecretStore(this.pool);
+    this.routines = new RoutineStore(this.pool);
     this.hub = new LiveHub();
     this.wsTickets = new TicketStore();
     this.usage = new UsageSink(this.clickhouse());
