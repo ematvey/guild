@@ -7,12 +7,34 @@
 // deferred, spec decision 8).
 
 import { randomUUID } from "node:crypto";
-import type { GatewayCtx } from "../contexts.js";
 import { CONNECTORS } from "../integration-catalog.js";
 import { builtinConnectorByName, manifestToolClass, toolClassOf, type ConnectorToolSpec } from "./connectors.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
 
 export type Json = Record<string, unknown>;
+
+/** The narrow store surface the dispatcher re-resolves secrets through
+ *  (structurally the GatewayCtx slice; no store values ride the snapshot). */
+export interface PluginSecretSource {
+  integrationSecrets: {
+    names(orgId: string, integration: string): Promise<string[]>;
+    resolve(orgId: string, integration: string, names: string[], masterKey: Buffer): Promise<[string, string][]>;
+  };
+  masterKey(): Buffer;
+}
+
+/** The gateway slice plugin resolution needs (structurally the GatewayCtx
+ *  slice): the integration rows, the secret store, and the registry whose
+ *  approvals gate MCP manifests + guide bundles. */
+export interface PluginGateway extends PluginSecretSource {
+  integrations: {
+    listEnabled(orgId: string): Promise<{ name: string; config: unknown; enabled: boolean }[]>;
+  };
+  registry: {
+    approvedBundle(orgId: string, kind: string, slug: string): Promise<[string, string] | null>;
+    getVersion(orgId: string, kind: string, slug: string, version: string): Promise<{ manifest: unknown; bundle_sha256: string | null; object_key: string }>;
+  };
+}
 
 /** How a plugin executes: a compiled-in connector or a remote MCP server. */
 export type PluginExecutor = "rust" | "mcp";
@@ -126,7 +148,7 @@ export function resolveActingAs(
 /** The manifest whose content an admin's approval covers: resolved only
  *  while the item is approved AND the approval's recorded version is still
  *  the latest — a republish resets the review status. */
-export async function registryManifest(gateway: GatewayCtx, orgId: string, slug: string): Promise<Json> {
+export async function registryManifest(gateway: PluginGateway, orgId: string, slug: string): Promise<Json> {
   const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
   if (approved === null) {
     throw new Error(`registry item ${slug} has no approval covering its latest version and bundle`);
@@ -195,7 +217,7 @@ function toMcpToolInfo(slug: string, manifest: Json, tool: McpTool): PluginToolI
  *  live and merge the discovered tools. A broken plugin degrades: skipped
  *  with a warning, the caller continues without it. */
 export async function resolvePlugins(
-  gateway: GatewayCtx,
+  gateway: PluginGateway,
   orgId: string,
   warn: (message: string) => void = () => {},
 ): Promise<PluginTurn[]> {

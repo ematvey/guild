@@ -30,6 +30,7 @@ import type { ThreadStore } from "../platform/store/thread.js";
 import { approvalDecisionEvent, approvalRequestEvent } from "../platform/domain/thread-events.js";
 import { uuidv5 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
+import type { IntegrationGate } from "./integrations.js";
 
 export const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
 
@@ -89,6 +90,10 @@ export interface ApprovalGateDeps {
   /** Where this conversation's tools execute (drives the shell allowlist +
    *  the batch contract). */
   executorKind(conversationId: number): Promise<ExecutorKind>;
+  /** The integrations chat runtime (M8): the integration tool envelope —
+   *  reads flow, an `always_ask` curation or a write-class tool forces the
+   *  card ahead of the chat's approval mode (org governance wins). */
+  integrations?: IntegrationGate;
   /** The conversation's configured model (the judge's route). */
   currentModel(conversationId: number): Promise<string | null>;
   /** Server-side shell allowlist (GUILD_ALLOW_SHELL_TOOLS). */
@@ -271,6 +276,22 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
           return { block: "denied: shell tools are disabled on this server" };
         }
         if (decision.kind === "allow") return undefined; // static allow skips the gate
+      }
+
+      // 1b. Integration tools (M8): the connector envelope. Guild-provided
+      //     disclosure tools and read-class tools flow without a gate; an
+      //     always_ask curation or a write-class tool forces the card (the
+      //     Rust chat loop gates them with Approval::Ask regardless of the
+      //     chat's approval mode — the stored per-tool config and the
+      //     manifest class are the single source of truth). The batch
+      //     contract (server-side workspace sessions) skips the interactive
+      //     gate like every server tool.
+      if (deps.integrations !== undefined) {
+        const decision = await deps.integrations.gateDecision(Number(runtime.conversationId), call.name);
+        if (decision === "ask" && executor !== "server") {
+          return waitForApproval(deps, runtime, chatId, call, context);
+        }
+        if (decision !== undefined) return undefined;
       }
 
       // 2. The batch contract: server-side workspace sessions are
