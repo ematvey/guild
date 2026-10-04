@@ -27,6 +27,14 @@ export const GUILD_TS_SERVER_VERSION: string = (() => {
   }
 })();
 
+/** The composition root rides the app instance: tests and diagnostics read
+ *  the wiring through `app.platform`. */
+declare module "fastify" {
+  interface FastifyInstance {
+    platform: PlatformContext;
+  }
+}
+
 // Native route groups. Anything listed here is served by this process;
 // everything else answers the not-found handler below (deferred routes are
 // unreachable by design — spec decision 8).
@@ -52,7 +60,7 @@ export async function buildApp(config: Config) {
 
   const platform = new PlatformContext(config, logger);
   // Test/diagnostic surface (buildApp's consumers read the wiring).
-  (app as unknown as { platform: PlatformContext }).platform = platform;
+  app.decorate("platform", platform);
 
   // Bootstrap the agent runtime (decision 9: one owning process): applies
   // the durable_* migrations + the chat-conversation mapping idempotently
@@ -80,7 +88,7 @@ export async function buildApp(config: Config) {
   // plugin, see register.ts, so the M1 error envelope and content parsers
   // apply). The upgrade listener is the server's ONLY 'upgrade' handler.
   platform.wsLog = (message) => logger.info({ ws: message }, "ws");
-  attachWsUpgrade(app.server, platform);
+  attachWsUpgrade(app.server, platform, platform, platform.pool);
 
   // The chats lane's sync capture (SyncBegin … ThreadState … SyncDone).
   wireWsSync(platform);
@@ -90,7 +98,7 @@ export async function buildApp(config: Config) {
   // to the native routes or the not-found handler. And the Faro telemetry
   // ingest (unauthenticated, fire-and-forget).
   registerWebRoutes(app as unknown as FastifyInstance, config);
-  registerFaroRoute(app as unknown as FastifyInstance, platform);
+  registerFaroRoute(app as unknown as FastifyInstance, platform.config);
 
   // Unmatched routes answer the Rust not-found envelope
   // (crates/server/src/http/error.rs not_found()): deferred surfaces

@@ -4,7 +4,7 @@
 // — duplicates are allowed.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { GatewayCtx, IdentityCtx } from "../contexts.js";
 import { ApiError, invalidTypeError, missingFieldError, RAW_BODY } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
@@ -44,7 +44,7 @@ function jsonRecord(body: unknown): Record<string, unknown> {
     : {};
 }
 
-export function registerProjectRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerProjectRoutes(app: FastifyInstance, gateway: GatewayCtx, ctx: IdentityCtx): void {
   app.post("/api/v1/projects", async (req, reply) => {
     const user = await requireUser(ctx, req);
     const record = jsonRecord(req.body);
@@ -58,13 +58,13 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: PlatformContext
     }
     const nameOpt = typeof record["name"] === "string" ? record["name"].trim() : null;
     const name = nameOpt !== null && nameOpt !== "" ? nameOpt : folderBasename(folder);
-    const created = await ctx.projects.create(user.org_id, user.id, name, folder, machineIdRaw);
+    const created = await gateway.projects.create(user.org_id, user.id, name, folder, machineIdRaw);
     return reply.status(200).type("application/json").send(projectJson(created));
   });
 
   app.get("/api/v1/projects", async (req, reply) => {
     const user = await requireUser(ctx, req);
-    const rows = await ctx.projects.list(user.org_id, user.id);
+    const rows = await gateway.projects.list(user.org_id, user.id);
     // json!-built body: sorted keys.
     reply.type("application/json").send(rustJsonText({ projects: rows }));
     return reply;
@@ -92,14 +92,14 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: PlatformContext
       }
       archived = record["archived"];
     }
-    const updated = await ctx.projects.update(user.org_id, projectId, user.id, name, folder, machineId, archived);
+    const updated = await gateway.projects.update(user.org_id, projectId, user.id, name, folder, machineId, archived);
     return reply.status(200).type("application/json").send(projectJson(updated));
   });
 
   app.delete("/api/v1/projects/:id", async (req, reply) => {
     const user = await requireUser(ctx, req);
     const projectId = parseUuidParam(req, "id");
-    await ctx.projects.delete(user.org_id, projectId, user.id);
+    await gateway.projects.delete(user.org_id, projectId, user.id);
     // json!-built body: sorted keys.
     reply.type("application/json").send(rustJsonText({ ok: true }));
     return reply;

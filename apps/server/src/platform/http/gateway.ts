@@ -6,27 +6,27 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";
 import { requireJsonBody, requireUser } from "./error.js";
 import { rustFloat, rustJsonText } from "../provider/sse.js";
-import type { PlatformContext } from "../context.js";
+import type { GatewayCtx, IdentityCtx } from "../contexts.js";
 import { PROTOCOLS, providerSlug } from "../store/gateway.js";
 
 /** The authenticated user from the session table, requiring the admin role. */
-async function requireAdminUser(ctx: PlatformContext, req: FastifyRequest) {
+async function requireAdminUser(ctx: IdentityCtx, req: FastifyRequest) {
   const user = await requireUser(ctx, req);
   if (user.role !== "admin") throw ApiError.forbidden();
   return user;
 }
 
-export function registerGatewayAdminRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: GatewayCtx, ctx: IdentityCtx): void {
   // User-facing: the org's enabled models.
   app.get("/api/v1/gateway/models", async (req) => {
     const user = await requireUser(ctx, req);
-    const list = await ctx.gatewayStore.listModels(user.org_id);
+    const list = await gateway.gatewayStore.listModels(user.org_id);
     return rustJsonText({ models: list });
   });
 
   app.get("/api/v1/admin/gateway/routes", async (req) => {
     const admin = await requireAdminUser(ctx, req);
-    const rows = await ctx.gatewayStore.listRoutes(admin.org_id);
+    const rows = await gateway.gatewayStore.listRoutes(admin.org_id);
     // f64 columns keep serde's ryu rendering (0 → "0.0").
     const rendered = rows.map((r) => ({
       ...r,
@@ -64,7 +64,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, ctx: PlatformCo
           .filter((m): m is string => typeof m === "string")
           .filter((m) => m === "image" || m === "audio" || m === "video")
       : [];
-    await ctx.gatewayStore.upsertRoute(
+    await gateway.gatewayStore.upsertRoute(
       admin.org_id,
       model,
       provider,
@@ -83,13 +83,13 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, ctx: PlatformCo
   app.delete("/api/v1/admin/gateway/routes/:model", async (req) => {
     const admin = await requireAdminUser(ctx, req);
     const model = (req.params as Record<string, string>)["model"] ?? "";
-    await ctx.gatewayStore.deleteRoute(admin.org_id, model);
+    await gateway.gatewayStore.deleteRoute(admin.org_id, model);
     return rustJsonText({});
   });
 
   app.get("/api/v1/admin/gateway/providers", async (req) => {
     const admin = await requireAdminUser(ctx, req);
-    const providers = await ctx.gatewayStore.listProviders(admin.org_id, ctx.masterKey());
+    const providers = await gateway.gatewayStore.listProviders(admin.org_id, gateway.masterKey());
     return rustJsonText({ providers });
   });
 
@@ -110,11 +110,11 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, ctx: PlatformCo
     const key = typeof body["key"] === "string" && body["key"] !== "" ? body["key"] : null;
     if (key === null) throw ApiError.badRequest("missing key");
     const slug = providerSlug(name);
-    const existing = await ctx.gatewayStore.getProvider(admin.org_id, slug, ctx.masterKey());
+    const existing = await gateway.gatewayStore.getProvider(admin.org_id, slug, gateway.masterKey());
     if (existing !== null) {
       throw ApiError.conflict("already_exists", `a provider with the name '${name}' already exists`);
     }
-    await ctx.gatewayStore.createProvider(admin.org_id, slug, name, protocol, baseUrl, key, ctx.masterKey());
+    await gateway.gatewayStore.createProvider(admin.org_id, slug, name, protocol, baseUrl, key, gateway.masterKey());
     return rustJsonText({ provider: slug });
   });
 
@@ -134,14 +134,14 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, ctx: PlatformCo
     const baseUrl = readNonEmpty(body["base_url"]) ? (body["base_url"] as string).trim() : null;
     if (baseUrl === null) throw ApiError.badRequest("missing base_url");
     const key = typeof body["key"] === "string" && body["key"] !== "" ? body["key"] : null;
-    const updated = await ctx.gatewayStore.updateProvider(
+    const updated = await gateway.gatewayStore.updateProvider(
       admin.org_id,
       slug,
       name,
       protocol,
       baseUrl,
       key,
-      ctx.masterKey(),
+      gateway.masterKey(),
     );
     if (!updated) throw ApiError.notFound(`no provider ${slug}`);
     return rustJsonText({});
@@ -152,7 +152,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, ctx: PlatformCo
   app.delete("/api/v1/admin/gateway/providers/:slug", async (req) => {
     const admin = await requireAdminUser(ctx, req);
     const slug = (req.params as Record<string, string>)["slug"] ?? "";
-    await ctx.gatewayStore.deleteProvider(admin.org_id, slug);
+    await gateway.gatewayStore.deleteProvider(admin.org_id, slug);
     return rustJsonText({});
   });
 }

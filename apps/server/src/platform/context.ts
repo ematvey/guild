@@ -20,18 +20,14 @@ import { TeamStore } from "./store/teams.js";
 import { OrgKvStore, KvStore } from "./store/org_kv.js";
 import { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
 import { RoutineStore } from "./store/routines.js";
-import type { UserRow } from "./store/identity.js";
 import { LiveHub } from "../hub/live.js";
 import { TicketStore } from "../hub/tickets.js";
-import type { SocketSink } from "../hub/sink.js";
-import type { WsServerMsg } from "../hub/protocol.js";
-import type { LiveMember } from "../hub/live.js";
 import { ChatStore } from "./store/chats.js";
 import { ThreadStore } from "./store/thread.js";
 import { TurnCommandStore } from "./store/turn_commands.js";
 import { AgentSessionStore } from "./store/agentSessions.js";
 import { ToolArtifactStore } from "./store/toolArtifacts.js";
-import { machineDispatch } from "../machines/dispatch.js";
+import { machineDispatch, type MachineDispatch } from "../machines/dispatch.js";
 import { GuildRuntime } from "../harness/runtime.js";
 import { NotifyHub } from "./notify.js";
 import { FeedForwarder } from "../hub/feed.js";
@@ -39,6 +35,7 @@ import { ClickhouseClient } from "./clickhouse.js";
 import { UsageSink } from "./usage.js";
 import { ApiError } from "./errors.js";
 import type { GatewayCredential } from "./http/llm.js";
+import type { ChatsCtx } from "./contexts.js";
 import type { Logger } from "pino";
 
 // Fixed identities for the config-minted internal gateway key (spec
@@ -79,8 +76,12 @@ export class PlatformContext {
    *  lane injects fakes typed against the seam `Hub` interface in hub/index.ts
    *  and casts here in its own tests. */
   readonly hub: LiveHub;
+  /** The per-hub tool-dispatch registry (machines/dispatch.ts; one per
+   *  process, hub-owned lifetime). */
+  readonly machineDispatch: MachineDispatch;
   readonly wsTickets: TicketStore;
   readonly usage: UsageSink;
+  readonly clickhouse: ClickhouseClient;
   /** M3: the chat-side stores and the agent runtime (the harness is owned
    *  by this process, decision 9; it starts lazily — durable migrations run
    *  idempotently on first use and at server startup). */
@@ -108,10 +109,10 @@ export class PlatformContext {
    *  - wsMachineReconcile: the dispatch lane's uncertain-execution sweep at
    *    machine connect (Rust reconcile_machine_tools).
    *  - wsLog: trace sink for the socket supervisor (server log in Rust). */
-  wsSync?: (args: { chatId: string; user: UserRow; sink: SocketSink }) => Promise<WsServerMsg | null>;
-  wsToolResult?: (args: { member: LiveMember; user: UserRow; frame: { type: "tool_result"; chat_id: string; call_id: string; content: string; is_error: boolean; meta: unknown; images: string[] } }) => Promise<void>;
-  wsMachineReconcile?: (machineId: string, connId: string) => Promise<void>;
-  wsLog?: (message: string) => void;
+  wsSync?: ChatsCtx["wsSync"];
+  wsToolResult?: ChatsCtx["wsToolResult"];
+  wsMachineReconcile?: ChatsCtx["wsMachineReconcile"];
+  wsLog?: ChatsCtx["wsLog"];
 
   constructor(
     readonly config: Config,
@@ -139,8 +140,10 @@ export class PlatformContext {
     this.integrationSecrets = new IntegrationSecretStore(this.pool);
     this.routines = new RoutineStore(this.pool);
     this.hub = new LiveHub();
+    this.machineDispatch = machineDispatch(this.hub);
     this.wsTickets = new TicketStore();
-    this.usage = new UsageSink(this.clickhouse());
+    this.clickhouse = this.createClickhouse();
+    this.usage = new UsageSink(this.clickhouse);
     this.chats = new ChatStore(this.pool);
     this.threads = new ThreadStore(this.pool);
     this.turnCommands = new TurnCommandStore(this.pool);
@@ -150,14 +153,14 @@ export class PlatformContext {
     this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub);
     // The machine dispatch registry settles pending tool waiters when a
     // machine's slot dies (the unknown-outcome sweep).
-    this.hub.onMachineDisconnected = (_machineId, connId) => machineDispatch(this.hub).unregisterConnection(connId);
+    this.hub.onMachineDisconnected = (_machineId, connId) => this.machineDispatch.unregisterConnection(connId);
     // The dispatch lane's tool-result completion + connect sweep (the
     // ws.ts seams; no-op until a test/lane sets richer behavior).
     this.wsToolResult = async ({ member, frame }) => {
-      machineDispatch(this.hub).resolveToolResult(member, frame);
+      this.machineDispatch.resolveToolResult(member, frame);
     };
     this.wsMachineReconcile = async (machineId, connId) => {
-      machineDispatch(this.hub).reconcileMachine(machineId, connId);
+      this.machineDispatch.reconcileMachine(machineId, connId);
     };
     this.feed = new FeedForwarder(this);
     this.feed.start();
@@ -170,7 +173,7 @@ export class PlatformContext {
     return key;
   }
 
-  private clickhouse(): ClickhouseClient {
+  private createClickhouse(): ClickhouseClient {
     return new ClickhouseClient({
       url: this.config.clickhouseUrl,
       database: this.config.clickhouseDatabase,

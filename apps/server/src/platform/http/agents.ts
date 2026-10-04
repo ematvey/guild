@@ -7,7 +7,8 @@
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { ChatsCtx, GatewayCtx, IdentityCtx } from "../contexts.js";
+import type { Config } from "../../config.js";
 import { ApiError, sortedJson } from "../errors.js";
 import { parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 import type { UserRow } from "../store/identity.js";
@@ -15,38 +16,44 @@ import { uuidv7 } from "../time.js";
 import { validWorkspaceName } from "../store/agentSessions.js";
 import { threadEventRowWire } from "../domain/thread-events.js";
 
-export function workspaceRoot(ctx: PlatformContext, orgId: string): string {
-  return path.join(ctx.config.dataDir, "workspaces", orgId);
+export function workspaceRoot(config: Config, orgId: string): string {
+  return path.join(config.dataDir, "workspaces", orgId);
 }
 
 /** The workspace dir for a session name, rejecting traversal/absolute/empty
  *  names (the Rust workspace_boundary_tests contract). */
-export function workspaceDir(ctx: PlatformContext, orgId: string, workspaceName: string): string {
+export function workspaceDir(config: Config, orgId: string, workspaceName: string): string {
   if (!validWorkspaceName(workspaceName)) {
     throw ApiError.badRequest("invalid workspace name");
   }
-  return path.join(workspaceRoot(ctx, orgId), workspaceName);
+  return path.join(workspaceRoot(config, orgId), workspaceName);
 }
 
-export function registerAgentSessionRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerAgentSessionRoutes(
+  app: FastifyInstance,
+  chats: ChatsCtx,
+  gateway: GatewayCtx,
+  auth: IdentityCtx,
+  config: Config,
+): void {
   /** Creates a session: the name reservation, the chat/session inserts, and
    *  the workspace preparation share one transaction — the rows become
    *  visible only after the orphan reclaim and dir create succeeded. */
   app.post("/api/v1/agents/sessions", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
     const name = body["workspace_name"];
     if (typeof name !== "string") throw ApiError.badRequest("missing workspace_name");
-    const dir = workspaceDir(ctx, user.org_id, name);
+    const dir = workspaceDir(config, user.org_id, name);
     // The rows become visible only after the orphan reclaim and dir create
     // succeeded — the transaction is the store method's.
-    const session = await ctx.agentSessions.createWithChat(
+    const session = await chats.agentSessions.createWithChat(
       user.org_id,
       user.id,
       name,
       (client) =>
         // The chat's title is the workspace name (the Rust create_chat_on call).
-        ctx.chats.createChatOn(client, user.org_id, user.id, name, null),
+        chats.chats.createChatOn(client, user.org_id, user.id, name, null),
       async () => {
         // No committed session holds the name, so any dir still on disk is an
         // orphan a deleted account left behind. Reclaim it — the next user of
@@ -69,18 +76,18 @@ export function registerAgentSessionRoutes(app: FastifyInstance, ctx: PlatformCo
   });
 
   app.get("/api/v1/agents/sessions", async (req, reply) => {
-    const user = await requireUser(ctx, req);
-    const sessions = await ctx.agentSessions.list(user.org_id, user.id);
+    const user = await requireUser(auth, req);
+    const sessions = await chats.agentSessions.list(user.org_id, user.id);
     return reply.status(200).send(JSON.stringify({ sessions: sessions.map((s) => sortedJson(s)) }));
   });
 
   /** History is the thread journal (org-scoped, owner-or-admin). */
   app.get("/api/v1/agents/sessions/:id", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const id = parseUuidParam(req, "id");
-    const session = await ctx.agentSessions.get(user.org_id, id, user);
-    await ctx.chats.getChat(user.org_id, session.chat_id, user);
-    const rows = await ctx.threads.listEvents(user.org_id, session.chat_id);
+    const session = await chats.agentSessions.get(user.org_id, id, user);
+    await chats.chats.getChat(user.org_id, session.chat_id, user);
+    const rows = await chats.threads.listEvents(user.org_id, session.chat_id);
     // serde_json::json!({"events": rows}): sorted outer keys; each row
     // interpolates as a Value — the byte-exact ThreadEventRow rendering.
     return reply
@@ -92,21 +99,21 @@ export function registerAgentSessionRoutes(app: FastifyInstance, ctx: PlatformCo
    *  uses, with `server_workspace` naming the org workspace the tools run
    *  in (the batch contract — exec-policy gated, pre-approved). */
   app.post("/api/v1/agents/sessions/:id/turns", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const id = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
     if (typeof body["message"] !== "string") throw ApiError.badRequest("missing message");
     if (typeof body["model"] !== "string") throw ApiError.badRequest("missing model");
-    const session = await ctx.agentSessions.get(user.org_id, id, user);
+    const session = await chats.agentSessions.get(user.org_id, id, user);
     // Same spend gate as the chat gateway: an agent turn is a model call,
     // so the route's monthly quota applies before any tokens flow.
     try {
-      const route = await ctx.gatewayStore.resolveRoute(user.org_id, body["model"] as string, ctx.masterKey());
+      const route = await gateway.gatewayStore.resolveRoute(user.org_id, body["model"] as string, gateway.masterKey());
       void route;
     } catch (error) {
       throw ApiError.internal(`route resolve failed: ${String(error)}`);
     }
-    const ack = await submitSessionTurn(ctx, user, {
+    const ack = await submitSessionTurn(chats, gateway, user, {
       chat_id: session.chat_id,
       model: body["model"] as string,
       message: body["message"] as string,
@@ -126,9 +133,14 @@ interface SessionTurnBody {
 /** The agents-session turn path: builds the same canonical request the chat
  *  gateway journals (with server_workspace filled) and reuses the chats
  *  route's submitTurn core via the runtime. */
-async function submitSessionTurn(ctx: PlatformContext, user: UserRow, body: SessionTurnBody): Promise<string> {
+async function submitSessionTurn(
+  chats: ChatsCtx,
+  gateway: GatewayCtx,
+  user: UserRow,
+  body: SessionTurnBody,
+): Promise<string> {
   // Quota enforcement rides the gateway route resolution (429 surfaces).
-  await ctx.gatewayStore.resolveRoute(user.org_id, body.model, ctx.masterKey());
+  await gateway.gatewayStore.resolveRoute(user.org_id, body.model, gateway.masterKey());
   const commandId = uuidv7();
   const request = {
     user_message_id: commandId,
@@ -139,7 +151,7 @@ async function submitSessionTurn(ctx: PlatformContext, user: UserRow, body: Sess
     attachment_ids: [],
     server_workspace: body.server_workspace,
   };
-  const command = await ctx.turnCommands.accept(commandId, user.org_id, user.id, body.chat_id, sortedJson(request), {
+  const command = await chats.turnCommands.accept(commandId, user.org_id, user.id, body.chat_id, sortedJson(request), {
     user_message_id: commandId,
     org_id: user.org_id,
     user_id: user.id,
@@ -153,16 +165,16 @@ async function submitSessionTurn(ctx: PlatformContext, user: UserRow, body: Sess
     attachment_ids: [],
     server_workspace: body.server_workspace,
   }, { content: body.message, attachments: [] });
-  const submissionId = await ctx.runtime.submitTurn(body.chat_id, user.org_id, {
+  const submissionId = await chats.runtime.submitTurn(body.chat_id, user.org_id, {
     orgId: user.org_id,
     requestId: commandId,
     content: body.message,
     images: [],
     model: body.model,
   });
-  await ctx.turnCommands.submitted(commandId, `sub:${submissionId}`);
-  await ctx.chats.setGenerating(user.org_id, body.chat_id, true);
-  const refreshed = await ctx.turnCommands.existing(commandId, user.org_id, user.id, body.chat_id, sortedJson(request));
+  await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
+  await chats.chats.setGenerating(user.org_id, body.chat_id, true);
+  const refreshed = await chats.turnCommands.existing(commandId, user.org_id, user.id, body.chat_id, sortedJson(request));
   const ack = refreshed ?? command;
   return JSON.stringify(
     sortedJson({

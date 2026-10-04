@@ -90,4 +90,15 @@ describe("arch layers", () => {
       expect(violations(path.join(SRC, dir), BANNED_FOR_SERVICES)).toEqual([]);
     });
   }
+
+  it("platform/http/* imports no PlatformContext (register.ts composition glue excepted)", () => {
+    const found: string[] = [];
+    for (const file of tsFiles(path.join(SRC, "platform", "http"))) {
+      const rel = path.relative(SRC, file);
+      if (rel === "platform/http/register.ts") continue;
+      const targets = importSpecifiers(readFileSync(file, "utf8")).map((s) => resolveImport(s, file));
+      if (targets.includes("platform/context.ts")) found.push(rel);
+    }
+    expect(found.sort()).toEqual([]);
+  });
 });
