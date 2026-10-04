@@ -1,15 +1,23 @@
 // Admin API (crates/server/src/http/admin.rs): user management, the
 // assistant / approval-policy prompts (org_kv), and the integration
-// configuration read paths + per-tool curation. The integration save path
-// (POST/PUT with config validation, connection tests and live MCP
-// discovery) and the tools listing stay on the Rust side for now — see the
-// M6 report for the disposition.
+// configuration CRUD — including the save path (config validation, secret
+// merge, connection tests) and the tools listing with per-tool curation
+// (M7 wiring; connector catalogs live in src/platform/integrations/).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { PlatformContext } from "../context.js";
-import { ApiError, parseUuidParam, requireUser } from "./error.js";
+import { ApiError, parseUuidParam, requireJsonBody, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
 import { CONNECTORS, connectorByName, type ConnectorManifest } from "../integration-catalog.js";
+import { builtinConnectorByName, manifestToolClass, toolClassOf } from "../integrations/connectors.js";
+import { mcpConnect } from "../integrations/mcp.js";
+import {
+  envelopeHeaders,
+  namespacedTool,
+  registryManifest,
+  toolCurate,
+} from "../integrations/plugins.js";
+import { randomUUID } from "node:crypto";
 
 /** Org KV key holding the admin-configured assistant persona prompt. */
 const ASSISTANT_PROMPT_KEY = "assistant_system_prompt";
@@ -262,6 +270,36 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
     return reply;
   });
 
+  // Creates a configuration row for a not-yet-configured connector: a
+  // compiled-in kind or an installed registry v2 MCP plugin. The new row's
+  // stable id is the object's address from here on.
+  app.post("/api/v1/admin/integrations", async (req, reply) => {
+    const admin = await requireAdmin(ctx, req);
+    const body = requireJsonBody(req);
+    const name = body["name"];
+    if (typeof name !== "string") throw ApiError.badRequest("missing name");
+    const rows = await ctx.integrations.list(admin.org_id);
+    if (rows.some((r) => r.name === name)) {
+      throw ApiError.conflict("already_configured", `integration ${name} already has a configuration`);
+    }
+    // Known connectors only: a compiled-in kind, or an installed registry v2
+    // bundle whose manifest declares an MCP server.
+    const known =
+      builtinConnectorByName(name) !== undefined ||
+      (await latestIntegrationManifest(ctx, admin.org_id, name))?.["mcp"] != null;
+    if (!known) throw ApiError.notFound(`unknown integration ${name}`);
+    await saveIntegration(ctx, admin.org_id, name, null, body);
+    const created = await ctx.integrations.getByName(admin.org_id, name);
+    sendJson(reply, {
+      id: created!.id,
+      org_id: created!.org_id,
+      name: created!.name,
+      config: created!.config,
+      enabled: created!.enabled,
+    });
+    return reply;
+  });
+
   // Lists one integration's secret names, timestamps and masked previews —
   // never values.
   app.get("/api/v1/admin/integrations/:id/secrets", async (req, reply) => {
@@ -341,6 +379,97 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
     return reply;
   });
 
+  // The full, unfiltered tool list of one integration row with each tool's
+  // stored per-tool config. Built-in (adapter-bound) rows read their
+  // compiled-in declarations; MCP rows connect live and merge the discovered
+  // tools with the stored config. A disabled row reports `resolved: false`
+  // without connecting; a broken plugin reports the resolution error — never
+  // a silent empty list.
+  app.get("/api/v1/admin/integrations/:id/tools", async (req, reply) => {
+    const admin = await requireAdmin(ctx, req);
+    const id = parseUuidParam(req, "id");
+    const integrationRow = await ctx.integrations.get(admin.org_id, id);
+    if (integrationRow === null) throw ApiError.notFound("unknown integration");
+    const rowConfig = (integrationRow.config ?? {}) as Record<string, unknown>;
+    const mcpUrl = readMcpUrl(rowConfig);
+    if (mcpUrl === null) {
+      const connector = builtinConnectorByName(integrationRow.name);
+      if (connector === undefined) {
+        throw ApiError.notFound(`unknown integration kind ${integrationRow.name}`);
+      }
+      let specs;
+      try {
+        specs = connector.tools(rowConfig);
+      } catch (error) {
+        throw ApiError.badRequest(`invalid integration config: ${(error as Error).message}`);
+      }
+      const tools = specs.map((spec) =>
+        curatedToolJson(
+          spec.name,
+          integrationRow.name,
+          toolClassOf(connector, spec.name),
+          spec.description,
+          false,
+          rowConfig,
+        ),
+      );
+      sendJson(reply, { resolved: true, kind: "builtin", tools });
+      return reply;
+    }
+    // MCP-bound: live discovery merged with the stored config. A disabled
+    // row is not resolved (it serves nothing); a reachable one lists every
+    // tool it currently serves, each with the stored curation (absent =
+    // disabled, so remote drift lands visible-but-off).
+    if (!integrationRow.enabled) {
+      sendJson(reply, { resolved: false, kind: "mcp", reason: "integration disabled", tools: [] });
+      return reply;
+    }
+    let manifest: Record<string, unknown>;
+    try {
+      manifest = await registryManifest(ctx, admin.org_id, integrationRow.name);
+    } catch (error) {
+      throw ApiError.badRequest(`no registry manifest: ${(error as Error).message}`);
+    }
+    // The auth block's declared list — the same source the connector's
+    // registry bundle declares (not the settings-derived list).
+    const auth = manifest["auth"];
+    const secretNames =
+      auth !== null && typeof auth === "object" && Array.isArray((auth as Record<string, unknown>)["secret_names"])
+        ? ((auth as Record<string, unknown>)["secret_names"] as string[])
+        : [];
+    let secrets: [string, string][];
+    try {
+      secrets = await ctx.integrationSecrets.resolve(admin.org_id, integrationRow.name, secretNames, ctx.masterKey());
+    } catch (error) {
+      throw ApiError.conflict("missing_secrets", (error as Error).message);
+    }
+    const headers = envelopeHeaders(randomUUID(), admin.org_id, null, null, secrets);
+    let peer;
+    try {
+      peer = await mcpConnect(mcpUrl, headers);
+    } catch (error) {
+      throw ApiError.badRequest(`MCP server unreachable: ${(error as Error).message}`);
+    }
+    let listed;
+    try {
+      listed = await peer.listTools();
+    } catch (error) {
+      throw ApiError.badRequest(`MCP tools/list failed: ${(error as Error).message}`);
+    }
+    const tools = listed.map((t) =>
+      curatedToolJson(
+        t.name,
+        integrationRow.name,
+        manifestToolClass(manifest, t.name),
+        t.description,
+        true,
+        rowConfig,
+      ),
+    );
+    sendJson(reply, { resolved: true, kind: "mcp", tools });
+    return reply;
+  });
+
   // Removes an integration's configuration by id (the connector can be
   // re-added later as a fresh row with a fresh id).
   app.delete("/api/v1/admin/integrations/:id", async (req, reply) => {
@@ -348,6 +477,20 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, ctx: Platfo
     const id = parseUuidParam(req, "id");
     await ctx.integrations.delete(admin.org_id, id);
     sendJson(reply, {});
+    return reply;
+  });
+
+  // Updates one integration by id: config, enabled flag and newly entered
+  // credential values, validated and connection-tested before anything is
+  // persisted. The connector slug comes from the row.
+  app.put("/api/v1/admin/integrations/:id", async (req, reply) => {
+    const admin = await requireAdmin(ctx, req);
+    const id = parseUuidParam(req, "id");
+    const body = requireJsonBody(req);
+    const existing = await ctx.integrations.get(admin.org_id, id);
+    if (existing === null) throw ApiError.notFound("unknown integration");
+    await saveIntegration(ctx, admin.org_id, existing.name, existing, body);
+    sendJson(reply, { ok: true });
     return reply;
   });
 }
@@ -387,4 +530,238 @@ function declaredV2SecretNames(manifest: Record<string, unknown> | null): string
 
 function param(req: FastifyRequest, name: string): string {
   return (req.params as Record<string, string>)[name] ?? "";
+}
+
+// ---------- integration save path (create/update with connection tests) ----------
+
+/** Validates an MCP plugin row's config: mcp.url must be an absolute http(s)
+ *  URL when present; tool_policy role keys ⊆ {member, admin} with class
+ *  lists ⊆ {read, write, admin}. */
+function validateMcpConfig(config: Record<string, unknown>): void {
+  const mcp = config["mcp"];
+  const url =
+    mcp !== null && typeof mcp === "object" && !Array.isArray(mcp)
+      ? (mcp as Record<string, unknown>)["url"]
+      : undefined;
+  if (typeof url === "string" && !url.startsWith("http://") && !url.startsWith("https://")) {
+    throw ApiError.badRequest("mcp.url must be an absolute http(s) URL");
+  }
+  const policy = config["tool_policy"];
+  if (policy !== null && typeof policy === "object" && !Array.isArray(policy)) {
+    for (const [role, classes] of Object.entries(policy as Record<string, unknown>)) {
+      if (role !== "member" && role !== "admin") {
+        throw ApiError.badRequest("tool_policy role keys must be member or admin");
+      }
+      if (!Array.isArray(classes)) {
+        throw ApiError.badRequest("tool_policy role value must be a class list");
+      }
+      for (const c of classes) {
+        if (c !== "read" && c !== "write" && c !== "admin") {
+          throw ApiError.badRequest("tool_policy classes must be read, write, or admin");
+        }
+      }
+    }
+  }
+}
+
+/** Connection test for an MCP plugin: a full pool connect plus tools/list
+ *  handshake with the would-be secret headers. */
+async function mcpTestConnection(
+  url: string,
+  secrets: [string, string][],
+  orgId: string,
+): Promise<void> {
+  const headers = envelopeHeaders(randomUUID(), orgId, null, null, secrets);
+  let peer;
+  try {
+    peer = await mcpConnect(url, headers);
+  } catch (error) {
+    throw ApiError.badRequest(`MCP server unreachable: ${(error as Error).message}`);
+  }
+  try {
+    await peer.listTools();
+  } catch (error) {
+    throw ApiError.badRequest(`MCP tools/list failed: ${(error as Error).message}`);
+  }
+}
+
+/** Shared save path for create and update (crates/server/src/http/admin.rs
+ *  save_integration): applies the registry-shadowing rules, validates
+ *  required fields, merges newly entered credential values in memory, runs
+ *  the connector's connection test against the would-be state, and persists
+ *  (config, secrets, enabled) only on success — a broken connection is
+ *  never stored. */
+async function saveIntegration(
+  ctx: PlatformContext,
+  orgId: string,
+  name: string,
+  existing: { config: unknown; enabled: boolean } | null,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const master = ctx.masterKey();
+  const existingConfig = (existing?.config ?? {}) as Record<string, unknown>;
+  // A create-stub (POST with just a name) registers the row disabled and
+  // empty: the completeness check and connection test apply to every real
+  // save of settings or credentials.
+  const isStubCreate =
+    existing === null && body["config"] === undefined && body["enabled"] === undefined && body["secrets"] === undefined;
+  if (isStubCreate) {
+    // An MCP plugin from the registry seeds its stub with the manifest's
+    // mcp/auth blocks (as registry install does): the settings editor can
+    // then complete and enable it — an empty stub can never enable.
+    const manifest = await latestIntegrationManifest(ctx, orgId, name);
+    const config: Record<string, unknown> =
+      manifest !== null && manifest["mcp"] != null
+        ? { mcp: manifest["mcp"], auth: manifest["auth"] ?? { kind: "org_secret", secret_names: [], identity_key: "email" }, tool_policy: {} }
+        : {};
+    await ctx.integrations.upsert(orgId, name, config, false);
+    return;
+  }
+  const registryManifestValue = await latestIntegrationManifest(ctx, orgId, name);
+  const v2Claimed =
+    (registryManifestValue !== null && registryManifestValue["mcp"] != null) ||
+    readMcpUrl(existingConfig) !== null;
+  // Newly entered credential values: only non-empty strings are writes; an
+  // untouched field stays as stored (standard CRUD update).
+  const submitted: [string, string][] = Object.entries(
+    body["secrets"] !== null && typeof body["secrets"] === "object" && !Array.isArray(body["secrets"])
+      ? (body["secrets"] as Record<string, unknown>)
+      : {},
+  )
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== "")
+    .map(([k, v]) => [k, v]);
+  if (v2Claimed) {
+    // v2 MCP plugin installed from the registry: config fields merge
+    // shallowly over the stored row (an empty object on create) so partial
+    // updates keep mcp/auth. The tools curation map never comes from a
+    // settings save — the PUT tools endpoint is its only writer.
+    const config: Record<string, unknown> = { ...existingConfig };
+    const patch = body["config"];
+    if (patch !== null && typeof patch === "object" && !Array.isArray(patch)) {
+      for (const [k, v] of Object.entries(patch as Record<string, unknown>)) {
+        if (k === "tools") continue;
+        config[k] = v;
+      }
+    }
+    validateMcpConfig(config);
+    const enabled =
+      typeof body["enabled"] === "boolean" ? body["enabled"] : (existing?.enabled ?? false);
+    const declared = declaredV2SecretNames(registryManifestValue);
+    if (enabled && readMcpUrl(config) === null) {
+      throw ApiError.badRequest("mcp plugin needs an mcp.url before enabling");
+    }
+    // Resolve stored secrets, overlay the submitted values in memory, and
+    // test the connection before anything is written. A save that neither
+    // enables nor writes credentials touches neither.
+    if (declared.length > 0 || submitted.length > 0) {
+      let secrets = await ctx.integrationSecrets.resolve(
+        orgId,
+        name,
+        await ctx.integrationSecrets.names(orgId, name),
+        master,
+      );
+      for (const [k, v] of submitted) {
+        secrets = secrets.filter(([n]) => n !== k);
+        secrets.push([k, v]);
+      }
+      if (enabled) {
+        const missing = declared.filter((d) => !secrets.some(([n]) => n === d));
+        if (missing.length > 0) {
+          throw ApiError.conflict("missing_secrets", `missing secrets: ${missing.join(", ")}`);
+        }
+        await mcpTestConnection(readMcpUrl(config) ?? "", secrets, orgId);
+      }
+    }
+    for (const [k, v] of submitted) {
+      await ctx.integrationSecrets.upsert(orgId, name, k, v, master);
+    }
+    await ctx.integrations.upsert(orgId, name, config, enabled);
+    return;
+  }
+  const connector = builtinConnectorByName(name);
+  if (connector === undefined) throw ApiError.notFound(`unknown integration ${name}`);
+  let config = body["config"] !== undefined ? body["config"] : existing?.config ?? {};
+  // Per-tool curation is admin state with a single writer — the PUT tools
+  // endpoint. A settings save never changes it: the client-sent tools map (a
+  // stale snapshot by definition) is dropped and the stored selection rides
+  // through.
+  if (config !== null && typeof config === "object" && !Array.isArray(config)) {
+    const obj = config as Record<string, unknown>;
+    delete obj["tools"];
+    if (existing !== null && existingConfig["tools"] !== undefined) {
+      obj["tools"] = existingConfig["tools"];
+    }
+  }
+  const configForTools = (config ?? {}) as Record<string, unknown>;
+  // Validate via the connector's own config check before saving.
+  try {
+    connector.tools(configForTools);
+  } catch (error) {
+    throw ApiError.badRequest(`invalid integration config: ${(error as Error).message}`);
+  }
+  const schemaFields = CONNECTORS.find((c) => c.name === name)!.fields;
+  const enabled =
+    typeof body["enabled"] === "boolean" ? body["enabled"] : (existing?.enabled ?? false);
+  // Required settings must be filled (a missing optional falls back to the
+  // manifest default or stays absent). Credential fields are skipped here —
+  // they are enforced by the missing-secrets gate below, which reports the
+  // proper conflict code.
+  for (const f of schemaFields) {
+    if (!f.required || f.kind === "secret") continue;
+    const value = configForTools[f.name];
+    const present = f.kind === "boolean" ? typeof value === "boolean" : typeof value === "string" && value !== "";
+    if (!present) {
+      const label = f.label ?? f.name;
+      throw ApiError.badRequest(`field ${label} is required`);
+    }
+  }
+  // Merge stored + submitted credentials in memory and test before anything
+  // is written.
+  const declared = schemaFields.filter((f) => f.kind === "secret").map((f) => f.name);
+  let secrets = await ctx.integrationSecrets.resolve(
+    orgId,
+    name,
+    await ctx.integrationSecrets.names(orgId, name),
+    master,
+  );
+  for (const [k, v] of submitted) {
+    secrets = secrets.filter(([n]) => n !== k);
+    secrets.push([k, v]);
+  }
+  if (enabled) {
+    const missing = declared.filter((d) => !secrets.some(([n]) => n === d));
+    if (missing.length > 0) {
+      throw ApiError.conflict("missing_secrets", `missing secrets: ${missing.join(", ")}`);
+    }
+  }
+  try {
+    await connector.testConnection(configForTools, secrets);
+  } catch (error) {
+    throw ApiError.badRequest((error as Error).message);
+  }
+  for (const [k, v] of submitted) {
+    await ctx.integrationSecrets.upsert(orgId, name, k, v, master);
+  }
+  await ctx.integrations.upsert(orgId, name, config, enabled);
+}
+
+/** One declared/served tool with its stored per-tool curation, as the admin
+ *  Tools table renders it. */
+function curatedToolJson(
+  rawName: string,
+  slug: string,
+  cls: string,
+  description: string,
+  mcp: boolean,
+  rowConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  const curate = toolCurate(rowConfig, mcp, rawName);
+  return {
+    name: rawName,
+    tool: namespacedTool(slug, rawName),
+    class: cls,
+    description,
+    enabled: curate.enabled,
+    approval: curate.alwaysAsk ? "always_ask" : "default",
+  };
 }
