@@ -10,7 +10,13 @@ import path from "node:path";
 import pg from "pg";
 import { buildApp } from "../../app.js";
 import { loadConfig } from "../../config.js";
-import { MIGRATIONS_DIR, TEST_ADMIN_URL } from "./harness.js";
+import {
+  MIGRATIONS_DIR,
+  TEST_ADMIN_URL,
+  TEST_S3_ACCESS_KEY_ID,
+  TEST_S3_SECRET_ACCESS_KEY,
+  TEST_S3_URL,
+} from "./harness.js";
 
 const TEST_CLICKHOUSE_URL =
   process.env.GUILD_M2_TEST_CLICKHOUSE_URL ?? "http://localhost:8123";
@@ -72,15 +78,16 @@ export async function createM2TestEnv(
 ): Promise<M2TestEnv> {
   const suffix = randomSuffix();
   const databaseName = `${dbPrefix}${suffix}`;
-  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
+  const adminPool = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
   await adminPool.query(`CREATE DATABASE "${databaseName}"`);
+  await adminPool.end();
   const databaseUrl = new URL(TEST_ADMIN_URL);
   databaseUrl.pathname = `/${databaseName}`;
 
   // Seeding/preparation pool on the disposable database — never on the
   // shared guild database the admin URL points at.
-  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 4 });
-  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2 });
+  const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 4, idleTimeoutMillis: 2000 });
+  const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
   for (const file of readdirSync(MIGRATIONS_DIR).sort()) {
     if (!file.endsWith(".sql")) continue;
     await migrationPool.query(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
@@ -112,6 +119,10 @@ export async function createM2TestEnv(
     GUILD_CLICKHOUSE_USER: TEST_CLICKHOUSE_USER,
     GUILD_CLICKHOUSE_PASSWORD: TEST_CLICKHOUSE_PASSWORD,
     GUILD_INTERNAL_KEY: `gk_internal_${suffix}`,
+    GUILD_POOL_MAX: "5",
+    GUILD_S3_URL: TEST_S3_URL,
+    GUILD_S3_ACCESS_KEY_ID: TEST_S3_ACCESS_KEY_ID,
+    GUILD_S3_SECRET_ACCESS_KEY: TEST_S3_SECRET_ACCESS_KEY,
     ...configOverrides,
   });
   const app = await buildApp(config);
@@ -123,7 +134,7 @@ export async function createM2TestEnv(
     await app.close();
     await dbPool.end();
     if (withClickhouse) await dropClickhouseDatabase(clickhouseDatabase);
-    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1 });
+    const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
     try {
       // WITH (FORCE) can transiently fail ("permission denied to terminate
       // process") when a backend exits as the signal lands under parallel
@@ -142,7 +153,6 @@ export async function createM2TestEnv(
     } finally {
       await dropper.end();
     }
-    await adminPool.end();
   };
 
   return {
@@ -166,6 +176,9 @@ export interface MockUpstreamRequest {
 export interface MockUpstream {
   url: string;
   requests: MockUpstreamRequest[];
+  /** Replaces the response script (sequential tests install their next
+   *  scenario; pending waits resolve with the new script). */
+  setResponses(responses: MockUpstreamResponse[]): void;
   stop(): Promise<void>;
 }
 
@@ -231,9 +244,15 @@ export async function startMockUpstream(
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("mock upstream bind failed");
+  const scripted: MockUpstreamResponse[] = responses;
   return {
     url: `http://127.0.0.1:${address.port}`,
     requests,
+    setResponses(next: MockUpstreamResponse[]) {
+      scripted.length = 0;
+      scripted.push(...next);
+      call = 0;
+    },
     stop: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
@@ -281,9 +300,9 @@ export interface M2Stack {
  *  `configOverrides` pass through to loadConfig (e.g. GUILD_SELF_BASE_URL). */
 export async function setupM2Stack(
   configOverrides: Record<string, string> = {},
-  opts: { dbPrefix?: string } = {},
+  opts: { dbPrefix?: string; logLevel?: string } = {},
 ): Promise<M2Stack> {
-  const env = await createM2TestEnv(true, "error", configOverrides, opts.dbPrefix);
+  const env = await createM2TestEnv(true, opts.logLevel ?? "error", configOverrides, opts.dbPrefix);
   const db = env.db;
   const orgId = crypto.randomUUID();
   const adminEmail = `m2-admin-${randomSuffix()}@example.test`;

@@ -15,7 +15,9 @@ function installBigintNumberParser(): void {
 export type PlatformPool = pg.Pool;
 export type PoolClient = pg.PoolClient;
 
-export function createPlatformPool(databaseUrl: string): pg.Pool {
+export function createPlatformPool(databaseUrl: string, poolMax = 10): pg.Pool {
   installBigintNumberParser();
-  return new pg.Pool({ connectionString: databaseUrl, max: 10 });
+  // Short idle timeout: suites (and redeploys) must release their slots
+  // promptly on the shared dev server's connection budget.
+  return new pg.Pool({ connectionString: databaseUrl, max: poolMax, idleTimeoutMillis: 2000 });
 }

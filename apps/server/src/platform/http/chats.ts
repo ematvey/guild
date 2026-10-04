@@ -292,9 +292,20 @@ export function registerChatsRoutes(app: FastifyInstance, ctx: PlatformContext):
       }
     }
 
-    // Live turn: the M4 approval gate (beforeTool + durable waiting task)
-    // resolves the decision; until that lane lands there is nothing to
-    // forward to — the boundary is documented in the M3 report.
+    // Live turn: the M4 approval gate's tool task polls the journaled
+    // decision (the block/resume contract) — appending it here resolves the
+    // suspended gate within the poll interval.
+    const generating = await ctx.chats.isGenerating(user.org_id, chatId);
+    if (generating) {
+      await ctx.threads.appendEvent(chatId, {
+        type: "approval_decision",
+        call_id: callId,
+        approved,
+        ...(reason !== undefined ? { reason } : {}),
+        expired: false,
+      });
+      return reply.status(200).send(JSON.stringify(sortedJson({ ok: true, settled: false })));
+    }
     // Orphaned call (no recorded decision, no live turn): journal the
     // expired marker so a reload shows the settled card.
     const APPROVAL_EXPIRED_REASON = "expired — no turn was waiting for this approval";

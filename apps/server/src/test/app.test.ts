@@ -140,6 +140,11 @@ describe("health route (native)", () => {
       "GET /api/v1/admin/integrations/*/secrets",
       "PUT /api/v1/admin/integrations/*/tools/*",
       "DELETE /api/v1/admin/integrations/*",
+      // M4: workspace agent sessions + tool artifacts.
+      "/api/v1/agents/sessions",
+      "/api/v1/agents/sessions/*",
+      "/api/v1/tool_artifacts/*",
+      "/api/v1/chats/*/tool_artifacts",
     ]);
   });
 });

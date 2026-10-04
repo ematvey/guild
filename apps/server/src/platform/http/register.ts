@@ -16,6 +16,8 @@ import { registerGatewayAdminRoutes } from "./gateway.js";
 import { registerApiKeyRoutes } from "./api_keys.js";
 import { registerUsageRoutes } from "./usage.js";
 import { registerChatsRoutes } from "./chats.js";
+import { registerAgentSessionRoutes } from "./agents.js";
+import { registerToolArtifactRoutes } from "./tool-artifacts.js";
 import { registerThreadStreamRoute } from "./thread-stream.js";
 import { registerOpenAiRoutes, renderOpenAiError } from "./openai.js";
 import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
@@ -59,6 +61,9 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "admin-users", paths: ["/api/v1/admin/users", "/api/v1/admin/users/*"] },
   { name: "admin-prompts", paths: ["/api/v1/admin/assistant-prompt", "/api/v1/admin/approval-policy-prompt"] },
   { name: "admin-integrations", paths: ["GET /api/v1/admin/integrations", "GET /api/v1/admin/integrations/*/secrets", "PUT /api/v1/admin/integrations/*/tools/*", "DELETE /api/v1/admin/integrations/*"] },
+  // M4: workspace agent sessions + tool artifacts (the spill surface).
+  { name: "agents", paths: ["/api/v1/agents/sessions", "/api/v1/agents/sessions/*"] },
+  { name: "tool-artifacts", paths: ["/api/v1/tool_artifacts/*", "/api/v1/chats/*/tool_artifacts"] },
 ];
 
 export async function registerPlatformRoutes(app: FastifyInstance, ctx: PlatformContext): Promise<void> {
@@ -104,6 +109,8 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerMachineRoutes(scope, ctx);
     registerWsRoutes(scope, ctx);
     registerChatsRoutes(scope, ctx);
+    registerAgentSessionRoutes(scope, ctx);
+    registerToolArtifactRoutes(scope, ctx);
     registerThreadStreamRoute(scope, ctx);
     // M6 long tail.
     registerRegistryRoutes(scope, ctx);

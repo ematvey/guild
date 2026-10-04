@@ -17,7 +17,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await env.cleanup();
-});
+  // The drop retries under load can exceed the 10s default hook timeout.
+}, 60_000);
 
 interface Login {
   token: string;

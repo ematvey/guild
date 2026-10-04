@@ -26,6 +26,12 @@ describe("loadConfig", () => {
       selfBaseUrl: "http://127.0.0.1:8080",
       faroUrl: DEFAULT_FARO_URL,
       webDistDir: path.resolve(process.cwd(), "../desktop/dist"),
+      poolMax: 10,
+      dataDir: path.resolve("./data"),
+      allowShellTools: false,
+      approvalTimeoutMs: 300_000,
+      clientToolTimeoutMs: 300_000,
+      execPolicyRulesPath: null,
     });
     expect(DEFAULT_BIND_ADDR).toBe("0.0.0.0:8080");
     expect(DEFAULT_UPSTREAM_URL).toBe("http://server-rust:8080");

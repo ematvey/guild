@@ -1,12 +1,9 @@
 // The Guild extension: the system-prompt section the built-in agent runs
-// with (crates/server/src/worker/restate.rs build_system_prompt port for the
-// parts that exist without M4/M5 machinery — persona from the org's
-// assistant_system_prompt key or the built-in default, plus the coding-tools
-// sentence). Workspace sentences, machine-tool text, skills/AGENTS.md
-// indexes, and integrations arrive with the workspace-sessions and hub
-// lanes; this section covers the text-only + server-side-tools surface.
+// with (crates/server/src/worker/restate.rs build_system_prompt port) and
+// the approval gate hook (the M4 exec-policy + approvals lane).
 
 import { defineExtension, type ConversationId, type PromptSection, type ToolRegistration } from "@earendil-works/pi-durable";
+import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
 
 export const ASSISTANT_PROMPT_KEY = "assistant_system_prompt";
 
@@ -20,7 +17,7 @@ export function buildSystemPrompt(orgPrompt: string | null | undefined): string 
   return `${persona} You have tools (read, write, edit, bash) that execute on the Guild server. Use them to inspect and change files before answering anything that could be about files.`;
 }
 
-export interface GuildExtensionDeps {
+export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** Org id → stored persona lookup (org_kv.assistant_system_prompt). */
   orgPrompt(orgId: string): Promise<string | null>;
   /** conversationId → org id (the chat mapping). */
@@ -39,5 +36,6 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
   return defineExtension({
     name: "guild",
     sections: [section],
+    hooks: [createApprovalGate(deps)],
   });
 }
