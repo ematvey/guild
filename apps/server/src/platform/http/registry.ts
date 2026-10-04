@@ -7,7 +7,8 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { GatewayCtx, IdentityCtx } from "../contexts.js";
+import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
@@ -57,9 +58,14 @@ function sendJson(reply: FastifyReply, value: unknown): void {
   void reply.type("application/json").send(rustJsonText(value));
 }
 
-export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerRegistryRoutes(
+  app: FastifyInstance,
+  gateway: GatewayCtx,
+  auth: IdentityCtx,
+  objects: ObjectStore,
+): void {
   app.post("/api/v1/registry/:kind", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const kind = param(req, "kind");
     validKind(kind);
     const slug = queryOne(req, "slug");
@@ -103,7 +109,7 @@ export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContex
     // Metadata first: only an accepted upsert (new version, unchanged
     // republish) commits a row — a superseded publish is refused before any
     // bundle bytes land, so the old release's object stays intact.
-    await ctx.registry.upsertVersion(
+    await gateway.registry.upsertVersion(
       user.org_id,
       kind,
       slug,
@@ -118,13 +124,13 @@ export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContex
     // are immutable and idempotent to re-write, so a failed put only leaves
     // the object missing until the publish is retried.
     try {
-      await ctx.objects.put(key, body);
+      await objects.put(key, body);
     } catch (error) {
       throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
     }
     // org event: registry item published; best-effort
     try {
-      await ctx.events.emit(user.org_id, "registry.published", { kind, slug, version });
+      await auth.events.emit(user.org_id, "registry.published", { kind, slug, version });
     } catch {
       // best-effort
     }
@@ -133,42 +139,42 @@ export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContex
   });
 
   app.get("/api/v1/registry/:kind", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const kind = param(req, "kind");
     validKind(kind);
-    const items = await ctx.registry.listItems(user.org_id, kind);
+    const items = await gateway.registry.listItems(user.org_id, kind);
     sendJson(reply, { items });
     return reply;
   });
 
   app.get("/api/v1/registry/:kind/:slug", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const kind = param(req, "kind");
     validKind(kind);
-    const versions = await ctx.registry.itemVersions(user.org_id, kind, param(req, "slug"));
+    const versions = await gateway.registry.itemVersions(user.org_id, kind, param(req, "slug"));
     sendJson(reply, { versions });
     return reply;
   });
 
   app.get("/api/v1/registry/:kind/:slug/:version/bundle", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const kind = param(req, "kind");
     validKind(kind);
     const slug = param(req, "slug");
     const version = param(req, "version");
-    const stored = await ctx.registry.getVersion(user.org_id, kind, slug, version);
+    const stored = await gateway.registry.getVersion(user.org_id, kind, slug, version);
     // members can only download the exact approved bundle: the requested
     // version must be the approval's version and its stored hash must equal
     // the approved one — a byte-swapped republish is undownloadable.
     if (user.role !== "admin") {
-      const approved = await ctx.registry.approvedBundle(user.org_id, kind, slug);
+      const approved = await gateway.registry.approvedBundle(user.org_id, kind, slug);
       if (approved === null || approved[0] !== version || stored.bundle_sha256 !== approved[1]) {
         throw ApiError.forbidden();
       }
     }
     let bytes: Buffer;
     try {
-      bytes = await ctx.objects.get(stored.object_key);
+      bytes = await objects.get(stored.object_key);
     } catch (error) {
       throw ApiError.internal(`object store read failed: ${(error as Error).message}`);
     }
@@ -176,7 +182,7 @@ export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContex
   });
 
   app.post("/api/v1/registry/:kind/:slug/review", async (req, reply) => {
-    const admin = await requireAdmin(ctx, req);
+    const admin = await requireAdmin(auth, req);
     const kind = param(req, "kind");
     validKind(kind);
     const slug = param(req, "slug");
@@ -196,13 +202,13 @@ export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContex
     if (status === "approved" && (reviewedVersion === null || reviewedBundleSha256 === null)) {
       throw ApiError.badRequest("approval requires reviewed_version and reviewed_bundle_sha256");
     }
-    await ctx.registry.setReview(admin.org_id, kind, slug, status, reviewedVersion, reviewedBundleSha256);
+    await gateway.registry.setReview(admin.org_id, kind, slug, status, reviewedVersion, reviewedBundleSha256);
     sendJson(reply, {});
     return reply;
   });
 
   app.post("/api/v1/registry/:kind/:slug/install", async (req, reply) => {
-    const user = await requireUser(ctx, req);
+    const user = await requireUser(auth, req);
     const kind = param(req, "kind");
     validKind(kind);
     const slug = param(req, "slug");
@@ -213,22 +219,22 @@ export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContex
     // version and its exact bundle bytes yields a default.
     let version = queryOne(req, "version") ?? null;
     if (version === null) {
-      const approved = await ctx.registry.approvedBundle(user.org_id, kind, slug);
+      const approved = await gateway.registry.approvedBundle(user.org_id, kind, slug);
       if (approved === null) throw ApiError.forbidden();
       version = approved[0];
     }
-    const stored = await ctx.registry.getVersion(user.org_id, kind, slug, version);
+    const stored = await gateway.registry.getVersion(user.org_id, kind, slug, version);
     // Members can only install the exact approved bundle (admins keep the
     // review-surface bypass).
     if (user.role !== "admin") {
-      const approved = await ctx.registry.approvedBundle(user.org_id, kind, slug);
+      const approved = await gateway.registry.approvedBundle(user.org_id, kind, slug);
       if (approved === null || approved[0] !== version || stored.bundle_sha256 !== approved[1]) {
         throw ApiError.forbidden();
       }
     }
     let bytes: Buffer;
     try {
-      bytes = await ctx.objects.get(stored.object_key);
+      bytes = await objects.get(stored.object_key);
     } catch (error) {
       throw ApiError.internal(`bundle read failed: ${(error as Error).message}`);
     }
@@ -242,7 +248,7 @@ export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContex
       throw ApiError.badRequest(`bad manifest.json: ${(error as Error).message}`);
     }
     if (manifest.mcp !== null && manifest.mcp !== undefined) {
-      return installMcpPlugin(ctx, reply, user, slug, manifest, parsed);
+      return installMcpPlugin(gateway, reply, user, slug, manifest, parsed);
     }
     const routineJson = readBundleFile(parsed, "routine.json");
     if (routineJson === null) throw ApiError.badRequest("bundle has no routine.json");
@@ -260,7 +266,7 @@ export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContex
     if (typeof cfg["model"] !== "string") throw ApiError.badRequest("routine.json missing model");
     const webhookToken = newHookToken();
     const allowedTools = cfg["allowed_tools"] ?? ["http_call", "storage_put"];
-    const routine = await ctx.routines.create(
+    const routine = await gateway.routines.create(
       user.org_id,
       user.id,
       slug,
@@ -288,7 +294,7 @@ export function registerRegistryRoutes(app: FastifyInstance, ctx: PlatformContex
  *  row carrying the mcp/auth/tool_policy config (skipped when the row
  *  already exists) and disabled routines from the manifest triggers. */
 async function installMcpPlugin(
-  ctx: PlatformContext,
+  gateway: GatewayCtx,
   reply: FastifyReply,
   user: UserRow,
   slug: string,
@@ -313,11 +319,11 @@ async function installMcpPlugin(
     auth,
     tool_policy: {},
   };
-  const existing = (await ctx.integrations.list(user.org_id)).find((r) => r.name === slug);
+  const existing = (await gateway.integrations.list(user.org_id)).find((r) => r.name === slug);
   let integrationRow = existing ?? null;
   if (integrationRow === null) {
-    await ctx.integrations.upsert(user.org_id, slug, config, false);
-    integrationRow = (await ctx.integrations.list(user.org_id)).find((r) => r.name === slug) ?? null;
+    await gateway.integrations.upsert(user.org_id, slug, config, false);
+    integrationRow = (await gateway.integrations.list(user.org_id)).find((r) => r.name === slug) ?? null;
     if (integrationRow === null) throw ApiError.internal("row just upserted");
   }
 
@@ -326,7 +332,7 @@ async function installMcpPlugin(
   for (let i = 0; i < triggers.length; i++) {
     const t = triggers[i] as Record<string, unknown>;
     const routineSlug = i === 0 ? slug : `${slug}-${i}`;
-    if ((await ctx.routines.getBySlug(user.org_id, routineSlug)) !== null) {
+    if ((await gateway.routines.getBySlug(user.org_id, routineSlug)) !== null) {
       continue;
     }
     const allowedTools = t["allowed_tools"] ?? ["http_call", "storage_put"];
@@ -334,7 +340,7 @@ async function installMcpPlugin(
       throw ApiError.badRequest("trigger prompt is empty");
     }
     const webhookToken = newHookToken();
-    const routine = await ctx.routines.create(
+    const routine = await gateway.routines.create(
       user.org_id,
       user.id,
       routineSlug,
@@ -360,7 +366,7 @@ function param(req: FastifyRequest, name: string): string {
   return (req.params as Record<string, string>)[name] ?? "";
 }
 
-async function requireAdmin(ctx: PlatformContext, req: FastifyRequest): Promise<UserRow> {
+async function requireAdmin(ctx: IdentityCtx, req: FastifyRequest): Promise<UserRow> {
   const user = await requireUser(ctx, req);
   if (user.role !== "admin") throw ApiError.forbidden();
   return user;

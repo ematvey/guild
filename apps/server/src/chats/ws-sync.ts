@@ -13,7 +13,7 @@ import { captureThreadState, threadStateMsg } from "./thread-state.js";
  *  http/ws.ts owns the bracket). */
 export function wireWsSync(ctx: PlatformContext): void {
   ctx.wsSync = async (args: { chatId: string; user: UserRow }): Promise<WsServerMsg> => {
-    const capture = await captureThreadState(ctx, args.user.org_id, args.chatId, args.user);
+    const capture = await captureThreadState(ctx, ctx.pool, args.user.org_id, args.chatId, args.user);
     return threadStateMsg(capture);
   };
 }

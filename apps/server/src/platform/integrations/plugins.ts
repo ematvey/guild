@@ -7,7 +7,7 @@
 // deferred, spec decision 8).
 
 import { randomUUID } from "node:crypto";
-import type { PlatformContext } from "../context.js";
+import type { GatewayCtx } from "../contexts.js";
 import { CONNECTORS } from "../integration-catalog.js";
 import { builtinConnectorByName, manifestToolClass, toolClassOf, type ConnectorToolSpec } from "./connectors.js";
 import { mcpConnect, type McpTool } from "./mcp.js";
@@ -126,13 +126,13 @@ export function resolveActingAs(
 /** The manifest whose content an admin's approval covers: resolved only
  *  while the item is approved AND the approval's recorded version is still
  *  the latest — a republish resets the review status. */
-export async function registryManifest(ctx: PlatformContext, orgId: string, slug: string): Promise<Json> {
-  const approved = await ctx.registry.approvedBundle(orgId, "integration", slug);
+export async function registryManifest(gateway: GatewayCtx, orgId: string, slug: string): Promise<Json> {
+  const approved = await gateway.registry.approvedBundle(orgId, "integration", slug);
   if (approved === null) {
     throw new Error(`registry item ${slug} has no approval covering its latest version and bundle`);
   }
   const [version, bundleSha256] = approved;
-  const stored = await ctx.registry.getVersion(orgId, "integration", slug, version);
+  const stored = await gateway.registry.getVersion(orgId, "integration", slug, version);
   if (stored.bundle_sha256 !== bundleSha256) {
     throw new Error(`registry item ${slug}: stored bundle no longer matches the approved hash`);
   }
@@ -195,12 +195,12 @@ function toMcpToolInfo(slug: string, manifest: Json, tool: McpTool): PluginToolI
  *  live and merge the discovered tools. A broken plugin degrades: skipped
  *  with a warning, the caller continues without it. */
 export async function resolvePlugins(
-  ctx: PlatformContext,
+  gateway: GatewayCtx,
   orgId: string,
   warn: (message: string) => void = () => {},
 ): Promise<PluginTurn[]> {
-  const rows = await ctx.integrations.listEnabled(orgId);
-  const masterKey = ctx.masterKey();
+  const rows = await gateway.integrations.listEnabled(orgId);
+  const masterKey = gateway.masterKey();
   const out: PluginTurn[] = [];
   for (const row of rows) {
     const config = (row.config ?? {}) as Json;
@@ -216,7 +216,7 @@ export async function resolvePlugins(
       const secretNames = catalogSecretNames(row.name);
       // Presence check only — values never ride the snapshot.
       try {
-        await ctx.integrationSecrets.resolve(orgId, row.name, secretNames, masterKey);
+        await gateway.integrationSecrets.resolve(orgId, row.name, secretNames, masterKey);
       } catch {
         warn(`integration ${row.name}: secrets unresolved, skipping`);
         continue;
@@ -248,7 +248,7 @@ export async function resolvePlugins(
     // disabled) requires the live list.
     let manifest: Json;
     try {
-      manifest = await registryManifest(ctx, orgId, row.name);
+      manifest = await registryManifest(gateway, orgId, row.name);
     } catch {
       warn(`integration ${row.name}: no registry manifest, skipping`);
       continue;
@@ -256,7 +256,7 @@ export async function resolvePlugins(
     const secretNames = manifestSecretNames(manifest);
     let secrets: [string, string][];
     try {
-      secrets = await ctx.integrationSecrets.resolve(orgId, row.name, secretNames, masterKey);
+      secrets = await gateway.integrationSecrets.resolve(orgId, row.name, secretNames, masterKey);
     } catch {
       warn(`integration ${row.name}: secrets unresolved, skipping`);
       continue;

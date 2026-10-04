@@ -10,7 +10,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError } from "../errors.js";
 import { requireJsonBody } from "./error.js";
-import type { PlatformContext } from "../context.js";
+import type { GatewayCtx } from "../contexts.js";
 import {
   accumulate,
   dispatch,
@@ -29,8 +29,8 @@ import { uuidv7 } from "../time.js";
 
 /** Resolves the bearer (or x-api-key) token; rejections render in the
  *  Anthropic error shape (`x-api-key` or `Authorization: Bearer`). */
-function anthropicCredential(ctx: PlatformContext, req: FastifyRequest): Promise<GatewayCredential> {
-  return ctx.gatewayCredential(req);
+function anthropicCredential(gateway: GatewayCtx, req: FastifyRequest): Promise<GatewayCredential> {
+  return gateway.gatewayCredential(req);
 }
 
 function anthropicErrorShape(errorType: string, message: string): string {
@@ -292,11 +292,11 @@ function contentBlocks(reasoning: string, text: string, calls: ToolCall[]): unkn
   return blocks;
 }
 
-export function registerAnthropicRoutes(app: FastifyInstance, gateway: GatewayContext, ctx: PlatformContext): void {
+export function registerAnthropicRoutes(app: FastifyInstance, gateway: GatewayCtx): void {
   app.post("/anthropic/v1/messages", async (req, reply) => {
     let credential: GatewayCredential;
     try {
-      credential = await anthropicCredential(ctx, req);
+      credential = await anthropicCredential(gateway, req);
     } catch (error) {
       const apiError = error as ApiError;
       return reply

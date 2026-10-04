@@ -4,7 +4,8 @@
 // credential that minted them.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { IdentityCtx } from "../contexts.js";
+import type { PlatformPool } from "../db.js";
 import { ApiError, RAW_BODY, TextError, sortedJson } from "../errors.js";
 import { requireJsonBody, requireStringFields, requireUser, parseUuidParam } from "./error.js";
 import { secretFromCode } from "../store/pairing.js";
@@ -30,7 +31,7 @@ function bearerToken(req: FastifyRequest): string {
   return header.slice("Bearer ".length);
 }
 
-export function registerAuthRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool: PlatformPool): void {
   // The first org + admin user; the bootstrap credential is often the org's
   // only admin, so the same 8-char minimum as admin-created accounts applies.
   app.post("/api/v1/auth/bootstrap", async (req, reply) => {
@@ -42,7 +43,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: PlatformContext): 
     if ([...password].length < 8) {
       throw ApiError.badRequest("password must be at least 8 characters");
     }
-    const anyUsers = await ctx.pool.query<{ count: number }>("SELECT COUNT(*) AS count FROM users");
+    const anyUsers = await pool.query<{ count: number }>("SELECT COUNT(*) AS count FROM users");
     if (anyUsers.rows[0]!.count > 0) {
       throw ApiError.conflict("already_bootstrapped", "org already has users");
     }

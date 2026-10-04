@@ -7,7 +7,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError } from "../errors.js";
 import { requireJsonBody } from "./error.js";
-import type { PlatformContext } from "../context.js";
 import {
   accumulate,
   dispatch,
@@ -19,6 +18,7 @@ import {
   type GatewayContext,
   type GatewayCredential,
 } from "./llm.js";
+import type { GatewayCtx } from "../contexts.js";
 import { rustJsonText, serializeRustJson } from "../provider/sse.js";
 import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
 import { sseDataFrame, sseReply } from "./sse-writer.js";
@@ -239,11 +239,11 @@ function invalidType(value: unknown, req: FastifyRequest): TextError {
   );
 }
 
-export function registerOpenAiRoutes(app: FastifyInstance, gateway: GatewayContext, ctx: PlatformContext): void {
+export function registerOpenAiRoutes(app: FastifyInstance, gateway: GatewayCtx): void {
   app.get("/openai/v1/models", async (req, reply) => {
     try {
-      const credential = await ctx.gatewayCredential(req);
-      const models = await ctx.gatewayStore.listModels(credential.orgId);
+      const credential = await gateway.gatewayCredential(req);
+      const models = await gateway.gatewayStore.listModels(credential.orgId);
       return reply.type("application/json").send(
         rustJsonText({
           object: "list",
@@ -259,7 +259,7 @@ export function registerOpenAiRoutes(app: FastifyInstance, gateway: GatewayConte
   app.post("/openai/v1/chat/completions", async (req, reply) => {
     let credential: GatewayCredential;
     try {
-      credential = await ctx.gatewayCredential(req);
+      credential = await gateway.gatewayCredential(req);
     } catch (error) {
       // Auth rejections carry the error `code` field (OpenAiAuthError).
       const apiError = error as ApiError;

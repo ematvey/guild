@@ -2,7 +2,7 @@
 // used for cost roll-ups and scoping.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { IdentityCtx } from "../contexts.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
@@ -11,7 +11,7 @@ function sendJson(reply: FastifyReply, value: unknown): void {
   void reply.type("application/json").send(rustJsonText(value));
 }
 
-export function registerTeamRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerTeamRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   app.get("/api/v1/admin/teams", async (req, reply) => {
     const admin = await requireAdmin(ctx, req);
     const teams = await ctx.teams.listTeams(admin.org_id);
@@ -76,7 +76,7 @@ function readName(req: FastifyRequest): string {
   return name;
 }
 
-async function requireAdmin(ctx: PlatformContext, req: FastifyRequest) {
+async function requireAdmin(ctx: IdentityCtx, req: FastifyRequest) {
   const user = await requireUser(ctx, req);
   if (user.role !== "admin") throw ApiError.forbidden();
   return user;

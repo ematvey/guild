@@ -12,7 +12,7 @@
 // acting-as, body shape) never reaches that point unless it passed.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { GatewayCtx, IdentityCtx } from "../contexts.js";
 import { ApiError } from "../errors.js";
 import { rustJsonText } from "../provider/sse.js";
 import {
@@ -34,22 +34,22 @@ export interface IntegrationCaller {
   role: string;
 }
 
-async function integrationCaller(ctx: PlatformContext, req: FastifyRequest): Promise<IntegrationCaller> {
+async function integrationCaller(auth: IdentityCtx, req: FastifyRequest): Promise<IntegrationCaller> {
   const header = req.headers.authorization;
   const token = typeof header === "string" && header.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
   if (token === null) throw ApiError.unauthorized("missing authorization header");
   // Session first (member or admin), then org API key.
   try {
-    const user = await ctx.identity.validateSession(token);
+    const user = await auth.identity.validateSession(token);
     return { org: user.org_id, userId: user.id, email: user.email, role: user.role };
   } catch {
     // fall through to the API key
   }
-  const key = await ctx.apiKeys.authenticate(token);
+  const key = await auth.apiKeys.authenticate(token);
   if (key === null) throw ApiError.unauthorized("invalid credentials");
   let role = "member";
   try {
-    role = (await ctx.identity.getUser(key.created_by)).role;
+    role = (await auth.identity.getUser(key.created_by)).role;
   } catch {
     role = "member";
   }
@@ -60,7 +60,7 @@ async function integrationCaller(ctx: PlatformContext, req: FastifyRequest): Pro
   const owner = key.user_id ?? key.created_by;
   let email: string | null = null;
   try {
-    email = (await ctx.identity.getUser(owner)).email;
+    email = (await auth.identity.getUser(owner)).email;
   } catch {
     email = null;
   }
@@ -71,9 +71,9 @@ function sendJson(reply: FastifyReply, value: unknown): void {
   void reply.type("application/json").send(rustJsonText(value));
 }
 
-async function turns(ctx: PlatformContext, orgId: string): Promise<PluginTurn[]> {
+async function turns(gateway: GatewayCtx, orgId: string): Promise<PluginTurn[]> {
   try {
-    return await resolvePlugins(ctx, orgId);
+    return await resolvePlugins(gateway, orgId);
   } catch {
     // The resolved plugins of the caller's org — a broken plugin contributes
     // nothing (spec §8).
@@ -81,11 +81,11 @@ async function turns(ctx: PlatformContext, orgId: string): Promise<PluginTurn[]>
   }
 }
 
-export function registerIntegrationToolRoutes(app: FastifyInstance, ctx: PlatformContext): void {  // `GET /api/v1/integrations` — enabled plugins (built-in and MCP) for the
+export function registerIntegrationToolRoutes(app: FastifyInstance, auth: IdentityCtx, gateway: GatewayCtx): void {  // `GET /api/v1/integrations` — enabled plugins (built-in and MCP) for the
   // caller's org, policy-filtered to a count only.
   app.get("/api/v1/integrations", async (req, reply) => {
-    const caller = await integrationCaller(ctx, req);
-    const items = (await turns(ctx, caller.org)).map((t) => ({
+    const caller = await integrationCaller(auth, req);
+    const items = (await turns(gateway, caller.org)).map((t) => ({
       slug: t.slug,
       description: t.description,
       tool_count: t.tools.filter((info) => toolAllowed(t, info, caller.role)).length,
@@ -97,9 +97,9 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, ctx: Platfor
   // `GET /api/v1/integrations/{slug}/tools` — the full policy-filtered tool
   // list with JSON schemas and classes.
   app.get("/api/v1/integrations/:slug/tools", async (req, reply) => {
-    const caller = await integrationCaller(ctx, req);
+    const caller = await integrationCaller(auth, req);
     const slug = (req.params as Record<string, string>)["slug"] ?? "";
-    const turn = (await turns(ctx, caller.org)).find((t) => t.slug === slug);
+    const turn = (await turns(gateway, caller.org)).find((t) => t.slug === slug);
     if (turn === undefined) throw ApiError.notFound("no such integration");
     const tools = turn.tools
       .filter((info) => toolAllowed(turn, info, caller.role))
@@ -119,11 +119,11 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, ctx: Platfor
   // Rust connector with its backend unreachable (200, ok:false) — the
   // integrations runtime is deferred (spec decision 8).
   app.post("/api/v1/integrations/:slug/tools/:tool", async (req, reply) => {
-    const caller = await integrationCaller(ctx, req);
+    const caller = await integrationCaller(auth, req);
     const params = req.params as Record<string, string>;
     const slug = params["slug"] ?? "";
     const tool = params["tool"] ?? "";
-    const turn = (await turns(ctx, caller.org)).find((t) => t.slug === slug);
+    const turn = (await turns(gateway, caller.org)).find((t) => t.slug === slug);
     if (turn === undefined) throw ApiError.notFound("no such integration");
     // The path carries the Guild-facing namespaced name; the raw connector
     // name is accepted too — both sides are compared after namespace
@@ -184,7 +184,7 @@ export function registerIntegrationToolRoutes(app: FastifyInstance, ctx: Platfor
       ? `integration ${turn.slug} unreachable: mcp handshake failed`
       : `${turn.slug} unreachable: connector runtime is not available in this deployment`;    // Journaled audit (spec §8): the identity record for the script call.
     try {
-      await ctx.events.emit(caller.org, "integration.tool_called", {
+      await auth.events.emit(caller.org, "integration.tool_called", {
         slug: turn.slug,
         call_id: crypto.randomUUID(),
         tool: raw,

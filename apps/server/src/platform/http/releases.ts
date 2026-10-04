@@ -5,7 +5,8 @@
 
 import { createHmac, createPrivateKey, createPublicKey, randomBytes, sign as cryptoSign, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { GatewayCtx, IdentityCtx } from "../contexts.js";
+import type { ObjectStore } from "../s3.js";
 import { ApiError } from "../errors.js";
 import { parseUuidParam, requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
@@ -38,12 +39,12 @@ function objectKey(version: string, kind: string, platform: string, id: string, 
 }
 
 /** Short-lived signed download URL: `/dl?exp=<unix>&sig=<hmac(id,exp)>`. */
-function signDownload(ctx: PlatformContext, id: string, exp: number): string {
+function signDownload(ctx: IdentityCtx, id: string, exp: number): string {
   const sig = createHmac("sha256", ctx.config.jwtSecret).update(`${id}:${exp}`).digest("hex");
   return `/api/v1/releases/${id}/download?exp=${exp}&sig=${sig}`;
 }
 
-function verifySignature(ctx: PlatformContext, id: string, exp: number, sig: string): void {
+function verifySignature(ctx: IdentityCtx, id: string, exp: number, sig: string): void {
   if (exp < Math.floor(Date.now() / 1000)) {
     throw ApiError.unauthorized("download link expired");
   }
@@ -56,7 +57,7 @@ function verifySignature(ctx: PlatformContext, id: string, exp: number, sig: str
   }
 }
 
-async function requireAdmin(ctx: PlatformContext, req: FastifyRequest) {
+async function requireAdmin(ctx: IdentityCtx, req: FastifyRequest) {
   const user = await requireUser(ctx, req);
   if (user.role !== "admin") throw ApiError.forbidden();
   return user;
@@ -65,7 +66,7 @@ async function requireAdmin(ctx: PlatformContext, req: FastifyRequest) {
 /** The release-signing ed25519 seed, in order: GUILD_RELEASE_SIGNING_SEED
  *  env (hex, 32 bytes), the auto-generated seed persisted in server_kv,
  *  generate-once. */
-async function signingSeed(ctx: PlatformContext): Promise<Buffer> {
+async function signingSeed(ctx: IdentityCtx): Promise<Buffer> {
   const envSeed = process.env.GUILD_RELEASE_SIGNING_SEED;
   if (envSeed !== undefined && envSeed.trim() !== "") {
     return decodeSeed(envSeed);
@@ -101,7 +102,7 @@ function signDigest(seed: Buffer, digest: Buffer): string {
   return cryptoSign(null, digest, ed25519PrivateKey(seed)).toString("hex");
 }
 
-async function verifyingKeyHex(ctx: PlatformContext): Promise<string> {
+async function verifyingKeyHex(ctx: IdentityCtx): Promise<string> {
   const seed = await signingSeed(ctx);
   const publicKey = createPublicKey(ed25519PrivateKey(seed));
   const spki = publicKey.export({ format: "der", type: "spki" }) as Buffer;
@@ -180,7 +181,12 @@ function updaterArtifact(target: string, filename: string): boolean {
   }
 }
 
-export function registerReleaseRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerReleaseRoutes(
+  app: FastifyInstance,
+  gateway: GatewayCtx,
+  ctx: IdentityCtx,
+  objects: ObjectStore,
+): void {
   app.post("/api/v1/admin/releases", async (req, reply) => {
     await requireAdmin(ctx, req);
     const version = queryOne(req, "version");
@@ -216,7 +222,7 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: PlatformContext
     const id = uuidv7();
     const key = objectKey(version, kind, platform, id, filename);
     try {
-      await ctx.objects.put(key, body);
+      await objects.put(key, body);
     } catch (error) {
       throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
     }
@@ -224,7 +230,7 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: PlatformContext
     const digest = sha256Hex(body);
     const seed = await signingSeed(ctx);
     const signature = signDigest(seed, Buffer.from(digest, "hex"));
-    const created = await ctx.releases.create(
+    const created = await gateway.releases.create(
       id,
       version,
       kind,
@@ -244,7 +250,7 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: PlatformContext
 
   app.get("/api/v1/admin/releases", async (req, reply) => {
     await requireAdmin(ctx, req);
-    const rows = await ctx.releases.list();
+    const rows = await gateway.releases.list();
     sendJson(reply, { releases: rows });
     return reply;
   });
@@ -252,10 +258,10 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: PlatformContext
   app.delete("/api/v1/admin/releases/:id", async (req, reply) => {
     await requireAdmin(ctx, req);
     const id = parseUuidParam(req, "id");
-    const deleted = await ctx.releases.delete(id);
+    const deleted = await gateway.releases.delete(id);
     const key = objectKey(deleted.version, deleted.kind, deleted.platform, deleted.id, deleted.filename);
     try {
-      await ctx.objects.delete(key);
+      await objects.delete(key);
     } catch {
       // best-effort
     }
@@ -265,7 +271,7 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: PlatformContext
 
   app.get("/api/v1/releases", async (req, reply) => {
     await requireUser(ctx, req);
-    const rows = await ctx.releases.list();
+    const rows = await gateway.releases.list();
     sendJson(reply, { releases: rows });
     return reply;
   });
@@ -283,7 +289,7 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: PlatformContext
   app.get("/api/v1/releases/:id/download-url", async (req, reply) => {
     await requireUser(ctx, req);
     const id = parseUuidParam(req, "id");
-    await ctx.releases.get(id);
+    await gateway.releases.get(id);
     const exp = Math.floor(Date.now() / 1000) + 3600;
     sendJson(reply, { url: signDownload(ctx, id, exp), expires_at: exp });
     return reply;
@@ -311,11 +317,11 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: PlatformContext
       }
       await ctx.identity.validateSession(header.slice("Bearer ".length));
     }
-    const releaseRow: ReleaseRow = await ctx.releases.get(id);
+    const releaseRow: ReleaseRow = await gateway.releases.get(id);
     const key = objectKey(releaseRow.version, releaseRow.kind, releaseRow.platform, releaseRow.id, releaseRow.filename);
     let bytes: Buffer;
     try {
-      bytes = await ctx.objects.get(key);
+      bytes = await objects.get(key);
     } catch (error) {
       throw ApiError.internal(`object store read failed: ${(error as Error).message}`);
     }
@@ -331,7 +337,7 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: PlatformContext
   // platforms with a signed updater artifact for the newest desktop version
   // are listed.
   app.get("/api/v1/updates/latest.json", async (_req, reply) => {
-    const rows = await ctx.releases.list();
+    const rows = await gateway.releases.list();
     let latest: { version: string; created_at: string } | null = null;
     for (const r of rows) {
       if (r.kind !== "desktop" || r.updater_signature === "") continue;

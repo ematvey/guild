@@ -3,11 +3,11 @@
 // crates/server/src/http/feed.rs (hub cutover, later milestone).
 
 import type { FastifyInstance } from "fastify";
-import type { PlatformContext } from "../context.js";
+import type { IdentityCtx } from "../contexts.js";
 import { sortedJson } from "../errors.js";
 import { requireUser } from "./error.js";
 
-export function registerEventRoutes(app: FastifyInstance, ctx: PlatformContext): void {
+export function registerEventRoutes(app: FastifyInstance, ctx: IdentityCtx): void {
   app.get("/api/v1/events", async (req, reply) => {
     const user = await requireUser(ctx, req);
     const events = await ctx.events.list(user.org_id, 200);
