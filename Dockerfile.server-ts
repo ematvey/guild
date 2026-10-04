@@ -52,7 +52,7 @@ COPY --from=webui /app/apps/desktop/dist ./apps/desktop/dist
 # The static exec-policy rules (M4): the matcher loads the SAME file the
 # Rust server ships — no TS fork of the rule set. The default path resolves
 # relative to the server's cwd: <cwd>/../../crates/server/assets/.
-COPY --from=build crates/server/assets/exec_policy_base.rules /app/crates/server/assets/exec_policy_base.rules
+COPY --from=build /app/crates/server/assets/exec_policy_base.rules /app/crates/server/assets/exec_policy_base.rules
 WORKDIR /app/apps/server
 EXPOSE 8080
 CMD ["node", "dist/index.js"]
