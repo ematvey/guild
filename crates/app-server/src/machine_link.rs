@@ -1028,28 +1028,101 @@ mod tests {
         }
     }
 
+    /// The machine link against a hand-rolled mock hub: the hub mints a
+    /// ticket, upgrades the machine socket, relays `machine_request` frames
+    /// (capabilities, context preparation, artifact prefetch) to the
+    /// connected machine and returns its `machine_response` frames, and
+    /// serves the authenticated artifact endpoint the machine's prefetch
+    /// fetcher downloads from. The hub's own routing and displacement
+    /// semantics are server-side behavior, owned and tested there.
     #[tokio::test]
-    async fn remote_context_and_prefetch_roundtrip_on_real_machine_socket() {
+    async fn remote_context_and_prefetch_roundtrip_on_mock_hub_socket() {
         ensure_crypto_provider();
-        let fixture = guild_server::test_support::full_state().await;
+        use futures::{SinkExt, StreamExt};
+        let (req_tx, req_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let (resp_tx, mut resp_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let req_rx = Arc::new(std::sync::Mutex::new(Some(req_rx)));
+        let resp_tx = Arc::new(std::sync::Mutex::new(Some(resp_tx)));
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/ws/ticket",
+                axum::routing::post(|| async {
+                    axum::Json(serde_json::json!({"ticket":"fixture"}))
+                }),
+            )
+            .route(
+                "/api/v1/tool_artifacts/{artifact}",
+                axum::routing::get(
+                    |headers: axum::http::HeaderMap, artifact: axum::extract::Path<String>| async move {
+                        if headers
+                            .get(axum::http::header::AUTHORIZATION)
+                            .and_then(|v| v.to_str().ok())
+                            != Some("Bearer tok")
+                        {
+                            return (axum::http::StatusCode::UNAUTHORIZED, String::new());
+                        }
+                        let _ = artifact;
+                        (
+                            axum::http::StatusCode::OK,
+                            "prefetched before first touch".to_string(),
+                        )
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/ws",
+                axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
+                    let req_rx = req_rx.clone();
+                    let resp_tx = resp_tx.clone();
+                    async move {
+                        ws.on_upgrade(move |socket| async move {
+                            let mut req_rx = req_rx
+                                .lock()
+                                .unwrap()
+                                .take()
+                                .expect("one machine connection");
+                            let resp_tx = resp_tx.lock().unwrap().take().unwrap();
+                            let (mut tx, mut rx) = socket.split();
+                            // The machine identifies itself in the URL query;
+                            // the link sends nothing until it must answer —
+                            // relay requests immediately, ignore pings.
+                            loop {
+                                tokio::select! {
+                                    request = req_rx.recv() => match request {
+                                        Some(text) => {
+                                            if tx
+                                                .send(axum::extract::ws::Message::text(text))
+                                                .await
+                                                .is_err()
+                                            {
+                                                return;
+                                            }
+                                        }
+                                        None => return,
+                                    },
+                                    incoming = rx.next() => match incoming {
+                                        Some(Ok(axum::extract::ws::Message::Text(text))) => {
+                                            let _ = resp_tx.send(text.to_string());
+                                        }
+                                        Some(Ok(_)) => {} // pings and pongs
+                                        _ => return,
+                                    },
+                                }
+                            }
+                        })
+                    }
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let app = guild_server::build_router(fixture.state.clone());
         let server = tokio::spawn(async move {
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await
-            .unwrap();
+            axum::serve(listener, app).await.unwrap();
         });
         let config = MachineLinkConfig {
             base_url,
-            token: fixture.token.clone(),
             machine_id: Uuid::now_v7().to_string(),
             ..cfg()
         };
-        let machine = config.machine_id.clone();
         let (_config_tx, mut config_rx) = watch::channel(Some(config.clone()));
         let (stop_tx, mut stop_rx) = watch::channel(false);
         let session = tokio::spawn(async move {
@@ -1063,13 +1136,6 @@ mod tests {
             )
             .await
         });
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while !fixture.state.hub.machine_online(&machine) {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
         let temp = temp_scoped_dir("remote-context-socket");
         let root = temp.join("bound");
         let child = root.join("child");
@@ -1090,36 +1156,29 @@ mod tests {
             "---\nname: ancestor\n---\nREAD-ONLY-ANCESTOR",
         )
         .unwrap();
-        let timeout = Duration::from_secs(5);
-        let caps = fixture
-            .state
-            .hub
-            .machine_request(
-                &machine,
-                fixture.org_id,
-                "capabilities",
-                serde_json::json!({}),
-                timeout,
-            )
-            .await
-            .unwrap();
+        let caps = hub_request(
+            &req_tx,
+            &mut resp_rx,
+            "caps",
+            "capabilities",
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
         assert!(caps["operations"]
             .as_array()
             .unwrap()
             .iter()
             .any(|v| v == "context.prepare_v1"));
-        let context = fixture
-            .state
-            .hub
-            .machine_request(
-                &machine,
-                fixture.org_id,
-                "context.prepare_v1",
-                serde_json::json!({"project_dir": child, "prompt":"/socket-demo"}),
-                timeout,
-            )
-            .await
-            .unwrap();
+        let context = hub_request(
+            &req_tx,
+            &mut resp_rx,
+            "ctx",
+            "context.prepare_v1",
+            serde_json::json!({"project_dir": child, "prompt":"/socket-demo"}),
+        )
+        .await
+        .unwrap();
         let context: protocol::ws::MachineContext = serde_json::from_value(context).unwrap();
         let docs = context.instructions.unwrap();
         assert!(docs.find("SOCKET-ROOT").unwrap() < docs.find("SOCKET-CHILD").unwrap());
@@ -1151,66 +1210,50 @@ mod tests {
         )
         .await;
         assert!(outside.is_error);
-        assert!(matches!(
-            fixture
-                .state
-                .hub
-                .machine_request(
-                    &machine,
-                    Uuid::now_v7(),
-                    "context.prepare_v1",
-                    serde_json::json!({"project_dir": child}),
-                    timeout
-                )
-                .await,
-            Err(guild_server::http::hub::MachineRequestError::Offline)
-        ));
 
-        let artifact = guild_server::worker::spill::spill_artifact(
-            &fixture.state,
-            fixture.org_id,
-            fixture.chat_id,
-            "prefetch-fixture",
-            "test",
-            "immediate.txt",
-            "text/plain",
-            b"prefetched before first touch",
+        // Artifact prefetch: the machine downloads the artifact from the
+        // hub's authenticated endpoint and materializes it in the workspace.
+        let chat_id = Uuid::now_v7();
+        let artifact_id = Uuid::now_v7();
+        let artifact = hub_request(
+            &req_tx,
+            &mut resp_rx,
+            "prefetch",
+            "artifact.prefetch_v1",
+            serde_json::json!({
+                "workdir": child,
+                "chat_id": chat_id,
+                "artifact_id": artifact_id,
+                "filename": "immediate.txt"
+            }),
         )
         .await
         .unwrap();
-        guild_server::worker::spill::spawn_machine_prefetch(
-            &fixture.state,
-            fixture.org_id,
-            fixture.chat_id,
-            &machine,
-            guild_server::worker::funnel::ExpectedExecutor {
-                org_id: Some(fixture.org_id),
-                project_id: None,
-                owner: Some((fixture.user_id, fixture.org_id)),
-            },
-            &child.to_string_lossy(),
-            &artifact,
-        );
-        let artifact_path = child.join(&artifact.path);
-        tokio::time::timeout(timeout, async {
-            while !artifact_path.exists() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
+        let artifact_path = child.join(artifact["path"].as_str().unwrap());
         assert_eq!(
             std::fs::read_to_string(&artifact_path).unwrap(),
             "prefetched before first touch"
         );
-        // Authenticated fetch and path guards remain active on prefetch.
-        let denied = fixture.state.hub.machine_request(&machine, fixture.org_id, "artifact.prefetch_v1", serde_json::json!({"workdir": child, "chat_id": fixture.chat_id, "artifact_id": artifact.artifact_id, "filename":"../escape"}), timeout).await;
-        assert!(matches!(
-            denied,
-            Err(guild_server::http::hub::MachineRequestError::Rejected(_))
-        ));
+        // Path guards remain active on prefetch.
+        let denied = hub_request(
+            &req_tx,
+            &mut resp_rx,
+            "escape",
+            "artifact.prefetch_v1",
+            serde_json::json!({
+                "workdir": child,
+                "chat_id": chat_id,
+                "artifact_id": artifact_id,
+                "filename": "../escape"
+            }),
+        )
+        .await;
+        assert!(
+            matches!(&denied, Err(e) if e.contains("invalid artifact filename")),
+            "path escape must be rejected, got {denied:?}"
+        );
         stop_tx.send(true).unwrap();
-        tokio::time::timeout(timeout, session)
+        tokio::time::timeout(Duration::from_secs(5), session)
             .await
             .unwrap()
             .unwrap();
@@ -1218,6 +1261,39 @@ mod tests {
         std::fs::remove_dir_all(temp).unwrap();
     }
 
+    /// Sends one `machine_request` through the mock hub relay and awaits
+    /// the machine's `machine_response` with the same `request_id`.
+    async fn hub_request(
+        req_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+        resp_rx: &mut tokio::sync::mpsc::UnboundedReceiver<String>,
+        request_id: &str,
+        op: &str,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        req_tx
+            .send(
+                serde_json::json!({
+                    "type": "machine_request",
+                    "request_id": request_id,
+                    "op": op,
+                    "payload": payload,
+                })
+                .to_string(),
+            )
+            .unwrap();
+        let text = tokio::time::timeout(Duration::from_secs(5), resp_rx.recv())
+            .await
+            .expect("machine answered in time")
+            .expect("machine socket closed");
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["type"], "machine_response");
+        assert_eq!(value["request_id"], request_id);
+        if value["ok"].as_bool().unwrap_or(false) {
+            Ok(value["payload"].clone())
+        } else {
+            Err(value["error"].as_str().unwrap_or_default().to_string())
+        }
+    }
     #[tokio::test]
     async fn capability_discovery_is_versioned_and_unknown_operations_are_rejected() {
         let caps = machine_request_result("capabilities", &serde_json::json!({}))
