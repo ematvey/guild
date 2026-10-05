@@ -13,6 +13,25 @@ Updated 2026-10-04 (post M8 integrations runtime).
 
 ## Latest decisions
 
+- **Rust tree deletion prepared — `crates/server` fully decoupled (2026-10-04).**
+  Two lanes. **TS side (direct, commit `f62a520`)**: exec-policy base rules
+  relocated to `apps/server/assets/exec_policy_base.rules` (matcher default,
+  Dockerfile build+runtime copies, tests updated) — the TS server no longer
+  reads anything from the Rust tree at build or runtime. **Rust side (lane
+  R9, `prep/rust-removal`, commits `0891b73`/`dc0df6e`/`06e5b14`)**:
+  engine (`app-server`) and desktop tests that used `guild_server`
+  test-support/build_router rewritten against hand-rolled mock routers
+  (engine-side coverage preserved; Rust-server-internal coverage superseded
+  by TS hub tests), `guild-server` dev-deps removed from both crates,
+  `crates/server` dropped from the workspace member lists. Verified:
+  `cargo check --workspace --all-targets` PASS, `cargo test -p app-server`
+  PASS (80 lib + integration suites), protocol bindings generate and are
+  fresh, dev stack rebuilt — exec policy loads from the new location
+  (0 boot errors). **`crates/server/` remains on disk untouched**: deleting
+  it is now a pure `git rm` gated on prod cutover + soak (rollback-image
+  rebuild and the routines parity reference are the two remaining reasons
+  to keep it until then). Report: `apps/server/R9-REPORT.md`.
+
 - **M8: integrations chat runtime ported — the missing-tools regression fixed (2026-10-04).**
   The chat-loop integrations runtime was deferred (old decision 8) while the
   user's patent workflow runs on gmail/jira tools through chats, so after the
