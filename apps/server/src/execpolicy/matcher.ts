@@ -345,11 +345,11 @@ function validateExamples(validations: RuleMatchExample[], source: string): void
   }
 }
 
-/** The default rules location: the Rust tree's static asset, resolved from
- *  the working directory (dev: apps/server → ../../crates; container: the
- *  copied /app/crates tree; both cwd = apps/server). */
+/** The default rules location: apps/server/assets (relocated out of the
+ *  Rust tree ahead of its deletion), resolved from the working directory
+ *  (dev and container both run with cwd = apps/server). */
 export function defaultRulesPath(): string {
-  return process.env.GUILD_EXEC_POLICY_RULES ?? path.resolve(process.cwd(), "../../crates/server/assets/exec_policy_base.rules");
+  return process.env.GUILD_EXEC_POLICY_RULES ?? path.resolve(process.cwd(), "assets/exec_policy_base.rules");
 }
 
 let cached: ExecPolicy | null = null;

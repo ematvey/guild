@@ -10,7 +10,7 @@ import { ExecPolicy, evaluateCommand, evaluateExecute, execPolicy, resetExecPoli
 import { parseRulesFile } from "../execpolicy/rule-parser.js";
 
 const REPO_ROOT = path.resolve(process.cwd(), "../..");
-const RULES_PATH = path.join(REPO_ROOT, "crates/server/assets/exec_policy_base.rules");
+const RULES_PATH = path.join(REPO_ROOT, "apps/server/assets/exec_policy_base.rules");
 
 const policy = execPolicy(RULES_PATH);
 

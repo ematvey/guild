@@ -1,6 +1,6 @@
 // Exec-policy rules parser (crates/codex-execpolicy parser.rs subset + the
 // build.rs loading shape): the base rules load from the static Rust asset
-// (crates/server/assets/exec_policy_base.rules) and an optional deployment
+// (apps/server/assets/exec_policy_base.rules) and an optional deployment
 // local layer (exec_policy_local.rules next to it) merges after it — a
 // broken local layer degrades to base-only with a warning, like build.rs.
 //
