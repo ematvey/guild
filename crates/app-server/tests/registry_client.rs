@@ -1,7 +1,9 @@
 use guild_app_server::cloud::CloudClient;
 use guild_app_server::registry_client;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -24,16 +26,91 @@ fn make_skill(base: &Path, slug: &str) -> std::path::PathBuf {
     dir
 }
 
+/// Hand-rolled mock of the registry REST surface the client speaks: skill
+/// bundles uploaded by publish are stored and served back on the bundle
+/// endpoint, and the item listing carries the review gate. Approval flow on
+/// the server side is owned and tested there.
+#[derive(Default)]
+struct RegistryState {
+    bundles: HashMap<(String, String), Vec<u8>>,
+    slug: String,
+    latest_version: String,
+    review_status: String,
+}
+
+async fn spawn_mock_registry(state: Arc<Mutex<RegistryState>>) -> wiremock::MockServer {
+    let server = wiremock::MockServer::start().await;
+    // publish: POST /api/v1/registry/{kind}?slug=&version= (gzip body)
+    let st = state.clone();
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path_regex("/api/v1/registry/(skill|mcp)"))
+        .respond_with(move |req: &wiremock::Request| {
+            let mut query: HashMap<String, String> = req
+                .url
+                .query_pairs()
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
+            let slug = query.remove("slug").unwrap_or_default();
+            let version = query.remove("version").unwrap_or_default();
+            let mut s = st.lock().unwrap();
+            s.bundles.insert((slug.clone(), version.clone()), req.body.clone());
+            s.slug = slug.clone();
+            s.latest_version = version.clone();
+            wiremock::ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"slug": slug, "version": version}))
+        })
+        .mount(&server)
+        .await;
+    // item listing: the install gate (review_status + latest_version)
+    let st = state.clone();
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/api/v1/registry/skill"))
+        .respond_with(move |_: &wiremock::Request| {
+            let s = st.lock().unwrap();
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [{
+                    "slug": s.slug,
+                    "review_status": s.review_status,
+                    "latest_version": s.latest_version,
+                }]
+            }))
+        })
+        .mount(&server)
+        .await;
+    // bundle download: GET /api/v1/registry/skill/{slug}/{version}/bundle
+    let st = state;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path_regex(
+            "/api/v1/registry/skill/[^/]+/[^/]+/bundle",
+        ))
+        .respond_with(move |req: &wiremock::Request| {
+            let segments: Vec<&str> = req.url.path().split('/').collect();
+            let slug = segments[segments.len() - 3].to_string();
+            let version = segments[segments.len() - 2].to_string();
+            match st.lock().unwrap().bundles.get(&(slug, version)) {
+                Some(bytes) => wiremock::ResponseTemplate::new(200)
+                    .set_body_bytes(bytes.clone())
+                    .insert_header("content-type", "application/gzip"),
+                None => wiremock::ResponseTemplate::new(404),
+            }
+        })
+        .mount(&server)
+        .await;
+    server
+}
+
+fn mock_cloud(base_url: &str) -> CloudClient {
+    CloudClient {
+        base_url: base_url.to_string(),
+        token: "t".into(),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publish_then_install_roundtrip() {
-    let srv = guild_server::test_support::serve_full().await;
-    let (token, user) = CloudClient::login(&srv.base_url, "a@b.c", "hunter226")
-        .await
-        .unwrap();
-    let cloud = CloudClient {
-        base_url: srv.base_url.clone(),
-        token,
-    };
+    let state = Arc::new(Mutex::new(RegistryState::default()));
+    let server = spawn_mock_registry(state.clone()).await;
+    let cloud = mock_cloud(&server.uri());
 
     let source = scratch("src");
     let skill_dir = make_skill(&source, "deploy-check");
@@ -48,27 +125,8 @@ async fn publish_then_install_roundtrip() {
         registry_client::install_skill(&cloud, &project, "deploy-check", None, false, "").await;
     assert!(err.is_err(), "draft must not install");
 
-    // admin approves via the review endpoint
-    let app_state = srv.state.clone();
-    let _ = app_state; // the admin path is covered by the server tests; approve directly:
-    let store = srv.store();
-    let stored = store
-        .registry()
-        .get_version(user.org_id, "skill", "deploy-check", "1.0.0")
-        .await
-        .unwrap();
-    store
-        .registry()
-        .set_review(
-            user.org_id,
-            "skill",
-            "deploy-check",
-            "approved",
-            Some("1.0.0"),
-            stored.bundle_sha256.as_deref(),
-        )
-        .await
-        .unwrap();
+    // approve (the server-side review flow is owned and tested there)
+    state.lock().unwrap().review_status = "approved".into();
 
     let entry =
         registry_client::install_skill(&cloud, &project, "deploy-check", None, false, "a@b.c")
@@ -127,14 +185,9 @@ async fn uninstall_refuses_dirs_guild_did_not_install() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publish_stamps_provenance_sidecar() {
-    let srv = guild_server::test_support::serve_full().await;
-    let (token, _user) = CloudClient::login(&srv.base_url, "a@b.c", "hunter226")
-        .await
-        .unwrap();
-    let cloud = CloudClient {
-        base_url: srv.base_url.clone(),
-        token,
-    };
+    let state = Arc::new(Mutex::new(RegistryState::default()));
+    let server = spawn_mock_registry(state).await;
+    let cloud = mock_cloud(&server.uri());
     let source = scratch("pubsrc");
     let skill_dir = make_skill(&source, "my-authored");
     registry_client::publish(&cloud, "skill", &skill_dir, "0.2.0")
@@ -150,14 +203,9 @@ async fn publish_stamps_provenance_sidecar() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_item_publishes_without_skill_md() {
-    let srv = guild_server::test_support::serve_full().await;
-    let (token, _user) = CloudClient::login(&srv.base_url, "a@b.c", "hunter226")
-        .await
-        .unwrap();
-    let cloud = CloudClient {
-        base_url: srv.base_url.clone(),
-        token,
-    };
+    let state = Arc::new(Mutex::new(RegistryState::default()));
+    let server = spawn_mock_registry(state).await;
+    let cloud = mock_cloud(&server.uri());
 
     let source = scratch("mcpsrc");
     std::fs::create_dir_all(source.join("my-mcp")).unwrap();
@@ -173,14 +221,9 @@ async fn mcp_item_publishes_without_skill_md() {
 /// failed extract must not leave a mixed tree.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
-    let srv = guild_server::test_support::serve_full().await;
-    let (token, user) = CloudClient::login(&srv.base_url, "a@b.c", "hunter226")
-        .await
-        .unwrap();
-    let cloud = CloudClient {
-        base_url: srv.base_url.clone(),
-        token,
-    };
+    let state = Arc::new(Mutex::new(RegistryState::default()));
+    let server = spawn_mock_registry(state.clone()).await;
+    let cloud = mock_cloud(&server.uri());
     let source = scratch("upsrc");
     let skill_dir = make_skill(&source, "upgradable");
     std::fs::write(skill_dir.join("old-helper.txt"), "v1 only").unwrap();
@@ -189,39 +232,13 @@ async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
         .unwrap();
 
     let project = scratch("upproj");
-    let store = srv.store();
     let dest = project.join(".agents/skills/upgradable");
 
-    // admin-approve-and-install helper
-    async fn approve_and_install(
-        store: &guild_server::store::Store,
-        org: uuid::Uuid,
-        cloud: &CloudClient,
-        project: &Path,
-        version: &str,
-    ) {
-        let stored = store
-            .registry()
-            .get_version(org, "skill", "upgradable", version)
-            .await
-            .unwrap();
-        store
-            .registry()
-            .set_review(
-                org,
-                "skill",
-                "upgradable",
-                "approved",
-                Some(version),
-                stored.bundle_sha256.as_deref(),
-            )
-            .await
-            .unwrap();
-        registry_client::install_skill(cloud, project, "upgradable", Some(version), false, "a@b.c")
-            .await
-            .unwrap();
-    }
-    approve_and_install(&store, user.org_id, &cloud, &project, "1.0.0").await;
+    // approve once; both installs are pinned versions
+    state.lock().unwrap().review_status = "approved".into();
+    registry_client::install_skill(&cloud, &project, "upgradable", Some("1.0.0"), false, "a@b.c")
+        .await
+        .unwrap();
     assert!(dest.join("old-helper.txt").is_file());
     assert_eq!(
         guild_app_server::registry_client::read_sidecar(&dest)
@@ -236,7 +253,9 @@ async fn upgrading_a_skill_drops_files_removed_by_the_new_version() {
     registry_client::publish(&cloud, "skill", &skill_dir, "1.1.0")
         .await
         .unwrap();
-    approve_and_install(&store, user.org_id, &cloud, &project, "1.1.0").await;
+    registry_client::install_skill(&cloud, &project, "upgradable", Some("1.1.0"), false, "a@b.c")
+        .await
+        .unwrap();
 
     assert!(
         !dest.join("old-helper.txt").exists(),
