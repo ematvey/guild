@@ -13,6 +13,21 @@ Updated 2026-10-04 (post M8 integrations runtime).
 
 ## Latest decisions
 
+- **Read-dot fix: unread orders by seq, not event id (2026-10-04).** User
+  report: read/unread not persisting on the TS branch. Diagnosis: read
+  markers WERE persisted (route + rows verified live); the bug was the
+  unread projection comparing `thread_events.id` — the turn-command
+  idempotency contract makes the client's random uuid-v4 message id double
+  as the user_message event id, and v4 sorts above every uuid-v7 harness
+  event, so each chat pinned ~1 unread forever and the dot never cleared
+  (Rust-era events were all v4, so id order was ill-defined there too —
+  seq, the BIGSERIAL write order, was always the correct key, and mark-read
+  already used it). Fix: the sidebar list and hub-feed unread projections
+  now compare `e.seq > (marker event's seq)`; regression test covers a chat
+  mixing v4 + v7 ids (read clears, new turn re-marks). 265/265 tests,
+  redeployed, live-verified mark-all → 0 unread. Commit `fix` in
+  `agent-plane` (see git log for hash).
+
 - **Rust tree deletion prepared — `crates/server` fully decoupled (2026-10-04).**
   Two lanes. **TS side (direct, commit `f62a520`)**: exec-policy base rules
   relocated to `apps/server/assets/exec_policy_base.rules` (matcher default,
