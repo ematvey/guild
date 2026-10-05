@@ -19,7 +19,6 @@ import { ProjectStore } from "./store/projects.js";
 import { TeamStore } from "./store/teams.js";
 import { OrgKvStore, KvStore } from "./store/org_kv.js";
 import { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
-import { RoutineStore } from "./store/routines.js";
 import { LiveHub } from "../hub/live.js";
 import { TicketStore } from "../hub/tickets.js";
 import { ChatStore } from "./store/chats.js";
@@ -69,9 +68,6 @@ export class PlatformContext {
   readonly kv: KvStore;
   readonly integrations: IntegrationStore;
   readonly integrationSecrets: IntegrationSecretStore;
-  /** Only the creation path (registry install); full routine CRUD is
-   *  deferred with the routines feature (spec decision 8). */
-  readonly routines: RoutineStore;
   /** The real machine/member socket registry (M5 hub core). The M3 harness
    *  lane injects fakes typed against the seam `Hub` interface in hub/index.ts
    *  and casts here in its own tests. */
@@ -138,7 +134,6 @@ export class PlatformContext {
     this.kv = new KvStore(this.pool);
     this.integrations = new IntegrationStore(this.pool);
     this.integrationSecrets = new IntegrationSecretStore(this.pool);
-    this.routines = new RoutineStore(this.pool);
     this.hub = new LiveHub();
     this.machineDispatch = machineDispatch(this.hub);
     this.wsTickets = new TicketStore();

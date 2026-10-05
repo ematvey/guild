@@ -33,7 +33,6 @@ import type { ProjectStore } from "./store/projects.js";
 import type { TeamStore } from "./store/teams.js";
 import type { OrgKvStore, KvStore } from "./store/org_kv.js";
 import type { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
-import type { RoutineStore } from "./store/routines.js";
 import type { ChatStore } from "./store/chats.js";
 import type { ThreadStore } from "./store/thread.js";
 import type { TurnCommandStore } from "./store/turn_commands.js";
@@ -109,7 +108,7 @@ export interface ChatsCtx {
 }
 
 /** The gateway/registry lane: the provider route table, the registry and
- *  release stores, projects, routines, and the integration stores — plus
+ *  release stores, projects, and the integration stores — plus
  *  the LLM pipeline's needs (master key, usage sink, and the credential
  *  extractor the /openai and /anthropic surfaces meter against). */
 export interface GatewayCtx extends GatewayContext {
@@ -118,7 +117,6 @@ export interface GatewayCtx extends GatewayContext {
   readonly registry: RegistryStore;
   readonly releases: ReleaseStore;
   readonly projects: ProjectStore;
-  readonly routines: RoutineStore;
   /** Resolves a gateway bearer token (gk_… key or the config-minted
    *  internal key) to the credential the LLM gateway endpoints meter
    *  against. */
