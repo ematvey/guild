@@ -227,7 +227,7 @@ describe("M6 registry", () => {
     expect(json(res).error).toMatchObject({ code: "version_superseded" });
   });
 
-  it("installs a v2 MCP plugin: integration row + disabled routines", async () => {
+  it("installs a v2 MCP plugin: integration row, no trigger routines (dropped)", async () => {
     const manifest = {
       kind: "integration",
       slug: "test-mcp",
@@ -251,20 +251,17 @@ describe("M6 registry", () => {
     expect(install.statusCode).toBe(200);
     const body = json(install) as unknown as {
       integration: Record<string, unknown>;
-      routines: Record<string, unknown>[];
     };
     expect(body.integration.name).toBe("test-mcp");
     expect(body.integration.enabled).toBe(false);
     expect((body.integration.config as Record<string, unknown>).mcp).toEqual(manifest.mcp);
-    expect(body.routines).toHaveLength(1);
-    expect(body.routines[0]!.slug).toBe("test-mcp");
-    expect(body.routines[0]!.enabled).toBe(false);
-    expect(body.routines[0]!.webhook_token).toMatch(/^hook_[0-9a-f]{48}$/);
+    // Routines are dropped: the install response carries no routines field
+    // and the manifest triggers are ignored.
+    expect(body).not.toHaveProperty("routines");
 
-    // A second install keeps the row and skips the existing routine.
+    // A second install is a no-op (row already exists).
     const again = await inject("POST", "/api/v1/registry/integration/test-mcp/install", e.memberToken, {});
     expect(again.statusCode).toBe(200);
-    expect((json(again) as unknown as { routines: unknown[] }).routines).toHaveLength(0);
   });
 });
 

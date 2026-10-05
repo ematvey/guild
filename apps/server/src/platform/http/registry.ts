@@ -1,9 +1,8 @@
 // Registry API: publish, list, versions, review, download, install
 // (crates/server/src/http/registry.rs). Bundles are tar.gz; bytes live in
 // object storage, metadata in Postgres. Server-side install creates a
-// disabled routine (v1 automation bundle) or a disabled MCP-plugin
-// integration row + trigger routines (v2) — both stay inert until enabled,
-// which the deferred routines feature never does (spec decision 8).
+// disabled MCP-plugin integration row (routines are dropped — 2026-10-04
+// decision: the feature is out of scope, automation bundles are rejected).
 
 import { createHash, randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -251,48 +250,19 @@ export function registerRegistryRoutes(
       return installMcpPlugin(gateway, reply, user, slug, manifest, parsed);
     }
     const routineJson = readBundleFile(parsed, "routine.json");
-    if (routineJson === null) throw ApiError.badRequest("bundle has no routine.json");
-    let cfg: Record<string, unknown>;
-    try {
-      cfg = JSON.parse(routineJson.toString("utf8")) as Record<string, unknown>;
-    } catch (error) {
-      throw ApiError.badRequest(`bad routine.json: ${(error as Error).message}`);
+    if (routineJson !== null) {
+      // Routines are dropped (2026-10-04 decision): automation bundles are
+      // permanently unsupported — refuse instead of installing an inert row.
+      throw ApiError.badRequest("automation bundles (routine.json) are not supported: routines are dropped");
     }
-    const triggerKind = typeof cfg["trigger_kind"] === "string" ? cfg["trigger_kind"] : "webhook";
-    if (triggerKind !== "webhook" && triggerKind !== "interval") {
-      throw ApiError.badRequest("routine.json trigger_kind must be webhook or interval");
-    }
-    if (typeof cfg["prompt"] !== "string") throw ApiError.badRequest("routine.json missing prompt");
-    if (typeof cfg["model"] !== "string") throw ApiError.badRequest("routine.json missing model");
-    const webhookToken = newHookToken();
-    const allowedTools = cfg["allowed_tools"] ?? ["http_call", "storage_put"];
-    const routine = await gateway.routines.create(
-      user.org_id,
-      user.id,
-      slug,
-      typeof cfg["name"] === "string" ? cfg["name"] : slug,
-      triggerKind,
-      cfg["trigger_config"] ?? {},
-      cfg["prompt"] as string,
-      cfg["model"] as string,
-      allowedTools,
-      webhookToken,
-      false, // disabled until the owner enables it
-    );
-    // The plaintext webhook token is shown once, at install; only its hash
-    // is stored (same shape as the routines create endpoint).
-    const routineValue: Record<string, unknown> = { ...routine };
-    if (routine.trigger_kind === "webhook") {
-      routineValue["webhook_token"] = webhookToken;
-    }
-    sendJson(reply, { routine: routineValue });
-    return reply;
+    throw ApiError.badRequest("bundle has neither an mcp plugin nor a supported payload");
   });
 }
 
 /** Install path for v2 MCP plugin bundles: creates a disabled `integrations`
  *  row carrying the mcp/auth/tool_policy config (skipped when the row
- *  already exists) and disabled routines from the manifest triggers. */
+ *  already exists). Trigger routines are no longer created — routines are
+ *  dropped (2026-10-04 decision). */
 async function installMcpPlugin(
   gateway: GatewayCtx,
   reply: FastifyReply,
@@ -328,37 +298,8 @@ async function installMcpPlugin(
   }
 
   const triggers = Array.isArray(manifest.triggers) ? manifest.triggers : [];
-  const routines: Record<string, unknown>[] = [];
-  for (let i = 0; i < triggers.length; i++) {
-    const t = triggers[i] as Record<string, unknown>;
-    const routineSlug = i === 0 ? slug : `${slug}-${i}`;
-    if ((await gateway.routines.getBySlug(user.org_id, routineSlug)) !== null) {
-      continue;
-    }
-    const allowedTools = t["allowed_tools"] ?? ["http_call", "storage_put"];
-    if (typeof t["prompt"] !== "string" || typeof t["model"] !== "string") {
-      throw ApiError.badRequest("trigger prompt is empty");
-    }
-    const webhookToken = newHookToken();
-    const routine = await gateway.routines.create(
-      user.org_id,
-      user.id,
-      routineSlug,
-      typeof t["name"] === "string" ? t["name"] : slug,
-      typeof t["kind"] === "string" ? t["kind"] : "webhook",
-      t["trigger_config"] ?? {},
-      t["prompt"] as string,
-      t["model"] as string,
-      allowedTools,
-      webhookToken,
-      false, // disabled until an admin enables it
-    );
-    // The plaintext token is shown once here: only its hash is stored and
-    // no rotate endpoint exists, so dropping it would leave the webhook
-    // trigger permanently unusable.
-    routines.push({ ...routine, webhook_token: webhookToken });
-  }
-  sendJson(reply, { integration: integrationRow, routines });
+  void triggers; // trigger routines are dropped (2026-10-04 decision)
+  sendJson(reply, { integration: integrationRow });
   return reply;
 }
 
