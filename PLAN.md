@@ -13,6 +13,20 @@ Updated 2026-10-04 (post M8 integrations runtime).
 
 ## Latest decisions
 
+- **Desktop 0.5.35 released (2026-10-04).** `scripts/release-clients.sh` run
+  detached (systemd user unit, warm caches — 3.5 min wall) against the dev
+  server; all four platforms published and server-side sha256-verified:
+  Windows NSIS `Guild_0.5.35_x64-setup.exe`, Linux
+  `Guild-0.5.35-x86_64.AppImage`, macOS DMGs + `.app.tar.gz` updater bundles
+  (aarch64/x86_64). `/api/v1/updates/latest.json` serves 0.5.35 with all
+  updater minisign signatures present — paired clients auto-update on their
+  next 15-min check. Built from `agent-plane` (TS-server era: routines
+  dropped — `RoutineStore` removed, registry install rejects automation
+  bundles and the install response drops the `routines` field; M8
+  integrations runtime; read-dot seq fix). Operator note: release publishing
+  needs an admin session — a temporary one was minted directly in the dev
+  DB for the run and revoked immediately after.
+
 - **Read-dot fix: unread orders by seq, not event id (2026-10-04).** User
   report: read/unread not persisting on the TS branch. Diagnosis: read
   markers WERE persisted (route + rows verified live); the bug was the
