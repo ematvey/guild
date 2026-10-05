@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // The turn flow waits on async bridge/compaction writes: generous timeouts.
 const TEST_TIMEOUT = 30_000;
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import type { PlatformContext } from "../platform/context.js";
 
 let stack: M2Stack;
 let port: number;
@@ -137,9 +138,58 @@ describe("chats CRUD wire", () => {
       method: "GET",
       url: `/api/v1/chats/${chat.id}/thread`,
       headers: auth(stack.memberToken),
-    });
-    const events = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
+    });    const events = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
     expect(events.some((e) => e.event.type === "approval_decision")).toBe(true);
+  });
+
+  it("read watermark clears unread across id flavors (seq is the order)", async () => {
+    // The client-supplied message id doubles as the user_message event id
+    // (idempotency contract) and is a random uuid v4 — it sorts ABOVE every
+    // uuid v7 event. The unread projection must order by seq, not id, or
+    // the read dot never clears (2026-10-04 regression).
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+      payload: {},
+    });
+    const chat = JSON.parse(created.body) as { id: string };
+    const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
+    await platform.threads.appendEvent(
+      chat.id,
+      { type: "user_message", content: "client v4 id", attachments: [] },
+      "f7ffffff-ffff-4fff-8fff-ffffffffffff", // uuid v4-shaped, sorts high
+    );
+    await platform.threads.appendEvent(
+      chat.id,
+      { type: "assistant_message", turn: 1, step: 1, blocks: [{ type: "text", text: "turn reply" }], usage: { tokens_in: 1, tokens_out: 1 }, model: "test-model" },
+      "00000000-0000-7000-8000-000000000001", // uuid v7-shaped, sorts low
+    );
+    const listUnread = async () => {
+      const res = await stack.env.app.inject({
+        method: "GET",
+        url: "/api/v1/chats",
+        headers: auth(stack.memberToken),
+      });
+      const chats = (JSON.parse(res.body) as { chats: { id: string; unread: boolean }[] }).chats;
+      return chats.find((c) => c.id === chat.id)!.unread;
+    };
+    expect(await listUnread()).toBe(true);
+    const read = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/chats/${chat.id}/read`,
+      headers: auth(stack.memberToken),
+      payload: {},
+    });
+    expect(read.statusCode).toBe(200);
+    // The v4 user event out-sorts the v7 marker id — seq ordering must say read.
+    expect(await listUnread()).toBe(false);
+    // A newer turn re-marks the chat unread.
+    await platform.threads.appendEvent(
+      chat.id,
+      { type: "assistant_message", turn: 2, step: 2, blocks: [{ type: "text", text: "second turn" }], usage: { tokens_in: 1, tokens_out: 1 }, model: "test-model" },
+    );
+    expect(await listUnread()).toBe(true);
   });
 });
 
