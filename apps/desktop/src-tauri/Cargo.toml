@@ -37,7 +37,6 @@ serde_json = "1"
 url = "2"
 
 [dev-dependencies]
-guild-server = { path = "../../../crates/server", features = ["test-support"] }
 axum.workspace = true
 tokio = { version = "1", features = ["test-util"] }
 
