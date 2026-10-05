@@ -1896,78 +1896,36 @@ mod tests {
         );
     }
 
+    /// A displaced frame arriving on the socket (the server-side slot
+    /// takeover that produces it is owned and tested by the server) must
+    /// drive the desktop read path to the terminal reconnect policy.
     #[tokio::test]
-    async fn overloaded_old_writer_resume_uses_terminal_reconnect_policy() {
+    async fn displaced_frame_on_socket_uses_terminal_reconnect_policy() {
         guild_app_server::machine_link::ensure_crypto_provider();
-        let (fixture, _) = guild_server::test_support::test_state_with_mock_ingress().await;
-        let user = fixture
-            .store()
-            .identity()
-            .ensure_bootstrap_admin("takeover@test", "test-password")
-            .await
-            .unwrap();
-        let (_, token) = fixture
-            .store()
-            .identity()
-            .create_session(user)
-            .await
-            .unwrap();
+        use futures::{SinkExt, StreamExt};
+        let app = axum::Router::new().route(
+            "/api/v1/ws",
+            axum::routing::get(|ws: axum::extract::ws::WebSocketUpgrade| async move {
+                ws.on_upgrade(move |socket| async move {
+                    let (mut tx, _rx) = socket.split();
+                    let _ = tx
+                        .send(axum::extract::ws::Message::text(r#"{"type":"displaced"}"#))
+                        .await;
+                    let _ = tx.close().await;
+                })
+            }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let router = guild_server::build_router(fixture.state.clone());
         let server = tokio::spawn(async move {
-            axum::serve(
-                listener,
-                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await
-            .unwrap();
+            axum::serve(listener, app).await.unwrap();
         });
-        let instance = uuid::Uuid::now_v7();
-        let connect = |instance, resume| {
-            let base = base.clone();
-            let token = token.clone();
-            async move {
-                let ticket: Value = reqwest::Client::new()
-                    .post(format!("{base}/api/v1/ws/ticket"))
-                    .bearer_auth(token)
-                    .send()
-                    .await
-                    .unwrap()
-                    .json()
-                    .await
-                    .unwrap();
-                let url = with_instance(
-                    machine_url_for_test(
-                        &base,
-                        ticket["ticket"].as_str().unwrap(),
-                        "machine",
-                        "Desk",
-                    )
-                    .unwrap(),
-                    instance,
-                    resume,
-                );
-                tokio_tungstenite::connect_async(url.as_str())
-                    .await
-                    .unwrap()
-                    .0
-            }
-        };
-        let _old = connect(instance, false).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        guild_server::test_support::overload_machine_writer(&fixture.state, "machine");
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while fixture.state.hub.machine_online("machine") {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-        let _successor = connect(uuid::Uuid::now_v7(), false).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        let holder = fixture.state.hub.machine_connection("machine");
-        let mut stale = connect(instance, true).await;
+        let url = with_instance(
+            machine_url_for_test(&base, "fixture", "machine", "Desk").unwrap(),
+            uuid::Uuid::now_v7(),
+            true,
+        );
+        let (mut stale, _) = tokio_tungstenite::connect_async(url.as_str()).await.unwrap();
         let (priority_tx, _priority_rx) = tokio::sync::mpsc::channel(1);
         let outbound = OutboundQueue {
             priority_tx,
@@ -1979,7 +1937,6 @@ mod tests {
             MemberFrame::Displaced
         ));
         assert_eq!(link_action(LinkEvent::Displaced), LinkAction::Takeover);
-        assert_eq!(fixture.state.hub.machine_connection("machine"), holder);
         server.abort();
     }
 
