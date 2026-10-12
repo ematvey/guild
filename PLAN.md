@@ -13,6 +13,19 @@ Updated 2026-10-12.
 
 ## Latest decisions
 
+- **Sidebar icon rail — chats and project chats separated.** The chat
+  sidebar grew a ChatGPT-desktop-style narrow icon rail (desktop only,
+  always visible even when the panel is collapsed) with three tabs:
+  Chats (workspace switcher, New chat, Recents, Archived), Work (projects
+  with their fold-out chats), Settings (section rows that open the settings
+  overlay at that section). The account menu moved to the rail bottom; the
+  tab selection persists in `localStorage["guild.sidebarTab"]`. Recents
+  now shows only stateless chats — project-bound chats appear only under
+  their project on the Work tab (project rows carry an aggregate
+  unread/generating dot, and `/project/<id>` deep links open the Work tab).
+  The mobile drawer is pinned to the Chats panel (no rail there).
+  `sidebarGrouping.visible` changed meaning accordingly (stateless only).
+
 - **0.5.36 — read markers ride event `seq`, not event id.** Threads with a
   dead executor kept reappearing unread after every refresh: durable
   workflow events carry deterministic uuid v5 ids (idempotent replay), and
