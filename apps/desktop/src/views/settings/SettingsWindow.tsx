@@ -26,6 +26,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@guild/ui
 import { apiMe } from "../../transport";
 import {
   DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@guild/ui/components/dropdown-menu";
 import { UserBadge } from "../../components/user-badge";
 import { WorkspaceMenuItems } from "../workspace-menu";
@@ -232,6 +233,7 @@ export function SettingsWindow({
                 onAddWorkspace={onAddWorkspace}
                 onReload={() => window.location.reload()}
               />
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
             </UserBadge>
           </div>
