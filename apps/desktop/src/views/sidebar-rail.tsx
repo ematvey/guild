@@ -86,7 +86,7 @@ export function SidebarRail({
           <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
           <DropdownMenuItem onClick={() => onOpenSettings()}>Settings</DropdownMenuItem>
           {/* Browser only: the desktop sign-out lives on the workspace rows
-              (inline ×) — a second button below duplicated it. */}
+              (inline ×). */}
           {!IS_TAURI && <DropdownMenuSeparator />}
           {!IS_TAURI && (
             <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
