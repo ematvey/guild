@@ -8,7 +8,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { ChevronDown, Plus, X } from "lucide-react";
@@ -139,7 +138,6 @@ export function WorkspaceMenuItems({
           </DropdownMenuItem>
         );
       })}
-      <DropdownMenuSeparator />
     </>
   );
 }
