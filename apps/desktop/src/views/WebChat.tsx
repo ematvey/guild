@@ -2433,6 +2433,23 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     pushRoute({ overlay: { kind: "settings", section: section ?? null, detail: null } });
 
   const sidebarCollapse = isMobile ? undefined : () => setCollapsed(true);
+  // The mobile drawer has no rail, so it always shows the Chats panel — the
+  // persisted tab must not leak into it.
+  const chatsPanel = (
+    <ChatsPanel
+      grouping={grouping}
+      loadingChats={chats === null}
+      chatId={chatId}
+      archivedChats={archivedChats}
+      onNewChat={newChat}
+      onOpenChat={openChat}
+      onCollapse={sidebarCollapse}
+      onRenameChat={(id, title) => void renameChat(id, title)}
+      onArchiveChat={(id) => void archiveChat(id)}
+      onUnarchiveChat={(id) => void unarchiveChat(id)}
+      onAddWorkspace={onAddWorkspace}
+    />
+  );
   const sidebar =
     sidebarTab === "work" ? (
       <WorkPanel
@@ -2451,20 +2468,15 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     ) : sidebarTab === "settings" ? (
       <SettingsPanel role={role} onOpenSettings={openSettings} onCollapse={sidebarCollapse} />
     ) : (
-      <ChatsPanel
-        grouping={grouping}
-        loadingChats={chats === null}
-        chatId={chatId}
-        archivedChats={archivedChats}
-        onNewChat={newChat}
-        onOpenChat={openChat}
-        onCollapse={sidebarCollapse}
-        onRenameChat={(id, title) => void renameChat(id, title)}
-        onArchiveChat={(id) => void archiveChat(id)}
-        onUnarchiveChat={(id) => void unarchiveChat(id)}
-        onAddWorkspace={onAddWorkspace}
-      />
+      chatsPanel
     );
+
+  // A /project/<id> route (deep link, reload, or back/forward) opens on the
+  // Work tab so the linked project is visible. Not persisted: the route is
+  // a navigation, not a tab preference.
+  useEffect(() => {
+    if (route.projectId) setSidebarTab("work");
+  }, [route.projectId]);
 
   // desktop: draggable resize handle. While dragging, the width transition
   // is suspended — an animated width chases the cursor and reads as lag.
@@ -2515,7 +2527,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetContent side="left" className="w-72 p-0">
             <SheetTitle className="sr-only">Chats</SheetTitle>
-            {sidebar}
+            {chatsPanel}
           </SheetContent>
         </Sheet>
       ) : (

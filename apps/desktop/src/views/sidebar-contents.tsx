@@ -223,6 +223,7 @@ function ChatListItem({
 function ProjectHeader({
   name,
   folder,
+  status,
   open,
   onToggle,
   onRename,
@@ -231,6 +232,9 @@ function ProjectHeader({
 }: {
   name: string;
   folder: string;
+  /** Aggregate over the project's chats: the same status treatment the
+   * chat rows use (generating spinner wins over the unread dot). */
+  status: { generating: boolean; unread: boolean };
   open: boolean;
   onToggle: () => void;
   onRename: (name: string) => void;
@@ -262,6 +266,11 @@ function ProjectHeader({
         className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
       />
       <FadeTitle text={name} />
+      {status.generating ? (
+        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+      ) : status.unread ? (
+        <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
+      ) : null}
       {onNewChat && (
         <span
           role="button"
@@ -485,6 +494,10 @@ export function WorkPanel({
                 <ProjectHeader
                   name={p.name}
                   folder={p.folder}
+                  status={{
+                    generating: chats.some((c) => !!c.generating),
+                    unread: chats.some((c) => !!c.unread),
+                  }}
                   open={open}
                   onToggle={() => setExpanded((e) => ({ ...e, [p.id]: !open }))}
                   onRename={(name) => onRenameProject?.(p.id, name)}
