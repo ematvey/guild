@@ -77,7 +77,8 @@ services:
   server:
     # explicit tag: the default (compose-server) collides with other projects
     # that also use a "compose/compose" layout and steals the tag on rebuild
-    image: guild-server:latest
+    # overridable so a second stack on the same host can't clobber the shared tag
+    image: ${GUILD_SERVER_IMAGE:-guild-server:latest}
     build:
       context: ../..
       dockerfile: Dockerfile

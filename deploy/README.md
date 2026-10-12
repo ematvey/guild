@@ -15,6 +15,27 @@ docker compose up -d --build
 Health check: `curl -s localhost:8080/api/v1/health` → `{"status":"ok"}`.
 Restate admin UI: `http://localhost:9070`.
 
+## Publish desktop clients
+
+The compose build serves the web frontend but does not build or publish desktop
+installers. After a new deployment, run the client release separately for the
+version in `apps/desktop/src-tauri/tauri.conf.json`. Set the public server URL
+so a fresh install opens with this deployment selected:
+
+```bash
+cd ../..
+BASE=http://localhost:8080 \
+TOKEN=<admin-session-token> \
+VERSION=<desktop-version> \
+VITE_DEFAULT_SERVER_URL=https://guild.example.org \
+  scripts/release-clients.sh
+```
+
+This builds and uploads Windows, Linux, and macOS installers and updater
+artifacts. Check the authenticated `/api/v1/releases` list for six artifacts
+and `/api/v1/updates/latest.json` for the new version and all four platforms.
+See `docs/clients.md` for toolchain requirements and signing details.
+
 ## First-run bootstrap
 
 ```bash

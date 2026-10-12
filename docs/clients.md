@@ -141,6 +141,7 @@ artifacts of the same version/platform). When running it detached
 
 ```bash
 BASE=http://localhost:18080 TOKEN=<admin-session-token> VERSION=0.1.0 \
+  VITE_DEFAULT_SERVER_URL=https://guild.example.org \
   scripts/release-clients.sh
 ```
 

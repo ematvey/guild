@@ -23,12 +23,15 @@
 #
 # Usage:
 #   BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=0.1.0 \
+#     VITE_DEFAULT_SERVER_URL=https://guild.example.org \
 #     scripts/release-clients.sh
 set -euo pipefail
 
 BASE="${BASE:-https://guild.example.com}"
 TOKEN="${TOKEN:?set TOKEN to an admin session token}"
 VERSION="${VERSION:?set VERSION, e.g. 0.1.0}"
+VITE_DEFAULT_SERVER_URL="${VITE_DEFAULT_SERVER_URL:?set VITE_DEFAULT_SERVER_URL to the public deployment URL}"
+export VITE_DEFAULT_SERVER_URL
 export SDKROOT="${SDKROOT:-$HOME/macos-sdks/MacOSX11.3.sdk}"
 # minisign keypair for the tauri desktop auto-updater (passwordless)
 UPDATER_KEY="${UPDATER_KEY:-$HOME/.tauri/guild.key}"

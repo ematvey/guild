@@ -264,7 +264,7 @@ Notes:
   - `scripts/release-desktop.sh` — portable tar.gz/zip builds for
     linux/mac/windows (zigbuild), not installer-format.
   - Usage: `BASE=http://localhost:18080 TOKEN=<admin-token> VERSION=x.y.z
-    scripts/release-clients.sh`.
+    VITE_DEFAULT_SERVER_URL=https://guild.example.org scripts/release-clients.sh`.
   - Running the release script from a systemd transient unit needs an explicit
     `-E PATH=...` including `~/.cargo/bin` (cargo-xwin/zigbuild) — the unit's
     default PATH lacks it and the build fails with "cargo-xwin command not
@@ -272,6 +272,12 @@ Notes:
     bundler to sign updater artifacts.
 - Artifacts land in `/api/v1/releases` (MinIO-backed); the desktop
   updater consumes `latest.json`.
+- A server compose rebuild does not create client releases. For each new
+  deployment, run `scripts/release-clients.sh` separately with `BASE` pointing
+  to that deployment, `VERSION` matching `apps/desktop/src-tauri/tauri.conf.json`,
+  and `VITE_DEFAULT_SERVER_URL` set to its public URL. Verify six release rows
+  (Windows installer, Linux AppImage, two macOS DMGs, two macOS updater
+  archives) and a four-platform `/api/v1/updates/latest.json` response.
 - Local desktop dev: `npm run dev` (vite, port 1420 strict) +
   `npm run tauri dev`; `devUrl` in `tauri.conf.json` points at :1420. The
   GUI spawns `guild-desktop engine` — same binary, so rebuild the Rust
