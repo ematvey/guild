@@ -130,7 +130,7 @@ import {
   readDraft,
   writeDraft,
 } from "../lib/drafts";
-import { WorkspaceMenuItems } from "./workspace-menu";
+import { WorkspaceSwitcher } from "./workspace-menu";
 import { BrowserSendStore } from "../lib/browser-send-store";
 import { clearCommands, detachCommandDraft, selectRestoredCommand, captureCommand, forgetCommand, matchesCommandDraft, prepareOnSendingMachine, recoveryDraft, rememberCommand, restoreCommands, submitCommand,
   type DraftAttachment, type OutgoingCommand } from "../lib/outgoing-command";
@@ -3624,7 +3624,16 @@ function SidebarContent({
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
-        <span className="font-semibold">Guild</span>
+        {/* Desktop: the workspace switcher takes the title's place; the web
+            has a single server, so the static app name stays. */}
+        {IS_TAURI ? (
+          <WorkspaceSwitcher
+            onAddWorkspace={onAddWorkspace}
+            onReload={() => window.location.reload()}
+          />
+        ) : (
+          <span className="font-semibold">Guild</span>
+        )}
         {onCollapse && (
           <Button
             variant="ghost"
@@ -3799,7 +3808,6 @@ function SidebarContent({
       <Separator />
       <div className="p-2">
         <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
-          <WorkspaceMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
           <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
           <DropdownMenuItem onClick={onOpenSettings}>Settings</DropdownMenuItem>
           {/* Browser only: the desktop sign-out lives on the workspace rows
