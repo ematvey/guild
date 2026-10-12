@@ -174,7 +174,7 @@ impl<'a> ChatStore<'a> {
                     c.generating = false AND EXISTS ( \
                       SELECT 1 FROM thread_events e \
                       WHERE e.chat_id = c.id AND e.type = 'assistant_message' \
-                        AND (r.last_read_event_id IS NULL OR e.id > r.last_read_event_id)) AS unread \
+                        AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq)) AS unread \
              FROM chats c \
              LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2 \
              LEFT JOIN projects pr ON pr.id = c.project_id \
@@ -654,8 +654,12 @@ impl<'a> ChatStore<'a> {
     }
 
     /// Marks the chat read for the caller: the marker moves to the newest
-    /// thread event. Org-scoped like every chat read; a chat with no events
-    /// yet has nothing unread — the marker is simply not written.
+    /// thread event's `seq` — the global write order. Event ids cannot order
+    /// events (durable workflow events use deterministic uuid v5 ids for
+    /// idempotent replay), so the marker rides `seq`, and the unread
+    /// derivation compares in the same space. Org-scoped like every chat
+    /// read; a chat with no events yet has nothing unread — the marker is
+    /// simply not written.
     pub async fn mark_read(
         &self,
         org_id: Uuid,
@@ -664,26 +668,24 @@ impl<'a> ChatStore<'a> {
     ) -> Result<(), ApiError> {
         // Same owner/admin gate as get_chat.
         self.get_chat(org_id, chat_id, caller).await?;
-        // The marker is the newest thread event (uuid v7 sorts by time; the
-        // monotonic `seq` orders the rows — max(id) does not exist for uuid).
-        let last: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
+        let last: Option<i64> = sqlx::query_scalar(
+            "SELECT seq FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
         )
         .bind(chat_id)
         .fetch_optional(self.pool)
         .await?;
-        let Some(last_read_event_id) = last else {
+        let Some(last_read_seq) = last else {
             return Ok(()); // no events yet — nothing unread, no marker
         };
         sqlx::query(
-            "INSERT INTO chat_reads (chat_id, user_id, last_read_event_id) \
+            "INSERT INTO chat_reads (chat_id, user_id, last_read_seq) \
              VALUES ($1, $2, $3) \
              ON CONFLICT (chat_id, user_id) \
-             DO UPDATE SET last_read_event_id = EXCLUDED.last_read_event_id",
+             DO UPDATE SET last_read_seq = EXCLUDED.last_read_seq",
         )
         .bind(chat_id)
         .bind(caller.id)
-        .bind(last_read_event_id)
+        .bind(last_read_seq)
         .execute(self.pool)
         .await?;
         Ok(())
@@ -853,6 +855,72 @@ mod tests {
             axum::http::StatusCode::NOT_FOUND
         );
         assert!(!list().await.unwrap()[0].unread);
+    }
+
+    /// Durable workflow events carry deterministic uuid v5 ids (idempotent
+    /// replay), so event ids do not order by time. The read marker must ride
+    /// the event's `seq`: a v5 assistant event that sorts bytewise above the
+    /// marker must not resurrect the dot after a read.
+    #[tokio::test]
+    async fn chat_read_survives_uuid_v5_event_ids() {
+        let db = Store::connect_test().await.unwrap();
+        let store = &db.store;
+        let org = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test')")
+            .bind(org)
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let alice = store
+            .identity()
+            .create_user(org, "alice3@example.org", "hunter226", "member")
+            .await
+            .unwrap();
+        let chat = store
+            .chats()
+            .create_chat(org, alice.id, Some("status-v5"), None)
+            .await
+            .unwrap();
+        let asst = protocol::api::ThreadEvent::AssistantMessage {
+            turn: 1,
+            step: 0,
+            blocks: vec![protocol::api::Block::Text {
+                text: "reply".into(),
+            }],
+            usage: Default::default(),
+            model: "m".into(),
+            interrupted: None,
+        };
+        // A dead-executor turn's durable events: uuid v5 ids appended in seq
+        // order, the newest bytewise BELOW an older assistant event — the
+        // id-based comparison would count that older event unread forever.
+        let older = crate::worker::restate::durable_event_id("inv-a", "assistant:1");
+        let newer = crate::worker::restate::durable_event_id("inv-a", "assistant:2");
+        assert!(newer.as_bytes() < older.as_bytes(), "test setup: marker id sorts below an older event");
+        store
+            .thread()
+            .append_event_with_id(chat.id, &asst, older)
+            .await
+            .unwrap();
+        store
+            .thread()
+            .append_event_with_id(chat.id, &asst, newer)
+            .await
+            .unwrap();
+        let list = || async { store.chats().list_chats(org, alice.id).await };
+        assert!(list().await.unwrap()[0].unread);
+
+        store.chats().mark_read(org, chat.id, &alice).await.unwrap();
+        assert!(!list().await.unwrap()[0].unread, "read must survive v5 event ids");
+
+        // a fresh durable event still re-sets the dot
+        let next = crate::worker::restate::durable_event_id("inv-a", "system");
+        store
+            .thread()
+            .append_event_with_id(chat.id, &asst, next)
+            .await
+            .unwrap();
+        assert!(list().await.unwrap()[0].unread);
     }
 
     /// Rename + archive roundtrip: PATCH changes the title, archiving hides
