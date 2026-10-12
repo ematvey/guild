@@ -37,9 +37,14 @@ const project = (id: string, name = id, machine_label?: string): Project =>
 describe("sidebarGrouping", () => {
   const chats = [chat("c1", "p1"), chat("c2"), chat("c3", "p2"), chat("c4", "p1")];
 
-  it("recents shows every chat in list order", () => {
+  it("recents shows only the stateless chats, in list order", () => {
     const g = sidebarGrouping(chats);
-    expect(g.visible.map((c) => c.id)).toEqual(["c1", "c2", "c3", "c4"]);
+    expect(g.visible.map((c) => c.id)).toEqual(["c2"]);
+  });
+
+  it("project-bound chats never appear in recents (they live under their project)", () => {
+    const g = sidebarGrouping(chats);
+    expect(g.visible.every((c) => !c.project_id)).toBe(true);
   });
 
   it("each project's fold-out list carries only that project's chats, in list order", () => {
@@ -49,7 +54,7 @@ describe("sidebarGrouping", () => {
     expect(g.chatsByProject["missing"]).toBeUndefined();
   });
 
-  it("projectless chats never appear under any project", () => {
+  it("stateless chats never appear under any project", () => {
     const g = sidebarGrouping(chats);
     for (const list of Object.values(g.chatsByProject)) {
       expect(list.every((c) => !!c.project_id)).toBe(true);
