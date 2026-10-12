@@ -3,6 +3,7 @@ node_modules
 dist
 .env
 config.env
+BOOTSTRAP-ADMIN.txt
 *.local
 crates/server/data-test/
 crates/server/data/
