@@ -9,9 +9,22 @@ recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
-Updated 2026-09-30.
+Updated 2026-10-12.
 
 ## Latest decisions
+
+- **0.5.36 — read markers ride event `seq`, not event id.** Threads with a
+  dead executor kept reappearing unread after every refresh: durable
+  workflow events carry deterministic uuid v5 ids (idempotent replay), and
+  the unread derivation compared event ids bytewise assuming uuid v7
+  time ordering — an older event with a bytewise-greater v5 id counted
+  unread forever, no matter how often the chat was opened. Migration 0066
+  moves `chat_reads` to `last_read_seq BIGINT` (the global write order the
+  marker already selected from), backfills from the stored ids, and the
+  list projection + mark_read compare in seq space. Migrations are
+  append-only: 0048 keeps its shipped schema, 0066 alone does the
+  transform (editing 0048 broke fresh template builds with a duplicate
+  column). Server-only; no client change.
 
 - **Prod is a separate checkout** (`~/guild-prod`, branch master, compose
   stack on :18081, public at guild.example.org). Deploy to prod by
