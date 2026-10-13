@@ -304,3 +304,37 @@ Check these when touching releases, tests, or the daemon itself.
    `cargo xwin check` (msvc) and `cargo zigbuild --lib` (apple) as
    compile gates; full binary links happen in the release pipeline
    (Windows SDK / macOS SDK needed there).
+
+## 10. Version sync — one product version everywhere (mandatory)
+
+The product carries a single version (currently 0.5.37). It must be the
+same in every place it lives; the health endpoint, the updater manifest
+checks and the release scripts all compare against it, so drift reads as a
+mismatched client or a stale server.
+
+The complete list of places:
+
+| File | What it versions |
+|---|---|
+| `Cargo.toml` (`[workspace.package] version`) | workspace crates: `protocol`, `guild-core`, `app-server` |
+| `apps/desktop/src-tauri/Cargo.toml` | the Tauri desktop app (outside the workspace — bumped separately) |
+| `apps/desktop/src-tauri/tauri.conf.json` | desktop updater bundle version |
+| `apps/desktop/package.json` | desktop SPA build; the release manifests use it |
+| `apps/server/package.json` | TS server; `GUILD_TS_SERVER_VERSION` reads it → `/api/v1/health` |
+| `packages/ui/package.json` | shared UI kit |
+
+**Update them with the script, never by hand** — it also refreshes both
+Cargo lockfiles (`cargo update -w` touches only workspace members):
+
+```bash
+scripts/bump-version.sh 0.5.38
+```
+
+Deliberately NOT synced: `crates/codex-utils-absolute-path` and
+`crates/codex-execpolicy` (0.2.1) — vendored Codex upstream crates that
+keep their own version line; and every external dependency in the
+`[workspace.dependencies]` table.
+
+When a release bumps the version, run the script first, commit, then
+follow `docs/clients.md`'s release flow (`scripts/release-clients.sh` with
+the same `VERSION`).
