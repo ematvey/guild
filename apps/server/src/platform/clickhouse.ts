@@ -72,6 +72,18 @@ export class ClickhouseClient {
         ") ENGINE = MergeTree ORDER BY (org_id, ts)",
     );
   }
+
+  /** Ensures the skill_reads table exists (org-wide skills; the DDL is
+   *  specified in the skills design — String columns, team/chat ids empty
+   *  when absent). */
+  async ensureSkillReadsTable(): Promise<void> {
+    await this.execute(
+      "CREATE TABLE IF NOT EXISTS skill_reads (" +
+        "ts DateTime64(3), org_id String, user_id String, team_id String, " +
+        "slug String, bundle_sha256 String, chat_id String" +
+        ") ENGINE = MergeTree ORDER BY (org_id, slug, ts)",
+    );
+  }
 }
 
 export class ClickhouseError extends Error {
