@@ -1838,10 +1838,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     void listMachines().then(setMachines).catch(() => {});
   }, [refreshProjects]);
 
-  // The composer's project binding. The chip is interactive only on a new
-  // (unsent) chat, where the pick applies when the send creates the chat;
-  // an existing chat displays its project read-only — the binding cannot
-  // change after the chat started. Projectless is the default state.
+  // The composer's project binding. The chip renders only when a project
+  // is actually bound or pre-picked (project context) — a plain chat-mode
+  // chat shows no project affordance at all. On a new (unsent) chat the
+  // pick applies when the send creates the chat; an existing chat displays
+  // its project read-only — the binding cannot change after it started.
   const [pickedProject, setPickedProject] = useState<PickedProject | null>(null);
   const pickedProjectRef = useRef<PickedProject | null>(pickedProject);
   pickedProjectRef.current = pickedProject;
@@ -2984,7 +2985,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     machines?.find((m) => m.machine_id === chipMachineId)?.name ??
                     chipMachineId;
                   return (
-                    (!chatId || currentProject) && (
+                    currentProject && (
                       <span
                         className="flex h-7 max-w-52 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground"
                         title={
