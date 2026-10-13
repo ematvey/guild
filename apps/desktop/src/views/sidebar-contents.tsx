@@ -353,10 +353,7 @@ export function ChatsPanel({
           <Plus /> New chat
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2">
-        <div className="flex items-center gap-1.5 pb-1 pt-4 font-medium text-muted-foreground">
-          <span className="px-1">Recents</span>
-        </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pt-2">
         <div className="space-y-0.5 pb-2">
           {loadingChats &&
             [0, 1, 2, 3, 4].map((i) => (
