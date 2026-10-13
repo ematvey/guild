@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@guild/ui/components/select";
-import { SkillDetail } from "./SkillDetail";
+import { SkillDetail, editAccess, editAccessLabel } from "./SkillDetail";
 import { SkillEditor } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
 import LocalSkills from "./LocalSkills";
@@ -51,6 +51,9 @@ export interface SkillRow {
   /** Org-wide install count on its own (the row renders the label). */
   installsCount: number;
   gated: boolean;
+  /** The access label shown in the row's lock badge when gated
+   *  ("Team Platform can edit" / "Owner can edit"), null when open. */
+  gatedLabel: string | null;
   /** The viewer's pinned version ("v2"), or null when not installed. */
   pin: string | null;
   /** The latest version when the viewer's pin is behind it, else null. */
@@ -72,6 +75,9 @@ export function skillRow(item: SkillItem, install: SkillInstall | null | undefin
     latestVersion: item.latest_version ?? "—",
     installsCount: item.installs,
     gated: item.maintainer_gated,
+    gatedLabel: item.maintainer_gated
+      ? editAccessLabel(editAccess(item), item.owner?.label)
+      : null,
     pin,
     updateTo,
   };
@@ -99,7 +105,7 @@ export const skillFilterOptions: ReadonlyArray<readonly [SkillFilterKind, string
   ["all", "All skills"],
   ["installed", "Installed"],
   ["mine", "Mine"],
-  ["approval", "Approval required"],
+  ["approval", "Restricted editing"],
 ];
 
 /** The catalog's sort keys, in Select order. */
@@ -423,9 +429,9 @@ export function SkillsPanel({
                               <Badge
                                 variant="outline"
                                 className="gap-1 text-muted-foreground"
-                                title="Installing requires maintainer approval"
+                                title="Publishing updates is limited to the owner/team and admins"
                               >
-                                <Lock className="size-3" /> approval
+                                <Lock className="size-3" /> {row.gatedLabel}
                               </Badge>
                             )}
                             {row.pin !== null && (
