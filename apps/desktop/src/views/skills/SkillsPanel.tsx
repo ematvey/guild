@@ -1,8 +1,8 @@
 // Skills panel (Skills tab): Catalog | Activity tabs. Catalog is the
 // org skill catalog as a card grid with a search box; Activity is the
 // org event feed with the All / Changes pill filter. The rail tab
-// switches here; the editor surface is not wired yet, so "New skill" is
-// a visible placeholder.
+// switches here; the skill editor replaces the panel body when open
+// (New skill button, or Edit on a detail page).
 
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
@@ -10,6 +10,7 @@ import { Input } from "@guild/ui/components/input";
 import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { SkillDetail } from "./SkillDetail";
+import { SkillEditor, type EditorMode } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
 import { skillsList, type SkillItem, type SkillMe } from "./skills-api";
 import { CollapseButton } from "../sidebar-contents";
@@ -70,6 +71,7 @@ export function SkillsPanel({
   const [skills, setSkills] = useState<SkillItem[] | null>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [editor, setEditor] = useState<{ mode: EditorMode; slug?: string } | null>(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -85,6 +87,21 @@ export function SkillsPanel({
   const filtered = filterSkills(skills ?? [], query);
   const empty = skills === null ? null : skillsEmptyState(query, filtered.length);
 
+  if (editor !== null) {
+    return (
+      <SkillEditor
+        mode={editor.mode}
+        slug={editor.slug}
+        onBack={() => setEditor(null)}
+        onSaved={(slug) => {
+          setEditor(null);
+          setSelected(slug);
+          setTick((t) => t + 1);
+        }}
+      />
+    );
+  }
+
   if (selected !== null) {
     return (
       <SkillDetail
@@ -97,6 +114,7 @@ export function SkillsPanel({
           setTick((t) => t + 1);
         }}
         onOpenSkill={setSelected}
+        onEdit={(slug) => setEditor({ mode: "edit", slug })}
       />
     );
   }
@@ -106,12 +124,11 @@ export function SkillsPanel({
       <div className="flex items-center justify-between px-3 py-3">
         <span className="font-semibold">Skills</span>
         <span className="flex items-center gap-1">
-          {/* Placeholder until the editor surface is wired. */}
           <Button
             variant="outline"
             size="sm"
-            disabled
-            aria-label="New skill (editor not available yet)"
+            aria-label="New skill"
+            onClick={() => setEditor({ mode: "create" })}
           >
             New skill
           </Button>
