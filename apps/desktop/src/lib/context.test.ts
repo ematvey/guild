@@ -14,8 +14,10 @@ import {
   discoverSkills,
   listSkills,
   setSkillDisabled,
+  installedOrgSkills,
   type BridgeFs,
   type DirEntry,
+  type OrgSkillsApi,
 } from "./context";
 
 /** In-memory fs with the bridge's shapes. */
@@ -117,6 +119,10 @@ describe("mentionExpansions + mentionBlock", () => {
     const block = mentionBlock([{ skill: skills[0], body: "STEPS" }]);
     expect(block).toContain("Invoked skills");
     expect(block).toContain("### Skill: deploy (/cfg/skills/deploy/SKILL.md)");
+    // path-less entries (browser org skills) render without the parens
+    const orgBlock = mentionBlock([{ skill: { name: "org-skill", description: "", path: "", org: { version: "v1" } }, body: "B" }]);
+    expect(orgBlock).toContain("### Skill: org-skill\n");
+    expect(orgBlock).not.toContain("()");
     expect(block).toContain("STEPS");
     expect(mentionBlock([])).toBeNull();
   });
@@ -256,6 +262,105 @@ describe("skills manager listing + toggles", () => {
   });
 });
 
+
+describe("installed org skills (spec §2.3)", () => {
+  /** Org api fixture: records every skillBody fetch. */
+  function fakeOrgApi(installs: Array<{ slug: string; pinned_version: string }> | null, bodies: Record<string, string> = {}) {
+    const fetched: string[] = [];
+    const api: OrgSkillsApi = {
+      installs: async () => installs,
+      skillBody: async (slug) => {
+        fetched.push(slug);
+        return bodies[slug] ?? null;
+      },
+    };
+    return { api, fetched };
+  }
+
+  it("machine installs map to the sync path (~/.agents/skills/<slug>/SKILL.md)", async () => {
+    const { api } = fakeOrgApi([
+      { slug: "deploy-checklist", pinned_version: "v2" },
+      { slug: "sql-explorer", pinned_version: "v1" },
+    ]);
+    const entries = await installedOrgSkills(api, "/home/u");
+    expect(entries).toEqual([
+      { name: "deploy-checklist", description: "", path: "/home/u/.agents/skills/deploy-checklist/SKILL.md" },
+      { name: "sql-explorer", description: "", path: "/home/u/.agents/skills/sql-explorer/SKILL.md" },
+    ]);
+  });
+  it("browser installs carry the source marker instead of a path", async () => {
+    const { api } = fakeOrgApi([{ slug: "deploy-checklist", pinned_version: "v2" }]);
+    const entries = await installedOrgSkills(api, null);
+    expect(entries).toEqual([
+      { name: "deploy-checklist", description: "", path: "", org: { version: "v2" } },
+    ]);
+  });
+  it("no api, no installs, or a failed fetch yields nothing", async () => {
+    expect(await installedOrgSkills(undefined, "/home/u")).toEqual([]);
+    const { api } = fakeOrgApi(null);
+    expect(await installedOrgSkills(api, "/home/u")).toEqual([]);
+    expect(await installedOrgSkills(api, null)).toEqual([]);
+  });
+  it("browser mention expansion fetches the source body — once per skill per turn", async () => {
+    const { api, fetched } = fakeOrgApi(
+      [{ slug: "deploy-checklist", pinned_version: "v2" }],
+      { "deploy-checklist": SKILL("deploy-checklist", "Deploy") },
+    );
+    // duplicate entries share one fetch (the per-assembly cache)
+    const entries = await installedOrgSkills(api, null);
+    const m = await mentionExpansions(fakeFs({}), "/proj", "run /deploy-checklist twice: /deploy-checklist", [
+      ...entries,
+      ...entries,
+    ], api);
+    expect(fetched).toEqual(["deploy-checklist"]);
+    expect(m).toHaveLength(1);
+    expect(m[0].body).toContain("body of deploy-checklist");
+  });
+  it("unmentioned org skills are never fetched; a failed body fetch drops the mention", async () => {
+    const { api, fetched } = fakeOrgApi(
+      [{ slug: "deploy-checklist", pinned_version: "v2" }, { slug: "quiet", pinned_version: "v1" }],
+      {},
+    );
+    const entries = await installedOrgSkills(api, null);
+    const m = await mentionExpansions(fakeFs({}), "/proj", "only /deploy-checklist", entries, api);
+    expect(fetched).toEqual(["deploy-checklist"]);
+    expect(m).toEqual([]);
+  });
+  it("prepareTurn (machine): org installs join the index; local discovery wins a collision", async () => {
+    const fs = fakeFs({
+      "/home/u/.agents/skills/synced/SKILL.md": SKILL("synced", "synced frontmatter"),
+    });
+    const { api } = fakeOrgApi([
+      { slug: "fresh-install", pinned_version: "v1" },
+      { slug: "synced", pinned_version: "v2" },
+    ]);
+    const prep = await prepareTurn(fs, { configDir: "/cfg/guild", home: "/home/u" }, "no mentions", "/proj", api);
+    expect(prep.index).toContain("- fresh-install:  (/home/u/.agents/skills/fresh-install/SKILL.md)");
+    expect(prep.index).toContain("- synced: synced frontmatter");
+    expect(prep.index).not.toContain("org: ");
+  });
+  it("prepareTurn (machine): org mentions expand from the local file", async () => {
+    const fs = fakeFs({
+      "/home/u/.agents/skills/deploy-checklist/SKILL.md": SKILL("deploy-checklist", "Deploy"),
+    });
+    const { api, fetched } = fakeOrgApi([{ slug: "deploy-checklist", pinned_version: "v2" }]);
+    const prep = await prepareTurn(fs, { configDir: "/cfg/guild", home: "/home/u" }, "run /deploy-checklist", "/proj", api);
+    expect(prep.prompt).toContain("### Skill: deploy-checklist");
+    expect(prep.prompt).toContain("body of deploy-checklist");
+    expect(fetched).toEqual([]); // the local file path — no HTTP fetch
+  });
+  it("prepareTurn (browser): index stays empty (the server renders installs) but mentions fetch and inline", async () => {
+    const { api, fetched } = fakeOrgApi(
+      [{ slug: "deploy-checklist", pinned_version: "v2" }],
+      { "deploy-checklist": "BROWSER BODY" },
+    );
+    const prep = await prepareTurn(fakeFs({}), { configDir: null, home: null }, "run /deploy-checklist", undefined, api);
+    expect(prep.index).toBe("");
+    expect(prep.prompt).toContain("### Skill: deploy-checklist");
+    expect(prep.prompt).toContain("BROWSER BODY");
+    expect(fetched).toEqual(["deploy-checklist"]);
+  });
+});
 
 describe("project skill scope contracts", () => {
   it("prefers the closest repository scope for duplicate names", async () => {
