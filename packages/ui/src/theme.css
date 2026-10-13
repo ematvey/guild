@@ -3,7 +3,15 @@
    semantic utilities (bg-card, text-muted-foreground, ...) so light/dark
    needs no per-view classes. Dark is the default. */
 
+@import "@fontsource-variable/inter";
+
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* Inter Variable is the UI font, self-hosted so the Tauri client never
+   depends on a webfont CDN. Monospace stays the Tailwind default stack. */
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+}
 
 :root {
   --background: #ffffff;
