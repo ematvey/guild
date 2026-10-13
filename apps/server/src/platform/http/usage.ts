@@ -1,6 +1,6 @@
-// Usage/cost queries over ClickHouse (crates/server/src/http/usage.rs
-// port): per user, team, model, day. Admins see the whole org; members
-// only themselves. ClickHouse binds mirror the Rust client (`?` →
+// Usage/cost queries over ClickHouse: per user, team, model, day. Admins
+// see the whole org; members only themselves. ClickHouse binds use
+// URL params (`?` →
 // `{param_N:Type}` URL params); the SELECT statements are ported verbatim.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";

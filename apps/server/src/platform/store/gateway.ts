@@ -1,5 +1,4 @@
-// Gateway records: org provider keys (encrypted at rest) and model routes
-// (crates/server/src/store/gateway.rs port).
+// Gateway records: org provider keys (encrypted at rest) and model routes.
 
 import { decryptSecret, encryptSecret } from "../crypto.js";
 import { ApiError } from "../errors.js";
@@ -313,7 +312,7 @@ export class GatewayStore {
 }
 
 /** One bullet per stored character, capped so very long secrets don't blow
- *  out the placeholder line (crates/server/src/crypto.rs). */
+ *  out the placeholder line. */
 function maskSecretLen(len: number): string {
   return "•".repeat(Math.min(Math.max(len, 1), 48));
 }

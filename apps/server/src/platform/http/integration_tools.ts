@@ -1,5 +1,5 @@
-// Script-facing integration tool API (crates/server/src/http/
-// integration_tools.rs): the same policy-filtered plugin tools the chat loop
+// Script-facing integration tool API: the same policy-filtered plugin
+// tools the chat loop
 // uses — built-in and MCP plugins alike — reachable over HTTPS so scripts
 // can call them with session or org-API-key auth. The execute route
 // dispatches through the connector runtime (platform/integrations/

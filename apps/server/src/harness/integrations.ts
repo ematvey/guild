@@ -1,5 +1,5 @@
-// The integrations chat runtime (crates/server/src/worker/restate.rs port,
-// server_tool_step + the plugin turn machinery): per turn the enabled
+// The integrations chat runtime (server_tool_step + the plugin turn
+// machinery): per turn the enabled
 // plugins of the conversation's org resolve into a snapshot, one dynamic
 // per-org registry extension carries their tools (the Guild-provided
 // `{slug}_list_tools` / `{slug}_guide` disclosure pair plus the connector

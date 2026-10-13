@@ -71,7 +71,7 @@ The same chat frontend runs in two hosts:
   in the URL fragment (never sent to the server), the console stores it
   locally, so no re-login (pin/re-login happens only if the session is
   revoked).
-- **Web** (served by the guild-server binary): the SAME frontend at `/` —
+- **Web** (served by the TS server): the SAME frontend at `/` —
   it detects the browser (no `__TAURI_INTERNALS__`), uses same-origin
   fetch/SSE instead of the engine, and runs in **chat mode** (streaming
   gateway chat; agent mode with local tools stays desktop-only — tools run
@@ -81,9 +81,8 @@ The same chat frontend runs in two hosts:
   key → auth is shared with the chat app seamlessly in web mode; its
   "Guild" title links back to `/`.
 
-Serving: the guild-server binary embeds both frontends (`/` = chat app from
-`apps/desktop/dist`, `/admin` = admin console from `apps/webui/dist`, built
-with `base: /admin/`). The Dockerfile has node stages for both.
+Serving: the TS server embeds the frontend (`/` = chat app from
+`apps/desktop/dist`, built in the webui stage of `Dockerfile.server-ts`).
 
 ## Tauri release builds need `custom-protocol`
 

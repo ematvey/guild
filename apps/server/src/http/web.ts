@@ -1,4 +1,4 @@
-// Embedded web UI serving (crates/server/src/http/web.rs): the SPA bundle
+// Embedded web UI serving: the SPA bundle
 // is read from disk (baked into the image at build time, apps/desktop/
 // dist); non-API GETs fall back to index.html (SPA routing). When the
 // frontend hasn't been built, API routes still work and pages answer with

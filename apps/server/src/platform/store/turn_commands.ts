@@ -1,5 +1,5 @@
-// Durable accepted chat commands (crates/server/src/store/turn_commands.rs
-// port). The rows keep the gateway's idempotency contract (user_message_id
+// Durable accepted chat commands. The rows keep the gateway's idempotency
+// contract (user_message_id
 // dedupe + the `command_ack` response shape) and the generating-flag
 // bookkeeping; delivery itself is the pi-durable submission (the bridge
 // flips running/completed from run_start/run_end — no outbox pump, the

@@ -1,4 +1,4 @@
-// Machine registry store semantics (crates/server/src/store/machines.rs):
+// Machine registry store semantics:
 // reconnect refresh, foreign-user refusal, foreign-org untouched, fingerprint
 // adoption re-keying (re-pair) with binding moves, bindable.
 

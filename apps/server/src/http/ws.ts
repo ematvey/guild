@@ -1,4 +1,4 @@
-// Per-client WebSocket endpoint (crates/server/src/http/ws.rs): single-use
+// Per-client WebSocket endpoint: single-use
 // ticket auth, one upgrade route, per-user socket caps live in the hub.
 // Browsers cannot send headers on upgrade, and long-lived tokens in a query
 // string leak into access logs — hence the ticket hop over the normal

@@ -1,4 +1,4 @@
-// Admin API (crates/server/src/http/admin.rs): user management, the
+// Admin API: user management, the
 // assistant / approval-policy prompts (org_kv), and the integration
 // configuration CRUD — including the save path (config validation, secret
 // merge, connection tests) and the tools listing with per-tool curation
@@ -551,8 +551,8 @@ async function mcpTestConnection(
   }
 }
 
-/** Shared save path for create and update (crates/server/src/http/admin.rs
- *  save_integration): applies the registry-shadowing rules, validates
+/** Shared save path for create and update (save_integration): applies the
+ *  registry-shadowing rules, validates
  *  required fields, merges newly entered credential values in memory, runs
  *  the connector's connection test against the would-be state, and persists
  *  (config, secrets, enabled) only on success — a broken connection is

@@ -1,4 +1,4 @@
-// Project routes (crates/server/src/http/projects.rs): CRUD over the
+// Project routes: CRUD over the
 // caller's named workspace folders. Strictly owner-scoped (admins
 // included); names are display labels derived from the folder when omitted
 // — duplicates are allowed.

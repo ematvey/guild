@@ -1,4 +1,4 @@
-// Workspace settings API (crates/server/src/http/org.rs): display name and
+// Workspace settings API: display name and
 // logo of the caller's organization. The logo endpoint is public — <img>
 // tags cannot send bearer tokens, and a logo is not sensitive.
 

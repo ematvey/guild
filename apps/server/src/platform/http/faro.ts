@@ -1,4 +1,4 @@
-// Faro telemetry collector proxy (crates/server/src/http/faro.rs): the web
+// Faro telemetry collector proxy: the web
 // UI (same origin) and the desktop webview (paired server URL) POST Faro
 // Web SDK payloads to /faro/collect; the server forwards them to the org's
 // Faro receiver (GUILD_FARO_URL). Intentionally unauthenticated — telemetry

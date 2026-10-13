@@ -1,5 +1,5 @@
-// Org API keys for the public OpenAI-compatible endpoint (crates/server/
-// src/http/api_keys.rs port): admin-minted org keys plus user-level keys
+// Org API keys for the public OpenAI-compatible endpoint: admin-minted org
+// keys plus user-level keys
 // every member manages from their own settings.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";

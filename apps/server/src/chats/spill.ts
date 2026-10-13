@@ -1,4 +1,4 @@
-// Tool-artifact spill (crates/server/src/worker/spill.rs port): oversized
+// Tool-artifact spill: oversized
 // tool results become a tool_artifacts row + object-storage bytes, and the
 // persisted tool_result event carries a short pointer text naming the
 // materialized path `.guild/artifacts/<chat>/<filename>` instead of the full

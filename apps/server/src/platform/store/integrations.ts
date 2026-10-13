@@ -1,5 +1,4 @@
-// Admin-configured integration plugins (crates/server/src/store/
-// integrations.rs and integration_secrets.rs): config rows per org, and
+// Admin-configured integration plugins: config rows per org, and
 // AES-256-GCM encrypted per-integration secrets that never leave the store
 // in plaintext except through resolve.
 
@@ -125,8 +124,7 @@ export class IntegrationStore {
     return res.rows.map((r: Record<string, unknown>) => row(r));
   }
 
-  /** Enabled rows only, in name order (crates/server/src/store/
-   *  integrations.rs list_enabled) — the plugin resolver's input. */
+  /** Enabled rows only, in name order — the plugin resolver's input. */
   async listEnabled(orgId: string): Promise<IntegrationRow[]> {
     const res = await this.pool.query(
       "SELECT id, org_id, name, config, enabled FROM integrations WHERE org_id = $1 AND enabled ORDER BY name",

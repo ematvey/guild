@@ -1,6 +1,5 @@
-// Org events API (crates/server/src/http/events.rs): recent events are
-// listed here; live delivery uses the authenticated WebSocket feed in
-// crates/server/src/http/feed.rs (hub cutover, later milestone).
+// Org events API: recent events are
+// listed here; live delivery uses the authenticated WebSocket feed (hub).
 
 import type { FastifyInstance } from "fastify";
 import type { IdentityCtx } from "../contexts.js";

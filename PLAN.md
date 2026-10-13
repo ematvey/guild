@@ -10,7 +10,24 @@ This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
-- **Sidebar icon rail — chats and project chats separated.** The chat
+
+- **Rust server deleted (2026-10-13).** `crates/server` git-rm'd — the R9
+  gate (prod cutover + soak) superseded by maintainer's explicit order after
+  the live E2E on the TS stack (real model turn with tool calls through the
+  server-side sandbox, usage sink verified, wire parity diffed against the
+  retired Rust image on a loopback port: all GET surfaces identical except
+  TS's additive `org_id`/`user_id` on projects). Migrations moved to
+  `apps/server/migrations` (the TS test harnesses were the only remaining
+  reader of `crates/server/migrations`); the root `Dockerfile` (Rust image)
+  deleted; provenance comments naming the Rust tree cleaned across the TS
+  sources; README/AGENTS/deploy docs updated. Consequences: the dev stack
+  is TS-only (:18080), prod (:18081) still runs the Rust server from its
+  own checkout (`~/guild-prod`) until its cutover — rollback for prod is a
+  checkout of git history, not a build from this tree. Workspace now:
+  protocol, guild-core, app-server, codex-execpolicy(+utils), desktop
+  Tauri.
+
+## Latest decisions- **Sidebar icon rail — chats and project chats separated.** The chat
   sidebar grew a ChatGPT-desktop-style narrow icon rail (desktop only,
   always visible even when the panel is collapsed) with three tabs:
   Chats (workspace switcher, New chat, Recents, Archived), Work (projects

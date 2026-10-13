@@ -1,4 +1,4 @@
-// Turn derivation (crates/server/src/worker/turn.rs port): the arrival-turn
+// Turn derivation: the arrival-turn
 // user event text (chips + inlined document bytes), the attachment media
 // map, and the model-facing image parts — everything the turn submission
 // derives from its inputs before the durable run starts.

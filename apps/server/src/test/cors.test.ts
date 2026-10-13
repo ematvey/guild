@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
 
-// The CORS layer port (crates/server/src/http/mod.rs): preflights answered
+// The CORS layer port: preflights answered
 // 204 with ACAO only for the allow-listed webview origins.
 function cfg() {
   return loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s" });

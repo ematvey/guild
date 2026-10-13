@@ -1,6 +1,5 @@
-// S3-compatible object storage client (rustfs/MinIO; spec §4.4/§4.9), the
-// TypeScript counterpart of crates/server/src/s3.rs. Same object keys, same
-// put/get/delete surface.
+// S3-compatible object storage client (rustfs/MinIO; spec §4.4/§4.9): same
+// object keys, same put/get/delete surface across the eras.
 
 import {
   DeleteObjectCommand,

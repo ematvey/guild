@@ -1,5 +1,5 @@
-// Public OpenAI-compatible chat completions endpoint (crates/server/src/
-// http/openai.rs port): `POST /openai/v1/chat/completions` with `gk_…`
+// Public OpenAI-compatible chat completions endpoint:
+// `POST /openai/v1/chat/completions` with `gk_…`
 // API-key auth. No chat persistence; usage is attributed to the key's
 // owner. Streaming frames are byte-compatible with the Rust server
 // (serde_json BTreeMap key order, `data: …\n\n` frames, `[DONE]` end).

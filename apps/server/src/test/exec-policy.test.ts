@@ -1,7 +1,5 @@
-// Exec-policy gate tests — the Rust suite in
-// crates/server/src/worker/exec_policy_gate.rs (mod tests), ported verbatim,
-// against the REAL static rules asset (parity evidence: the same file the
-// Rust build embeds).
+// Exec-policy gate tests against the REAL static rules asset
+// (apps/server/assets/exec_policy_base.rules).
 
 import { readFileSync } from "node:fs";
 import path from "node:path";

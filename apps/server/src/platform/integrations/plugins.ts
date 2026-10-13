@@ -1,5 +1,5 @@
-// Turn-start plugin resolution (crates/server/src/integrations.rs
-// resolve_plugins) and the per-tool policy rules: the same snapshot shape
+// Turn-start plugin resolution (resolve_plugins) and the per-tool policy
+// rules: the same snapshot shape
 // built-in Rust connectors and MCP plugins resolve through — the tool list
 // with manifest classes, policy-filtered by role. Secrets are checked
 // (declared names must be stored) but only their presence — values are

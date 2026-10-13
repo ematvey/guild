@@ -1,5 +1,5 @@
-// The connector execute runtime (crates/server/src/integrations.rs and
-// integrations/*.rs): one execute function per built-in connector, the
+// The connector execute runtime: one execute function per built-in
+// connector, the
 // shared generic `api` tool (call_vendor_api), and the plugin dispatcher
 // (call_plugin) that re-resolves secrets and runs the built-in connector or
 // the MCP peer. A connector failure is a tool RESULT (the error text the
@@ -53,8 +53,8 @@ function trimTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
-/** Percent-encodes one URL path segment (crates/server/src/integrations.rs
- *  path_segment): user- and model-controlled values must not inject `/`,
+/** Percent-encodes one URL path segment (path_segment): user- and
+ *  model-controlled values must not inject `/`,
  *  `?` or `#` into a vendor request path; a dot-segment is rejected. */
 export function pathSegment(value: string): string {
   if (value === "." || value === "..") {
@@ -1784,8 +1784,8 @@ export interface PluginSecretSource {
   masterKey(): Buffer;
 }
 
-/** Executes one call against a resolved plugin (crates/server/src/
- *  integrations.rs call_plugin): re-resolves the secrets (snapshots never
+/** Executes one call against a resolved plugin (call_plugin): re-resolves
+ *  the secrets (snapshots never
  *  carry values), then runs the built-in connector directly or connects to
  *  the MCP server with the identity envelope and calls the raw tool name. */
 export async function callPlugin(

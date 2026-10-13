@@ -1,5 +1,5 @@
-// One-time pairing tokens for desktop-app enrollment (crates/server/src/
-// store/pairing.rs): the webapp issues a short-lived code the desktop app
+// One-time pairing tokens for desktop-app enrollment: the webapp issues a
+// short-lived code the desktop app
 // redeems for a normal session. Only the sha256 hash of the secret is
 // stored; plaintext is shown once at creation.
 

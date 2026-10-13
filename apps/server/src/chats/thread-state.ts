@@ -1,7 +1,7 @@
 // ThreadState capture + wire rendering: the authoritative atomic view the
 // member socket (M5) syncs with and the M3 SSE thread-stream endpoint
 // pushes. Frame bytes match `serde_json::to_value(WsServerMsg::ThreadState)`
-// (crates/server/src/http/feed.rs `capture_thread`): internally-tagged
+//: internally-tagged
 // snake_case enum, fields in variant declaration order, `None` project
 // fields skipped, `has_more_events` always present.
 

@@ -1,5 +1,5 @@
-// Chat routes (crates/server/src/http/chats.rs + the chat half of gateway.rs
-// port): chat CRUD + thread read/append + approval override + read markers +
+// Chat routes: chat CRUD + thread read/append + approval override + read
+// markers +
 // project binding, and the gateway turn-submission routes (POST
 // /api/v1/gateway/chat → a pi-durable submission; stop/compact/approval
 // decision). The machines routes stay proxied until the hub lane (M5): the

@@ -1,5 +1,5 @@
 // The one outbound queue consumed by a socket's writer task
-// (crates/server/src/http/ws.rs SocketSink + SocketBacklog). The hub clones
+//. The hub clones
 // sinks into registry slots; the ws route runs the writer loop.
 //
 // Node model of the Rust semantics: an unbounded queue with a pending

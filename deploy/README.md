@@ -1,6 +1,7 @@
 # Deploy — Guild server
 
-Full server-side stack: guild-server, Postgres, ClickHouse, MinIO, Restate.
+Server-side stack: the TS server (`apps/server`, Dockerfile.server-ts),
+host Postgres, ClickHouse, MinIO.
 
 ## Run
 

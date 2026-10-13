@@ -1,5 +1,5 @@
 // Env-driven configuration, same style as the Rust server's config.env
-// (deploy/compose/config.env.example, crates/server/src/config.rs). M1 adds
+//. M1 adds
 // the platform-core settings: Postgres, the secret master key, the OIDC
 // state-signing secret, and S3 object storage.
 

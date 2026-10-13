@@ -1,4 +1,4 @@
-// Workspace agent sessions routes (crates/server/src/http/agents.rs port):
+// Workspace agent sessions routes:
 // create/list/history/run-turn. A session is one durable conversation (its
 // 1:1 chat) plus a workspace dir under `workspaces/<org>/<name>` — the
 // sandbox the harness's tools execute in (the harness env factory resolves

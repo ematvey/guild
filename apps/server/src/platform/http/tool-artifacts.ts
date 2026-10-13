@@ -50,7 +50,7 @@ export function registerToolArtifactRoutes(
   });
 }
 
-/** crates/server/src/store/chats.rs readable_by_executor: the chat's bound
+/** readable_by_executor: the chat's bound
  *  machine (project machine first, else the chat's) reads with its owner's
  *  member token; everyone else passes the owner/admin gate. */
 async function readableByExecutor(chats: ChatsCtx, pool: InfraContext["pool"], orgId: string, chatId: string, user: { id: string; role: string }): Promise<void> {

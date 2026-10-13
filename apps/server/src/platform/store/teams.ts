@@ -1,5 +1,5 @@
 // Teams: org subgroups used for cost roll-ups and scoping
-// (crates/server/src/store/teams.rs). Members carry the org's user list
+//. Members carry the org's user list
 // shape (UserListRow, same as admin users).
 
 import { ApiError } from "../errors.js";
@@ -17,7 +17,7 @@ export interface TeamRow {
   member_count: number;
 }
 
-/** UserListRow (crates/server/src/store/identity.rs) declaration order —
+/** UserListRow declaration order —
  *  defined in identity.ts, re-exported here for the team-member lists. */
 
 function teamRow(r: Record<string, unknown>): TeamRow {

@@ -1,4 +1,4 @@
-// Domain error types for `/api/v1` (spec §7, crates/server/src/http/error.rs):
+// Domain error types for `/api/v1`:
 // {"error":{"code":"...","message":"..."}} — plus the extractor-rejection
 // text bodies axum emits outside the envelope (JSON body parse/deserialize
 // and path-param failures), which the Rust server leaks verbatim.

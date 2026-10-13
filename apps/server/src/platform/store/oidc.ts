@@ -1,4 +1,4 @@
-// OIDC SSO configuration storage (crates/server/src/store/oidc.rs): one
+// OIDC SSO configuration storage: one
 // config per org; the client secret is encrypted at rest with the master
 // key.
 

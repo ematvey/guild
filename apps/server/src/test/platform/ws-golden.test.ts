@@ -1,5 +1,5 @@
 // Golden WS replay: runs the exact scenario captured from the Rust server
-// (crates/server, see scripts/capture-ws-fixtures.ts) against the TS
+// against the TS
 // implementation and byte-compares every recorded text frame and HTTP body
 // after masking dynamic values (uuids/timestamps/tickets) with the shared
 // normalizer. Ping/pong payloads are compared as shape (uuid v7 bytes), not

@@ -1,6 +1,6 @@
-// Per-org and server-wide key/value settings (crates/server/src/store/
-// org_kv.rs and kv.rs): migration-free settings — the admin-configured
-// assistant prompts, the auto-generated release signing seed.
+// Per-org and server-wide key/value settings: migration-free settings —
+// the admin-configured assistant prompts, the auto-generated release
+// signing seed.
 
 import type { PlatformPool } from "../db.js";
 

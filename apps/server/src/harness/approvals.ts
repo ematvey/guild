@@ -1,5 +1,5 @@
-// The approval gate (crates/server/src/worker/restate.rs approval_gate +
-// exec_and_approval_gate port onto the pi-durable tool-task hook):
+// The approval gate (approval_gate + exec_and_approval_gate onto the
+// pi-durable tool-task hook):
 //
 // 1. Static exec policy (codex model) for command-bearing tools: a matched
 //    `allow` rule skips the gate entirely; `forbidden` is a hard deny whose

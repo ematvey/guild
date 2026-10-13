@@ -1,4 +1,4 @@
-// Usage-event sink — ClickHouse (crates/server/src/usage.rs port). The
+// Usage-event sink — ClickHouse. The
 // shared usage_events table/columns; unreachable ClickHouse must never
 // break model calls: failures are logged and dropped.
 

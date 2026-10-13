@@ -1,6 +1,5 @@
 // Shared crypto primitives for the platform layer, matching the Rust
-// server's formats byte-for-byte (crates/server/src/crypto.rs,
-// crates/server/src/store/identity.rs and pairing.rs):
+// era's stored formats byte-for-byte (see the migration SQL):
 //   - passwords: argon2id v19, m=19456 t=2 p=1, PHC string (Argon2::default)
 //   - tokens/codes: 32 random bytes hex-encoded; only sha256 stored
 //   - secrets at rest: AES-256-GCM, hex(nonce || ciphertext+tag)
@@ -69,7 +68,7 @@ export function decryptSecret(masterKey: Buffer, encoded: string): string {
 }
 
 /** One bullet per stored character, capped so very long secrets don't blow
- *  out the placeholder line (crates/server/src/crypto.rs mask_secret_len). */
+ *  out the placeholder line. */
 export function maskSecretLen(len: number): string {
   return "•".repeat(Math.min(Math.max(len, 1), 48));
 }
