@@ -12,7 +12,7 @@
 // put, and the org event — the arch layers forbid importing the HTTP
 // module from a service, so the shape is kept in step by convention.
 
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { Type } from "typebox";
@@ -24,7 +24,7 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { ApiError } from "../platform/errors.js";
-import { packBundle } from "../platform/bundle.js";
+import { packBundle, parseBundle } from "../platform/bundle.js";
 import { validateManifest, type Manifest } from "../platform/registry-manifest.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { RegistryItemRow } from "../platform/store/registry.js";
@@ -44,8 +44,9 @@ export interface SkillRuntimeDeps {
   skills: Pick<SkillStore, "install" | "byUserAndSlug" | "listForUser">;
   events: Pick<EventStore, "emit">;
   teams: Pick<TeamStore, "isMember">;
-  /** Object store for the push path's bundle put; absent → pushes error. */
-  objects: Pick<ObjectStore, "put"> | undefined;
+  /** Object store: the push path's bundle put + the materialization
+   *  path's bundle get; get absent/unconfigured → no materialization. */
+  objects: (Pick<ObjectStore, "put"> & Partial<Pick<ObjectStore, "get">>) | undefined;
   /** ClickHouse skill-read sink; absent → reads are not recorded. */
   skillReads: Pick<SkillReadSink, "record"> | undefined;
   /** conversationId → chat id (the chat mapping). */
@@ -229,6 +230,67 @@ export class SkillRuntime {
   /** Fans install/pin changes out to the user's machines. No-op until
    *  Task 8 wires the skills sync protocol over the hub. */
   async syncUser(_orgId: string, _userId: string): Promise<void> {}
+
+  // ------------------------------------------------- sandbox materialization
+
+  /** Materializes the user's installed org skills into a server-side
+   *  executor directory (spec §3): each install's pinned-version bundle is
+   *  fetched from object storage via the version's object key, parsed with
+   *  parseBundle, and written to `<sandboxRoot>/skills/<slug>/` (SKILL.md
+   *  plus every extra file; identical files are left untouched). Failures
+   *  are logged and skipped — a broken bundle never blocks a turn. No
+   *  installs, no object store, or a store failure → silent no-op. */
+  async materializeIntoSandbox(orgId: string, userId: string, sandboxRoot: string): Promise<void> {
+    if (this.deps.objects?.get === undefined) return;
+    let installs: Array<{ slug: string; pinned_version: string }>;
+    try {
+      installs = await this.deps.skills.listForUser(orgId, userId);
+    } catch (error) {
+      this.deps.log.warn(`skill materialization skipped: list installs failed: ${(error as Error).message}`);
+      return;
+    }
+    for (const install of installs) {
+      try {
+        await this.materializeSkill(orgId, install.slug, install.pinned_version, sandboxRoot);
+      } catch (error) {
+        this.deps.log.warn(`skill ${install.slug} materialization failed: ${(error as Error).message}`);
+      }
+    }
+  }
+
+  /** Materializes ONE skill's pinned bundle into `<root>/skills/<slug>/`.
+   *  Throws (the callers catch): the read_skill install-on-use dep wraps
+   *  this with the conversation dir, materializeIntoSandbox with the loop.
+   *  The bundle's manifest.json stays out of the sandbox — push_skill
+   *  rebuilds it, and a materialized copy would shadow the fresh manifest
+   *  on the next push. */
+  async materializeSkill(orgId: string, slug: string, version: string, root: string): Promise<void> {
+    const objects = this.deps.objects;
+    if (objects?.get === undefined) throw new Error("no object store is configured");
+    const meta = await this.deps.registry.getVersionMeta(orgId, "skill", slug, version);
+    if (meta === null) throw new Error(`no such skill version: ${slug}@${version}`);
+    const bundle = await objects.get(meta.object_key);
+    if (meta.bundle_sha256 !== null && meta.bundle_sha256 !== "") {
+      const sha256 = createHash("sha256").update(bundle).digest("hex");
+      if (sha256 !== meta.bundle_sha256) {
+        throw new Error(`skill ${slug}@${version} bundle sha mismatch (expected ${meta.bundle_sha256}, got ${sha256})`);
+      }
+    }
+    const parsed = await parseBundle(bundle);
+    for (const entry of parsed.entries) {
+      if (!entry.file || entry.path === "manifest.json") continue;
+      const dest = path.join(root, "skills", slug, entry.path);
+      let existing: Buffer | undefined;
+      try {
+        existing = await readFile(dest);
+      } catch {
+        existing = undefined;
+      }
+      if (existing !== undefined && existing.equals(entry.content!)) continue;
+      await mkdir(path.dirname(dest), { recursive: true });
+      await writeFile(dest, entry.content!);
+    }
+  }
 
   // ------------------------------------------------------------------ tools
 

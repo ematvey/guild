@@ -150,14 +150,8 @@ export class GuildRuntime {
         return { orgId: owner.org_id, userId: owner.user_id, role: res.rows[0]?.role ?? "member" };
       },
       executorKind: (conversationId) => this.executorKind(conversationId),
-      conversationDir: async (conversationId, orgId) => {
-        const chatId = await this.chatOfConversation(conversationId);
-        if (chatId !== null) {
-          const workspace = await this.agentSessions.workspaceForChat(orgId, chatId);
-          if (workspace !== null) return `${this.config.dataDir}/workspaces/${orgId}/${workspace}`;
-        }
-        return `${sandboxRoot()}/${conversationId}`;
-      },
+      conversationDir: (conversationId, orgId) => this.dirForConversation(conversationId, orgId),
+      materialize: (args) => this.materializeInstalledSkill(args),
     });
     this.integrationsRuntime = new IntegrationsRuntime(
       {
@@ -257,6 +251,18 @@ export class GuildRuntime {
     return null;
   }
 
+  /** The conversation's server-side dir (the SkillRuntime deps hook): an
+   *  agent session's workspace dir when one is bound, the per-conversation
+   *  sandbox otherwise. */
+  private async dirForConversation(conversationId: number, orgId: string): Promise<string> {
+    const chatId = await this.chatOfConversation(conversationId);
+    if (chatId !== null) {
+      const workspace = await this.agentSessions.workspaceForChat(orgId, chatId);
+      if (workspace !== null) return `${this.config.dataDir}/workspaces/${orgId}/${workspace}`;
+    }
+    return `${sandboxRoot()}/${conversationId}`;
+  }
+
   /** Where this conversation's tools execute — the env factory and the
    *  approval gate both resolve through this: the chat's bound machine
    *  (machine dispatch), an agent session's workspace dir, or the per-
@@ -274,6 +280,33 @@ export class GuildRuntime {
     const workspace = await this.agentSessions.workspaceForChat(row.org_id, chatId);
     return workspace !== null ? "server" : null;
   }
+  /** Turn-start skill materialization (spec §3): the chat owner's
+   *  installed org skills land under the server-side executor dir before
+   *  the turn's tools run. Never throws — a broken bundle or a store
+   *  failure is logged and the turn proceeds without the skill files. */
+  private async materializeSandboxSkills(chatId: string, dir: string): Promise<void> {
+    try {
+      const owner = await this.chats.ownerOf(chatId);
+      if (owner === null) return;
+      await this.skillsRuntime.materializeIntoSandbox(owner.org_id, owner.user_id, dir);
+    } catch (error) {
+      this.log.warn({ err: error, chatId }, "skill materialization failed");
+    }
+  }
+
+  /** The read_skill install-on-use dep (Task 5's hook): one freshly
+   *  installed skill into the conversation's dir; the caller in
+   *  harness/skills.ts catches and logs, so errors must not escape here. */
+  private async materializeInstalledSkill(args: {
+    conversationId: number;
+    orgId: string;
+    slug: string;
+    version: string;
+  }): Promise<void> {
+    const dir = await this.dirForConversation(args.conversationId, args.orgId);
+    await this.skillsRuntime.materializeSkill(args.orgId, args.slug, args.version, dir);
+  }
+
   /** Idempotent start: migrations, harness open, watches for every mapped
    *  conversation. The one owning process (decision 9) is the server. */
   async start(): Promise<void> {
@@ -327,12 +360,16 @@ export class GuildRuntime {
           const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
           const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
           const workspace = await this.agentSessions.workspaceForChat(chat.rows[0]!.org_id, chatId);
-          return new NodeExecutionEnv({ cwd: `${this.config.dataDir}/workspaces/${chat.rows[0]!.org_id}/${workspace}` });
+          const dir = `${this.config.dataDir}/workspaces/${chat.rows[0]!.org_id}/${workspace}`;
+          await this.materializeSandboxSkills(chatId, dir);
+          return new NodeExecutionEnv({ cwd: dir });
         }
         const sandboxDir = `${sandboxRoot()}/${target.conversationId}`;
         // NodeExecutionEnv.exec requires an existing cwd; the sandbox is
         // created lazily on first tool use.
         await mkdir(sandboxDir, { recursive: true });
+        const chatId = await this.chatOfConversation(Number(target.conversationId));
+        if (chatId !== null) await this.materializeSandboxSkills(chatId, sandboxDir);
         return new NodeExecutionEnv({ cwd: sandboxDir });
       },
       onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
