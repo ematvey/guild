@@ -14,6 +14,13 @@ import {
   sortSkills,
   versionRank,
 } from "./SkillsPanel";
+import {
+  clampSkillsRoute,
+  SKILLS_CATALOG,
+  skillsPageState,
+  skillsRefetch,
+  type SkillsRoute,
+} from "./skills-route";
 import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
 
 const fixtures: SkillItem[] = [
@@ -172,6 +179,59 @@ describe("skillsEmptyState", () => {
   it("is null whenever the (filtered) catalog has rows to render", () => {
     expect(skillsEmptyState("", 3)).toBeNull();
     expect(skillsEmptyState("code", 1)).toBeNull();
+  });
+});
+
+describe("skills-route (the page's URL contract)", () => {
+  it("skillsPageState derives tab, detail slug and editor from the route", () => {
+    expect(skillsPageState(SKILLS_CATALOG)).toEqual({
+      tab: "catalog",
+      selected: null,
+      editor: null,
+    });
+    expect(skillsPageState({ view: "activity", slug: null, editor: null })).toMatchObject({
+      tab: "activity",
+      selected: null,
+    });
+    expect(skillsPageState({ view: "catalog", slug: "code-review", editor: null })).toEqual({
+      tab: "catalog",
+      selected: "code-review",
+      editor: null,
+    });
+    // the editor replaces the page body: no detail renders under it
+    expect(skillsPageState({ view: "catalog", slug: null, editor: "new" })).toEqual({
+      tab: "catalog",
+      selected: null,
+      editor: { mode: "create" },
+    });
+    expect(skillsPageState({ view: "catalog", slug: "code-review", editor: "code-review" })).toEqual({
+      tab: "catalog",
+      selected: null,
+      editor: { mode: "edit", slug: "code-review" },
+    });
+  });
+
+  it("clampSkillsRoute falls back from the machine tab off-Tauri and passes everything else through", () => {
+    const machine: SkillsRoute = { view: "machine", slug: null, editor: null };
+    expect(clampSkillsRoute(machine, false)).toEqual({ view: "catalog", slug: null, editor: null });
+    expect(clampSkillsRoute(machine, true)).toBe(machine);
+    const detail: SkillsRoute = { view: "catalog", slug: "x", editor: null };
+    expect(clampSkillsRoute(detail, false)).toBe(detail);
+  });
+
+  it("skillsRefetch fires on detail back and editor close, not on tab or forward moves", () => {
+    const detail: SkillsRoute = { view: "catalog", slug: "x", editor: null };
+    const editing: SkillsRoute = { view: "catalog", slug: "x", editor: "x" };
+    expect(skillsRefetch(detail, SKILLS_CATALOG)).toBe(true);
+    // save: editor closes onto the saved slug's detail page
+    expect(skillsRefetch(editing, detail)).toBe(true);
+    // cancel: editor closes onto the bare catalog
+    expect(skillsRefetch(editing, SKILLS_CATALOG)).toBe(true);
+    // catalog tab switches and forward moves into a detail never refetch
+    expect(skillsRefetch(SKILLS_CATALOG, detail)).toBe(false);
+    expect(skillsRefetch(SKILLS_CATALOG, { view: "activity", slug: null, editor: null })).toBe(false);
+    // opening the editor (detail → edit) keeps the page mounted, no refetch
+    expect(skillsRefetch(detail, editing)).toBe(false);
   });
 });
 

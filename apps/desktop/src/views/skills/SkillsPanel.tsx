@@ -3,11 +3,12 @@
 // skill catalog as compact rows with filter/sort selects and a search box;
 // Activity is the org event feed with the All / Changes pill filter; On
 // this machine (Tauri only) manages the local skill folders and the
-// signed-in user's org installs. The rail tab switches here; the skill
-// editor replaces the page body when open (New skill button, or Edit on a
-// detail page).
+// signed-in user's org installs. The page is URL-driven: the tab, the open
+// detail slug and the editor all come from the /skills... route and every
+// user action navigates through onNavigate (see skills-route.ts); only the
+// catalog's search/filter/sort stay local component state.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Lock, Search } from "lucide-react";
 import { IS_TAURI } from "../../transport";
 import { Input } from "@guild/ui/components/input";
@@ -22,9 +23,14 @@ import {
   SelectValue,
 } from "@guild/ui/components/select";
 import { SkillDetail } from "./SkillDetail";
-import { SkillEditor, type EditorMode } from "./SkillEditor";
+import { SkillEditor } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
 import LocalSkills from "./LocalSkills";
+import {
+  skillsPageState,
+  skillsRefetch,
+  type SkillsRoute,
+} from "./skills-route";
 import {
   fetchInstalls,
   skillsList,
@@ -197,17 +203,24 @@ export function skillsPageHeader(isTauri: boolean): {
 
 export function SkillsPanel({
   me,
+  route,
+  onNavigate,
 }: {
   me: SkillMe;
+  /** The /skills... route this page renders (already clamped to what this
+   *  session can show — see clampSkillsRoute). Tab, detail slug and editor
+   *  all derive from it; search/filter/sort stay local (not URL state). */
+  route: SkillsRoute;
+  /** User navigation: replaces the /skills... route (pushState + route
+   *  state move together in WebChat, like every other navigation). */
+  onNavigate: (next: SkillsRoute) => void;
 }) {
-  const [tab, setTab] = useState<SkillsTab>("catalog");
+  const { tab, selected, editor } = skillsPageState(route);
   const [skills, setSkills] = useState<SkillItem[] | null>(null);
   const [installs, setInstalls] = useState<SkillInstall[] | null>(null);
   const [query, setQuery] = useState("");
   const [filterKind, setFilterKind] = useState<SkillFilterKind>("all");
   const [sortKey, setSortKey] = useState<SkillSortKey>("installs");
-  const [selected, setSelected] = useState<string | null>(null);
-  const [editor, setEditor] = useState<{ mode: EditorMode; slug?: string } | null>(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -221,6 +234,17 @@ export function SkillsPanel({
       live = false;
     };
   }, [tick]);
+
+  // Arriving at the catalog from a detail page or the editor refetches:
+  // actions that change visibility or versions (unpublish, save) must not
+  // leave a stale row in the list. Route-driven, so the browser's back
+  // button refetches exactly like the page's own Back control.
+  const prevRouteRef = useRef(route);
+  useEffect(() => {
+    const prev = prevRouteRef.current;
+    prevRouteRef.current = route;
+    if (skillsRefetch(prev, route)) setTick((t) => t + 1);
+  }, [route]);
 
   const installedSlugs = new Set((installs ?? []).map((i) => i.slug));
   const search = filterSkills(skills ?? [], query);
@@ -237,12 +261,10 @@ export function SkillsPanel({
         <SkillEditor
           mode={editor.mode}
           slug={editor.slug}
-          onBack={() => setEditor(null)}
-          onSaved={(slug) => {
-            setEditor(null);
-            setSelected(slug);
-            setTick((t) => t + 1);
-          }}
+          // Cancel returns to the owning catalog URL; the save below is the
+          // one editor exit that carries the saved slug forward.
+          onBack={() => onNavigate({ view: "catalog", slug: null, editor: null })}
+          onSaved={(slug) => onNavigate({ view: "catalog", slug, editor: null })}
         />
       </div>
     );
@@ -254,14 +276,12 @@ export function SkillsPanel({
         <SkillDetail
           slug={selected}
           me={me}
-          // Back refetches the catalog: actions that change visibility
-          // (unpublish) must not leave a stale row in the list.
-          onBack={() => {
-            setSelected(null);
-            setTick((t) => t + 1);
-          }}
-          onOpenSkill={setSelected}
-          onEdit={(slug) => setEditor({ mode: "edit", slug })}
+          // Back refetches the catalog (the route transition drives it):
+          // actions that change visibility (unpublish) must not leave a
+          // stale row in the list.
+          onBack={() => onNavigate({ view: "catalog", slug: null, editor: null })}
+          onOpenSkill={(slug) => onNavigate({ view: "catalog", slug, editor: null })}
+          onEdit={(slug) => onNavigate({ view: "catalog", slug, editor: slug })}
         />
       </div>
     );
@@ -321,7 +341,7 @@ export function SkillsPanel({
               size="sm"
               aria-pressed={tab === value}
               aria-label={`${label} tab`}
-              onClick={() => setTab(value)}
+              onClick={() => onNavigate({ view: value, slug: null, editor: null })}
             >
               {label}
             </Button>
@@ -332,7 +352,7 @@ export function SkillsPanel({
             variant="outline"
             size="sm"
             aria-label="New skill"
-            onClick={() => setEditor({ mode: "create" })}
+            onClick={() => onNavigate({ view: "catalog", slug: null, editor: "new" })}
           >
             New skill
           </Button>
@@ -363,11 +383,11 @@ export function SkillsPanel({
                       tabIndex={0}
                       aria-label={`Open skill ${row.slug}`}
                       className="cursor-pointer rounded-md border border-border px-3 py-2.5 hover:bg-muted/50"
-                      onClick={() => setSelected(row.slug)}
+                      onClick={() => onNavigate({ view: "catalog", slug: row.slug, editor: null })}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          setSelected(row.slug);
+                          onNavigate({ view: "catalog", slug: row.slug, editor: null });
                         }
                       }}
                     >
