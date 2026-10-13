@@ -156,6 +156,26 @@ describe("skills api", () => {
     expect(changeKinds).not.toContain("skill.installed");
   });
 
+  it("GET /api/v1/skills/installs lists the caller's installs with their pins", async () => {
+    await createSkill("installs-list-skill", "# installs list");
+    await inject("POST", "/api/v1/skills/installs-list-skill/install", e.memberToken, {});
+    const res = await inject("GET", "/api/v1/skills/installs", e.memberToken);
+    expect(res.statusCode).toBe(200);
+    const installs = (
+      res.json() as { installs: Array<{ slug: string; pinned_version: string; installed_at: string }> }
+    ).installs;
+    const row = installs.find((i) => i.slug === "installs-list-skill");
+    expect(row).toMatchObject({ slug: "installs-list-skill", pinned_version: "v1" });
+    expect(typeof row?.installed_at).toBe("string");
+    // another member's list does not include it
+    const other = await inject("GET", "/api/v1/skills/installs", e.member2Token);
+    expect(
+      (other.json() as { installs: Array<{ slug: string }> }).installs.find(
+        (i) => i.slug === "installs-list-skill",
+      ),
+    ).toBeUndefined();
+  });
+
   it("pin to v1 after installing at v2; unknown version and missing install are 404s", async () => {
     await createSkill("pin-skill", "# v1");
     await editSkill("pin-skill", "# v2");
