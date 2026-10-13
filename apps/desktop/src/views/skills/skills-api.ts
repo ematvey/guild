@@ -88,6 +88,18 @@ export async function skillsActivity(
   return v?.events ?? null;
 }
 
+/** GET /api/v1/skills/installs — the signed-in user's org installs (one
+ *  row per installed skill, with its pinned version). Null on any failure
+ *  (the local tab shows no org-installs list). */
+export async function fetchInstalls(): Promise<SkillInstall[] | null> {
+  const res = await fetch(apiUrl("/api/v1/skills/installs"), {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) return null;
+  const v = (await res.json().catch(() => null)) as { installs?: SkillInstall[] } | null;
+  return v?.installs ?? null;
+}
+
 export type SkillActionResult =
   | { ok: true; slug?: string; install?: SkillInstall }
   | { ok: false; message: string };

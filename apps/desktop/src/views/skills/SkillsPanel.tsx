@@ -1,17 +1,21 @@
-// Skills panel (Skills tab): Catalog | Activity tabs. Catalog is the
-// org skill catalog as a card grid with a search box; Activity is the
-// org event feed with the All / Changes pill filter. The rail tab
-// switches here; the skill editor replaces the panel body when open
-// (New skill button, or Edit on a detail page).
+// Skills panel (Skills tab): Catalog | Activity | On this machine tabs.
+// Catalog is the org skill catalog as a card grid with a search box;
+// Activity is the org event feed with the All / Changes pill filter;
+// On this machine (Tauri only) manages the local skill folders and the
+// signed-in user's org installs. The rail tab switches here; the skill
+// editor replaces the panel body when open (New skill button, or Edit
+// on a detail page).
 
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
+import { IS_TAURI } from "../../transport";
 import { Input } from "@guild/ui/components/input";
 import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { SkillDetail } from "./SkillDetail";
 import { SkillEditor, type EditorMode } from "./SkillEditor";
 import { ActivityFeed } from "./ActivityFeed";
+import LocalSkills from "./LocalSkills";
 import { skillsList, type SkillItem, type SkillMe } from "./skills-api";
 import { CollapseButton } from "../sidebar-contents";
 
@@ -57,8 +61,19 @@ export function skillsEmptyState(query: string, count: number): string | null {
   return needle === "" ? "No skills yet." : `No skills match "${needle}".`;
 }
 
-/** The panel's two tabs: the card catalog and the activity feed. */
-export type SkillsTab = "catalog" | "activity";
+/** The panel's tabs: the card catalog, the activity feed, and the
+ *  local-machine group — "machine" exists only in Tauri sessions (it
+ *  needs the desktop fs bridge). */
+export type SkillsTab = "catalog" | "activity" | "machine";
+
+export function panelTabs(isTauri: boolean): ReadonlyArray<readonly [SkillsTab, string]> {
+  const tabs: Array<readonly [SkillsTab, string]> = [
+    ["catalog", "Catalog"],
+    ["activity", "Activity"],
+  ];
+  if (isTauri) tabs.push(["machine", "On this machine"]);
+  return tabs;
+}
 
 export function SkillsPanel({
   onCollapse,
@@ -136,12 +151,7 @@ export function SkillsPanel({
         </span>
       </div>
       <div className="flex items-center gap-1 px-3 pb-2">
-        {(
-          [
-            ["catalog", "Catalog"],
-            ["activity", "Activity"],
-          ] as const
-        ).map(([value, label]) => (
+        {panelTabs(IS_TAURI).map(([value, label]) => (
           <Button
             key={value}
             variant={tab === value ? "secondary" : "ghost"}
@@ -155,6 +165,7 @@ export function SkillsPanel({
         ))}
       </div>
       {tab === "activity" && <ActivityFeed />}
+      {tab === "machine" && IS_TAURI && <LocalSkills />}
       {tab === "catalog" && (
         <>
       <div className="px-3 pb-2">
