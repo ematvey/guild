@@ -1049,14 +1049,16 @@ function orgSkillsApi(): OrgSkillsApi {
           typeof (r as any)?.slug === "string" && typeof (r as any)?.pinned_version === "string",
       );
     },
-    skillBody: async (slug) => {
-      const v = (await get(`/api/v1/skills/${encodeURIComponent(slug)}/source`)) as
+    skillBody: async (slug, version) => {
+      const q = typeof version === "string" && version !== "" ? `?version=${encodeURIComponent(version)}` : "";
+      const v = (await get(`/api/v1/skills/${encodeURIComponent(slug)}/source${q}`)) as
         | { skill_md?: unknown }
         | null;
       return typeof v?.skill_md === "string" ? v.skill_md : null;
     },
   };
 }
+export { orgSkillsApi };
 
 /// Expands `/name` skill mentions in a turn prompt against the local skill
 /// discovery, renders the skills index, and assembles the AGENTS.md
