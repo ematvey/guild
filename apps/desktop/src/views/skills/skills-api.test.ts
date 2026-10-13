@@ -1,9 +1,11 @@
 // Tests for the skills API's `send()` helper: a caller that passes its own
 // headers (the JSON-bodied actions set content-type) must not lose the
-// Authorization header. Mocks global fetch to capture the init it receives.
+// Authorization header. Mocks global fetch to capture the URL + init it
+// receives. Also covers the editor's save target (POST create / PUT edit)
+// and the teams list the owner selector uses.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { skillsGate, skillsInstall, skillsUninstall } from "./skills-api";
+import { myTeams, skillsGate, skillsInstall, skillsSave, skillsUninstall } from "./skills-api";
 
 const token = "test-token-123";
 
@@ -20,16 +22,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function captureFetch(): { inits: RequestInit[] } {
+function captureFetch(): { urls: string[]; inits: RequestInit[] } {
+  const urls: string[] = [];
   const inits: RequestInit[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_input: string | URL, init?: RequestInit) => {
+    vi.fn(async (input: string | URL, init?: RequestInit) => {
+      urls.push(String(input));
       inits.push(init ?? {});
       return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } });
     }),
   );
-  return { inits };
+  return { urls, inits };
 }
 
 describe("send() header merge", () => {
@@ -54,5 +58,68 @@ describe("send() header merge", () => {
     await skillsUninstall("code-review");
     const plainHeaders = new Headers(inits[1]?.headers);
     expect(plainHeaders.get("authorization")).toBe(`Bearer ${token}`);
+  });
+});
+
+describe("skillsSave (the editor's save target)", () => {
+  it("create mode POSTs the payload to /api/v1/skills", async () => {
+    const { urls, inits } = captureFetch();
+    const payload = { slug: "code-review", description: "d", body: "# hi" };
+    const res = await skillsSave({ method: "POST", path: "/api/v1/skills", body: payload });
+    expect(res.ok).toBe(true);
+    expect(urls[0]).toContain("/api/v1/skills");
+    expect(inits[0]?.method).toBe("POST");
+    expect(inits[0]?.body).toBe(JSON.stringify(payload));
+  });
+
+  it("edit mode PUTs the payload to /api/v1/skills/:slug", async () => {
+    const { urls, inits } = captureFetch();
+    const payload = { description: "d", body: "# hi" };
+    const res = await skillsSave({ method: "PUT", path: "/api/v1/skills/code-review", body: payload });
+    expect(res.ok).toBe(true);
+    expect(urls[0]).toContain("/api/v1/skills/code-review");
+    expect(inits[0]?.method).toBe("PUT");
+    expect(inits[0]?.body).toBe(JSON.stringify(payload));
+  });
+
+  it("surfaces a 409 slug_taken as ok:false with the server message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "slug_taken", message: "a skill with this slug already exists" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    const res = await skillsSave({
+      method: "POST",
+      path: "/api/v1/skills",
+      body: { slug: "taken", description: "", body: "" },
+    });
+    expect(res).toEqual({ ok: false, message: "a skill with this slug already exists" });
+  });
+});
+
+describe("myTeams (the owner selector's team list)", () => {
+  it("maps the admin teams list to id + name", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ teams: [{ id: "t1", name: "Platform", created_at: "x", member_count: 2 }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    expect(await myTeams()).toEqual([{ id: "t1", name: "Platform" }]);
+  });
+
+  it("returns null on failure (e.g. 403 for a non-admin)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "forbidden" }), { status: 403 })),
+    );
+    expect(await myTeams()).toBeNull();
   });
 });

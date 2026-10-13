@@ -1,8 +1,8 @@
 // Skill detail page (Skills tab → card click): description, owner badge,
 // versions table, fork provenance, usage stats, and the action row —
-// install / update pin / uninstall / edit (Task 13 wires the editor) /
-// fork / maintainer-gate toggle (owner or admin) / unpublish. Every action
-// calls its Task 3 endpoint and refetches the detail.
+// install / update pin / uninstall / edit (opens the skill editor) /
+// fork / maintainer-gate toggle (owner or admin) / unpublish. Every
+// action calls its skills API endpoint and refetches the detail.
 
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
@@ -95,8 +95,7 @@ export interface SkillDetailProps {
   slug: string;
   me: SkillMe;
   onBack: () => void;
-  /** Task 13 wires the editor; absent until then the button is a disabled
-   *  placeholder. */
+  /** Opens the skill editor for this slug. */
   onEdit?: (slug: string) => void;
   /** Navigates to another skill's detail (used after a successful fork). */
   onOpenSkill?: (slug: string) => void;

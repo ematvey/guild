@@ -179,6 +179,71 @@ export function skillsUnpublish(slug: string): Promise<SkillActionResult> {
   return send(slugPath(slug, "/unpublish"), { method: "POST" });
 }
 
+/** One team in the editor's owner selector (GET /api/v1/admin/teams). */
+export interface EditorTeam {
+  id: string;
+  name: string;
+}
+
+/** The org's teams, via the admin list endpoint — the only teams list the
+ *  server exposes. Null on any failure (a non-admin gets 403 and the
+ *  owner selector degrades to Me only). */
+export async function myTeams(): Promise<EditorTeam[] | null> {
+  const res = await fetch(apiUrl("/api/v1/admin/teams"), {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) return null;
+  const v = (await res.json().catch(() => null)) as
+    | { teams?: Array<{ id?: unknown; name?: unknown }> }
+    | null;
+  return (v?.teams ?? [])
+    .filter((t) => typeof t.id === "string" && typeof t.name === "string")
+    .map((t) => ({ id: t.id as string, name: t.name as string }));
+}
+
+/** GET /api/v1/skills/:slug/source — the current SKILL.md body; the
+ *  editor's edit mode seeds its textarea from this. */
+export async function skillsSource(slug: string): Promise<{ version: string; skill_md: string } | null> {
+  const res = await fetch(apiUrl(slugPath(slug, "/source")), {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) return null;
+  return (await res.json().catch(() => null)) as { version: string; skill_md: string } | null;
+}
+
+/** POST /api/v1/skills body: a fresh skill at v1, optionally owned by a
+ *  team (the server checks membership). */
+export interface SkillCreatePayload {
+  slug: string;
+  description: string;
+  body: string;
+  owner_team_id?: string;
+}
+
+/** PUT /api/v1/skills/:slug body: publishes the next version; the slug
+ *  and owner never change here. */
+export interface SkillEditPayload {
+  description: string;
+  body: string;
+}
+
+/** The save request the editor builds for the current mode (pure —
+ *  SkillEditor.saveRequest produces it, this executes it). */
+export interface SkillSaveRequest {
+  method: "POST" | "PUT";
+  path: string;
+  body: SkillCreatePayload | SkillEditPayload;
+}
+
+/** Executes the editor's save request against the skills API. */
+export function skillsSave(req: SkillSaveRequest): Promise<SkillActionResult> {
+  return send(req.path, {
+    method: req.method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(req.body),
+  });
+}
+
 /** Fork (POST /api/v1/skills): seed a new slug from the source skill at
  *  `from_version`; the server copies the source bundle and records the
  *  provenance. */
