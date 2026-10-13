@@ -148,14 +148,21 @@ export class SkillStore {
     orgId: string,
     ownerUserId: string | null,
     ownerTeamId: string | null,
-  ): Promise<{ kind: "user" | "team"; id: string; label: string } | null> {
+  ): Promise<{
+    kind: "user" | "team";
+    id: string;
+    label: string;
+    avatar_url: string | null;
+  } | null> {
     if (ownerUserId !== null) {
-      const res = await this.pool.query<{ label: string }>(
-        "SELECT COALESCE(NULLIF(display_name, ''), email) AS label FROM users WHERE org_id = $1 AND id = $2",
+      const res = await this.pool.query<{ label: string; avatar_url: string | null }>(
+        "SELECT COALESCE(NULLIF(display_name, ''), email) AS label, avatar_url FROM users WHERE org_id = $1 AND id = $2",
         [orgId, ownerUserId],
       );
-      const label = res.rows[0]?.label;
-      return label === undefined ? null : { kind: "user", id: ownerUserId, label };
+      const row = res.rows[0];
+      return row === undefined
+        ? null
+        : { kind: "user", id: ownerUserId, label: row.label, avatar_url: row.avatar_url };
     }
     if (ownerTeamId !== null) {
       const res = await this.pool.query<{ label: string }>(
@@ -163,7 +170,9 @@ export class SkillStore {
         [orgId, ownerTeamId],
       );
       const label = res.rows[0]?.label;
-      return label === undefined ? null : { kind: "team", id: ownerTeamId, label };
+      return label === undefined
+        ? null
+        : { kind: "team", id: ownerTeamId, label, avatar_url: null };
     }
     return null;
   }

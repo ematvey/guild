@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, File, Folder, Info, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@guild/ui/components/badge";
+import { Avatar } from "@guild/ui/components/avatar";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import { Skeleton } from "@guild/ui/components/skeleton";
@@ -574,12 +575,13 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
           {detail.owner !== null && (
             <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[13px] text-muted-foreground">
               owned by
-              <span
-                title={detail.owner.label}
-                className="flex size-5 items-center justify-center rounded-full border border-border bg-secondary text-[8.5px] font-semibold text-foreground"
-              >
-                {initialsOf(detail.owner.label)}
-              </span>
+              <Avatar
+                src={detail.owner.avatar_url}
+                alt={detail.owner.label}
+                fallback={initialsOf(detail.owner.label)}
+                className="size-5 border border-border"
+                fallbackClassName="bg-secondary text-[8.5px] font-semibold text-foreground"
+              />
               <span className="font-medium text-foreground">{detail.owner.label}</span>
               {detail.owner.kind === "team" && <span>(team)</span>}
             </p>
@@ -641,9 +643,11 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
                       <td className="px-2.5 py-2 text-muted-foreground">
                         {v.publisher !== null && v.publisher !== "" ? (
                           <span className="flex items-center gap-1.5">
-                            <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-secondary text-[8.5px] font-semibold text-foreground">
-                              {initialsOf(v.publisher)}
-                            </span>
+                            <Avatar
+                              fallback={initialsOf(v.publisher)}
+                              className="size-5 border border-border"
+                              fallbackClassName="bg-secondary text-[8.5px] font-semibold text-foreground"
+                            />
                             <span className="truncate">{v.publisher}</span>
                           </span>
                         ) : (

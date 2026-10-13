@@ -9,6 +9,8 @@ export interface SkillOwner {
   kind: "user" | "team";
   id: string;
   label: string;
+  /** The owner user's avatar URL; null for teams and unset avatars. */
+  avatar_url?: string | null;
 }
 
 /** One catalog entry (GET /api/v1/skills). */
