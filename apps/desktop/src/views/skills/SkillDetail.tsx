@@ -9,7 +9,7 @@
 // plus the breadcrumb in the top bar.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ArrowLeft, ChevronRight, File, Folder, Info, Lock } from "lucide-react";
+import { ChevronRight, File, Folder, Info, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@guild/ui/components/badge";
 import { Button } from "@guild/ui/components/button";
@@ -230,15 +230,12 @@ function SectionHeading({ label, count }: { label: string; count?: number }) {
   );
 }
 
-/** The slim top bar shared by every detail state: icon back button, the
- *  "Skills › slug" breadcrumb (the Skills segment navigates back too), and
- *  the action row at the right edge. */
+/** The slim top bar shared by every detail state: the "Skills › slug"
+ *  breadcrumb (the Skills segment navigates back), and the action row at
+ *  the right edge. */
 function DetailHeader({ slug, onBack, actions }: { slug: string; onBack: () => void; actions?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-2.5 border-b border-border bg-background px-5 py-2.5">
-      <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to skills">
-        <ArrowLeft className="size-4" />
-      </Button>
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm">
         <button
           className="shrink-0 rounded-sm text-muted-foreground outline-none hover:text-foreground"
