@@ -5,13 +5,20 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  actionVariant,
+  buildFileTree,
+  bundleFilePaths,
   canManageSkill,
   detailActions,
   detailLoadState,
   forkPayload,
   pinSummary,
+  publishedLabel,
   readBars,
   readSummary,
+  shaPrefix,
+  initialsOf,
+  sparkRects,
   updateAvailable,
 } from "./SkillDetail";
 import type { SkillDetail as SkillDetailData, SkillMe } from "./skills-api";
@@ -88,6 +95,8 @@ describe("detailActions", () => {
     const actions = detailActions(base, other);
     expect(actions).toContain("Edit");
     expect(actions).toContain("Fork");
+    // prototype order: Fork before Edit
+    expect(actions.indexOf("Fork")).toBeLessThan(actions.indexOf("Edit"));
   });
 
   it("shows the approval toggle and Unpublish only to owner or admin", () => {
@@ -175,14 +184,126 @@ describe("readBars", () => {
       { day: "2026-10-12", reads: 8 },
       { day: "2026-10-13", reads: 4 },
     ];
-    expect(readBars(series)).toEqual([8, 32, 16]);
+    expect(readBars(series)).toEqual([10, 40, 20]);
   });
 
   it("is empty for an empty series and bottoms out at the minimum height", () => {
     expect(readBars([])).toEqual([]);
     // A lone entry is its own peak (full height); a near-zero entry against
     // a high peak clamps to the 2px floor.
-    expect(readBars([{ day: "2026-10-13", reads: 1 }])).toEqual([32]);
-    expect(readBars([{ day: "2026-10-12", reads: 1 }, { day: "2026-10-13", reads: 32 }])).toEqual([2, 32]);
+    expect(readBars([{ day: "2026-10-13", reads: 1 }])).toEqual([40]);
+    expect(readBars([{ day: "2026-10-12", reads: 1 }, { day: "2026-10-13", reads: 32 }])).toEqual([2, 40]);
+  });
+});
+
+describe("sparkRects (the insights sparkline's SVG geometry)", () => {
+  it("lays one bar per day across the 260×44 viewBox, peak at full height", () => {
+    const rects = sparkRects([
+      { day: "2026-10-12", reads: 0 },
+      { day: "2026-10-13", reads: 8 },
+    ]);
+    expect(rects).toHaveLength(2);
+    // bar width = 260/2 - 2, first bar flat at the 2px floor, second full
+    expect(rects[0]).toMatchObject({ x: 1, w: 128, h: 2, y: 42 });
+    expect(rects[1]).toMatchObject({ x: 131, w: 128, h: 40, y: 4 });
+  });
+
+  it("is empty for an empty series", () => {
+    expect(sparkRects([])).toEqual([]);
+  });
+});
+
+describe("shaPrefix (the versions table's Bundle cell)", () => {
+  it("takes the first 12 characters", () => {
+    expect(shaPrefix("a1b2c3d4e5f6g7h8")).toBe("a1b2c3d4e5f6");
+  });
+
+  it("falls back to — for a missing sha", () => {
+    expect(shaPrefix(null)).toBe("—");
+    expect(shaPrefix("")).toBe("—");
+  });
+});
+
+describe("bundleFilePaths (the Files section's manifest list)", () => {
+  it("lists SKILL.md first, then the bundle's extra files sorted", () => {
+    expect(
+      bundleFilePaths({
+        skill_md: "# hi",
+        files: [
+          { path: "scripts/run.sh", size: 10, sha256: "a" },
+          { path: "refs/api.md", size: 5, sha256: "b" },
+        ],
+      }),
+    ).toEqual(["SKILL.md", "refs/api.md", "scripts/run.sh"]);
+  });
+
+  it("skips SKILL.md duplicates and the manifest sidecar", () => {
+    expect(
+      bundleFilePaths({
+        skill_md: "# hi",
+        files: [
+          { path: "SKILL.md", size: 3, sha256: "x" },
+          { path: "manifest.json", size: 9, sha256: "y" },
+        ],
+      }),
+    ).toEqual(["SKILL.md"]);
+  });
+});
+
+describe("buildFileTree (the file tree from the manifest paths)", () => {
+  it("nests paths under dirs, dirs before files, alphabetical", () => {
+    const tree = buildFileTree([
+      "SKILL.md",
+      "scripts/run.sh",
+      "refs/api.md",
+      "refs/intro.md",
+      "scripts/check.sh",
+    ]);
+    expect(tree.map((n) => `${n.kind}:${n.name}`)).toEqual(["dir:refs", "dir:scripts", "file:SKILL.md"]);
+    const scripts = tree.find((n) => n.name === "scripts")!;
+    expect(scripts.path).toBe("scripts");
+    expect(scripts.children.map((n) => n.name)).toEqual(["check.sh", "run.sh"]);
+    expect(scripts.children[0]).toMatchObject({ kind: "file", path: "scripts/check.sh" });
+  });
+
+  it("merges shared directory prefixes across files", () => {
+    const tree = buildFileTree(["a/b/one.md", "a/b/two.md", "a/top.md"]);
+    const a = tree[0]!;
+    expect(a.children.map((n) => `${n.kind}:${n.name}`)).toEqual(["dir:b", "file:top.md"]);
+  });
+
+  it("returns a flat list for single-segment paths", () => {
+    expect(buildFileTree(["SKILL.md"]).map((n) => n.name)).toEqual(["SKILL.md"]);
+  });
+});
+
+describe("publishedLabel (the versions table's Published cell)", () => {
+  it("formats the calendar date and a relative label", () => {
+    const label = publishedLabel(new Date(Date.now() - 3 * 86_400_000).toISOString());
+    expect(label.rel).toBe("3d ago");
+    expect(label.date).toMatch(/\d{4}/); // month name, day and year present
+  });
+
+  it("calls same-day publishes today", () => {
+    expect(publishedLabel(new Date().toISOString()).rel).toBe("today");
+  });
+});
+
+describe("initialsOf (the avatar chips)", () => {
+  it("takes the first two characters, uppercased", () => {
+    expect(initialsOf("Ada")).toBe("AD");
+  });
+});
+
+describe("actionVariant (the top bar's per-action button style)", () => {
+  it("installs and pin updates are primary, unpublish is ghost, the rest outline", () => {
+    expect(actionVariant("Install")).toBe("default");
+    expect(actionVariant("Update pin to latest")).toBe("default");
+    expect(actionVariant("Unpublish")).toBe("ghost");
+    expect(actionVariant("Uninstall")).toBe("outline");
+    expect(actionVariant("Fork")).toBe("outline");
+    expect(actionVariant("Edit")).toBe("outline");
+    expect(actionVariant("Require approval")).toBe("outline");
+    expect(actionVariant("Remove approval")).toBe("outline");
   });
 });

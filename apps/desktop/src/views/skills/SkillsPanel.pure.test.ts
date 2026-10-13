@@ -81,6 +81,11 @@ describe("skillRow", () => {
     expect(skillRow(fixtures[0]!, null)).toMatchObject({ pin: null, updateTo: null });
   });
 
+  it("splits the version and install count out for the row's emphasized meta", () => {
+    expect(skillRow(fixtures[0]!, null)).toMatchObject({ latestVersion: "v3", installsCount: 12 });
+    expect(skillRow(fixtures[2]!, null)).toMatchObject({ latestVersion: "v10", installsCount: 0 });
+  });
+
   it("shows no update badge when pinned at the latest version", () => {
     const current: SkillInstall = { ...pin, pinned_version: "v3" };
     expect(skillRow(fixtures[0]!, current)).toMatchObject({ pin: "v3", updateTo: null });

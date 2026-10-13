@@ -216,20 +216,44 @@ export async function myTeams(): Promise<EditorTeam[] | null> {
     .map((t) => ({ id: t.id as string, name: t.name as string }));
 }
 
-/** GET /api/v1/skills/:slug/source — one version's SKILL.md body; without
- *  an explicit version the server resolves the caller's pin, then latest.
- *  The editor's edit mode passes the latest version so the publish diff
- *  always runs against the newest published content. */
+/** One extra bundle file in a version's source manifest (path + sha only —
+ *  the manifest never carries file contents). */
+export interface SkillSourceFile {
+  path: string;
+  size: number;
+  sha256: string;
+}
+
+/** GET /api/v1/skills/:slug/source — one version's SKILL.md body plus the
+ *  bundle's extra files as path+sha (no content); without an explicit
+ *  version the server resolves the caller's pin, then latest. The editor's
+ *  edit mode passes the latest version so the publish diff always runs
+ *  against the newest published content. */
 export async function skillsSource(
   slug: string,
   version?: string,
-): Promise<{ version: string; skill_md: string } | null> {
+): Promise<{ version: string; skill_md: string; files: SkillSourceFile[] } | null> {
   const suffix = version === undefined ? "" : `?version=${encodeURIComponent(version)}`;
   const res = await fetch(apiUrl(slugPath(slug, `/source${suffix}`)), {
     headers: { authorization: `Bearer ${getToken()}` },
   });
   if (!res.ok) return null;
-  return (await res.json().catch(() => null)) as { version: string; skill_md: string } | null;
+  const v = (await res.json().catch(() => null)) as {
+    version?: unknown;
+    skill_md?: unknown;
+    files?: unknown;
+  } | null;
+  if (v === null || typeof v.version !== "string" || typeof v.skill_md !== "string") return null;
+  const files = Array.isArray(v.files)
+    ? (v.files as Array<Partial<SkillSourceFile> & { path?: unknown }>)
+        .filter((f) => f !== null && typeof f.path === "string")
+        .map((f) => ({
+          path: f.path as string,
+          size: typeof f.size === "number" ? f.size : 0,
+          sha256: typeof f.sha256 === "string" ? f.sha256 : "",
+        }))
+    : [];
+  return { version: v.version, skill_md: v.skill_md, files };
 }
 
 /** POST /api/v1/skills body: a fresh skill at v1, optionally owned by a
