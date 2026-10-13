@@ -222,6 +222,22 @@ export function pruneStopping(
   return changed ? next : null;
 }
 
+/** Layout mode for one sidebar tab (desktop rail). The skills tab is a
+ *  full main-column page swap: NO sidebar aside at all — the skills page
+ *  replaces the chat thread — so picking it must not touch the persisted
+ *  sidebar collapsed state either (leaving the tab restores the sidebar
+ *  exactly as it was). Every other tab keeps the resizable panel next to
+ *  the chat, and a tab pick re-expands a collapsed panel. Mobile has no
+ *  rail aside at all (chats-only drawer) and always shows the chat. */
+export function tabPaneLayout(
+  tab: SidebarTab,
+  isMobile: boolean,
+): { aside: boolean; mainPane: "chat" | "skillsPage"; expandsPanel: boolean } {
+  if (isMobile) return { aside: false, mainPane: "chat", expandsPanel: false };
+  if (tab === "skills") return { aside: false, mainPane: "skillsPage", expandsPanel: false };
+  return { aside: true, mainPane: "chat", expandsPanel: true };
+}
+
 
 /// URL-driven navigation: the pathname is the single source of truth for
 /// where the user is. Routes:
@@ -2434,8 +2450,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setSidebarTab(tab);
     saveSidebarTab(tab);
     // A collapsed panel hides the tab's content — a tab pick is an intent
-    // to see it, so the panel re-expands on the newly picked tab.
-    setCollapsed(false);
+    // to see it, so the panel re-expands on the newly picked tab. The
+    // skills tab has no panel at all (it renders as a full main-column
+    // page), so it must not touch the persisted collapsed state.
+    if (tabPaneLayout(tab, isMobile).expandsPanel) setCollapsed(false);
     // Entering Settings with no section picked lands on the first user
     // section instead of an empty main pane.
     if (tab === "settings") setSettingsSection((s) => s ?? "account");
@@ -2481,11 +2499,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         onArchiveChat={(id) => void archiveChat(id)}
         onRenameProject={(id, name) => void renameProject(id, name)}
         onArchiveProject={(id) => void archiveProject(id)}
-      />
-    ) : sidebarTab === "skills" ? (
-      <SkillsPanel
-        onCollapse={sidebarCollapse}
-        me={{ email, displayName: displayName ?? undefined, role }}
       />
     ) : sidebarTab === "settings" ? (
       <SettingsPanel
@@ -2537,6 +2550,16 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           detail={settingsDetail}
           onDetailChange={setSettingsDetail}
         />
+      </div>
+    ) : null;
+
+  // The Skills tab's main pane IS the skills page — the whole column right
+  // of the rail, no sidebar panel at all (the inlineSettings pattern). The
+  // chat thread only comes back when another tab is picked.
+  const inlineSkills =
+    !isMobile && sidebarTab === "skills" ? (
+      <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
+        <SkillsPanel me={{ email, displayName: displayName ?? undefined, role }} />
       </div>
     ) : null;
 
@@ -2594,7 +2617,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             {chatsPanel}
           </SheetContent>
         </Sheet>
-      ) : (
+      ) : sidebarTab === "skills" ? null : (
         <aside
           className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground ${
             resizing ? "" : "transition-[width] duration-150"
@@ -2642,7 +2665,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             </div>
           </div>
         )}
-        {inlineSettings ? (
+        {inlineSkills ? (
+          inlineSkills
+        ) : inlineSettings ? (
           inlineSettings
         ) : (
           <>

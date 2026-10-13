@@ -4,7 +4,7 @@
 // (vitest); see package.json.
 
 import { describe, expect, it } from "vitest";
-import { filterSkills, skillCard, skillsEmptyState } from "./SkillsPanel";
+import { filterSkills, skillsPageHeader, skillCard, skillsEmptyState } from "./SkillsPanel";
 import type { SkillItem } from "./skills-api";
 
 const fixtures: SkillItem[] = [
@@ -84,5 +84,28 @@ describe("skillsEmptyState", () => {
   it("is null whenever the (filtered) catalog has cards to render", () => {
     expect(skillsEmptyState("", 3)).toBeNull();
     expect(skillsEmptyState("code", 1)).toBeNull();
+  });
+});
+
+describe("skillsPageHeader (the full-page header contract)", () => {
+  it("carries title, search and the New skill action in one row", () => {
+    const header = skillsPageHeader(false);
+    expect(header.title).toBe("Skills");
+    expect(header.searchPlaceholder).toBe("Search skills");
+    expect(header.newSkill).toBe(true);
+  });
+
+  it("renders the Catalog/Activity tab bar, machine tab only in Tauri", () => {
+    expect(skillsPageHeader(false).tabs.map(([value]) => value)).toEqual(["catalog", "activity"]);
+    expect(skillsPageHeader(true).tabs.map(([value]) => value)).toEqual([
+      "catalog",
+      "activity",
+      "machine",
+    ]);
+  });
+
+  it("has no collapse button — a full page, not a sidebar panel", () => {
+    expect(skillsPageHeader(false).collapseButton).toBe(false);
+    expect(skillsPageHeader(true).collapseButton).toBe(false);
   });
 });
