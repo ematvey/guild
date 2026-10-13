@@ -1396,7 +1396,8 @@ mod tests {
             skill_dir.join("agents/guild.yaml").exists(),
             "installed dir carries the provenance sidecar"
         );
-        // A hash mismatch fails the op (the response carries the error).
+        // A hash mismatch fails only that entry: the op still succeeds and
+        // the summary carries the failed slug in `failed`.
         let bad_sha = hub_request(
             &req_tx,
             &mut resp_rx,
@@ -1407,11 +1408,14 @@ mod tests {
                  "url": format!("{}/api/v1/registry/skill/demo-skill/v2/bundle", base_url)}
             ]}),
         )
-        .await;
-        assert!(
-            matches!(&bad_sha, Err(e) if e.contains("sha256 mismatch")),
-            "got {bad_sha:?}"
-        );
+        .await
+        .unwrap();
+        let failed = bad_sha["failed"].as_array().unwrap();
+        assert_eq!(failed.len(), 1, "got {bad_sha}");
+        assert_eq!(failed[0]["slug"], "demo-skill");
+        assert!(failed[0]["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("sha256 mismatch")));
         stop_tx.send(true).unwrap();
         tokio::time::timeout(Duration::from_secs(5), session)
             .await
