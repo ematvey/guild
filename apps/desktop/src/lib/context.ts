@@ -24,6 +24,11 @@ export interface SkillEntry {
   description: string;
   /** Full path to SKILL.md (the agent reads it with read_file). */
   path: string;
+  /** Installed-org marker (browser sessions): no local file exists, so
+   *  mention expansion fetches GET /api/v1/skills/:slug/source pinned at
+   *  this version. Machine installs instead carry the real sync path
+   *  (~/.agents/skills/<slug>/SKILL.md) and no marker. */
+  org?: { version: string };
 }
 
 export interface SkillListEntry extends SkillEntry {
@@ -82,6 +87,52 @@ const emptyFs: BridgeFs = {
   exists: async () => false,
   writeText: async () => false,
 };
+
+// ---------- installed org skills (spec §2.3) ----------
+
+/** One row of GET /api/v1/skills/installs (the fields the assembly uses). */
+export interface OrgInstall {
+  slug: string;
+  pinned_version: string;
+}
+
+/**
+ * The org-skills HTTP surface the assembly needs, kept out of this module
+ * (the real implementation lives where apiUrl/getToken live — transport):
+ * the caller's installs, and a skill's SKILL.md body at the caller's pin.
+ * Uninstalled org skills are the agent's discovery surface (index +
+ * search_skills) and never ride this — they are not mentionable.
+ */
+export interface OrgSkillsApi {
+  installs(): Promise<OrgInstall[] | null>;
+  skillBody(slug: string): Promise<string | null>;
+}
+
+/**
+ * The installed-org skill entries (spec §2.3 — mentions cover local +
+ * installed org only): machine sessions map each install to its canonical
+ * sync path so the local-file expansion reads it unchanged (a
+ * locally-materialized copy wins the merge — its frontmatter description
+ * is real); browser sessions carry the source marker instead (expansion
+ * fetches the body). Uninstalled org skills never appear.
+ */
+export async function installedOrgSkills(
+  api: OrgSkillsApi | undefined,
+  home: string | null,
+): Promise<SkillEntry[]> {
+  const installs = api ? await api.installs() : null;
+  if (installs === null) return [];
+  const out: SkillEntry[] = [];
+  for (const install of installs) {
+    if (typeof install?.slug !== "string" || install.slug === "") continue;
+    out.push(
+      home !== null
+        ? { name: install.slug, description: "", path: `${home}/.agents/skills/${install.slug}/SKILL.md` }
+        : { name: install.slug, description: "", path: "", org: { version: String(install.pinned_version ?? "") } },
+    );
+  }
+  return out;
+}
 
 // ---------- skills ----------
 
@@ -266,6 +317,7 @@ export async function mentionExpansions(
   projectDir: string | undefined,
   prompt: string,
   skills: SkillEntry[],
+  orgApi?: OrgSkillsApi,
 ): Promise<Array<{ skill: SkillEntry; body: string }>> {
   const names = new Set<string>();
   for (let i = 0; i < prompt.length; i++) {
@@ -277,10 +329,23 @@ export async function mentionExpansions(
     }
   }
   const out: Array<{ skill: SkillEntry; body: string }> = [];
+  // Browser org skills fetch their body once per assembly (cached here);
+  // a name expanded once never repeats (first entry wins, merge semantics).
+  const fetched = new Map<string, string | null>();
+  const expandedNames = new Set<string>();
   for (const e of skills) {
-    if (names.has(e.name)) {
-      const body = await fs.readText(projectDir, e.path);
-      if (body !== null) out.push({ skill: e, body });
+    if (!names.has(e.name) || expandedNames.has(e.name)) continue;
+    let body: string | null;
+    if (e.org) {
+      if (!orgApi) continue;
+      if (!fetched.has(e.name)) fetched.set(e.name, await orgApi.skillBody(e.name));
+      body = fetched.get(e.name)!;
+    } else {
+      body = await fs.readText(projectDir, e.path);
+    }
+    if (body !== null) {
+      out.push({ skill: e, body });
+      expandedNames.add(e.name);
     }
   }
   return out;
@@ -293,7 +358,7 @@ export function mentionBlock(
   if (mentions.length === 0) return null;
   let s = "\n\n---\nInvoked skills (follow their instructions):\n";
   for (const { skill, body } of mentions) {
-    s += `\n### Skill: ${skill.name} (${skill.path})\n${body}\n`;
+    s += `\n### Skill: ${skill.name}${skill.path ? ` (${skill.path})` : ""}\n${body}\n`;
   }
   return s;
 }
@@ -390,14 +455,28 @@ export async function prepareTurn(
   scopes: { configDir: string | null; home: string | null },
   prompt: string,
   projectDir?: string,
+  orgApi?: OrgSkillsApi,
 ): Promise<PreparedTurn> {
   const { configDir, home } = scopes;
-  if (!configDir || !home) return { prompt, index: "" };
-  const skills = await discoverSkills(fs, projectDir, configDir, home);
+  if (!configDir || !home) {
+    // Browser mode: no local files. Installed org skills still mention-
+    // expand (bodies fetched per turn, cached); the index stays empty —
+    // the server renders the org portion (installs with pin markers)
+    // itself, and a client-sent local list would strip those markers.
+    const org = await installedOrgSkills(orgApi, null);
+    const mentions = await mentionExpansions(fs, projectDir, prompt, org, orgApi);
+    const expanded = mentionBlock(mentions);
+    return { prompt: expanded === null ? prompt : `${prompt}${expanded}`, index: "" };
+  }
+  // Org installs merge first: a locally-materialized copy (real
+  // frontmatter description) wins the name collision.
+  const merged: SkillEntry[] = [];
+  for (const e of await installedOrgSkills(orgApi, home)) merge(merged, e);
+  for (const e of await discoverSkills(fs, projectDir, configDir, home)) merge(merged, e);
   const disabled = await disabledPaths(fs, projectDir, configDir, home);
-  const enabled = skills.filter((s) => !disabled.has(s.path));
+  const enabled = merged.filter((s) => !disabled.has(s.path));
   const index = promptIndex(enabled);
-  const mentions = await mentionExpansions(fs, projectDir, prompt, enabled);
+  const mentions = await mentionExpansions(fs, projectDir, prompt, enabled, orgApi);
   const expanded = mentionBlock(mentions);
   const finalPrompt =
     expanded === null ? prompt : `${prompt}${expanded}`;

@@ -9,6 +9,7 @@ import {
   compareVersions,
   eventsToBlocks,
   mentionCandidates,
+  composerSkills,
   parseChatRoute,
   parseSearchResults,
   reconcilePendingSend,
@@ -611,5 +612,40 @@ describe("mentionCandidates (slash autocomplete pool)", () => {
     expect(res.every((c) => c.builtin)).toBe(true);
     const mixed = mentionCandidates(builtins, skills, "deploy");
     expect(mixed[0].builtin).toBe(false);
+  });
+});
+
+describe("composerSkills (local + installed org pool, spec §2.3)", () => {
+  const local = [
+    { name: "local-a", description: "a local skill", disabled: false },
+    { name: "dup", description: "local wins", disabled: false },
+  ];
+  const installs = [
+    { slug: "org-deploy", pinned_version: "v2" },
+    { slug: "dup", pinned_version: "v1" }, // also local: folds into the local row
+  ];
+
+  it("org group carries only installed org skills; local rows win duplicates", () => {
+    const pool = composerSkills(local, installs);
+    const orgGroup = pool.filter((s) => s.org);
+    expect(orgGroup.map((s) => s.name)).toEqual(["org-deploy"]); // `dup` is listed locally — no second entry
+    expect(pool.map((s) => s.name)).toEqual(["local-a", "dup", "org-deploy"]);
+  });
+  it("uninstalled org skills never enter (they are not in the installs list)", () => {
+    const pool = composerSkills(local, [{ slug: "org-deploy", pinned_version: "v2" }]);
+    expect(pool.some((s) => s.name === "uninstalled-org-skill" || s.org === undefined && s.name.startsWith("uninstalled"))).toBe(false);
+    expect(pool.filter((s) => s.org)).toHaveLength(1);
+  });
+  it("works with either half absent", () => {
+    expect(composerSkills(null, installs).map((s) => s.name)).toEqual(["org-deploy", "dup"]);
+    expect(composerSkills(local, null)).toEqual(local);
+    expect(composerSkills(null, null)).toEqual([]);
+  });
+  it("org entries ride the /-autocomplete pool", () => {
+    const pool = composerSkills(local, installs);
+    const candidates = mentionCandidates([{ name: "compact", description: "c" }], pool, "");
+    expect(candidates.map((c) => c.name)).toEqual(["compact", "local-a", "dup", "org-deploy"]);
+    expect(candidates.find((c) => c.name === "org-deploy")?.org).toBe(true);
+    expect(candidates.find((c) => c.name === "local-a")?.org).toBe(false);
   });
 });
