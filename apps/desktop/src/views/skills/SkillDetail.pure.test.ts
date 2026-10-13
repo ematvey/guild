@@ -90,14 +90,14 @@ describe("detailActions", () => {
     expect(actions).toContain("Fork");
   });
 
-  it("shows the gate toggle and Unpublish only to owner or admin", () => {
+  it("shows the approval toggle and Unpublish only to owner or admin", () => {
     const gated = detailActions({ ...base, maintainer_gated: true }, owner);
-    expect(gated).toContain("Remove gate");
+    expect(gated).toContain("Remove approval");
     expect(gated).toContain("Unpublish");
-    expect(detailActions(base, admin)).toContain("Gate");
+    expect(detailActions(base, admin)).toContain("Require approval");
     expect(detailActions(base, admin)).toContain("Unpublish");
     const stranger = detailActions(base, other);
-    expect(stranger).not.toContain("Gate");
+    expect(stranger).not.toContain("Require approval");
     expect(stranger).not.toContain("Unpublish");
   });
 

@@ -1,21 +1,33 @@
 // Skill editor (Skills tab → "New skill" or detail → Edit): slug (create
 // only), owner selector (me or one of my teams), description, and the
-// SKILL.md body with a Write/Preview toggle. Save publishes via the
-// skills API (POST create / PUT next version); errors surface as sonner
-// toasts and success hands the slug back for navigation to the detail
-// page.
+// SKILL.md body with a Write/Preview toggle. Publishing is guarded: the
+// save action opens a review step showing the new slug/description and a
+// per-file line diff against the latest published version, and only the
+// explicit "Approve & publish" action calls the skills API (POST create /
+// PUT next version). Errors surface as sonner toasts and success hands
+// the slug back for navigation to the detail page.
 
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
+import { Badge } from "@guild/ui/components/badge";
 import { Button } from "@guild/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@guild/ui/components/dialog";
 import { Input } from "@guild/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
 import { MD_CLASS, mdComponents } from "../markdown";
+import { diffLines, type DiffLine } from "./skill-diff";
 import {
   myTeams,
   skillsDetail,
@@ -92,6 +104,57 @@ export function canSave(form: EditorForm, mode: EditorMode): boolean {
   return mode === "create" ? slugError(form.slug) === null : true;
 }
 
+/** The published content the edit-mode diff runs against (the manifest
+ *  description plus the latest version's SKILL.md body). */
+export interface ReviewBase {
+  description: string;
+  skill_md: string;
+}
+
+/** One changed file in the review step: the editor publishes a single
+ *  SKILL.md, so path is always SKILL.md — added in create mode (full
+ *  content diff), modified in edit mode. */
+export interface ReviewChange {
+  path: string;
+  status: "added" | "modified";
+  diff: DiffLine[];
+}
+
+/** The review step's view model: per-file diffs plus whether anything
+ *  actually changes (a description-only edit changes no file but still
+ *  publishes a new version). */
+export interface ReviewSummary {
+  changes: ReviewChange[];
+  descriptionChanged: boolean;
+  hasChanges: boolean;
+}
+
+/** The publish guard's diff: create mode treats everything as added
+ *  (full content diff); edit mode diffs the body against the latest
+ *  published version and flags a description-only change. */
+export function reviewChanges(
+  mode: EditorMode,
+  form: EditorForm,
+  base: ReviewBase | null,
+): ReviewSummary {
+  if (mode === "create" || base === null) {
+    return {
+      changes: [{ path: "SKILL.md", status: "added", diff: diffLines("", form.body) }],
+      descriptionChanged: true,
+      hasChanges: true,
+    };
+  }
+  const bodyChanged = form.body !== base.skill_md;
+  const descriptionChanged = form.description !== base.description;
+  return {
+    changes: bodyChanged
+      ? [{ path: "SKILL.md", status: "modified", diff: diffLines(base.skill_md, form.body) }]
+      : [],
+    descriptionChanged,
+    hasChanges: bodyChanged || descriptionChanged,
+  };
+}
+
 /** The body pane's two panes: the markdown textarea and its rendered
  *  read-only preview. */
 export type EditorPane = "write" | "preview";
@@ -115,6 +178,10 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
   const [teams, setTeams] = useState<EditorTeam[] | null>(null);
   const [pane, setPane] = useState<EditorPane>("write");
   const [busy, setBusy] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  // Edit mode: the published content the review diff runs against; null
+  // in create mode (everything counts as added).
+  const [base, setBase] = useState<ReviewBase | null>(null);
   // Edit mode: null until the detail + source load, false when the skill
   // is gone (404 or network error).
   const [loadFailed, setLoadFailed] = useState<boolean | null>(mode === "create" ? false : null);
@@ -129,7 +196,13 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
         live = false;
       };
     }
-    void Promise.all([skillsDetail(slug ?? ""), skillsSource(slug ?? "")]).then(([detail, source]) => {
+    void (async () => {
+      const detail = await skillsDetail(slug ?? "");
+      // The source request pins the version explicitly so the seeded body
+      // and the review diff both run against the latest published content
+      // (a pinned install must not silently select an older version).
+      const source =
+        detail === null ? null : await skillsSource(slug ?? "", detail.latest_version ?? undefined);
       if (!live) return;
       if (detail === null || source === null) {
         setLoadFailed(true);
@@ -141,8 +214,9 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
         body: source.skill_md,
         ownerTeamId: null,
       });
+      setBase({ description: detail.description, skill_md: source.skill_md });
       setLoadFailed(false);
-    });
+    })();
     return () => {
       live = false;
     };
@@ -188,18 +262,24 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
   }
 
   const slugErr = mode === "create" ? slugError(form.slug) : null;
-  // Don't nag on a pristine empty slug field; the disabled Save carries it.
+  // Don't nag on a pristine empty slug field; the disabled review button
+  // carries it.
   const showSlugError = mode === "create" && form.slug !== "" && slugErr !== null;
 
-  const save = async () => {
+  const review = reviewChanges(mode, form, base);
+
+  // The API write lives here and nowhere else: the save button only opens
+  // the review dialog, and the dialog's approve action calls this.
+  const publish = async () => {
     setBusy(true);
     const res = await skillsSave(saveRequest(mode, form));
     setBusy(false);
     if (res.ok) {
-      toast.success(res.slug !== undefined ? `Saved ${res.slug}` : "Skill saved");
+      toast.success(res.slug !== undefined ? `Published ${res.slug}` : "Skill published");
+      setReviewOpen(false);
       onSaved(res.slug ?? form.slug);
     } else {
-      toast.error("Skill save failed", { description: res.message });
+      toast.error("Skill publish failed", { description: res.message });
     }
   };
 
@@ -284,9 +364,9 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
             size="sm"
             disabled={busy || !canSave(form, mode)}
             title={slugErr ?? undefined}
-            onClick={() => void save()}
+            onClick={() => setReviewOpen(true)}
           >
-            {busy ? "Saving…" : "Save"}
+            Review & publish
           </Button>
         </div>
         {pane === "write" ? (
@@ -310,6 +390,139 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
           </div>
         )}
       </div>
+      <ReviewDialog
+        open={reviewOpen}
+        onOpenChange={setReviewOpen}
+        mode={mode}
+        slug={form.slug}
+        description={form.description}
+        baseVersion={mode === "edit" ? (base === null ? null : "latest") : null}
+        review={review}
+        busy={busy}
+        onApprove={() => void publish()}
+      />
     </div>
+  );
+}
+
+/** Diff lines shown before the "… N more lines" note. */
+const MAX_DIFF_LINES = 400;
+
+function diffLineClass(type: DiffLine["type"]): string {
+  switch (type) {
+    case "add":
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
+    case "del":
+      return "bg-destructive/10 text-destructive";
+    case "ctx":
+      return "text-muted-foreground";
+  }
+}
+
+/** One changed file's review card: path + status badge over a capped,
+ *  scrollable line diff (mono is file content, not UI text). */
+function FileDiff({ change }: { change: ReviewChange }) {
+  const shown = change.diff.slice(0, MAX_DIFF_LINES);
+  return (
+    <div className="overflow-hidden rounded-md border border-border">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-sm">
+        <span className="font-medium">{change.path}</span>
+        <Badge
+          variant={change.status === "added" ? "secondary" : "outline"}
+          className={change.status === "added" ? "" : "text-muted-foreground"}
+        >
+          {change.status === "added" ? "new file" : "modified"}
+        </Badge>
+      </div>
+      <div className="max-h-72 overflow-y-auto py-1 font-mono text-xs leading-relaxed" data-scrollable>
+        {shown.map((line, i) => (
+          <div key={i} className={`whitespace-pre-wrap px-3 ${diffLineClass(line.type)}`}>
+            {line.type === "add" ? "+ " : line.type === "del" ? "- " : "  "}
+            {line.text === "" ? "\u00A0" : line.text}
+          </div>
+        ))}
+        {change.diff.length > shown.length && (
+          <p className="px-3 py-1 text-muted-foreground">
+            … {change.diff.length - shown.length} more lines
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The publish guard's review step: the new skill's slug/description plus
+ *  a per-file diff against the latest published version. "Approve &
+ *  publish" is the only path to the API write; disabled with a note when
+ *  the draft changes nothing. */
+function ReviewDialog({
+  open,
+  onOpenChange,
+  mode,
+  slug,
+  description,
+  baseVersion,
+  review,
+  busy,
+  onApprove,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  mode: EditorMode;
+  slug: string;
+  description: string;
+  /** "latest" in edit mode once the base has loaded, null in create mode. */
+  baseVersion: "latest" | null;
+  review: ReviewSummary;
+  busy: boolean;
+  onApprove: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Review & publish</DialogTitle>
+          <DialogDescription>
+            {mode === "create"
+              ? `Publishing creates ${slug || "the skill"} at v1 — nothing is written until you approve.`
+              : `Publishing bumps ${slug} to the next version — nothing is written until you approve.`}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex max-h-[50vh] flex-col gap-2 overflow-y-auto" data-scrollable>
+          <div className="rounded-md border border-border px-2.5 py-2 text-sm">
+            <p>
+              <span className="text-muted-foreground">Slug: </span>
+              <span className="font-medium">{slug || "—"}</span>
+            </p>
+            <p className="min-w-0">
+              <span className="text-muted-foreground">Description: </span>
+              {description.trim() === "" ? <span className="text-muted-foreground">—</span> : description}
+            </p>
+          </div>
+          {review.changes.map((change) => (
+            <FileDiff key={change.path} change={change} />
+          ))}
+          {!review.hasChanges && (
+            <p className="text-sm text-muted-foreground">
+              No changes against the published {baseVersion === "latest" ? "latest version" : "content"} —
+              nothing to publish.
+            </p>
+          )}
+          {review.hasChanges && review.changes.length === 0 && review.descriptionChanged && (
+            <p className="text-sm text-muted-foreground">
+              Only the description changes; the SKILL.md body is unchanged.
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => onOpenChange(false)}>
+            Back to edit
+          </Button>
+          <Button size="sm" disabled={busy || !review.hasChanges} onClick={onApprove}>
+            {busy ? "Publishing…" : "Approve & publish"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

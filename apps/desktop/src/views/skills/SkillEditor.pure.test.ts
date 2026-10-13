@@ -4,7 +4,15 @@
 // options (me + my teams).
 
 import { describe, expect, it } from "vitest";
-import { canSave, ownerOptions, saveRequest, slugError, type EditorForm } from "./SkillEditor";
+import {
+  canSave,
+  ownerOptions,
+  reviewChanges,
+  saveRequest,
+  slugError,
+  type EditorForm,
+  type ReviewBase,
+} from "./SkillEditor";
 
 const base: EditorForm = {
   slug: "code-review",
@@ -90,5 +98,54 @@ describe("canSave", () => {
 
   it("edit mode has no slug gate (the slug is fixed)", () => {
     expect(canSave({ ...base, slug: "" }, "edit")).toBe(true);
+  });
+});
+
+const reviewBase: ReviewBase = { description: base.description, skill_md: base.body };
+
+describe("reviewChanges (the publish guard's diff)", () => {
+  it("create mode treats everything as added — full content diff of SKILL.md", () => {
+    const review = reviewChanges("create", base, null);
+    expect(review.hasChanges).toBe(true);
+    expect(review.changes).toHaveLength(1);
+    const change = review.changes[0]!;
+    expect(change.path).toBe("SKILL.md");
+    expect(change.status).toBe("added");
+    expect(change.diff.every((line) => line.type === "add")).toBe(true);
+    expect(change.diff.map((line) => line.text)).toEqual(base.body.split("\n"));
+  });
+
+  it("edit mode diffs the body against the latest published SKILL.md", () => {
+    const edited: EditorForm = { ...base, body: "# Code review\n\nReviews diffs, carefully." };
+    const review = reviewChanges("edit", edited, reviewBase);
+    expect(review.hasChanges).toBe(true);
+    expect(review.descriptionChanged).toBe(false);
+    expect(review.changes[0]).toMatchObject({ path: "SKILL.md", status: "modified" });
+    expect(review.changes[0]!.diff).toEqual([
+      { type: "ctx", text: "# Code review" },
+      { type: "ctx", text: "" },
+      { type: "del", text: "Reviews diffs." },
+      { type: "add", text: "Reviews diffs, carefully." },
+    ]);
+  });
+
+  it("edit mode with an unchanged draft disables the approve action", () => {
+    const review = reviewChanges("edit", base, reviewBase);
+    expect(review.hasChanges).toBe(false);
+    expect(review.changes).toEqual([]);
+  });
+
+  it("a description-only edit publishes but changes no file", () => {
+    const edited: EditorForm = { ...base, description: "Reviews diffs against the repo standards" };
+    const review = reviewChanges("edit", edited, reviewBase);
+    expect(review.hasChanges).toBe(true);
+    expect(review.descriptionChanged).toBe(true);
+    expect(review.changes).toEqual([]);
+  });
+
+  it("edit mode without a loaded base falls back to the full added diff", () => {
+    const review = reviewChanges("edit", base, null);
+    expect(review.hasChanges).toBe(true);
+    expect(review.changes[0]).toMatchObject({ path: "SKILL.md", status: "added" });
   });
 });

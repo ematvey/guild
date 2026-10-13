@@ -216,10 +216,16 @@ export async function myTeams(): Promise<EditorTeam[] | null> {
     .map((t) => ({ id: t.id as string, name: t.name as string }));
 }
 
-/** GET /api/v1/skills/:slug/source — the current SKILL.md body; the
- *  editor's edit mode seeds its textarea from this. */
-export async function skillsSource(slug: string): Promise<{ version: string; skill_md: string } | null> {
-  const res = await fetch(apiUrl(slugPath(slug, "/source")), {
+/** GET /api/v1/skills/:slug/source — one version's SKILL.md body; without
+ *  an explicit version the server resolves the caller's pin, then latest.
+ *  The editor's edit mode passes the latest version so the publish diff
+ *  always runs against the newest published content. */
+export async function skillsSource(
+  slug: string,
+  version?: string,
+): Promise<{ version: string; skill_md: string } | null> {
+  const suffix = version === undefined ? "" : `?version=${encodeURIComponent(version)}`;
+  const res = await fetch(apiUrl(slugPath(slug, `/source${suffix}`)), {
     headers: { authorization: `Bearer ${getToken()}` },
   });
   if (!res.ok) return null;
