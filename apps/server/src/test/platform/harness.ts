@@ -3,7 +3,6 @@
 // instance. Database name is namespaced `guild_m1_test_*` so the durable
 // storage suite (guild_durable_test_*) can run concurrently.
 
-import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import pg from "pg";
 import {
@@ -13,6 +12,7 @@ import {
   ListObjectsV2Command,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { applyPlatformMigrations } from "../../platform/migrations.js";
 import { buildApp } from "../../app.js";
 import { loadConfig } from "../../config.js";
 
@@ -62,10 +62,9 @@ export async function createM1TestEnv(logLevel = "error"): Promise<M1TestEnv> {
 
   // Apply the verbatim Rust migrations in order (plain SQL files).
   const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
-  for (const file of readdirSync(MIGRATIONS_DIR).sort()) {
-    if (!file.endsWith(".sql")) continue;
-    await migrationPool.query(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
-  }
+  // The production startup path (applyPlatformMigrations): same filename
+  // order, same schema_history tracking hand-run deployments use.
+  await applyPlatformMigrations(migrationPool);
   await migrationPool.end();
 
   const s3 = new S3Client({

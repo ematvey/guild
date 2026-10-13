@@ -2,7 +2,7 @@
 // migrations applied in order, namespaced `guild_m7_test_*`) + a disposable
 // rustfs bucket, mirroring the M1 harness with M7 names.
 
-import { readFileSync, readdirSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import * as tar from "tar";
@@ -19,8 +19,7 @@ import { loadConfig } from "../../config.js";
 
 // vitest runs with cwd = apps/server; the migrations live in the Rust tree
 // (the historical record the TS schema ports verbatim).
-const REPO_ROOT = path.resolve(process.cwd(), "../..");
-const MIGRATIONS_DIR = path.join(REPO_ROOT, "apps/server/migrations");
+import { applyPlatformMigrations } from "../../platform/migrations.js";
 
 const TEST_ADMIN_URL = process.env.GUILD_M7_TEST_DATABASE_URL ?? "postgres://guild:guild@localhost:5432/guild";
 const TEST_S3_URL = process.env.GUILD_M7_TEST_S3_URL ?? "http://localhost:9950";
@@ -59,10 +58,9 @@ export async function createM7TestEnv(logLevel = "error", extraEnv: Record<strin
   const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2 });
 
   const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2 });
-  for (const file of readdirSync(MIGRATIONS_DIR).sort()) {
-    if (!file.endsWith(".sql")) continue;
-    await migrationPool.query(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
-  }
+  // The production startup path (applyPlatformMigrations): same filename
+  // order, same schema_history tracking hand-run deployments use.
+  await applyPlatformMigrations(migrationPool);
   await migrationPool.end();
 
   const s3 = new S3Client({

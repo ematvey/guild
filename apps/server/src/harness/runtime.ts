@@ -25,6 +25,7 @@ import { mkdir } from "node:fs/promises";
 import type { Logger } from "pino";
 import { applyPostgresMigrations, PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
 import type { PlatformPool } from "../platform/db.js";
+import { applyPlatformMigrations } from "../platform/migrations.js";
 import { GatewayStore } from "../platform/store/gateway.js";
 import { ChatStore } from "../platform/store/chats.js";
 import { ThreadStore } from "../platform/store/thread.js";
@@ -327,6 +328,10 @@ export class GuildRuntime {
     // The shared platform pool outlives the runtime (PlatformContext owns
     // it); the database facade must not end it on storage close.
     const db = new SharedPoolDatabase(this.pool);
+    // Platform schema first: the mapping below references chats(id), and
+    // every route handler assumes apps/server/migrations are current.
+    // Failure throws — startup must not come up on a stale schema.
+    await applyPlatformMigrations(this.pool, { log: this.log });
     await applyPostgresMigrations(db);
     await applyChatMappingMigration(this.pool);
     this.storage = await PostgresDurableStorage.open(db);

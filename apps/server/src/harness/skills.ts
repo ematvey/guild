@@ -469,7 +469,10 @@ export class SkillRuntime {
     } else {
       parts.push(`(no SKILL.md text was recorded for ${slug}@${version})`);
     }
-    const files = meta.files ?? [];
+    // manifest.json is auto-generated bundle metadata (registry contract
+    // keeps it in the bundle bytes) but installs/sandbox materialization
+    // never write it — the agent-facing list must not advertise it.
+    const files = (meta.files ?? []).filter((f) => f.path !== "manifest.json");
     if (files.length > 0) {
       parts.push(
         `Additional files (read with read_file):\n${files.map((f) => `- ${f.path} (sha256 ${f.sha256})`).join("\n")}`,
