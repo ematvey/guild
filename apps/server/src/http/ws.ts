@@ -371,6 +371,9 @@ async function driveSocket(
     }
     machineRegistered = true;
     await registerMachineRecord(chats, user, machineId, meta, peerIp, query.client_id ?? "", hub);
+    // The fresh slot catches up on its owner's install list (spec §4) —
+    // fire-and-forget; failures land in the skills runtime's log.
+    chats.wsSkillsSync?.(user.org_id, user.id);
   } else {
     if (!hub.registerMember(member)) {
       await sendTerminal(socket, { type: "error", message: "too many connections" });

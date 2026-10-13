@@ -3,7 +3,7 @@
 // (catalog query), push_skill (workspace tree → next version) — plus the
 // per-turn surfaces the guild extension consumes: the combined prompt
 // index section, the per-conversation index stash, and the machine sync
-// hook (Task 8 fills syncUser).
+// hook (the fleet push over the hub).
 //
 // Tool failures are RESULTS the model sees (isError text), never thrown
 // 403/404s. The publish path mirrors the HTTP publish internals
@@ -31,7 +31,9 @@ import type { RegistryItemRow } from "../platform/store/registry.js";
 import type { SkillReadEvent, SkillReadSink } from "../platform/skillReads.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { RegistryStore } from "../platform/store/registry.js";
+import type { MachineRow, MachineStore } from "../platform/store/machines.js";
 import type { SkillStore } from "../platform/store/skills.js";
+import type { MachineRequestResult } from "../hub/index.js";
 import type { TeamStore } from "../platform/store/teams.js";
 import type { ExecutorKind } from "../machines/dispatch.js";
 
@@ -69,9 +71,24 @@ export interface SkillRuntimeDeps {
     slug: string;
     version: string;
   }): Promise<void>;
-  /** Hub machineRequest (Task 8/9 — machine fs_read + sync); absent → the
-   *  machine paths degrade (pushes refuse, syncs stay no-ops). */
-  machineRequest?(args: { machineId: string; op: string; payload: unknown }): Promise<unknown>;
+  /** The hub's control-plane request to a machine's executor socket (the
+   *  skills fleet sync push; the machine fs_read op rides the same seam
+   *  later); absent → syncs stay no-ops. */
+  machineRequest?(args: {
+    machineId: string;
+    orgId: string;
+    op: string;
+    payload: unknown;
+  }): Promise<MachineRequestResult>;
+  /** Hub liveness (LiveHub.machineOnline); absent → every listed machine
+   *  is attempted and the offline reply is the failure signal. */
+  machineOnline?(machineId: string): boolean;
+  /** The durable machine registry (the sync fan-out's recipient list);
+   *  absent → syncs stay no-ops. */
+  machines?: Pick<MachineStore, "listForUser">;
+  /** This server's own base URL (config.selfBaseUrl) — the bundle-fetch
+   *  URL each sync entry carries; absent → entries carry no url. */
+  selfBaseUrl?: string;
 }
 
 interface ChatIdentity {
@@ -227,9 +244,84 @@ export class SkillRuntime {
     return this.lastIndex.get(conversationId as ConversationId);
   }
 
-  /** Fans install/pin changes out to the user's machines. No-op until
-   *  Task 8 wires the skills sync protocol over the hub. */
-  async syncUser(_orgId: string, _userId: string): Promise<void> {}
+  /** The fleet sync push (spec §4): the user's install list is the
+   *  machine's desired state — every install becomes
+   *  `{ slug, version, bundle_sha256, url }` (the bundle URL under this
+   *  server's own base, fetched by the machine with its own auth), and the
+   *  machine converges by fetching newer bundles and dropping
+   *  locally-held slugs the list omits — an uninstall's row is gone, so
+   *  absence is the removal signal and no removed tombstones are tracked.
+   *  One push per machine row the hub reports live; the pushes are
+   *  fire-and-forget — syncUser returns once they are dispatched, and a
+   *  per-machine failure is logged without touching the other machines
+   *  (the ClickHouse sink's never-throw discipline, per machine). No
+   *  machine store, no machines, no installs, or a store failure →
+   *  silent no-op (logged). */
+  async syncUser(orgId: string, userId: string): Promise<void> {
+    const machines = this.deps.machines;
+    if (machines === undefined) return;
+    let rows: MachineRow[];
+    try {
+      rows = await machines.listForUser(orgId, userId);
+    } catch (error) {
+      this.deps.log.warn(`skills sync skipped: machine list failed: ${(error as Error).message}`);
+      return;
+    }
+    if (rows.length === 0) return;
+    let installs: Array<{ slug: string; pinned_version: string }>;
+    try {
+      installs = await this.deps.skills.listForUser(orgId, userId);
+    } catch (error) {
+      this.deps.log.warn(`skills sync skipped: install list failed: ${(error as Error).message}`);
+      return;
+    }
+    const skills: Array<{ slug: string; version: string; bundle_sha256: string; url?: string }> = [];
+    for (const install of installs) {
+      try {
+        const meta = await this.deps.registry.getVersionMeta(orgId, "skill", install.slug, install.pinned_version);
+        if (meta === null) {
+          this.deps.log.warn(`skills sync: ${install.slug}@${install.pinned_version} has no version row — entry dropped`);
+          continue;
+        }
+        skills.push({
+          slug: install.slug,
+          version: install.pinned_version,
+          bundle_sha256: meta.bundle_sha256 ?? "",
+          ...(this.deps.selfBaseUrl !== undefined
+            ? { url: `${this.deps.selfBaseUrl}/api/v1/registry/skill/${install.slug}/${install.pinned_version}/bundle` }
+            : {}),
+        });
+      } catch (error) {
+        this.deps.log.warn(`skills sync: ${install.slug} meta lookup failed: ${(error as Error).message}`);
+      }
+    }
+    const payload = { skills };
+    // Zero installs → no push: there is nothing to fetch, and the machine
+    // connect frame stream stays free of sync traffic for skill-less
+    // users (the WS golden replay pins that stream). Stale local copies
+    // of a fully-uninstalled fleet are out of sync's reach.
+    if (skills.length === 0) return;
+    for (const row of rows) {
+      if (this.deps.machineOnline?.(row.machine_id) === false) continue;
+      const pending = this.deps.machineRequest?.({
+        machineId: row.machine_id,
+        orgId,
+        op: "skills.sync_v1",
+        payload,
+      });
+      if (pending === undefined) continue;
+      void pending
+        .then((result) => {
+          if (!result.ok) {
+            const detail = result.error.message !== undefined ? `: ${result.error.message}` : "";
+            this.deps.log.warn(`skills sync push to ${row.machine_id} failed (${result.error.kind}${detail})`);
+          }
+        })
+        .catch((error) => {
+          this.deps.log.warn(`skills sync push to ${row.machine_id} failed: ${(error as Error).message}`);
+        });
+    }
+  }
 
   // ------------------------------------------------- sandbox materialization
 

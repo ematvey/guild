@@ -103,6 +103,10 @@ export interface ChatsCtx {
   /** The dispatch lane's uncertain-execution sweep at machine connect
    *  (Rust reconcile_machine_tools). */
   wsMachineReconcile?: (machineId: string, connId: string) => Promise<void>;
+  /** The skills lane's fleet-sync push at machine connect (spec §4: the
+   *  freshly connected machine catches up on its owner's install list).
+   *  Fire-and-forget: failures land in the skills runtime's log. */
+  wsSkillsSync?: (orgId: string, userId: string) => void;
   /** Trace sink for the socket supervisor (server log in Rust). */
   wsLog?: (message: string) => void;
 }

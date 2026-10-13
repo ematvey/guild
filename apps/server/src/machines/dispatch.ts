@@ -18,15 +18,20 @@
 import path from "node:path";
 import { err, ok, ExecutionError, FileError, type ExecutionEnv, type FileInfo, type Result, type ShellExecOptions, type ShellExecResult, type TextLine, type TextLineReader } from "@earendil-works/pi-durable/env";
 import type { Context } from "@earendil-works/chord";
+import type { MachineRequestFn } from "../hub/index.js";
 
 /** Where a conversation's tools execute — the env factory and the approval
  *  gate both resolve through the runtime. */
 export type ExecutorKind = "machine" | "server" | null;
 /** The hub surface the dispatch registry and the env need (LiveHub in
- *  production; a test double implements the same two methods). */
+ *  production; a test double implements the same members). */
 export interface MachineDispatchHost {
   machineHolder(machineId: string): { conn_id: string; org_id: string } | null;
   sendMachineToolDispatch(machineId: string, orgId: string, msg: { type: "tool_dispatch"; chat_id: string; call_id: string; name: string; arguments: string; workdir?: string }): boolean;
+  /** The control-plane request to a machine's executor socket (the skills
+   *  fleet sync push) and the slot liveness the fan-out consults. */
+  machineRequest: MachineRequestFn;
+  machineOnline(machineId: string): boolean;
 }
 
 export const CLIENT_TOOL_TIMEOUT_MS = 5 * 60 * 1000;

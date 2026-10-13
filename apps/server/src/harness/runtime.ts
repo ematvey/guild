@@ -35,6 +35,7 @@ import { EventStore } from "../platform/store/events.js";
 import { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import { RegistryStore } from "../platform/store/registry.js";
 import { SkillStore } from "../platform/store/skills.js";
+import { MachineStore } from "../platform/store/machines.js";
 import { TeamStore } from "../platform/store/teams.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { SkillReadSink } from "../platform/skillReads.js";
@@ -138,6 +139,14 @@ export class GuildRuntime {
       log,
       registry: registryStore,
       skills: new SkillStore(pool),
+      machines: new MachineStore(pool),
+      machineOnline: (machineId) => this.hub?.machineOnline(machineId) ?? false,
+      machineRequest: async ({ machineId, orgId, op, payload }) =>
+        (await this.hub?.machineRequest(machineId, orgId, op, payload, 10_000)) ?? {
+          ok: false,
+          error: { kind: "offline" as const },
+        },
+      selfBaseUrl: this.config.selfBaseUrl,
       events,
       teams: new TeamStore(pool),
       objects,

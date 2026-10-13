@@ -88,7 +88,7 @@ export class InMemoryHub implements Hub {
 }
 
 export { LiveHub } from "./live.js";
-export type { LiveMember, MachineRegistration, MachineRejected } from "./live.js";
+export type { LiveMember, MachineRegistration, MachineRejected, MachineRequestResult } from "./live.js";
 export { MAX_SOCKETS_PER_USER } from "./live.js";
 export { SocketSink, SOCKET_HIGH_WATER } from "./sink.js";
 export type { SocketOutput } from "./sink.js";
