@@ -80,7 +80,8 @@ function str(payload: Record<string, unknown>, name: string): string | undefined
 }
 
 /** "maya installed `sql-explorer` v2" — the actor prefix appears only
- *  when the event carries one (publishes do not). */
+ *  when the event carries one (legacy actorless rows fall back to the
+ *  actorless text). */
 function sentence(actor: string | undefined, verb: string, rest: string): string {
   if (actor === undefined) return `${verb[0].toUpperCase()}${verb.slice(1)} ${rest}`;
   return `${actor} ${verb} ${rest}`;
@@ -96,9 +97,9 @@ export function activityText(event: SkillActivityEvent): string | null {
   const version = str(payload, "version");
   switch (kind) {
     case "publish":
-      return sentence(undefined, "published", "`" + slug + "`" + (version ? ` ${version}` : ""));
+      return sentence(str(payload, "actor"), "published", "`" + slug + "`" + (version ? ` ${version}` : ""));
     case "update":
-      return sentence(undefined, "updated", `\`${slug}\` to ${version ?? "a new version"}`);
+      return sentence(str(payload, "actor"), "updated", `\`${slug}\` to ${version ?? "a new version"}`);
     case "fork":
       return sentence(
         str(payload, "actor"),

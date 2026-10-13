@@ -19,8 +19,19 @@ import type { SkillActivityEvent } from "./skills-api";
 const published: SkillActivityEvent = {
   ts: "2026-10-13T10:00:00Z",
   kind: "registry.published",
-  // publishBundleBytes emits {kind, slug, version} — no actor field.
+  // publishBundleBytes emits the publisher's identity too; this fixture
+  // stays actorless to pin the fallback rendering.
   payload: { kind: "skill", slug: "sql-explorer", version: "v3" },
+};
+const publishedByActor: SkillActivityEvent = {
+  ts: "2026-10-13T10:00:00Z",
+  kind: "registry.published",
+  payload: { kind: "skill", slug: "sql-explorer", version: "v3", user_id: "u9", actor: "maya" },
+};
+const updatedByActor: SkillActivityEvent = {
+  ts: "2026-10-13T11:00:00Z",
+  kind: "registry.updated",
+  payload: { kind: "skill", slug: "sql-explorer", version: "v4", user_id: "u9", actor: "maya" },
 };
 const installed: SkillActivityEvent = {
   ts: "2026-10-13T09:30:00Z",
@@ -45,9 +56,14 @@ const unpublished: SkillActivityEvent = {
 
 describe("activityText", () => {
   it("renders publish and install rows from the real payload fields", () => {
-    // published/updated carry no actor — the row says what happened, not who.
+    // actorless payloads (legacy rows) still render the current text
     expect(activityText(published)).toBe("Published `sql-explorer` v3");
     expect(activityText(installed)).toBe("maya installed `sql-explorer` v2");
+  });
+
+  it("names the actor on publish/update rows when the payload carries one", () => {
+    expect(activityText(publishedByActor)).toBe("maya published `sql-explorer` v3");
+    expect(activityText(updatedByActor)).toBe("maya updated `sql-explorer` to v4");
   });
 
   it("renders fork, pin, unpublish and updated rows", () => {
@@ -60,6 +76,13 @@ describe("activityText", () => {
       payload: { kind: "skill", slug: "sql-explorer", version: "v4" },
     };
     expect(activityText(updated)).toBe("Updated `sql-explorer` to v4");
+  });
+
+  it("renders actor-bearing publish/update rows in the row view-model too", () => {
+    const rows = activityRows([publishedByActor], "all");
+    expect(rows).toEqual([
+      { event: publishedByActor, icon: Upload, text: "maya published `sql-explorer` v3", time: "2026-10-13 10:00" },
+    ]);
   });
 
   it("returns null for unknown event kinds", () => {

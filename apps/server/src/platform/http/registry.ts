@@ -123,12 +123,20 @@ export async function publishBundleBytes(
     throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
   }
   // org event: first publish vs republish (the activity feed treats
-  // them as distinct kinds); best-effort
+  // them as distinct kinds); best-effort. The payload carries the
+  // publisher's identity (label = display name or email, matching the
+  // actorLabel convention on the skill routes).
   try {
     await auth.events.emit(
       user.org_id,
       control !== null ? "registry.updated" : "registry.published",
-      { kind, slug, version },
+      {
+        kind,
+        slug,
+        version,
+        user_id: user.id,
+        actor: user.display_name && user.display_name !== "" ? user.display_name : user.email,
+      },
     );
   } catch {
     // best-effort
