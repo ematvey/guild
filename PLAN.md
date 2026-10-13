@@ -11,6 +11,33 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **User-owned MCP servers + the codemode tool (0.5.40, 2026-10-14).** Two
+  branches merged (`user-mcp`, `codemode`), both built by subagents in their
+  own worktrees and browser-E2E-verified live on :18080.
+  *User MCP*: members add their own streamable-HTTP MCP servers in Settings
+  → MCP servers (list/add dialog with live probe/detail with enable toggle
+  and delete); the server stores name/url/headers (headers encrypted with
+  the org master key, API returns masked previews only), migration 0068,
+  CRUD+probe routes user-session-authed with an SSRF guard rejecting
+  private/loopback IP literals unless `GUILD_MCP_ALLOW_PRIVATE=1` (set in
+  the dev compose config.env — flip it off for stricter behavior; DNS names
+  are never resolved, so `host.docker.internal` passes). At turn start the
+  chat owner's enabled servers are discovered (`listTools`) and their tools
+  declared as `mcp_<server>_<tool>`, executed server-side per call with
+  headers re-decrypted at call time; an unreachable server degrades to a
+  prompt-index diagnostic, never a failed turn.
+  *Codemode*: pi-durable upgraded 1.0.1 → 1.2.0 (breaking changes absorbed:
+  Postgres storage scan-order/error semantics per the conformance suite,
+  `ToolExecutionResult.content` → `output`, tagged tool-task unions,
+  ChatBridge ignoring the new event fields; wire contracts unchanged). Every
+  conversation now carries the `codemode` tool (`createCodemodeExtension`):
+  the model writes JavaScript that runs in a QuickJS sandbox and calls the
+  conversation's tools as nested calls (`tools.read`, `tools.bash`, skills
+  and MCP tools too) — only the script's output reaches the model. Nested
+  calls run the full tool pipeline (validation, hooks, exec policy, approval
+  gate) exactly like direct calls. E2E: MCP probe + real-model turn
+  (`mcp_e2efixture_add(2,3)` → `5`), codemode write→read script round-trip
+  plus a correctly policy-blocked nested bash; SSRF deny path verified live.
 - **Descriptions are one line, stored and rendered (2026-10-14).** The
   detail page's apparent line breaks were the `max-w-[560px]` render cap
   wrapping — the stored value was already single-line. Save points now
