@@ -64,6 +64,30 @@ export interface SkillMe {
   email?: string;
 }
 
+/** One activity-feed row (GET /api/v1/skills/activity): the raw org event.
+ *  payload fields vary by kind — registry.published/updated carry only
+ *  {kind, slug, version}; the other kinds add actor/forked_from. */
+export interface SkillActivityEvent {
+  ts: string;
+  kind: string;
+  payload: Record<string, unknown>;
+}
+
+export type SkillActivityFilter = "all" | "changes";
+
+/** GET /api/v1/skills/activity?filter=…; null on any failure (the feed
+ *  shows its empty state). */
+export async function skillsActivity(
+  filter: SkillActivityFilter = "all",
+): Promise<SkillActivityEvent[] | null> {
+  const res = await fetch(apiUrl(`/api/v1/skills/activity?filter=${filter}`), {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) return null;
+  const v = (await res.json().catch(() => null)) as { events?: SkillActivityEvent[] } | null;
+  return v?.events ?? null;
+}
+
 export type SkillActionResult =
   | { ok: true; slug?: string; install?: SkillInstall }
   | { ok: false; message: string };

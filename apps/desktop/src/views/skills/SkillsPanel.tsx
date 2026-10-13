@@ -1,6 +1,8 @@
-// Skills panel (Skills tab): the org skill catalog as a card grid with a
-// search box. The rail tab switches here; the editor surface is not wired
-// yet, so "New skill" is a visible placeholder.
+// Skills panel (Skills tab): Catalog | Activity tabs. Catalog is the
+// org skill catalog as a card grid with a search box; Activity is the
+// org event feed with the All / Changes pill filter. The rail tab
+// switches here; the editor surface is not wired yet, so "New skill" is
+// a visible placeholder.
 
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
@@ -8,6 +10,7 @@ import { Input } from "@guild/ui/components/input";
 import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { SkillDetail } from "./SkillDetail";
+import { ActivityFeed } from "./ActivityFeed";
 import { skillsList, type SkillItem, type SkillMe } from "./skills-api";
 import { CollapseButton } from "../sidebar-contents";
 
@@ -53,6 +56,9 @@ export function skillsEmptyState(query: string, count: number): string | null {
   return needle === "" ? "No skills yet." : `No skills match "${needle}".`;
 }
 
+/** The panel's two tabs: the card catalog and the activity feed. */
+export type SkillsTab = "catalog" | "activity";
+
 export function SkillsPanel({
   onCollapse,
   me,
@@ -60,6 +66,7 @@ export function SkillsPanel({
   onCollapse?: () => void;
   me: SkillMe;
 }) {
+  const [tab, setTab] = useState<SkillsTab>("catalog");
   const [skills, setSkills] = useState<SkillItem[] | null>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -111,6 +118,28 @@ export function SkillsPanel({
           <CollapseButton onCollapse={onCollapse} />
         </span>
       </div>
+      <div className="flex items-center gap-1 px-3 pb-2">
+        {(
+          [
+            ["catalog", "Catalog"],
+            ["activity", "Activity"],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            variant={tab === value ? "secondary" : "ghost"}
+            size="sm"
+            aria-pressed={tab === value}
+            aria-label={`${label} tab`}
+            onClick={() => setTab(value)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+      {tab === "activity" && <ActivityFeed />}
+      {tab === "catalog" && (
+        <>
       <div className="px-3 pb-2">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -165,6 +194,8 @@ export function SkillsPanel({
           })}
         {empty !== null && <p className="px-1 py-1.5 text-muted-foreground">{empty}</p>}
       </div>
+        </>
+      )}
     </div>
   );
 }
