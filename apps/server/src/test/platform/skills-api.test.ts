@@ -125,8 +125,9 @@ describe("skills api", () => {
       description: "d",
       latest_version: "v1",
       maintainer_gated: false,
-      installs: 0,
-      installs_latest: 0,
+      // Publishing auto-installs for the creator (pinned at v1).
+      installs: 1,
+      installs_latest: 1,
       tombstoned: false,
     });
     expect((row!.owner as { kind: string }).kind).toBe("user");
@@ -151,6 +152,32 @@ describe("skills api", () => {
     expect(body.skill_md).toBe("# second");
     // manifest.json is registry packaging metadata — never listed to agents.
     expect(body.files.map((f) => f.path).sort()).toEqual(["SKILL.md"]);
+  });
+
+  it("publish auto-installs for the publisher; edits re-pin; other installs keep theirs", async () => {
+    await createSkill("auto-install-skill", "# auto");
+    const mine = await inject("GET", "/api/v1/skills/installs", e.memberToken);
+    expect(
+      (mine.json() as { installs: Array<{ slug: string; pinned_version: string }> }).installs.find(
+        (i) => i.slug === "auto-install-skill",
+      ),
+    ).toMatchObject({ pinned_version: "v1" });
+
+    // A second user's manual install stays at v1 when the publisher edits.
+    await inject("POST", "/api/v1/skills/auto-install-skill/install", e.member2Token, {});
+    await editSkill("auto-install-skill", "# auto v2");
+    const afterEdit = await inject("GET", "/api/v1/skills/installs", e.memberToken);
+    expect(
+      (afterEdit.json() as { installs: Array<{ slug: string; pinned_version: string }> }).installs.find(
+        (i) => i.slug === "auto-install-skill",
+      ),
+    ).toMatchObject({ pinned_version: "v2" });
+    const others = await inject("GET", "/api/v1/skills/installs", e.member2Token);
+    expect(
+      (others.json() as { installs: Array<{ slug: string; pinned_version: string }> }).installs.find(
+        (i) => i.slug === "auto-install-skill",
+      ),
+    ).toMatchObject({ pinned_version: "v1" });
   });
 
   it("editor save after a version gap publishes max+1, never an overwrite", async () => {
@@ -346,12 +373,14 @@ describe("skills api", () => {
   it("source respects an explicit version over the pin and latest", async () => {
     await createSkill("ver-skill", "# one");
     await editSkill("ver-skill", "# two");
-    await inject("POST", "/api/v1/skills/ver-skill/install", e.memberToken, { version: "v2" });
-    const src = await inject("GET", "/api/v1/skills/ver-skill/source?version=v1", e.memberToken);
+    // A second user pins v2 explicitly (the publisher's own pin auto-advances
+    // on every edit, so their source is always latest).
+    await inject("POST", "/api/v1/skills/ver-skill/install", e.member2Token, { version: "v2" });
+    const src = await inject("GET", "/api/v1/skills/ver-skill/source?version=v1", e.member2Token);
     expect((src.json() as { version: string; skill_md: string }).skill_md).toBe("# one");
     // pinned version wins over latest when no query version
     await editSkill("ver-skill", "# three");
-    const pinned = await inject("GET", "/api/v1/skills/ver-skill/source", e.memberToken);
+    const pinned = await inject("GET", "/api/v1/skills/ver-skill/source", e.member2Token);
     expect((pinned.json() as { version: string }).version).toBe("v2");
   });
 

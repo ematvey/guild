@@ -137,12 +137,97 @@ function clipDescription(description: string): string {
   return description.length > DESCRIPTION_CLIP ? `${description.slice(0, DESCRIPTION_CLIP)}…` : description;
 }
 
+/** The YAML frontmatter `description` of a SKILL.md, null when the
+ *  document carries no frontmatter description. Reads top-level
+ *  `description:` in its three shapes: a single-line plain or quoted
+ *  scalar, a block scalar (`>`, `|-`, `>+`, …) whose indented lines fold
+ *  with spaces (`>`) or keep their newlines (`|`), and a bare key followed
+ *  by indented continuation lines (a plain multi-line scalar, folded like
+ *  `>`). Blank lines inside a folded scalar break it (folded) or pass
+ *  through (literal); trailing whitespace is trimmed either way. */
+export function frontmatterDescription(text: string): string | null {
+  if (!text.startsWith("---")) return null;
+  const firstBreak = text.indexOf("\n");
+  if (firstBreak === -1) return null;
+  const lines = text.slice(firstBreak + 1).split("\n");
+  const keyLine = lines.findIndex((l) => l === "---" || l === "...");
+  if (keyLine === -1) return null;
+  const front = lines.slice(0, keyLine);
+  const idx = front.findIndex((l) => /^description:(?:\s|$)/.test(l));
+  if (idx === -1) return null;
+  const inline = front[idx]!.slice("description:".length).trim();
+  const body = front.slice(idx + 1);
+  const block = blockScalar(inline, body);
+  if (block !== null) return block;
+  if (inline !== "") return unquote(inline);
+  // Bare key: the indented lines under it are the scalar (plain multi-line).
+  return foldPlain(body);
+}
+
+/** A block scalar's folded/literal text, null when `inline` does not name
+ *  one (or the continuation lines are all empty). */
+function blockScalar(inline: string, body: string[]): string | null {
+  const match = /^[>|][+-]?$/.exec(inline);
+  if (match === null) return null;
+  const literal = inline[0] === "|";
+  const parts: string[] = [];
+  let blanks = 0;
+  for (const raw of body) {
+    if (raw.trim() === "") {
+      blanks += 1; // a blank line is a paragraph break, not the scalar's end
+      continue;
+    }
+    if (!/^\s/.test(raw)) break; // de-indented line: the next key
+    if (parts.length > 0) parts.push(literal ? "\n".repeat(blanks + 1) : blanks > 0 ? "\n" : " ");
+    blanks = 0;
+    parts.push(raw.trim());
+  }
+  if (parts.length === 0) return null;
+  return parts.join("").trim();
+}
+
+/** A plain multi-line scalar: the indented lines under a bare key,
+ *  folded with spaces (blank lines become newlines). Null when empty. */
+function foldPlain(body: string[]): string | null {
+  const parts: string[] = [];
+  let blanks = 0;
+  for (const raw of body) {
+    if (raw.trim() === "") {
+      blanks += 1;
+      continue;
+    }
+    if (!/^\s/.test(raw)) break;
+    if (parts.length > 0) parts.push(blanks > 0 ? "\n" : " ");
+    blanks = 0;
+    parts.push(raw.trim());
+  }
+  if (parts.length === 0) return null;
+  return parts.join("").trim();
+}
+
+/** Strips one level of matching quotes ("…" or '…'). */
+function unquote(value: string): string {
+  return value.replace(/^"([\s\S]*)"$/, "$1").replace(/^'([\s\S]*)'$/, "$1");
+}
+
+/** The document with its frontmatter fence removed (everything after the
+ *  closing `---`); the document itself when there is no fence. */
+export function stripFrontmatter(text: string): string {
+  if (!text.startsWith("---")) return text;
+  const lines = text.split("\n");
+  const close = lines.findIndex((l, i) => i > 0 && (l === "---" || l === "..."));
+  return close === -1 ? text : lines.slice(close + 1).join("\n");
+}
+
 /** Derives an item description from a SKILL.md (first-push registration):
- *  the first non-empty, non-heading line, clipped at 200 chars on a word
- *  boundary (a single word longer than the budget is hard-cut). Empty or
- *  heading-only text yields "". */
+ *  the frontmatter's `description` when present, else the body's first
+ *  non-empty, non-heading line clipped at 200 chars on a word boundary (a
+ *  single word longer than the budget is hard-cut). Empty or heading-only
+ *  text yields "". */
 export function descriptionFromSkillMd(text: string): string {
-  for (const raw of text.split("\n")) {
+  const front = frontmatterDescription(text);
+  if (front !== null && front !== "") return front;
+  for (const raw of stripFrontmatter(text).split("\n")) {
     const line = raw.trim();
     if (line === "" || line.startsWith("#")) continue;
     if (line.length <= 200) return line;
@@ -615,6 +700,15 @@ export class SkillRuntime {
       await objects.put(key, bundle);
     } catch (error) {
       return this.errorResult(`object store write failed: ${(error as Error).message}`);
+    }
+    // Publishing auto-installs for the pusher (pinned at the pushed
+    // version; a later push re-pins) — the same record a manual install
+    // writes, so the skill is in the caller's chat surface immediately.
+    try {
+      await this.deps.skills.install(orgId, userId, slug, version);
+      await this.deps.events.emit(orgId, "skill.installed", { slug, version, user_id: userId });
+    } catch (error) {
+      this.deps.log.warn(`push auto-install failed for ${slug}: ${(error as Error).message}`);
     }
     try {
       await this.deps.events.emit(orgId, control !== null ? "registry.updated" : "registry.published", {

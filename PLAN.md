@@ -11,6 +11,21 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Publish parses the SKILL.md description; publish auto-installs (2026-10-14).**
+  `descriptionFromSkillMd` (server push path) now reads the frontmatter's
+  `description` first — single-line plain/quoted, block scalars (`>`/`|`
+  with chomping indicators, folded with spaces vs kept newlines), and a
+  bare key with indented continuation lines — falling back to the old
+  first-body-line heuristic (which had grabbed the opening `---` fence as
+  the description). Desktop `parseFrontmatter` (composer local-skill
+  descriptions) reads block scalars the same way. Publishing auto-installs
+  for the publisher in all three paths (editor create, fork, edit; agent
+  push_skill): the same install record + `skill.installed` event + machine
+  sync a manual install takes, pinned at the published version; a later
+  publish by the same user re-pins them to it, other users' pins are
+  untouched (their update-available marker works as before). The live
+  `hubspot-investigate` row's description and manifest were corrected in
+  place, and the pusher got their retroactive install record.
 - **Rail tabs own URLs; tab switch resets the composer (2026-10-13).**
   Each sidebar tab now has its own address: `/chats` (default, `/` aliases
   to it), `/work` (also implied by `/project/<id>`), `/settings` (bare;

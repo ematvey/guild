@@ -321,6 +321,36 @@ describe("descriptionFromSkillMd", () => {
     );
   });
 
+  it("prefers the frontmatter's folded block scalar", () => {
+    const md = [
+      "---",
+      "name: hubspot-investigate",
+      "description: >-",
+      "  Investigate how OUR HubSpot portal works and how it is structured. Use this",
+      "  skill for any question about the CRM: objects, pipelines, record volumes.",
+      "---",
+      "",
+      "# Investigate our HubSpot",
+    ].join("\n");
+    expect(descriptionFromSkillMd(md)).toBe(
+      "Investigate how OUR HubSpot portal works and how it is structured. Use this " +
+        "skill for any question about the CRM: objects, pipelines, record volumes.",
+    );
+  });
+
+  it("reads literal block scalars, quoted and bare-key values", () => {
+    const literal = "---\ndescription: |\n  First line.\n  Second line.\n---\nbody";
+    expect(descriptionFromSkillMd(literal)).toBe("First line.\nSecond line.");
+    expect(descriptionFromSkillMd('---\ndescription: "Quoted text"\n---\n')).toBe("Quoted text");
+    expect(descriptionFromSkillMd("---\ndescription:\n  plain continuation\n  lines here\n---\n")).toBe(
+      "plain continuation lines here",
+    );
+  });
+
+  it("falls back to the body when the frontmatter has no description", () => {
+    expect(descriptionFromSkillMd("---\nname: x\n---\n\nBody line first.")).toBe("Body line first.");
+  });
+
   it("skips heading-only openings and empty text yields empty", () => {
     expect(descriptionFromSkillMd("# Title\n## Sub\n\nReal line here.")).toBe("Real line here.");
     expect(descriptionFromSkillMd("\n\n   \n")).toBe("");
@@ -388,8 +418,9 @@ describe("push_skill", () => {
       ]);
       expect(recorded.emitted.map((e) => e.kind)).toContain("registry.published");
       expect(recorded.puts).toHaveLength(1);
-      // No auto-install — the next read_skill's install-on-use covers it.
-      expect(recorded.installs).toHaveLength(0);
+      // Publish auto-installs for the pusher, pinned at the pushed version.
+      expect(recorded.installs).toEqual([{ orgId: ORG, userId: USER, slug: "hello", version: "v1" }]);
+      expect(recorded.emitted.map((e) => e.kind)).toContain("skill.installed");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
