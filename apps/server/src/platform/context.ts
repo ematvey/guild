@@ -72,6 +72,8 @@ export class PlatformContext {
   readonly kv: KvStore;
   readonly integrations: IntegrationStore;
   readonly integrationSecrets: IntegrationSecretStore;
+  /** User-owned MCP server rows (the user_mcp settings surface + runtime). */
+  readonly userMcp: UserMcpStore;
   /** The real machine/member socket registry (M5 hub core). The M3 harness
    *  lane injects fakes typed against the seam `Hub` interface in hub/index.ts
    *  and casts here in its own tests. */
