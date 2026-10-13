@@ -259,6 +259,15 @@ export function registerSkillRoutes(
     return reply;
   });
 
+  app.get("/api/v1/skills/installs", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    // The caller's own org installs (spec §3): one row per installed
+    // skill, with its pinned version — the local tab's org-installs
+    // list and the context.ts merge read this.
+    sendJson(reply, { installs: await skills.listForUser(user.org_id, user.id) });
+    return reply;
+  });
+
   app.get("/api/v1/skills", async (req, reply) => {
     const user = await requireUser(auth, req);
     const q = queryOne(req, "q") ?? null;
