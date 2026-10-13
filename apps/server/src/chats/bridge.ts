@@ -291,6 +291,9 @@ export class ChatBridge {
         return;
       }
       case "tool_execution_start": {
+        // Nested calls (a codemode script's tools.*) are not transcript
+        // cards: only the model-issued call that owns them is.
+        if (event.parentToolCallId !== undefined) return;
         // The tool-call card (Rust: ToolStarted into the generation stream;
         // the durable harness's tools execute server-side).
         if (state.generationId === null) return;
@@ -304,6 +307,7 @@ export class ChatBridge {
         return;
       }
       case "tool_execution_end": {
+        if (event.parentToolCallId !== undefined) return;
         if (event.entry && !state.handledEntries.has(String(event.entry.id))) {
           state.handledEntries.add(String(event.entry.id));
           const result = event.entry.model?.find((m) => m.role === "toolResult");

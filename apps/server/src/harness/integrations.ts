@@ -262,7 +262,7 @@ export class IntegrationsRuntime {
         // `guild_meta` key — the bridge maps it onto the tool_result event.
         return {
           isError: outcome.isError,
-          content: [{ type: "text", text: outcome.content }],
+          output: [{ type: "text", text: outcome.content }],
           ...(outcome.meta !== undefined && outcome.meta !== null ? { details: { guild_meta: outcome.meta } as unknown as ToolExecutionResult["details"] } : {}),
         };
       },

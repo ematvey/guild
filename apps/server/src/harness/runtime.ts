@@ -16,10 +16,14 @@ import {
   watchEvents,
   type AgentEventStream,
   type Conversation,
+  type Extension,
   type Registry,
+  type ToolRegistration,
 } from "@earendil-works/pi-durable";
+import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createModels, type MutableModels, type UserMessage } from "@earendil-works/pi-ai";
 import { mkdir } from "node:fs/promises";
 import type { Logger } from "pino";
@@ -123,6 +127,13 @@ export class GuildRuntime {
   /** The guild extension object (the per-conversation selection carries
    *  it, resolved by name against the registry). */
   private readonly guildExtension: ReturnType<typeof createGuildExtension>;
+  /** The codemode extension (the `codemode` tool, its nested model tools,
+   *  and the `codemode` prompt section) — one registration object shared
+   *  by every conversation configure, like CodingTools. */
+  private readonly codemodeExtension: Extension;
+  /** The codemode scripts' QuickJS sandbox (one per process; a worker
+   *  thread per script, 300 s deadline, no memory cap beyond wasm32). */
+  private readonly codemodeSandbox = new CodemodeSandbox();
 
   constructor(
     private readonly config: Config,
@@ -213,10 +224,21 @@ export class GuildRuntime {
       log,
     });
     // Registry: the built-in tasks + the guild prompt section + the coding
-    // tools (spec decision 12: built-in coding tools enabled).
+    // tools (spec decision 12: built-in coding tools enabled) + codemode.
     this.guildExtension = createGuildExtension(this.extensionDeps());
     this.registry.install(this.guildExtension);
     this.registry.install(CodingTools);
+    this.codemodeExtension = createCodemodeExtension({ sandbox: this.codemodeSandbox });
+    this.registry.install(this.codemodeExtension);
+  }
+
+  /** The base conversation configuration: the guild, coding, and codemode
+   *  extensions with their tools — every configure starts from this. */
+  private baseConfiguration(): { extensions: readonly Extension[]; tools: readonly ToolRegistration[] } {
+    return {
+      extensions: [this.guildExtension, CodingTools, this.codemodeExtension],
+      tools: [...(CodingTools.tools ?? []), ...this.skillsRuntime.tools(), ...(this.codemodeExtension.tools ?? [])],
+    };
   }
 
   private masterKey(): Buffer {
@@ -370,7 +392,7 @@ export class GuildRuntime {
       models: this.models,
       registry: this.registry,
       settings: {
-        extensions: [this.registry.snapshot().extension("guild")!, CodingTools],
+        extensions: [this.registry.snapshot().extension("guild")!, CodingTools, this.codemodeExtension],
         // Decision 12: automatic background compaction on (built-in default
         // thresholds), steering/follow-ups on (the inbox boundary places
         // queued inputs; "one-at-a-time" keeps turn semantics).
@@ -495,16 +517,18 @@ export class GuildRuntime {
     // the exact previous configure behavior.
     const prepared = await this.integrationsRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
     const userPrepared = await this.userMcpRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
-    if (prepared.action === "configure" || userPrepared.action === "configure") {
+    // A "clear" must still reconfigure — it drops that runtime's stale
+    // extension — so the conversation is left untouched only when both
+    // runtimes have never configured it and have nothing to add now.
+    if (prepared.action !== "none" || userPrepared.action !== "none") {
+      const base = this.baseConfiguration();
       await conversation.configure(
         {
-          extensions: [this.guildExtension, CodingTools, ...prepared.extensions, ...userPrepared.extensions],
-          tools: [...(CodingTools.tools ?? []), ...this.skillsRuntime.tools(), ...prepared.tools, ...userPrepared.tools],
+          extensions: [...base.extensions, ...prepared.extensions, ...userPrepared.extensions],
+          tools: [...base.tools, ...prepared.tools, ...userPrepared.tools],
         },
         BACKGROUND_CONTEXT,
       );
-    } else if (prepared.action === "clear" && userPrepared.action === "clear") {
-      await conversation.configure({ extensions: null, tools: null }, BACKGROUND_CONTEXT);
     }
     // The combined skills index section renders at turn start from the
     // stash; a turn whose client sent no index re-renders from the server
@@ -608,6 +632,7 @@ export class GuildRuntime {
     this.watches.clear();
     if (this.harness) await this.harness.close(BACKGROUND_CONTEXT).catch(() => {});
     if (this.storage) await this.storage.close(BACKGROUND_CONTEXT).catch(() => {});
+    await this.codemodeSandbox.close().catch(() => {});
   }
 }
 
