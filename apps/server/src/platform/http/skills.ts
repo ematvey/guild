@@ -251,6 +251,14 @@ export function registerSkillRoutes(
     return reply;
   });
 
+  app.get("/api/v1/skills/teams", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    // The caller's team memberships (spec §1.2): the editor's owner
+    // selector offers Me plus one option per team.
+    sendJson(reply, { teams: await auth.teams.listTeamsForUser(user.org_id, user.id) });
+    return reply;
+  });
+
   app.get("/api/v1/skills", async (req, reply) => {
     const user = await requireUser(auth, req);
     const q = queryOne(req, "q") ?? null;

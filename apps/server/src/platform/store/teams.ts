@@ -132,6 +132,16 @@ export class TeamStore {
     return res.rows.length > 0;
   }
 
+  /** The user's teams in the org (the skill editor's owner selector). */
+  async listTeamsForUser(orgId: string, userId: string): Promise<Array<{ id: string; name: string }>> {
+    const res = await this.pool.query(
+      "SELECT t.id, t.name FROM team_members m JOIN teams t ON t.id = m.team_id " +
+      "WHERE t.org_id = $1 AND m.user_id = $2 ORDER BY t.name",
+      [orgId, userId],
+    );
+    return res.rows.map((r: Record<string, unknown>) => ({ id: r.id as string, name: r.name as string }));
+  }
+
   private async teamInOrg(orgId: string, teamId: string): Promise<boolean> {
     const res = await this.pool.query("SELECT org_id FROM teams WHERE id = $1", [teamId]);
     return res.rows[0]?.org_id === orgId;

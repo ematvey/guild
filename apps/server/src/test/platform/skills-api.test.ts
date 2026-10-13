@@ -295,4 +295,27 @@ describe("skills api", () => {
     const pinned = await inject("GET", "/api/v1/skills/ver-skill/source", e.memberToken);
     expect((pinned.json() as { version: string }).version).toBe("v2");
   });
+
+  it("GET /skills/teams lists the caller's memberships only", async () => {
+    const mine = await inject("POST", "/api/v1/admin/teams", e.adminToken, { name: "selector-mine" });
+    const other = await inject("POST", "/api/v1/admin/teams", e.adminToken, { name: "selector-other" });
+    expect(mine.statusCode).toBe(200);
+    expect(other.statusCode).toBe(200);
+    const mineId = (mine.json() as { id: string }).id;
+    const add = await inject("POST", `/api/v1/admin/teams/${mineId}/members`, e.adminToken, { user_id: e.memberId });
+    expect(add.statusCode).toBe(200);
+
+    const list = await inject("GET", "/api/v1/skills/teams", e.memberToken);
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toEqual({ teams: [{ id: mineId, name: "selector-mine" }] });
+
+    // A member with no memberships gets an empty list, not an error.
+    const none = await inject("GET", "/api/v1/skills/teams", e.member2Token);
+    expect(none.statusCode).toBe(200);
+    expect(none.json()).toEqual({ teams: [] });
+
+    // Unauthenticated callers are rejected like any other user route.
+    const anon = await e.env.app.inject({ method: "GET", url: "/api/v1/skills/teams" });
+    expect(anon.statusCode).toBe(401);
+  });
 });
