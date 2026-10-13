@@ -578,7 +578,14 @@ pub(crate) async fn submit_turn(
         &modalities,
     )
     .await?;
-    let command = store
+    // Reserve the generation before the accept's thread-state capture: the
+    // state that echoes the new user_message must already say generating,
+    // or the client drops its optimistic spinner in the window before the
+    // worker starts (the Working indicator blinks off and back on). A
+    // running turn keeps its own entry (reservation skipped — the command
+    // queues, as before); a failed accept releases the reservation.
+    let reservation = state.generations.try_begin_with_id(req.chat_id, command_id).ok();
+    let command = match store
         .turn_commands()
         .accept(
             command_id,
@@ -589,7 +596,16 @@ pub(crate) async fn submit_turn(
             serde_json::to_value(&payload).expect("payload serializes"),
             &event,
         )
-        .await?;
+        .await
+    {
+        Ok(command) => command,
+        Err(e) => {
+            if reservation.is_some() {
+                state.generations.remove_if_id(req.chat_id, command_id);
+            }
+            return Err(e);
+        }
+    };
     if req.send_mode.as_deref() == Some("steer") {
         if let Some(cancel) = generation_cancel(state, req.chat_id) {
             cancel.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -624,11 +640,15 @@ fn command_ack(command: &crate::store::turn_commands::TurnCommand) -> serde_json
 pub async fn dispatch_turn_commands(state: &AppState, chat: Option<Uuid>) -> Result<(), ApiError> {
     let store = state.store().await?;
     for command in store.turn_commands().pending_heads(chat).await? {
-        let Ok(reservation) = state
-            .generations
-            .try_begin_with_id(command.chat_id, command.id)
-        else {
-            continue;
+        // A reservation under this command's id is the submit path's own
+        // acceptance-time reservation — reuse it. A different id means
+        // another turn owns the chat: leave the command queued for the pump.
+        let reservation = match state.generations.try_begin_with_id(command.chat_id, command.id) {
+            Ok(reservation) => reservation,
+            Err(_) => match state.generations.handle(command.chat_id) {
+                Some(handle) if handle.id == command.id => handle,
+                _ => continue,
+            },
         };
         let result: Result<(), ApiError> = async {
             let current = store
