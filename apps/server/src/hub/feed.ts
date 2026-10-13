@@ -363,8 +363,7 @@ export async function threadListSnapshot(chats: ChatsCtx, pool: PlatformPool, us
             c.generating = false AND EXISTS (
               SELECT 1 FROM thread_events e
               WHERE e.chat_id = c.id AND e.type = 'assistant_message'
-                AND (r.last_read_event_id IS NULL OR e.seq > (
-                  SELECT m.seq FROM thread_events m WHERE m.id = r.last_read_event_id))) AS unread
+                AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq)) AS unread
      FROM chats c
      LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
      LEFT JOIN projects pr ON pr.id = c.project_id
