@@ -23,7 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { Skeleton } from "@guild/ui/components/skeleton";
-import type { ChatSummary, Project } from "../transport";
+import type { ChatSummary, MachineInfo, Project } from "../transport";
 import {
   PROJECT_PAGE_INITIAL,
   PROJECT_PAGE_STEP,
@@ -221,6 +221,7 @@ function ChatListItem({
 function ProjectHeader({
   name,
   folder,
+  machine,
   status,
   open,
   onToggle,
@@ -230,6 +231,10 @@ function ProjectHeader({
 }: {
   name: string;
   folder: string;
+  /** The machine the project is bound to: its name rides the row title
+   *  with an online/offline dot (hidden while the socket state is
+   *  unknown — e.g. the machines list has not landed yet). */
+  machine?: { name: string | null; online: boolean | undefined };
   /** Aggregate over the project's chats: the same status treatment the
    * chat rows use (generating spinner wins over the unread dot). */
   status: { generating: boolean; unread: boolean };
@@ -264,6 +269,20 @@ function ProjectHeader({
         className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
       />
       <FadeTitle text={name} />
+      {machine?.name && (
+        <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground/70">
+          {machine.online !== undefined &&
+            (machine.online ? (
+              <span className="relative flex size-1.5 shrink-0">
+                <span className="absolute inline-flex size-1.5 animate-ping rounded-full bg-emerald-500/60" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+              </span>
+            ) : (
+              <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
+            ))}
+          <span className="max-w-20 truncate">{machine.name}</span>
+        </span>
+      )}
       {status.generating ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
       ) : status.unread ? (
@@ -297,7 +316,7 @@ function ProjectHeader({
 }
 
 /** Collapse button shared by every panel header (desktop only). */
-function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
+export function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
   return onCollapse ? (
     <Button
       variant="ghost"
@@ -344,17 +363,27 @@ export function ChatsPanel({
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
         {/* The workspace switcher lives on the rail's first button; the panel
-            header keeps the static app name. */}
-        <span className="font-semibold">Guild</span>
-        <CollapseButton onCollapse={onCollapse} />
+            header names the tab and carries the new-chat plus, like the
+            Projects panel. */}
+        <span className="font-semibold">Chats</span>
+        <span className="flex items-center gap-1">
+          <span
+            role="button"
+            tabIndex={0}
+            title="New chat"
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={onNewChat}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") onNewChat();
+            }}
+          >
+            <Plus className="size-4" />
+          </span>
+          <CollapseButton onCollapse={onCollapse} />
+        </span>
       </div>
-      <div className="px-2">
-        <Button variant="ghost" className="w-full justify-start gap-2" onClick={onNewChat}>
-          <Plus /> New chat
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pt-2">
-        <div className="space-y-0.5 pb-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2">
+        <div className="space-y-0.5 pb-2 pt-2">
           {loadingChats &&
             [0, 1, 2, 3, 4].map((i) => (
               <Skeleton key={i} className="h-8 w-full rounded-md" style={{ opacity: 1 - i * 0.15 }} />
@@ -418,6 +447,7 @@ export function ChatsPanel({
 export function WorkPanel({
   grouping,
   projects,
+  machines,
   chatId,
   onOpenChat,
   onCollapse,
@@ -430,6 +460,9 @@ export function WorkPanel({
 }: {
   grouping: ReturnType<typeof sidebarGrouping>;
   projects: Project[] | null;
+  /** Registered machines with their live socket state — feeds each
+   *  project row's machine label + online/offline dot. */
+  machines?: MachineInfo[] | null;
   chatId: string | null;
   onOpenChat: (id: string) => void;
   onCollapse?: () => void;
@@ -474,11 +507,17 @@ export function WorkPanel({
             const open = !!expanded[p.id];
             const chats = grouping.chatsByProject[p.id] ?? [];
             const limit = limits[p.id] ?? PROJECT_PAGE_INITIAL;
+            const machine = machines?.find((m) => m.machine_id === p.machine_id);
             return (
               <div key={p.id}>
                 <ProjectHeader
                   name={p.name}
                   folder={p.folder}
+                  machine={
+                    machine || p.machine_label
+                      ? { name: machine?.name ?? p.machine_label ?? null, online: machine?.connected }
+                      : undefined
+                  }
                   status={{
                     generating: chats.some((c) => !!c.generating),
                     unread: chats.some((c) => !!c.unread),

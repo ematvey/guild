@@ -60,27 +60,17 @@ services:
       mc mb --ignore-existing local/guild
       "
 
-  restate:
-    image: docker.io/restatedev/restate@sha256:6893750bdd261030529a507e9e0fd9df00ac0af8b24e650026b0b2df9ae34cbe
-    restart: unless-stopped
-    environment:
-      RESTATE_NODE_NAME: ${GUILD_RESTATE_NODE_NAME:-guild-restate}
-    volumes:
-      - restate_data:/restate-data
-    # Ingress stays internal (worker role talks to it over the compose
-    # network); the admin/UI port is published loopback-only — it can
-    # register deployments, kill invocations and read journals, so it must
-    # never be reachable off-host. Operators tunnel in.
-    ports:
-      - "127.0.0.1:${GUILD_RESTATE_ADMIN_PORT:-9070}:9070"
-
   server:
-    # explicit tag: the default (compose-server) collides with other projects
-    # that also use a "compose/compose" layout and steals the tag on rebuild
-    image: guild-server:latest
+    # The TS server (apps/server) is the only server: it serves the whole
+    # public surface (HTTP + the hub WS upgrade) — gateway, chats/turns on
+    # pi-durable, hub machine links, registry/releases, projects, teams,
+    # admin, integrations, web UI. Deferred surfaces (routines, hooks,
+    # internal) answer a clean 404. Host services (postgres/clickhouse/
+    # rustfs) are external — no compose service deps.
+    image: ${GUILD_TS_SERVER_IMAGE:-guild-server-ts:latest}
     build:
       context: ../..
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.server-ts
     restart: unless-stopped
     ports:
       - "${GUILD_HTTP_PORT:-8080}:8080"
@@ -89,14 +79,12 @@ services:
       # reach the host-published shared services (postgres/clickhouse/rustfs)
       - "host.docker.internal:host-gateway"
     volumes:
+      # GUILD_DATA_DIR: the server-side workspace sessions root
+      # (workspaces/<org>/<name>).
       - guild_data:/data
-    depends_on:
-      restate:
-        condition: service_started
 
 volumes:
   pgdata:
   chdata:
   miniodata:
   guild_data:
-  restate_data:

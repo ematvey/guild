@@ -1,0 +1,1002 @@
+{
+  "captured_at": "2026-10-03T22:26:30.195Z",
+  "upstream": "http://server-rust:8080",
+  "fixtures": [
+    {
+      "name": "login-wrong-password",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"email\":\"m1cap-admin-07db71@example.test\",\"password\":\"wrong-password\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"invalid_credentials\",\"message\":\"invalid email or password\"}}"
+      }
+    },
+    {
+      "name": "login-missing-email",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"password\":\"x\"}"
+      },
+      "response": {
+        "status": 422,
+        "headers": {},
+        "body": "Failed to deserialize the JSON body into the target type: missing field `email` at line 1 column 16"
+      }
+    },
+    {
+      "name": "login-missing-password",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"email\":\"m1cap-admin-07db71@example.test\"}"
+      },
+      "response": {
+        "status": 422,
+        "headers": {},
+        "body": "Failed to deserialize the JSON body into the target type: missing field `password` at line 1 column 43"
+      }
+    },
+    {
+      "name": "login-invalid-json",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{not json"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "Failed to parse the request body as JSON: key must be a string at line 1 column 2"
+      }
+    },
+    {
+      "name": "login-no-content-type",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": {},
+        "body": "{\"email\":\"m1cap-admin-07db71@example.test\",\"password\":\"m1capture-Pw1!\"}"
+      },
+      "response": {
+        "status": 415,
+        "headers": {},
+        "body": "Expected request with `Content-Type: application/json`"
+      }
+    },
+    {
+      "name": "login-ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"email\":\"m1cap-admin-07db71@example.test\",\"password\":\"m1capture-Pw1!\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"token\":\"SYNTH-ADMIN-TOKEN-1\",\"user\":{\"id\":\"0f4e7582-aa2b-4276-9b53-24f7c8a597f8\",\"email\":\"m1cap-admin-07db71@example.test\",\"org_id\":\"b0b8a541-7fd9-48ff-bf82-ed93f178cbaf\",\"role\":\"admin\",\"display_name\":null,\"avatar_url\":null}}"
+      }
+    },
+    {
+      "name": "login-member",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"email\":\"m1cap-member-07db71@example.test\",\"password\":\"m1capture-Pw1!\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"token\":\"SYNTH-MEMBER-TOKEN-1\",\"user\":{\"id\":\"6696a409-4667-4b29-b860-44d935c0ec01\",\"email\":\"m1cap-member-07db71@example.test\",\"org_id\":\"b0b8a541-7fd9-48ff-bf82-ed93f178cbaf\",\"role\":\"member\",\"display_name\":null,\"avatar_url\":null}}"
+      }
+    },
+    {
+      "name": "me-ok",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/auth/me",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"id\":\"0f4e7582-aa2b-4276-9b53-24f7c8a597f8\",\"email\":\"m1cap-admin-07db71@example.test\",\"org_id\":\"b0b8a541-7fd9-48ff-bf82-ed93f178cbaf\",\"role\":\"admin\",\"display_name\":null,\"avatar_url\":null}"
+      }
+    },
+    {
+      "name": "me-no-header",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/auth/me",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"missing authorization header\"}}"
+      }
+    },
+    {
+      "name": "me-not-bearer",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/auth/me",
+        "headers": {
+          "authorization": "Basic SYNTH-ADMIN-TOKEN-1"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"expected Bearer token\"}}"
+      }
+    },
+    {
+      "name": "me-bad-token",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/auth/me",
+        "headers": {
+          "authorization": "Bearer deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"invalid or expired session\"}}"
+      }
+    },
+    {
+      "name": "bootstrap-missing-email",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/bootstrap",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"password\":\"longenough1\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"missing email\"}}"
+      }
+    },
+    {
+      "name": "bootstrap-short-password",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/bootstrap",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"email\":\"x@example.test\",\"password\":\"short\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"password must be at least 8 characters\"}}"
+      }
+    },
+    {
+      "name": "bootstrap-already",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/bootstrap",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"email\":\"x@example.test\",\"password\":\"longenough1\"}"
+      },
+      "response": {
+        "status": 409,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"already_bootstrapped\",\"message\":\"org already has users\"}}"
+      }
+    },
+    {
+      "name": "bootstrap-invalid-json",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/bootstrap",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1"
+      }
+    },
+    {
+      "name": "refresh-ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/refresh",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"token\":\"SYNTH-ADMIN-TOKEN-1\"}"
+      }
+    },
+    {
+      "name": "refresh-bad-token",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/refresh",
+        "headers": {
+          "authorization": "Bearer deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"invalid or expired session\"}}"
+      }
+    },
+    {
+      "name": "relogin",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"email\":\"m1cap-admin-07db71@example.test\",\"password\":\"m1capture-Pw1!\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"token\":\"SYNTH-ADMIN-TOKEN-2\",\"user\":{\"id\":\"0f4e7582-aa2b-4276-9b53-24f7c8a597f8\",\"email\":\"m1cap-admin-07db71@example.test\",\"org_id\":\"b0b8a541-7fd9-48ff-bf82-ed93f178cbaf\",\"role\":\"admin\",\"display_name\":null,\"avatar_url\":null}}"
+      }
+    },
+    {
+      "name": "logout-bad-token",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/logout",
+        "headers": {
+          "authorization": "Bearer deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"invalid or expired session\"}}"
+      }
+    },
+    {
+      "name": "logout-ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/logout",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN2"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"ok\":true}"
+      }
+    },
+    {
+      "name": "me-after-logout",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/auth/me",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN2"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"invalid or expired session\"}}"
+      }
+    },
+    {
+      "name": "pair-malformed-code",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/pair",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"code\":\"not-a-code\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"malformed pairing code\"}}"
+      }
+    },
+    {
+      "name": "pair-unknown-secret",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/pair",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"code\":\"g1|http://localhost:18080|abababababababababababababababababababababababababababababababab\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"invalid or expired pairing code\"}}"
+      }
+    },
+    {
+      "name": "pairing-token-create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/pairing-tokens",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1",
+          "content-type": "application/json"
+        },
+        "body": "{}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"id\":\"01a103e0-3e89-768d-88df-d30832cba02f\",\"secret\":\"SYNTH-PT-SECRET-1\",\"expires_at\":\"2026-10-03T22:56:30.153275Z\"}"
+      }
+    },
+    {
+      "name": "pairing-token-create-clamped",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/pairing-tokens",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1",
+          "content-type": "application/json"
+        },
+        "body": "{\"ttl_minutes\":99999}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"id\":\"01a103e0-3e8b-729e-941f-bf7266b0fde0\",\"secret\":\"SYNTH-PT-SECRET-2\",\"expires_at\":\"2026-10-04T22:26:30.155411Z\"}"
+      }
+    },
+    {
+      "name": "pairing-token-unauthorized",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/pairing-tokens",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{}"
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"missing authorization header\"}}"
+      }
+    },
+    {
+      "name": "pairing-token-list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/auth/pairing-tokens",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"tokens\":[{\"created_at\":\"2026-10-03T22:26:30.155456Z\",\"expires_at\":\"2026-10-04T22:26:30.155411Z\",\"id\":\"01a103e0-3e8b-729e-941f-bf7266b0fde0\"},{\"created_at\":\"2026-10-03T22:26:30.153327Z\",\"expires_at\":\"2026-10-03T22:56:30.153275Z\",\"id\":\"01a103e0-3e89-768d-88df-d30832cba02f\"}]}"
+      }
+    },
+    {
+      "name": "pairing-token-revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/auth/pairing-tokens/01a103e0-3e8b-729e-941f-bf7266b0fde0",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{}"
+      }
+    },
+    {
+      "name": "pairing-token-revoke-again",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/auth/pairing-tokens/01a103e0-3e8b-729e-941f-bf7266b0fde0",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no such pairing token\"}}"
+      }
+    },
+    {
+      "name": "pairing-token-revoke-bad-uuid",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/auth/pairing-tokens/not-a-uuid",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "Invalid URL: Cannot parse `id` with value `not-a-uuid`: UUID parsing failed: invalid character: found `n` at 0"
+      }
+    },
+    {
+      "name": "pair-ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/pair",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"code\":\"g1|http://localhost:18080|SYNTH-PT-SECRET-1\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"token\":\"SYNTH-PAIR-TOKEN\",\"user\":{\"id\":\"0f4e7582-aa2b-4276-9b53-24f7c8a597f8\",\"email\":\"m1cap-admin-07db71@example.test\",\"org_id\":\"b0b8a541-7fd9-48ff-bf82-ed93f178cbaf\",\"role\":\"admin\",\"display_name\":null,\"avatar_url\":null}}"
+      }
+    },
+    {
+      "name": "pair-reused-code",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/pair",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"code\":\"g1|http://localhost:18080|SYNTH-PT-SECRET-1\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"invalid or expired pairing code\"}}"
+      }
+    },
+    {
+      "name": "events-list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/events",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"events\":[{\"created_at\":\"2026-10-03T22:17:07.843001Z\",\"id\":\"a53951c4-6837-422f-996d-486860ef2841\",\"kind\":\"member.joined\",\"org_id\":\"b0b8a541-7fd9-48ff-bf82-ed93f178cbaf\",\"payload\":{\"email\":\"m1cap-admin-07db71@example.test\",\"user_id\":\"0f4e7582-aa2b-4276-9b53-24f7c8a597f8\"}}]}"
+      }
+    },
+    {
+      "name": "events-unauthorized",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"missing authorization header\"}}"
+      }
+    },
+    {
+      "name": "org-get",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/org",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"logo_url\":null,\"name\":\"m1-capture org\"}"
+      }
+    },
+    {
+      "name": "org-put-missing-name",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/org",
+        "headers": {
+          "content-type": "application/json",
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "{}"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"missing name\"}}"
+      }
+    },
+    {
+      "name": "org-put-member-forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/org",
+        "headers": {
+          "content-type": "application/json",
+          "authorization": "Bearer REDACTED-MEMBER1"
+        },
+        "body": "{\"name\":\"nope\"}"
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"forbidden\",\"message\":\"admin role required\"}}"
+      }
+    },
+    {
+      "name": "org-put-ok",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/org",
+        "headers": {
+          "content-type": "application/json",
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "{\"name\":\"  renamed org  \"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"name\":\"renamed org\",\"ok\":true}"
+      }
+    },
+    {
+      "name": "org-put-too-long",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/org",
+        "headers": {
+          "content-type": "application/json",
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "{\"name\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"name too long (max 100 chars)\"}}"
+      }
+    },
+    {
+      "name": "org-logo-get-unknown-org",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/orgs/11111111-2222-3333-4444-555555555555/logo",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"organization not found\"}}"
+      }
+    },
+    {
+      "name": "org-logo-get-none",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/orgs/b0b8a541-7fd9-48ff-bf82-ed93f178cbaf/logo",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no logo set\"}}"
+      }
+    },
+    {
+      "name": "org-logo-put-unsupported",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/org/logo?content_type=image/bmp",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "fakepng"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"unsupported image type (png, jpeg, webp, gif, svg)\"}}"
+      }
+    },
+    {
+      "name": "org-logo-put-member-forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/org/logo?content_type=image/png",
+        "headers": {
+          "authorization": "Bearer REDACTED-MEMBER1"
+        },
+        "body": "fakepng"
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"forbidden\",\"message\":\"admin role required\"}}"
+      }
+    },
+    {
+      "name": "org-logo-put-ok",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/org/logo?content_type=image/png",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "fake-png-bytes"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"logo_url\":\"/api/v1/orgs/b0b8a541-7fd9-48ff-bf82-ed93f178cbaf/logo\",\"ok\":true}"
+      }
+    },
+    {
+      "name": "org-logo-download",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/orgs/b0b8a541-7fd9-48ff-bf82-ed93f178cbaf/logo",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "image/png",
+          "cache-control": "public, max-age=60"
+        },
+        "body": "fake-png-bytes"
+      }
+    },
+    {
+      "name": "org-logo-clear",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/org/logo",
+        "headers": {
+          "authorization": "Bearer REDACTED-MEMBER1"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"forbidden\",\"message\":\"admin role required\"}}"
+      }
+    },
+    {
+      "name": "org-logo-clear-ok",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/org/logo",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"ok\":true}"
+      }
+    },
+    {
+      "name": "oidc-status",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/auth/oidc/status",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"configured\":true,\"org_id\":\"11111111-1111-4111-8111-111111111111\"}"
+      }
+    },
+    {
+      "name": "oidc-admin-config-get",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/oidc",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"configured\":false,\"redirect_uri\":\"https://guild.example.com/api/v1/auth/oidc/callback\"}"
+      }
+    },
+    {
+      "name": "oidc-admin-config-put-missing-issuer",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/oidc",
+        "headers": {
+          "content-type": "application/json",
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "{\"client_id\":\"cid\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"missing issuer\"}}"
+      }
+    },
+    {
+      "name": "oidc-admin-config-put-member",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/oidc",
+        "headers": {
+          "content-type": "application/json",
+          "authorization": "Bearer REDACTED-MEMBER1"
+        },
+        "body": "{\"issuer\":\"https://idp.example.test\",\"client_id\":\"cid\"}"
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"forbidden\",\"message\":\"admin role required\"}}"
+      }
+    },
+    {
+      "name": "oidc-login-missing-nonce",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/auth/oidc/login?org_id=b0b8a541-7fd9-48ff-bf82-ed93f178cbaf",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"missing or invalid login nonce\"}}"
+      }
+    },
+    {
+      "name": "oidc-login-bad-org",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/auth/oidc/login?org_id=b0b8a541-7fd9-48ff-bf82-ed93f178cbaf&nonce=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no oidc config for org\"}}"
+      }
+    },
+    {
+      "name": "attachment-upload-ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/chats/0602197d-1698-4930-bafd-f13235f9b8ab/attachments?filename=note.txt&content_type=text/plain",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "hello attachment"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"chat_id\":\"0602197d-1698-4930-bafd-f13235f9b8ab\",\"content_type\":\"text/plain\",\"created_at\":\"2026-10-03T22:26:30.187673Z\",\"filename\":\"note.txt\",\"id\":\"01a103e0-3eaa-7177-a017-af844c725c9a\",\"org_id\":\"b0b8a541-7fd9-48ff-bf82-ed93f178cbaf\",\"size_bytes\":16}"
+      }
+    },
+    {
+      "name": "attachment-upload-bad-filename",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/chats/0602197d-1698-4930-bafd-f13235f9b8ab/attachments",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "x"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"bad filename\"}}"
+      }
+    },
+    {
+      "name": "attachment-upload-dotfile",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/chats/0602197d-1698-4930-bafd-f13235f9b8ab/attachments?filename=.hidden",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "x"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"bad filename\"}}"
+      }
+    },
+    {
+      "name": "attachment-upload-long-filename",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/chats/0602197d-1698-4930-bafd-f13235f9b8ab/attachments?filename=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "x"
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"bad filename\"}}"
+      }
+    },
+    {
+      "name": "attachment-upload-unknown-chat",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/chats/11111111-2222-3333-4444-555555555555/attachments?filename=a.txt",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        },
+        "body": "x"
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no such chat\"}}"
+      }
+    },
+    {
+      "name": "attachment-list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/chats/0602197d-1698-4930-bafd-f13235f9b8ab/attachments",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\"attachments\":[{\"chat_id\":\"0602197d-1698-4930-bafd-f13235f9b8ab\",\"content_type\":\"text/plain\",\"created_at\":\"2026-10-03T22:26:30.187673Z\",\"filename\":\"note.txt\",\"id\":\"01a103e0-3eaa-7177-a017-af844c725c9a\",\"org_id\":\"b0b8a541-7fd9-48ff-bf82-ed93f178cbaf\",\"size_bytes\":16}]}"
+      }
+    },
+    {
+      "name": "attachment-list-member-other-chat",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/chats/0602197d-1698-4930-bafd-f13235f9b8ab/attachments",
+        "headers": {
+          "authorization": "Bearer REDACTED-MEMBER1"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no such chat\"}}"
+      }
+    },
+    {
+      "name": "attachment-download",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/attachments/01a103e0-3eaa-7177-a017-af844c725c9a",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/plain",
+          "content-disposition": "attachment; filename=\"note.txt\""
+        },
+        "body": {
+          "base64": "aGVsbG8gYXR0YWNobWVudA==",
+          "length": 16
+        }
+      }
+    },
+    {
+      "name": "attachment-download-member-forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/attachments/01a103e0-3eaa-7177-a017-af844c725c9a",
+        "headers": {
+          "authorization": "Bearer REDACTED-MEMBER1"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no such chat\"}}"
+      }
+    },
+    {
+      "name": "attachment-download-unknown",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/attachments/11111111-2222-3333-4444-555555555555",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no such attachment\"}}"
+      }
+    },
+    {
+      "name": "attachment-download-bad-uuid",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/attachments/not-a-uuid",
+        "headers": {
+          "authorization": "Bearer REDACTED-ADMIN1"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": "Invalid URL: Cannot parse `id` with value `not-a-uuid`: UUID parsing failed: invalid character: found `n` at 0"
+      }
+    }
+  ]
+}

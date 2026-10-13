@@ -48,25 +48,22 @@ Two different "Guild" stacks exist on this host. **Don't confuse them.**
 ### The real one: compose stack on :18080
 
 - Compose project: `~/guild/deploy/compose` (`docker-compose.yml` there).
-- Running containers: `compose-server-1`, `compose-restate-1`. The infra
-  services (postgres/clickhouse/minio) exist in the compose file behind the
+- Running container: `compose-server-1` (the TS server). The infra services
+  (postgres/clickhouse/minio) exist in the compose file behind the
   `fullstack` profile as a self-contained fallback and are **stopped**
   (`compose-postgres-1` etc.); the server reads config.env pointing at the
   host services (§0).
 - `compose-server-1` publishes **0.0.0.0:18080 → 8080** (that's the chat app
-  + API everything points at) and Restate admin is published on **9070**.
+  + API everything points at).
 - Config: `deploy/compose/config.env` (gitignored — holds real secrets:
   `GUILD_MASTER_KEY_HEX`, `GUILD_JWT_SECRET`). `GUILD_HTTP_PORT=18080`
   because 8080 is already taken on this host. DB/CH/S3 URLs use
   `host.docker.internal:5432/8123/9950`.
 - Server state lives in the named volume `guild_data` (`/data` inside the
-  container). Restate journals live in `restate_data` mounted at
-  `/restate-data`. The fullstack fallback volumes (`pgdata`, `chdata`,
-  `miniodata`) still hold the pre-cutover data — keep until confident.
+  container — `GUILD_DATA_DIR`, the server-side workspace sessions root).
+  The fullstack fallback volumes (`pgdata`, `chdata`, `miniodata`) still
+  hold the pre-cutover data — keep until confident.
   `docker compose down -v` destroys all of it.
-- Single-container mode: `GUILD_ROLE=all` (HTTP + worker roles in one
-  binary; worker binds 9080 internally, Restate ingress is compose-internal,
-  only the Restate admin port is published).
 
 ### The stale one: legacy Node stack on :9330
 
@@ -88,29 +85,19 @@ once the legacy stack stopped.
 
 ---
 
-## 2. The big gotcha: frontends are embedded in the server binary
+## 2. The big gotcha: the frontend dist is baked into the server IMAGE
 
-`crates/server/src/http/web.rs`:
+The TS server (`apps/server`, `Dockerfile.server-ts`) builds the chat SPA
+in a `webui` stage and serves it from disk at `apps/desktop/dist` inside
+the image (`GUILD_WEB_DIST` default; `apps/server/src/http/web.ts`):
 
-```rust
-static CHAT_DIST: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../apps/desktop/dist");
-static WEB_DIST: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../apps/webui/dist");
-```
-
-Consequences:
-
-- **A local `vite build` (or any edit under `apps/*/`) does NOT change what
-  `http://localhost:18080` serves.** The running container serves whatever
-  was compiled into its binary at Docker image build time. Editing files,
-  rebuilding the frontend locally, even restarting the container — none of
-  it ships frontend changes.
-- `build.rs` only `create_dir_all`s the dist dirs and prints
-  `cargo:rerun-if-changed` — it does not build the frontends. The Dockerfile
-  builds them.
-- The server returns a 503 hint ("run `npm --prefix apps/webui run build`")
-  if a dist dir is empty at compile time.
+- **A local `vite build` (or any edit under `apps/desktop/`) does NOT change
+  what `http://localhost:18080` serves.** The running container serves
+  whatever was baked into its image. Editing files, rebuilding the frontend
+  locally, even restarting the container — none of it ships frontend
+  changes.
+- If the image has no dist, pages answer with the 503 hint ("chat app not
+  built") and the API still works.
 
 ### Shipping a frontend change (the canonical recipe)
 
@@ -119,16 +106,13 @@ cd ~/guild/deploy/compose
 docker compose build server && docker compose up -d server
 ```
 
-- The Dockerfile compiles both frontends inside (stages `webui` and
-  `chatapp`), copies the dists into the Rust build stage, and `cargo build
-  --release -p guild-server` embeds them.
-- Changing anything under `apps/desktop/` invalidates the `chatapp` stage
-  (fresh `npm ci` + `npm run build`) **and** the `COPY --from=chatapp`
-  layer, which invalidates the cargo layer → **full Rust release rebuild
-  inside Docker** (the `target/` dir is not cached across builds). Expect
-  the long pole to be cargo, not npm.
-- Backend-only changes (`crates/`) also invalidate the cargo layer the same
-  way — same recipe, same cost.
+- The image's `webui` stage runs `npm ci --workspace apps/desktop` + `vite
+  build` (it also needs `packages/ui/src` and the generated
+  `crates/protocol/bindings`). Changing anything under `apps/desktop/` or
+  `packages/ui/` invalidates that stage; the TS compile stage is
+  independent, so npm is usually the long pole.
+- Backend changes (`apps/server/src`) invalidate the build stage only —
+  same recipe.
 - For long builds run it detached (see §7).
 
 ### Verify the new bundle actually went live
@@ -139,63 +123,50 @@ curl -s localhost:18080/api/v1/health          # {"status":"ok"}
 ```
 
 A changed asset hash = new bundle. Optionally
-`docker run --rm --entrypoint sh compose-server -c "grep -ac 'SomeNewString'
-/usr/local/bin/guild-server"` to confirm a specific change is embedded.
+`docker run --rm --entrypoint sh compose-server-1 -c "ls /app/apps/desktop/dist/assets |
+head"` to inspect the served bundle directly.
 
 ---
 
-## 3. Dockerfile stage map (`~/guild/Dockerfile`)
+## 3. Dockerfile stage map (`Dockerfile.server-ts` — the live image)
 
 | Stage | Base | Does |
 |---|---|---|
-| `webui` | node:22 | `npm ci --workspace apps/webui` + build (admin console) |
-| `chatapp` | node:22 | `npm ci --workspace apps/desktop` + build (chat UI) |
-| `build` | rust:1.97 | copies `crates`, `apps/desktop/src-tauri`, both dists; `cargo build --release -p guild-server` |
-| runtime | debian:trixie-slim | just the `guild-server` binary + ca-certificates; `ENTRYPOINT ["guild-server"]` |
+| `build` | node:22 | `npm ci --workspace apps/server` + `tsc` (dist compiled at build time) |
+| `webui` | node:22 | `npm ci --workspace apps/desktop` + `vite build` (chat SPA, needs `packages/ui/src` + `crates/protocol/bindings`) |
+| runtime | node:22-slim | production `node_modules` + the server dist + the SPA dist + the static exec-policy rules; `node dist/index.js` |
 
 Notes:
 
 - npm deps are hoisted via root workspaces; each stage copies
-  `package.json`/`package-lock.json` + `packages/ui` + its app only —
-  **adding a dependency to one app requires the lockfile update to flow
-  through** (lockfile is COPYed in every frontend stage).
+  `package.json`/`package-lock.json` + its apps only — **adding a
+  dependency requires the lockfile update to flow through** (lockfile is
+  COPYed in every stage).
 - Build context is the repo root (`context: ../..`), so anything new the
-  build needs must be COPYed explicitly; there is no `.dockerignore`-visible
-  sneaking in.
+  build needs must be COPYed explicitly.
+- The historical Rust server was removed from the repo (2026-10-13); its
+  last state lives in git history. The TS image (`Dockerfile.server-ts`)
+  is the only server image.
 
 ---
 
 ## 4. Compose stack details
 
-- Default `up` starts only `server` + `restate`; postgres/clickhouse/minio
-  are behind the `fullstack` profile (`--profile fullstack` to use them).
-- Server startup order: server waits only for restate `started` (host
-  services are already up). If the server crash-loops on boot, check the
-  host services first (`/srv/postgres`, `/srv/clickhouse`,
-  `rustfs.service`).
+- Default `up` starts only `server`; postgres/clickhouse/minio are behind
+  the `fullstack` profile (`--profile fullstack` to use them). The server
+  has no compose-service deps — the host services must already be up. If
+  the server crash-loops on boot, check the host services first
+  (`/srv/postgres`, `/srv/clickhouse`, `rustfs.service`).
 - The fullstack fallback ClickHouse stays pinned to
   `clickhouse-server:24`; the host ClickHouse floats 26.5
   (`pull_policy: always`) — a host CH upgrade can change behavior.
 - Registry bundles live in rustfs bucket `guild` (host :9950).
-- Restate is pinned to the deployed image digest. Upgrade its image and
-  stored journal format deliberately, with a stopped-data backup.
-- Restate's node name is persistent identity, not a disposable container
-  hostname. Compose supplies `RESTATE_NODE_NAME` from
-  `GUILD_RESTATE_NODE_NAME` (`guild-restate` for a fresh installation).
-  On migration, set that variable in compose's ignored `.env` to the
-  **existing data's node name** before recreating the container. This host
-  retains `4ff015b84014`; changing it makes Restate refuse the existing data.
-- When adopting `restate_data` on an older installation with no mount,
-  **do not run compose up against an empty volume**. Stop server and
-  Restate, copy the stopped container's `/restate-data/.` to a private
-  backup, seed the named volume with those exact bytes, and only then
-  recreate Restate. Compare file hashes before starting and retain the
-  backup. Recheck outstanding invocations before workflow-code changes;
-  adding journal operations can make old in-flight invocations incompatible.
-  Wait for Restate's admin query endpoint as well as server health after
-  startup; server health alone does not establish workflow readiness.
-- Host port overrides: `GUILD_HTTP_PORT` (18080 here), `GUILD_RESTATE_ADMIN_PORT`
-  (9070) in `config.env`.
+- Restate (the Rust-era durable-execution backend) was removed from compose
+  in M3 when the durable engine moved into the TS server on
+  pi-durable; its journals in `restate_data` are historical. The
+  `restate_data` volume on the host still exists — drop it when the
+  pre-cutover confidence window closes.
+- Host port override: `GUILD_HTTP_PORT` (18080 here) in `config.env`.
 - Server-side agent sessions store under `GUILD_DATA_DIR=/data`;
   `GUILD_ALLOW_SHELL_TOOLS=1` (commented out) is the opt-in for
   `run_command` in server sessions.
@@ -232,7 +203,7 @@ Notes:
 
 ## 7. Running long rebuilds detached
 
-`docker compose build server` can run long (cargo release). Use the
+`docker compose build server` can run long (npm + tsc). Use the
 `big-job` skill (systemd-run transient unit, journal output). Two traps:
 
 - **No shell operators after `systemd-run --`** — `a && b` becomes literal

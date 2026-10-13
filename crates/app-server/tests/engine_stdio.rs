@@ -1,8 +1,8 @@
 //! Client↔backend interop across the real process boundary — the same wire
 //! the Tauri shell drives. Spawns the engine binary in its stdio JSON-RPC
-//! mode (no args) and runs login → chat → session.info against a real
-//! guild-server, asserting response correlation, event streaming, and
-//! session persistence (isolated via XDG_CONFIG_HOME).
+//! mode (no args) and runs pairing → session.info against a hand-rolled
+//! mock backend, asserting response correlation and session persistence
+//! (isolated via XDG_CONFIG_HOME).
 //!
 //! No Tauri build, no webview, no display: `cargo test -p guild-app-server`.
 
@@ -17,7 +17,6 @@ struct EngineProc {
     stdin: ChildStdin,
     next_id: u64,
     replies: Arc<Mutex<Vec<(u64, Value)>>>,
-    events: Receiver<Value>,
     replies_rx: Receiver<Value>,
 }
 
@@ -38,9 +37,9 @@ impl EngineProc {
         let stdout = child.stdout.take().expect("stdout piped");
 
         // Demux engine stdout exactly like the Tauri bridge does: responses
-        // (have `id`, no `event`) correlate pending RPCs, everything else is
-        // a server-push event.
-        let (event_tx, event_rx) = channel();
+        // (have `id`, no `event`) correlate pending RPCs, server-push events
+        // are drained (the loop must keep reading stdout or the child
+        // blocks).
         let (reply_tx, reply_rx) = channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
@@ -49,10 +48,9 @@ impl EngineProc {
                     continue;
                 };
                 if v.get("event").is_some() {
-                    if event_tx.send(v).is_err() {
-                        break;
-                    }
-                } else if reply_tx.send(v).is_err() {
+                    continue;
+                }
+                if reply_tx.send(v).is_err() {
                     break;
                 }
             }
@@ -63,7 +61,6 @@ impl EngineProc {
             stdin,
             next_id: 0,
             replies: Arc::new(Mutex::new(Vec::new())),
-            events: event_rx,
             replies_rx: reply_rx,
         }
     }
@@ -112,29 +109,6 @@ impl EngineProc {
         }
     }
 
-    fn wait_event(&self, name: &str, timeout: std::time::Duration) -> Value {
-        let deadline = std::time::Instant::now() + timeout;
-        loop {
-            let now = std::time::Instant::now();
-            if now >= deadline {
-                panic!("timed out waiting for event {name}");
-            }
-            match self.events.recv_timeout(deadline - now) {
-                Ok(v) if v["event"] == name => return v,
-                Ok(_) => continue,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    panic!("timed out waiting for event {name}")
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    panic!("engine stdout closed")
-                }
-            }
-        }
-    }
-
-    fn drain_events(&self) {
-        while self.events.try_recv().is_ok() {}
-    }
 }
 
 impl Drop for EngineProc {
@@ -144,75 +118,53 @@ impl Drop for EngineProc {
     }
 }
 
-/// login → chat.send → events → session.info, against a real server.
-// Ignored: chat.send goes through the gateway → Restate ChatRunner, and
-// test_support points restate_url at a placeholder. Un-ignore together with
-// the agent_rpc tests once tests embed a Restate runtime.
-#[ignore = "gateway chat needs an embedded Restate runtime in tests; placeholder restate_url"]
-#[tokio::test(flavor = "multi_thread")]
-async fn engine_stdio_interop() {
-    let srv = guild_server::test_support::serve_full().await;
-    let mut engine = EngineProc::spawn();
-
-    // login (persists the session under the isolated XDG_CONFIG_HOME)
-    let res = engine
-        .call(
-            "login",
-            json!({"base_url": srv.base_url, "email": "a@b.c", "password": "hunter226"}),
-        )
-        .expect("login");
-    assert_eq!(res["user"]["email"], "a@b.c");
-
-    // chat.send: correlated reply + streamed chat.delta/chat.done events
-    let res = engine
-        .call("chat.send", json!({"text": "greet", "model": srv.model}))
-        .expect("chat.send");
-    assert!(res["chat_id"].is_string());
-    assert!(res["cost_usd"].as_f64().unwrap() > 0.0);
-    assert_eq!(res["tokens_in"], 5);
-
-    let delta = engine.wait_event("chat.delta", std::time::Duration::from_secs(30));
-    assert_eq!(delta["payload"]["content"], "hi there");
-    let done = engine.wait_event("chat.done", std::time::Duration::from_secs(30));
-    assert!(done["payload"]["tokens_out"].as_i64().unwrap() > 0);
-
-    // session.info reflects the login (same surface the GUI reads)
-    let res = engine
-        .call("session.info", json!({}))
-        .expect("session.info");
-    assert_eq!(res["email"], "a@b.c");
-    assert_eq!(res["base_url"], srv.base_url);
-
-    // session persisted to the isolated config dir (what a restarted GUI loads)
-    let cfg = std::env::temp_dir().join(format!("guild-interop-{}", std::process::id()));
-    let token_path = cfg.join("guild").join("token.json");
-    let stored = std::fs::read_to_string(&token_path).expect("session file written");
-    let stored: Value = serde_json::from_str(&stored).unwrap();
-    assert_eq!(stored["base_url"], srv.base_url);
-    assert!(!stored["token"].as_str().unwrap().is_empty());
-
-    engine.drain_events();
-}
-
-/// The full enrollment flow over the stdio wire: create a pairing token via
-/// the HTTP API, redeem it through the engine's `pair` RPC, verify the
-/// session (session.info) and its persistence.
+/// The full enrollment flow over the stdio wire: redeem a pairing code
+/// through the engine's `pair` RPC against a mock backend, verify the
+/// session (session.info) and its persistence, and confirm the persisted
+/// token is the one the mock issued (the mock answers auth/me only for it).
 #[tokio::test(flavor = "multi_thread")]
 async fn engine_stdio_pair_flow() {
-    let srv = guild_server::test_support::serve_full().await;
-    // token issued to the bootstrapped admin at store level
-    let created = srv
-        .store()
-        .pairing()
-        .create(srv.org_id, srv.user_id, 30, None)
-        .await
-        .unwrap();
+    use protocol::api::{PairResponse, UserInfo};
+    let issued_token = "paired-token-1";
+    let user = UserInfo {
+        id: uuid::Uuid::now_v7(),
+        email: "a@b.c".into(),
+        org_id: uuid::Uuid::now_v7(),
+        role: "member".into(),
+        display_name: None,
+        avatar_url: None,
+    };
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/v1/auth/pair"))
+        .respond_with({
+            let pair = PairResponse {
+                token: issued_token.into(),
+                user: user.clone(),
+            };
+            move |_: &wiremock::Request| {
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(serde_json::to_value(&pair).unwrap())
+            }
+        })
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/api/v1/auth/me"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            format!("Bearer {issued_token}"),
+        ))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({"user": user})))
+        .mount(&server)
+        .await;
+    let base_url = server.uri();
 
     let mut engine = EngineProc::spawn();
     let res = engine
         .call(
             "pair",
-            json!({"code": format!("g1|{}|{}", srv.base_url, created.secret)}),
+            json!({"code": format!("g1|{}|{}", base_url, "a1b2c3")}),
         )
         .expect("pair");
     assert_eq!(res["user"]["email"], "a@b.c");
@@ -220,10 +172,10 @@ async fn engine_stdio_pair_flow() {
     let info = engine
         .call("session.info", json!({}))
         .expect("session.info");
-    assert_eq!(info["base_url"], srv.base_url);
+    assert_eq!(info["base_url"], base_url);
     assert_eq!(info["email"], "a@b.c");
 
-    // the redeemed session actually authenticates against the server
+    // the persisted session carries exactly the token the mock issued
     let stored = std::fs::read_to_string(
         std::env::temp_dir()
             .join(format!("guild-interop-{}", std::process::id()))
@@ -232,9 +184,11 @@ async fn engine_stdio_pair_flow() {
     )
     .expect("session file written");
     let stored: Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored["base_url"], base_url);
+    assert_eq!(stored["token"], issued_token);
     let client = reqwest::Client::new();
     let me = client
-        .get(format!("{}/api/v1/auth/me", srv.base_url))
+        .get(format!("{}/api/v1/auth/me", base_url))
         .bearer_auth(stored["token"].as_str().unwrap())
         .send()
         .await
@@ -245,7 +199,6 @@ async fn engine_stdio_pair_flow() {
 /// Unknown methods produce a correlated error, not a hang or a crash.
 #[tokio::test(flavor = "multi_thread")]
 async fn engine_stdio_unknown_method_is_correlated_error() {
-    let _srv = guild_server::test_support::serve_full().await;
     let mut engine = EngineProc::spawn();
     let err = engine.call("nope.method", json!({})).unwrap_err();
     assert!(err.contains("unknown method"), "got: {err}");

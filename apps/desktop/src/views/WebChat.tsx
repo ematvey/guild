@@ -1,15 +1,17 @@
-import { Component, useCallback, useEffect, useMemo, useRef, useState,
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type ErrorInfo, type ReactNode, type RefObject } from "react";
 import { applyMention, detectMention } from "../lib/skill-mention";
 import { daemonFs, listSkills } from "../lib/context";
+import { fetchInstalls } from "./skills/skills-api";
 import { openExternal } from "../lib/open-external";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 // Client-side tools need the desktop runtime (local files, shell); in a plain
 // browser they stay pending until the server-side timeout releases the turn.
-import Markdown, { Components } from "react-markdown";
+import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "./markdown";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import {
   ArrowUp,
@@ -66,10 +68,15 @@ import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsSectionPane, SettingsWindow } from "./settings/SettingsWindow";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
-import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
 import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "./sidebar-contents";
-import { SidebarRail, saveSidebarTab, storedSidebarTab, type SidebarTab } from "./sidebar-rail";
+import { SkillsPanel } from "./skills/SkillsPanel";
+import {
+  clampSkillsRoute,
+  SKILLS_CATALOG,
+  type SkillsRoute,
+} from "./skills/skills-route";
+import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import {
   attachmentBlobUrl,
   toolArtifactBlobUrl,
@@ -219,21 +226,47 @@ export function pruneStopping(
   return changed ? next : null;
 }
 
+/** Layout mode for one sidebar tab (desktop rail). The skills tab is a
+ *  full main-column page swap: NO sidebar aside at all — the skills page
+ *  replaces the chat thread — so picking it must not touch the persisted
+ *  sidebar collapsed state either (leaving the tab restores the sidebar
+ *  exactly as it was). Every other tab keeps the resizable panel next to
+ *  the chat, and a tab pick re-expands a collapsed panel. Mobile has no
+ *  rail aside at all (chats-only drawer) and always shows the chat. */
+export function tabPaneLayout(
+  tab: SidebarTab,
+  isMobile: boolean,
+): { aside: boolean; mainPane: "chat" | "skillsPage"; expandsPanel: boolean } {
+  if (isMobile) return { aside: false, mainPane: "chat", expandsPanel: false };
+  if (tab === "skills") return { aside: false, mainPane: "skillsPage", expandsPanel: false };
+  return { aside: true, mainPane: "chat", expandsPanel: true };
+}
+
 
 /// URL-driven navigation: the pathname is the single source of truth for
 /// where the user is. Routes:
 ///   /                          — new chat (recents view)
 ///   /thread/<id>               — open thread
-///   /project/<id>              — sidebar filtered to one project
+///   /chats                      — the Chats tab (default; a bare chat id
+///                                keeps its short form)
+///   /work                       — the Work tab
+///   /project/<id>              — sidebar filtered to one project (Work tab)
 ///   /project/<id>/thread/<cid> — open thread within its project view
 ///   /device                    — device-setup dialog, optionally over a
 ///                                thread: /thread/<id>/device
-///   /settings[/<section>[/<detail>]] — settings overlay (top-level; the
+///   /settings                   — the Settings tab (bare; the section lives
+///                                in pane state)
+///   /settings/<section>[/<detail>] — settings overlay (top-level; the
 ///                                thread underneath stays loaded in app
 ///                                state). <detail> addresses a sub-page
 ///                                inside a section: an integration slug,
 ///                                a user/team id or "new", a model route
 ///                                or "add", a registry kind/slug.
+///   /skills[/activity|/machine|/<slug>[/edit] | /new]
+///                              — the skills page (top-level; replaces the
+///                                main pane): tab views, a detail page, the
+///                                editor in edit or create mode. See
+///                                skills-route.ts for the state contract.
 /// Back/forward, reloads and deep links all resolve through parseChatRoute.
 type ChatOverlay =
   | { kind: "settings"; section: string | null; detail: string | null }
@@ -244,6 +277,13 @@ interface ChatRoute {
   /** Sidebar project filter (deep-linked /project/<id>). */
   projectId: string | null;
   overlay: ChatOverlay;
+  /** The skills page route, or null when the URL is not a skills one. */
+  skills: SkillsRoute | null;
+  /** Which rail panel tab the URL names: /chats, /work or /settings.
+   * Sectioned /settings/<...> overlay URLs carry "chats" — the tab under
+   * an overlay is whatever the navigation came from (pushRoute keeps it;
+   * a stale deep link falls back to the default). */
+  tab: "chats" | "work" | "settings";
 }
 
 export const parseChatRoute = (pathname: string): ChatRoute => {
@@ -252,39 +292,95 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     .split("/")
     .filter(Boolean)
     .map(decodeURIComponent);
+  // The rail's panel tabs own top-level addresses: /chats (the default),
+  // /work, and bare /settings — a sectioned /settings/<...> URL is the
+  // settings overlay, not the tab. Tab picks navigate, so back/forward and
+  // reloads restore the tab like any other route state.
+  let tab: ChatRoute["tab"] = "chats";
+  if (parts[0] === "chats" || parts[0] === "work") {
+    tab = parts[0];
+    parts.shift();
+  }
   let chatId: string | null = null;
   let projectId: string | null = null;
   if (parts[0] === "project" && parts[1]) {
     projectId = parts[1];
+    tab = "work";
     parts.splice(0, 2);
   }
   if (parts[0] === "thread" && parts[1]) {
     chatId = parts[1];
     parts.splice(0, 2);
   }
-  if (parts[0] === "device") return { chatId, projectId, overlay: { kind: "device" } };
+  if (parts[0] === "device") return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null };
   if (parts[0] === "settings") {
-    // Everything after the section is the sub-page id; each segment was
-    // encoded separately, so a model id like "a/b" round-trips as one part.
+    // Bare /settings is the Settings tab; anything with a section is the
+    // overlay. Everything after the section is the sub-page id; each
+    // segment was encoded separately, so a model id like "a/b" round-trips
+    // as one part.
+    if (parts.length === 1)
+      return { chatId: null, projectId: null, tab: "settings", overlay: null, skills: null };
     const detail = parts.length > 2 ? parts.slice(2).map(decodeURIComponent).join("/") : null;
-    return { chatId, projectId, overlay: { kind: "settings", section: parts[1] ?? null, detail } };
+    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "settings", section: parts[1], detail }, skills: null };
   }
-  return { chatId, projectId, overlay: null };
+  // Skills is chat-independent and top-level like settings: the URL drops
+  // any thread/project prefix, so the skills page replaces the chat.
+  if (parts[0] === "skills") {
+    const skills = parseSkillsRoute(parts.slice(1));
+    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats" };
+  }
+  return { chatId, projectId, tab, overlay: null, skills: null };
+};
+
+/// /skills/<seg...> after the leading "skills": a bare /skills is the
+/// catalog, the reserved segments name the activity/machine tabs and the
+/// create editor, and anything else is a detail slug with an optional
+/// /edit suffix. The reserved-segment rule is what disambiguates tabs from
+/// slugs — see SkillsRoute.
+const parseSkillsRoute = (parts: string[]): SkillsRoute => {
+  const seg = parts[0];
+  if (seg === undefined) return SKILLS_CATALOG;
+  if (seg === "activity") return { view: "activity", slug: null, editor: null };
+  if (seg === "machine") return { view: "machine", slug: null, editor: null };
+  if (seg === "new") return { view: "catalog", slug: null, editor: "new" };
+  return { view: "catalog", slug: seg, editor: parts[1] === "edit" ? seg : null };
 };
 
 export const chatRoutePath = (
   chatId: string | null,
   projectId: string | null,
   overlay: ChatOverlay,
+  skills: SkillsRoute | null = null,
+  tab: ChatRoute["tab"] = "chats",
 ): string => {
+  // Skills is chat-independent — top-level URL that replaces the chat view.
+  if (skills !== null) {
+    if (skills.editor === "new") return "/skills/new";
+    if (skills.slug !== null)
+      return skills.editor !== null
+        ? `/skills/${encodeURIComponent(skills.slug)}/edit`
+        : `/skills/${encodeURIComponent(skills.slug)}`;
+    if (skills.view === "activity") return "/skills/activity";
+    if (skills.view === "machine") return "/skills/machine";
+    return "/skills";
+  }
   const base = projectId
     ? `/project/${encodeURIComponent(projectId)}${
         chatId ? `/thread/${encodeURIComponent(chatId)}` : ""
       }`
     : chatId
       ? `/thread/${encodeURIComponent(chatId)}`
-      : "";
-  if (overlay?.kind === "device") return `${base}/device`;
+      : tab === "work"
+        ? "/work"
+        : tab === "settings"
+          ? "/settings"
+          : "/chats";
+  if (overlay?.kind === "device") {
+    // /settings/<seg> parses as a settings overlay section, so a device
+    // dialog pushed over the Settings tab detours through /chats — the
+    // dialog itself is chat-independent anyway.
+    return `${tab === "settings" ? "/chats" : base}/device`;
+  }
   // Settings is chat-independent — top-level URL even when opened over a
   // thread (the thread stays loaded; closing the overlay restores it).
   if (overlay?.kind === "settings")
@@ -448,49 +544,35 @@ function AttachmentFileChip({
   );
 }
 
-/// Anchor for markdown content: every link routes through `openExternal`.
-/// Images never load from model/tool-controlled URLs: injected markdown
-/// could otherwise exfiltrate via the image request; a rendered placeholder
-/// links out instead.
-const mdComponents: Components = {
-  a: ({ node: _node, href, children, ...rest }) => (
-    <a
-      {...rest}
-      href={href}
-      onClick={e => {
-        if (href) {
-          e.preventDefault();
-          openExternal(href);
-        }
-      }}
-    >
-      {children}
-    </a>
-  ),
-  img: ({ node: _node, src, alt }) => {
-    const url = typeof src === "string" ? src : undefined;
-    const label = alt || url || "image";
-    return (
-      <button
-        type="button"
-        className="inline-flex max-w-full items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
-        onClick={() => url && openExternal(url)}
-      >
-        🖼 {label}
-      </button>
-    );
-  },
-};
-
 /// Per-chat workspace state lives server-side now: the chat's project
 /// (spec §5). No local folder storage — the project binding is the single
 /// source of truth.
 
-/// One row of the composer's /-autocomplete (skills.list result).
+/// One row of the composer's /-autocomplete pool: a builtin command, a
+/// local skill, or an installed org skill (spec §2.3 — uninstalled org
+/// skills are the agent's discovery surface and never mentionable).
 interface ComposerSkill {
   name: string;
   description: string;
   disabled: boolean;
+  /** true for an installed org skill (from the installs endpoint). */
+  org?: boolean;
+}
+
+/// The composer's skill pool (spec §2.3): the local rows plus the
+/// installed org skills; a slug the local list already holds folds into
+/// its local row. Pure for tests.
+export function composerSkills(
+  local: ComposerSkill[] | null,
+  installs: Array<{ slug: string; pinned_version?: string }> | null,
+): ComposerSkill[] {
+  const out = [...(local ?? [])];
+  const names = new Set(out.map((s) => s.name));
+  for (const install of installs ?? []) {
+    if (names.has(install.slug)) continue;
+    out.push({ name: install.slug, description: "", disabled: false, org: true });
+  }
+  return out;
 }
 
 /// Built-in composer commands — shown in the `/` autocomplete ahead of
@@ -508,12 +590,12 @@ export function mentionCandidates(
   builtins: { name: string; description: string }[],
   skills: ComposerSkill[] | null,
   query: string,
-): { name: string; description: string; builtin: boolean }[] {
-  const pool: { name: string; description: string; builtin: boolean }[] = [
-    ...builtins.map((c) => ({ ...c, builtin: true })),
+): { name: string; description: string; builtin: boolean; org: boolean }[] {
+  const pool: { name: string; description: string; builtin: boolean; org: boolean }[] = [
+    ...builtins.map((c) => ({ ...c, builtin: true, org: false })),
     ...(skills ?? [])
       .filter((s) => !s.disabled)
-      .map((s) => ({ name: s.name, description: s.description, builtin: false })),
+      .map((s) => ({ name: s.name, description: s.description, builtin: false, org: s.org === true })),
   ];
   return pool
     .filter((c) => query === "" || c.name.startsWith(query))
@@ -551,22 +633,6 @@ function ThreadSkeleton() {
     </div>
   );
 }
-
-/// Markdown body class shared by text blocks and tool-card excerpts.
-const MD_CLASS =
-  "[overflow-wrap:anywhere] " +
-  "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc";
-// Long unbreakable tokens (inline code, URLs) must wrap inside the message
-// column, never widen it into a horizontal page scroll. overflow-wrap
-// inherits, so the one declaration at the top of MD_CLASS covers every
-// child; non-markdown blocks carry WRAP_ANYWHERE explicitly.
-const WRAP_ANYWHERE = "[overflow-wrap:anywhere]";
-
-/// GFM tables: block-level so wide tables scroll horizontally inside the
-/// chat column instead of squishing; cell padding keeps adjacent columns
-/// visually separated (the old rendering had none, so columns merged).
-const MD_TABLE_CLASS =
-  "[&_table]:my-2 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:text-[0.92em] [&_th]:border-b-2 [&_th]:border-border [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border-t [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-top [&_tbody_tr:nth-child(even)]:bg-muted/40";
 
 /// Status pill on tool frames and page cards.
 function StatusPill({ status }: { status: "running" | "done" | "error" }) {
@@ -1476,8 +1542,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   chatsRef.current = chats;
   // URL-driven navigation state (see parseChatRoute above): everything the
   // user can navigate to — the open thread, the settings overlay with its
-  // active section, the device dialog — lives in the pathname, so back/forward,
-  // reloads and deep links all land in exactly the right place.
+  // active section, the device dialog, the skills page — lives in the
+  // pathname, so back/forward, reloads and deep links all land in exactly
+  // the right place.
   const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
   const chatId = route.chatId;
   const overlay = route.overlay;
@@ -1528,14 +1595,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const [mentionDismissed, setMentionDismissed] = useState(false);
   const [mentionIndex, setMentionIndex] = useState(0);
   useEffect(() => {
-    if (!isTauri) return;
     let cancelled = false;
-    // Skills discovery moved client-side (lib/context.ts over the fs bridge).
-    const fs = daemonFs(rpcCall);
-    fs.scopes()
-      .then((scopes) => listSkills(fs, scopes))
-      .then((rows) => {
-        if (!cancelled) setSkills(rows as ComposerSkill[]);
+    // The /-autocomplete pool = local + installed org skills (spec §2.3):
+    // local rows exist only on Tauri (the fs bridge); org installs come
+    // from the server in both modes — uninstalled org skills are never
+    // fetched, so they can never be mentioned.
+    const fs = isTauri ? daemonFs(rpcCall) : null;
+    const local = fs
+      ? fs.scopes().then((scopes) => listSkills(fs, scopes)).catch(() => null)
+      : Promise.resolve(null);
+    Promise.all([local, fetchInstalls().catch(() => null)])
+      .then(([rows, installs]) => {
+        if (!cancelled) setSkills(composerSkills(rows as ComposerSkill[] | null, installs));
       })
       .catch(() => {
         /* skills are optional composer sugar — silence */
@@ -1791,16 +1862,34 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   // Every navigation goes through here: history and route state move
   // together, so the URL always reflects what is on screen.
-  const pushRoute = (next: { chatId?: string | null; projectId?: string | null; overlay?: ChatOverlay }) => {
+  const pushRoute = (next: {
+    chatId?: string | null;
+    projectId?: string | null;
+    overlay?: ChatOverlay;
+    skills?: SkillsRoute | null;
+    tab?: ChatRoute["tab"];
+  }) => {
     const chatId = "chatId" in next ? (next.chatId as string | null) : route.chatId;
     const projectId = "projectId" in next ? (next.projectId as string | null) : route.projectId;
     const ov = "overlay" in next ? (next.overlay as ChatOverlay) : route.overlay;
-    const path = chatRoutePath(chatId, projectId, ov);
+    const tab = next.tab ?? route.tab;
+    // The skills page is replaced by anything that names a chat or opens a
+    // dialog overlay — those are chat-context surfaces. An overlay close
+    // (overlay: null) keeps it: the dialog was rendered over the skills page.
+    const sk =
+      "skills" in next
+        ? (next.skills as SkillsRoute | null)
+        : "chatId" in next || (next.overlay !== undefined && next.overlay !== null)
+          ? null
+          : route.skills;
+    const path = chatRoutePath(chatId, projectId, ov, sk, tab);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setRoute({ chatId, projectId, overlay: ov });
+    setRoute({ chatId, projectId, overlay: ov, skills: sk, tab });
   };
 
-  useEffect(() => {
+  // Layout effect: the correction must land before paint, or the new block
+  // shows for a frame at the old scroll offset (the reported 1-frame jump).
+  useLayoutEffect(() => {
     if (!stick.current) return;
     bottom.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
   }, [blocks]);
@@ -1850,26 +1939,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
    * project row's "+"): the chatId switch consumes it, so the per-chat
    * reset applies to every other transition. */
   const scratchPickRef = useRef<PickedProject | null>(null);
-  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  /** Where the create-project dialog was opened from: only the composer's
-   * project picker binds the new project to the chat — the sidebar's
-   * "+" merely creates it. */
-  const createProjectFromRef = useRef<"picker" | "sidebar">("picker");
-  const openCreateProject = (from: "picker" | "sidebar") => {
-    createProjectFromRef.current = from;
+  const openCreateProject = () => {
     setCreateProjectOpen(true);
   };
   const openRow = chatId ? chats?.find((c) => c.id === chatId) : undefined;
   const currentProject = pickedProject ?? chatProjectOf(openRow);
+  // Ref mirror for effects that must read the pick without re-running on
+  // every pick change.
+  const currentProjectRef = useRef(currentProject);
+  currentProjectRef.current = currentProject;
   const pickProject = (p: PickedProject | null) => {
     setPickedProject(p);
   };
-  const projectCreated = (project: Project) => {
+  const projectCreated = () => {
     void refreshProjects();
-    if (createProjectFromRef.current !== "picker") return;
-    pickProject({ id: project.id, name: project.name, machine_label: project.machine_label, folder: project.folder });
-    setProjectPickerOpen(false);
   };
 
   // ---- sidebar row menu: rename + archive (row drop-out = list refresh) ----
@@ -1954,7 +2038,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
-        if (active) { promptRef.current = ""; setPrompt(""); setPending([]); }
+        if (active) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
       }
       restoredCommandRef.current.delete(target);
     }
@@ -2213,6 +2297,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         promptRef.current = recovered.text;
         setPrompt(recovered.text);
         setPending(recovered.files);
+        requestAnimationFrame(autoGrow);
       }
     }
     refreshOutgoing(n => n + 1);
@@ -2232,7 +2317,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
-        if (openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); }
+        if (openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
       },
     });
     if (command.accepted) { deliveringRef.current.delete(command.id); return; }
@@ -2326,6 +2411,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       if (!chatId) { toast.error("Compact needs an existing chat — send a message first"); return; }
       promptRef.current = "";
       setPrompt("");
+      requestAnimationFrame(autoGrow);
       setCompacting(reducerRef.current.setCompacting(chatId).compacting);
       try { await compactChat(chatId); }
       catch (e) { setCompacting(reducerRef.current.setCompacting(null).compacting); toast.error(e instanceof Error ? e.message : String(e)); }
@@ -2443,19 +2529,37 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   );
 
   // Sidebar tab: one icon rail (desktop) switches the panel between chats,
-  // work and settings; the choice persists across sessions.
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(storedSidebarTab);
+  // work, skills and settings. The skills tab is not panel state at all —
+  // it is the /skills... route (see below), so this state only ever holds
+  // the panel-bearing tabs. Every tab owns a top-level URL (/chats, /work,
+  // /settings): the state starts from the parsed route and follows it on
+  // back/forward, reloads and deep links — the URL is the truth.
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(route.tab);
+  useEffect(() => setSidebarTab(route.tab), [route.tab]);
+  // The rail's active tab: the skills page raises its own tab while a
+  // /skills... URL is live (rail pick, deep link, reload, back/forward).
+  const railTab: SidebarTab = route.skills !== null ? "skills" : sidebarTab;
   // Settings tab: the section rendered inline in the main pane (the rail's
   // Settings tab is a persistent surface, not an overlay launcher). Sub-page
   // navigation stays local to the pane.
   const [settingsSection, setSettingsSection] = useState<string | null>(null);
   const [settingsDetail, setSettingsDetail] = useState<string | null>(null);
   const switchTab = (tab: SidebarTab) => {
-    setSidebarTab(tab);
-    saveSidebarTab(tab);
+    // The skills tab is a URL route, not persisted panel state: entering it
+    // navigates to /skills, leaving it returns to the chat root — so back/
+    // forward crosses between the skills page and the chat like any other
+    // route pair, and a reload lands back on the skills page.
+    if (tab === "skills") {
+      pushRoute({ chatId: null, projectId: null, overlay: null, skills: SKILLS_CATALOG });
+      return;
+    }
+    // Panel tabs navigate too: each owns its address, back/forward walks
+    // tab history, and the navigation clears the open chat — a tab switch
+    // always lands on a fresh composer, never the previously selected chat.
+    pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, tab });
     // A collapsed panel hides the tab's content — a tab pick is an intent
     // to see it, so the panel re-expands on the newly picked tab.
-    setCollapsed(false);
+    if (tabPaneLayout(tab, isMobile).expandsPanel) setCollapsed(false);
     // Entering Settings with no section picked lands on the first user
     // section instead of an empty main pane.
     if (tab === "settings") setSettingsSection((s) => s ?? "account");
@@ -2465,9 +2569,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setSettingsDetail(null);
   };
 
-  /** Optional section id deep-links into the settings overlay (null = root). */
+  /** Opens the settings overlay window (the rail account menu, the settings
+   * panel's "All settings"). The URL always names a section — bare
+   * /settings is the Settings tab — and "account" is what a root-less
+   * overlay fell back to anyway. */
   const openSettings = (section?: string) =>
-    pushRoute({ overlay: { kind: "settings", section: section ?? null, detail: null } });
+    pushRoute({ overlay: { kind: "settings", section: section ?? "account", detail: null } });
 
   const sidebarCollapse = isMobile ? undefined : () => setCollapsed(true);
   // The mobile drawer has no rail, so it always shows the Chats panel — the
@@ -2491,11 +2598,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       <WorkPanel
         grouping={grouping}
         projects={projects}
+        machines={machines}
         chatId={chatId}
         onOpenChat={openChat}
         onCollapse={sidebarCollapse}
         onNewChatInProject={newChatInProject}
-        onNewProject={() => openCreateProject("sidebar")}
+        onNewProject={openCreateProject}
         onRenameChat={(id, title) => void renameChat(id, title)}
         onArchiveChat={(id) => void archiveChat(id)}
         onRenameProject={(id, name) => void renameProject(id, name)}
@@ -2513,16 +2621,27 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       chatsPanel
     );
 
-  // A /project/<id> route (deep link, reload, or back/forward) opens on the
-  // Work tab so the linked project is visible. A chat route lands on the
-  // Chats tab the same way. Neither is persisted: routes are navigation,
-  // not tab preferences.
+  // A /project/<id> route (deep link, reload, or back/forward) parses as
+  // the Work tab, so the linked project is visible — no state decision
+  // needed beyond the route-tab sync above.
+  // Chat routes: a stateless chat lands on the Chats tab; a project-bound
+  // chat belongs to its project row — it opens (or stays) on the Work tab
+  // instead of yanking the user out of it. The decision waits for the chats
+  // list; a chat not yet listed (just sent) counts as bound while the
+  // composer still carries a project pick.
+  const routeTabDecidedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (route.projectId) setSidebarTab("work");
-  }, [route.projectId]);
-  useEffect(() => {
-    if (route.chatId) setSidebarTab("chats");
-  }, [route.chatId]);
+    if (!route.chatId) {
+      routeTabDecidedRef.current = null;
+      return;
+    }
+    if (routeTabDecidedRef.current === route.chatId) return; // already handled
+    if (chats === null) return; // wait for the list before deciding
+    const row = chats.find((c) => c.id === route.chatId);
+    const projectBound = row ? !!row.project_id : !!currentProjectRef.current?.id;
+    routeTabDecidedRef.current = route.chatId;
+    setSidebarTab(projectBound ? "work" : "chats");
+  }, [route.chatId, chats]);
 
   // The Settings tab's main pane renders the picked section inline instead
   // of the chat thread (desktop only — the mobile drawer has no settings
@@ -2539,6 +2658,25 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         />
       </div>
     ) : null;
+
+  // The skills page's URL state clamped to what this session can render
+  // (the machine tab needs the desktop fs bridge — a web deep link falls
+  // back to the catalog). Every panel state derives from it; user actions
+  // navigate through pushRoute, so the URL is always the truth.
+  const skillsRoute =
+    !isMobile && route.skills !== null ? clampSkillsRoute(route.skills, isTauri) : null;
+  // The Skills route's main pane IS the skills page — the whole column right
+  // of the rail, no sidebar panel at all (the inlineSettings pattern). The
+  // chat thread only comes back when another route is navigated to.
+  const inlineSkills = skillsRoute !== null ? (
+    <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
+      <SkillsPanel
+        me={{ email, displayName: displayName ?? undefined, role }}
+        route={skillsRoute}
+        onNavigate={(next) => pushRoute({ chatId: null, projectId: null, overlay: null, skills: next })}
+      />
+    </div>
+  ) : null;
 
   // desktop: draggable resize handle. While dragging, the width transition
   // is suspended — an animated width chases the cursor and reads as lag.
@@ -2571,10 +2709,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   return (
     <div ref={shell} className="fixed inset-0 flex bg-background text-foreground">
       {/* icon rail: desktop only, always visible — it switches the sidebar
-          panel between chats / work / settings and carries the account menu */}
+          panel between chats / work / skills / settings and carries the
+          account menu */}
       {!isMobile && (
         <SidebarRail
-          activeTab={sidebarTab}
+          activeTab={railTab}
           onTabChange={switchTab}
           email={email}
           displayName={displayName}
@@ -2593,7 +2732,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             {chatsPanel}
           </SheetContent>
         </Sheet>
-      ) : (
+      ) : skillsRoute !== null ? null : (
         <aside
           className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground ${
             resizing ? "" : "transition-[width] duration-150"
@@ -2641,7 +2780,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             </div>
           </div>
         )}
-        {inlineSettings ? (
+        {inlineSkills ? (
+          inlineSkills
+        ) : inlineSettings ? (
           inlineSettings
         ) : (
           <>
@@ -2700,7 +2841,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           <div
             ref={pane}
             data-scrollable
-            className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain"
+            className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
             onScroll={() => {
               const el = pane.current;
               if (!el) return;
@@ -2871,7 +3012,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   >
                     <span className="text-sm font-medium">/{sk.name}</span>
                     <span className="line-clamp-1 text-xs text-muted-foreground">
-                      {sk.builtin ? sk.description : `${sk.description} — the skill's instructions are attached when you send`}
+                      {sk.builtin
+                        ? sk.description
+                        : `${sk.description || "Installed org skill"} — the skill's instructions are attached when you send`}
                     </span>
                   </button>
                 ))}
@@ -2958,7 +3101,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 </Button>
                 {(() => {
                   const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-                  // One chip for project + machine. The executing machine is
+                  // One read-only chip for project + machine. The composer
+                  // never binds projects: a chat is projectless unless it was
+                  // started from a project (the sidebar project row's "+",
+                  // which pre-picks the binding). The executing machine is
                   // project-derived: an existing chat inherits its bound
                   // project's machine, a new chat the picked project's. The
                   // dot renders only for a remote machine (on desktop the
@@ -2990,10 +3136,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                         className="flex h-7 max-w-52 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground"
                         title={
                           showMachine
-                            ? `${currentProject ? `${currentProject.name} — ` : ""}Machine: ${machineLabel}${machineOnline ? " (online)" : " (offline)"}`
-                            : currentProject
-                              ? `${currentProject.name} — ${currentProject.machine_label ?? "project"}`
-                              : "Pick the folder the agent works in"
+                            ? `${currentProject.name} — Machine: ${machineLabel}${machineOnline ? " (online)" : " (offline)"}`
+                            : `${currentProject.name} — ${currentProject.machine_label ?? "project"}`
                         }
                       >
                         {showMachine && (
@@ -3001,42 +3145,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                             className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
                           />
                         )}
-                        {chatId ? (
-                          // An existing chat: the binding is fixed at chat
-                          // start — a bound project shows as a read-only
-                          // label; a projectless existing chat renders no
-                          // chip at all (outer guard above).
-                          <span className="flex h-7 items-center gap-1 px-2">
-                            <FolderOpen className="size-3.5 shrink-0" />
-                            <span className="hidden min-w-0 sm:block sm:flex-1">
-                              <FadeTitle text={projectChipLabel(currentProject)} />
-                            </span>
+                        <span className="flex h-7 items-center gap-1 px-2">
+                          <FolderOpen className="size-3.5 shrink-0" />
+                          <span className="hidden min-w-0 sm:block sm:flex-1">
+                            <FadeTitle text={projectChipLabel(currentProject)} />
                           </span>
-                        ) : (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 max-w-44 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground sm:max-w-40"
-                              onClick={() => setProjectPickerOpen(true)}
-                            >
-                              <FolderOpen className="size-3.5 shrink-0" />
-                              <span className="hidden min-w-0 sm:block sm:flex-1">
-                                <FadeTitle text={projectChipLabel(currentProject)} />
-                              </span>
-                            </Button>
-                            {currentProject && (
-                              <button
-                                type="button"
-                                title="Detach the project (the agent works without a folder)"
-                                className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
-                                onClick={() => pickProject(null)}
-                              >
-                                <XIcon className="size-3" />
-                              </button>
-                            )}
-                          </>
-                        )}
+                        </span>
                       </span>
                     )
                   );
@@ -3158,16 +3272,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         onOpenChange={(o) => {
           if (!o) pushRoute({ overlay: null });
         }}
-      />
-
-      <ProjectPickerDialog
-        open={projectPickerOpen}
-        onOpenChange={setProjectPickerOpen}
-        projects={projects}
-        chats={chats}
-        current={currentProject}
-        onPick={pickProject}
-        onCreateProject={() => openCreateProject("picker")}
       />
 
       <CreateProjectDialog

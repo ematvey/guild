@@ -1,0 +1,65 @@
+# TS server (apps/server) image — the Fastify app serving the full public
+# surface (health, auth, chats/turns on pi-durable, hub WS, gateway,
+# registry, releases, projects, teams, admin, integrations, faro, web UI).
+# TypeScript is compiled at build time; the runtime runs plain
+# `node dist/index.js`. The chat SPA is built in a `webui` stage and served
+# by the TS server from apps/desktop/dist (GUILD_WEB_DIST default resolves
+# there — see apps/server/src/http/web.ts).
+
+# Build stage: npm workspaces install (root package.json/lockfile), compile
+# apps/server with tsc.
+FROM node:22 AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+# npm ci validates every workspace listed in the root package.json.
+COPY apps/desktop/package.json apps/desktop/
+COPY apps/server/package.json apps/server/
+COPY packages/ui/package.json packages/ui/
+RUN npm ci --workspace apps/server --no-audit --no-fund
+COPY apps/server/src ./apps/server/src
+COPY apps/server/tsconfig.json apps/server/tsconfig.json
+# The static exec-policy rules: the TS matcher loads the shared rule set
+# from apps/server/assets (relocated out of the Rust tree ahead of its
+# deletion).
+COPY apps/server/assets/exec_policy_base.rules apps/server/assets/exec_policy_base.rules
+# The platform SQL migrations: applied at startup (schema_history-tracked).
+COPY apps/server/migrations ./apps/server/migrations
+RUN npm run build --workspace apps/server
+
+# Frontend stage: build the chat SPA (apps/desktop) for the TS server to
+# serve at /. Needs the shared UI kit and the generated protocol bindings
+# (the desktop code imports them via relative paths).
+FROM node:22 AS webui
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/desktop/package.json apps/desktop/
+COPY packages/ui/package.json packages/ui/
+RUN npm ci --workspace apps/desktop --no-audit --no-fund
+COPY packages/ui/src ./packages/ui/src
+COPY crates/protocol/bindings ./crates/protocol/bindings
+COPY apps/desktop/index.html apps/desktop/vite.config.ts apps/desktop/tsconfig.json apps/desktop/
+COPY apps/desktop/src ./apps/desktop/src
+COPY apps/desktop/public ./apps/desktop/public
+RUN npm run build --workspace apps/desktop
+
+# Runtime stage: production deps (hoisted into /app/node_modules) + dist.
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/server/dist ./apps/server/dist
+COPY --from=build /app/apps/server/package.json ./apps/server/package.json
+# The chat SPA: GUILD_WEB_DIST's default (../desktop/dist from the server
+# cwd) resolves here.
+COPY --from=webui /app/apps/desktop/dist ./apps/desktop/dist
+# The static exec-policy rules (M4, relocated 2026-10-04 to apps/server/assets
+# ahead of the Rust tree's deletion): the matcher loads the SAME rule set —
+# no TS fork. The default path resolves relative to the server's cwd:
+# <cwd>/assets/.
+COPY --from=build /app/apps/server/assets/exec_policy_base.rules /app/apps/server/assets/exec_policy_base.rules
+# The platform SQL migrations: startup applies pending files in filename
+# order (platform/migrations.ts, schema_history-tracked).
+COPY --from=build /app/apps/server/migrations /app/apps/server/migrations
+WORKDIR /app/apps/server
+EXPOSE 8080
+CMD ["node", "dist/index.js"]
