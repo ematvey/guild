@@ -186,14 +186,16 @@ export class RegistryStore {
 
   /** Skill search for the agent tool + prompt index (q matches the slug,
    *  description, or the latest version's SKILL.md text; tombstoned items
-   *  never appear). An empty q lists the org's skills. */
+   *  never appear). An empty q lists the org's skills. Most-recently-
+   *  updated first (the latest version's publish time), slug as the tie —
+   *  the index's discovery surface leads with fresh work. */
   async searchSkills(orgId: string, q: string, limit = 12): Promise<RegistryItemRow[]> {
     const res = await this.pool.query(
       "SELECT i.slug, i.description, i.latest_version, i.review_status FROM registry_items i " +
       "LEFT JOIN registry_versions v ON v.item_id = i.id AND v.version = i.latest_version " +
       "WHERE i.org_id = $1 AND i.kind = 'skill' AND i.tombstoned_at IS NULL " +
       "AND (i.slug ILIKE '%' || $2 || '%' OR i.description ILIKE '%' || $2 || '%' OR v.skill_md_text ILIKE '%' || $2 || '%') " +
-      "ORDER BY i.slug LIMIT $3",
+      "ORDER BY v.published_at DESC NULLS LAST, i.slug LIMIT $3",
       [orgId, q, Math.min(Math.max(limit, 1), 500)],
     );
     return res.rows.map(itemRow);

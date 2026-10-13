@@ -68,6 +68,9 @@ export interface SubmitTurnInput {
   /** Model-facing image parts (data URIs), when the route supports them. */
   images: { mimeType: string; data: string }[];
   model: string | null;
+  /** The machine turn's client-assembled skills index (the combined
+   *  section's local portion); browser/server turns send none. */
+  skillsIndex?: string;
 }
 
 export class GuildRuntime {
@@ -214,6 +217,12 @@ export class GuildRuntime {
         if (chatId === null) return null;
         const res = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
         return res.rows[0]?.org_id ?? null;
+      },
+      userOfConversation: async (conversationId) => {
+        const chatId = await this.chatOfConversation(conversationId);
+        if (chatId === null) return null;
+        const owner = await this.chats.ownerOf(chatId);
+        return owner === null ? null : { id: owner.user_id };
       },
       // The approval gate (M4): exec policy + approvals over the chat
       // mapping and the executor resolution below.
@@ -412,6 +421,10 @@ export class GuildRuntime {
     } else if (prepared.action === "clear") {
       await conversation.configure({ extensions: null, tools: null }, BACKGROUND_CONTEXT);
     }
+    // The combined skills index section renders at turn start from the
+    // stash; a turn whose client sent no index re-renders from the server
+    // portion alone (browser/server turns never send one).
+    this.skillsRuntime.noteTurnInput(Number(conversation.id), input.skillsIndex ?? "");
     if (input.model !== null) {
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const current = agent.model;

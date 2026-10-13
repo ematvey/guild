@@ -433,6 +433,9 @@ async function submitTurn(
   const { chips, inline } = buildTurnText(attachmentIds, media, attachmentRows, routeModalities);
   const content = [userMessageText, inline].filter((part) => part !== "").join("\n\n");
   const { images } = mediaPartsFor(routeModalities, chips, media);
+  // The machine turn's client-assembled skills index (additive wire field;
+  // the desktop sends it, browser clients do not).
+  const skillsIndex = typeof body["skills_index"] === "string" ? body["skills_index"] : undefined;
 
   const payload = {
     user_message_id: commandId,
@@ -456,6 +459,7 @@ async function submitTurn(
     content,
     images,
     model,
+    ...(skillsIndex !== undefined ? { skillsIndex } : {}),
   });
   await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
   await chats.chats.setGenerating(user.org_id, chatId, true);
