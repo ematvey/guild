@@ -9,7 +9,7 @@
 // catalog's search/filter/sort stay local component state.
 
 import { useEffect, useRef, useState } from "react";
-import { Lock, Search } from "lucide-react";
+import { Lock, Plus, Search } from "lucide-react";
 import { IS_TAURI } from "../../transport";
 import { Input } from "@guild/ui/components/input";
 import { Button } from "@guild/ui/components/button";
@@ -46,6 +46,10 @@ export interface SkillRow {
   ownerLabel: string;
   /** "v3 · 12 installs" — versions arrive as "vN" from the server. */
   meta: string;
+  /** Latest version on its own (the row renders it emphasized). */
+  latestVersion: string;
+  /** Org-wide install count on its own (the row renders the label). */
+  installsCount: number;
   gated: boolean;
   /** The viewer's pinned version ("v2"), or null when not installed. */
   pin: string | null;
@@ -65,6 +69,8 @@ export function skillRow(item: SkillItem, install: SkillInstall | null | undefin
     description: item.description,
     ownerLabel: item.owner?.label ?? "",
     meta,
+    latestVersion: item.latest_version ?? "—",
+    installsCount: item.installs,
     gated: item.maintainer_gated,
     pin,
     updateTo,
@@ -272,7 +278,9 @@ export function SkillsPanel({
 
   if (selected !== null) {
     return (
-      <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col">
+      // Full column width: the detail's top bar spans the page and caps its
+      // own body, like the prototype's topbar over the 56rem inner column.
+      <div className="flex min-h-0 w-full flex-1 flex-col">
         <SkillDetail
           slug={selected}
           me={me}
@@ -289,12 +297,19 @@ export function SkillsPanel({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      {/* page header: title, search, filter + sort, New skill and the tab
-          bar in one wrapping row */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
-        <span className="font-semibold">Skills</span>
-        <div className="w-full max-w-64 sm:w-auto sm:flex-1 sm:max-w-sm">
-          <div className="relative">
+      {/* page header, two rows over one bottom border (prototype layout):
+          row 1 = title + count chip + grow + search + New skill; row 2 =
+          underline tabs + grow + filter/sort selects (catalog only) */}
+      <header className="border-b border-border bg-background px-5 pt-3">
+        <div className="flex flex-wrap items-center gap-3 pb-3">
+          <h1 className="text-base font-semibold tracking-[-0.01em]">Skills</h1>
+          {skills !== null && (
+            <span className="rounded-full border border-border px-2.5 py-px text-xs text-muted-foreground">
+              {skills.length} in catalog
+            </span>
+          )}
+          <div className="hidden flex-1 sm:block" />
+          <div className="relative w-full sm:w-[280px]">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
@@ -305,63 +320,72 @@ export function SkillsPanel({
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-        </div>
-        <Select
-          value={filterKind}
-          onValueChange={(v) => setFilterKind(v as SkillFilterKind)}
-        >
-          <SelectTrigger aria-label="Filter skills" className="h-9 w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {skillFilterOptions.map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={sortKey} onValueChange={(v) => setSortKey(v as SkillSortKey)}>
-          <SelectTrigger aria-label="Sort skills" className="h-9 w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {skillSortOptions.map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <div className="flex items-center gap-1">
-          {panelTabs(IS_TAURI).map(([value, label]) => (
-            <Button
-              key={value}
-              variant={tab === value ? "secondary" : "ghost"}
-              size="sm"
-              aria-pressed={tab === value}
-              aria-label={`${label} tab`}
-              onClick={() => onNavigate({ view: value, slug: null, editor: null })}
-            >
-              {label}
-            </Button>
-          ))}
-        </div>
-        <span className="flex flex-1 items-center justify-end">
           <Button
-            variant="outline"
             size="sm"
             aria-label="New skill"
             onClick={() => onNavigate({ view: "catalog", slug: null, editor: "new" })}
           >
+            <Plus />
             New skill
           </Button>
-        </span>
-      </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div role="tablist" aria-label="Skills sections" className="flex gap-0.5">
+            {panelTabs(IS_TAURI).map(([value, label]) => (
+              <button
+                key={value}
+                role="tab"
+                aria-selected={tab === value}
+                aria-label={`${label} tab`}
+                onClick={() => onNavigate({ view: value, slug: null, editor: null })}
+                className={`-mb-px border-b-2 px-3 pb-2 pt-2 text-[13.5px] outline-none transition-colors ${
+                  tab === value
+                    ? "border-foreground text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex-1" />
+          {tab === "catalog" && (
+            <>
+              <Select
+                value={filterKind}
+                onValueChange={(v) => setFilterKind(v as SkillFilterKind)}
+              >
+                <SelectTrigger aria-label="Filter skills" className="h-8 w-40 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {skillFilterOptions.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={sortKey} onValueChange={(v) => setSortKey(v as SkillSortKey)}>
+                <SelectTrigger aria-label="Sort skills" className="h-8 w-40 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {skillSortOptions.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          )}
+        </div>
+      </header>
       {/* page body: full-width background fill, content capped so the row
           list and detail panes don't stretch absurdly on wide monitors */}
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
-        <div className="mx-auto w-full max-w-5xl px-4 py-4">
+        <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-12">
           {tab === "activity" && <ActivityFeed />}
           {tab === "machine" && IS_TAURI && <LocalSkills />}
           {tab === "catalog" && (
@@ -382,7 +406,7 @@ export function SkillsPanel({
                       role="button"
                       tabIndex={0}
                       aria-label={`Open skill ${row.slug}`}
-                      className="cursor-pointer rounded-md border border-border px-3 py-2.5 hover:bg-muted/50"
+                      className="cursor-pointer rounded-lg border border-border bg-card px-3.5 py-[11px] transition-colors hover:bg-accent hover:text-accent-foreground"
                       onClick={() => onNavigate({ view: "catalog", slug: row.slug, editor: null })}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
@@ -394,7 +418,7 @@ export function SkillsPanel({
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="font-medium">{row.slug}</span>
+                            <span className="text-[13.5px] font-semibold">{row.slug}</span>
                             {row.gated && (
                               <Badge
                                 variant="outline"
@@ -419,18 +443,22 @@ export function SkillsPanel({
                               </Badge>
                             )}
                           </div>
-                          <p className="line-clamp-3 text-sm text-muted-foreground">{row.description}</p>
+                          <p className="mt-0.5 line-clamp-3 text-[13px] text-muted-foreground">{row.description}</p>
                         </div>
                         <div className="flex shrink-0 items-center gap-3 text-sm text-muted-foreground">
                           {row.ownerLabel !== "" && (
                             <span className="flex min-w-0 items-center gap-1.5">
-                              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
+                              <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-secondary text-[8.5px] font-semibold">
                                 {ownerInitials(row.ownerLabel)}
                               </span>
                               <span className="hidden max-w-32 truncate md:inline">{row.ownerLabel}</span>
                             </span>
                           )}
-                          <span className="whitespace-nowrap">{row.meta}</span>
+                          <span className="min-w-[90px] whitespace-nowrap text-right">
+                            <span className="font-medium text-foreground">{row.latestVersion}</span>
+                            {' · '}
+                            {row.installsCount} install{row.installsCount === 1 ? '' : 's'}
+                          </span>
                         </div>
                       </div>
                     </div>
