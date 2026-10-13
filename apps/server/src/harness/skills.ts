@@ -255,9 +255,16 @@ export class SkillRuntime {
    *  fire-and-forget — syncUser returns once they are dispatched, and a
    *  per-machine failure is logged without touching the other machines
    *  (the ClickHouse sink's never-throw discipline, per machine). No
-   *  machine store, no machines, no installs, or a store failure →
-   *  silent no-op (logged). */
-  async syncUser(orgId: string, userId: string): Promise<void> {
+   *  machine store, no machines, or a store failure → silent no-op
+   *  (logged).
+   *
+   *  Zero installs push an empty `skills` list — a meaningful "you should
+   *  have nothing" frame that converges a machine still holding the last
+   *  uninstalled skill — EXCEPT at connect time: `opts.skipWhenEmpty`
+   *  (set by the ws connect seam only) keeps the machine-connect frame
+   *  stream free of sync traffic for skill-less users (the WS golden
+   *  replay pins that stream byte-exactly). */
+  async syncUser(orgId: string, userId: string, opts?: { skipWhenEmpty?: boolean }): Promise<void> {
     const machines = this.deps.machines;
     if (machines === undefined) return;
     let rows: MachineRow[];
@@ -296,11 +303,11 @@ export class SkillRuntime {
       }
     }
     const payload = { skills };
-    // Zero installs → no push: there is nothing to fetch, and the machine
-    // connect frame stream stays free of sync traffic for skill-less
-    // users (the WS golden replay pins that stream). Stale local copies
-    // of a fully-uninstalled fleet are out of sync's reach.
-    if (skills.length === 0) return;
+    // Connect-time only: zero installs → no push, so the machine connect
+    // frame stream stays free of sync traffic for skill-less users (the
+    // WS golden replay pins that stream). Change triggers (install/pin/
+    // uninstall) always push — the empty list is the converge frame.
+    if (skills.length === 0 && opts?.skipWhenEmpty === true) return;
     for (const row of rows) {
       if (this.deps.machineOnline?.(row.machine_id) === false) continue;
       const pending = this.deps.machineRequest?.({

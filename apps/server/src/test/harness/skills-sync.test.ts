@@ -279,14 +279,30 @@ describe("skills syncUser", () => {
     expect(fx.calls).toEqual([]);
   });
 
-  it("pushes nothing for a zero-install user even with machines (no empty-list round-trip)", async () => {
+  it("connect-time with zero installs pushes nothing (the WS golden replay pins the connect frame stream)", async () => {
+    const fx = makeFixture({ selfBaseUrl: SELF });
+    fx.machines = [{ machine_id: "m-1" }];
+    fx.online = new Set(["m-1"]);
+
+    await fx.runtime.syncUser(ORG, USER, { skipWhenEmpty: true });
+
+    expect(fx.calls).toEqual([]);
+    expect(fx.warns).toEqual([]);
+  });
+
+  it("a change trigger with zero installs (final uninstall) pushes the empty desired-state frame", async () => {
     const fx = makeFixture({ selfBaseUrl: SELF });
     fx.machines = [{ machine_id: "m-1" }];
     fx.online = new Set(["m-1"]);
 
     await fx.runtime.syncUser(ORG, USER);
 
-    expect(fx.calls).toEqual([]);
+    expect(fx.calls).toHaveLength(1);
+    expect(fx.calls[0]!.machineId).toBe("m-1");
+    expect(fx.calls[0]!.orgId).toBe(ORG);
+    expect(fx.calls[0]!.op).toBe("skills.sync_v1");
+    expect(fx.calls[0]!.payload).toEqual({ skills: [] });
+    await flush();
     expect(fx.warns).toEqual([]);
   });
 });

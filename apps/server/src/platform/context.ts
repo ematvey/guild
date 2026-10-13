@@ -169,9 +169,11 @@ export class PlatformContext {
       this.machineDispatch.reconcileMachine(machineId, connId);
     };
     this.wsSkillsSync = (orgId, userId) => {
-      void this.runtime.skillsRuntime.syncUser(orgId, userId).catch((error) =>
-        log.warn(`skills fleet sync failed: ${error instanceof Error ? error.message : String(error)}`),
-      );
+      void this.runtime.skillsRuntime
+        .syncUser(orgId, userId, { skipWhenEmpty: true })
+        .catch((error) =>
+          log.warn(`skills fleet sync failed: ${error instanceof Error ? error.message : String(error)}`),
+        );
     };
     this.feed = new FeedForwarder(this);
     this.feed.start();
