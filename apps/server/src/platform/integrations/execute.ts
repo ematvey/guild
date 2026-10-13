@@ -31,7 +31,7 @@ const VENDOR_API_MAX_CHARS = 12_000;
 const MAX_BODY_SNIPPET = 300;
 const SCRAPE_EXCERPT_CHARS = 2_000;
 const MAP_LINK_LIMIT = 500;
-const FIRECRAWL_DEFAULT_BASE_URL = "http://host.docker.internal:3002";
+const FIRECRAWL_DEFAULT_BASE_URL = "http://host.docker.internal:13002";
 
 export function secret(secrets: [string, string][], name: string): string {
   const found = secrets.find(([n]) => n === name);

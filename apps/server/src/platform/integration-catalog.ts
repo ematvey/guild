@@ -49,7 +49,7 @@ function field(
   };
 }
 
-const FIRECRAWL_BASE_URL = "http://host.docker.internal:3002";
+const FIRECRAWL_BASE_URL = "http://host.docker.internal:13002";
 
 /** The compiled-in kinds, in registry order (integration_names()). */
 export const CONNECTORS: ConnectorManifest[] = [
