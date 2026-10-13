@@ -1,6 +1,6 @@
-// The Guild extension: the system-prompt section the built-in agent runs
-// with and
-// the approval gate hook (the M4 exec-policy + approvals lane).
+// The Guild extension: the system-prompt sections the built-in agent runs
+// with (the persona/guild section and the combined skills index) and the
+// approval gate hook (the M4 exec-policy + approvals lane).
 
 import { defineExtension, type ConversationId, type PromptSection, type ToolRegistration } from "@earendil-works/pi-durable";
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
@@ -24,6 +24,9 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   orgPrompt(orgId: string): Promise<string | null>;
   /** conversationId → org id (the chat mapping). */
   orgOfConversation(conversationId: ConversationId): Promise<string | null>;
+  /** conversationId → the chat owner's user (the skills index's install
+   *  pins resolve against them) — the same chat→row lookup. */
+  userOfConversation(conversationId: ConversationId): Promise<{ id: string } | null>;
   /** The integrations chat runtime (M8): the approval gate consults it for
    *  the integration tool envelope (absent: the generic policy applies). */
   integrations?: IntegrationGate;
@@ -41,10 +44,23 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
       return buildSystemPrompt(prompt);
     },
   };
+  const skillsSection: PromptSection<ToolRegistration> = {
+    key: "skills",
+    async render(input) {
+      const runtime = deps.skillRuntime;
+      if (runtime === undefined) return undefined;
+      const orgId = await deps.orgOfConversation(input.conversationId);
+      if (orgId === null) return undefined;
+      const user = await deps.userOfConversation(input.conversationId);
+      if (user === null) return undefined;
+      const rendered = await runtime.indexSection(orgId, user.id, runtime.stashedIndex(Number(input.conversationId)));
+      return rendered ?? undefined;
+    },
+  };
   return defineExtension({
     name: "guild",
     tools: deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools(),
-    sections: [section],
+    sections: [section, skillsSection],
     hooks: [createApprovalGate(deps)],
   });
 }

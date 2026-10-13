@@ -326,8 +326,8 @@ describe("SkillRuntime surfaces", () => {
     });
     const runtime = makeRuntime(deps);
     const section = await runtime.indexSection(ORG, USER);
-    expect(section).toContain("- hello-skill: A skill (installed, pinned v1)");
-    expect(section).toContain("- other-skill: Another (latest v1)");
+    expect(section).toContain("- hello-skill: A skill (installed, pinned v1, update available: v2)");
+    expect(section).toContain("- other-skill: Another (org)");
   });
 
   it("indexSection is null when the org has no skills", async () => {
@@ -392,7 +392,9 @@ describe("store surfaces", () => {
 
     expect((await registry.searchSkills(orgId, "deploy")).map((r) => r.slug)).toEqual(["deploy-helper"]);
     expect((await registry.searchSkills(orgId, "needle")).map((r) => r.slug)).toEqual(["log-tailer"]);
-    expect((await registry.searchSkills(orgId, "")).map((r) => r.slug)).toEqual(["deploy-helper", "log-tailer"]);
+    // Empty-q listing: most-recently-updated first (log-tailer was seeded
+    // later), so the index's discovery surface leads with fresh work.
+    expect((await registry.searchSkills(orgId, "")).map((r) => r.slug)).toEqual(["log-tailer", "deploy-helper"]);
     expect((await registry.searchSkills(orgId, "nothing-matches-this")).length).toBe(0);
   });
 

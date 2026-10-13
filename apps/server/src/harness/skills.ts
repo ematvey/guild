@@ -1,9 +1,9 @@
 // The skills runtime (spec §1/§3): the three agent tools over the org
 // skill registry — read_skill (install-on-use, pinned reads), search_skills
 // (catalog query), push_skill (workspace tree → next version) — plus the
-// per-turn surfaces the guild extension consumes: the prompt index section
-// (Task 6), the per-conversation index stash, and the machine sync hook
-// (Task 8 fills syncUser).
+// per-turn surfaces the guild extension consumes: the combined prompt
+// index section, the per-conversation index stash, and the machine sync
+// hook (Task 8 fills syncUser).
 //
 // Tool failures are RESULTS the model sees (isError text), never thrown
 // 403/404s. The publish path mirrors the HTTP publish internals
@@ -27,6 +27,7 @@ import { ApiError } from "../platform/errors.js";
 import { packBundle } from "../platform/bundle.js";
 import { validateManifest, type Manifest } from "../platform/registry-manifest.js";
 import type { ObjectStore } from "../platform/s3.js";
+import type { RegistryItemRow } from "../platform/store/registry.js";
 import type { SkillReadEvent, SkillReadSink } from "../platform/skillReads.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { RegistryStore } from "../platform/store/registry.js";
@@ -80,6 +81,42 @@ interface ChatIdentity {
 }
 
 const INDEX_LIMIT = 200;
+/** The combined section's byte budget (spec §2.1) — the client's local
+ *  lines + the org portion together. */
+const SECTION_BUDGET = 8192;
+/** Headroom for the overflow line, so it never pushes past the budget. */
+const OVERFLOW_RESERVE = 96;
+/** Uninstalled org descriptions clip at this many chars (client parity). */
+const DESCRIPTION_CLIP = 120;
+
+const SECTION_HEADER = "# Available skills";
+const SECTION_GUIDANCE =
+  "When a task matches a skill, read it with read_skill and follow it. Skills marked installed are on this machine " +
+  "(their files are readable with read_file); if one shows a newer version, ask the user before updating.";
+
+/** The client `skills_index`'s skill lines, verbatim: its own `# Available
+ *  skills` header, its guidance sentence, and blank lines are stripped. */
+function localLinesOf(index: string | undefined): string[] {
+  if (index === undefined || index.trim() === "") return [];
+  const lines: string[] = [];
+  for (const raw of index.split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line === SECTION_HEADER || line.startsWith("When a task matches a skill")) continue;
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** The slug a local line carries (`- slug: …`), null when the line is not
+ *  a skill entry — used to keep a locally-listed slug out of the org list. */
+function localSlugOf(line: string): string | null {
+  const match = /^- ([^:]+):/.exec(line);
+  return match === null ? null : match[1]!.trim();
+}
+
+function clipDescription(description: string): string {
+  return description.length > DESCRIPTION_CLIP ? `${description.slice(0, DESCRIPTION_CLIP)}…` : description;
+}
 
 export class SkillRuntime {
   private readonly lastIndex = new Map<ConversationId, string>();
@@ -122,28 +159,64 @@ export class SkillRuntime {
     return [this.readSkill, this.searchSkills, this.pushSkill];
   }
 
-  /** The combined skills prompt section (Task 6 renders it into the system
-   *  prompt): the org's catalog with the user's install pins marked. null
-   *  when the org has no live skills (nothing to render). */
-  async indexSection(orgId: string, userId: string): Promise<string | null> {
+  /** The combined skills prompt section (spec §2.1): the conversation's
+   *  stashed client `skills_index` lines first (the machine's local
+   *  skills), then the org's catalog — installed skills with their pin
+   *  (+ update-available) markers, then uninstalled skills clipped with
+   *  the (org) marker, most-recently-updated first — under one 8192-byte
+   *  budget whose overflow line points at search_skills. A slug the local
+   *  lines already list never repeats. null only when BOTH halves are
+   *  empty (no stash and the org has no skills); a store failure renders
+   *  the section without the org portion (logged) and never throws. */
+  async indexSection(orgId: string, userId: string, localIndex?: string): Promise<string | null> {
+    const localLines = localLinesOf(localIndex);
+    const localSlugs = new Set(localLines.map(localSlugOf).filter((slug): slug is string => slug !== null));
+    let orgLines: string[] | null;
     try {
       const items = await this.deps.registry.searchSkills(orgId, "", INDEX_LIMIT);
-      if (items.length === 0) return null;
-      const pins = new Map((await this.deps.skills.listForUser(orgId, userId)).map((i) => [i.slug, i.pinned_version]));
-      const lines = items.map((item) => {
-        const pin = pins.get(item.slug);
-        const version = pin === undefined ? `latest ${item.latest_version ?? "?"}` : `installed, pinned ${pin}`;
-        return `- ${item.slug}: ${item.description} (${version})`;
-      });
-      return `Org skills are available — read_skill "<slug>" to read one, search_skills to find them:\n${lines.join("\n")}`;
+      orgLines = items.length === 0 ? null : await this.orgLines(orgId, items, userId, localSlugs);
     } catch (error) {
       this.deps.log.warn(`skills index render failed: ${(error as Error).message}`);
-      return null;
+      orgLines = null;
     }
+    if (localLines.length === 0 && orgLines === null) return null;
+    const lines = [SECTION_HEADER, SECTION_GUIDANCE, ...localLines];
+    if (orgLines !== null) {
+      let dropped = 0;
+      for (let i = 0; i < orgLines.length; i++) {
+        if (Buffer.byteLength([...lines, orgLines[i]!].join("\n"), "utf8") + OVERFLOW_RESERVE > SECTION_BUDGET) {
+          dropped = orgLines.length - i;
+          break;
+        }
+        lines.push(orgLines[i]!);
+      }
+      if (dropped > 0) lines.push(`(${dropped} more org skills — use search_skills)`);
+    }
+    return lines.join("\n");
   }
 
-  /** Remembers the index text a turn was prepared with (Task 6/8 consume
-   *  the stash for machine sync diffing and section reuse). */
+  /** The org portion's lines: installs with pin/update markers first, then
+   *  uninstalled skills (clipped, (org) marker) — locally-listed slugs
+   *  excluded. */
+  private async orgLines(orgId: string, items: RegistryItemRow[], userId: string, exclude: Set<string>): Promise<string[]> {
+    const pins = new Map((await this.deps.skills.listForUser(orgId, userId)).map((i) => [i.slug, i.pinned_version]));
+    const installed: string[] = [];
+    const uninstalled: string[] = [];
+    for (const item of items) {
+      if (exclude.has(item.slug)) continue;
+      const pin = pins.get(item.slug);
+      if (pin === undefined) {
+        uninstalled.push(`- ${item.slug}: ${clipDescription(item.description)} (org)`);
+      } else {
+        const update = item.latest_version !== null && item.latest_version !== pin ? `, update available: ${item.latest_version}` : "";
+        installed.push(`- ${item.slug}: ${item.description} (installed, pinned ${pin}${update})`);
+      }
+    }
+    return [...installed, ...uninstalled];
+  }
+
+  /** Remembers the index text a turn was prepared with (the guild
+   *  extension's section reuses it; Task 8 diffs it for machine sync). */
   noteTurnInput(conversationId: number, skillsIndex: string): void {
     this.lastIndex.set(conversationId as ConversationId, skillsIndex);
   }
