@@ -27,6 +27,7 @@ import type { OrgStore } from "./store/orgs.js";
 import type { OidcStore } from "./store/oidc.js";
 import type { ApiKeyStore } from "./store/api_keys.js";
 import type { MachineStore } from "./store/machines.js";
+import type { SkillReadSink } from "./skillReads.js";
 import type { RegistryStore } from "./store/registry.js";
 import type { ReleaseStore } from "./store/releases.js";
 import type { ProjectStore } from "./store/projects.js";
@@ -121,6 +122,9 @@ export interface GatewayCtx extends GatewayContext {
   readonly registry: RegistryStore;
   readonly releases: ReleaseStore;
   readonly projects: ProjectStore;
+  /** The ClickHouse skill-read sink: spec §3's detail-page usage stats
+   *  (read analytics; writes ride the read_skill tool). */
+  readonly skillReads: SkillReadSink;
   /** Resolves a gateway bearer token (gk_… key or the config-minted
    *  internal key) to the credential the LLM gateway endpoints meter
    *  against. */

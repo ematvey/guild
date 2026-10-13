@@ -40,6 +40,10 @@ export class SkillReadSink {
    *  Every failure is logged and dropped. */
   async record(event: SkillReadEvent): Promise<void> {
     try {
+      // The DDL rides along with the first write (and startup ensures it);
+      // a failed ensure is caught below with the insert — ClickHouse being
+      // down drops the read, never breaks the turn.
+      await this.ensureOnce();
       let teamId = event.team_id ?? "";
       if (event.team_id === null && this.pool !== null) {
         // Membership has no primary flag; the earliest-created team is primary.
