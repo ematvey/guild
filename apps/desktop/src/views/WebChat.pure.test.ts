@@ -23,8 +23,10 @@ import {
   toolDisplayName,
   upsertApproval,
   accountDefaultLabel,
+  tabPaneLayout,
   type Block,
 } from "./WebChat";
+import type { SidebarTab } from "./sidebar-rail";
 import type { ApprovalPolicy, ThreadEvent, ThreadEventRow } from "../transport";
 
 function row(seq: number, event: ThreadEvent): ThreadEventRow {
@@ -647,5 +649,32 @@ describe("composerSkills (local + installed org pool, spec §2.3)", () => {
     expect(candidates.map((c) => c.name)).toEqual(["compact", "local-a", "dup", "org-deploy"]);
     expect(candidates.find((c) => c.name === "org-deploy")?.org).toBe(true);
     expect(candidates.find((c) => c.name === "local-a")?.org).toBe(false);
+  });
+});
+
+describe("tabPaneLayout (rail tab → sidebar/pane layout)", () => {
+  it("the skills tab is a full-page main-pane swap with NO sidebar aside", () => {
+    expect(tabPaneLayout("skills", false)).toEqual({
+      aside: false,
+      mainPane: "skillsPage",
+      expandsPanel: false,
+    });
+  });
+
+  it("the other desktop tabs keep the panel sidebar and the chat thread", () => {
+    for (const tab of ["chats", "work", "settings"] as SidebarTab[]) {
+      expect(tabPaneLayout(tab, false)).toEqual({
+        aside: true,
+        mainPane: "chat",
+        expandsPanel: true,
+      });
+    }
+  });
+
+  it("mobile keeps the chats-only drawer behavior unchanged", () => {
+    for (const tab of ["chats", "work", "skills", "settings"] as SidebarTab[]) {
+      expect(tabPaneLayout(tab, true).mainPane).toBe("chat");
+      expect(tabPaneLayout(tab, true).aside).toBe(false);
+    }
   });
 });
