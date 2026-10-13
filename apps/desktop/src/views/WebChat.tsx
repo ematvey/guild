@@ -2462,7 +2462,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       onRenameChat={(id, title) => void renameChat(id, title)}
       onArchiveChat={(id) => void archiveChat(id)}
       onUnarchiveChat={(id) => void unarchiveChat(id)}
-      onAddWorkspace={onAddWorkspace}
     />
   );
   const sidebar =
@@ -2561,6 +2560,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           onOpenSettings={openSettings}
           onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
           onSignOut={signOut}
+          onAddWorkspace={onAddWorkspace}
         />
       )}
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}

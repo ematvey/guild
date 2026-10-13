@@ -10,8 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
-import { ChevronDown, Plus, X } from "lucide-react";
-import {
+import { ChevronDown, Plus, X } from "lucide-react";import {
   IS_TAURI,
   workspaceList,
   workspaceSignOut,
@@ -139,6 +138,57 @@ export function WorkspaceMenuItems({
         );
       })}
     </>
+  );
+}
+
+/** Rail trigger: the active workspace's logo as a compact icon button (the
+ * rail's first button); the dropdown carries the switcher rows. On the web
+ * (single server) it renders nothing. */
+export function WorkspaceRailButton({
+  onAddWorkspace,
+  onReload,
+}: {
+  onAddWorkspace?: () => void;
+  /** Runs after a switch or sign-out (the caller reloads the app). */
+  onReload: () => void;
+}) {
+  const list = useWorkspaceList();
+  if (!IS_TAURI) return null;
+  const activeRow = (list?.workspaces ?? []).find(
+    (w) => w.base_url === (list?.active ?? null),
+  );
+  const label = activeRow
+    ? activeRow.name || shortOrigin(activeRow.base_url)
+    : "Guild";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
+          title="Switch workspace"
+          aria-label="Switch workspace"
+        >
+          {activeRow?.logo_url ? (
+            <img
+              src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
+              alt=""
+              className="size-6 shrink-0 rounded object-contain"
+            />
+          ) : (
+            <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-semibold text-muted-foreground">
+              {label.slice(0, 1).toUpperCase()}
+            </span>
+          )}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="bottom" align="start" className="w-60">
+        <WorkspaceMenuItems
+          list={list}
+          onAddWorkspace={onAddWorkspace}
+          onReload={onReload}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

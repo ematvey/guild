@@ -24,14 +24,12 @@ import {
 } from "@guild/ui/components/dropdown-menu";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import type { ChatSummary, Project } from "../transport";
-import { IS_TAURI } from "../transport";
 import {
   PROJECT_PAGE_INITIAL,
   PROJECT_PAGE_STEP,
   sidebarGrouping,
   type PickedProject,
 } from "./projects/projects";
-import { WorkspaceSwitcher } from "./workspace-menu";
 import { SETTINGS_SECTIONS } from "./settings/SettingsWindow";
 
 /** Row title that fades out at the right edge when it overflows (instead
@@ -326,7 +324,6 @@ export function ChatsPanel({
   onRenameChat,
   onArchiveChat,
   onUnarchiveChat,
-  onAddWorkspace,
 }: {
   grouping: ReturnType<typeof sidebarGrouping>;
   /** True while the chat list is still loading (skeleton rows). */
@@ -341,23 +338,14 @@ export function ChatsPanel({
   onRenameChat?: (id: string, title: string) => void;
   onArchiveChat?: (id: string) => void;
   onUnarchiveChat?: (id: string) => void;
-  /** Desktop multi-workspace: the header hosts the switcher. */
-  onAddWorkspace?: () => void;
 }) {
   const [archivedOpen, setArchivedOpen] = useState(false);
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
-        {/* Desktop: the workspace switcher takes the title's place; the web
-            has a single server, so the static app name stays. */}
-        {IS_TAURI ? (
-          <WorkspaceSwitcher
-            onAddWorkspace={onAddWorkspace}
-            onReload={() => window.location.reload()}
-          />
-        ) : (
-          <span className="font-semibold">Guild</span>
-        )}
+        {/* The workspace switcher lives on the rail's first button; the panel
+            header keeps the static app name. */}
+        <span className="font-semibold">Guild</span>
         <CollapseButton onCollapse={onCollapse} />
       </div>
       <div className="px-2">

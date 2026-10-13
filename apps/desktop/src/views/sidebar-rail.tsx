@@ -8,6 +8,7 @@ import {
   DropdownMenuSeparator,
 } from "@guild/ui/components/dropdown-menu";
 import { UserBadge } from "../components/user-badge";
+import { WorkspaceRailButton } from "./workspace-menu";
 import { IS_TAURI } from "../transport";
 
 export type SidebarTab = "chats" | "work" | "settings";
@@ -49,6 +50,7 @@ export function SidebarRail({
   onOpenSettings,
   onOpenDevice,
   onSignOut,
+  onAddWorkspace,
 }: {
   activeTab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
@@ -59,10 +61,18 @@ export function SidebarRail({
   onOpenSettings: (section?: string) => void;
   onOpenDevice: () => void;
   onSignOut: () => void;
+  /** Desktop multi-workspace: the rail's first button hosts the switcher. */
+  onAddWorkspace?: () => void;
 }) {
   return (
     <nav className="flex h-full w-12 shrink-0 flex-col items-center border-r border-border bg-sidebar py-2 text-sidebar-foreground">
       <div className="flex flex-col items-center gap-1">
+        {/* First button: the active workspace (logo/initial); its dropdown
+            carries the switcher rows. Renders nothing on the web. */}
+        <WorkspaceRailButton
+          onAddWorkspace={onAddWorkspace}
+          onReload={() => window.location.reload()}
+        />
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
