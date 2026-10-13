@@ -504,7 +504,7 @@ export class SkillRuntime {
   }
 
   private textResult(text: string, isError = false): ToolExecutionResult {
-    return { content: [{ type: "text", text }], isError };
+    return { output: [{ type: "text", text }], isError };
   }
 
   private errorResult(text: string): ToolExecutionResult {
