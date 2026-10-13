@@ -64,7 +64,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
-import { SettingsWindow } from "./settings/SettingsWindow";
+import { SettingsSectionPane, SettingsWindow } from "./settings/SettingsWindow";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
 import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
 import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
@@ -2423,9 +2423,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // Sidebar tab: one icon rail (desktop) switches the panel between chats,
   // work and settings; the choice persists across sessions.
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(storedSidebarTab);
+  // Settings tab: the section rendered inline in the main pane (the rail's
+  // Settings tab is a persistent surface, not an overlay launcher). Sub-page
+  // navigation stays local to the pane.
+  const [settingsSection, setSettingsSection] = useState<string | null>(null);
+  const [settingsDetail, setSettingsDetail] = useState<string | null>(null);
   const switchTab = (tab: SidebarTab) => {
     setSidebarTab(tab);
     saveSidebarTab(tab);
+    // Entering Settings with no section picked lands on the first user
+    // section instead of an empty main pane.
+    if (tab === "settings") setSettingsSection((s) => s ?? "account");
+  };
+  const openSettingsSection = (id: string) => {
+    setSettingsSection(id);
+    setSettingsDetail(null);
   };
 
   /** Optional section id deep-links into the settings overlay (null = root). */
@@ -2466,17 +2478,43 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         onArchiveProject={(id) => void archiveProject(id)}
       />
     ) : sidebarTab === "settings" ? (
-      <SettingsPanel role={role} onOpenSettings={openSettings} onCollapse={sidebarCollapse} />
+      <SettingsPanel
+        role={role}
+        activeSection={settingsSection}
+        onSelectSection={openSettingsSection}
+        onOpenSettings={() => openSettings()}
+        onCollapse={sidebarCollapse}
+      />
     ) : (
       chatsPanel
     );
 
   // A /project/<id> route (deep link, reload, or back/forward) opens on the
-  // Work tab so the linked project is visible. Not persisted: the route is
-  // a navigation, not a tab preference.
+  // Work tab so the linked project is visible. A chat route lands on the
+  // Chats tab the same way. Neither is persisted: routes are navigation,
+  // not tab preferences.
   useEffect(() => {
     if (route.projectId) setSidebarTab("work");
   }, [route.projectId]);
+  useEffect(() => {
+    if (route.chatId) setSidebarTab("chats");
+  }, [route.chatId]);
+
+  // The Settings tab's main pane renders the picked section inline instead
+  // of the chat thread (desktop only — the mobile drawer has no settings
+  // tab). The full overlay stays available via "All settings" and the
+  // account menu, and keeps its URL-driven open/close.
+  const inlineSettings =
+    !isMobile && sidebarTab === "settings" && settingsSection !== null ? (
+      <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
+        <SettingsSectionPane
+          sectionId={settingsSection}
+          email={email}
+          detail={settingsDetail}
+          onDetailChange={setSettingsDetail}
+        />
+      </div>
+    ) : null;
 
   // desktop: draggable resize handle. While dragging, the width transition
   // is suspended — an animated width chases the cursor and reads as lag.
@@ -2578,6 +2616,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             </div>
           </div>
         )}
+        {inlineSettings ? (
+          inlineSettings
+        ) : (
+          <>
         <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
           {isMobile ? (
             <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
@@ -3082,6 +3124,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             </div>
           </div>
         </div>
+          </>
+        )}
       </div>
 
       <DeviceSetupDialog

@@ -32,7 +32,7 @@ import {
   type PickedProject,
 } from "./projects/projects";
 import { WorkspaceSwitcher } from "./workspace-menu";
-import { SETTINGS_SECTIONS } from "./settings/section-nav";
+import { SETTINGS_SECTIONS } from "./settings/SettingsWindow";
 
 /** Row title that fades out at the right edge when it overflows (instead
  * of an ellipsis); also used by the composer's project chip in WebChat. */
@@ -554,18 +554,28 @@ export function WorkPanel({
 
 export function SettingsPanel({
   role,
+  activeSection,
+  onSelectSection,
   onOpenSettings,
   onCollapse,
 }: {
-  /** "admin" turns on the workspace (org) sections, same as the overlay. */
+  /** "admin" turns on the workspace sections, same as the overlay. */
   role: string;
-  /** A section id opens the settings overlay at that section; no id opens
-   * the overlay root. */
-  onOpenSettings: (section?: string) => void;
+  /** The section rendered in the main pane (inline settings); null = none
+   * picked yet. */
+  activeSection: string | null;
+  /** A section pick renders that section inline in the main pane. */
+  onSelectSection: (id: string) => void;
+  /** "All settings": opens the full settings overlay (root). */
+  onOpenSettings: () => void;
   onCollapse?: () => void;
 }) {
   const isAdmin = role === "admin";
-  const sections = SETTINGS_SECTIONS.filter((s) => !s.admin || isAdmin);
+  const visible = SETTINGS_SECTIONS.filter((s) => !s.admin || isAdmin);
+  const groups: { key: "user" | "workspace"; label: string }[] = [
+    { key: "user", label: "User" },
+    ...(isAdmin ? [{ key: "workspace" as const, label: "Workspace" }] : []),
+  ];
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
@@ -576,22 +586,42 @@ export function SettingsPanel({
         <div className="space-y-0.5">
           <button
             type="button"
-            onClick={() => onOpenSettings()}
+            onClick={onOpenSettings}
             className="flex w-full items-center rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           >
             All settings
           </button>
-          {sections.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => onOpenSettings(s.id)}
-              className="flex w-full items-center rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-            >
-              {s.label}
-            </button>
-          ))}
         </div>
+        {groups.map((g) => {
+          const items = visible.filter((s) => s.group === g.key);
+          if (items.length === 0) return null;
+          return (
+            <div key={g.key}>
+              <p className="px-1 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                {g.label}
+              </p>
+              <div className="space-y-0.5">
+                {items.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => onSelectSection(s.id)}
+                    className={`relative flex w-full items-center rounded-md px-2 py-1.5 text-left outline-none transition-colors ${
+                      activeSection === s.id
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    }`}
+                  >
+                    {activeSection === s.id && (
+                      <span className="absolute inset-y-1.5 -left-2 w-0.5 rounded-full bg-foreground/40" />
+                    )}
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
