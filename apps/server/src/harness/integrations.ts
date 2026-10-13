@@ -117,7 +117,11 @@ function toolMatches(slug: string, specName: string, callName: string): boolean 
   return s !== null && c !== null && s === c;
 }
 
-export type IntegrationGateClassification = "skip" | "ask" | undefined;
+/** The approval-gate consultation surface (harness/integrations.ts
+ *  IntegrationsRuntime implements it). "ask" = the card is forced
+ *  (always_ask curation); "policy" = the call falls through to the chat's
+ *  approval mode (full_access flows, ask gates). */
+export type IntegrationGateClassification = "skip" | "ask" | "policy" | undefined;
 
 /** The approval-gate consultation surface (harness/integrations.ts
  *  IntegrationsRuntime implements it). */
@@ -346,7 +350,7 @@ export class IntegrationsRuntime {
    *  write-class tool forces the card — org governance wins over the chat's
    *  approval mode. `undefined` = not an integration tool (the generic
    *  policy applies). */
-  async gateDecision(conversationId: number, callName: string): Promise<"skip" | "ask" | undefined> {
+  async gateDecision(conversationId: number, callName: string): Promise<IntegrationGateClassification> {
     // Cheap path: a name this runtime never registered and no auto-tool
     // shape cannot be an integration tool — coding tools pay no resolve.
     if (!this.knownToolNames.has(callName) && !/^(int_)?[a-z0-9][a-z0-9-]*_[a-z0-9_]+$/.test(callName)) {
@@ -359,9 +363,8 @@ export class IntegrationsRuntime {
     if (target === undefined) return undefined;
     const { turn, info } = target;
     const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
-    const alwaysAsk = toolCurate(turn.rowConfig, turn.executor === "mcp", raw).alwaysAsk;
-    if (alwaysAsk || info.class !== "read") return "ask";
-    return "skip";
+    if (toolCurate(turn.rowConfig, turn.executor === "mcp", raw).alwaysAsk) return "ask";
+    return info.class === "read" ? "skip" : "policy";
   }
 
   /** Executes one integration tool call (restate.rs server_tool_step): the

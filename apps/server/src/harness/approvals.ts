@@ -279,19 +279,19 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       }
 
       // 1b. Integration tools (M8): the connector envelope. Guild-provided
-      //     disclosure tools and read-class tools flow without a gate; an
-      //     always_ask curation or a write-class tool forces the card (the
-      //     Rust chat loop gates them with Approval::Ask regardless of the
-      //     chat's approval mode — the stored per-tool config and the
-      //     manifest class are the single source of truth). The batch
-      //     contract (server-side workspace sessions) skips the interactive
-      //     gate like every server tool.
+      //     disclosure and read-class tools flow; an always_ask curation
+      //     forces the card; any other class falls through to the chat's
+      //     approval mode below (full_access flows, ask/approve_for_me
+      //     gate). The batch contract (server-side workspace sessions)
+      //     skips the interactive gate like every server tool.
       if (deps.integrations !== undefined) {
         const decision = await deps.integrations.gateDecision(Number(runtime.conversationId), call.name);
         if (decision === "ask" && executor !== "server") {
           return waitForApproval(deps, runtime, chatId, call, context);
         }
-        if (decision !== undefined) return undefined;
+        if (decision === "skip") return undefined;
+        if (decision === "ask") return undefined;
+        // "policy" and undefined fall through to the chat approval mode.
       }
 
       // 2. The batch contract: server-side workspace sessions are
