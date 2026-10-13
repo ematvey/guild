@@ -9,7 +9,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Context } from "@earendil-works/chord";
 import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
-import { SkillRuntime, type SkillRuntimeDeps } from "../../harness/skills.js";
+import { SkillRuntime, descriptionFromSkillMd, type SkillRuntimeDeps } from "../../harness/skills.js";
 import { ApiError } from "../../platform/errors.js";
 import { RegistryStore } from "../../platform/store/registry.js";
 import { ChatStore } from "../../platform/store/chats.js";
@@ -32,6 +32,7 @@ interface Recorded {
 
 interface FakeOptions {
   control?: Record<string, unknown> | null;
+  dir?: string;
   meta?: Record<string, unknown> | null;
   versions?: Array<{ version: string }>;
   install?: { slug: string; pinned_version: string; installed_at: string } | null;
@@ -110,7 +111,7 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
     chatOfConversation: async () => CHAT,
     chatOwner: async () => ({ orgId: ORG, userId: USER, role: "member" }),
     executorKind: async () => options.executor ?? null,
-    conversationDir: async () => (options as { dir?: string }).dir ?? "/nonexistent",
+    conversationDir: async () => options.dir ?? "/nonexistent",
     materialize: async (args) => {
       recorded.materialized.push(args as unknown as Record<string, unknown>);
     },
@@ -217,7 +218,126 @@ describe("read_skill", () => {
   });
 });
 
-// --------------------------------------------------------------- search_skills
+// --------------------------------------------- read_skill — local tree first
+
+describe("read_skill local-first", () => {
+  it("reads the LOCAL skills/<slug> tree when present — no install, no org read, no materialization", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "guild-read-local-"));
+    try {
+      mkdirSync(path.join(dir, "skills", "hello", "scripts"), { recursive: true });
+      writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Local body\nFrom the workspace tree.", "utf8");
+      writeFileSync(path.join(dir, "skills", "hello", "scripts", "run.sh"), "echo hi\n", "utf8");
+      const { deps, recorded } = fakeDeps({ dir, executor: "server" });
+      const runtime = makeRuntime(deps);
+      const read = runtime.tools().find((t) => t.name === "read_skill")!;
+      const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+        { slug: "hello" }, API, CTX,
+      );
+      expect(result.isError).toBeFalsy();
+      const body = text(result);
+      expect(body).toContain("Local skill");
+      expect(body).toContain("From the workspace tree.");
+      expect(body).toContain("Additional files (read with read_file):");
+      expect(body).toContain("- scripts/run.sh");
+      expect(body).not.toContain("sha256");
+      // A local read is a workspace read, not an org read: no install
+      // record, no skill.installed event, no skill_reads row, no sync.
+      expect(recorded.installs).toHaveLength(0);
+      expect(recorded.reads).toHaveLength(0);
+      expect(recorded.emitted).toHaveLength(0);
+      expect(recorded.materialized).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("local-wins: notes the org registry's latest version alongside the local body", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "guild-read-over-"));
+    try {
+      mkdirSync(path.join(dir, "skills", "hello"), { recursive: true });
+      writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Local body\n", "utf8");
+      const { deps, recorded } = fakeDeps({ dir, executor: "server" });
+      const runtime = makeRuntime(deps);
+      const read = runtime.tools().find((t) => t.name === "read_skill")!;
+      const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+        { slug: "hello" }, API, CTX,
+      );
+      expect(result.isError).toBeFalsy();
+      const body = text(result);
+      expect(body).toContain("# Local body");
+      expect(body).not.toContain("# Deploy");
+      expect(body).toContain("the org registry has hello at v2 — pushing publishes your local tree as the next version");
+      expect(recorded.installs).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a local tree WITHOUT SKILL.md falls through to the org path", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "guild-read-nomd-"));
+    try {
+      mkdirSync(path.join(dir, "skills", "hello"), { recursive: true });
+      writeFileSync(path.join(dir, "skills", "hello", "notes.txt"), "no manifest here", "utf8");
+      const { deps, recorded } = fakeDeps({ dir, executor: "server" });
+      const runtime = makeRuntime(deps);
+      const read = runtime.tools().find((t) => t.name === "read_skill")!;
+      const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+        { slug: "hello" }, API, CTX,
+      );
+      expect(result.isError).toBeFalsy();
+      expect(text(result)).toContain("# Deploy");
+      expect(recorded.reads).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a tombstoned org twin carries no version note on a local read", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "guild-read-tomb-"));
+    try {
+      mkdirSync(path.join(dir, "skills", "hello"), { recursive: true });
+      writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Local body\n", "utf8");
+      const { deps } = fakeDeps({
+        dir,
+        control: { tombstoned: true, latest_version: "v2", description: "x", owner_user_id: null, owner_team_id: null, maintainer_gated: false, forked_from: null },
+      });
+      const runtime = makeRuntime(deps);
+      const read = runtime.tools().find((t) => t.name === "read_skill")!;
+      const result = await (read.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+        { slug: "hello" }, API, CTX,
+      );
+      expect(result.isError).toBeFalsy();
+      expect(text(result)).not.toContain("the org registry has");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("descriptionFromSkillMd", () => {
+  it("takes the first non-empty, non-heading line", () => {
+    expect(descriptionFromSkillMd("# Title\n\nDeploy the service safely.\nMore text.\n")).toBe(
+      "Deploy the service safely.",
+    );
+  });
+
+  it("skips heading-only openings and empty text yields empty", () => {
+    expect(descriptionFromSkillMd("# Title\n## Sub\n\nReal line here.")).toBe("Real line here.");
+    expect(descriptionFromSkillMd("\n\n   \n")).toBe("");
+    expect(descriptionFromSkillMd("")).toBe("");
+  });
+
+  it("truncates at 200 chars on a word boundary", () => {
+    const long = `A ${"word ".repeat(60)}tail`; // > 200 chars, single paragraph
+    const out = descriptionFromSkillMd(`# T\n${long}\n`);
+    expect(out.length).toBeLessThanOrEqual(200);
+    expect(out.endsWith(" ")).toBe(false);
+    expect(out.startsWith("A word")).toBe(true);
+    expect(long.startsWith(out)).toBe(true);
+    // A word longer than the budget is hard-cut.
+    expect(descriptionFromSkillMd("x".repeat(250)).length).toBe(200);
+  });
+});
 
 describe("search_skills", () => {
   it("lists hits and points at read_skill", async () => {
@@ -250,15 +370,29 @@ describe("search_skills", () => {
 // ------------------------------------------------------------------ push_skill
 
 describe("push_skill", () => {
-  it("404-texts when the skill is not installed", async () => {
-    const { deps } = fakeDeps({ install: null });
-    const runtime = makeRuntime(deps);
-    const push = runtime.tools().find((t) => t.name === "push_skill")!;
-    const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
-      { slug: "hello" }, API, CTX,
-    );
-    expect(result.isError).toBe(true);
-    expect(text(result)).toMatch(/pull the skill with read_skill before pushing/);
+  it("pushes a BRAND-NEW slug: v1, derived description, registry.published, no install precondition", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "guild-push-new-"));
+    try {
+      mkdirSync(path.join(dir, "skills", "hello"), { recursive: true });
+      writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Deploy\n\nRun the deploy checklist.\n", "utf8");
+      const { deps, recorded } = fakeDeps({ dir, executor: "server", control: null, install: null, versions: [] });
+      const runtime = makeRuntime(deps);
+      const push = runtime.tools().find((t) => t.name === "push_skill")!;
+      const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+        { slug: "hello" }, API, CTX,
+      );
+      expect(result.isError).toBeFalsy();
+      expect(text(result)).toContain("new org skill (now in the catalog)");
+      expect(recorded.upserts).toEqual([
+        { orgId: ORG, kind: "skill", slug: "hello", version: "v1", description: "Run the deploy checklist." },
+      ]);
+      expect(recorded.emitted.map((e) => e.kind)).toContain("registry.published");
+      expect(recorded.puts).toHaveLength(1);
+      // No auto-install — the next read_skill's install-on-use covers it.
+      expect(recorded.installs).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("is not available from a machine", async () => {

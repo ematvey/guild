@@ -137,6 +137,21 @@ function clipDescription(description: string): string {
   return description.length > DESCRIPTION_CLIP ? `${description.slice(0, DESCRIPTION_CLIP)}…` : description;
 }
 
+/** Derives an item description from a SKILL.md (first-push registration):
+ *  the first non-empty, non-heading line, clipped at 200 chars on a word
+ *  boundary (a single word longer than the budget is hard-cut). Empty or
+ *  heading-only text yields "". */
+export function descriptionFromSkillMd(text: string): string {
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    if (line.length <= 200) return line;
+    const cut = line.lastIndexOf(" ", 200);
+    return cut > 0 ? line.slice(0, cut) : line.slice(0, 200);
+  }
+  return "";
+}
+
 export class SkillRuntime {
   private readonly lastIndex = new Map<ConversationId, string>();
   private readonly readSkill: ToolRegistration;
@@ -147,8 +162,8 @@ export class SkillRuntime {
     this.readSkill = defineTool({
       name: "read_skill",
       description:
-        "Read an available skill by name. Returns the skill's SKILL.md and the list of additional files it ships. " +
-        "First read of an org skill installs it for you (pinned to the current version).",
+        "Read an available skill by name. Reads the conversation's local skills/<slug> tree when present, otherwise " +
+        "the org skill (installing it on first use). Returns the SKILL.md and the list of additional files it ships.",
       parameters: Type.Object({ slug: Type.String({ description: "The skill's slug" }) }),
       replay: "safe",
       outputLimits: { maxBytes: 256 * 1024 },
@@ -165,8 +180,9 @@ export class SkillRuntime {
     this.pushSkill = defineTool({
       name: "push_skill",
       description:
-        "Publish the local skills/<slug> directory as the skill's next version. The skill must be installed first " +
-        "(read_skill), and maintainer-gated skills only accept pushes from the owner, the owner team, or an admin.",
+        "Publishes the local skills/<slug> tree to the org registry — first push creates the entry (no install " +
+        "needed). Existing entries get the next version; maintainer-gated skills only accept pushes from the owner, " +
+        "the owner team, or an admin.",
       parameters: Type.Object({ slug: Type.String({ description: "The skill's slug" }) }),
       replay: "safe",
       outputLimits: { maxBytes: 4 * 1024 },
@@ -414,6 +430,29 @@ export class SkillRuntime {
     const id = await this.identity(api);
     if (id === null) return this.errorResult("no chat is bound to this conversation");
     const { orgId, userId } = id;
+    // Local tree first: the conversation's skills/<slug> is the agent's
+    // working copy, and push publishes exactly what read showed — so a
+    // present local tree always wins over the org registry. A local read
+    // is a workspace read, NOT an org read: no install, no pin, no
+    // skill_reads record, no sync/materialization.
+    const local = await this.collectTreeOrNull(orgId, Number(api.conversationId), slug);
+    if (local !== null) {
+      const control = await this.deps.registry.itemControl(orgId, "skill", slug);
+      const parts: string[] = [
+        `Local skill — this copy lives in your skills/${slug}/ tree (not read from the org registry).`,
+        local.get("SKILL.md")!.toString("utf8"),
+      ];
+      const files = [...local.keys()].filter((p) => p !== "SKILL.md").sort();
+      if (files.length > 0) {
+        parts.push(`Additional files (read with read_file):\n${files.map((f) => `- ${f}`).join("\n")}`);
+      }
+      if (control !== null && !control.tombstoned && control.latest_version !== null) {
+        parts.push(
+          `Note: the org registry has ${slug} at ${control.latest_version} — pushing publishes your local tree as the next version.`,
+        );
+      }
+      return this.textResult(parts.join("\n\n"));
+    }
     const control = await this.deps.registry.itemControl(orgId, "skill", slug);
     if (control === null) return this.errorResult(`no such skill: ${slug}`);
     if (control.tombstoned) return this.errorResult(`skill ${slug} is unpublished`);
@@ -502,8 +541,10 @@ export class SkillRuntime {
     const id = await this.identity(api);
     if (id === null) return this.errorResult("no chat is bound to this conversation");
     const { orgId, userId, role } = id;
-    const install = await this.deps.skills.byUserAndSlug(orgId, userId, slug);
-    if (install === null) return this.errorResult(`pull the skill with read_skill before pushing (${slug})`);
+    // No install precondition: a first push registers a fresh slug — the
+    // tombstone check, publishGate (a null item passes = creation allowed,
+    // owner becomes the pusher via upsertVersion's create path), and the
+    // SKILL.md requirement are the only gates.
     const executor = await this.deps.executorKind(Number(api.conversationId));
     if (executor === "machine") {
       return this.errorResult("pushing from a machine is not available yet");
@@ -536,9 +577,12 @@ export class SkillRuntime {
     const versions = await this.deps.registry.itemVersions(orgId, "skill", slug);
     // Max-suffix arithmetic (never count-based): a version gap (v1,v3) must
     // yield v4, not a silent overwrite of v3 through upsertVersion's
-    // same-latest short-circuit.
+    // same-latest short-circuit. No versions at all (a fresh slug) → v1.
     const version = nextVersion(versions);
-    const description = control?.description ?? "";
+    // Existing slugs keep their catalog description; a NEW slug derives one
+    // from the SKILL.md body.
+    const description =
+      control !== null ? control.description : descriptionFromSkillMd(collected.get("SKILL.md")!.toString("utf8"));
     const manifest: Manifest = { kind: "skill", slug, version, description };
     try {
       validateManifest(manifest);
@@ -583,21 +627,20 @@ export class SkillRuntime {
       this.deps.log.warn(`registry.updated emit failed: ${(error as Error).message}`);
     }
     await this.syncUser(orgId, userId);
+    if (control === null) {
+      return this.textResult(`Pushed ${slug} ${version} — new org skill (now in the catalog).`);
+    }
     const extra = collected.size - 1;
     return this.textResult(
       `Pushed ${slug} ${version} (SKILL.md + ${extra} additional file${extra === 1 ? "" : "s"}).`,
     );
   }
 
-  /** Reads every regular file under the conversation's `skills/<slug>`
-   *  directory into memory (relative path → bytes). Returns an error text
-   *  when the directory is missing or unreadable. */
-  private async collectTree(
-    orgId: string,
-    conversationId: number,
-    slug: string,
-  ): Promise<Map<string, Buffer> | string> {
-    const root = path.join(await this.deps.conversationDir(conversationId, orgId), "skills", slug);
+  /** Reads every regular file under a directory into memory (relative
+   *  path → bytes). Throws on a missing or unreadable root — the callers
+   *  decide what absence means (push: an error text; read: fall through
+   *  to the org registry). */
+  private async walkTree(root: string): Promise<Map<string, Buffer>> {
     const files = new Map<string, Buffer>();
     const walk = async (dir: string, rel: string): Promise<void> => {
       for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -609,8 +652,22 @@ export class SkillRuntime {
         }
       }
     };
+    await walk(root, "");
+    return files;
+  }
+
+  /** Reads every regular file under the conversation's `skills/<slug>`
+   *  directory into memory (relative path → bytes). Returns an error text
+   *  when the directory is missing or unreadable. */
+  private async collectTree(
+    orgId: string,
+    conversationId: number,
+    slug: string,
+  ): Promise<Map<string, Buffer> | string> {
+    const root = path.join(await this.deps.conversationDir(conversationId, orgId), "skills", slug);
+    let files: Map<string, Buffer>;
     try {
-      await walk(root, "");
+      files = await this.walkTree(root);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return `no skills/${slug} directory in this conversation's workspace — create it (with SKILL.md) before pushing`;
@@ -621,5 +678,23 @@ export class SkillRuntime {
       return `no skills/${slug} directory in this conversation's workspace — create it (with SKILL.md) before pushing`;
     }
     return files;
+  }
+
+  /** collectTree for the read_skill local-first check: null instead of an
+   *  error text when the tree is missing, unreadable, empty, or has no
+   *  SKILL.md — the caller falls through to the org path. A SKILL.md-less
+   *  tree is not a local skill copy. */
+  private async collectTreeOrNull(
+    orgId: string,
+    conversationId: number,
+    slug: string,
+  ): Promise<Map<string, Buffer> | null> {
+    try {
+      const root = path.join(await this.deps.conversationDir(conversationId, orgId), "skills", slug);
+      const files = await this.walkTree(root);
+      return files.has("SKILL.md") && files.size > 0 ? files : null;
+    } catch {
+      return null;
+    }
   }
 }
