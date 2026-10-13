@@ -2507,7 +2507,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         onArchiveProject={(id) => void archiveProject(id)}
       />
     ) : sidebarTab === "skills" ? (
-      <SkillsPanel onCollapse={sidebarCollapse} />
+      <SkillsPanel
+        onCollapse={sidebarCollapse}
+        me={{ email, displayName: displayName ?? undefined, role }}
+      />
     ) : sidebarTab === "settings" ? (
       <SettingsPanel
         role={role}
