@@ -32,6 +32,7 @@ import { registerProjectRoutes } from "./projects.js";
 import { registerTeamRoutes } from "./teams.js";
 import { registerAdminUserRoutes, registerAdminPromptRoutes, registerAdminIntegrationRoutes } from "./admin.js";
 import { registerIntegrationToolRoutes } from "./integration_tools.js";
+import { registerUserMcpRoutes } from "./user_mcp.js";
 
 export interface NativeRouteGroup {
   /** Route group name (for the report / rollback notes). */
@@ -68,6 +69,7 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   // call fails with the connector-unreachable shape (200, ok:false).
   { name: "admin-integrations", paths: ["/api/v1/admin/integrations", "/api/v1/admin/integrations/*"] },
   { name: "integration-tools", paths: ["/api/v1/integrations", "/api/v1/integrations/*"] },
+  { name: "user-mcp", paths: ["/api/v1/mcp", "/api/v1/mcp/*"] },
   // M4: workspace agent sessions + tool artifacts (the spill surface).
   { name: "agents", paths: ["/api/v1/agents/sessions", "/api/v1/agents/sessions/*"] },
   { name: "tool-artifacts", paths: ["/api/v1/tool_artifacts/*", "/api/v1/chats/*/tool_artifacts"] },
@@ -137,6 +139,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerAdminUserRoutes(scope, auth);
     registerAdminPromptRoutes(scope, auth);
     registerAdminIntegrationRoutes(scope, gateway, auth);
+    registerUserMcpRoutes(scope, auth);
   });
 
   // The script-facing integration tool API accepts ANY content type as raw
