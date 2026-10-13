@@ -36,12 +36,10 @@ function row(seq: number, event: ThreadEvent): ThreadEventRow {
 const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
 
 describe("parseChatRoute / chatRoutePath", () => {
-  const roundTrip = (path: string) =>
-    chatRoutePath(
-      parseChatRoute(path).chatId,
-      parseChatRoute(path).projectId,
-      parseChatRoute(path).overlay,
-    );
+  const roundTrip = (path: string) => {
+    const r = parseChatRoute(path);
+    return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills);
+  };
 
   it("round-trips every route shape", () => {
     for (const path of [
@@ -54,26 +52,93 @@ describe("parseChatRoute / chatRoutePath", () => {
       "/settings",
       "/settings/models",
       "/settings/integrations/my-slug",
+      "/skills",
+      "/skills/activity",
+      "/skills/machine",
+      "/skills/new",
+      "/skills/code-review",
+      "/skills/code-review/edit",
     ]) {
       expect(roundTrip(path)).toBe(path);
     }
   });
 
+  it("parses every skills page state; skills is chat-independent and top-level", () => {
+    expect(parseChatRoute("/skills").skills).toEqual({
+      view: "catalog",
+      slug: null,
+      editor: null,
+    });
+    expect(parseChatRoute("/skills/activity").skills).toEqual({
+      view: "activity",
+      slug: null,
+      editor: null,
+    });
+    expect(parseChatRoute("/skills/machine").skills).toEqual({
+      view: "machine",
+      slug: null,
+      editor: null,
+    });
+    // "new" is a reserved segment: the create editor, not a detail slug.
+    expect(parseChatRoute("/skills/new").skills).toEqual({
+      view: "catalog",
+      slug: null,
+      editor: "new",
+    });
+    expect(parseChatRoute("/skills/code-review").skills).toEqual({
+      view: "catalog",
+      slug: "code-review",
+      editor: null,
+    });
+    expect(parseChatRoute("/skills/code-review/edit").skills).toEqual({
+      view: "catalog",
+      slug: "code-review",
+      editor: "code-review",
+    });
+    // activity/machine/new are reserved: a slug can never collide with
+    // them, so tabs parse without a slug lookup.
+    for (const reserved of ["activity", "machine", "new"]) {
+      expect(parseChatRoute(`/skills/${reserved}`).skills).toMatchObject({ slug: null });
+    }
+    // the skills page replaces the chat: no thread/project rides along
+    const r = parseChatRoute("/skills/code-review");
+    expect(r.chatId).toBeNull();
+    expect(r.projectId).toBeNull();
+    expect(r.overlay).toBeNull();
+  });
+
   it("parses thread + overlay combinations", () => {
-    expect(parseChatRoute("/thread/x")).toEqual({ chatId: "x", projectId: null, overlay: null });
+    expect(parseChatRoute("/thread/x")).toEqual({
+      chatId: "x",
+      projectId: null,
+      overlay: null,
+      skills: null,
+    });
     expect(parseChatRoute("/thread/x/device")).toEqual({
       chatId: "x",
       projectId: null,
       overlay: { kind: "device" },
+      skills: null,
     });
     expect(parseChatRoute("/settings/integrations/a/b")).toEqual({
       chatId: null,
       projectId: null,
       overlay: { kind: "settings", section: "integrations", detail: "a/b" },
+      skills: null,
     });
     // trailing slashes and empty segments are ignored
-    expect(parseChatRoute("/thread/x/")).toEqual({ chatId: "x", projectId: null, overlay: null });
-    expect(parseChatRoute("")).toEqual({ chatId: null, projectId: null, overlay: null });
+    expect(parseChatRoute("/thread/x/")).toEqual({
+      chatId: "x",
+      projectId: null,
+      overlay: null,
+      skills: null,
+    });
+    expect(parseChatRoute("")).toEqual({
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+    });
     // a detail carrying an encoded slash parses to the full id and the
     // rebuilt path is parse-stable from there on
     const once = chatRoutePath(
@@ -89,16 +154,27 @@ describe("parseChatRoute / chatRoutePath", () => {
   });
 
   it("parses the project filter, with and without an open thread", () => {
-    expect(parseChatRoute("/project/p1")).toEqual({ chatId: null, projectId: "p1", overlay: null });
+    expect(parseChatRoute("/project/p1")).toEqual({
+      chatId: null,
+      projectId: "p1",
+      overlay: null,
+      skills: null,
+    });
     expect(parseChatRoute("/project/p1/thread/c1")).toEqual({
       chatId: "c1",
       projectId: "p1",
       overlay: null,
+      skills: null,
     });
     // a bare /thread/<id> has no project filter (deep link)
     expect(parseChatRoute("/thread/c1").projectId).toBeNull();
     // /project without an id is not a project route
-    expect(parseChatRoute("/project")).toEqual({ chatId: null, projectId: null, overlay: null });
+    expect(parseChatRoute("/project")).toEqual({
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+    });
   });
 });
 
