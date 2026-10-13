@@ -62,7 +62,10 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
           bundle_sha256: "cafe",
           publisher: USER,
           skill_md_text: "# Deploy\nRun the deploy checklist.",
-          files: [{ path: "scripts/run.sh", size: 12, sha256: "deadbeef" }],
+          files: [
+            { path: "scripts/run.sh", size: 12, sha256: "deadbeef" },
+            { path: "manifest.json", size: 95, sha256: "beefcafe" },
+          ],
         }
       : options.meta;
   const deps: SkillRuntimeDeps = {
@@ -162,6 +165,9 @@ describe("read_skill", () => {
     expect(body).toContain("# Deploy");
     expect(body).toContain("Additional files (read with read_file):");
     expect(body).toContain("- scripts/run.sh (sha256 deadbeef)");
+    // manifest.json is bundle metadata installs never materialize — agents
+    // must not be pointed at a file that cannot exist locally.
+    expect(body).not.toContain("manifest.json");
     expect(recorded.installs).toHaveLength(0);
     expect(recorded.materialized).toHaveLength(0);
     expect(recorded.reads).toEqual([

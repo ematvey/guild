@@ -335,7 +335,9 @@ export function registerSkillRoutes(
     sendJson(reply, {
       version,
       skill_md: meta.skill_md_text ?? "",
-      files: meta.files ?? [],
+      // manifest.json is bundle metadata (never materialized on installs) —
+      // keep it out of the agent-facing file list.
+      files: (meta.files ?? []).filter((f) => f.path !== "manifest.json"),
     });
     return reply;
   });

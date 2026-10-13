@@ -133,7 +133,8 @@ describe("skills api", () => {
     const body = src.json() as { version: string; skill_md: string; files: Array<{ path: string }> };
     expect(body.version).toBe("v2");
     expect(body.skill_md).toBe("# second");
-    expect(body.files.map((f) => f.path).sort()).toEqual(["SKILL.md", "manifest.json"]);
+    // manifest.json is registry packaging metadata — never listed to agents.
+    expect(body.files.map((f) => f.path).sort()).toEqual(["SKILL.md"]);
   });
 
   it("install → my_install set and activity contains skill.installed", async () => {

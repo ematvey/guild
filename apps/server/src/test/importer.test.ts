@@ -6,14 +6,14 @@
 // user 16, approvals 5+5, compaction 1) plus one empty chat.
 
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { PostgresDurableStorage } from "../storage/postgres/index.js";
 import { importThreads } from "../importer/importer.js";
 import { SharedPoolDatabase } from "../harness/runtime.js";
-import { MIGRATIONS_DIR, TEST_ADMIN_URL } from "./platform/harness.js";
+import { applyPlatformMigrations } from "../platform/migrations.js";
+import { TEST_ADMIN_URL } from "./platform/harness.js";
 
 const FIXTURE_PATH = new URL("./fixtures/m3-threads.json", import.meta.url);
 
@@ -48,11 +48,9 @@ beforeAll(async () => {
   databaseUrl = url.toString();
   pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
   const migrationPool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
-  const { readdirSync } = await import("node:fs");
-  for (const file of readdirSync(MIGRATIONS_DIR).sort()) {
-    if (!file.endsWith(".sql")) continue;
-    await migrationPool.query(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
-  }
+  // The production startup path (applyPlatformMigrations): same filename
+  // order, same schema_history tracking hand-run deployments use.
+  await applyPlatformMigrations(migrationPool);
   await migrationPool.end();
   cleanupDb = async () => {
     await pool.end();

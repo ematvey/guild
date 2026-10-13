@@ -5,10 +5,9 @@
 // built app instance.
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, readdirSync } from "node:fs";
-import path from "node:path";
 import pg from "pg";
 import { buildApp } from "../../app.js";
+import { applyPlatformMigrations } from "../../platform/migrations.js";
 import { loadConfig } from "../../config.js";
 import {
   MIGRATIONS_DIR,
@@ -88,10 +87,9 @@ export async function createM2TestEnv(
   // shared guild database the admin URL points at.
   const dbPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 4, idleTimeoutMillis: 2000 });
   const migrationPool = new pg.Pool({ connectionString: databaseUrl.toString(), max: 2, idleTimeoutMillis: 2000 });
-  for (const file of readdirSync(MIGRATIONS_DIR).sort()) {
-    if (!file.endsWith(".sql")) continue;
-    await migrationPool.query(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
-  }
+  // The production startup path (applyPlatformMigrations): same filename
+  // order, same schema_history tracking hand-run deployments use.
+  await applyPlatformMigrations(migrationPool);
   await migrationPool.end();
 
   const clickhouseDatabase = withClickhouse ? await createClickhouseDatabase(dbPrefix) : "guild";

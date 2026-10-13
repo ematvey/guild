@@ -22,6 +22,8 @@ COPY apps/server/tsconfig.json apps/server/tsconfig.json
 # from apps/server/assets (relocated out of the Rust tree ahead of its
 # deletion).
 COPY apps/server/assets/exec_policy_base.rules apps/server/assets/exec_policy_base.rules
+# The platform SQL migrations: applied at startup (schema_history-tracked).
+COPY apps/server/migrations ./apps/server/migrations
 RUN npm run build --workspace apps/server
 
 # Frontend stage: build the chat SPA (apps/desktop) for the TS server to
@@ -55,6 +57,9 @@ COPY --from=webui /app/apps/desktop/dist ./apps/desktop/dist
 # no TS fork. The default path resolves relative to the server's cwd:
 # <cwd>/assets/.
 COPY --from=build /app/apps/server/assets/exec_policy_base.rules /app/apps/server/assets/exec_policy_base.rules
+# The platform SQL migrations: startup applies pending files in filename
+# order (platform/migrations.ts, schema_history-tracked).
+COPY --from=build /app/apps/server/migrations /app/apps/server/migrations
 WORKDIR /app/apps/server
 EXPOSE 8080
 CMD ["node", "dist/index.js"]
