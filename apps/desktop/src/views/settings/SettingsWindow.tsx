@@ -65,13 +65,45 @@ type SectionId =
   // No "releases" pane: desktop releases are dev-controlled, not
   // admin-controlled.
 
-interface SectionDef {
+export interface SectionDef {
   id: SectionId;
   label: string;
   icon: React.ReactNode;
-  group: "user" | "org";
+  group: "user" | "workspace";
   admin?: boolean;
 }
+
+/// The section catalog, shared by the settings overlay and the sidebar
+/// rail's Settings tab (nav + inline rendering).
+export const SETTINGS_SECTIONS: SectionDef[] = [
+  { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
+  { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
+  { id: "machine", label: "Machine", icon: <Cpu className="size-4" />, group: "user" },
+  { id: "gateway", label: "Gateway", icon: <KeyRound className="size-4" />, group: "user" },
+  { id: "skills", label: "Skills", icon: <Puzzle className="size-4" />, group: "user" },
+  {
+    id: "approvals",
+    label: "Approvals",
+    icon: <ShieldCheck className="size-4" />,
+    group: "user",
+  },
+  { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
+  { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "workspace", admin: true },
+  { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "workspace", admin: true },
+  { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "workspace", admin: true },
+  { id: "users", label: "Users", icon: <Users className="size-4" />, group: "workspace", admin: true },
+  { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "workspace", admin: true },
+  { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "workspace", admin: true },
+  {
+    id: "integrations",
+    label: "Integrations",
+    icon: <Plug className="size-4" />,
+    group: "workspace",
+    admin: true,
+  },
+  { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace", admin: true },
+  { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace", admin: true },
+];
 
 export function SettingsWindow({
   open,
@@ -107,43 +139,14 @@ export function SettingsWindow({
   onDetailChange: (detail: string | null) => void;
 }) {
   const isAdmin = role === "admin";
-  const sections: SectionDef[] = [
-    { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
-    { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
-    { id: "machine", label: "Machine", icon: <Cpu className="size-4" />, group: "user" },
-    { id: "gateway", label: "Gateway", icon: <KeyRound className="size-4" />, group: "user" },
-    { id: "skills", label: "Skills", icon: <Puzzle className="size-4" />, group: "user" },
-    {
-      id: "approvals",
-      label: "Approvals",
-      icon: <ShieldCheck className="size-4" />,
-      group: "user",
-    },
-    { id: "general", label: "General", icon: <Building2 className="size-4" />, group: "org", admin: true },
-    { id: "usage", label: "Usage", icon: <Sparkles className="size-4" />, group: "org", admin: true },
-    { id: "assistant", label: "Assistant", icon: <Bot className="size-4" />, group: "org", admin: true },
-    { id: "users", label: "Users", icon: <Users className="size-4" />, group: "org", admin: true },
-    { id: "teams", label: "Teams", icon: <UsersRound className="size-4" />, group: "org", admin: true },
-    { id: "models", label: "Models", icon: <Waypoints className="size-4" />, group: "org", admin: true },
-    {
-      id: "integrations",
-      label: "Integrations",
-      icon: <Plug className="size-4" />,
-      group: "org",
-      admin: true,
-    },
-    { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "org", admin: true },
-    { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "org", admin: true },
-    { id: "about", label: "About", icon: <Info className="size-4" />, group: "user" },
-  ];
-  const visible = sections.filter((s) => !s.admin || isAdmin);
+  const visible = SETTINGS_SECTIONS.filter((s) => !s.admin || isAdmin);
   // Section is URL-driven (WebChat owns it); an unknown section (stale deep
   // link, or a role/chat change that hid it) falls back to the first visible.
   const activeDef = visible.find((s) => s.id === section) ?? visible[0];
 
-  const groups: { key: "user" | "org"; label: string }[] = [
+  const groups: { key: "user" | "workspace"; label: string }[] = [
     { key: "user", label: "User" },
-    ...(isAdmin ? [{ key: "org" as const, label: "Workspace" }] : []),
+    ...(isAdmin ? [{ key: "workspace" as const, label: "Workspace" }] : []),
   ];
 
   // same resizable sidebar as the chat, sharing its stored width
@@ -259,6 +262,27 @@ export function SettingsWindow({
   );
 }
 
+/// Section content for embedding outside the overlay: the sidebar rail's
+/// Settings tab renders this pane in the main column. Unknown ids fall back
+/// to the first section (same fallback the overlay uses for stale links).
+export function SettingsSectionPane({
+  sectionId,
+  email,
+  detail,
+  onDetailChange,
+}: {
+  sectionId: string;
+  email: string;
+  detail: string | null;
+  onDetailChange: (detail: string | null) => void;
+}) {
+  const def =
+    SETTINGS_SECTIONS.find((s) => s.id === sectionId) ?? SETTINGS_SECTIONS[0];
+  return (
+    <SectionPane def={def} email={email} detail={detail} onDetailChange={onDetailChange} />
+  );
+}
+
 function SectionPane({
   def,
   email,
@@ -309,8 +333,6 @@ function SectionBody({
       return <AppearanceSection />;
     case "machine":
       return <MachineSection />;
-    case "gateway":
-      return <GatewaySection />;
     case "gateway":
       return <GatewaySection />;
     case "approvals":
