@@ -110,6 +110,33 @@ async function actorLabel(skills: SkillStore, orgId: string, userId: string): Pr
   return (await skills.ownerEntry(orgId, userId, null))?.label ?? userId;
 }
 
+/** Publishing auto-installs for the publisher: the same install record,
+ *  event and machine-sync fan-out a manual install takes, pinned at the
+ *  pushed version (a later publish re-pins; other users' installs are
+ *  untouched). Never fails the publish — a failed install logs. */
+async function autoInstall(
+  skills: SkillStore,
+  auth: IdentityCtx,
+  onInstallChange: (orgId: string, userId: string) => void | Promise<void>,
+  orgId: string,
+  userId: string,
+  slug: string,
+  version: string,
+): Promise<void> {
+  try {
+    await skills.install(orgId, userId, slug, version);
+    await emitEvent(auth, orgId, "skill.installed", {
+      slug,
+      version,
+      user_id: userId,
+      actor: await actorLabel(skills, orgId, userId),
+    });
+    await onInstallChange(orgId, userId);
+  } catch (error) {
+    console.warn(`auto-install after publish failed for ${slug}: ${(error as Error).message}`);
+  }
+}
+
 /** Applies the create payload's owner pick: owner_team_id requires team
  *  membership and moves ownership off the creating user. */
 async function applyOwnerTeam(
@@ -193,6 +220,7 @@ export function registerSkillRoutes(
         user_id: user.id,
         actor: await actorLabel(skills, user.org_id, user.id),
       });
+      await autoInstall(skills, auth, onInstallChange, user.org_id, user.id, slug, "v1");
       sendJson(reply, { slug, version: "v1" });
       return reply;
     }
@@ -214,6 +242,7 @@ export function registerSkillRoutes(
       buildSkillBundle(slug, version, description, bodyText),
     );
     await applyOwnerTeam(gateway, auth, user, slug, ownerTeamId);
+    await autoInstall(skills, auth, onInstallChange, user.org_id, user.id, slug, version);
     sendJson(reply, { slug, version });
     return reply;
   });
@@ -233,6 +262,7 @@ export function registerSkillRoutes(
       { kind: "skill", slug, version, description },
       buildSkillBundle(slug, version, description, bodyText),
     );
+    await autoInstall(skills, auth, onInstallChange, user.org_id, user.id, slug, version);
     sendJson(reply, { slug, version });
     return reply;
   });

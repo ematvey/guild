@@ -67,6 +67,24 @@ describe("parseFrontmatter", () => {
     const { name } = parseFrontmatter("no frontmatter here", "skill-file");
     expect(name).toBe("skill-file");
   });
+  it("folds a block scalar description (>- and |)", () => {
+    const folded = [
+      "---",
+      "name: hubspot-investigate",
+      "description: >-",
+      "  Investigate how OUR HubSpot portal works and how it is structured. Use this",
+      "  skill for any question about the CRM.",
+      "---",
+      "",
+      "# body",
+    ].join("\n");
+    expect(parseFrontmatter(folded, "f").description).toBe(
+      "Investigate how OUR HubSpot portal works and how it is structured. Use this " +
+        "skill for any question about the CRM.",
+    );
+    const literal = "---\ndescription: |\n  First line.\n  Second line.\n---\n";
+    expect(parseFrontmatter(literal, "f").description).toBe("First line.\nSecond line.");
+  });
 });
 
 describe("promptIndex", () => {

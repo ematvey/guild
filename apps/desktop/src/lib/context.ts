@@ -136,7 +136,10 @@ export async function installedOrgSkills(
 
 // ---------- skills ----------
 
-/** Frontmatter `name`/`description` (guild-core::registry::parse_frontmatter). */
+/** Frontmatter `name`/`description` (guild-core::registry::parse_frontmatter).
+ *  `description` reads single-line plain/quoted values and YAML block
+ *  scalars (`>`, `|-`, `>+`, … — indented lines fold with spaces for `>`
+ *  and keep newlines for `|`); `name` stays single-line. */
 export function parseFrontmatter(
   body: string,
   fallbackName: string,
@@ -145,11 +148,35 @@ export function parseFrontmatter(
   let description = "";
   if (body.startsWith("---")) {
     const front = body.slice(3).split("---")[0] ?? "";
-    for (const line of front.split("\n")) {
+    const lines = front.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
       if (line.startsWith("name:")) {
         name = line.slice(5).trim().replace(/^"|"$/g, "");
       } else if (line.startsWith("description:")) {
-        description = line.slice(12).trim().replace(/^"|"$/g, "");
+        const inline = line.slice(12).trim();
+        const block = /^(?:>|\|)[+-]?$/.exec(inline);
+        if (block !== null) {
+          // Block scalar: the indented (or blank) lines under the key are
+          // the value; `>` folds with spaces, `|` keeps line breaks.
+          const literal = inline[0] === "|";
+          const parts: string[] = [];
+          let blanks = 0;
+          for (let j = i + 1; j < lines.length; j++) {
+            const raw = lines[j]!;
+            if (raw.trim() === "") {
+              blanks += 1;
+              continue;
+            }
+            if (!/^\s/.test(raw)) break;
+            if (parts.length > 0) parts.push(literal ? "\n".repeat(blanks + 1) : blanks > 0 ? "\n" : " ");
+            blanks = 0;
+            parts.push(raw.trim());
+          }
+          description = parts.join("").trim();
+        } else {
+          description = inline.replace(/^"([\s\S]*)"$/, "$1").replace(/^'([\s\S]*)'$/, "$1");
+        }
       }
     }
   }
