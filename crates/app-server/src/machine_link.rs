@@ -392,10 +392,15 @@ async fn ws_session(
                         ServerFrame::MachineRequest { request_id, op, payload } => {
                             let outbound = outbound_tx.clone();
                             let hooks = hooks.clone();
+                            let cloud = cloud.clone();
                             tokio::spawn(async move {
                                 let result = if op == "artifact.prefetch_v1" {
                                     prefetch_artifact(&payload, &hooks).await
-                                } else { machine_request_result(&op, &payload).await };
+                                } else if op == "skills.sync_v1" {
+                                    sync_skills(&payload, &cloud).await
+                                } else {
+                                    machine_request_result(&op, &payload).await
+                                };
                                 let (ok, resp_payload, error) = match result {
                                     Ok(v) => (true, Some(v), None),
                                     Err(e) => (false, None, Some(e)),
@@ -463,6 +468,57 @@ async fn ws_session(
 /// read_file's truncation marker.
 const FS_LIST_MAX_ENTRIES: usize = 1000;
 
+/// Cap on `fs_read` payloads (machine-side control plane read): a huge file
+/// must not ride the executor socket as one frame.
+const FS_READ_MAX_BYTES: usize = 1024 * 1024;
+
+/// The skill scope `skills.sync_v1` converges: the machine user's home
+/// (`~/.agents/skills` — the same root the remote-context skill scan
+/// reads). Env-overridable for tests.
+fn skills_root() -> PathBuf {
+    std::env::var("GUILD_SKILLS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| crate::fs_bridge::home_dir())
+}
+
+/// One `skills.sync_v1` request over the link: fills in each entry's
+/// bundle URL when the server omitted it (the machine's own authenticated
+/// registry bundle endpoint — the same one install_skill uses), then
+/// converges the home skill scope. The bearer-auth fetch path is the
+/// machine link's own cloud client, exactly like artifact prefetch.
+async fn sync_skills(
+    payload: &serde_json::Value,
+    cloud: &CloudClient,
+) -> Result<serde_json::Value, String> {
+    let base = cloud.base_url.trim_end_matches('/');
+    let mut payload = payload.clone();
+    if let Some(skills) = payload["skills"].as_array_mut() {
+        for entry in skills {
+            let missing = entry["url"]
+                .as_str()
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+                .is_none();
+            if missing {
+                let slug = entry["slug"].as_str().unwrap_or_default();
+                let version = entry["version"].as_str().unwrap_or_default();
+                entry["url"] = serde_json::json!(format!(
+                    "{base}/api/v1/registry/skill/{slug}/{version}/bundle"
+                ));
+            }
+        }
+    }
+    crate::skill_sync::sync(
+        &payload,
+        |url: String| {
+            let cloud = cloud.clone();
+            async move { crate::skill_sync::fetch_bundle(&cloud, &url).await }
+        },
+        &skills_root(),
+    )
+    .await
+}
+
 /// Control-plane ops the server sends over the executor socket (read-only
 /// filesystem access for the desktop's remote folder browse).
 async fn prefetch_artifact(
@@ -502,9 +558,9 @@ async fn machine_request_result(
     payload: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     match op {
-        "capabilities" => {
-            Ok(serde_json::json!({"operations": ["context.prepare_v1", "artifact.prefetch_v1"]}))
-        }
+        "capabilities" => Ok(
+            serde_json::json!({"operations": ["context.prepare_v1", "artifact.prefetch_v1", "skills.sync_v1"]}),
+        ),
         "context.prepare_v1" => {
             let project = payload["project_dir"]
                 .as_str()
@@ -525,6 +581,30 @@ async fn machine_request_result(
         "fs_home" => Ok(serde_json::json!({
             "home": std::env::var("HOME").unwrap_or_default()
         })),
+        "fs_read" => {
+            use base64::Engine as _;
+            let path = payload["path"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or("missing path")?;
+            if !Path::new(path).is_absolute() {
+                return Err("path must be absolute".into());
+            }
+            let bytes = tokio::fs::read(path)
+                .await
+                .map_err(|e| format!("{path}: {e}"))?;
+            if bytes.len() > FS_READ_MAX_BYTES {
+                return Err(format!("{path}: exceeds the 1 MiB read cap"));
+            }
+            match std::str::from_utf8(&bytes) {
+                Ok(text) => Ok(serde_json::json!({ "path": path, "content": text })),
+                Err(_) => Ok(serde_json::json!({
+                    "path": path,
+                    "content_base64": base64::engine::general_purpose::STANDARD.encode(&bytes)
+                })),
+            }
+        }
         "fs_list" => {
             let path = payload["path"]
                 .as_str()
@@ -1043,6 +1123,25 @@ mod tests {
         let (resp_tx, mut resp_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let req_rx = Arc::new(std::sync::Mutex::new(Some(req_rx)));
         let resp_tx = Arc::new(std::sync::Mutex::new(Some(resp_tx)));
+        let temp = temp_scoped_dir("remote-context-socket");
+        let bundle_src = temp.join("bundle-src/demo-skill");
+        std::fs::create_dir_all(&bundle_src).unwrap();
+        std::fs::write(
+            bundle_src.join("SKILL.md"),
+            "---\nname: demo-skill\ndescription: t\n---\nSYNCED-BODY",
+        )
+        .unwrap();
+        let (bundle_bytes, _) = guild_core::registry::pack_skill(&bundle_src, "v2").unwrap();
+        let bundle_sha = {
+            use sha2::{Digest as _, Sha256};
+            hex::encode(Sha256::digest(&bundle_bytes))
+        };
+        let sync_bundle = Arc::new(std::sync::Mutex::new(bundle_bytes.clone()));
+        // The skills sync dispatch arm targets the machine user's home; the
+        // test redirects it (env-overridable, same pattern as the heartbeat
+        // cadence) so the machine's real ~/.agents is never touched.
+        let skills_home = temp.join("skills-home");
+        std::env::set_var("GUILD_SKILLS_ROOT", &skills_home);
         let app = axum::Router::new()
             .route(
                 "/api/v1/ws/ticket",
@@ -1068,6 +1167,28 @@ mod tests {
                         )
                     },
                 ),
+            )
+            .route(
+                "/api/v1/registry/skill/{slug}/{version}/bundle",
+                {
+                    let sync_bundle = sync_bundle.clone();
+                    axum::routing::get(
+                        move |headers: axum::http::HeaderMap,
+                              axum::extract::Path((slug, version)): axum::extract::Path<(String, String)>| async move {
+                            if headers
+                                .get(axum::http::header::AUTHORIZATION)
+                                .and_then(|v| v.to_str().ok())
+                                != Some("Bearer tok")
+                            {
+                                return (axum::http::StatusCode::UNAUTHORIZED, Vec::new());
+                            }
+                            if slug != "demo-skill" || version != "v2" {
+                                return (axum::http::StatusCode::NOT_FOUND, Vec::new());
+                            }
+                            (axum::http::StatusCode::OK, sync_bundle.lock().unwrap().clone())
+                        },
+                    )
+                },
             )
             .route(
                 "/api/v1/ws",
@@ -1119,7 +1240,7 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let config = MachineLinkConfig {
-            base_url,
+            base_url: base_url.clone(),
             machine_id: Uuid::now_v7().to_string(),
             ..cfg()
         };
@@ -1136,7 +1257,6 @@ mod tests {
             )
             .await
         });
-        let temp = temp_scoped_dir("remote-context-socket");
         let root = temp.join("bound");
         let child = root.join("child");
         std::fs::create_dir_all(child.join(".agents/skills/socket-demo")).unwrap();
@@ -1252,12 +1372,53 @@ mod tests {
             matches!(&denied, Err(e) if e.contains("invalid artifact filename")),
             "path escape must be rejected, got {denied:?}"
         );
+
+        // Skills sync: the machine downloads the payload's bundle URL with
+        // its own bearer credentials, converges the home skill scope, and
+        // reports the result.
+        let synced = hub_request(
+            &req_tx,
+            &mut resp_rx,
+            "sync",
+            "skills.sync_v1",
+            serde_json::json!({"skills": [
+                {"slug": "demo-skill", "version": "v2", "bundle_sha256": bundle_sha,
+                 "url": format!("{}/api/v1/registry/skill/demo-skill/v2/bundle", base_url.clone())}
+            ]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(synced["updated"], serde_json::json!(["demo-skill"]));
+        let skill_dir = skills_home.join(".agents/skills/demo-skill");
+        let skill_md = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        assert!(skill_md.contains("SYNCED-BODY"));
+        assert!(
+            skill_dir.join("agents/guild.yaml").exists(),
+            "installed dir carries the provenance sidecar"
+        );
+        // A hash mismatch fails the op (the response carries the error).
+        let bad_sha = hub_request(
+            &req_tx,
+            &mut resp_rx,
+            "sync-bad",
+            "skills.sync_v1",
+            serde_json::json!({"skills": [
+                {"slug": "demo-skill", "version": "v2", "bundle_sha256": "00",
+                 "url": format!("{}/api/v1/registry/skill/demo-skill/v2/bundle", base_url)}
+            ]}),
+        )
+        .await;
+        assert!(
+            matches!(&bad_sha, Err(e) if e.contains("sha256 mismatch")),
+            "got {bad_sha:?}"
+        );
         stop_tx.send(true).unwrap();
         tokio::time::timeout(Duration::from_secs(5), session)
             .await
             .unwrap()
             .unwrap();
         server.abort();
+        std::env::remove_var("GUILD_SKILLS_ROOT");
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -1301,7 +1462,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             caps["operations"],
-            serde_json::json!(["context.prepare_v1", "artifact.prefetch_v1"])
+            serde_json::json!([
+                "context.prepare_v1",
+                "artifact.prefetch_v1",
+                "skills.sync_v1"
+            ])
         );
         assert!(
             machine_request_result("context.prepare_v2", &serde_json::json!({}))
@@ -1527,6 +1692,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn fs_read_returns_text_and_rejects_relative_paths_and_oversize_files() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = temp_scoped_dir("fs-read");
+        std::fs::write(dir.join("text.txt"), "hello fs_read").unwrap();
+        let bytes: Vec<u8> = vec![0xFF, 0xFE, 0x00, 0x01];
+        std::fs::write(dir.join("bin.bin"), &bytes).unwrap();
+        let result = rt
+            .block_on(machine_request_result(
+                "fs_read",
+                &serde_json::json!({ "path": dir.join("text.txt").to_string_lossy() }),
+            ))
+            .unwrap();
+        assert_eq!(result["content"], "hello fs_read");
+        let bin = rt
+            .block_on(machine_request_result(
+                "fs_read",
+                &serde_json::json!({ "path": dir.join("bin.bin").to_string_lossy() }),
+            ))
+            .unwrap();
+        use base64::Engine as _;
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(bin["content_base64"].as_str().unwrap())
+                .unwrap(),
+            bytes
+        );
+        assert!(bin["content"].is_null());
+        assert!(rt
+            .block_on(machine_request_result(
+                "fs_read",
+                &serde_json::json!({ "path": "relative/path.txt" }),
+            ))
+            .is_err());
+        assert!(rt
+            .block_on(machine_request_result("fs_read", &serde_json::json!({})))
+            .is_err());
+        let big = dir.join("big.bin");
+        std::fs::write(&big, vec![0u8; FS_READ_MAX_BYTES + 1]).unwrap();
+        assert!(rt
+            .block_on(machine_request_result(
+                "fs_read",
+                &serde_json::json!({ "path": big.to_string_lossy() }),
+            ))
+            .is_err());
+        let missing = rt
+            .block_on(machine_request_result(
+                "fs_read",
+                &serde_json::json!({ "path": dir.join("nope.txt").to_string_lossy() }),
+            ))
+            .unwrap_err();
+        assert!(missing.contains("nope.txt"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
