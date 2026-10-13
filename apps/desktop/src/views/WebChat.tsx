@@ -68,7 +68,6 @@ import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsSectionPane, SettingsWindow } from "./settings/SettingsWindow";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
-import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
 import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "./sidebar-contents";
 import { SkillsPanel } from "./skills/SkillsPanel";
@@ -1903,14 +1902,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
    * project row's "+"): the chatId switch consumes it, so the per-chat
    * reset applies to every other transition. */
   const scratchPickRef = useRef<PickedProject | null>(null);
-  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  /** Where the create-project dialog was opened from: only the composer's
-   * project picker binds the new project to the chat — the sidebar's
-   * "+" merely creates it. */
-  const createProjectFromRef = useRef<"picker" | "sidebar">("picker");
-  const openCreateProject = (from: "picker" | "sidebar") => {
-    createProjectFromRef.current = from;
+  const openCreateProject = () => {
     setCreateProjectOpen(true);
   };
   const openRow = chatId ? chats?.find((c) => c.id === chatId) : undefined;
@@ -1922,11 +1915,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const pickProject = (p: PickedProject | null) => {
     setPickedProject(p);
   };
-  const projectCreated = (project: Project) => {
+  const projectCreated = () => {
     void refreshProjects();
-    if (createProjectFromRef.current !== "picker") return;
-    pickProject({ id: project.id, name: project.name, machine_label: project.machine_label, folder: project.folder });
-    setProjectPickerOpen(false);
   };
 
   // ---- sidebar row menu: rename + archive (row drop-out = list refresh) ----
@@ -2574,7 +2564,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         onOpenChat={openChat}
         onCollapse={sidebarCollapse}
         onNewChatInProject={newChatInProject}
-        onNewProject={() => openCreateProject("sidebar")}
+        onNewProject={openCreateProject}
         onRenameChat={(id, title) => void renameChat(id, title)}
         onArchiveChat={(id) => void archiveChat(id)}
         onRenameProject={(id, name) => void renameProject(id, name)}
@@ -3075,7 +3065,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 </Button>
                 {(() => {
                   const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-                  // One chip for project + machine. The executing machine is
+                  // One read-only chip for project + machine. The composer
+                  // never binds projects: a chat is projectless unless it was
+                  // started from a project (the sidebar project row's "+",
+                  // which pre-picks the binding). The executing machine is
                   // project-derived: an existing chat inherits its bound
                   // project's machine, a new chat the picked project's. The
                   // dot renders only for a remote machine (on desktop the
@@ -3102,15 +3095,13 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     machines?.find((m) => m.machine_id === chipMachineId)?.name ??
                     chipMachineId;
                   return (
-                    (!chatId || currentProject) && (
+                    currentProject && (
                       <span
                         className="flex h-7 max-w-52 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground"
                         title={
                           showMachine
-                            ? `${currentProject ? `${currentProject.name} — ` : ""}Machine: ${machineLabel}${machineOnline ? " (online)" : " (offline)"}`
-                            : currentProject
-                              ? `${currentProject.name} — ${currentProject.machine_label ?? "project"}`
-                              : "Pick the folder the agent works in"
+                            ? `${currentProject.name} — Machine: ${machineLabel}${machineOnline ? " (online)" : " (offline)"}`
+                            : `${currentProject.name} — ${currentProject.machine_label ?? "project"}`
                         }
                       >
                         {showMachine && (
@@ -3118,42 +3109,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                             className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
                           />
                         )}
-                        {chatId ? (
-                          // An existing chat: the binding is fixed at chat
-                          // start — a bound project shows as a read-only
-                          // label; a projectless existing chat renders no
-                          // chip at all (outer guard above).
-                          <span className="flex h-7 items-center gap-1 px-2">
-                            <FolderOpen className="size-3.5 shrink-0" />
-                            <span className="hidden min-w-0 sm:block sm:flex-1">
-                              <FadeTitle text={projectChipLabel(currentProject)} />
-                            </span>
+                        <span className="flex h-7 items-center gap-1 px-2">
+                          <FolderOpen className="size-3.5 shrink-0" />
+                          <span className="hidden min-w-0 sm:block sm:flex-1">
+                            <FadeTitle text={projectChipLabel(currentProject)} />
                           </span>
-                        ) : (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 max-w-44 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground sm:max-w-40"
-                              onClick={() => setProjectPickerOpen(true)}
-                            >
-                              <FolderOpen className="size-3.5 shrink-0" />
-                              <span className="hidden min-w-0 sm:block sm:flex-1">
-                                <FadeTitle text={projectChipLabel(currentProject)} />
-                              </span>
-                            </Button>
-                            {currentProject && (
-                              <button
-                                type="button"
-                                title="Detach the project (the agent works without a folder)"
-                                className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
-                                onClick={() => pickProject(null)}
-                              >
-                                <XIcon className="size-3" />
-                              </button>
-                            )}
-                          </>
-                        )}
+                        </span>
                       </span>
                     )
                   );
@@ -3275,16 +3236,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         onOpenChange={(o) => {
           if (!o) pushRoute({ overlay: null });
         }}
-      />
-
-      <ProjectPickerDialog
-        open={projectPickerOpen}
-        onOpenChange={setProjectPickerOpen}
-        projects={projects}
-        chats={chats}
-        current={currentProject}
-        onPick={pickProject}
-        onCreateProject={() => openCreateProject("picker")}
       />
 
       <CreateProjectDialog
