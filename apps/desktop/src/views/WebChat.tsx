@@ -69,6 +69,7 @@ import { CreateProjectDialog } from "./projects/CreateProjectDialog";
 import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
 import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "./sidebar-contents";
+import { SkillsPanel } from "./skills/SkillsPanel";
 import { SidebarRail, saveSidebarTab, storedSidebarTab, type SidebarTab } from "./sidebar-rail";
 import {
   attachmentBlobUrl,
@@ -2446,7 +2447,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   );
 
   // Sidebar tab: one icon rail (desktop) switches the panel between chats,
-  // work and settings; the choice persists across sessions.
+  // work, skills and settings; the choice persists across sessions.
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(storedSidebarTab);
   // Settings tab: the section rendered inline in the main pane (the rail's
   // Settings tab is a persistent surface, not an overlay launcher). Sub-page
@@ -2505,6 +2506,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         onRenameProject={(id, name) => void renameProject(id, name)}
         onArchiveProject={(id) => void archiveProject(id)}
       />
+    ) : sidebarTab === "skills" ? (
+      <SkillsPanel onCollapse={sidebarCollapse} />
     ) : sidebarTab === "settings" ? (
       <SettingsPanel
         role={role}
@@ -2589,7 +2592,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   return (
     <div ref={shell} className="fixed inset-0 flex bg-background text-foreground">
       {/* icon rail: desktop only, always visible — it switches the sidebar
-          panel between chats / work / settings and carries the account menu */}
+          panel between chats / work / skills / settings and carries the
+          account menu */}
       {!isMobile && (
         <SidebarRail
           activeTab={sidebarTab}
