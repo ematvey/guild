@@ -11,6 +11,29 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Org-wide skills shipped (2026-10-13).** The 17-task plan
+  (`docs/superpowers/plans/2026-10-13-org-skills.md`, spec
+  `docs/superpowers/specs/2026-10-13-org-skills-design.md`) is complete and
+  deployed: registry items gain team/owner ownership, maintainer gating and
+  tombstone unpublish (revival via the editor route republishes at
+  max-version+1); skill HTTP surface (catalog, detail with read_stats,
+  source, install/uninstall/pin/gate/unpublish, fork, activity,
+  member-scoped `/skills/teams`, caller-install listing `/skills/installs`);
+  ClickHouse `skill_reads` sink feeding detail-page usage stats; agent tools
+  `read_skill` (install-on-use, pinned, sha-verified) / `search_skills` /
+  `push_skill` with one combined index section in the system prompt
+  (8192-byte budget); `skills.sync_v1` MachineRequest converging pinned
+  installs onto every machine (Rust app-server handler materializes to
+  `~/.agents/skills/`, sidecar `agents/guild.yaml`, per-entry isolation);
+  desktop Skills rail panel (catalog/activity tabs, detail with
+  install/pin/fork/gate/unpublish, wiki-style editor with owner pick,
+  Tauri-only local-machine group); composer mentions cover local + installed
+  org skills only; settings' SkillsSection deleted (panel owns skill
+  customization), RegistrySection keeps mcp/integration. Startup now applies
+  `apps/server/migrations` via `schema_history` (the old by-hand ritual is
+  retired). Branch `skills`, E2E verified live on :18080 (create -> read ->
+  install-on-use pin -> panel counts -> activity feed).
+
 - **Rust server deleted (2026-10-13).** `crates/server` git-rm'd — the R9
   gate (prod cutover + soak) superseded by maintainer's explicit order after
   the live E2E on the TS stack (real model turn with tool calls through the
