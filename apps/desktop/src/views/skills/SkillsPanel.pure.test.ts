@@ -1,17 +1,26 @@
 // Pure-render tests for the Skills panel's catalog logic (no DOM, no
-// server): card view models from fixture skills, client-side search
-// filtering, and the empty-state decision. These run under `npm test`
-// (vitest); see package.json.
+// server): row view models from fixture skills (install pin, update
+// badge), the search / filter / sort pipeline, and the empty-state
+// decision. These run under `npm test` (vitest); see package.json.
 
 import { describe, expect, it } from "vitest";
-import { filterSkills, skillsPageHeader, skillCard, skillsEmptyState } from "./SkillsPanel";
-import type { SkillItem } from "./skills-api";
+import {
+  filterByKind,
+  filterSkills,
+  ownerInitials,
+  skillsPageHeader,
+  skillRow,
+  skillsEmptyState,
+  sortSkills,
+  versionRank,
+} from "./SkillsPanel";
+import type { SkillInstall, SkillItem, SkillMe } from "./skills-api";
 
 const fixtures: SkillItem[] = [
   {
     slug: "code-review",
     description: "Reviews diffs against repo standards",
-    latest_version: "1.2.0",
+    latest_version: "v3",
     owner: { kind: "user", id: "u1", label: "Ada" },
     maintainer_gated: false,
     installs: 12,
@@ -20,7 +29,7 @@ const fixtures: SkillItem[] = [
   {
     slug: "deploy-runbook",
     description: "Compose rebuild and live-bundle check",
-    latest_version: "0.9.1",
+    latest_version: "v2",
     owner: { kind: "team", id: "t1", label: "Platform" },
     maintainer_gated: true,
     installs: 3,
@@ -29,33 +38,52 @@ const fixtures: SkillItem[] = [
   {
     slug: "triage",
     description: "Sorts new issues by severity",
-    latest_version: "2.0.0",
+    latest_version: "v10",
     owner: null,
     maintainer_gated: false,
     installs: 0,
   },
 ];
 
-describe("skillCard", () => {
-  it("renders every fixture skill as a card view model", () => {
-    const cards = fixtures.map(skillCard);
-    expect(cards.map((c) => c.slug)).toEqual(["code-review", "deploy-runbook", "triage"]);
+const me: SkillMe = { role: "member", email: "ada@example.com", displayName: "Ada" };
+const pin: SkillInstall = { slug: "code-review", pinned_version: "v2", installed_at: "2026-10-12T11:00:00Z" };
+
+describe("skillRow", () => {
+  it("renders every fixture skill as a row view model", () => {
+    const rows = fixtures.map((f) => skillRow(f, null));
+    expect(rows.map((r) => r.slug)).toEqual(["code-review", "deploy-runbook", "triage"]);
   });
 
-  it("carries the display fields each card renders", () => {
-    const card = skillCard(fixtures[0]);
-    expect(card.title).toBe("code-review");
-    expect(card.description).toBe("Reviews diffs against repo standards");
-    expect(card.subtitle).toBe("Ada");
-    expect(card.meta).toContain("1.2.0");
-    expect(card.meta).toContain("12");
-    expect(card.gated).toBe(false);
+  it("carries the display fields each row renders", () => {
+    const row = skillRow(fixtures[0]!, null);
+    expect(row.slug).toBe("code-review");
+    expect(row.description).toBe("Reviews diffs against repo standards");
+    expect(row.ownerLabel).toBe("Ada");
+    expect(row.meta).toContain("v3");
+    expect(row.meta).toContain("12");
+    expect(row.gated).toBe(false);
   });
 
-  it("falls back to no subtitle without an owner and marks gated skills", () => {
-    expect(skillCard(fixtures[2]).subtitle).toBe("");
-    const gated = skillCard(fixtures[1]);
-    expect(gated.gated).toBe(true);
+  it("falls back to no owner without one and marks approval-gated skills", () => {
+    expect(skillRow(fixtures[2]!, null).ownerLabel).toBe("");
+    expect(skillRow(fixtures[1]!, null).gated).toBe(true);
+  });
+
+  it("carries the viewer's pin and the update badge target when behind latest", () => {
+    expect(skillRow(fixtures[0]!, pin)).toMatchObject({ pin: "v2", updateTo: "v3" });
+    expect(skillRow(fixtures[0]!, null)).toMatchObject({ pin: null, updateTo: null });
+  });
+
+  it("shows no update badge when pinned at the latest version", () => {
+    const current: SkillInstall = { ...pin, pinned_version: "v3" };
+    expect(skillRow(fixtures[0]!, current)).toMatchObject({ pin: "v3", updateTo: null });
+  });
+});
+
+describe("ownerInitials (the row's initials avatar)", () => {
+  it("takes the first two characters, uppercased", () => {
+    expect(ownerInitials("Ada")).toBe("AD");
+    expect(ownerInitials("platform-team")).toBe("PL");
   });
 });
 
@@ -75,13 +103,73 @@ describe("filterSkills (the search box's client-side filter)", () => {
   });
 });
 
+describe("versionRank (the recently-updated sort's version order)", () => {
+  it("parses the numeric suffix of a vN version", () => {
+    expect(versionRank("v3")).toBe(3);
+    expect(versionRank("v10")).toBe(10);
+    expect(versionRank("1.2.0")).toBe(0);
+  });
+});
+
+describe("filterByKind (the filter select's client-side cut)", () => {
+  const installedSlugs = new Set(["code-review"]);
+  const ctx = { installedSlugs, me };
+
+  it("all keeps everything; installed keeps only the viewer's installs", () => {
+    expect(filterByKind(fixtures, "all", ctx)).toHaveLength(3);
+    expect(filterByKind(fixtures, "installed", ctx).map((s) => s.slug)).toEqual(["code-review"]);
+  });
+
+  it("mine keeps user-owned skills whose label is the viewer's name or email", () => {
+    expect(filterByKind(fixtures, "mine", ctx).map((s) => s.slug)).toEqual(["code-review"]);
+    const other: SkillMe = { role: "member", email: "bob@example.com", displayName: "Bob" };
+    expect(filterByKind(fixtures, "mine", { installedSlugs, me: other })).toEqual([]);
+  });
+
+  it("approval keeps only maintainer-gated skills", () => {
+    expect(filterByKind(fixtures, "approval", ctx).map((s) => s.slug)).toEqual(["deploy-runbook"]);
+  });
+});
+
+describe("sortSkills (the sort select's ordering)", () => {
+  it("most installed sorts by install count descending", () => {
+    expect(sortSkills(fixtures, "installs").map((s) => s.slug)).toEqual([
+      "code-review",
+      "deploy-runbook",
+      "triage",
+    ]);
+  });
+
+  it("recently updated sorts by version rank descending (the catalog has no timestamps)", () => {
+    expect(sortSkills(fixtures, "updated").map((s) => s.slug)).toEqual([
+      "triage",
+      "code-review",
+      "deploy-runbook",
+    ]);
+  });
+
+  it("A → Z sorts by slug ascending", () => {
+    expect(sortSkills(fixtures, "az").map((s) => s.slug)).toEqual([
+      "code-review",
+      "deploy-runbook",
+      "triage",
+    ]);
+  });
+});
+
 describe("skillsEmptyState", () => {
   it("returns the right message for an empty catalog vs a fruitless search", () => {
     expect(skillsEmptyState("", 0)).toBe("No skills yet.");
     expect(skillsEmptyState("deploy", 0)).toBe('No skills match "deploy".');
   });
 
-  it("is null whenever the (filtered) catalog has cards to render", () => {
+  it("distinguishes a filter that cut everything from an empty catalog", () => {
+    expect(skillsEmptyState("", 0, true)).toBe("No skills match the current filter.");
+    expect(skillsEmptyState("", 3, true)).toBeNull();
+    expect(skillsEmptyState("deploy", 0, true)).toBe('No skills match "deploy".');
+  });
+
+  it("is null whenever the (filtered) catalog has rows to render", () => {
     expect(skillsEmptyState("", 3)).toBeNull();
     expect(skillsEmptyState("code", 1)).toBeNull();
   });

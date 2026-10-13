@@ -1,11 +1,13 @@
-// Skill detail page (Skills tab → card click): description, owner badge,
+// Skill detail page (Skills tab → row click): description, owner badge,
 // versions table, fork provenance, usage stats, and the action row —
 // install / update pin / uninstall / edit (opens the skill editor) /
-// fork / maintainer-gate toggle (owner or admin) / unpublish. Every
+// fork / maintainer-approval toggle (owner or admin) / unpublish. Every
 // action calls its skills API endpoint and refetches the detail.
+// Navigation is the icon back button plus the "Skills / <slug>"
+// breadcrumb in the header row.
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@guild/ui/components/badge";
 import { Button } from "@guild/ui/components/button";
@@ -61,7 +63,7 @@ export function detailActions(detail: SkillDetailData, me: SkillMe): string[] {
   if (detail.my_install !== null) actions.push("Uninstall");
   if (detail.latest_version !== null) actions.push("Edit", "Fork");
   if (canManageSkill(detail, me)) {
-    actions.push(detail.maintainer_gated ? "Remove gate" : "Gate", "Unpublish");
+    actions.push(detail.maintainer_gated ? "Remove approval" : "Require approval", "Unpublish");
   }
   return actions;
 }
@@ -103,6 +105,29 @@ export type DetailLoadState = "loading" | "missing" | "ready";
 export function detailLoadState(detail: SkillDetailData | null, loadFailed: boolean): DetailLoadState {
   if (detail !== null) return "ready";
   return loadFailed ? "missing" : "loading";
+}
+
+/** The header row shared by every detail state: icon back button plus
+ *  the "Skills / <slug>" breadcrumb (the Skills segment navigates back
+ *  too). */
+function DetailHeader({ slug, onBack }: { slug: string; onBack: () => void }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-3">
+      <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to skills">
+        <ArrowLeft className="size-4" />
+      </Button>
+      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
+        <button
+          className="shrink-0 rounded-sm text-muted-foreground outline-none hover:text-foreground hover:underline"
+          onClick={onBack}
+        >
+          Skills
+        </button>
+        <span className="shrink-0 text-muted-foreground">/</span>
+        <span className="truncate font-medium">{slug}</span>
+      </nav>
+    </div>
+  );
 }
 
 export interface SkillDetailProps {
@@ -158,12 +183,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
   if (detailLoadState(detail, loadFailed) === "missing") {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
-        <div className="flex items-center gap-2 px-3 py-3">
-          <Button variant="ghost" size="sm" onClick={onBack} aria-label="Back to skills">
-            <ArrowLeft className="size-4" />
-          </Button>
-          <span className="font-semibold">{slug}</span>
-        </div>
+        <DetailHeader slug={slug} onBack={onBack} />
         <div className="px-3 pb-3">
           <p className="text-sm text-muted-foreground">
             Skill not found — it may have been unpublished, or the request failed.
@@ -179,12 +199,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
   if (detail === null) {
     return (
       <div className="flex min-h-0 w-full flex-1 flex-col">
-        <div className="flex items-center gap-2 px-3 py-3">
-          <Button variant="ghost" size="sm" onClick={onBack} aria-label="Back to skills">
-            <ArrowLeft className="size-4" />
-          </Button>
-          <span className="font-semibold">{slug}</span>
-        </div>
+        <DetailHeader slug={slug} onBack={onBack} />
         <div className="px-3 pb-3">
           <Skeleton className="mb-2 h-5 w-2/3 rounded-md" />
           <Skeleton className="mb-2 h-4 w-full rounded-md" />
@@ -199,18 +214,23 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
-      <div className="flex items-center gap-2 px-3 py-3">
-        <Button variant="ghost" size="sm" onClick={onBack} aria-label="Back to skills">
-          <ArrowLeft className="size-4" />
-        </Button>
-        <span className="truncate font-semibold">{detail.slug}</span>
-      </div>
+      <DetailHeader slug={detail.slug} onBack={onBack} />
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {detail.owner !== null && <Badge variant="secondary">{detail.owner.label}</Badge>}
-          {detail.maintainer_gated && <Badge variant="outline">gated</Badge>}
+          {detail.maintainer_gated && (
+            <Badge variant="outline" className="gap-1 text-muted-foreground">
+              <Lock className="size-3" /> approval required
+            </Badge>
+          )}
           {detail.tombstoned && <Badge variant="destructive">unpublished</Badge>}
         </div>
+        {detail.maintainer_gated && (
+          <p className="mb-2 rounded-md border border-border bg-muted/50 px-2.5 py-2 text-sm text-muted-foreground">
+            Members can browse and fork this skill, but installing it needs maintainer sign-off —
+            the owner or an admin approves.
+          </p>
+        )}
         {detail.description !== "" && <p className="mb-2 text-sm">{detail.description}</p>}
         {detail.forked_from !== null && (
           <p className="mb-2 text-sm text-muted-foreground">Forked from {detail.forked_from}</p>
@@ -326,7 +346,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
                 >
                   {label}
                 </Button>
-              ) : label === "Gate" || label === "Remove gate" ? (
+              ) : label === "Require approval" || label === "Remove approval" ? (
                 <Button
                   key={label}
                   variant="outline"
@@ -335,7 +355,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
                   onClick={() =>
                     void run(
                       () => skillsGate(detail.slug, !detail.maintainer_gated),
-                      detail.maintainer_gated ? "Gate removed" : "Skill gated",
+                      detail.maintainer_gated ? "Approval removed" : "Approval required",
                     )
                   }
                 >
