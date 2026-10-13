@@ -67,6 +67,8 @@ async fn summary_and_grouped_usage_reflect_gateway_calls() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(v["today_cost_usd"].as_f64().unwrap() > 0.0);
     assert!(v["month_cost_usd"].as_f64().unwrap() >= v["today_cost_usd"].as_f64().unwrap());
+    assert_eq!(v["today_tokens"].as_u64(), Some(240));
+    assert_eq!(v["month_tokens"].as_u64(), Some(240));
 
     // group by model
     let res = app

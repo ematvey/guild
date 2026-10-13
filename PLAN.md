@@ -9,9 +9,91 @@ recipes in `docs/clients.md`. Repo conventions are in `AGENTS.md`.
 This file tracks where the project stands and where it is going. History is
 not kept here — it lives in git and in `docs/reviews/`.
 
-Updated 2026-10-04 (post M8 integrations runtime).
-
 ## Latest decisions
+- **Sidebar icon rail — chats and project chats separated.** The chat
+  sidebar grew a ChatGPT-desktop-style narrow icon rail (desktop only,
+  always visible even when the panel is collapsed) with three tabs:
+  Chats (workspace switcher, New chat, Recents, Archived), Work (projects
+  with their fold-out chats), Settings (section rows that open the settings
+  overlay at that section). The account menu moved to the rail bottom; the
+  tab selection persists in `localStorage["guild.sidebarTab"]`. Recents
+  now shows only stateless chats — project-bound chats appear only under
+  their project on the Work tab (project rows carry an aggregate
+  unread/generating dot, and `/project/<id>` deep links open the Work tab).
+  The mobile drawer is pinned to the Chats panel (no rail there).
+  `sidebarGrouping.visible` changed meaning accordingly (stateless only).
+
+- **0.5.36 — read markers ride event `seq`, not event id.** Threads with a
+  dead executor kept reappearing unread after every refresh: durable
+  workflow events carry deterministic uuid v5 ids (idempotent replay), and
+  the unread derivation compared event ids bytewise assuming uuid v7
+  time ordering — an older event with a bytewise-greater v5 id counted
+  unread forever, no matter how often the chat was opened. Migration 0066
+  moves `chat_reads` to `last_read_seq BIGINT` (the global write order the
+  marker already selected from), backfills from the stored ids, and the
+  list projection + mark_read compare in seq space. Migrations are
+  append-only: 0048 keeps its shipped schema, 0066 alone does the
+  transform (editing 0048 broke fresh template builds with a duplicate
+  column). Server-only; no client change.
+
+- **Prod is a separate checkout** (`~/guild-prod`, branch master, compose
+  stack on :18081, public at guild.example.org). Deploy to prod by
+  fast-forwarding its master from ~/guild's develop (fetch the local path,
+  merge --ff-only — its docker-compose.yml carries prod-local edits, so
+  never rebase it) and `docker compose build server && up -d` there. First
+  multi-workspace deploy: 0.5.32 on 2026-09-30. The 0.5.22→0.5.32 jump
+  exposed that an untracked migration file breaks the tree — migrations
+  must be committed with their store/mod.rs entries.
+
+- **Multi-workspace auth — the daemon holds N live sessions, one per
+  server.** The desktop client can now be signed into two guild servers
+  (different domains) at once and switch between them: both servers see the
+  machine online and either can dispatch tools. Design spec:
+  `docs/plans/2026-09-30-multi-workspace-auth-design.md` (approved:
+  "both live simultaneously", not Slack-style single-active switching).
+  Mechanics: `workspaces.json` (session list + active pointer) beside
+  `token.json`, which stays the ACTIVE session's mirror so the watcher,
+  CLI logins, and every reader keep working. The single machine-link
+  channel became a registry (one link task per live workspace, supervisor
+  per host cycle). New RPC: `workspace.list`, `workspace.switch`;
+  `session.clear` gained an optional `base_url` (per-workspace sign-out).
+  Webview: workspace switcher in the account menu, "Add workspace" shows
+  the pair/sign-in card over the running app; switching re-mirrors
+  `session.info` and reloads (the existing restore path). Accepted
+  consequence: one machine's executor serves two servers concurrently —
+  dispatches are independent requests, the executor processes them one at
+  a time. Machine slots are per-server, so the 0.5.25 live-slot rule is
+  unaffected. A dead token in one workspace keeps its row listed as "sign
+  in again" instead of vanishing.
+
+- **0.5.25 — a live machine slot is held, not displaced.** Root cause of the
+  recurring devbox outages: any locally-run guild binary (dev sessions on
+  this box — which IS devbox) loads the real token.json and connects a
+  machine link as the same row; the hub's newest-wins displacement handed
+  the slot to the thief, and the displaced link never learns it lost the
+  slot — its leftover server conn keeps heartbeating, so the daemon sits
+  "connected" while the machine shows offline until the daemon restarts.
+  The hub now REJECTS a connect from a different instance while a live slot
+  exists (same-instance reconnects still replace their own zombie slot —
+  that's the blip-heal path); clients of every deployed version already
+  park 300s on the Displaced notice and retry. Rejections are logged with
+  machine + instance. Known limit: instance_id is client-claimed, so a
+  determined spoofer could still bypass — real defense would need
+  per-instance credentials. Server-only change; no client release needed.
+
+- **0.5.24 — the Windows machines were offline because of one misplaced
+  flag.** WORKSTATION's daemon trace (the 0.5.23 toggle earning its keep) showed
+  `daemon host cycle failed: os error 87` once per second: the Sep 23 pipe
+  rewrite passed `PIPE_REJECT_REMOTE_CLIENTS` in `dwOpenMode` where the bit
+  is unassigned, so `CreateNamedPipeW` failed on every call and the host
+  cycle aborted + respawned the machine link once a second — no Windows
+  client could hold a link past ~1s (WORKSTATION, DEVBOX-2), while the
+  Linux daemon path never runs this code. Flag moved to `dwPipeMode`; the
+  reclaiming host also no longer tears the link down on a failed bind (the
+  link is independent of the CLI socket — the Sep 23 abort+respawn shape
+  was the storm's other half). Lesson that keeps paying: the Sep 25
+  instrumentation + the 0.5.23 trace toggle turned "why is it offline"
+  into a one-line answer without touching the user's machine.
 
 - **Desktop 0.5.35 released (2026-10-04).** `scripts/release-clients.sh` run
   detached (systemd user unit, warm caches — 3.5 min wall) against the dev
@@ -332,8 +414,6 @@ Updated 2026-10-04 (post M8 integrations runtime).
   was the storm's other half). Lesson that keeps paying: the Sep 25
   instrumentation + the 0.5.23 trace toggle turned "why is it offline"
   into a one-line answer without touching the user's machine.
-
-## Latest decisions
 
 - **0.5.23 — daemon trace behind a settings toggle (WORKSTATION offline hunt).**
   WORKSTATION's machine link connects and the client closes it ~3 ms later
