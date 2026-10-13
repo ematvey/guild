@@ -89,7 +89,7 @@ export class UserMcpRuntime {
       return { action: "none", extensions: [], tools: [] };
     }
     const extension = this.installUserExtension(snapshot);
-    const tools = snapshot.tools.map((t) => this.toolRegistration(t));
+    const tools = extension.tools ?? [];
     return { action: "configure", extensions: [extension], tools };
   }
 
@@ -141,10 +141,11 @@ export class UserMcpRuntime {
   }
 
   /** Installs (or replaces in place) the per-user extension: the prompt
-   *  index section; the tools ride the conversation's bare registrations
-   *  (prepareTurn's `tools`), the same way the integrations runtime passes
-   *  connector tools. */
+   *  index section plus every declared tool (pi-durable resolves a
+   *  conversation's tool allow-list against the installed extensions — the
+   *  integrations runtime carries its connector tools the same way). */
   private installUserExtension(snapshot: TurnSnapshot): Extension<ToolRegistration> {
+    const tools = snapshot.tools.map((t) => this.toolRegistration(t));
     const runtime = this;
     const section: PromptSection<ToolRegistration> = {
       key: "user-mcp",
@@ -157,7 +158,7 @@ export class UserMcpRuntime {
     };
     const extension: Extension<ToolRegistration> = {
       name: this.extensionName(snapshot.userId),
-      tools: [],
+      tools,
       sections: [section],
     };
     this.registry.install(extension);
@@ -205,6 +206,17 @@ export class UserMcpRuntime {
       },
     } as unknown as ToolRegistration;
     return registration;
+  }
+
+  /** The approval-gate classification of one call: a declared user-MCP
+   *  tool flows without a card (the user owns the server and enabled it —
+   *  there is no org curation layer to force one); anything else is not a
+   *  user-MCP tool (the generic policy applies). */
+  async gateDecision(conversationId: number, callName: string): Promise<"skip" | undefined> {
+    const snapshot = await this.snapshotFor(conversationId);
+    if (snapshot === undefined) return undefined;
+    if (!snapshot.tools.some((t) => userMcpToolName(t.serverName, t.toolName) === callName)) return undefined;
+    return "skip";
   }
 
   /** Executes one user-MCP tool call: the server row is re-read fresh (a

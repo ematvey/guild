@@ -256,7 +256,13 @@ export class GuildRuntime {
       allowShellTools: this.config.allowShellTools,
       chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
       executorKind: (conversationId) => this.executorKind(conversationId),
-      integrations: this.integrationsRuntime,
+      integrations: {
+        gateDecision: async (conversationId, callName) => {
+          const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);
+          if (userDecision !== undefined) return userDecision;
+          return this.integrationsRuntime.gateDecision(conversationId, callName);
+        },
+      },
       skillRuntime: this.skillsRuntime,
       currentModel: async (conversationId) => {
         await this.start();
