@@ -163,6 +163,24 @@ describe("skills publish", () => {
     expect(events.rows[0]!.payload.user_id).toBe(e.memberId);
   });
 
+  it("emits the pre-fix actorless payload for non-skill kinds (integration)", async () => {
+    const bundle = await packBundle({
+      "manifest.json": JSON.stringify({ kind: "integration", slug: "plain-integration", version: "v1", description: "d" }),
+    });
+    expect(
+      (await inject("POST", "/api/v1/registry/integration?slug=plain-integration&version=v1", e.memberToken, bundle))
+        .statusCode,
+    ).toBe(200);
+    const events = await e.env.db.query<{ payload: Record<string, unknown> }>(
+      "SELECT payload FROM events WHERE org_id = $1 AND kind = 'registry.published' AND payload->>'slug' = 'plain-integration'",
+      [e.orgId],
+    );
+    expect(events.rows).toHaveLength(1);
+    // mcp/integration emissions keep the exact pre-fix payload shape — no
+    // actor fields ride along.
+    expect(events.rows[0]!.payload).toEqual({ kind: "integration", slug: "plain-integration", version: "v1" });
+  });
+
   it("refuses a non-maintainer push to a gated slug; republishes emit registry.updated", async () => {
     expect((await publish("gated-skill", "v1", e.memberToken)).statusCode).toBe(200);
     await e.env.db.query(
