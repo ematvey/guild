@@ -569,7 +569,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
             {detail.tombstoned && <Badge variant="destructive">unpublished</Badge>}
           </div>
           {detail.description !== "" && (
-            <p className="mt-1.5 max-w-[560px] text-sm text-muted-foreground">{detail.description}</p>
+            <p className="mt-1.5 text-sm text-muted-foreground">{detail.description}</p>
           )}
           {detail.owner !== null && (
             <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[13px] text-muted-foreground">
