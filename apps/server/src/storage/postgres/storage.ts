@@ -543,7 +543,7 @@ export class PostgresDurableStorage implements Storage {
       `SELECT record FROM documents WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT $${params.length}`,
       params,
     );
-    return page(rows.map((row) => parseJson(row.record) as DocumentRecord), limit);
+    return page(rows.map((row) => parseJson(row.record) as DocumentRecord), limit, "ascending");
   }
 
   async close(_context: Context): Promise<void> {

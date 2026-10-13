@@ -16,7 +16,7 @@
 // ShellExecResult/byte shapes — they are dropped (documented deviation).
 
 import path from "node:path";
-import { err, ok, ExecutionError, FileError, type ExecutionEnv, type FileInfo, type Result, type ShellExecOptions, type ShellExecResult, type TextLine, type TextLineReader } from "@earendil-works/pi-durable/env";
+import { err, ok, ExecutionError, FileError, LineScanner, type BinaryReader, type DirReader, type ExecutionEnv, type FileInfo, type Result, type ShellExecOptions, type ShellExecResult, type ShellOutputInfo, type TextLine, type TextLineReader, type WatchChange, type WatchTarget, type FileWatcher } from "@earendil-works/pi-durable/env";
 import type { Context } from "@earendil-works/chord";
 import type { MachineRequestFn } from "../hub/index.js";
 
@@ -193,6 +193,13 @@ function fileErr(code: (typeof FileError.prototype)["code"], message: string, pa
   return err(new FileError(code, message, path));
 }
 
+/** Renders one argv element as a shell word: bare when plainly safe,
+ *  double-quoted with backslash escapes otherwise. */
+function shellQuote(arg: string): string {
+  if (/^[A-Za-z0-9_\-./:=@%+]+$/.test(arg)) return arg;
+  return `"${arg.replaceAll("\\", "\\\\").replaceAll("\"", "\\\\\"").replaceAll("$", "\\$").replaceAll("`", "\\`")}"`;
+}
+
 export interface MachineEnvOptions {
   machineId: string;
   orgId: string;
@@ -281,6 +288,42 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return ok(new TextEncoder().encode(text.value));
   }
 
+  /** Positional reads over the whole-file `read_file` transfer (the machine
+   *  tool set has no paged binary op; binary fidelity is already a
+   *  documented deviation, and `noFollow` has no channel in the wire
+   *  contract — a final-component symlink is followed). */
+  async openBinaryReader(p: string, _options: { noFollow?: boolean } | undefined, context: Context): Promise<Result<BinaryReader, FileError>> {
+    const text = await this.readTextFile(p, context);
+    if (!text.ok) return text;
+    const bytes = new TextEncoder().encode(text.value);
+    const info: FileInfo = { name: path.basename(p), path: p, kind: "file", size: bytes.length, mtimeMs: 0 };
+    const reader: BinaryReader = {
+      info: async () => ok(info),
+      read: async (offset, length) => {
+        if (offset < 0 || !Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || length < 0) {
+          return fileErr("invalid", "invalid binary read range", p);
+        }
+        if (offset >= bytes.length) return ok(new Uint8Array());
+        return ok(bytes.slice(offset, Math.min(offset + length, bytes.length)));
+      },
+      scanLines: async (scanOptions) => {
+        const scanner = new LineScanner(scanOptions.startLine, scanOptions.endLine);
+        scanner.push(bytes);
+        return ok(scanner.finish());
+      },
+      close: async () => {},
+    };
+    return ok(reader);
+  }
+
+  async openDirReader(): Promise<Result<DirReader, FileError>> {
+    return fileErr("not_supported", "directory readers are not supported over machine dispatch");
+  }
+
+  async watch(_targets: readonly WatchTarget[], _onChange: (change: WatchChange) => void, _context: Context): Promise<Result<FileWatcher, FileError>> {
+    return fileErr("not_supported", "watching is not supported over machine dispatch");
+  }
+
   async writeFile(p: string, content: string | Uint8Array, _context: Context): Promise<Result<void, FileError>> {
     if (typeof content !== "string") {
       return fileErr("not_supported", "binary writes are not supported over machine dispatch", p);
@@ -344,13 +387,18 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return fileErr("not_supported", "temp files are not supported over machine dispatch");
   }
 
-  async exec(command: string, options: ShellExecOptions | undefined, _context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
+  async exec(command: string | readonly string[], options: ShellExecOptions | undefined, _context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
     const timeoutMs =
       options?.timeout !== undefined ? Math.min(Math.max(options.timeout * 1000, 1), DEFAULT_EXECUTE_TIMEOUT_MS) : DEFAULT_EXECUTE_TIMEOUT_MS;
+    // The wire contract carries one shell command string; an argv array is
+    // rendered into that shell's command line (guild tools never use the
+    // argv form over machine dispatch).
+    const line = typeof command === "string" ? command : command.map(shellQuote).join(" ");
     let streamed = 0;
-    const outcome = await this.runTool("execute", { command, timeout_ms: timeoutMs });
+    const outcome = await this.runTool("execute", { command: line, timeout_ms: timeoutMs });
     if (options?.onOutput !== undefined && outcome.content.length > streamed) {
-      options.onOutput(outcome.content, _context);
+      const info: ShellOutputInfo = { stream: "stdout" };
+      options.onOutput(outcome.content, _context, info);
       streamed = outcome.content.length;
     }
     void streamed;
