@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   canManageSkill,
   detailActions,
+  detailLoadState,
   forkPayload,
   pinSummary,
   updateAvailable,
@@ -138,6 +139,15 @@ describe("forkPayload", () => {
     const payload = forkPayload(installedBehind, "my-review");
     expect(payload.from_version).toBe("v2");
     expect(payload.forked_from).toBe("code-review");
+  });
+});
+
+describe("detailLoadState", () => {
+  it("is loading until the detail resolves, missing when it resolves null", () => {
+    expect(detailLoadState(null, false)).toBe("loading");
+    expect(detailLoadState(null, true)).toBe("missing");
+    expect(detailLoadState(base, true)).toBe("ready");
+    expect(detailLoadState(base, false)).toBe("ready");
   });
 });
 

@@ -93,7 +93,10 @@ export async function skillsDetail(slug: string): Promise<SkillDetail | null> {
 /** Fastify errors arrive as {error, message}; surface the message. */
 async function send(path: string, init?: RequestInit): Promise<SkillActionResult> {
   try {
-    const res = await fetch(apiUrl(path), { headers: authHeaders(), ...init });
+    const res = await fetch(apiUrl(path), {
+      ...init,
+      headers: { ...authHeaders(), ...init?.headers },
+    });
     if (!res.ok) {
       const v = (await res.json().catch(() => null)) as { message?: string } | null;
       return { ok: false, message: v?.message ?? res.statusText };
