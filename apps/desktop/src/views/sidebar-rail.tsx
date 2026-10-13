@@ -82,7 +82,7 @@ export function SidebarRail({
         ))}
       </div>
       <div className="mt-auto p-1">
-        <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
+        <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl} compact>
           <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
           <DropdownMenuItem onClick={() => onOpenSettings()}>Settings</DropdownMenuItem>
           {/* Browser only: the desktop sign-out lives on the workspace rows

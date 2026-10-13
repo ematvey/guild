@@ -13,11 +13,14 @@ export function UserBadge({
   email,
   displayName,
   avatarUrl,
+  compact,
   children,
 }: {
   email: string;
   displayName?: string | null;
   avatarUrl?: string | null;
+  /** Icon-only trigger (avatar/initials, no name row) for narrow rails. */
+  compact?: boolean;
   /** Dropdown menu contents (DropdownMenuItem and friends). */
   children?: React.ReactNode;
 }) {
@@ -32,7 +35,11 @@ export function UserBadge({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent"
+          className={
+            compact
+              ? "flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
+              : "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-accent"
+          }
           title="Account"
         >
           {showAvatar ? (
@@ -48,13 +55,17 @@ export function UserBadge({
               {initials}
             </span>
           )}
-          <span
-            className="min-w-0 flex-1 truncate text-muted-foreground"
-            title={email}
-          >
-            {displayName ?? email}
-          </span>
-          <ChevronUp className="size-3 shrink-0 text-muted-foreground" />
+          {!compact && (
+            <>
+              <span
+                className="min-w-0 flex-1 truncate text-muted-foreground"
+                title={email}
+              >
+                {displayName ?? email}
+              </span>
+              <ChevronUp className="size-3 shrink-0 text-muted-foreground" />
+            </>
+          )}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-56">
