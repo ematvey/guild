@@ -11,6 +11,14 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Descriptions are one line, stored and rendered (2026-10-14).** The
+  detail page's apparent line breaks were the `max-w-[560px]` render cap
+  wrapping — the stored value was already single-line. Save points now
+  collapse whitespace regardless: `singleLineDescription` (new, in
+  `registry-manifest.ts`) normalizes the editor create/edit/fork fields
+  and the push_skill derivation, and the desktop `parseFrontmatter` folds
+  literal block scalars flat too — descriptions feed one-line index
+  entries and a multi-line value would corrupt that format.
 - **Publish parses the SKILL.md description; publish auto-installs (2026-10-14).**
   `descriptionFromSkillMd` (server push path) now reads the frontmatter's
   `description` first — single-line plain/quoted, block scalars (`>`/`|`
