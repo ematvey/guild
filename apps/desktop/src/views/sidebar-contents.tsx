@@ -23,7 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { Skeleton } from "@guild/ui/components/skeleton";
-import type { ChatSummary, Project } from "../transport";
+import type { ChatSummary, MachineInfo, Project } from "../transport";
 import {
   PROJECT_PAGE_INITIAL,
   PROJECT_PAGE_STEP,
@@ -221,6 +221,7 @@ function ChatListItem({
 function ProjectHeader({
   name,
   folder,
+  machine,
   status,
   open,
   onToggle,
@@ -230,6 +231,10 @@ function ProjectHeader({
 }: {
   name: string;
   folder: string;
+  /** The machine the project is bound to: its name rides the row title
+   *  with an online/offline dot (hidden while the socket state is
+   *  unknown — e.g. the machines list has not landed yet). */
+  machine?: { name: string | null; online: boolean | undefined };
   /** Aggregate over the project's chats: the same status treatment the
    * chat rows use (generating spinner wins over the unread dot). */
   status: { generating: boolean; unread: boolean };
@@ -264,6 +269,20 @@ function ProjectHeader({
         className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
       />
       <FadeTitle text={name} />
+      {machine?.name && (
+        <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground/70">
+          {machine.online !== undefined &&
+            (machine.online ? (
+              <span className="relative flex size-1.5 shrink-0">
+                <span className="absolute inline-flex size-1.5 animate-ping rounded-full bg-emerald-500/60" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+              </span>
+            ) : (
+              <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
+            ))}
+          <span className="max-w-20 truncate">{machine.name}</span>
+        </span>
+      )}
       {status.generating ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
       ) : status.unread ? (
@@ -431,6 +450,7 @@ export function ChatsPanel({
 export function WorkPanel({
   grouping,
   projects,
+  machines,
   chatId,
   onOpenChat,
   onCollapse,
@@ -443,6 +463,9 @@ export function WorkPanel({
 }: {
   grouping: ReturnType<typeof sidebarGrouping>;
   projects: Project[] | null;
+  /** Registered machines with their live socket state — feeds each
+   *  project row's machine label + online/offline dot. */
+  machines?: MachineInfo[] | null;
   chatId: string | null;
   onOpenChat: (id: string) => void;
   onCollapse?: () => void;
@@ -487,11 +510,17 @@ export function WorkPanel({
             const open = !!expanded[p.id];
             const chats = grouping.chatsByProject[p.id] ?? [];
             const limit = limits[p.id] ?? PROJECT_PAGE_INITIAL;
+            const machine = machines?.find((m) => m.machine_id === p.machine_id);
             return (
               <div key={p.id}>
                 <ProjectHeader
                   name={p.name}
                   folder={p.folder}
+                  machine={
+                    machine || p.machine_label
+                      ? { name: machine?.name ?? p.machine_label ?? null, online: machine?.connected }
+                      : undefined
+                  }
                   status={{
                     generating: chats.some((c) => !!c.generating),
                     unread: chats.some((c) => !!c.unread),
