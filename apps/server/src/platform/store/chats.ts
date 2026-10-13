@@ -51,8 +51,7 @@ const LIST_SELECT = `SELECT c.id, c.org_id, c.user_id, c.title,
     (c.generating = false AND EXISTS (
       SELECT 1 FROM thread_events e
       WHERE e.chat_id = c.id AND e.type = 'assistant_message'
-        AND (r.last_read_event_id IS NULL OR e.seq > (
-          SELECT m.seq FROM thread_events m WHERE m.id = r.last_read_event_id)))) AS unread
+        AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq))) AS unread
   FROM chats c
   LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
   LEFT JOIN projects pr ON pr.id = c.project_id
@@ -396,19 +395,21 @@ export class ChatStore {
   }
 
   /** Marks the chat read for the caller: the marker moves to the newest
-   *  thread event. A chat with no events has nothing unread — no marker. */
+   *  thread event's `seq` (migration 0066 shape — event ids cannot order
+   *  events; the BIGSERIAL write order is the comparison space). A chat
+   *  with no events has nothing unread — no marker. */
   async markRead(orgId: string, chatId: string, caller: UserRow): Promise<void> {
     await this.getChat(orgId, chatId, caller);
-    const last = await this.pool.query<{ id: string }>(
-      "SELECT id FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
+    const last = await this.pool.query<{ seq: string }>(
+      "SELECT seq FROM thread_events WHERE chat_id = $1 ORDER BY seq DESC LIMIT 1",
       [chatId],
     );
-    const lastReadEventId = last.rows[0]?.id;
-    if (!lastReadEventId) return;
+    const lastReadSeq = last.rows[0]?.seq;
+    if (lastReadSeq === undefined) return;
     await this.pool.query(
-      `INSERT INTO chat_reads (chat_id, user_id, last_read_event_id) VALUES ($1, $2, $3)
-       ON CONFLICT (chat_id, user_id) DO UPDATE SET last_read_event_id = EXCLUDED.last_read_event_id`,
-      [chatId, caller.id, lastReadEventId],
+      `INSERT INTO chat_reads (chat_id, user_id, last_read_seq) VALUES ($1, $2, $3)
+       ON CONFLICT (chat_id, user_id) DO UPDATE SET last_read_seq = EXCLUDED.last_read_seq`,
+      [chatId, caller.id, lastReadSeq],
     );
   }
 }

@@ -344,14 +344,24 @@ export function ChatsPanel({
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center justify-between px-3 py-3">
         {/* The workspace switcher lives on the rail's first button; the panel
-            header keeps the static app name. */}
-        <span className="font-semibold">Guild</span>
-        <CollapseButton onCollapse={onCollapse} />
-      </div>
-      <div className="px-2">
-        <Button variant="ghost" className="w-full justify-start gap-2" onClick={onNewChat}>
-          <Plus /> New chat
-        </Button>
+            header names the tab and carries the new-chat plus, like the
+            Projects panel. */}
+        <span className="font-semibold">Chats</span>
+        <span className="flex items-center gap-1">
+          <span
+            role="button"
+            tabIndex={0}
+            title="New chat"
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={onNewChat}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") onNewChat();
+            }}
+          >
+            <Plus className="size-4" />
+          </span>
+          <CollapseButton onCollapse={onCollapse} />
+        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2">
         <div className="flex items-center gap-1.5 pb-1 pt-4 font-medium text-muted-foreground">
