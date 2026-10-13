@@ -20,6 +20,7 @@ import { ProjectStore } from "./store/projects.js";
 import { TeamStore } from "./store/teams.js";
 import { OrgKvStore, KvStore } from "./store/org_kv.js";
 import { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
+import { UserMcpStore } from "./store/userMcp.js";
 import { LiveHub } from "../hub/live.js";
 import { TicketStore } from "../hub/tickets.js";
 import { ChatStore } from "./store/chats.js";
@@ -143,6 +144,7 @@ export class PlatformContext {
     this.kv = new KvStore(this.pool);
     this.integrations = new IntegrationStore(this.pool);
     this.integrationSecrets = new IntegrationSecretStore(this.pool);
+    this.userMcp = new UserMcpStore(this.pool);
     this.hub = new LiveHub();
     this.machineDispatch = machineDispatch(this.hub);
     this.wsTickets = new TicketStore();
