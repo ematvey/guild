@@ -201,7 +201,7 @@ export class UserMcpRuntime {
         const outcome = await runtime.executeToolCall(Number(api.conversationId), wireName, tool, (args ?? {}) as Json);
         return {
           isError: outcome.isError,
-          content: [{ type: "text", text: outcome.content }],
+          output: [{ type: "text", text: outcome.content }],
         };
       },
     } as unknown as ToolRegistration;
