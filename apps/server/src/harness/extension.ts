@@ -5,6 +5,7 @@
 import { defineExtension, type ConversationId, type PromptSection, type ToolRegistration } from "@earendil-works/pi-durable";
 import { createApprovalGate, type ApprovalGateDeps } from "./approvals.js";
 import type { IntegrationGate } from "./integrations.js";
+import type { SkillRuntime } from "./skills.js";
 
 export const ASSISTANT_PROMPT_KEY = "assistant_system_prompt";
 
@@ -26,6 +27,9 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** The integrations chat runtime (M8): the approval gate consults it for
    *  the integration tool envelope (absent: the generic policy applies). */
   integrations?: IntegrationGate;
+  /** The skills runtime (read_skill/search_skills/push_skill + the Task 6
+   *  prompt index section); absent in tests without one. */
+  skillRuntime?: SkillRuntime;
 }
 
 export function createGuildExtension(deps: GuildExtensionDeps) {
@@ -39,6 +43,7 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
   };
   return defineExtension({
     name: "guild",
+    tools: deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools(),
     sections: [section],
     hooks: [createApprovalGate(deps)],
   });
