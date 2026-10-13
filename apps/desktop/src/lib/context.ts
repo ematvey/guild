@@ -105,7 +105,7 @@ export interface OrgInstall {
  */
 export interface OrgSkillsApi {
   installs(): Promise<OrgInstall[] | null>;
-  skillBody(slug: string): Promise<string | null>;
+  skillBody(slug: string, version?: string): Promise<string | null>;
 }
 
 /**
@@ -338,7 +338,7 @@ export async function mentionExpansions(
     let body: string | null;
     if (e.org) {
       if (!orgApi) continue;
-      if (!fetched.has(e.name)) fetched.set(e.name, await orgApi.skillBody(e.name));
+      if (!fetched.has(e.name)) fetched.set(e.name, await orgApi.skillBody(e.name, e.org?.version));
       body = fetched.get(e.name)!;
     } else {
       body = await fs.readText(projectDir, e.path);

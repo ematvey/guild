@@ -264,13 +264,13 @@ describe("skills manager listing + toggles", () => {
 
 
 describe("installed org skills (spec §2.3)", () => {
-  /** Org api fixture: records every skillBody fetch. */
+  /** Org api fixture: records every skillBody fetch (slug + version). */
   function fakeOrgApi(installs: Array<{ slug: string; pinned_version: string }> | null, bodies: Record<string, string> = {}) {
-    const fetched: string[] = [];
+    const fetched: Array<{ slug: string; version?: string }> = [];
     const api: OrgSkillsApi = {
       installs: async () => installs,
-      skillBody: async (slug) => {
-        fetched.push(slug);
+      skillBody: async (slug, version) => {
+        fetched.push({ slug, version });
         return bodies[slug] ?? null;
       },
     };
@@ -312,7 +312,7 @@ describe("installed org skills (spec §2.3)", () => {
       ...entries,
       ...entries,
     ], api);
-    expect(fetched).toEqual(["deploy-checklist"]);
+    expect(fetched).toEqual([{ slug: "deploy-checklist", version: "v2" }]); // the pin rides the fetch
     expect(m).toHaveLength(1);
     expect(m[0].body).toContain("body of deploy-checklist");
   });
@@ -323,7 +323,7 @@ describe("installed org skills (spec §2.3)", () => {
     );
     const entries = await installedOrgSkills(api, null);
     const m = await mentionExpansions(fakeFs({}), "/proj", "only /deploy-checklist", entries, api);
-    expect(fetched).toEqual(["deploy-checklist"]);
+    expect(fetched).toEqual([{ slug: "deploy-checklist", version: "v2" }]);
     expect(m).toEqual([]);
   });
   it("prepareTurn (machine): org installs join the index; local discovery wins a collision", async () => {
@@ -358,7 +358,7 @@ describe("installed org skills (spec §2.3)", () => {
     expect(prep.index).toBe("");
     expect(prep.prompt).toContain("### Skill: deploy-checklist");
     expect(prep.prompt).toContain("BROWSER BODY");
-    expect(fetched).toEqual(["deploy-checklist"]);
+    expect(fetched).toEqual([{ slug: "deploy-checklist", version: "v2" }]);
   });
 });
 
