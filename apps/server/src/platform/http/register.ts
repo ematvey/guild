@@ -128,7 +128,9 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerThreadStreamRoute(scope, chats, auth, ctx.pool);
     // M6 long tail.
     registerRegistryRoutes(scope, gateway, auth, ctx.objects);
-    registerSkillRoutes(scope, gateway, auth, ctx.objects, ctx.skills);
+    registerSkillRoutes(scope, gateway, auth, ctx.objects, ctx.skills, {
+      onInstallChange: (orgId, userId) => ctx.runtime.skillsRuntime.syncUser(orgId, userId),
+    });
     registerReleaseRoutes(scope, gateway, auth, ctx.objects);
     registerProjectRoutes(scope, gateway, auth);
     registerTeamRoutes(scope, auth);
