@@ -1,8 +1,8 @@
-//! Sidebar account badge: avatar photo when set, initials fallback
-//! otherwise, display name, and a dropdown whose items the caller supplies.
+//! Sidebar account badge: the shared Avatar (photo when set, initials
+//! otherwise), display name, and a dropdown whose items the caller supplies.
 
-import { useEffect, useState } from "react";
 import { ChevronUp } from "lucide-react";
+import { Avatar } from "@guild/ui/components/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,12 +26,6 @@ export function UserBadge({
   children?: React.ReactNode;
 }) {
   const initials = (displayName ?? email).slice(0, 2).toUpperCase();
-  // A remote avatar URL may fail to load (network, IdP outage), so a failed
-  // load falls back to initials instead of a broken image.
-  const [avatarBroken, setAvatarBroken] = useState(false);
-  // A changed URL may load fine — clear the broken flag for the new source.
-  useEffect(() => setAvatarBroken(false), [avatarUrl]);
-  const showAvatar = avatarUrl && !avatarBroken;
   const trigger = (
     <button
       className={
@@ -41,19 +35,12 @@ export function UserBadge({
       }
       title="Account"
     >
-      {showAvatar ? (
-        <img
-          src={avatarUrl}
-          alt=""
-          className="size-7 shrink-0 rounded-full object-cover"
-          referrerPolicy="no-referrer"
-          onError={() => setAvatarBroken(true)}
-        />
-      ) : (
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-          {initials}
-        </span>
-      )}
+      <Avatar
+        src={avatarUrl}
+        fallback={initials}
+        className="size-7"
+        fallbackClassName="bg-primary text-[11px] font-semibold text-primary-foreground"
+      />
       {!compact && (
         <>
           <span

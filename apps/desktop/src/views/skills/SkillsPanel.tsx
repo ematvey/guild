@@ -13,6 +13,7 @@ import { Lock, Plus, Search } from "lucide-react";
 import { IS_TAURI } from "../../transport";
 import { Input } from "@guild/ui/components/input";
 import { Button } from "@guild/ui/components/button";
+import { Avatar } from "@guild/ui/components/avatar";
 import { Badge } from "@guild/ui/components/badge";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import {
@@ -44,6 +45,8 @@ export interface SkillRow {
   slug: string;
   description: string;
   ownerLabel: string;
+  /** The owner user's avatar URL, or null (initials chip fallback). */
+  ownerAvatar: string | null;
   /** "v3 · 12 installs" — versions arrive as "vN" from the server. */
   meta: string;
   /** Latest version on its own (the row renders it emphasized). */
@@ -71,6 +74,7 @@ export function skillRow(item: SkillItem, install: SkillInstall | null | undefin
     slug: item.slug,
     description: item.description,
     ownerLabel: item.owner?.label ?? "",
+    ownerAvatar: item.owner?.avatar_url ?? null,
     meta,
     latestVersion: item.latest_version ?? "—",
     installsCount: item.installs,
@@ -454,9 +458,12 @@ export function SkillsPanel({
                         <div className="flex shrink-0 items-center gap-3 text-sm text-muted-foreground">
                           {row.ownerLabel !== "" && (
                             <span className="flex min-w-0 items-center gap-1.5">
-                              <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-secondary text-[8.5px] font-semibold">
-                                {ownerInitials(row.ownerLabel)}
-                              </span>
+                              <Avatar
+                                src={row.ownerAvatar}
+                                fallback={ownerInitials(row.ownerLabel)}
+                                className="size-5 border border-border"
+                                fallbackClassName="bg-secondary text-[8.5px] font-semibold"
+                              />
                               <span className="hidden max-w-32 truncate md:inline">{row.ownerLabel}</span>
                             </span>
                           )}
