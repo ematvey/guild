@@ -43,7 +43,9 @@ export class UserMcpStore {
 
   async list(orgId: string, userId: string): Promise<UserMcpRow[]> {
     const res = await this.pool.query(
-      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, created_at, updated_at " +
+      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, "
+      + "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, "
+      + "to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at " +
       "FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 ORDER BY created_at",
       [orgId, userId],
     );
@@ -53,7 +55,9 @@ export class UserMcpStore {
   /** Enabled rows only, in name order — the runtime's per-turn input. */
   async listEnabled(orgId: string, userId: string): Promise<UserMcpRow[]> {
     const res = await this.pool.query(
-      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, created_at, updated_at " +
+      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, "
+      + "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, "
+      + "to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at " +
       "FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 AND enabled ORDER BY name",
       [orgId, userId],
     );
@@ -62,7 +66,9 @@ export class UserMcpStore {
 
   async get(orgId: string, userId: string, id: string): Promise<UserMcpRow | null> {
     const res = await this.pool.query(
-      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, created_at, updated_at " +
+      "SELECT id, org_id, user_id, name, url, headers_enc, enabled, "
+      + "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, "
+      + "to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at " +
       "FROM user_mcp_servers WHERE org_id = $1 AND user_id = $2 AND id = $3",
       [orgId, userId, id],
     );
