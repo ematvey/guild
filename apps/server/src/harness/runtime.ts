@@ -34,12 +34,16 @@ import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import { EventStore } from "../platform/store/events.js";
 import { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
 import { RegistryStore } from "../platform/store/registry.js";
+import { SkillStore } from "../platform/store/skills.js";
+import { TeamStore } from "../platform/store/teams.js";
 import type { ObjectStore } from "../platform/s3.js";
+import type { SkillReadSink } from "../platform/skillReads.js";
 import { MachineExecutionEnv, machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
 import { createGuildExtension, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
 import { IntegrationsRuntime } from "./integrations.js";
+import { SkillRuntime } from "./skills.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import type { LiveBuffers } from "../chats/bridge.js";
@@ -101,6 +105,10 @@ export class GuildRuntime {
   /** The integrations chat runtime (M8): per-turn plugin resolution, the
    *  dynamic per-org tool registration, execution + audit. */
   readonly integrationsRuntime: IntegrationsRuntime;
+  /** The skills runtime: the read_skill/search_skills/push_skill tools
+   *  (the guild extension carries them), the Task 6 index section, and the
+   *  install-fan-out hook the routes call (Task 8 fills syncUser). */
+  readonly skillsRuntime: SkillRuntime;
   /** The guild extension object (the per-conversation selection carries
    *  it, resolved by name against the registry). */
   private readonly guildExtension: ReturnType<typeof createGuildExtension>;
@@ -111,6 +119,7 @@ export class GuildRuntime {
     private readonly log: Logger,
     objects?: ObjectStore,
     private readonly hub?: MachineDispatchHost,
+    private readonly skillReads?: Pick<SkillReadSink, "record">,
   ) {
     this.models = createModels();
     this.registry = createRegistry();
@@ -120,15 +129,42 @@ export class GuildRuntime {
     this.gateway = new GatewayStore(pool);
     this.agentSessions = new AgentSessionStore(pool);
     this.toolArtifacts = new ToolArtifactStore(pool);
+    const registryStore = new RegistryStore(pool);
+    const events = new EventStore(pool);
+    this.skillsRuntime = new SkillRuntime({
+      log,
+      registry: registryStore,
+      skills: new SkillStore(pool),
+      events,
+      teams: new TeamStore(pool),
+      objects,
+      skillReads: this.skillReads,
+      chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
+      chatOwner: async (chatId) => {
+        const owner = await this.chats.ownerOf(chatId);
+        if (owner === null) return null;
+        const res = await this.pool.query<{ role: string }>("SELECT role FROM users WHERE id = $1", [owner.user_id]);
+        return { orgId: owner.org_id, userId: owner.user_id, role: res.rows[0]?.role ?? "member" };
+      },
+      executorKind: (conversationId) => this.executorKind(conversationId),
+      conversationDir: async (conversationId, orgId) => {
+        const chatId = await this.chatOfConversation(conversationId);
+        if (chatId !== null) {
+          const workspace = await this.agentSessions.workspaceForChat(orgId, chatId);
+          if (workspace !== null) return `${this.config.dataDir}/workspaces/${orgId}/${workspace}`;
+        }
+        return `${sandboxRoot()}/${conversationId}`;
+      },
+    });
     this.integrationsRuntime = new IntegrationsRuntime(
       {
         gateway: {
           integrations: new IntegrationStore(pool),
           integrationSecrets: new IntegrationSecretStore(pool),
-          registry: new RegistryStore(pool),
+          registry: registryStore,
           masterKey: () => this.masterKey(),
         },
-        events: new EventStore(pool),
+        events,
         artifacts: this.toolArtifacts,
         objects,
         pool,
@@ -192,6 +228,7 @@ export class GuildRuntime {
       chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
       executorKind: (conversationId) => this.executorKind(conversationId),
       integrations: this.integrationsRuntime,
+      skillRuntime: this.skillsRuntime,
       currentModel: async (conversationId) => {
         await this.start();
         const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
@@ -368,7 +405,7 @@ export class GuildRuntime {
       await conversation.configure(
         {
           extensions: [this.guildExtension, CodingTools, ...prepared.extensions],
-          tools: [...(CodingTools.tools ?? []), ...prepared.tools],
+          tools: [...(CodingTools.tools ?? []), ...this.skillsRuntime.tools(), ...prepared.tools],
         },
         BACKGROUND_CONTEXT,
       );

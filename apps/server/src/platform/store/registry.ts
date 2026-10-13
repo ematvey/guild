@@ -184,6 +184,21 @@ export class RegistryStore {
     return res.rows.map(itemRow);
   }
 
+  /** Skill search for the agent tool + prompt index (q matches the slug,
+   *  description, or the latest version's SKILL.md text; tombstoned items
+   *  never appear). An empty q lists the org's skills. */
+  async searchSkills(orgId: string, q: string, limit = 12): Promise<RegistryItemRow[]> {
+    const res = await this.pool.query(
+      "SELECT i.slug, i.description, i.latest_version, i.review_status FROM registry_items i " +
+      "LEFT JOIN registry_versions v ON v.item_id = i.id AND v.version = i.latest_version " +
+      "WHERE i.org_id = $1 AND i.kind = 'skill' AND i.tombstoned_at IS NULL " +
+      "AND (i.slug ILIKE '%' || $2 || '%' OR i.description ILIKE '%' || $2 || '%' OR v.skill_md_text ILIKE '%' || $2 || '%') " +
+      "ORDER BY i.slug LIMIT $3",
+      [orgId, q, Math.min(Math.max(limit, 1), 500)],
+    );
+    return res.rows.map(itemRow);
+  }
+
   async itemVersions(orgId: string, kind: string, slug: string): Promise<VersionRow[]> {
     const res = await this.pool.query(
       "SELECT v.version, to_char(v.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS published_at, v.bundle_sha256, v.published_by AS publisher " +

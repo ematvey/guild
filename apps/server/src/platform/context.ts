@@ -32,6 +32,7 @@ import { GuildRuntime } from "../harness/runtime.js";
 import { NotifyHub } from "./notify.js";
 import { FeedForwarder } from "../hub/feed.js";
 import { ClickhouseClient } from "./clickhouse.js";
+import { SkillReadSink } from "./skillReads.js";
 import { UsageSink } from "./usage.js";
 import { ApiError } from "./errors.js";
 import type { GatewayCredential } from "./http/llm.js";
@@ -79,6 +80,9 @@ export class PlatformContext {
   readonly machineDispatch: MachineDispatch;
   readonly wsTickets: TicketStore;
   readonly usage: UsageSink;
+  /** The ClickHouse skill-read sink (read_skill analytics; Task 6's
+   *  detail page reads the query side). */
+  readonly skillReads: SkillReadSink;
   readonly clickhouse: ClickhouseClient;
   /** M3: the chat-side stores and the agent runtime (the harness is owned
    *  by this process, decision 9; it starts lazily — durable migrations run
@@ -142,13 +146,15 @@ export class PlatformContext {
     this.wsTickets = new TicketStore();
     this.clickhouse = this.createClickhouse();
     this.usage = new UsageSink(this.clickhouse);
+    this.skillReads = new SkillReadSink(this.clickhouse);
+    this.skillReads.attachPool(this.pool);
     this.chats = new ChatStore(this.pool);
     this.threads = new ThreadStore(this.pool);
     this.turnCommands = new TurnCommandStore(this.pool);
     this.agentSessions = new AgentSessionStore(this.pool);
     this.toolArtifacts = new ToolArtifactStore(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);
-    this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub);
+    this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads);
     // The machine dispatch registry settles pending tool waiters when a
     // machine's slot dies (the unknown-outcome sweep).
     this.hub.onMachineDisconnected = (_machineId, connId) => this.machineDispatch.unregisterConnection(connId);

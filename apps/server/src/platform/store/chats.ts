@@ -74,6 +74,17 @@ function rowToChat(r: Record<string, unknown>): ChatRow {
 export class ChatStore {
   constructor(private readonly pool: PlatformPool) {}
 
+  /** The chat's org and owner (the agent tools' caller identity: the
+   *  conversation → chat → owner mapping). null when the chat is gone. */
+  async ownerOf(chatId: string): Promise<{ org_id: string; user_id: string } | null> {
+    const res = await this.pool.query<{ org_id: string; user_id: string }>(
+      "SELECT org_id, user_id FROM chats WHERE id = $1",
+      [chatId],
+    );
+    const row = res.rows[0];
+    return row === undefined ? null : { org_id: row.org_id, user_id: row.user_id };
+  }
+
   /** Creates a chat on a caller-supplied executor (the agent-session create
    *  handler runs it inside its own transaction, uncommitted until the
    *  workspace is ready). */
