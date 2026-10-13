@@ -151,28 +151,48 @@ async function submitSessionTurn(
     attachment_ids: [],
     server_workspace: body.server_workspace,
   };
-  const command = await chats.turnCommands.accept(commandId, user.org_id, user.id, body.chat_id, sortedJson(request), {
-    user_message_id: commandId,
-    org_id: user.org_id,
-    user_id: user.id,
-    chat_id: body.chat_id,
-    model: body.model,
-    user_message: body.message,
-    client_tools: false,
-    project_id: null,
-    machine_id: null,
-    machine_label: null,
-    attachment_ids: [],
-    server_workspace: body.server_workspace,
-  }, { content: body.message, attachments: [] });
-  const submissionId = await chats.runtime.submitTurn(body.chat_id, user.org_id, {
-    orgId: user.org_id,
-    requestId: commandId,
-    content: body.message,
-    images: [],
-    model: body.model,
-  });
-  await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
+  // Same generating reservation as the chats gateway: the accept's echo
+  // capture must say generating, or the late socket delivery clobbers the
+  // client's optimistic busy. A failed accept or submit restores the
+  // previous flag.
+  const priorGenerating = await chats.chats.isGenerating(user.org_id, body.chat_id);
+  await chats.chats.setGenerating(user.org_id, body.chat_id, true);
+  let command;
+  try {
+    command = await chats.turnCommands.accept(
+      commandId,
+      user.org_id,
+      user.id,
+      body.chat_id,
+      sortedJson(request),
+      {
+        user_message_id: commandId,
+        org_id: user.org_id,
+        user_id: user.id,
+        chat_id: body.chat_id,
+        model: body.model,
+        user_message: body.message,
+        client_tools: false,
+        project_id: null,
+        machine_id: null,
+        machine_label: null,
+        attachment_ids: [],
+        server_workspace: body.server_workspace,
+      },
+      { content: body.message, attachments: [] },
+    );
+    const submissionId = await chats.runtime.submitTurn(body.chat_id, user.org_id, {
+      orgId: user.org_id,
+      requestId: commandId,
+      content: body.message,
+      images: [],
+      model: body.model,
+    });
+    await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
+  } catch (error) {
+    await chats.chats.setGenerating(user.org_id, body.chat_id, priorGenerating);
+    throw error;
+  }
   await chats.chats.setGenerating(user.org_id, body.chat_id, true);
   const refreshed = await chats.turnCommands.existing(commandId, user.org_id, user.id, body.chat_id, sortedJson(request));
   const ack = refreshed ?? command;

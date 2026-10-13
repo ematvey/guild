@@ -450,18 +450,31 @@ async function submitTurn(
     machine_label: machineLabel,
     attachment_ids: attachmentIds,
   };
-  const command = await chats
-    .turnCommands
-    .accept(commandId, user.org_id, user.id, chatId, request, payload, { content, attachments: chips });
-  const submissionId = await chats.runtime.submitTurn(chatId, user.org_id, {
-    orgId: user.org_id,
-    requestId: commandId,
-    content,
-    images,
-    model,
-    ...(skillsIndex !== undefined ? { skillsIndex } : {}),
-  });
-  await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
+  // Reserve "generating" before the accept's user_message echo: the capture
+  // echoing the new message must already say generating, or its socket
+  // delivery lands after the HTTP response and clobbers the client's
+  // optimistic busy (the Working indicator blinks off in the pre-turn
+  // window). A failed accept or submit restores the previous flag.
+  const priorGenerating = await chats.chats.isGenerating(user.org_id, chatId);
+  await chats.chats.setGenerating(user.org_id, chatId, true);
+  let command;
+  try {
+    command = await chats
+      .turnCommands
+      .accept(commandId, user.org_id, user.id, chatId, request, payload, { content, attachments: chips });
+    const submissionId = await chats.runtime.submitTurn(chatId, user.org_id, {
+      orgId: user.org_id,
+      requestId: commandId,
+      content,
+      images,
+      model,
+      ...(skillsIndex !== undefined ? { skillsIndex } : {}),
+    });
+    await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
+  } catch (error) {
+    await chats.chats.setGenerating(user.org_id, chatId, priorGenerating);
+    throw error;
+  }
   await chats.chats.setGenerating(user.org_id, chatId, true);
   const refreshed = await chats.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
   return commandAck(refreshed ?? command);
