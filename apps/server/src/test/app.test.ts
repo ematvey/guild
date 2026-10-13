@@ -77,6 +77,8 @@ describe("health route (native)", () => {
       "/api/v1/gateway/chat/*",
       // M6 long tail: registry, releases, projects, teams, admin reads.
       "/api/v1/registry/*",
+      "/api/v1/skills",
+      "/api/v1/skills/*",
       "/api/v1/releases",
       "/api/v1/releases/*",
       "/api/v1/admin/releases",

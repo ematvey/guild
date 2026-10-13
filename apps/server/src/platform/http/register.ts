@@ -26,6 +26,7 @@ import { registerAnthropicRoutes, renderAnthropicError } from "./anthropic.js";
 import { registerMachineRoutes } from "../../http/machines.js";
 import { registerWsRoutes } from "../../http/ws.js";
 import { registerRegistryRoutes } from "./registry.js";
+import { registerSkillRoutes } from "./skills.js";
 import { registerReleaseRoutes } from "./releases.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerTeamRoutes } from "./teams.js";
@@ -55,6 +56,7 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "chats", paths: ["/api/v1/chats", "/api/v1/chats/*", "/api/v1/gateway/chat", "/api/v1/gateway/chat/*"] },
   // M6 long tail: registry, releases, projects, teams, admin users/prompts.
   { name: "registry", paths: ["/api/v1/registry/*"] },
+  { name: "skills", paths: ["/api/v1/skills", "/api/v1/skills/*"] },
   { name: "releases", paths: ["/api/v1/releases", "/api/v1/releases/*", "/api/v1/admin/releases", "/api/v1/admin/releases/*", "/api/v1/updates/latest.json"] },
   { name: "projects", paths: ["/api/v1/projects", "/api/v1/projects/*"] },
   { name: "teams", paths: ["/api/v1/admin/teams", "/api/v1/admin/teams/*"] },
@@ -126,6 +128,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerThreadStreamRoute(scope, chats, auth, ctx.pool);
     // M6 long tail.
     registerRegistryRoutes(scope, gateway, auth, ctx.objects);
+    registerSkillRoutes(scope, gateway, auth, ctx.objects, ctx.skills);
     registerReleaseRoutes(scope, gateway, auth, ctx.objects);
     registerProjectRoutes(scope, gateway, auth);
     registerTeamRoutes(scope, auth);

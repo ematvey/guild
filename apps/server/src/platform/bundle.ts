@@ -4,8 +4,11 @@
 // untrusted, so path traversal, duplicates, special entries and
 // decompressed size are all bounded like the Rust extract/read caps.
 
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import path from "node:path";
+import { tmpdir } from "node:os";
 import { gunzipSync } from "node:zlib";
-import { Parser } from "tar";
+import { Parser, c as tarCreate } from "tar";
 import { ApiError } from "./errors.js";
 
 /** A decompressed bundle may not exceed this total size (bundle-bomb guard). */
@@ -34,6 +37,26 @@ export interface ParsedBundle {
 
 function bundleError(message: string): ApiError {
   return ApiError.badRequest(`invalid bundle: ${message}`);
+}
+
+/** Packs in-memory files into the same tar.gz bundle shape the client's
+ *  pack() produces: manifest.json at the root, then arbitrary files. tar
+ *  v7's `c` is filesystem-backed (it takes a path list, not data entries),
+ *  so the bytes land through a temp dir. */
+export function packBundle(files: Record<string, Buffer | string>): Buffer {
+  const dir = mkdtempSync(path.join(tmpdir(), "guild-pack-"));
+  try {
+    for (const [name, content] of Object.entries(files)) {
+      const filePath = path.join(dir, name);
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, content);
+    }
+    const tgz = path.join(dir, "bundle.tar.gz");
+    tarCreate({ sync: true, gzip: true, cwd: dir, file: tgz, portable: true }, Object.keys(files));
+    return readFileSync(tgz);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function normalizeEntryPath(raw: string): string {
