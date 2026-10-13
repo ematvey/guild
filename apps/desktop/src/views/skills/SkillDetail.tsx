@@ -72,6 +72,20 @@ export function pinSummary(pinCounts: { version: string; count: number }[]): str
   return pinCounts.map((p) => `${p.version} × ${p.count}`).join(" · ");
 }
 
+/** The read-analytics summary line (spec §3), or the no-reads text. */
+export function readSummary(readStats: NonNullable<SkillDetailData["read_stats"]>): string {
+  if (readStats.total === 0) return "No reads yet.";
+  return `${readStats.total} read${readStats.total === 1 ? "" : "s"} in the last 30 days`;
+}
+
+/** Bar heights (px) for the 14-day reads series, normalized against the
+ *  series' peak, bottoming out at the 2px minimum. */
+export function readBars(series: Array<{ day: string; reads: number }>): number[] {
+  const peak = Math.max(0, ...series.map((d) => d.reads));
+  if (peak === 0) return series.map(() => 2);
+  return series.map((d) => Math.max(2, Math.round((d.reads / peak) * 32)));
+}
+
 /** The POST /api/v1/skills body that forks this skill: from the viewer's
  *  pinned version when installed, else the latest. */
 export function forkPayload(
@@ -204,6 +218,26 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
         <p className="mb-2 text-sm text-muted-foreground">
           {detail.installs} install{detail.installs === 1 ? "" : "s"} · {pinSummary(detail.pin_counts)}
         </p>
+        {detail.read_stats != null && (
+          <div className="mb-3">
+            <p className="text-sm text-muted-foreground">{readSummary(detail.read_stats)}</p>
+            {detail.read_stats.series.length > 0 && (
+              <div
+                className="mt-1 flex h-8 items-end gap-0.5"
+                aria-label="Reads per day, last 14 days"
+              >
+                {readBars(detail.read_stats.series).map((height, i) => (
+                  <div
+                    key={detail.read_stats!.series[i]!.day}
+                    title={`${detail.read_stats!.series[i]!.day}: ${detail.read_stats!.series[i]!.reads}`}
+                    className="w-2 rounded-sm bg-primary/40"
+                    style={{ height: `${height}px` }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <h3 className="mb-1 text-sm font-medium">Versions</h3>
         <table className="mb-3 w-full text-sm">

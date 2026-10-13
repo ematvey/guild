@@ -54,6 +54,9 @@ export interface SkillDetail {
   installs: number;
   pin_counts: SkillPinCount[];
   my_install: SkillInstall | null;
+  /** ClickHouse read analytics (spec §3): total reads (30d) plus a per-day
+   *  series (14d). Absent on servers older than the read-stats fix. */
+  read_stats?: { total: number; series: Array<{ day: string; reads: number }> } | null;
   tombstoned: boolean;
 }
 

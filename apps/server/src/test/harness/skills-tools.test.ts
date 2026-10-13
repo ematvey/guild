@@ -316,6 +316,32 @@ describe("push_skill", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("publishes max+1 across a version gap (v1,v3 → v4, never an overwrite)", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "guild-push-gap-"));
+    try {
+      mkdirSync(path.join(dir, "skills", "hello"), { recursive: true });
+      writeFileSync(path.join(dir, "skills", "hello", "SKILL.md"), "# Deploy\nRun the checklist.", "utf8");
+      const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
+      const { deps, recorded } = fakeDeps({
+        install,
+        executor: "server",
+        versions: [{ version: "v1" }, { version: "v3" }],
+      });
+      (deps as unknown as { conversationDir: () => Promise<string> }).conversationDir = async () => dir;
+      const runtime = makeRuntime(deps);
+      const push = runtime.tools().find((t) => t.name === "push_skill")!;
+      const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
+        { slug: "hello" }, API, CTX,
+      );
+      expect(result.isError).toBeFalsy();
+      expect(text(result)).toContain("v4");
+      expect(recorded.upserts).toEqual([
+        { orgId: ORG, kind: "skill", slug: "hello", version: "v4", description: "A skill" },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ------------------------------------------------------- runtime-level surfaces

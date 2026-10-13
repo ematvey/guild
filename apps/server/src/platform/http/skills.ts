@@ -14,6 +14,7 @@ import { requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
 import { validateManifest, type Manifest } from "../registry-manifest.js";
 import { packBundle, parseBundle } from "../bundle.js";
+import { nextVersion } from "../store/registry.js";
 import { publishBundleBytes } from "./registry.js";
 
 export interface SkillRouteOptions {
@@ -204,7 +205,9 @@ export function registerSkillRoutes(
     }
     const bodyText = stringField(body, "body");
     const versions = await gateway.registry.itemVersions(user.org_id, "skill", slug);
-    const version = `v${versions.length + 1}`;
+    // Max-suffix arithmetic (never count-based): a legacy raw-route gap
+    // (v1,v3) must yield v4, not a silent overwrite of v3.
+    const version = nextVersion(versions);
     await publishBundleBytes(
       gateway, auth, objects, user, "skill", slug, version, description,
       { kind: "skill", slug, version, description },
@@ -224,7 +227,7 @@ export function registerSkillRoutes(
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control === null || control.tombstoned) throw ApiError.notFound("no such skill");
     const versions = await gateway.registry.itemVersions(user.org_id, "skill", slug);
-    const version = `v${versions.length + 1}`;
+    const version = nextVersion(versions);
     await publishBundleBytes(
       gateway, auth, objects, user, "skill", slug, version, description,
       { kind: "skill", slug, version, description },
@@ -296,11 +299,15 @@ export function registerSkillRoutes(
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control === null) throw ApiError.notFound("no such skill");
     const versions = await gateway.registry.itemVersions(user.org_id, "skill", slug);
-    const [installs, pinCounts, myInstall, owner] = await Promise.all([
+    // Read analytics (spec §3): totals (30d) + per-day series (14d) from
+    // ClickHouse; the sink degrades to 0/[] when ClickHouse is unavailable.
+    const [installs, pinCounts, myInstall, owner, readTotals, readSeries] = await Promise.all([
       skills.installCount(user.org_id, slug),
       skills.pinCounts(user.org_id, slug),
       skills.byUserAndSlug(user.org_id, user.id, slug),
       ownerEntry(skills, user.org_id, control.owner_user_id, control.owner_team_id),
+      gateway.skillReads.readsBySlug(user.org_id, slug, 30),
+      gateway.skillReads.readsByDay(user.org_id, slug, 14),
     ]);
     sendJson(reply, {
       slug,
@@ -313,6 +320,7 @@ export function registerSkillRoutes(
       installs,
       pin_counts: pinCounts,
       my_install: myInstall,
+      read_stats: { total: readTotals, series: readSeries },
       tombstoned: control.tombstoned,
     });
     return reply;

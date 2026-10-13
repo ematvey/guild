@@ -10,6 +10,8 @@ import {
   detailLoadState,
   forkPayload,
   pinSummary,
+  readBars,
+  readSummary,
   updateAvailable,
 } from "./SkillDetail";
 import type { SkillDetail as SkillDetailData, SkillMe } from "./skills-api";
@@ -155,5 +157,32 @@ describe("pinSummary", () => {
   it("lists version × count pairs, or the no-pins text", () => {
     expect(pinSummary([{ version: "v2", count: 4 }, { version: "v3", count: 1 }])).toBe("v2 × 4 · v3 × 1");
     expect(pinSummary([])).toBe("No pins yet.");
+  });
+});
+
+describe("readSummary", () => {
+  it("counts reads over the 30-day window, or the no-reads text", () => {
+    expect(readSummary({ total: 0, series: [] })).toBe("No reads yet.");
+    expect(readSummary({ total: 1, series: [{ day: "2026-10-13", reads: 1 }] })).toBe("1 read in the last 30 days");
+    expect(readSummary({ total: 12, series: [] })).toBe("12 reads in the last 30 days");
+  });
+});
+
+describe("readBars", () => {
+  it("normalizes the series against its peak into bar heights", () => {
+    const series = [
+      { day: "2026-10-11", reads: 2 },
+      { day: "2026-10-12", reads: 8 },
+      { day: "2026-10-13", reads: 4 },
+    ];
+    expect(readBars(series)).toEqual([8, 32, 16]);
+  });
+
+  it("is empty for an empty series and bottoms out at the minimum height", () => {
+    expect(readBars([])).toEqual([]);
+    // A lone entry is its own peak (full height); a near-zero entry against
+    // a high peak clamps to the 2px floor.
+    expect(readBars([{ day: "2026-10-13", reads: 1 }])).toEqual([32]);
+    expect(readBars([{ day: "2026-10-12", reads: 1 }, { day: "2026-10-13", reads: 32 }])).toEqual([2, 32]);
   });
 });

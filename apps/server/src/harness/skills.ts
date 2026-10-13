@@ -28,6 +28,7 @@ import { packBundle, parseBundle } from "../platform/bundle.js";
 import { validateManifest, type Manifest } from "../platform/registry-manifest.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { RegistryItemRow } from "../platform/store/registry.js";
+import { nextVersion } from "../platform/store/registry.js";
 import type { SkillReadEvent, SkillReadSink } from "../platform/skillReads.js";
 import type { EventStore } from "../platform/store/events.js";
 import type { RegistryStore } from "../platform/store/registry.js";
@@ -533,7 +534,10 @@ export class SkillRuntime {
       return this.errorResult(`the skills/${slug} directory has no SKILL.md`);
     }
     const versions = await this.deps.registry.itemVersions(orgId, "skill", slug);
-    const version = `v${versions.length + 1}`;
+    // Max-suffix arithmetic (never count-based): a version gap (v1,v3) must
+    // yield v4, not a silent overwrite of v3 through upsertVersion's
+    // same-latest short-circuit.
+    const version = nextVersion(versions);
     const description = control?.description ?? "";
     const manifest: Manifest = { kind: "skill", slug, version, description };
     try {

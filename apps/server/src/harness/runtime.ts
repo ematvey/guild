@@ -124,7 +124,7 @@ export class GuildRuntime {
     private readonly log: Logger,
     objects?: ObjectStore,
     private readonly hub?: MachineDispatchHost,
-    private readonly skillReads?: Pick<SkillReadSink, "record">,
+    private readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">,
   ) {
     this.models = createModels();
     this.registry = createRegistry();
@@ -334,6 +334,15 @@ export class GuildRuntime {
     await applyPlatformMigrations(this.pool, { log: this.log });
     await applyPostgresMigrations(db);
     await applyChatMappingMigration(this.pool);
+    // The skill_reads ClickHouse DDL: ensured once at startup (spec §3's
+    // detail-page stats read the table; record() also awaits it). ClickHouse
+    // being down must not block startup — reads degrade to zero and writes
+    // are dropped until it recovers.
+    try {
+      await this.skillReads?.ensureOnce();
+    } catch (error) {
+      this.log.warn({ err: error }, "skill_reads table ensure failed");
+    }
     this.storage = await PostgresDurableStorage.open(db);
     const harness = await Harness.open(this.storage, {
       models: this.models,

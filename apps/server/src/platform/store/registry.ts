@@ -48,6 +48,22 @@ function itemRow(r: Record<string, unknown>): RegistryItemRow {
   };
 }
 
+/** The next append-only version for an item: the max numeric suffix across
+ *  every existing vN row, + 1. Count-based arithmetic (`v${rows.length + 1}`)
+ *  recomputes an existing version when a gap exists — legacy raw-route
+ *  publishes v1 then v3 leave count 2, and "v3" would silently overwrite the
+ *  live v3 through upsertVersion's same-latest short-circuit. Parsing the
+ *  suffix keeps the (item_id, version) UNIQUE constraint meaningful: a
+ *  computed version never collides. */
+export function nextVersion(versions: Array<{ version: string }>): string {
+  let max = 0;
+  for (const v of versions) {
+    const match = /^v(\d+)$/.exec(v.version);
+    if (match !== null) max = Math.max(max, Number(match[1]));
+  }
+  return `v${max + 1}`;
+}
+
 export class RegistryStore {
   constructor(readonly pool: PlatformPool) {}
 

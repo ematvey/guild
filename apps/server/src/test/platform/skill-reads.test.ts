@@ -107,6 +107,33 @@ describe("SkillReadSink.record", () => {
   });
 });
 
+describe("SkillReadSink.record + ensureOnce", () => {
+  it("record awaits ensureOnce so the table exists before the first insert", async () => {
+    const client = fakeClient();
+    const s = sink(client);
+    await s.record(event());
+
+    expect(client.ensureSkillReadsTable).toHaveBeenCalledTimes(1);
+    expect(client.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it("record drops the insert (logged, no throw) when the DDL fails", async () => {
+    const client = fakeClient({
+      ensureSkillReadsTable: vi.fn(async () => {
+        throw new Error("clickhouse down");
+      }),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(sink(client).record(event())).resolves.toBeUndefined();
+      expect(client.insert).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("SkillReadSink.ensureOnce", () => {
   it("runs the skill_reads DDL exactly once", async () => {
     const client = fakeClient();

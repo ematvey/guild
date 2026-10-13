@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createM6TestEnv, type M6TestEnv } from "./m6-harness.js";
 import { hashPassword } from "../../platform/crypto.js";
+import { packBundle } from "../../platform/bundle.js";
 
 const PASSWORD = "hunter226";
 
@@ -94,6 +95,21 @@ const createSkill = (slug: string, body: string, token = e.memberToken, extra: R
 const editSkill = (slug: string, body: string, token = e.memberToken): Promise<Reply> =>
   inject("PUT", `/api/v1/skills/${slug}`, token, { description: "d", body });
 
+/** The legacy raw registry route (spec §1.2's other publish path): arbitrary
+ *  explicit versions, the source of version gaps the editor must survive. */
+const rawPublish = async (slug: string, version: string, body = "# x"): Promise<Reply> => {
+  const bundle = packBundle({
+    "manifest.json": Buffer.from(JSON.stringify({ kind: "skill", slug, version, description: "d" })),
+    "SKILL.md": Buffer.from(body, "utf8"),
+  });
+  return e.env.app.inject({
+    method: "POST",
+    url: `/api/v1/registry/skill?slug=${slug}&version=${version}`,
+    headers: { authorization: `Bearer ${e.memberToken}`, "content-type": "application/octet-stream" },
+    payload: bundle,
+  }) as unknown as Promise<Reply>;
+};
+
 describe("skills api", () => {
   it("create → catalog shows it", async () => {
     const res = await createSkill("panel-skill", "# panel");
@@ -135,6 +151,28 @@ describe("skills api", () => {
     expect(body.skill_md).toBe("# second");
     // manifest.json is registry packaging metadata — never listed to agents.
     expect(body.files.map((f) => f.path).sort()).toEqual(["SKILL.md"]);
+  });
+
+  it("editor save after a version gap publishes max+1, never an overwrite", async () => {
+    // Legacy raw-route publishes with a gap: v1 then v3 (row count = 2 —
+    // count-based arithmetic would recompute "v3" and silently overwrite it).
+    expect((await rawPublish("gap-skill", "v1")).statusCode).toBe(200);
+    expect((await rawPublish("gap-skill", "v3")).statusCode).toBe(200);
+
+    const res = await editSkill("gap-skill", "# gapped");
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ slug: "gap-skill", version: "v4" });
+
+    const detail = await inject("GET", "/api/v1/skills/gap-skill", e.memberToken);
+    const versions = (detail.json() as { versions: Array<{ version: string }> }).versions;
+    expect(versions.map((v) => v.version)).toEqual(["v4", "v3", "v1"]);
+  });
+
+  it("detail carries read_stats (degraded to zero without a live ClickHouse)", async () => {
+    await createSkill("stats-skill", "# stats");
+    const detail = await inject("GET", "/api/v1/skills/stats-skill", e.memberToken);
+    expect(detail.statusCode).toBe(200);
+    expect((detail.json() as { read_stats: unknown }).read_stats).toEqual({ total: 0, series: [] });
   });
 
   it("install → my_install set and activity contains skill.installed", async () => {
