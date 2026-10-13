@@ -251,7 +251,9 @@ config; installs are rejected without a valid signature. Plain-HTTP servers
 are allowed (`dangerousInsecureTransportProtocol`) since signatures still
 gate every install.
 
-Release flow (per release): bump the version, run
+Release flow (per release): bump the version everywhere first with
+`scripts/bump-version.sh <version>` (see `docs/deploy-nuances.md` §10 for
+the full list of places it must land), then run
 `BASE=… TOKEN=… VERSION=… scripts/release-clients.sh` — it signs each
 artifact (AppImage, NSIS setup.exe, DMGs, `.app.tar.gz` updater bundles) and
 publishes signatures alongside. Debug builds never self-update
