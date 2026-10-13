@@ -122,6 +122,16 @@ export class TeamStore {
     await this.pool.query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2", [teamId, userId]);
   }
 
+  /** Whether the user is on the team (the publish gate's membership check). */
+  async isMember(orgId: string, teamId: string, userId: string): Promise<boolean> {
+    const res = await this.pool.query(
+      "SELECT 1::int8 FROM team_members m JOIN teams t ON t.id = m.team_id " +
+      "WHERE t.org_id = $1 AND t.id = $2 AND m.user_id = $3",
+      [orgId, teamId, userId],
+    );
+    return res.rows.length > 0;
+  }
+
   private async teamInOrg(orgId: string, teamId: string): Promise<boolean> {
     const res = await this.pool.query("SELECT org_id FROM teams WHERE id = $1", [teamId]);
     return res.rows[0]?.org_id === orgId;

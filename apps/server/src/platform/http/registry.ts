@@ -25,8 +25,9 @@ function validKind(kind: string): void {
 
 /** Content-addressed: a republish with different bundle bytes lands at a
  *  new key, so superseded and supersede-attempt bundles are never
- *  overwritten in place. */
-function objectKey(orgId: string, kind: string, slug: string, version: string, sha256: string): string {
+ *  overwritten in place. (Shared with the skills editor path, which
+ *  re-publishes server-assembled bundles.) */
+export function objectKey(orgId: string, kind: string, slug: string, version: string, sha256: string): string {
   return `registry/${orgId}/${kind}/${slug}/${version}/${sha256}.tar.gz`;
 }
 
@@ -105,6 +106,27 @@ export function registerRegistryRoutes(
     const sha256 = sha256Hex(body);
     const key = objectKey(user.org_id, kind, slug, version, sha256);
 
+    // Publish gate (spec §1.2): gated slugs accept only the owner, the
+    // owner team's members, and admins; tombstoned slugs refuse everything.
+    const control = await gateway.registry.itemControl(user.org_id, kind, slug);
+    const isTeamMember =
+      control?.owner_team_id != null
+        ? await auth.teams.isMember(user.org_id, control.owner_team_id, user.id)
+        : false;
+    await gateway.registry.publishGate(user.org_id, kind, slug, user.id, user.role, isTeamMember);
+
+    // Skill projection (spec §1.2/§1.3): SKILL.md text + the file list with
+    // per-file hashes, stored on the version row for the panel/editor.
+    let skill: { md_text: string; files: Array<{ path: string; size: number; sha256: string }> } | null = null;
+    if (kind === "skill") {
+      skill = {
+        md_text: readBundleFile(parsed, "SKILL.md")!.toString("utf8"),
+        files: parsed.entries
+          .filter((e) => e.file)
+          .map((en) => ({ path: en.path, size: en.content!.length, sha256: sha256Hex(en.content!) })),
+      };
+    }
+
     // Metadata first: only an accepted upsert (new version, unchanged
     // republish) commits a row — a superseded publish is refused before any
     // bundle bytes land, so the old release's object stays intact.
@@ -118,6 +140,7 @@ export function registerRegistryRoutes(
       key,
       sha256,
       user.id,
+      skill,
     );
     // The content-addressed key was accepted by upsertVersion; the bytes
     // are immutable and idempotent to re-write, so a failed put only leaves
@@ -127,9 +150,14 @@ export function registerRegistryRoutes(
     } catch (error) {
       throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
     }
-    // org event: registry item published; best-effort
+    // org event: first publish vs republish (the activity feed treats
+    // them as distinct kinds); best-effort
     try {
-      await auth.events.emit(user.org_id, "registry.published", { kind, slug, version });
+      await auth.events.emit(
+        user.org_id,
+        control !== null ? "registry.updated" : "registry.published",
+        { kind, slug, version },
+      );
     } catch {
       // best-effort
     }
