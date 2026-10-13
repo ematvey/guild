@@ -2431,6 +2431,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const switchTab = (tab: SidebarTab) => {
     setSidebarTab(tab);
     saveSidebarTab(tab);
+    // A collapsed panel hides the tab's content — a tab pick is an intent
+    // to see it, so the panel re-expands on the newly picked tab.
+    setCollapsed(false);
     // Entering Settings with no section picked lands on the first user
     // section instead of an empty main pane.
     if (tab === "settings") setSettingsSection((s) => s ?? "account");
