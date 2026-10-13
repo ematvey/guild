@@ -7,19 +7,9 @@ import { Search } from "lucide-react";
 import { Input } from "@guild/ui/components/input";
 import { Button } from "@guild/ui/components/button";
 import { Skeleton } from "@guild/ui/components/skeleton";
-import { skillsList } from "./skills-api";
+import { SkillDetail } from "./SkillDetail";
+import { skillsList, type SkillItem, type SkillMe } from "./skills-api";
 import { CollapseButton } from "../sidebar-contents";
-
-/** Wire shape of one catalog entry (GET /api/v1/skills). */
-export interface SkillItem {
-  slug: string;
-  description: string;
-  latest_version: string;
-  owner: { kind: "user" | "team"; id: string; label: string } | null;
-  maintainer_gated: boolean;
-  installs: number;
-  installs_latest?: number;
-}
 
 /** What one catalog card renders. */
 export interface SkillCard {
@@ -63,9 +53,17 @@ export function skillsEmptyState(query: string, count: number): string | null {
   return needle === "" ? "No skills yet." : `No skills match "${needle}".`;
 }
 
-export function SkillsPanel({ onCollapse }: { onCollapse?: () => void }) {
+export function SkillsPanel({
+  onCollapse,
+  me,
+}: {
+  onCollapse?: () => void;
+  me: SkillMe;
+}) {
   const [skills, setSkills] = useState<SkillItem[] | null>(null);
   const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -75,10 +73,26 @@ export function SkillsPanel({ onCollapse }: { onCollapse?: () => void }) {
     return () => {
       live = false;
     };
-  }, []);
+  }, [tick]);
 
   const filtered = filterSkills(skills ?? [], query);
   const empty = skills === null ? null : skillsEmptyState(query, filtered.length);
+
+  if (selected !== null) {
+    return (
+      <SkillDetail
+        slug={selected}
+        me={me}
+        // Back refetches the catalog: actions that change visibility
+        // (unpublish) must not leave a stale card in the grid.
+        onBack={() => {
+          setSelected(null);
+          setTick((t) => t + 1);
+        }}
+        onOpenSkill={setSelected}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -119,7 +133,20 @@ export function SkillsPanel({ onCollapse }: { onCollapse?: () => void }) {
           filtered.map((item) => {
             const card = skillCard(item);
             return (
-              <div key={card.slug} className="mb-2 rounded-md border border-border p-2.5">
+              <div
+                key={card.slug}
+                role="button"
+                tabIndex={0}
+                aria-label={`Open skill ${card.slug}`}
+                className="mb-2 cursor-pointer rounded-md border border-border p-2.5 hover:bg-muted/50"
+                onClick={() => setSelected(card.slug)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelected(card.slug);
+                  }
+                }}
+              >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-medium">{card.title}</span>
                   {card.gated && (

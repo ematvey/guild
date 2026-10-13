@@ -4,7 +4,8 @@
 // (vitest); see package.json.
 
 import { describe, expect, it } from "vitest";
-import { filterSkills, skillCard, skillsEmptyState, type SkillItem } from "./SkillsPanel";
+import { filterSkills, skillCard, skillsEmptyState } from "./SkillsPanel";
+import type { SkillItem } from "./skills-api";
 
 const fixtures: SkillItem[] = [
   {
