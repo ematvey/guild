@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useMemo, useRef, useState,
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type ErrorInfo, type ReactNode, type RefObject } from "react";
 import { applyMention, detectMention } from "../lib/skill-mention";
 import { daemonFs, listSkills } from "../lib/context";
@@ -1793,7 +1793,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setRoute({ chatId, projectId, overlay: ov });
   };
 
-  useEffect(() => {
+  // Layout effect: the correction must land before paint, or the new block
+  // shows for a frame at the old scroll offset (the reported 1-frame jump).
+  useLayoutEffect(() => {
     if (!stick.current) return;
     bottom.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
   }, [blocks]);
@@ -1950,7 +1952,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
-        if (active) { promptRef.current = ""; setPrompt(""); setPending([]); }
+        if (active) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
       }
       restoredCommandRef.current.delete(target);
     }
@@ -2209,6 +2211,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         promptRef.current = recovered.text;
         setPrompt(recovered.text);
         setPending(recovered.files);
+        requestAnimationFrame(autoGrow);
       }
     }
     refreshOutgoing(n => n + 1);
@@ -2228,7 +2231,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
-        if (openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); }
+        if (openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
       },
     });
     if (command.accepted) { deliveringRef.current.delete(command.id); return; }
@@ -2322,6 +2325,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       if (!chatId) { toast.error("Compact needs an existing chat — send a message first"); return; }
       promptRef.current = "";
       setPrompt("");
+      requestAnimationFrame(autoGrow);
       setCompacting(reducerRef.current.setCompacting(chatId).compacting);
       try { await compactChat(chatId); }
       catch (e) { setCompacting(reducerRef.current.setCompacting(null).compacting); toast.error(e instanceof Error ? e.message : String(e)); }
@@ -2726,7 +2730,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           <div
             ref={pane}
             data-scrollable
-            className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain"
+            className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
             onScroll={() => {
               const el = pane.current;
               if (!el) return;
