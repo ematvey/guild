@@ -82,6 +82,15 @@ export function forkPayload(
   return { slug: newSlug, forked_from: detail.slug, from_version: fromVersion };
 }
 
+/** The detail page's lifecycle: loading (skeleton), missing (the call
+ *  resolved null — 404 or network error), or ready (payload in hand). */
+export type DetailLoadState = "loading" | "missing" | "ready";
+
+export function detailLoadState(detail: SkillDetailData | null, loadFailed: boolean): DetailLoadState {
+  if (detail !== null) return "ready";
+  return loadFailed ? "missing" : "loading";
+}
+
 export interface SkillDetailProps {
   slug: string;
   me: SkillMe;
@@ -95,6 +104,7 @@ export interface SkillDetailProps {
 
 export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDetailProps) {
   const [detail, setDetail] = useState<SkillDetailData | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
   const [forkSlug, setForkSlug] = useState(`${slug}-fork`);
@@ -104,7 +114,10 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
   useEffect(() => {
     let live = true;
     skillsDetail(slug).then((d) => {
-      if (live) setDetail(d);
+      if (live) {
+        setLoadFailed(d === null);
+        setDetail(d);
+      }
     });
     return () => {
       live = false;
@@ -128,6 +141,27 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
     },
     [refetch],
   );
+
+  if (detailLoadState(detail, loadFailed) === "missing") {
+    return (
+      <div className="flex min-h-0 w-full flex-1 flex-col">
+        <div className="flex items-center gap-2 px-3 py-3">
+          <Button variant="ghost" size="sm" onClick={onBack} aria-label="Back to skills">
+            <ArrowLeft className="size-4" />
+          </Button>
+          <span className="font-semibold">{slug}</span>
+        </div>
+        <div className="px-3 pb-3">
+          <p className="text-sm text-muted-foreground">
+            Skill not found — it may have been unpublished, or the request failed.
+          </p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={onBack}>
+            Back to skills
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (detail === null) {
     return (
