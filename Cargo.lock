@@ -2322,6 +2322,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "dirs 6.0.0",
  "ed25519-dalek",
