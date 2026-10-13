@@ -56,7 +56,9 @@ export class RegistryStore {
    *  bytes. An unchanged re-upload keeps the status only while the standing
    *  approval is bound to content. Republishing an older version is
    *  refused: it would overwrite a superseded release. The item row is
-   *  read and locked inside the transaction (no TOCTOU). */
+   *  read and locked inside the transaction (no TOCTOU). Skill publishes
+   *  carry the SKILL.md text + file projection; the first publish owns the
+   *  item (owner_user_id = the publisher). */
   async upsertVersion(
     orgId: string,
     kind: string,
@@ -67,6 +69,7 @@ export class RegistryStore {
     objectKey: string,
     bundleSha256: string,
     publisher: string,
+    skill: { md_text: string; files: Array<{ path: string; size: number; sha256: string }> } | null = null,
   ): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -117,19 +120,30 @@ export class RegistryStore {
       } else {
         itemId = uuidv7();
         await client.query(
-          "INSERT INTO registry_items (id, org_id, kind, slug, description, latest_version) " +
-          "VALUES ($1, $2, $3, $4, $5, $6)",
-          [itemId, orgId, kind, slug, description, version],
+          "INSERT INTO registry_items (id, org_id, kind, slug, description, latest_version, owner_user_id) " +
+          "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+          [itemId, orgId, kind, slug, description, version, publisher],
         );
       }
       await client.query(
-        "INSERT INTO registry_versions (id, item_id, version, manifest, object_key, bundle_sha256, published_by) " +
-        "VALUES ($1, $2, $3, $4, $5, $6, $7) " +
+        "INSERT INTO registry_versions (id, item_id, version, manifest, object_key, bundle_sha256, published_by, skill_md_text, files) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) " +
         "ON CONFLICT (item_id, version) " +
         "DO UPDATE SET manifest = EXCLUDED.manifest, object_key = EXCLUDED.object_key, " +
         "bundle_sha256 = EXCLUDED.bundle_sha256, published_by = EXCLUDED.published_by, " +
+        "skill_md_text = EXCLUDED.skill_md_text, files = EXCLUDED.files, " +
         "published_at = now()",
-        [uuidv7(), itemId, version, JSON.stringify(manifest), objectKey, bundleSha256, publisher],
+        [
+          uuidv7(),
+          itemId,
+          version,
+          JSON.stringify(manifest),
+          objectKey,
+          bundleSha256,
+          publisher,
+          skill?.md_text ?? null,
+          skill === null ? null : JSON.stringify(skill.files),
+        ],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -143,7 +157,7 @@ export class RegistryStore {
   async listItems(orgId: string, kind: string): Promise<RegistryItemRow[]> {
     const res = await this.pool.query(
       "SELECT slug, description, latest_version, review_status FROM registry_items " +
-      "WHERE org_id = $1 AND kind = $2 ORDER BY slug",
+      "WHERE org_id = $1 AND kind = $2 AND tombstoned_at IS NULL ORDER BY slug",
       [orgId, kind],
     );
     return res.rows.map(itemRow);
@@ -161,6 +175,61 @@ export class RegistryStore {
       published_at: pgTimestampToRfc3339(r.published_at as string),
       bundle_sha256: (r.bundle_sha256 as string | null) ?? null,
     }));
+  }
+
+  /** Tombstone state + gate info for one item. */
+  async itemControl(orgId: string, kind: string, slug: string): Promise<{
+    owner_user_id: string | null;
+    owner_team_id: string | null;
+    maintainer_gated: boolean;
+    tombstoned: boolean;
+    latest_version: string | null;
+  } | null> {
+    const res = await this.pool.query(
+      "SELECT owner_user_id, owner_team_id, maintainer_gated, tombstoned_at, latest_version FROM registry_items " +
+      "WHERE org_id = $1 AND kind = $2 AND slug = $3",
+      [orgId, kind, slug],
+    );
+    const r = res.rows[0];
+    if (r === undefined) return null;
+    return {
+      owner_user_id: (r.owner_user_id as string | null) ?? null,
+      owner_team_id: (r.owner_team_id as string | null) ?? null,
+      maintainer_gated: r.maintainer_gated === true,
+      tombstoned: r.tombstoned_at !== null,
+      latest_version: (r.latest_version as string | null) ?? null,
+    };
+  }
+
+  /** Publish gate (spec §1.2): gated slugs accept pushes from the owner,
+   *  the owner team's members, and admins only; tombstoned slugs reject
+   *  everything (T3's editor-save path clears the tombstone before
+   *  republishing). */
+  async publishGate(orgId: string, kind: string, slug: string, userId: string, role: string, isTeamMember: boolean): Promise<void> {
+    const item = await this.itemControl(orgId, kind, slug);
+    if (item === null) return; // new slug — no gate
+    if (item.tombstoned) throw ApiError.forbidden();
+    if (!item.maintainer_gated || role === "admin") return;
+    const owner = item.owner_user_id !== null && item.owner_user_id === userId;
+    if (owner || (item.owner_team_id !== null && isTeamMember)) return;
+    throw ApiError.forbidden();
+  }
+
+  /** Tombstones the item (unpublish): it leaves the catalog and refuses
+   *  publishes until cleared. */
+  async markUnpublished(orgId: string, kind: string, slug: string): Promise<void> {
+    const res = await this.pool.query(
+      "UPDATE registry_items SET tombstoned_at = now() WHERE org_id = $1 AND kind = $2 AND slug = $3 AND tombstoned_at IS NULL",
+      [orgId, kind, slug],
+    );
+    if (res.rowCount === 0) throw ApiError.notFound("no such registry item");
+  }
+
+  async clearTombstone(orgId: string, kind: string, slug: string): Promise<void> {
+    await this.pool.query(
+      "UPDATE registry_items SET tombstoned_at = NULL WHERE org_id = $1 AND kind = $2 AND slug = $3",
+      [orgId, kind, slug],
+    );
   }
 
   async getVersion(orgId: string, kind: string, slug: string, version: string): Promise<StoredVersion> {
