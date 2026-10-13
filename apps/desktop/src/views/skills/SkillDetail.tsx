@@ -53,6 +53,22 @@ export function canManageSkill(detail: SkillDetailData, me: SkillMe): boolean {
   );
 }
 
+/** Who can publish updates, derived from the gate flag plus the owner kind
+ *  (the server's publish gate: gated slugs accept pushes from the owner,
+ *  the owning team, and admins — spec §1.2). "anyone" = gate off. */
+export function editAccess(detail: Pick<SkillDetailData, "maintainer_gated" | "owner">): "anyone" | "team" | "owner" {
+  if (!detail.maintainer_gated) return "anyone";
+  return detail.owner?.kind === "team" ? "team" : "owner";
+}
+
+/** The user-facing label for an access level. Team-owned skills carry the
+ *  team name: "Team Platform can edit". */
+export function editAccessLabel(access: "anyone" | "team" | "owner", ownerLabel?: string): string {
+  if (access === "anyone") return "Anyone can edit";
+  if (access === "team") return `Team ${ownerLabel ?? ""} can edit`.trim();
+  return "Owner can edit";
+}
+
 /** The visible action labels, in render order (the top bar's action row).
  *  The component maps each label to its button variant, so this list is
  *  the single source of truth for what the actions row offers. */
@@ -67,7 +83,7 @@ export function detailActions(detail: SkillDetailData, me: SkillMe): string[] {
   if (detail.my_install !== null) actions.push("Uninstall");
   if (detail.latest_version !== null) actions.push("Fork", "Edit");
   if (canManageSkill(detail, me)) {
-    actions.push(detail.maintainer_gated ? "Remove approval" : "Require approval", "Unpublish");
+    actions.push(detail.maintainer_gated ? "Allow anyone to edit" : "Restrict editing", "Unpublish");
   }
   return actions;
 }
@@ -480,7 +496,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
           >
             {label}
           </Button>
-        ) : label === "Require approval" || label === "Remove approval" ? (
+        ) : label === "Restrict editing" || label === "Allow anyone to edit" ? (
           <Button
             key={label}
             variant="outline"
@@ -489,7 +505,9 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
             onClick={() =>
               void run(
                 () => skillsGate(detail.slug, !detail.maintainer_gated),
-                detail.maintainer_gated ? "Approval removed" : "Approval required",
+                detail.maintainer_gated
+                  ? "Editing opened to anyone"
+                  : `Editing restricted — ${editAccessLabel(editAccess(detail), detail.owner?.label)} (plus admins)`,
               )
             }
           >
@@ -529,7 +547,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
             <h1 className="text-[21px] font-semibold leading-tight">{detail.slug}</h1>
             {detail.maintainer_gated && (
               <Badge variant="secondary" className="gap-1">
-                <Lock className="size-3" /> approval required
+                <Lock className="size-3" /> {editAccessLabel(editAccess(detail), detail.owner?.label)}
               </Badge>
             )}
             {detail.forked_from !== null && (
@@ -567,14 +585,14 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
             </p>
           )}
 
-          {/* gated install notice */}
+          {/* publish-gate notice */}
           {detail.maintainer_gated && (
             <div className="mt-3.5 flex items-start gap-2.5 rounded-lg border border-border bg-secondary px-3.5 py-2.5 text-[13px] text-secondary-foreground">
               <Info className="mt-0.5 size-[15px] shrink-0 text-muted-foreground" />
               <span>
-                <span className="font-semibold">Approval required.</span> Members can browse and
-                fork this skill, but installing it needs maintainer sign-off — the owner or an
-                admin approves.
+                <span className="font-semibold">{editAccessLabel(editAccess(detail), detail.owner?.label)}.</span> Anyone in the org can
+                browse, install, and fork this skill — but publishing updates is limited to{" "}
+                {detail.owner?.kind === "team" ? `the ${detail.owner.label} team` : `the owner (${detail.owner?.label ?? "unknown"})`} and org admins.
               </span>
             </div>
           )}

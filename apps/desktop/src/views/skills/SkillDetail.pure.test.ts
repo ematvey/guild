@@ -11,6 +11,8 @@ import {
   canManageSkill,
   detailActions,
   detailLoadState,
+  editAccess,
+  editAccessLabel,
   forkPayload,
   pinSummary,
   publishedLabel,
@@ -99,15 +101,24 @@ describe("detailActions", () => {
     expect(actions.indexOf("Fork")).toBeLessThan(actions.indexOf("Edit"));
   });
 
-  it("shows the approval toggle and Unpublish only to owner or admin", () => {
+  it("shows the editing toggle and Unpublish only to owner or admin", () => {
     const gated = detailActions({ ...base, maintainer_gated: true }, owner);
-    expect(gated).toContain("Remove approval");
+    expect(gated).toContain("Allow anyone to edit");
     expect(gated).toContain("Unpublish");
-    expect(detailActions(base, admin)).toContain("Require approval");
+    expect(detailActions(base, admin)).toContain("Restrict editing");
     expect(detailActions(base, admin)).toContain("Unpublish");
     const stranger = detailActions(base, other);
-    expect(stranger).not.toContain("Require approval");
+    expect(stranger).not.toContain("Restrict editing");
     expect(stranger).not.toContain("Unpublish");
+  });
+
+  it("editAccess maps the gate flag plus owner kind to a user-facing label", () => {
+    const open = { maintainer_gated: false, owner: { kind: "team" as const, id: "t1", label: "Platform" } };
+    const team = { ...open, maintainer_gated: true };
+    const user = { ...open, maintainer_gated: true, owner: { kind: "user" as const, id: "u1", label: "dmitri" } };
+    expect(editAccessLabel(editAccess(open), open.owner.label)).toBe("Anyone can edit");
+    expect(editAccessLabel(editAccess(team), team.owner.label)).toBe("Team Platform can edit");
+    expect(editAccessLabel(editAccess(user), user.owner.label)).toBe("Owner can edit");
   });
 
   it("limits actions on a tombstoned skill to uninstall-if-installed", () => {
