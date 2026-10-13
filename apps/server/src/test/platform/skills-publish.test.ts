@@ -17,6 +17,8 @@ interface Env {
   adminToken: string;
   memberToken: string;
   member2Token: string;
+  adminEmail: string;
+  memberEmail: string;
   adminId: string;
   memberId: string;
   member2Id: string;
@@ -59,6 +61,8 @@ beforeAll(async () => {
     adminToken: await login(adminEmail),
     memberToken: await login(memberEmail),
     member2Token: await login(member2Email),
+    adminEmail,
+    memberEmail,
     adminId,
     memberId,
     member2Id,
@@ -148,11 +152,15 @@ describe("skills publish", () => {
       latest_version: "v1",
     });
 
-    const events = await e.env.db.query(
-      "SELECT kind FROM events WHERE org_id = $1 AND kind = 'registry.published' AND payload->>'slug' = 'test-skill'",
+    const events = await e.env.db.query<{ payload: { actor?: string; user_id?: string } }>(
+      "SELECT payload FROM events WHERE org_id = $1 AND kind = 'registry.published' AND payload->>'slug' = 'test-skill'",
       [e.orgId],
     );
     expect(events.rows).toHaveLength(1);
+    // The publisher's identity rides in the payload (label = display name
+    // or email; these seed users have no display name).
+    expect(events.rows[0]!.payload.actor).toBe(e.memberEmail);
+    expect(events.rows[0]!.payload.user_id).toBe(e.memberId);
   });
 
   it("refuses a non-maintainer push to a gated slug; republishes emit registry.updated", async () => {
@@ -165,11 +173,14 @@ describe("skills publish", () => {
     expect((await publish("gated-skill", "v2", e.memberToken)).statusCode).toBe(200); // owner
     expect((await publish("gated-skill", "v3", e.adminToken)).statusCode).toBe(200); // admin bypass
 
-    const updated = await e.env.db.query(
+    const updated = await e.env.db.query<{ payload: { version: string; actor: string } }>(
       "SELECT payload FROM events WHERE org_id = $1 AND kind = 'registry.updated' AND payload->>'slug' = 'gated-skill'",
       [e.orgId],
     );
-    expect(updated.rows.map((r) => (r.payload as { version: string }).version).sort()).toEqual(["v2", "v3"]);
+    expect(updated.rows.map((r) => r.payload.version).sort()).toEqual(["v2", "v3"]);
+    // Each republish names its actor: the owner republish, then the admin
+    // bypass.
+    expect(updated.rows.map((r) => r.payload.actor).sort()).toEqual([e.adminEmail, e.memberEmail]);
     const published = await e.env.db.query(
       "SELECT payload FROM events WHERE org_id = $1 AND kind = 'registry.published' AND payload->>'slug' = 'gated-skill'",
       [e.orgId],

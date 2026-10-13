@@ -570,6 +570,7 @@ export class SkillRuntime {
         kind: "skill",
         slug,
         version,
+        user_id: userId,
       });
     } catch (error) {
       this.deps.log.warn(`registry.updated emit failed: ${(error as Error).message}`);
