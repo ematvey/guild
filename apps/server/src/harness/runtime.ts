@@ -34,6 +34,7 @@ import { AgentSessionStore } from "../platform/store/agentSessions.js";
 import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import { EventStore } from "../platform/store/events.js";
 import { IntegrationSecretStore, IntegrationStore } from "../platform/store/integrations.js";
+import { UserMcpStore } from "../platform/store/userMcp.js";
 import { RegistryStore } from "../platform/store/registry.js";
 import { SkillStore } from "../platform/store/skills.js";
 import { MachineStore } from "../platform/store/machines.js";
@@ -45,6 +46,7 @@ import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/mat
 import type { Config } from "../config.js";
 import { createGuildExtension, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
 import { IntegrationsRuntime } from "./integrations.js";
+import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
 import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
@@ -110,6 +112,10 @@ export class GuildRuntime {
   /** The integrations chat runtime (M8): per-turn plugin resolution, the
    *  dynamic per-org tool registration, execution + audit. */
   readonly integrationsRuntime: IntegrationsRuntime;
+  /** The user-MCP chat runtime: the chat owner's servers declared as
+   *  mcp_<server>_<tool> per turn, executed server-side with the stored
+   *  headers. */
+  readonly userMcpRuntime: UserMcpRuntime;
   /** The skills runtime: the read_skill/search_skills/push_skill tools
    *  (the guild extension carries them), the Task 6 index section, and the
    *  install-fan-out hook the routes call (Task 8 fills syncUser). */
@@ -180,6 +186,16 @@ export class GuildRuntime {
       },
       this.registry,
     );
+    this.userMcpRuntime = new UserMcpRuntime(
+      {
+        store: new UserMcpStore(pool),
+        masterKey: () => this.masterKey(),
+        log,
+        chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
+        chatOwnerOf: async (chatId) => await this.chats.ownerOf(chatId),
+      },
+      this.registry,
+    );
     this.bridge = new ChatBridge({
       threads: this.threads,
       chats: this.chats,
@@ -240,7 +256,13 @@ export class GuildRuntime {
       allowShellTools: this.config.allowShellTools,
       chatOfConversation: (conversationId) => this.chatOfConversation(conversationId),
       executorKind: (conversationId) => this.executorKind(conversationId),
-      integrations: this.integrationsRuntime,
+      integrations: {
+        gateDecision: async (conversationId, callName) => {
+          const userDecision = await this.userMcpRuntime.gateDecision(conversationId, callName);
+          if (userDecision !== undefined) return userDecision;
+          return this.integrationsRuntime.gateDecision(conversationId, callName);
+        },
+      },
       skillRuntime: this.skillsRuntime,
       currentModel: async (conversationId) => {
         await this.start();
@@ -467,18 +489,21 @@ export class GuildRuntime {
     // Integrations (M8): per turn the org's enabled plugins resolve into a
     // snapshot, the per-org extension carries their tools, and the
     // conversation's agent selection + tool allow-list are refreshed
-    // (role-filtered like the Rust disclosure filter). Orgs without
-    // integrations leave the conversation untouched.
+    // (role-filtered like the Rust disclosure filter). User MCP servers:
+    // the chat owner's enabled servers declare their tools the same way
+    // (one extension + bare registrations). Orgs/users with neither keep
+    // the exact previous configure behavior.
     const prepared = await this.integrationsRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
-    if (prepared.action === "configure") {
+    const userPrepared = await this.userMcpRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
+    if (prepared.action === "configure" || userPrepared.action === "configure") {
       await conversation.configure(
         {
-          extensions: [this.guildExtension, CodingTools, ...prepared.extensions],
-          tools: [...(CodingTools.tools ?? []), ...this.skillsRuntime.tools(), ...prepared.tools],
+          extensions: [this.guildExtension, CodingTools, ...prepared.extensions, ...userPrepared.extensions],
+          tools: [...(CodingTools.tools ?? []), ...this.skillsRuntime.tools(), ...prepared.tools, ...userPrepared.tools],
         },
         BACKGROUND_CONTEXT,
       );
-    } else if (prepared.action === "clear") {
+    } else if (prepared.action === "clear" && userPrepared.action === "clear") {
       await conversation.configure({ extensions: null, tools: null }, BACKGROUND_CONTEXT);
     }
     // The combined skills index section renders at turn start from the

@@ -34,6 +34,7 @@ import type { ProjectStore } from "./store/projects.js";
 import type { TeamStore } from "./store/teams.js";
 import type { OrgKvStore, KvStore } from "./store/org_kv.js";
 import type { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
+import type { UserMcpStore } from "./store/userMcp.js";
 import type { ChatStore } from "./store/chats.js";
 import type { ThreadStore } from "./store/thread.js";
 import type { TurnCommandStore } from "./store/turn_commands.js";
@@ -73,6 +74,8 @@ export interface IdentityCtx {
   readonly orgKv: OrgKvStore;
   readonly kv: KvStore;
   readonly events: EventStore;
+  /** User-owned MCP server rows (the user_mcp settings surface + runtime). */
+  readonly userMcp: UserMcpStore;
   readonly attachments: AttachmentStore;
   readonly config: Config;
   masterKey(): Buffer;

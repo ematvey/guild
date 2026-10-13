@@ -44,6 +44,7 @@ type SectionId =
   | "teams"
   | "models"
   | "integrations"
+  | "mcp"
   | "sso"
   | "registry"
   | "about";
@@ -85,6 +86,7 @@ export const SETTINGS_SECTIONS: SectionDef[] = [
     group: "workspace",
     admin: true,
   },
+  { id: "mcp", label: "MCP servers", icon: <Waypoints className="size-4" />, group: "user" },
   { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace", admin: true },
   { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace", admin: true },
 ];
@@ -207,6 +209,15 @@ function SectionBody({
         <LazySection
           load={() => import("./sections/IntegrationsSection")}
           name="IntegrationsSection"
+          detail={detail}
+          onDetailChange={onDetailChange}
+        />
+      );
+    case "mcp":
+      return (
+        <LazySection
+          load={() => import("./sections/McpSection")}
+          name="McpSection"
           detail={detail}
           onDetailChange={onDetailChange}
         />
