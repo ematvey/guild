@@ -238,14 +238,21 @@ export function SkillsPanel({
   const [filterKind, setFilterKind] = useState<SkillFilterKind>("all");
   const [sortKey, setSortKey] = useState<SkillSortKey>("installs");
   const [tick, setTick] = useState(0);
+  /** The last load failed (fetch threw or answered !ok — the paired server
+   *  may predate the skills API). Renders a retry row instead of skeletons
+   *  that would otherwise spin forever. */
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
-    void Promise.all([skillsList(), fetchInstalls()]).then(([items, myInstalls]) => {
-      if (!live) return;
-      setSkills(items);
-      setInstalls(myInstalls);
-    });
+    void Promise.all([skillsList(), fetchInstalls()])
+      .catch(() => [null, null] as const)
+      .then(([items, myInstalls]) => {
+        if (!live) return;
+        setSkills(items);
+        setInstalls(myInstalls);
+        setLoadFailed(items === null);
+      });
     return () => {
       live = false;
     };
@@ -400,7 +407,30 @@ export function SkillsPanel({
           {tab === "machine" && IS_TAURI && <LocalSkills />}
           {tab === "catalog" && (
             <div className="flex flex-col gap-1.5">
-              {skills === null &&
+              {loadFailed && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3.5 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Could not load the skill catalog</p>
+                    <p className="mt-0.5 text-[13px] text-muted-foreground">
+                      The paired server may be older than this app and lack the skills API.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setLoadFailed(false);
+                      setSkills(null);
+                      setInstalls(null);
+                      setTick((t) => t + 1);
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              )}
+              {!loadFailed &&
+                skills === null &&
                 [0, 1, 2, 3, 4, 5].map((i) => (
                   <Skeleton key={i} className="h-16 w-full rounded-md" style={{ opacity: 1 - (i % 3) * 0.15 }} />
                 ))}

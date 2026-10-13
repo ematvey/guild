@@ -98,7 +98,7 @@ const GOOGLE_SCOPES =
   "https://www.googleapis.com/auth/calendar.readonly " +
   "https://www.googleapis.com/auth/drive.readonly " +
   "https://www.googleapis.com/auth/admin.directory.user.readonly";
-const FIRECRAWL_BASE_URL = "http://host.docker.internal:3002";
+const FIRECRAWL_BASE_URL = "http://host.docker.internal:13002";
 
 function githubApiUrl(config: Json): string {
   return trimTrailingSlash(configString(config, "api_url") ?? "https://api.github.com");
