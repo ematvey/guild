@@ -76,7 +76,7 @@ import {
   SKILLS_CATALOG,
   type SkillsRoute,
 } from "./skills/skills-route";
-import { SidebarRail, saveSidebarTab, storedSidebarTab, type SidebarTab } from "./sidebar-rail";
+import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import {
   attachmentBlobUrl,
   toolArtifactBlobUrl,
@@ -247,11 +247,16 @@ export function tabPaneLayout(
 /// where the user is. Routes:
 ///   /                          — new chat (recents view)
 ///   /thread/<id>               — open thread
-///   /project/<id>              — sidebar filtered to one project
+///   /chats                      — the Chats tab (default; a bare chat id
+///                                keeps its short form)
+///   /work                       — the Work tab
+///   /project/<id>              — sidebar filtered to one project (Work tab)
 ///   /project/<id>/thread/<cid> — open thread within its project view
 ///   /device                    — device-setup dialog, optionally over a
 ///                                thread: /thread/<id>/device
-///   /settings[/<section>[/<detail>]] — settings overlay (top-level; the
+///   /settings                   — the Settings tab (bare; the section lives
+///                                in pane state)
+///   /settings/<section>[/<detail>] — settings overlay (top-level; the
 ///                                thread underneath stays loaded in app
 ///                                state). <detail> addresses a sub-page
 ///                                inside a section: an integration slug,
@@ -274,6 +279,11 @@ interface ChatRoute {
   overlay: ChatOverlay;
   /** The skills page route, or null when the URL is not a skills one. */
   skills: SkillsRoute | null;
+  /** Which rail panel tab the URL names: /chats, /work or /settings.
+   * Sectioned /settings/<...> overlay URLs carry "chats" — the tab under
+   * an overlay is whatever the navigation came from (pushRoute keeps it;
+   * a stale deep link falls back to the default). */
+  tab: "chats" | "work" | "settings";
 }
 
 export const parseChatRoute = (pathname: string): ChatRoute => {
@@ -282,30 +292,44 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     .split("/")
     .filter(Boolean)
     .map(decodeURIComponent);
+  // The rail's panel tabs own top-level addresses: /chats (the default),
+  // /work, and bare /settings — a sectioned /settings/<...> URL is the
+  // settings overlay, not the tab. Tab picks navigate, so back/forward and
+  // reloads restore the tab like any other route state.
+  let tab: ChatRoute["tab"] = "chats";
+  if (parts[0] === "chats" || parts[0] === "work") {
+    tab = parts[0];
+    parts.shift();
+  }
   let chatId: string | null = null;
   let projectId: string | null = null;
   if (parts[0] === "project" && parts[1]) {
     projectId = parts[1];
+    tab = "work";
     parts.splice(0, 2);
   }
   if (parts[0] === "thread" && parts[1]) {
     chatId = parts[1];
     parts.splice(0, 2);
   }
-  if (parts[0] === "device") return { chatId, projectId, overlay: { kind: "device" }, skills: null };
+  if (parts[0] === "device") return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null };
   if (parts[0] === "settings") {
-    // Everything after the section is the sub-page id; each segment was
-    // encoded separately, so a model id like "a/b" round-trips as one part.
+    // Bare /settings is the Settings tab; anything with a section is the
+    // overlay. Everything after the section is the sub-page id; each
+    // segment was encoded separately, so a model id like "a/b" round-trips
+    // as one part.
+    if (parts.length === 1)
+      return { chatId: null, projectId: null, tab: "settings", overlay: null, skills: null };
     const detail = parts.length > 2 ? parts.slice(2).map(decodeURIComponent).join("/") : null;
-    return { chatId, projectId, overlay: { kind: "settings", section: parts[1] ?? null, detail }, skills: null };
+    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "settings", section: parts[1], detail }, skills: null };
   }
   // Skills is chat-independent and top-level like settings: the URL drops
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
     const skills = parseSkillsRoute(parts.slice(1));
-    return { chatId: null, projectId: null, overlay: null, skills };
+    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats" };
   }
-  return { chatId, projectId, overlay: null, skills: null };
+  return { chatId, projectId, tab, overlay: null, skills: null };
 };
 
 /// /skills/<seg...> after the leading "skills": a bare /skills is the
@@ -327,6 +351,7 @@ export const chatRoutePath = (
   projectId: string | null,
   overlay: ChatOverlay,
   skills: SkillsRoute | null = null,
+  tab: ChatRoute["tab"] = "chats",
 ): string => {
   // Skills is chat-independent — top-level URL that replaces the chat view.
   if (skills !== null) {
@@ -345,8 +370,17 @@ export const chatRoutePath = (
       }`
     : chatId
       ? `/thread/${encodeURIComponent(chatId)}`
-      : "";
-  if (overlay?.kind === "device") return `${base}/device`;
+      : tab === "work"
+        ? "/work"
+        : tab === "settings"
+          ? "/settings"
+          : "/chats";
+  if (overlay?.kind === "device") {
+    // /settings/<seg> parses as a settings overlay section, so a device
+    // dialog pushed over the Settings tab detours through /chats — the
+    // dialog itself is chat-independent anyway.
+    return `${tab === "settings" ? "/chats" : base}/device`;
+  }
   // Settings is chat-independent — top-level URL even when opened over a
   // thread (the thread stays loaded; closing the overlay restores it).
   if (overlay?.kind === "settings")
@@ -1833,10 +1867,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     projectId?: string | null;
     overlay?: ChatOverlay;
     skills?: SkillsRoute | null;
+    tab?: ChatRoute["tab"];
   }) => {
     const chatId = "chatId" in next ? (next.chatId as string | null) : route.chatId;
     const projectId = "projectId" in next ? (next.projectId as string | null) : route.projectId;
     const ov = "overlay" in next ? (next.overlay as ChatOverlay) : route.overlay;
+    const tab = next.tab ?? route.tab;
     // The skills page is replaced by anything that names a chat or opens a
     // dialog overlay — those are chat-context surfaces. An overlay close
     // (overlay: null) keeps it: the dialog was rendered over the skills page.
@@ -1846,9 +1882,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         : "chatId" in next || (next.overlay !== undefined && next.overlay !== null)
           ? null
           : route.skills;
-    const path = chatRoutePath(chatId, projectId, ov, sk);
+    const path = chatRoutePath(chatId, projectId, ov, sk, tab);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setRoute({ chatId, projectId, overlay: ov, skills: sk });
+    setRoute({ chatId, projectId, overlay: ov, skills: sk, tab });
   };
 
   // Layout effect: the correction must land before paint, or the new block
@@ -2494,11 +2530,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // Sidebar tab: one icon rail (desktop) switches the panel between chats,
   // work, skills and settings. The skills tab is not panel state at all —
   // it is the /skills... route (see below), so this state only ever holds
-  // the panel-bearing tabs and a stale persisted "skills" falls back to
-  // the chats panel.
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(
-    storedSidebarTab() === "skills" ? "chats" : storedSidebarTab(),
-  );
+  // the panel-bearing tabs. Every tab owns a top-level URL (/chats, /work,
+  // /settings): the state starts from the parsed route and follows it on
+  // back/forward, reloads and deep links — the URL is the truth.
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(route.tab);
+  useEffect(() => setSidebarTab(route.tab), [route.tab]);
   // The rail's active tab: the skills page raises its own tab while a
   // /skills... URL is live (rail pick, deep link, reload, back/forward).
   const railTab: SidebarTab = route.skills !== null ? "skills" : sidebarTab;
@@ -2516,11 +2552,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       pushRoute({ chatId: null, projectId: null, overlay: null, skills: SKILLS_CATALOG });
       return;
     }
-    if (route.skills) {
-      pushRoute({ chatId: null, projectId: null, overlay: null, skills: null });
-    }
-    setSidebarTab(tab);
-    saveSidebarTab(tab);
+    // Panel tabs navigate too: each owns its address, back/forward walks
+    // tab history, and the navigation clears the open chat — a tab switch
+    // always lands on a fresh composer, never the previously selected chat.
+    pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, tab });
     // A collapsed panel hides the tab's content — a tab pick is an intent
     // to see it, so the panel re-expands on the newly picked tab.
     if (tabPaneLayout(tab, isMobile).expandsPanel) setCollapsed(false);
@@ -2533,9 +2568,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setSettingsDetail(null);
   };
 
-  /** Optional section id deep-links into the settings overlay (null = root). */
+  /** Opens the settings overlay window (the rail account menu, the settings
+   * panel's "All settings"). The URL always names a section — bare
+   * /settings is the Settings tab — and "account" is what a root-less
+   * overlay fell back to anyway. */
   const openSettings = (section?: string) =>
-    pushRoute({ overlay: { kind: "settings", section: section ?? null, detail: null } });
+    pushRoute({ overlay: { kind: "settings", section: section ?? "account", detail: null } });
 
   const sidebarCollapse = isMobile ? undefined : () => setCollapsed(true);
   // The mobile drawer has no rail, so it always shows the Chats panel — the
@@ -2582,12 +2620,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       chatsPanel
     );
 
-  // A /project/<id> route (deep link, reload, or back/forward) opens on the
-  // Work tab so the linked project is visible. Neither tab decision is
-  // persisted: routes are navigation, not tab preferences.
-  useEffect(() => {
-    if (route.projectId) setSidebarTab("work");
-  }, [route.projectId]);
+  // A /project/<id> route (deep link, reload, or back/forward) parses as
+  // the Work tab, so the linked project is visible — no state decision
+  // needed beyond the route-tab sync above.
   // Chat routes: a stateless chat lands on the Chats tab; a project-bound
   // chat belongs to its project row — it opens (or stays) on the Work tab
   // instead of yanking the user out of it. The decision waits for the chats
