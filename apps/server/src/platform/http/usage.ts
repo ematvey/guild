@@ -222,7 +222,7 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: IdentityCtx, infr
     const sumSql = (tsBound: number) =>
       infra.usage.client
         .query(
-          `SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events WHERE ${scope} ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE ts >= toDateTime(?)`,
+          `SELECT coalesce(sum(cost_usd), 0) AS cost_usd, coalesce(sum(tokens_in + tokens_out), 0) AS tokens FROM (SELECT * FROM usage_events WHERE ${scope} ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE ts >= toDateTime(?)`,
           binds(tsBound),
         )
         .catch((error: unknown) => {
@@ -230,14 +230,23 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: IdentityCtx, infr
           if (err.unknownTable || (err.body ?? "").includes("UNKNOWN_TABLE")) return [];
           throw ApiError.internal(`usage query failed: ${errorText(error)}`);
         });
-    const first = (rows: Record<string, unknown>[]): number => {
-      const value = Object.values(rows[0] ?? {})[0];
-      if (typeof value === "number") return value;
-      if (typeof value === "string") return Number(value);
-      return 0;
+    const totals = (rows: Record<string, unknown>[]): { cost: number; tokens: number } => {
+      const row = rows[0] ?? {};
+      const num = (key: string): number => {
+        const value = row[key];
+        if (typeof value === "number") return value;
+        if (typeof value === "string") return Number(value) || 0;
+        return 0;
+      };
+      return { cost: num("cost_usd"), tokens: num("tokens") };
     };
-    const today = first(await sumSql(Math.floor(startOfDay.getTime() / 1000)));
-    const month = first(await sumSql(Math.floor(startOfMonth.getTime() / 1000)));
-    return rustJsonText({ today_cost_usd: rustFloat(today), month_cost_usd: rustFloat(month) });
+    const today = totals(await sumSql(Math.floor(startOfDay.getTime() / 1000)));
+    const month = totals(await sumSql(Math.floor(startOfMonth.getTime() / 1000)));
+    return rustJsonText({
+      today_cost_usd: rustFloat(today.cost),
+      month_cost_usd: rustFloat(month.cost),
+      today_tokens: today.tokens,
+      month_tokens: month.tokens,
+    });
   });
 }
