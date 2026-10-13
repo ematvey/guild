@@ -66,7 +66,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
-import { SettingsSectionPane, SettingsWindow } from "./settings/SettingsWindow";
+import { SettingsSectionPane } from "./settings/settings-sections";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
 import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "./sidebar-contents";
@@ -256,22 +256,20 @@ export function tabPaneLayout(
 ///                                thread: /thread/<id>/device
 ///   /settings                   — the Settings tab (bare; the section lives
 ///                                in pane state)
-///   /settings/<section>[/<detail>] — settings overlay (top-level; the
-///                                thread underneath stays loaded in app
-///                                state). <detail> addresses a sub-page
-///                                inside a section: an integration slug,
-///                                a user/team id or "new", a model route
-///                                or "add", a registry kind/slug.
+///   /settings/<section>[/<detail>] — the Settings tab with that section (and
+///                                sub-page) preselected — a deep link only;
+///                                tab picks navigate to bare /settings.
+///                                <detail> addresses a sub-page inside a
+///                                section: an integration slug, a user/team
+///                                id or "new", a model route or "add", a
+///                                registry kind/slug.
 ///   /skills[/activity|/machine|/<slug>[/edit] | /new]
 ///                              — the skills page (top-level; replaces the
 ///                                main pane): tab views, a detail page, the
 ///                                editor in edit or create mode. See
 ///                                skills-route.ts for the state contract.
 /// Back/forward, reloads and deep links all resolve through parseChatRoute.
-type ChatOverlay =
-  | { kind: "settings"; section: string | null; detail: string | null }
-  | { kind: "device" }
-  | null;
+type ChatOverlay = { kind: "device" } | null;
 interface ChatRoute {
   chatId: string | null;
   /** Sidebar project filter (deep-linked /project/<id>). */
@@ -279,11 +277,13 @@ interface ChatRoute {
   overlay: ChatOverlay;
   /** The skills page route, or null when the URL is not a skills one. */
   skills: SkillsRoute | null;
-  /** Which rail panel tab the URL names: /chats, /work or /settings.
-   * Sectioned /settings/<...> overlay URLs carry "chats" — the tab under
-   * an overlay is whatever the navigation came from (pushRoute keeps it;
-   * a stale deep link falls back to the default). */
+  /** Which rail panel tab the URL names: /chats, /work or /settings. */
   tab: "chats" | "work" | "settings";
+  /** Settings-tab section/detail named by the URL (/settings/<section>/
+   * [<detail>] deep links); null elsewhere and for bare /settings, whose
+   * section lives in pane state. */
+  settingsSection: string | null;
+  settingsDetail: string | null;
 }
 
 export const parseChatRoute = (pathname: string): ChatRoute => {
@@ -293,9 +293,9 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     .filter(Boolean)
     .map(decodeURIComponent);
   // The rail's panel tabs own top-level addresses: /chats (the default),
-  // /work, and bare /settings — a sectioned /settings/<...> URL is the
-  // settings overlay, not the tab. Tab picks navigate, so back/forward and
-  // reloads restore the tab like any other route state.
+  // /work, and /settings (bare, or with a deep-linked section). Tab picks
+  // navigate, so back/forward and reloads restore the tab like any other
+  // route state.
   let tab: ChatRoute["tab"] = "chats";
   if (parts[0] === "chats" || parts[0] === "work") {
     tab = parts[0];
@@ -312,24 +312,32 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     chatId = parts[1];
     parts.splice(0, 2);
   }
-  if (parts[0] === "device") return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null };
+  if (parts[0] === "device")
+    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, settingsSection: null, settingsDetail: null };
   if (parts[0] === "settings") {
-    // Bare /settings is the Settings tab; anything with a section is the
-    // overlay. Everything after the section is the sub-page id; each
-    // segment was encoded separately, so a model id like "a/b" round-trips
-    // as one part.
-    if (parts.length === 1)
-      return { chatId: null, projectId: null, tab: "settings", overlay: null, skills: null };
+    // Bare /settings is the Settings tab with the pane-state section; a
+    // section (and optional sub-page detail) preselects it. Everything
+    // after the section is the sub-page id; each segment was encoded
+    // separately, so a model id like "a/b" round-trips as one part.
+    const section = parts.length > 1 ? parts[1] : null;
     const detail = parts.length > 2 ? parts.slice(2).map(decodeURIComponent).join("/") : null;
-    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "settings", section: parts[1], detail }, skills: null };
+    return {
+      chatId: null,
+      projectId: null,
+      tab: "settings",
+      overlay: null,
+      skills: null,
+      settingsSection: section,
+      settingsDetail: detail,
+    };
   }
   // Skills is chat-independent and top-level like settings: the URL drops
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
     const skills = parseSkillsRoute(parts.slice(1));
-    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats" };
+    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats", settingsSection: null, settingsDetail: null };
   }
-  return { chatId, projectId, tab, overlay: null, skills: null };
+  return { chatId, projectId, tab, overlay: null, skills: null, settingsSection: null, settingsDetail: null };
 };
 
 /// /skills/<seg...> after the leading "skills": a bare /skills is the
@@ -352,6 +360,8 @@ export const chatRoutePath = (
   overlay: ChatOverlay,
   skills: SkillsRoute | null = null,
   tab: ChatRoute["tab"] = "chats",
+  settingsSection: string | null = null,
+  settingsDetail: string | null = null,
 ): string => {
   // Skills is chat-independent — top-level URL that replaces the chat view.
   if (skills !== null) {
@@ -376,17 +386,20 @@ export const chatRoutePath = (
           ? "/settings"
           : "/chats";
   if (overlay?.kind === "device") {
-    // /settings/<seg> parses as a settings overlay section, so a device
-    // dialog pushed over the Settings tab detours through /chats — the
-    // dialog itself is chat-independent anyway.
+    // /settings/<seg> parses as a Settings-tab section, so a device dialog
+    // pushed over the Settings tab detours through /chats — the dialog is
+    // chat-independent anyway.
     return `${tab === "settings" ? "/chats" : base}/device`;
   }
-  // Settings is chat-independent — top-level URL even when opened over a
-  // thread (the thread stays loaded; closing the overlay restores it).
-  if (overlay?.kind === "settings")
-    return `/settings${overlay.section ? `/${encodeURIComponent(overlay.section)}` : ""}${
-      overlay.detail
-        ? "/" + overlay.detail.split("/").map(encodeURIComponent).join("/")
+  // The Settings tab owns /settings; a deep-linked section/detail rides in
+  // the path (tab picks navigate to bare /settings and keep the pane-state
+  // section instead).
+  if (tab === "settings")
+    return `/settings${
+      settingsSection !== null ? `/${encodeURIComponent(settingsSection)}` : ""
+    }${
+      settingsDetail !== null
+        ? "/" + settingsDetail.split("/").map(encodeURIComponent).join("/")
         : ""
     }`;
   return base || "/";
@@ -1541,8 +1554,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const chatsRef = useRef<ChatSummary[] | null>(null);
   chatsRef.current = chats;
   // URL-driven navigation state (see parseChatRoute above): everything the
-  // user can navigate to — the open thread, the settings overlay with its
-  // active section, the device dialog, the skills page — lives in the
+  // user can navigate to — the open thread, the device dialog, the skills
+  // page, the Settings tab and its deep-linked section — lives in the
   // pathname, so back/forward, reloads and deep links all land in exactly
   // the right place.
   const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
@@ -1853,7 +1866,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   // Browser back/forward: re-derive the whole route from the URL. The
   // chatId effect below takes care of (re)loading or clearing the thread,
-  // and the overlay state opens/closes the settings/device surfaces.
+  // and the settings/device surfaces follow the parsed route.
   useEffect(() => {
     const onPop = () => setRoute(parseChatRoute(window.location.pathname));
     window.addEventListener("popstate", onPop);
@@ -1884,7 +1897,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           : route.skills;
     const path = chatRoutePath(chatId, projectId, ov, sk, tab);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setRoute({ chatId, projectId, overlay: ov, skills: sk, tab });
+    setRoute({
+      chatId,
+      projectId,
+      overlay: ov,
+      skills: sk,
+      tab,
+      // Tab picks keep the section in pane state; only deep links name it
+      // in the URL.
+      settingsSection: null,
+      settingsDetail: null,
+    });
   };
 
   // Layout effect: the correction must land before paint, or the new block
@@ -2544,6 +2567,14 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // navigation stays local to the pane.
   const [settingsSection, setSettingsSection] = useState<string | null>(null);
   const [settingsDetail, setSettingsDetail] = useState<string | null>(null);
+  // A deep-linked /settings/<section>[/<detail>] preselects the section;
+  // tab picks and pane navigation keep it in pane state instead.
+  useEffect(() => {
+    if (route.tab === "settings" && route.settingsSection !== null) {
+      setSettingsSection(route.settingsSection);
+      setSettingsDetail(route.settingsDetail);
+    }
+  }, [route.tab, route.settingsSection, route.settingsDetail]);
   const switchTab = (tab: SidebarTab) => {
     // The skills tab is a URL route, not persisted panel state: entering it
     // navigates to /skills, leaving it returns to the chat root — so back/
@@ -2568,13 +2599,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setSettingsSection(id);
     setSettingsDetail(null);
   };
-
-  /** Opens the settings overlay window (the rail account menu, the settings
-   * panel's "All settings"). The URL always names a section — bare
-   * /settings is the Settings tab — and "account" is what a root-less
-   * overlay fell back to anyway. */
-  const openSettings = (section?: string) =>
-    pushRoute({ overlay: { kind: "settings", section: section ?? "account", detail: null } });
 
   const sidebarCollapse = isMobile ? undefined : () => setCollapsed(true);
   // The mobile drawer has no rail, so it always shows the Chats panel — the
@@ -2614,7 +2638,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         role={role}
         activeSection={settingsSection}
         onSelectSection={openSettingsSection}
-        onOpenSettings={() => openSettings()}
         onCollapse={sidebarCollapse}
       />
     ) : (
@@ -2645,8 +2668,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   // The Settings tab's main pane renders the picked section inline instead
   // of the chat thread (desktop only — the mobile drawer has no settings
-  // tab). The full overlay stays available via "All settings" and the
-  // account menu, and keeps its URL-driven open/close.
+  // tab).
   const inlineSettings =
     !isMobile && sidebarTab === "settings" && settingsSection !== null ? (
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
@@ -2718,7 +2740,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           email={email}
           displayName={displayName}
           avatarUrl={avatarUrl}
-          onOpenSettings={openSettings}
           onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
           onSignOut={signOut}
           onAddWorkspace={onAddWorkspace}
@@ -3282,33 +3303,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         isTauri={isTauri}
         projects={projects}
         onCreated={projectCreated}
-      />
-
-      <SettingsWindow
-        open={overlay?.kind === "settings"}
-        onOpenChange={(o) => {
-          if (!o) pushRoute({ overlay: null });
-        }}
-        section={overlay?.kind === "settings" ? overlay.section : null}
-        detail={overlay?.kind === "settings" ? overlay.detail : null}
-        onSectionChange={(id) =>
-          pushRoute({ overlay: { kind: "settings", section: id, detail: null } })
-        }
-        onDetailChange={(d) =>
-          pushRoute({
-            overlay: {
-              kind: "settings",
-              section: overlay?.kind === "settings" ? overlay.section : null,
-              detail: d,
-            },
-          })
-        }
-        email={email}
-        role={role}
-        displayName={displayName}
-        avatarUrl={avatarUrl}
-        onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
-        onAddWorkspace={onAddWorkspace}
       />
     </div>
   );

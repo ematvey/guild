@@ -38,7 +38,7 @@ const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
 describe("parseChatRoute / chatRoutePath", () => {
   const roundTrip = (path: string) => {
     const r = parseChatRoute(path);
-    return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills, r.tab);
+    return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills, r.tab, r.settingsSection, r.settingsDetail);
   };
 
   it("round-trips every route shape", () => {
@@ -80,10 +80,11 @@ describe("parseChatRoute / chatRoutePath", () => {
     });
     // a project filter implies the Work tab
     expect(parseChatRoute("/project/p1")).toMatchObject({ projectId: "p1", tab: "work" });
-    // sectioned settings URLs are the overlay, not the tab
+    // a sectioned settings URL deep-links the tab's section
     expect(parseChatRoute("/settings/models")).toMatchObject({
-      overlay: { kind: "settings", section: "models", detail: null },
-      tab: "chats",
+      tab: "settings",
+      settingsSection: "models",
+      settingsDetail: null,
     });
     // everything else defaults to the Chats tab
     expect(parseChatRoute("/thread/x")).toMatchObject({ tab: "chats" });
@@ -140,20 +141,26 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
     });
     expect(parseChatRoute("/thread/x/device")).toEqual({
       chatId: "x",
       projectId: null,
       tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
       overlay: { kind: "device" },
       skills: null,
     });
     expect(parseChatRoute("/settings/integrations/a/b")).toEqual({
       chatId: null,
       projectId: null,
-      tab: "chats",
-      overlay: { kind: "settings", section: "integrations", detail: "a/b" },
+      tab: "settings",
+      overlay: null,
       skills: null,
+      settingsSection: "integrations",
+      settingsDetail: "a/b",
     });
     // trailing slashes and empty segments are ignored
     expect(parseChatRoute("/thread/x/")).toEqual({
@@ -162,6 +169,8 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
     });
     expect(parseChatRoute("")).toEqual({
       chatId: null,
@@ -169,19 +178,23 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
     });
     // a detail carrying an encoded slash parses to the full id and the
     // rebuilt path is parse-stable from there on
+    const deep = parseChatRoute("/settings/integrations/my%2Fslug");
     const once = chatRoutePath(
-      parseChatRoute("/settings/integrations/my%2Fslug").chatId,
-      parseChatRoute("/settings/integrations/my%2Fslug").projectId,
-      parseChatRoute("/settings/integrations/my%2Fslug").overlay,
+      deep.chatId,
+      deep.projectId,
+      deep.overlay,
+      deep.skills,
+      deep.tab,
+      deep.settingsSection,
+      deep.settingsDetail,
     );
-    expect(parseChatRoute(once).overlay).toEqual({
-      kind: "settings",
-      section: "integrations",
-      detail: "my/slug",
-    });
+    expect(parseChatRoute(once).settingsSection).toBe("integrations");
+    expect(parseChatRoute(once).settingsDetail).toBe("my/slug");
   });
 
   it("parses the project filter, with and without an open thread", () => {
@@ -191,6 +204,8 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       tab: "work",
+      settingsSection: null,
+      settingsDetail: null,
     });
     expect(parseChatRoute("/project/p1/thread/c1")).toEqual({
       chatId: "c1",
@@ -198,6 +213,8 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       tab: "work",
+      settingsSection: null,
+      settingsDetail: null,
     });
     // a bare /thread/<id> has no project filter (deep link)
     expect(parseChatRoute("/thread/c1").projectId).toBeNull();
@@ -208,6 +225,8 @@ describe("parseChatRoute / chatRoutePath", () => {
       overlay: null,
       skills: null,
       tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
     });
   });
 });
