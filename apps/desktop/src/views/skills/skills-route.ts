@@ -1,6 +1,6 @@
 // The skills page's URL contract: every page state — catalog / activity /
 // machine tab, open detail, open editor — is one /skills... route the same
-// way a thread or the settings overlay is, so deep links, reloads and
+// way a thread or the device dialog is, so deep links, reloads and
 // back/forward land exactly where the user was.
 
 import type { EditorMode } from "./SkillEditor";

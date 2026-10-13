@@ -1,8 +1,9 @@
-//! Guild settings window: one big dialog with its own sidebar and sections.
-//! User sections for everyone; org sections appear for admins. Sections are
-//! lazy-imported so the chat bundle only pays for what opens.
+//! Guild settings sections: the section catalog plus the inline pane the
+//! rail's Settings tab renders in the main column. User sections for
+//! everyone; org sections appear for admins. Sections are lazy-imported so
+//! the chat bundle only pays for what opens.
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Bot,
   Building2,
@@ -19,25 +20,11 @@ import {
   UsersRound,
   Waypoints,
 } from "lucide-react";
-import { X } from "lucide-react";
-import { Button } from "@guild/ui/components/button";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@guild/ui/components/dialog";
 import { apiMe } from "../../transport";
-import {
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from "@guild/ui/components/dropdown-menu";
-import { UserBadge } from "../../components/user-badge";
-import { WorkspaceMenuItems } from "../workspace-menu";
 import type { SectionDetailProps } from "./section-nav";
 import { useTheme } from "../../theme";
 import { PageHeader } from "./components/page-header";
 import { FactCard, FactGrid } from "./components/fact-card";
-import {
-  clampSidebarWidth,
-  saveSidebarWidth,
-  storedSidebarWidth,
-} from "../../lib/sidebar-width";
 import { MachineSection } from "./sections/MachineSection";
 import { GatewaySection } from "./sections/GatewaySection";
 import { AboutSection } from "./sections/AboutSection";
@@ -71,8 +58,8 @@ export interface SectionDef {
   admin?: boolean;
 }
 
-/// The section catalog, shared by the settings overlay and the sidebar
-/// rail's Settings tab (nav + inline rendering).
+/// The section catalog: the sidebar rail's Settings tab nav plus the inline
+/// main-pane rendering.
 export const SETTINGS_SECTIONS: SectionDef[] = [
   { id: "account", label: "Account", icon: <User className="size-4" />, group: "user" },
   { id: "appearance", label: "Appearance", icon: <Palette className="size-4" />, group: "user" },
@@ -101,163 +88,6 @@ export const SETTINGS_SECTIONS: SectionDef[] = [
   { id: "sso", label: "Sign-in / SSO", icon: <KeyRound className="size-4" />, group: "workspace", admin: true },
   { id: "registry", label: "Registry", icon: <Layers className="size-4" />, group: "workspace", admin: true },
 ];
-
-export function SettingsWindow({
-  open,
-  onOpenChange,
-  email,
-  role,
-  displayName,
-  avatarUrl,
-  onOpenDevice,
-  onAddWorkspace,
-  section,
-  detail,
-  onSectionChange,
-  onDetailChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  email: string;
-  role: string;
-  displayName?: string | null;
-  avatarUrl?: string | null;
-  /** Opens the device-setup dialog (replaces this overlay). */
-  onOpenDevice: () => void;
-  /** Desktop multi-workspace: opens the add-workspace card. */
-  onAddWorkspace?: () => void;
-  /** Active section, driven by the URL (/settings/<section>); null = default. */
-  section: string | null;
-  /** Sub-page inside the section (/settings/<section>/<detail>); null = list. */
-  detail: string | null;
-  /** Section picks push a new URL so back/forward walk section history. */
-  onSectionChange: (id: SectionId) => void;
-  /** Sub-page navigation: an id opens that detail page, null returns to the list. */
-  onDetailChange: (detail: string | null) => void;
-}) {
-  const isAdmin = role === "admin";
-  const visible = SETTINGS_SECTIONS.filter((s) => !s.admin || isAdmin);
-  // Section is URL-driven (WebChat owns it); an unknown section (stale deep
-  // link, or a role/chat change that hid it) falls back to the first visible.
-  const activeDef = visible.find((s) => s.id === section) ?? visible[0];
-
-  const groups: { key: "user" | "workspace"; label: string }[] = [
-    { key: "user", label: "User" },
-    ...(isAdmin ? [{ key: "workspace" as const, label: "Workspace" }] : []),
-  ];
-
-  // same resizable sidebar as the chat, sharing its stored width
-  const [width, setWidth] = useState(storedSidebarWidth);
-  const startDrag = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = width;
-      const move = (ev: MouseEvent) => setWidth(clampSidebarWidth(startW + ev.clientX - startX));
-      const up = () => {
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-        setWidth((w) => {
-          saveSidebarWidth(w);
-          return w;
-        });
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-    },
-    [width],
-  );
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="flex h-screen max-h-none w-screen max-w-none gap-0 rounded-none border-0 overflow-hidden p-0 sm:max-w-none"
-        hideClose
-      >
-        <DialogTitle className="sr-only">Settings</DialogTitle>
-        <DialogDescription className="sr-only">Guild settings</DialogDescription>
-        {/* settings sidebar: same width as the chat sidebar, drag to resize */}
-        <nav
-          className="relative flex shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar text-sidebar-foreground transition-[width] duration-150"
-          style={{ width }}
-        >
-          <div className="flex items-center gap-2 px-4 py-4">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Bot className="size-4" />
-            </div>
-            <span className="min-w-0 flex-1 text-base font-semibold">Settings</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-7 shrink-0 rounded-md text-muted-foreground hover:text-foreground"
-              title="Close and go back to chat"
-              onClick={() => onOpenChange(false)}
-            >
-              <X className="size-4" />
-            </Button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-            {groups.map((g) => {
-              const items = visible.filter((s) => s.group === g.key);
-              if (items.length === 0) return null;
-              return (
-                <div key={g.key} className="mb-3">
-                  <p className="px-2 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                    {g.label}
-                  </p>
-                  {items.map((s) => (
-                    <button
-                      key={s.id}
-                      onClick={() => onSectionChange(s.id)}
-                      className={`relative mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors ${
-                        activeDef?.id === s.id
-                          ? "bg-accent text-accent-foreground"
-                          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                      }`}
-                    >
-                      {activeDef?.id === s.id && (
-                        <span className="absolute inset-y-1.5 -left-2 w-0.5 rounded-full bg-foreground/40" />
-                      )}
-                      {s.icon}
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-          <div className="border-t border-border/60 p-2">
-            {/* same account menu as the chat sidebar */}
-            <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
-              <WorkspaceMenuItems
-                onAddWorkspace={onAddWorkspace}
-                onReload={() => window.location.reload()}
-              />
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
-            </UserBadge>
-          </div>
-          <div
-            className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-ring"
-            onMouseDown={startDrag}
-            title="Drag to resize"
-          />
-        </nav>
-        {/* section pane */}
-        <div className="min-w-0 flex-1 overflow-y-auto">
-          {activeDef && (
-            <SectionPane
-              def={activeDef}
-              email={email}
-              detail={detail}
-              onDetailChange={onDetailChange}
-            />
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 /// Section content for embedding outside the overlay: the sidebar rail's
 /// Settings tab renders this pane in the main column. Unknown ids fall back

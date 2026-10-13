@@ -30,7 +30,7 @@ import {
   sidebarGrouping,
   type PickedProject,
 } from "./projects/projects";
-import { SETTINGS_SECTIONS } from "./settings/SettingsWindow";
+import { SETTINGS_SECTIONS } from "./settings/settings-sections";
 
 /** Row title that fades out at the right edge when it overflows (instead
  * of an ellipsis); also used by the composer's project chip in WebChat. */
@@ -580,18 +580,15 @@ export function SettingsPanel({
   role,
   activeSection,
   onSelectSection,
-  onOpenSettings,
   onCollapse,
 }: {
-  /** "admin" turns on the workspace sections, same as the overlay. */
+  /** "admin" turns on the workspace sections, same as the rail menu. */
   role: string;
   /** The section rendered in the main pane (inline settings); null = none
    * picked yet. */
   activeSection: string | null;
   /** A section pick renders that section inline in the main pane. */
   onSelectSection: (id: string) => void;
-  /** "All settings": opens the full settings overlay (root). */
-  onOpenSettings: () => void;
   onCollapse?: () => void;
 }) {
   const isAdmin = role === "admin";
@@ -607,15 +604,6 @@ export function SettingsPanel({
         <CollapseButton onCollapse={onCollapse} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        <div className="space-y-0.5">
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className="flex w-full items-center rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          >
-            All settings
-          </button>
-        </div>
         {groups.map((g) => {
           const items = visible.filter((s) => s.group === g.key);
           if (items.length === 0) return null;

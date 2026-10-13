@@ -27,7 +27,6 @@ export function SidebarRail({
   email,
   displayName,
   avatarUrl,
-  onOpenSettings,
   onOpenDevice,
   onSignOut,
   onAddWorkspace,
@@ -37,8 +36,6 @@ export function SidebarRail({
   email: string;
   displayName?: string | null;
   avatarUrl?: string | null;
-  /** No-arg form opens the settings overlay root (the account menu entry). */
-  onOpenSettings: (section?: string) => void;
   onOpenDevice: () => void;
   onSignOut: () => void;
   /** Desktop multi-workspace: the rail's first button hosts the switcher. */
@@ -77,7 +74,7 @@ export function SidebarRail({
       <div className="mt-auto p-1">
         <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl} compact>
           <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onOpenSettings()}>Settings</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onTabChange("settings")}>Settings</DropdownMenuItem>
           {/* Browser only: the desktop sign-out lives on the workspace rows
               (inline ×). */}
           {!IS_TAURI && <DropdownMenuSeparator />}
