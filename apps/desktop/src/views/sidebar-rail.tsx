@@ -1,8 +1,8 @@
 // Icon rail left of the sidebar panel (desktop): switches the panel between
-// chats, projects (work) and settings. The account menu lives here too —
+// chats, projects (work), skills and settings. The account menu lives here too —
 // it is global across tabs and never scrolls away.
 
-import { FolderKanban, MessageSquare, Settings } from "lucide-react";
+import { FolderKanban, MessageSquare, Package, Settings } from "lucide-react";
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -12,13 +12,14 @@ import { UserBadge } from "../components/user-badge";
 import { WorkspaceRailButton } from "./workspace-menu";
 import { IS_TAURI } from "../transport";
 
-export type SidebarTab = "chats" | "work" | "settings";
+export type SidebarTab = "chats" | "work" | "skills" | "settings";
 
 export const SIDEBAR_TAB_KEY = "guild.sidebarTab";
 
 const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "chats", label: "Chats", icon: MessageSquare },
   { id: "work", label: "Work", icon: FolderKanban },
+  { id: "skills", label: "Skills", icon: Package },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -26,7 +27,7 @@ const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
 export function storedSidebarTab(): SidebarTab {
   try {
     const raw = localStorage.getItem(SIDEBAR_TAB_KEY);
-    return raw === "chats" || raw === "work" || raw === "settings" ? raw : "chats";
+    return raw === "chats" || raw === "work" || raw === "skills" || raw === "settings" ? raw : "chats";
   } catch {
     return "chats";
   }

@@ -316,7 +316,7 @@ function ProjectHeader({
 }
 
 /** Collapse button shared by every panel header (desktop only). */
-function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
+export function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
   return onCollapse ? (
     <Button
       variant="ghost"
