@@ -1861,6 +1861,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   };
   const openRow = chatId ? chats?.find((c) => c.id === chatId) : undefined;
   const currentProject = pickedProject ?? chatProjectOf(openRow);
+  // Ref mirror for effects that must read the pick without re-running on
+  // every pick change.
+  const currentProjectRef = useRef(currentProject);
+  currentProjectRef.current = currentProject;
   const pickProject = (p: PickedProject | null) => {
     setPickedProject(p);
   };
@@ -2514,15 +2518,29 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     );
 
   // A /project/<id> route (deep link, reload, or back/forward) opens on the
-  // Work tab so the linked project is visible. A chat route lands on the
-  // Chats tab the same way. Neither is persisted: routes are navigation,
-  // not tab preferences.
+  // Work tab so the linked project is visible. Neither tab decision is
+  // persisted: routes are navigation, not tab preferences.
   useEffect(() => {
     if (route.projectId) setSidebarTab("work");
   }, [route.projectId]);
+  // Chat routes: a stateless chat lands on the Chats tab; a project-bound
+  // chat belongs to its project row — it opens (or stays) on the Work tab
+  // instead of yanking the user out of it. The decision waits for the chats
+  // list; a chat not yet listed (just sent) counts as bound while the
+  // composer still carries a project pick.
+  const routeTabDecidedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (route.chatId) setSidebarTab("chats");
-  }, [route.chatId]);
+    if (!route.chatId) {
+      routeTabDecidedRef.current = null;
+      return;
+    }
+    if (routeTabDecidedRef.current === route.chatId) return; // already handled
+    if (chats === null) return; // wait for the list before deciding
+    const row = chats.find((c) => c.id === route.chatId);
+    const projectBound = row ? !!row.project_id : !!currentProjectRef.current?.id;
+    routeTabDecidedRef.current = route.chatId;
+    setSidebarTab(projectBound ? "work" : "chats");
+  }, [route.chatId, chats]);
 
   // The Settings tab's main pane renders the picked section inline instead
   // of the chat thread (desktop only — the mobile drawer has no settings
