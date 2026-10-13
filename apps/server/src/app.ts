@@ -43,8 +43,8 @@ export const NATIVE_ROUTES = [
   ...NATIVE_ROUTE_GROUPS.flatMap((g) => g.paths),
 ];
 
-// Body limit mirrors the largest Rust limit (releases: 512 MiB,
-// attachments: 64 MiB — crates/server/src/http/releases.rs / attachments.rs).
+// Body limit mirrors the largest upload surface (releases: 512 MiB,
+// attachments: 64 MiB).
 const BODY_LIMIT_BYTES = 512 * 1024 * 1024;
 
 export async function buildApp(config: Config) {
@@ -68,11 +68,11 @@ export async function buildApp(config: Config) {
   await platform.runtime.start();
 
   // CORS: the tower-http layer's port — preflights answered before routing,
-  // ACAO rides for the allow-listed webview origins (crates/server/src/http/mod.rs).
+  // ACAO rides for the allow-listed webview origins.
   registerCors(app as unknown as Parameters<typeof registerCors>[0]);
 
   // Native health route — same shape as the Rust one
-  // (crates/server/src/http/mod.rs): {"status":"ok","version":...}.
+  //: {"status":"ok","version":...}.
   app.get("/api/v1/health", async () => ({
     status: "ok",
     version: GUILD_TS_SERVER_VERSION,
@@ -100,8 +100,7 @@ export async function buildApp(config: Config) {
   registerWebRoutes(app as unknown as FastifyInstance, config);
   registerFaroRoute(app as unknown as FastifyInstance, platform.config);
 
-  // Unmatched routes answer the Rust not-found envelope
-  // (crates/server/src/http/error.rs not_found()): deferred surfaces
+  // Unmatched routes answer the not-found envelope; deferred surfaces
   // (routines, hooks, internal — spec decision 8) are unreachable, cleanly.
   app.setNotFoundHandler(async (_req, reply) => {
     void reply.status(404).type("application/json").send(

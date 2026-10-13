@@ -20,7 +20,7 @@ import { loadConfig } from "../../config.js";
 // vitest runs with cwd = apps/server; the migrations live in the Rust tree
 // (the historical record the TS schema ports verbatim).
 const REPO_ROOT = path.resolve(process.cwd(), "../..");
-const MIGRATIONS_DIR = path.join(REPO_ROOT, "crates/server/migrations");
+const MIGRATIONS_DIR = path.join(REPO_ROOT, "apps/server/migrations");
 
 const TEST_ADMIN_URL = process.env.GUILD_M7_TEST_DATABASE_URL ?? "postgres://guild:guild@localhost:5432/guild";
 const TEST_S3_URL = process.env.GUILD_M7_TEST_S3_URL ?? "http://localhost:9950";

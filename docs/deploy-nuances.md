@@ -144,9 +144,9 @@ Notes:
   COPYed in every stage).
 - Build context is the repo root (`context: ../..`), so anything new the
   build needs must be COPYed explicitly.
-- The Rust server image (`Dockerfile`, `cargo build --release -p
-  guild-server`, embeds both legacy frontends via `include_dir!`) is kept
-  buildable as the historical record; compose no longer builds or runs it.
+- The historical Rust server was removed from the repo (2026-10-13); its
+  last state lives in git history. The TS image (`Dockerfile.server-ts`)
+  is the only server image.
 
 ---
 

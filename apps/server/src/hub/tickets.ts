@@ -1,5 +1,5 @@
-// Single-use, short-TTL connect tickets (crates/server/src/http/ws.rs
-// TicketStore): tickets are worthless after a restart, so they live in
+// Single-use, short-TTL connect tickets (TicketStore): tickets are
+// worthless after a restart, so they live in
 // memory only; clients mint a fresh one on every connect. Format and TTL
 // must stay byte-compatible with shipped daemons: `gst_<uuid-v7-simple>`.
 

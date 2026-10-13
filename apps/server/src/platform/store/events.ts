@@ -1,5 +1,5 @@
-// Org event log + emission (spec §4.6/§4.8, crates/server/src/store/
-// events.rs): emitters insert the record and NOTIFY the guild_events
+// Org event log + emission (spec §4.6/§4.8): emitters insert the record and
+// NOTIFY the guild_events
 // channel; the WebSocket feed (M5) delivers the fan-out.
 
 import type { PlatformPool } from "../db.js";

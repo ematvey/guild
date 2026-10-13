@@ -1,5 +1,5 @@
-// The compiled-in integration kinds (crates/server/src/integrations.rs and
-// integrations/*.rs) as static manifest metadata — name, categories,
+// The compiled-in integration kinds as static manifest metadata — name,
+// categories,
 // settings schema and tool classes. This is what the admin API's
 // `available` list and the configured-row categories/secrets/settings
 // rendering need; tool declarations and connection tests stay Rust-side

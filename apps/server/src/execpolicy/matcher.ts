@@ -1,5 +1,5 @@
-// Exec-policy gate (crates/server/src/worker/exec_policy_gate.rs + the
-// codex-execpolicy prefix matcher, ported): a matched `allow` rule skips the
+// Exec-policy gate (the codex-execpolicy prefix matcher): a matched `allow`
+// rule skips the
 // approval gate entirely; a matched `forbidden` rule is a hard deny whose
 // text is the rule's justification; `prompt` rules and unmatched commands
 // fall through to the chat's approval flow. Rules are static assets — the
@@ -310,7 +310,7 @@ export function evaluateCommand(policy: ExecPolicy, command: string): ExecPolicy
 }
 
 /** Evaluates the machine `execute` tool arguments against the static policy
- *  (crates/server/src/worker/exec_policy_gate.rs evaluate_execute). */
+ *. */
 export function evaluateExecute(policy: ExecPolicy, args: unknown): ExecPolicyDecision {
   const command =
     typeof args === "object" && args !== null && "command" in args ? (args as { command?: unknown }).command : undefined;

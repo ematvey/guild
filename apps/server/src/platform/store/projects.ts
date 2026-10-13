@@ -1,4 +1,4 @@
-// Org-scoped projects (crates/server/src/store/projects.rs): a named folder
+// Org-scoped projects: a named folder
 // bound to a machine. Chats attach to a project (chats.project_id).
 // Strictly owner-scoped: every operation filters on user_id, with no admin
 // bypass — a user, including an admin, sees and touches only their own

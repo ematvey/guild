@@ -1,4 +1,4 @@
-// Team admin (crates/server/src/http/admin.rs team half): org subgroups
+// Team admin: org subgroups
 // used for cost roll-ups and scoping.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";

@@ -1,4 +1,4 @@
-// Chat store (crates/server/src/store/chats.rs port): chat CRUD with the
+// Chat store: chat CRUD with the
 // owner/admin gate, the sidebar list with its unread projection (chat_reads
 // watermark — UI state stays as-is, spec decision 6), project-derived
 // machine binding, the approval-mode override, and the generating flag with

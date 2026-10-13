@@ -1,4 +1,4 @@
-// Client release artifacts (crates/server/src/store/releases.rs): bytes in
+// Client release artifacts: bytes in
 // object storage, metadata + sha256 in Postgres. Admins upload builds;
 // users download via short-lived signed URLs (bearer auth also accepted).
 

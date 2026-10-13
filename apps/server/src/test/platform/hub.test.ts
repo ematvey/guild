@@ -1,4 +1,4 @@
-// Hub semantics (crates/server/src/http/hub.rs): the 0.5.25 live-slot rule,
+// Hub semantics: the 0.5.25 live-slot rule,
 // socket caps, ownership gates, dispatch correlation — ported from the Rust
 // hub's own test expectations.
 

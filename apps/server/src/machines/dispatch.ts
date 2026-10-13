@@ -5,9 +5,8 @@
 // (crates/protocol/src/ws.rs ToolDispatch) on the machine's executor socket
 // and the daemon answers a `tool_result` frame — no client update needed.
 //
-// Primitive → daemon mapping (guild-core tool schemas, the machine tool set
-// in crates/server/src/worker/restate.rs: read_file/execute/edit_file/
-// write_file):
+// Primitive → daemon mapping (guild-core tool schemas, the machine tool
+// set: read_file/execute/edit_file/write_file):
 //   exec            → `execute`   {command, timeout_ms?}
 //   readBinaryFile  → `read_file` {path}
 //   writeFile       → `write_file` {path, content}

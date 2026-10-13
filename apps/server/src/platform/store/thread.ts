@@ -1,4 +1,4 @@
-// Thread event log store (crates/server/src/store/thread.rs port): the
+// Thread event log store: the
 // append-only `thread_events` table stays the client-render surface and the
 // chat_reads read-marker space. The durable pi-durable conversation is the
 // agent state; the bridge (chats/bridge.ts) appends the equivalent events

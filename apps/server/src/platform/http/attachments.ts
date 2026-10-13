@@ -1,4 +1,4 @@
-// Attachment endpoints (spec §4.3/§5, crates/server/src/http/attachments.rs):
+// Attachment endpoints:
 // upload bytes into object storage and reference them from a chat.
 
 import type { FastifyInstance } from "fastify";

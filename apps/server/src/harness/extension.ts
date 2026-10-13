@@ -1,5 +1,5 @@
 // The Guild extension: the system-prompt section the built-in agent runs
-// with (crates/server/src/worker/restate.rs build_system_prompt port) and
+// with and
 // the approval gate hook (the M4 exec-policy + approvals lane).
 
 import { defineExtension, type ConversationId, type PromptSection, type ToolRegistration } from "@earendil-works/pi-durable";

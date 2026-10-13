@@ -1,5 +1,5 @@
 // Registry API: publish, list, versions, review, download, install
-// (crates/server/src/http/registry.rs). Bundles are tar.gz; bytes live in
+//. Bundles are tar.gz; bytes live in
 // object storage, metadata in Postgres. Server-side install creates a
 // disabled MCP-plugin integration row (routines are dropped — 2026-10-04
 // decision: the feature is out of scope, automation bundles are rejected).

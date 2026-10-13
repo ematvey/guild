@@ -1,6 +1,5 @@
-// Orgs, users (managed + OIDC accounts), sessions — the TypeScript port of
-// crates/server/src/store/identity.rs over the existing platform tables.
-// Column meanings are verbatim from crates/server/migrations/*.sql.
+// Orgs, users (managed + OIDC accounts), sessions over the platform
+// tables. Column meanings follow apps/server/migrations/*.sql.
 
 import { randomToken, sha256Hex, verifyPassword, hashPassword } from "../crypto.js";
 import { ApiError } from "../errors.js";
@@ -12,7 +11,7 @@ import { pgTimestampToRfc3339, uuidv7 } from "../time.js";
  *  store-to-store wiring is the context's job). */
 export type EmitOrgEvent = (orgId: string, kind: string, payload: unknown) => Promise<unknown>;
 
-/** UserListRow (crates/server/src/store/identity.rs declaration order) —
+/** UserListRow —
  *  the admin user list and team-member lists share this shape. */
 export interface UserListRow {
   id: string;
@@ -120,9 +119,9 @@ export class IdentityStore {
     return res.rows[0]!;
   }
 
-  /** The user's approval policy (crates/server/src/store/identity.rs
-   *  approval): "no such user" (404) is distinct from "user with NULL
-   *  policy" — the latter is the normal server-default case. */
+  /** The user's approval policy. "no such user" (404) is distinct from
+   *  "user with NULL policy" — the latter is the normal server-default
+   *  case. */
   async approval(userId: string): Promise<unknown> {
     const res = await this.pool.query<{ approval: unknown }>(
       "SELECT approval FROM users WHERE id = $1",
@@ -275,8 +274,8 @@ export class IdentityStore {
   }
 
   /** The (session_hash, expires_at) a live bearer token maps to — the ws
-   *  ticket mints this identity (crates/server/src/store/identity.rs
-   *  session_grant). Only a still-valid session resolves. */
+   *  ticket mints this identity (session_grant). Only a still-valid
+   *  session resolves. */
   async sessionGrant(token: string): Promise<[string, Date]> {
     const hash = sha256Hex(token);
     return [hash, await this.sessionExpiry(hash)];

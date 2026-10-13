@@ -1,5 +1,5 @@
 // Auth API — managed accounts: bootstrap, login, me, refresh, logout,
-// pairing (crates/server/src/http/auth.rs + store/pairing.rs). Opaque random
+// pairing. Opaque random
 // bearer tokens stored as sha256; sessions stamp the auth_generation of the
 // credential that minted them.
 

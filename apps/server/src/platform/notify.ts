@@ -8,7 +8,7 @@ import type { Logger } from "pino";
 
 export type NotifyHandler = (channel: string, payload: string) => void;
 
-/** The channels the stores NOTIFY (crates/server/src/store/*). */
+/** The channels the stores NOTIFY. */
 export const NOTIFY_CHANNELS = [
   "guild_thread_committed",
   "guild_chat_status",

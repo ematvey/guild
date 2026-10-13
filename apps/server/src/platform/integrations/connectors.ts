@@ -1,5 +1,5 @@
-// Built-in connector tool catalogs (crates/server/src/integrations.rs and
-// integrations/*.rs): tool declarations with their manifest classes, config
+// Built-in connector tool catalogs: tool declarations with their manifest
+// classes, config
 // validation, and connection tests. The runtime (execute) is not ported —
 // spec decision 8 defers the integrations runtime, so a validated execute
 // call fails the way the Rust connector fails with its backend unreachable
@@ -30,7 +30,7 @@ type Json = Record<string, unknown>;
 
 const PROBE_TIMEOUT_MS = 15_000;
 
-/** crates/server/src/integrations.rs probe(): any 2xx passes; a transport
+/** The probe contract: any 2xx passes; a transport
  *  failure or a non-2xx status fails with the connector's error text. */
 async function probe(req: Promise<Response>, what: string): Promise<void> {
   let res: Response;

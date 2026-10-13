@@ -1,4 +1,4 @@
-// Tool artifacts store (crates/server/src/store/tool_artifacts.rs port):
+// Tool artifacts store:
 // spilled oversized tool results — metadata in Postgres, bytes in object
 // storage, org-scoped reads.
 

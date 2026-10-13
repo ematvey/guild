@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the Guild desktop app (Tauri) for all platforms this host can produce
-# and publishes each artifact to a running guild-server.
+# and publishes each artifact to a running guild server.
 #
 #   linux-x86_64    native build (webkit2gtk-4.1 required)      -> tar.gz (portable)
 #   darwin-aarch64   cargo-zigbuild + manual .app assembly        -> tar.gz of .app
@@ -68,7 +68,7 @@ cp target/release/guild-desktop "$LINUX/guild-desktop"
 cp apps/desktop/src-tauri/icons/128x128.png "$LINUX/guild.png"
 cat > "$LINUX/README.txt" <<'EOF'
 Guild desktop (Linux, portable).
-Run: ./guild-desktop   (needs a running guild-server; enter its URL at login)
+Run: ./guild-desktop   (needs a running guild server; enter its URL at login)
 Optional desktop entry: Exec=<path>/guild-desktop, Icon=<path>/guild.png
 EOF
 tar -C "$STAGE" -czf "$STAGE/guild-desktop-$VERSION-linux-x86_64.tar.gz" "$(basename "$LINUX")"
@@ -110,7 +110,7 @@ for pair in "aarch64 target/aarch64-apple-darwin/release/guild-desktop" \
 Guild desktop (macOS, unsigned build).
 1. Untar, then move Guild.app into /Applications.
 2. First launch: right-click -> Open (unsigned; Gatekeeper will warn).
-3. Needs a running guild-server; enter its URL at login.
+3. Needs a running guild server; enter its URL at login.
 EOF
   tar -C "$STAGE" -czf "$STAGE/guild-desktop-$VERSION-macos-$arch.tar.gz" "Guild-$VERSION-macos-$arch"
   publish "darwin-$arch" "$STAGE/guild-desktop-$VERSION-macos-$arch.tar.gz" "guild-desktop-$VERSION-macos-$arch.tar.gz"
@@ -125,7 +125,7 @@ Guild desktop (Windows, portable).
 Run Guild.exe — requires the WebView2 runtime (preinstalled on Windows 10/11;
 the installer downloads it automatically if missing: see
 https://developer.microsoft.com/microsoft-edge/webview2/).
-Needs a running guild-server; enter its URL at login.
+Needs a running guild server; enter its URL at login.
 EOF
 (cd "$STAGE" && zip -q -r "guild-desktop-$VERSION-windows-x86_64.zip" "$(basename "$WIN")")
 publish windows-x86_64 "$STAGE/guild-desktop-$VERSION-windows-x86_64.zip" "guild-desktop-$VERSION-windows-x86_64.zip"

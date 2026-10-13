@@ -1,6 +1,5 @@
 // Registry records: org-scoped catalogs for skills, MCP servers, and
-// integrations (crates/server/src/store/registry.rs over the existing
-// registry_items/registry_versions tables).
+// integrations over the registry_items/registry_versions tables.
 
 import { ApiError } from "../errors.js";
 import { pgTimestampToRfc3339 } from "../time.js";

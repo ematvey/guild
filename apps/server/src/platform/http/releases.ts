@@ -1,4 +1,4 @@
-// Client release downloads (crates/server/src/http/releases.rs): admin
+// Client release downloads: admin
 // upload → user download via short-lived signed URLs, plus the Tauri
 // updater manifest. Artifacts are ed25519-signed over the sha256 digest so
 // downloads are verifiable offline.

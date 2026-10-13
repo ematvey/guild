@@ -1,5 +1,4 @@
-// Durable machine registry (crates/server/src/store/machines.ts over
-// migration 0046): one row per desktop pairing. The connection hub owns
+// Durable machine registry (migration 0046): one row per desktop pairing. The connection hub owns
 // liveness; this table is the durable record the machines page and bind
 // checks read. Writes happen at socket connect (upsert with fingerprint
 // adoption) and on a 30s-throttled ping heartbeat (last_seen).

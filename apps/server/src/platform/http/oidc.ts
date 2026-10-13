@@ -1,5 +1,5 @@
-// OIDC SSO configuration + login flow (spec §4.1, crates/server/src/
-// http/oidc.rs): generic OIDC against the org's IdP, provisioning
+// OIDC SSO configuration + login flow (spec §4.1): generic OIDC against
+// the org's IdP, provisioning
 // identity_type='oidc' users on first login.
 
 import { createHmac, timingSafeEqual } from "node:crypto";

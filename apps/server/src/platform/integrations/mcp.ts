@@ -1,9 +1,8 @@
-// Minimal MCP streamable-HTTP client (crates/server/src/worker/mcp_pool.rs
-// + rmcp): exactly the surface the integration routes need — the initialize
+// Minimal MCP streamable-HTTP client: exactly the surface the integration
+// routes need — the initialize
 // handshake with the identity envelope and secret headers, tools/list, and
 // tools/call (the tool call maps the peer's content blocks to the
-// integration outcome contract, crates/server/src/integrations.rs
-// mcp_call_tool).
+// integration outcome contract, mcp_call_tool).
 
 type Json = Record<string, unknown>;
 

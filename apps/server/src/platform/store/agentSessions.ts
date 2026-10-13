@@ -1,5 +1,5 @@
-// Server-side agent sessions store (crates/server/src/store/agent_sessions.rs
-// port): one row per workspace execution-backend session; the run state
+// Server-side agent sessions store: one row per workspace execution-backend
+// session; the run state
 // lives in the durable conversation, the row stays metadata.
 
 import { ApiError } from "../errors.js";

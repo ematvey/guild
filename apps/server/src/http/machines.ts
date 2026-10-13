@@ -1,4 +1,4 @@
-// Machine registry routes (crates/server/src/http/chats.rs, machine parts):
+// Machine registry routes:
 // the machines page list and the owner-scoped control-plane fs ops the
 // desktop UI drives directly. Pairing routes live in the auth lane
 // (/api/v1/auth/pair*, already native); there are no rename/delete routes

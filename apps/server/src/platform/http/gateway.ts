@@ -1,6 +1,5 @@
-// Provider administration and the user-facing model list (crates/server/
-// src/http/gateway.rs — the route/provider/admin part only; the chat
-// turn-submission routes stay proxied until the M3 cutover).
+// Provider administration and the user-facing model list (the
+// route/provider/admin part only).
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ApiError } from "../errors.js";

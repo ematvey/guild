@@ -1,5 +1,5 @@
-// Shared pipeline for the public LLM gateway endpoints (crates/server/src/
-// http/llm_proxy.rs port): API key auth (per-shape extractor) → org route
+// Shared pipeline for the public LLM gateway endpoints: API key auth
+// (per-shape extractor) → org route
 // resolution → quota → provider stream. Each surface renders errors in its
 // own wire contract (OpenAI `{"error": …}` vs Anthropic `{"type":"error",…}`)
 // and records usage against the key's owner.

@@ -1,4 +1,4 @@
-// The member-socket feed forwarder (crates/server/src/http/feed.rs): pushes
+// The member-socket feed forwarder: pushes
 // thread views, live generation frames, chat-status flips, org events, and
 // presence-driven thread lists to every connected socket of a chat's owner.
 //

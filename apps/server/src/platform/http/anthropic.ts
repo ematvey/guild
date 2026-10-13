@@ -1,5 +1,5 @@
-// Public Anthropic-compatible Messages endpoint (crates/server/src/http/
-// anthropic.rs port): `POST /anthropic/v1/messages` with `gk_…` key auth
+// Public Anthropic-compatible Messages endpoint:
+// `POST /anthropic/v1/messages` with `gk_…` key auth
 // (`x-api-key` or `Authorization: Bearer`). Converts the Anthropic request
 // shape (top-level system, content blocks, required `max_tokens`) into the
 // internal message format, resolves the org route for the model, and

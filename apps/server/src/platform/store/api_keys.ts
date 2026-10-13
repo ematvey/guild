@@ -1,5 +1,5 @@
-// API keys for the public OpenAI-compatible endpoint (crates/server/src/
-// store/api_keys.rs port). Plaintext keys are shown once at creation; only
+// API keys for the public OpenAI-compatible endpoint. Plaintext keys are
+// shown once at creation; only
 // the sha256 hash is stored.
 
 import { randomBytes } from "node:crypto";

@@ -1,7 +1,7 @@
 // Hub seam — the in-process machine/member socket registry and dispatch API.
 //
 // This module mirrors the public surface of the Rust hub
-// (crates/server/src/http/hub.rs). The M5 hub lane replaced InMemoryHub with
+//. The M5 hub lane replaced InMemoryHub with
 // the real WS-backed implementation (`LiveHub` + `SocketSink`); the M3
 // harness lane only imports the types and injects fakes in tests.
 //

@@ -1,5 +1,5 @@
 // Connection hub for browser member sockets and machine singleton sockets
-// (crates/server/src/http/hub.rs). Liveness is represented by a socket held
+//. Liveness is represented by a socket held
 // in the hub. Everything runs on the Node event loop — the Rust code's
 // "mutex never held across an await" is trivially true here.
 

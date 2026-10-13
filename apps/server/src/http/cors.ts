@@ -1,5 +1,5 @@
 // CORS — the port of the Rust server's tower-http CorsLayer
-// (crates/server/src/http/mod.rs): same-origin requests never hit CORS;
+//: same-origin requests never hit CORS;
 // the desktop webview (tauri://localhost on macOS, http(s)://tauri.localhost
 // elsewhere) and the vite dev server are the only cross-origin clients.
 // Blanket-permissive CORS would let any page drive an authenticated
