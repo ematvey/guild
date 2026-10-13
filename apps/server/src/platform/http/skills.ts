@@ -12,7 +12,7 @@ import type { UserRow } from "../store/identity.js";
 import { ApiError } from "../errors.js";
 import { requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
-import { validateManifest, type Manifest } from "../registry-manifest.js";
+import { singleLineDescription, validateManifest, type Manifest } from "../registry-manifest.js";
 import { packBundle, parseBundle } from "../bundle.js";
 import { nextVersion } from "../store/registry.js";
 import { publishBundleBytes } from "./registry.js";
@@ -167,7 +167,8 @@ export function registerSkillRoutes(
     const user = await requireUser(auth, req);
     const body = jsonBody(req);
     const slug = stringField(body, "slug");
-    const description = typeof body["description"] === "string" ? body["description"] : "";
+    const description =
+      typeof body["description"] === "string" ? singleLineDescription(body["description"] as string) : "";
     const ownerTeamId = typeof body["owner_team_id"] === "string" ? body["owner_team_id"] : undefined;
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control !== null && !control.tombstoned) {
@@ -195,8 +196,9 @@ export function registerSkillRoutes(
       }
       const parsed = await parseBundle(bytes);
       const sourceManifest = meta.manifest as { description?: unknown } | null;
-      const forkDescription =
-        description !== "" ? description : typeof sourceManifest?.description === "string" ? sourceManifest.description : "";
+      const forkDescription = singleLineDescription(
+        description !== "" ? description : typeof sourceManifest?.description === "string" ? sourceManifest.description : "",
+      );
       const manifest: Manifest = { kind: "skill", slug, version: "v1", description: forkDescription };
       try {
         validateManifest(manifest);
@@ -251,7 +253,7 @@ export function registerSkillRoutes(
     const user = await requireUser(auth, req);
     const slug = param(req, "slug");
     const body = jsonBody(req);
-    const description = stringField(body, "description");
+    const description = singleLineDescription(stringField(body, "description"));
     const bodyText = stringField(body, "body");
     const control = await gateway.registry.itemControl(user.org_id, "skill", slug);
     if (control === null || control.tombstoned) throw ApiError.notFound("no such skill");

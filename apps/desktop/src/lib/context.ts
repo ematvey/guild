@@ -173,10 +173,12 @@ export function parseFrontmatter(
             blanks = 0;
             parts.push(raw.trim());
           }
-          description = parts.join("").trim();
+          description = parts.join(" ").trim();
         } else {
           description = inline.replace(/^"([\s\S]*)"$/, "$1").replace(/^'([\s\S]*)'$/, "$1");
         }
+        // One line — the description feeds single-line index entries.
+        description = description.replace(/\s+/g, " ").trim();
       }
     }
   }

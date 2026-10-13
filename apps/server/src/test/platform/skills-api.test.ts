@@ -154,6 +154,16 @@ describe("skills api", () => {
     expect(body.files.map((f) => f.path).sort()).toEqual(["SKILL.md"]);
   });
 
+  it("collapses a multi-line description to one line on save", async () => {
+    await inject("POST", "/api/v1/skills", e.memberToken, {
+      slug: "single-line-skill",
+      description: "line one\nline two\r\n\tline three",
+      body: "# x",
+    });
+    const detail = await inject("GET", "/api/v1/skills/single-line-skill", e.memberToken);
+    expect((detail.json() as { description: string }).description).toBe("line one line two line three");
+  });
+
   it("publish auto-installs for the publisher; edits re-pin; other installs keep theirs", async () => {
     await createSkill("auto-install-skill", "# auto");
     const mine = await inject("GET", "/api/v1/skills/installs", e.memberToken);

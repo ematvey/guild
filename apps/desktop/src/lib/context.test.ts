@@ -83,7 +83,7 @@ describe("parseFrontmatter", () => {
         "skill for any question about the CRM.",
     );
     const literal = "---\ndescription: |\n  First line.\n  Second line.\n---\n";
-    expect(parseFrontmatter(literal, "f").description).toBe("First line.\nSecond line.");
+    expect(parseFrontmatter(literal, "f").description).toBe("First line. Second line.");
   });
 });
 

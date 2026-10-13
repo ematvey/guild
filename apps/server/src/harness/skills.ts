@@ -25,7 +25,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { ApiError } from "../platform/errors.js";
 import { packBundle, parseBundle } from "../platform/bundle.js";
-import { validateManifest, type Manifest } from "../platform/registry-manifest.js";
+import { singleLineDescription, validateManifest, type Manifest } from "../platform/registry-manifest.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { RegistryItemRow } from "../platform/store/registry.js";
 import { nextVersion } from "../platform/store/registry.js";
@@ -665,9 +665,11 @@ export class SkillRuntime {
     // same-latest short-circuit. No versions at all (a fresh slug) → v1.
     const version = nextVersion(versions);
     // Existing slugs keep their catalog description; a NEW slug derives one
-    // from the SKILL.md body.
-    const description =
-      control !== null ? control.description : descriptionFromSkillMd(collected.get("SKILL.md")!.toString("utf8"));
+    // from the SKILL.md body. One line either way — index entries are
+    // single-line, so multi-line scalars collapse here.
+    const description = singleLineDescription(
+      control !== null ? control.description : descriptionFromSkillMd(collected.get("SKILL.md")!.toString("utf8")),
+    );
     const manifest: Manifest = { kind: "skill", slug, version, description };
     try {
       validateManifest(manifest);
