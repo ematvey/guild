@@ -120,7 +120,7 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
 }
 
 function text(result: ToolExecutionResult): string {
-  const block = (result.content as Array<{ type: string; text?: string }> | undefined)?.[0];
+  const block = (result.output as Array<{ type: string; text?: string }> | undefined)?.[0];
   return block?.text ?? "";
 }
 

@@ -1,6 +1,6 @@
 import { apply, type Op } from "@earendil-works/chord/delta";
 import type { Context } from "@earendil-works/chord";
-import { StorageRejected } from "@earendil-works/pi-durable";
+import { StorageRequestError } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
   ConversationQuery,
@@ -27,6 +27,7 @@ import type {
   SubmissionId,
   SubmissionQuery,
   SubmissionRecord,
+  ScanOrder,
   TaskId,
   TaskQuery,
   TaskRecord,
@@ -54,15 +55,53 @@ const cursorId = (cursor: Cursor | undefined): number | undefined => {
   return after;
 };
 
+interface CursorPosition {
+  after: number | undefined;
+  order: ScanOrder;
+}
+
+/** Resolves a scan's cursor position and order: a cursor continues in the
+ *  order it was returned with, and a query asking for the other order is an
+ *  invalid request (the cursor is backend-owned continuation state). */
+const resolveCursor = (
+  cursor: Cursor | undefined,
+  requested: ScanOrder | undefined,
+  defaultOrder: ScanOrder,
+  label: string,
+): CursorPosition => {
+  if (cursor === undefined) return { after: undefined, order: requested ?? defaultOrder };
+  const after = cursorId(cursor);
+  const order = cursor.order;
+  if (order !== "ascending" && order !== "descending") {
+    throw new StorageRequestError(`${label} cursor is missing its scan order`);
+  }
+  if (requested !== undefined && requested !== order) {
+    throw new StorageRequestError(`${label} cursor continues in ${order} order; the query asks for ${requested}`);
+  }
+  return { after, order };
+};
+
 const bind = (params: unknown[], value: unknown): string => {
   params.push(value);
   return `$${params.length}`;
 };
 
-const page = <T extends { id: number }, C>(values: readonly T[], limit: number): Page<T, C> => {
+const page = <T extends { id: number }, C>(values: readonly T[], limit: number, order: ScanOrder): Page<T, C> => {
   const items = values.slice(0, limit);
   if (values.length <= limit) return { items };
-  return { items, next: { after: items.at(-1)!.id } as C };
+  return { items, next: { after: items.at(-1)!.id, order } as C };
+};
+
+const idClause = (operator: ">" | "<", placeholder: string): string => `id ${operator} ${placeholder}`;
+
+const orderSql = (order: ScanOrder): string => (order === "ascending" ? "ASC" : "DESC");
+
+/** The scan's id comparison against the cursor: a cursor continues strictly
+ *  after (ascending) or strictly before (descending) its last returned id. */
+const scanStart = (position: CursorPosition, defaultStart: number): { clause: string; params: unknown[] } => {
+  const ascending = position.order === "ascending";
+  const params: unknown[] = [position.after ?? (ascending ? defaultStart : Number.MAX_SAFE_INTEGER)];
+  return { clause: idClause(ascending ? ">" : "<", "$1"), params };
 };
 
 const scopeColumns = (scope: DocumentRecord["scope"]): { scopeKind: string; ownerId: number } => {
@@ -204,8 +243,10 @@ export class PostgresDurableStorage implements Storage {
     _context: Context,
   ): Promise<Page<ConversationRecord, Cursor>> {
     this.assertOpen();
-    const params: unknown[] = [cursorId(cursor) ?? -1];
-    const clauses = ["id > $1"];
+    const position = resolveCursor(cursor, query.order, "ascending", "conversation scan");
+    const start = scanStart(position, -1);
+    const params = [...start.params];
+    const clauses = [start.clause];
     if (query.ownerConversationId !== undefined) {
       clauses.push(`owner_conversation_id = ${bind(params, query.ownerConversationId)}`);
     }
@@ -214,10 +255,10 @@ export class PostgresDurableStorage implements Storage {
     }
     params.push(limit + 1);
     const rows = await this.db.query(
-      `SELECT record FROM conversations WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT $${params.length}`,
+      `SELECT record FROM conversations WHERE ${clauses.join(" AND ")} ORDER BY id ${orderSql(position.order)} LIMIT $${params.length}`,
       params,
     );
-    return page(rows.map((row) => parseJson(row.record) as ConversationRecord), limit);
+    return page(rows.map((row) => parseJson(row.record) as ConversationRecord), limit, position.order);
   }
 
   entry(id: EntryId, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
@@ -252,7 +293,7 @@ export class PostgresDurableStorage implements Storage {
     if (context !== undefined) {
       const conversationId = asConversationId(idOrConversationId);
       conversation = await this.readConversation(tx, conversationId);
-      if (conversation === undefined) throw new Error(`Unknown conversation: ${conversationId}`);
+      if (conversation === undefined) throw new StorageRequestError(`Unknown conversation: ${conversationId}`);
     }
     const rows = await tx.query("SELECT record, commit_seq FROM entries WHERE id = $1", [id]);
     if (rows.length === 0) return undefined;
@@ -278,7 +319,7 @@ export class PostgresDurableStorage implements Storage {
     this.assertOpen();
     return this.db.readTransaction(async (tx) => {
       let current = await this.readConversation(tx, conversationId);
-      if (current === undefined) throw new Error(`Unknown conversation: ${conversationId}`);
+      if (current === undefined) throw new StorageRequestError(`Unknown conversation: ${conversationId}`);
       let upper: number | undefined = atOrBeforeEntryId;
       while (true) {
         const rows =
@@ -315,29 +356,54 @@ export class PostgresDurableStorage implements Storage {
     limit: number,
     cursor: Cursor | undefined,
   ): Promise<Page<EntryRecord, Cursor>> {
-    let conversation = await this.readConversation(tx, query.conversationId);
-    if (conversation === undefined) throw new Error(`Unknown conversation: ${query.conversationId}`);
-    const after = cursorId(cursor);
-    let upper: number | undefined = query.maxEntryId;
-    if (after !== undefined) upper = Math.min(upper ?? Number.MAX_SAFE_INTEGER, after - 1);
+    const position = resolveCursor(cursor, query.order, "descending", "entry scan");
+    const segments = await this.entrySegments(tx, query.conversationId, query.maxEntryId);
+    // Ascending walks the fork chain root first, each segment capped at the
+    // next fork point; descending walks it leaf first.
+    const ordered = position.order === "ascending" ? [...segments].reverse() : segments;
+    const afterClause = (params: unknown[]): string | undefined => {
+      if (position.after === undefined) return undefined;
+      return position.order === "ascending"
+        ? idClause(">", bind(params, position.after))
+        : idClause("<", bind(params, position.after));
+    };
     const values: EntryRecord[] = [];
-    while (true) {
-      const params: unknown[] = [conversation.id];
+    for (const segment of ordered) {
+      const params: unknown[] = [segment.conversationId];
       const clauses = ["conversation_id = $1"];
+      if (segment.cap !== undefined) clauses.push(`id <= ${bind(params, segment.cap)}`);
       if (query.minEntryId !== undefined) clauses.push(`id >= ${bind(params, query.minEntryId)}`);
-      if (upper !== undefined) clauses.push(`id <= ${bind(params, upper)}`);
+      const after = afterClause(params);
+      if (after !== undefined) clauses.push(after);
       params.push(limit + 1 - values.length);
       const rows = await tx.query(
-        `SELECT record FROM entries WHERE ${clauses.join(" AND ")} ORDER BY id DESC LIMIT $${params.length}`,
+        `SELECT record FROM entries WHERE ${clauses.join(" AND ")} ORDER BY id ${orderSql(position.order)} LIMIT $${params.length}`,
         params,
       );
       values.push(...rows.map((row) => parseJson(row.record) as EntryRecord));
-      if (values.length > limit || conversation.parent === undefined) break;
-      upper = upper === undefined ? conversation.parent.at : Math.min(upper, conversation.parent.at);
-      if (query.minEntryId !== undefined && upper < query.minEntryId) break;
+      if (values.length > limit) break;
+    }
+    return page(values, limit, position.order);
+  }
+
+  /** The fork chain of one conversation, leaf first: each ancestor's
+   *  segment is capped at the fork point on the path below it. */
+  private async entrySegments(
+    tx: PostgresExecutor,
+    conversationId: ConversationId,
+    maxEntryId: EntryId | undefined,
+  ): Promise<{ conversationId: ConversationId; cap: number | undefined }[]> {
+    let conversation = await this.readConversation(tx, conversationId);
+    if (conversation === undefined) throw new StorageRequestError(`Unknown conversation: ${conversationId}`);
+    const segments: { conversationId: ConversationId; cap: number | undefined }[] = [];
+    let cap: number | undefined = maxEntryId;
+    while (true) {
+      segments.push({ conversationId: conversation.id, cap });
+      if (conversation.parent === undefined) break;
+      cap = cap === undefined ? conversation.parent.at : Math.min(cap, conversation.parent.at);
       conversation = (await this.readConversation(tx, conversation.parent.conversationId))!;
     }
-    return page(values, limit);
+    return segments;
   }
 
   async task(id: TaskId, _context: Context): Promise<TaskRecord<JsonObject, JsonObject, JsonObject> | undefined> {
@@ -353,8 +419,10 @@ export class PostgresDurableStorage implements Storage {
     _context: Context,
   ): Promise<Page<TaskRecord<JsonObject, JsonObject, JsonObject>, Cursor>> {
     this.assertOpen();
-    const params: unknown[] = [cursorId(cursor) ?? -1];
-    const clauses = ["id > $1"];
+    const position = resolveCursor(cursor, query.order, "ascending", "task scan");
+    const start = scanStart(position, -1);
+    const params = [...start.params];
+    const clauses = [start.clause];
     if (query.conversationId !== undefined) {
       clauses.push(`conversation_id = ${bind(params, query.conversationId)}`);
     }
@@ -372,10 +440,10 @@ export class PostgresDurableStorage implements Storage {
     }
     params.push(limit + 1);
     const rows = await this.db.query(
-      `SELECT record FROM tasks WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT $${params.length}`,
+      `SELECT record FROM tasks WHERE ${clauses.join(" AND ")} ORDER BY id ${orderSql(position.order)} LIMIT $${params.length}`,
       params,
     );
-    return page(rows.map((row) => parseJson(row.record) as TaskRecord<JsonObject, JsonObject, JsonObject>), limit);
+    return page(rows.map((row) => parseJson(row.record) as TaskRecord<JsonObject, JsonObject, JsonObject>), limit, position.order);
   }
 
   async submission(id: SubmissionId, _context: Context): Promise<SubmissionRecord | undefined> {
@@ -391,8 +459,10 @@ export class PostgresDurableStorage implements Storage {
     _context: Context,
   ): Promise<Page<SubmissionRecord, Cursor>> {
     this.assertOpen();
-    const params: unknown[] = [cursorId(cursor) ?? -1];
-    const clauses = ["id > $1"];
+    const position = resolveCursor(cursor, query.order, "ascending", "submission scan");
+    const start = scanStart(position, -1);
+    const params = [...start.params];
+    const clauses = [start.clause];
     if (query.conversationId !== undefined) {
       clauses.push(`conversation_id = ${bind(params, query.conversationId)}`);
     }
@@ -401,10 +471,10 @@ export class PostgresDurableStorage implements Storage {
     }
     params.push(limit + 1);
     const rows = await this.db.query(
-      `SELECT record FROM submissions WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT $${params.length}`,
+      `SELECT record FROM submissions WHERE ${clauses.join(" AND ")} ORDER BY id ${orderSql(position.order)} LIMIT $${params.length}`,
       params,
     );
-    return page(rows.map((row) => parseJson(row.record) as SubmissionRecord), limit);
+    return page(rows.map((row) => parseJson(row.record) as SubmissionRecord), limit, position.order);
   }
 
   async submissionByRequest(
@@ -473,7 +543,7 @@ export class PostgresDurableStorage implements Storage {
       `SELECT record FROM documents WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT $${params.length}`,
       params,
     );
-    return page(rows.map((row) => parseJson(row.record) as DocumentRecord), limit);
+    return page(rows.map((row) => parseJson(row.record) as DocumentRecord), limit, "ascending");
   }
 
   async close(_context: Context): Promise<void> {
@@ -498,7 +568,7 @@ export class PostgresDurableStorage implements Storage {
     if (rows.length === 0) return undefined;
     const record = parseJson(rows[0]!.record) as DocumentRecord;
     if (at !== "current" && isCurrentOnly(record)) {
-      throw new Error(`Document ${id} does not retain historical content`);
+      throw new StorageRequestError(`Document ${id} does not retain historical content`);
     }
     if (!isAliveAt(record, at)) return undefined;
     const upper = at === "current" ? Number.MAX_SAFE_INTEGER : at;
@@ -605,7 +675,7 @@ export class PostgresDurableStorage implements Storage {
     const liveCounts = new Map<string, number>();
     for (const [id, action] of actions) {
       if (action.copy !== undefined && actions.has(action.copy.id)) {
-        throw new StorageRejected(`Document copy ${id} source is changed in the copy batch`);
+        throw new Error(`Document copy ${id} source is changed in the copy batch`);
       }
       const rows = await tx.query("SELECT record FROM documents WHERE id = $1", [id]);
       const existing = rows.length === 0 ? undefined : (parseJson(rows[0]!.record) as DocumentRecord);
@@ -743,8 +813,7 @@ export class PostgresDurableStorage implements Storage {
           }
           content = { kind: "base", version: stored.version, value: stored.value };
         } catch (error) {
-          if (error instanceof StorageRejected) throw error;
-          throw new StorageRejected(`Document copy ${id} was rejected`, { cause: error });
+          throw new Error(`Document copy ${id} was rejected`, { cause: error });
         }
       }
       let record: DocumentRecord;
