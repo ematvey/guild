@@ -7,6 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@guild/ui/components/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";
 import { UserBadge } from "../components/user-badge";
 import { WorkspaceRailButton } from "./workspace-menu";
 import { IS_TAURI } from "../transport";
@@ -74,21 +75,24 @@ export function SidebarRail({
           onReload={() => window.location.reload()}
         />
         {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            title={label}
-            aria-label={label}
-            aria-current={activeTab === id}
-            onClick={() => onTabChange(id)}
-            className={`flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
-              activeTab === id
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Icon className="size-5" />
-          </button>
+          <Tooltip key={id}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={label}
+                aria-current={activeTab === id}
+                onClick={() => onTabChange(id)}
+                className={`flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
+                  activeTab === id
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Icon className="size-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{label}</TooltipContent>
+          </Tooltip>
         ))}
       </div>
       <div className="mt-auto p-1">

@@ -343,40 +343,41 @@ async fn summary(
         .unwrap()
         .and_utc();
 
+    #[derive(clickhouse::Row, serde::Deserialize)]
+    struct SummaryRow {
+        cost_usd: f64,
+        tokens: u64,
+    }
+
     let client = state.config.clickhouse_client();
     let missing_table = |e: &str| e.contains("UNKNOWN_TABLE");
-    let bind_scope = |sql: String, ts_bound: i64| {
-        let mut q = client.query(&sql).bind(user.0.org_id.simple().to_string());
+    let totals = |scope: &str, since: i64, what: &str| {
+        let mut q = client
+            .query(&format!(
+                "SELECT coalesce(sum(cost_usd), 0) AS cost_usd, coalesce(sum(tokens_in + tokens_out), 0) AS tokens \
+                 FROM (SELECT * FROM usage_events WHERE {scope} ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE ts >= toDateTime(?)"
+            ))
+            .bind(user.0.org_id.simple().to_string());
         if member_scoped {
             q = q.bind(user.0.id.simple().to_string());
         }
-        q.bind(ts_bound)
+        let what = what.to_string();
+        async move {
+            match q.bind(since).fetch_one::<SummaryRow>().await {
+                Ok(v) => Ok(v),
+                Err(e) if missing_table(&e.to_string()) => {
+                    Ok(SummaryRow { cost_usd: 0.0, tokens: 0 })
+                }
+                Err(e) => Err(ApiError::internal(format!("{what} query failed: {e}"))),
+            }
+        }
     };
-    let today: f64 = match bind_scope(
-        "SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events WHERE {scope} ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE ts >= toDateTime(?)"
-            .replace("{scope}", &scope),
-        start_of_day.timestamp(),
-    )
-    .fetch_one()
-    .await
-    {
-        Ok(v) => v,
-        Err(e) if missing_table(&e.to_string()) => 0.0,
-        Err(e) => return Err(ApiError::internal(format!("usage query failed: {e}"))),
-    };
-    let month: f64 = match bind_scope(
-        "SELECT coalesce(sum(cost_usd), 0) FROM (SELECT * FROM usage_events WHERE {scope} ORDER BY ts DESC LIMIT 1 BY org_id, request_id) WHERE ts >= toDateTime(?)"
-            .replace("{scope}", &scope),
-        start_of_month.timestamp(),
-    )
-    .fetch_one()
-    .await
-    {
-        Ok(v) => v,
-        Err(e) if missing_table(&e.to_string()) => 0.0,
-        Err(e) => return Err(ApiError::internal(format!("usage query failed: {e}"))),
-    };
-    Ok(Json(
-        json!({ "today_cost_usd": today, "month_cost_usd": month }),
-    ))
+    let today = totals(&scope, start_of_day.timestamp(), "usage").await?;
+    let month = totals(&scope, start_of_month.timestamp(), "usage").await?;
+    Ok(Json(json!({
+        "today_cost_usd": today.cost_usd,
+        "month_cost_usd": month.cost_usd,
+        "today_tokens": today.tokens,
+        "month_tokens": month.tokens,
+    })))
 }

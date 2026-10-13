@@ -10,7 +10,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
-import { ChevronDown, Plus, X } from "lucide-react";import {
+import { ChevronDown, Plus, X } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";import {
   IS_TAURI,
   workspaceList,
   workspaceSignOut,
@@ -162,25 +163,29 @@ export function WorkspaceRailButton({
     : "Guild";
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
-          title="Switch workspace"
-          aria-label="Switch workspace"
-        >
-          {activeRow?.logo_url ? (
-            <img
-              src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
-              alt=""
-              className="size-6 shrink-0 rounded object-contain"
-            />
-          ) : (
-            <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-semibold text-muted-foreground">
-              {label.slice(0, 1).toUpperCase()}
-            </span>
-          )}
-        </button>
-      </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
+              aria-label="Switch workspace"
+            >
+              {activeRow?.logo_url ? (
+                <img
+                  src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
+                  alt=""
+                  className="size-6 shrink-0 rounded object-contain"
+                />
+              ) : (
+                <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-semibold text-muted-foreground">
+                  {label.slice(0, 1).toUpperCase()}
+                </span>
+              )}
+            </button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="right">Switch workspace</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent side="bottom" align="start" className="w-60">
         <WorkspaceMenuItems
           list={list}
