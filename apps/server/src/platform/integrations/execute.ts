@@ -916,8 +916,8 @@ async function langfuseExecute(config: Json, tool: string, args: Json, secrets: 
       // encoded, so it cannot escape the segment or carry `?`/`#`.
       const version = typeof args["version"] === "number" && Number.isFinite(args["version"]) ? Math.trunc(args["version"]) : null;
       const path = version !== null
-        ? `/api/public/prompts/${pathSegment(name)}?version=${version}`
-        : `/api/public/prompts/${pathSegment(name)}`;
+        ? `/api/public/v2/prompts/${pathSegment(name)}?version=${version}`
+        : `/api/public/v2/prompts/${pathSegment(name)}`;
       const body = await langfuseGet(base, path, publicKey, secretKey);
       const promptName = typeof body["name"] === "string" ? body["name"] : name;
       const promptVersion = typeof body["version"] === "number" ? body["version"] : 0;
