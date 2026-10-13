@@ -179,17 +179,17 @@ export function skillsUnpublish(slug: string): Promise<SkillActionResult> {
   return send(slugPath(slug, "/unpublish"), { method: "POST" });
 }
 
-/** One team in the editor's owner selector (GET /api/v1/admin/teams). */
+/** One team in the editor's owner selector. */
 export interface EditorTeam {
   id: string;
   name: string;
 }
 
-/** The org's teams, via the admin list endpoint — the only teams list the
- *  server exposes. Null on any failure (a non-admin gets 403 and the
- *  owner selector degrades to Me only). */
+/** The caller's team memberships (GET /api/v1/skills/teams) — one option
+ *  per membership in the owner selector. Null on any failure (the selector
+ *  degrades to Me only). */
 export async function myTeams(): Promise<EditorTeam[] | null> {
-  const res = await fetch(apiUrl("/api/v1/admin/teams"), {
+  const res = await fetch(apiUrl("/api/v1/skills/teams"), {
     headers: { authorization: `Bearer ${getToken()}` },
   });
   if (!res.ok) return null;

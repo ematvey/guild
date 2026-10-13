@@ -102,23 +102,26 @@ describe("skillsSave (the editor's save target)", () => {
 });
 
 describe("myTeams (the owner selector's team list)", () => {
-  it("maps the admin teams list to id + name", async () => {
+  it("maps the caller's membership list to id + name", async () => {
+    const urls: string[] = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({ teams: [{ id: "t1", name: "Platform", created_at: "x", member_count: 2 }] }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      ),
+      vi.fn(async (input: string | URL) => {
+        urls.push(String(input));
+        return new Response(JSON.stringify({ teams: [{ id: "t1", name: "Platform" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
     );
     expect(await myTeams()).toEqual([{ id: "t1", name: "Platform" }]);
+    expect(urls[0]).toContain("/api/v1/skills/teams");
   });
 
-  it("returns null on failure (e.g. 403 for a non-admin)", async () => {
+  it("returns null on failure", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ error: "forbidden" }), { status: 403 })),
+      vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })),
     );
     expect(await myTeams()).toBeNull();
   });

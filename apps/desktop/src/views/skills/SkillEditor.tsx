@@ -248,9 +248,7 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
         </div>
         {showSlugError && <p className="text-destructive">{slugErr}</p>}
         {mode === "create" && teams !== null && teams.length === 0 && (
-          <p className="text-muted-foreground">
-            Team publishing needs the teams list (admin role); the skill will be owned by you.
-          </p>
+          <p className="text-muted-foreground">You are not on any team; the skill will be owned by you.</p>
         )}
         <label>
           <span className="mb-1 block text-sm text-muted-foreground">Description</span>
