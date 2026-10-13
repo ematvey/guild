@@ -17,6 +17,7 @@ export interface VersionRow {
   version: string;
   published_at: string;
   bundle_sha256: string | null;
+  publisher: string | null;
 }
 
 export interface StoredVersion {
@@ -70,17 +71,37 @@ export class RegistryStore {
     bundleSha256: string,
     publisher: string,
     skill: { md_text: string; files: Array<{ path: string; size: number; sha256: string }> } | null = null,
+    gate: { userId: string; role: string; isTeamMember: boolean } | null = null,
   ): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const itemRes = await client.query<{ id: string; latest_version: string | null; review_status: string; reviewed_version: string | null }>(
-        "SELECT id, latest_version, review_status, reviewed_version FROM registry_items " +
-        "WHERE org_id = $1 AND kind = $2 AND slug = $3 FOR UPDATE",
+      const itemRes = await client.query<{
+        id: string;
+        latest_version: string | null;
+        review_status: string;
+        reviewed_version: string | null;
+        owner_user_id: string | null;
+        owner_team_id: string | null;
+        maintainer_gated: boolean;
+        tombstoned_at: string | null;
+      }>(
+        "SELECT id, latest_version, review_status, reviewed_version, owner_user_id, owner_team_id, maintainer_gated, tombstoned_at " +
+        "FROM registry_items WHERE org_id = $1 AND kind = $2 AND slug = $3 FOR UPDATE",
         [orgId, kind, slug],
       );
       let itemId: string;
       const item = itemRes.rows[0];
+      // Publish gate re-checked under the row lock (spec §1.2): the
+      // check-then-publish race is closed by deciding here, on the same
+      // snapshot the version insert commits against.
+      if (gate !== null && item !== undefined) {
+        if (item.tombstoned_at !== null) throw ApiError.forbidden();
+        if (item.maintainer_gated && gate.role !== "admin") {
+          const owner = item.owner_user_id !== null && item.owner_user_id === gate.userId;
+          if (!owner && !(item.owner_team_id !== null && gate.isTeamMember)) throw ApiError.forbidden();
+        }
+      }
       if (item !== undefined) {
         if (item.latest_version !== version) {
           const exists = await client.query(
@@ -165,7 +186,7 @@ export class RegistryStore {
 
   async itemVersions(orgId: string, kind: string, slug: string): Promise<VersionRow[]> {
     const res = await this.pool.query(
-      "SELECT v.version, to_char(v.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS published_at, v.bundle_sha256 " +
+      "SELECT v.version, to_char(v.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS published_at, v.bundle_sha256, v.published_by AS publisher " +
       "FROM registry_versions v JOIN registry_items i ON i.id = v.item_id " +
       "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 ORDER BY v.published_at DESC",
       [orgId, kind, slug],
@@ -174,19 +195,23 @@ export class RegistryStore {
       version: r.version as string,
       published_at: pgTimestampToRfc3339(r.published_at as string),
       bundle_sha256: (r.bundle_sha256 as string | null) ?? null,
+      publisher: (r.publisher as string | null) ?? null,
     }));
   }
 
-  /** Tombstone state + gate info for one item. */
+  /** Tombstone state + gate/ownership info for one item (the detail page
+   *  and the gate/unpublish permission checks read this). */
   async itemControl(orgId: string, kind: string, slug: string): Promise<{
     owner_user_id: string | null;
     owner_team_id: string | null;
     maintainer_gated: boolean;
     tombstoned: boolean;
     latest_version: string | null;
+    description: string;
+    forked_from: string | null;
   } | null> {
     const res = await this.pool.query(
-      "SELECT owner_user_id, owner_team_id, maintainer_gated, tombstoned_at, latest_version FROM registry_items " +
+      "SELECT owner_user_id, owner_team_id, maintainer_gated, tombstoned_at, latest_version, description, forked_from FROM registry_items " +
       "WHERE org_id = $1 AND kind = $2 AND slug = $3",
       [orgId, kind, slug],
     );
@@ -198,6 +223,66 @@ export class RegistryStore {
       maintainer_gated: r.maintainer_gated === true,
       tombstoned: r.tombstoned_at !== null,
       latest_version: (r.latest_version as string | null) ?? null,
+      description: r.description as string,
+      forked_from: (r.forked_from as string | null) ?? null,
+    };
+  }
+
+  /** Flips the maintainer gate; 404 when the item does not exist. */
+  async setGate(orgId: string, kind: string, slug: string, enabled: boolean): Promise<void> {
+    const res = await this.pool.query(
+      "UPDATE registry_items SET maintainer_gated = $4 WHERE org_id = $1 AND kind = $2 AND slug = $3",
+      [orgId, kind, slug, enabled],
+    );
+    if (res.rowCount === 0) throw ApiError.notFound("no such registry item");
+  }
+
+  /** Records fork provenance ("slug@version") on the item. */
+  async setForkedFrom(orgId: string, kind: string, slug: string, forkedFrom: string): Promise<void> {
+    await this.pool.query(
+      "UPDATE registry_items SET forked_from = $4 WHERE org_id = $1 AND kind = $2 AND slug = $3",
+      [orgId, kind, slug, forkedFrom],
+    );
+  }
+
+  /** Hands item ownership to a team (the create route's owner pick). */
+  async setOwnerTeam(orgId: string, kind: string, slug: string, teamId: string | null): Promise<void> {
+    await this.pool.query(
+      "UPDATE registry_items SET owner_team_id = $4, owner_user_id = NULL WHERE org_id = $1 AND kind = $2 AND slug = $3",
+      [orgId, kind, slug, teamId],
+    );
+  }
+
+  /** Full version metadata for the skill surface: the SKILL.md projection
+   *  and file list live on the version row; null when absent. */
+  async getVersionMeta(
+    orgId: string,
+    kind: string,
+    slug: string,
+    version: string,
+  ): Promise<{
+    manifest: unknown;
+    object_key: string;
+    bundle_sha256: string | null;
+    publisher: string | null;
+    skill_md_text: string | null;
+    files: Array<{ path: string; size: number; sha256: string }> | null;
+  } | null> {
+    const res = await this.pool.query(
+      "SELECT v.manifest, v.object_key, v.bundle_sha256, v.published_by, v.skill_md_text, v.files " +
+      "FROM registry_versions v JOIN registry_items i ON i.id = v.item_id " +
+      "WHERE i.org_id = $1 AND i.kind = $2 AND i.slug = $3 AND v.version = $4",
+      [orgId, kind, slug, version],
+    );
+    const r = res.rows[0];
+    if (r === undefined) return null;
+    return {
+      manifest: r.manifest,
+      object_key: r.object_key,
+      bundle_sha256: (r.bundle_sha256 as string | null) ?? null,
+      publisher: (r.published_by as string | null) ?? null,
+      skill_md_text: (r.skill_md_text as string | null) ?? null,
+      files: (r.files as Array<{ path: string; size: number; sha256: string }> | null) ?? null,
     };
   }
 

@@ -62,4 +62,18 @@ export class EventStore {
     const row = res.rows[0];
     return row ? { ...row, created_at: pgTimestampToRfc3339(row.created_at) } : null;
   }
+
+  /** Reverse-chronological events whose kind matches any of the given
+   *  LIKE prefixes (e.g. 'registry.%', 'skill.%') — the skills activity
+   *  feed's query. */
+  async listKindPrefixed(orgId: string, prefixes: string[], limit: number): Promise<EventRow[]> {
+    const clauses = prefixes.map((_, i) => `kind LIKE $${i + 2}`).join(" OR ");
+    const res = await this.pool.query<EventRow>(
+      `SELECT id, org_id, kind, payload,
+              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+       FROM events WHERE org_id = $1 AND (${clauses}) ORDER BY created_at DESC LIMIT $${prefixes.length + 2}`,
+      [orgId, ...prefixes, Math.min(Math.max(limit, 1), 500)],
+    );
+    return res.rows.map((row) => ({ ...row, created_at: pgTimestampToRfc3339(row.created_at) }));
+  }
 }

@@ -197,7 +197,9 @@ describe("M6 registry", () => {
     expect(dl.statusCode).toBe(200);
     expect(dl.headers["content-type"]).toBe("application/gzip");
 
-    // Members cannot download a version the approval doesn't cover.
+    // A republish the approval doesn't cover resets review to draft; and
+    // skills are exempt from the review gate (spec §1.3: published =
+    // live), so members download even never-reviewed skill versions.
     const bundle2 = await packBundle({
       "manifest.json": JSON.stringify({ ...SKILL_MANIFEST, version: "2.0.0" }),
       "SKILL.md": "hello",
@@ -205,7 +207,18 @@ describe("M6 registry", () => {
     const pub2 = await inject("POST", "/api/v1/registry/skill?slug=hello-skill&version=2.0.0", e.adminToken, bundle2);
     expect(pub2.statusCode).toBe(200);
     const dl2 = await inject("GET", "/api/v1/registry/skill/hello-skill/2.0.0/bundle", e.memberToken);
-    expect(dl2.statusCode).toBe(403);
+    expect(dl2.statusCode).toBe(200);
+
+    // mcp keeps the gate: a member cannot download an unapproved mcp
+    // bundle, and the approval covers exactly its reviewed bytes.
+    const mcpBundle = await packBundle({
+      "manifest.json": JSON.stringify({ kind: "mcp", slug: "gate-mcp", version: "1.0.0", description: "d" }),
+      "README.md": "x",
+    });
+    const pubMcp = await inject("POST", "/api/v1/registry/mcp?slug=gate-mcp&version=1.0.0", e.adminToken, mcpBundle);
+    expect(pubMcp.statusCode).toBe(200);
+    const dlMcp = await inject("GET", "/api/v1/registry/mcp/gate-mcp/1.0.0/bundle", e.memberToken);
+    expect(dlMcp.statusCode).toBe(403);
     const dl2admin = await inject("GET", "/api/v1/registry/skill/hello-skill/2.0.0/bundle", e.adminToken);
     expect(dl2admin.statusCode).toBe(200);
 

@@ -14,6 +14,7 @@ import { ApiKeyStore } from "./store/api_keys.js";
 import { GatewayStore } from "./store/gateway.js";
 import { MachineStore } from "./store/machines.js";
 import { RegistryStore } from "./store/registry.js";
+import { SkillStore } from "./store/skills.js";
 import { ReleaseStore } from "./store/releases.js";
 import { ProjectStore } from "./store/projects.js";
 import { TeamStore } from "./store/teams.js";
@@ -61,6 +62,7 @@ export class PlatformContext {
   /** M6 long-tail stores (registry, releases, projects, teams, admin
    *  settings, integration config rows). */
   readonly registry: RegistryStore;
+  readonly skills: SkillStore;
   readonly releases: ReleaseStore;
   readonly projects: ProjectStore;
   readonly teams: TeamStore;
@@ -127,6 +129,7 @@ export class PlatformContext {
     this.gatewayStore = new GatewayStore(this.pool);
     this.machines = new MachineStore(this.pool);
     this.registry = new RegistryStore(this.pool);
+    this.skills = new SkillStore(this.pool);
     this.releases = new ReleaseStore(this.pool);
     this.projects = new ProjectStore(this.pool);
     this.teams = new TeamStore(this.pool);

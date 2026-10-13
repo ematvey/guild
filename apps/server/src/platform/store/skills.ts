@@ -93,6 +93,81 @@ export class SkillStore {
     return res.rows.map((r) => ({ version: r.pinned_version, count: Number(r.n) }));
   }
 
+  /** The catalog/search row the Skills panel renders: live skill items with
+   *  owner label, install totals, and how many pins sit on the latest
+   *  version; q filters over description and the latest version's SKILL.md
+   *  text. Tombstoned items never appear (provenance lives on the detail
+   *  page only). */
+  async catalog(
+    orgId: string,
+    q: string | null,
+    limit = 200,
+  ): Promise<Array<{
+    slug: string;
+    description: string;
+    latest_version: string | null;
+    owner_user_id: string | null;
+    owner_team_id: string | null;
+    owner_label: string | null;
+    maintainer_gated: boolean;
+    installs: number;
+    installs_latest: number;
+  }>> {
+    const res = await this.pool.query<Record<string, unknown>>(
+      `SELECT i.slug, i.description, i.latest_version, i.owner_user_id, i.owner_team_id, i.maintainer_gated,
+              COALESCE(NULLIF(u.display_name, ''), u.email) AS owner_label,
+              (SELECT count(*)::text FROM skill_installs si
+               WHERE si.org_id = i.org_id AND si.slug = i.slug) AS installs,
+              (SELECT count(*)::text FROM skill_installs si
+               WHERE si.org_id = i.org_id AND si.slug = i.slug AND si.pinned_version = i.latest_version) AS installs_latest
+       FROM registry_items i
+       LEFT JOIN users u ON u.id = i.owner_user_id
+       LEFT JOIN registry_versions v ON v.item_id = i.id AND v.version = i.latest_version
+       WHERE i.org_id = $1 AND i.kind = 'skill' AND i.tombstoned_at IS NULL
+         AND ($2::text IS NULL OR i.description ILIKE '%' || $2 || '%' OR v.skill_md_text ILIKE '%' || $2 || '%')
+       ORDER BY i.slug
+       LIMIT $3`,
+      [orgId, q, Math.min(Math.max(limit, 1), 500)],
+    );
+    return res.rows.map((r) => ({
+      slug: r.slug as string,
+      description: r.description as string,
+      latest_version: (r.latest_version as string | null) ?? null,
+      owner_user_id: (r.owner_user_id as string | null) ?? null,
+      owner_team_id: (r.owner_team_id as string | null) ?? null,
+      owner_label: (r.owner_label as string | null) ?? null,
+      maintainer_gated: r.maintainer_gated === true,
+      installs: Number(r.installs ?? "0"),
+      installs_latest: Number(r.installs_latest ?? "0"),
+    }));
+  }
+
+  /** The owner display entry for detail/catalog rows: a user (label =
+   *  display name or email) or a team (label = team name). */
+  async ownerEntry(
+    orgId: string,
+    ownerUserId: string | null,
+    ownerTeamId: string | null,
+  ): Promise<{ kind: "user" | "team"; id: string; label: string } | null> {
+    if (ownerUserId !== null) {
+      const res = await this.pool.query<{ label: string }>(
+        "SELECT COALESCE(NULLIF(display_name, ''), email) AS label FROM users WHERE org_id = $1 AND id = $2",
+        [orgId, ownerUserId],
+      );
+      const label = res.rows[0]?.label;
+      return label === undefined ? null : { kind: "user", id: ownerUserId, label };
+    }
+    if (ownerTeamId !== null) {
+      const res = await this.pool.query<{ label: string }>(
+        "SELECT name AS label FROM teams WHERE org_id = $1 AND id = $2",
+        [orgId, ownerTeamId],
+      );
+      const label = res.rows[0]?.label;
+      return label === undefined ? null : { kind: "team", id: ownerTeamId, label };
+    }
+    return null;
+  }
+
   private row(r: Record<string, unknown>): InstallRow {
     return {
       slug: r.slug as string,

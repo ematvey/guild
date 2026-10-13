@@ -31,7 +31,7 @@ export function objectKey(orgId: string, kind: string, slug: string, version: st
   return `registry/${orgId}/${kind}/${slug}/${version}/${sha256}.tar.gz`;
 }
 
-function sha256Hex(data: Buffer): string {
+export function sha256Hex(data: Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
@@ -56,6 +56,83 @@ function rawBody(req: FastifyRequest): Buffer {
  *  object key sorted — and serde's number rendering. */
 function sendJson(reply: FastifyReply, value: unknown): void {
   void reply.type("application/json").send(rustJsonText(value));
+}
+
+/** The shared publish body (the registry route and the skills editor both
+ *  land here): content-addressed key, publish gate re-checked inside
+ *  upsertVersion's FOR UPDATE transaction, SKILL.md projection for skills,
+ *  object put, and the org event (first publish vs republish). */
+export async function publishBundleBytes(
+  gateway: GatewayCtx,
+  auth: IdentityCtx,
+  objects: ObjectStore,
+  user: UserRow,
+  kind: string,
+  slug: string,
+  version: string,
+  description: string,
+  manifest: unknown,
+  bytes: Buffer,
+): Promise<void> {
+  const sha256 = sha256Hex(bytes);
+  const key = objectKey(user.org_id, kind, slug, version, sha256);
+
+  // Pre-read for the team-membership input; the authoritative gate decision
+  // happens inside upsertVersion's row-lock transaction.
+  const control = await gateway.registry.itemControl(user.org_id, kind, slug);
+  const isTeamMember =
+    control?.owner_team_id != null
+      ? await auth.teams.isMember(user.org_id, control.owner_team_id, user.id)
+      : false;
+
+  // Skill projection (spec §1.2/§1.3): SKILL.md text + the file list with
+  // per-file hashes, stored on the version row for the panel/editor.
+  let skill: { md_text: string; files: Array<{ path: string; size: number; sha256: string }> } | null = null;
+  if (kind === "skill") {
+    const parsed = await parseBundle(bytes);
+    skill = {
+      md_text: readBundleFile(parsed, "SKILL.md")!.toString("utf8"),
+      files: parsed.entries
+        .filter((e) => e.file)
+        .map((en) => ({ path: en.path, size: en.content!.length, sha256: sha256Hex(en.content!) })),
+    };
+  }
+
+  // Metadata first: only an accepted upsert (new version, unchanged
+  // republish) commits a row — a superseded publish is refused before any
+  // bundle bytes land, so the old release's object stays intact.
+  await gateway.registry.upsertVersion(
+    user.org_id,
+    kind,
+    slug,
+    version,
+    description,
+    manifest,
+    key,
+    sha256,
+    user.id,
+    skill,
+    { userId: user.id, role: user.role, isTeamMember },
+  );
+  // The content-addressed key was accepted by upsertVersion; the bytes
+  // are immutable and idempotent to re-write, so a failed put only leaves
+  // the object missing until the publish is retried.
+  try {
+    await objects.put(key, bytes);
+  } catch (error) {
+    throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
+  }
+  // org event: first publish vs republish (the activity feed treats
+  // them as distinct kinds); best-effort
+  try {
+    await auth.events.emit(
+      user.org_id,
+      control !== null ? "registry.updated" : "registry.published",
+      { kind, slug, version },
+    );
+  } catch {
+    // best-effort
+  }
 }
 
 export function registerRegistryRoutes(
@@ -103,64 +180,12 @@ export function registerRegistryRoutes(
       throw ApiError.badRequest("skill bundles must contain SKILL.md at the root");
     }
 
-    const sha256 = sha256Hex(body);
-    const key = objectKey(user.org_id, kind, slug, version, sha256);
-
-    // Publish gate (spec §1.2): gated slugs accept only the owner, the
-    // owner team's members, and admins; tombstoned slugs refuse everything.
-    const control = await gateway.registry.itemControl(user.org_id, kind, slug);
-    const isTeamMember =
-      control?.owner_team_id != null
-        ? await auth.teams.isMember(user.org_id, control.owner_team_id, user.id)
-        : false;
-    await gateway.registry.publishGate(user.org_id, kind, slug, user.id, user.role, isTeamMember);
-
-    // Skill projection (spec §1.2/§1.3): SKILL.md text + the file list with
-    // per-file hashes, stored on the version row for the panel/editor.
-    let skill: { md_text: string; files: Array<{ path: string; size: number; sha256: string }> } | null = null;
-    if (kind === "skill") {
-      skill = {
-        md_text: readBundleFile(parsed, "SKILL.md")!.toString("utf8"),
-        files: parsed.entries
-          .filter((e) => e.file)
-          .map((en) => ({ path: en.path, size: en.content!.length, sha256: sha256Hex(en.content!) })),
-      };
-    }
-
-    // Metadata first: only an accepted upsert (new version, unchanged
-    // republish) commits a row — a superseded publish is refused before any
-    // bundle bytes land, so the old release's object stays intact.
-    await gateway.registry.upsertVersion(
-      user.org_id,
-      kind,
-      slug,
-      version,
+    await publishBundleBytes(
+      gateway, auth, objects, user, kind, slug, version,
       typeof manifest.description === "string" ? manifest.description : "",
       manifest,
-      key,
-      sha256,
-      user.id,
-      skill,
+      body,
     );
-    // The content-addressed key was accepted by upsertVersion; the bytes
-    // are immutable and idempotent to re-write, so a failed put only leaves
-    // the object missing until the publish is retried.
-    try {
-      await objects.put(key, body);
-    } catch (error) {
-      throw ApiError.internal(`object store write failed: ${(error as Error).message}`);
-    }
-    // org event: first publish vs republish (the activity feed treats
-    // them as distinct kinds); best-effort
-    try {
-      await auth.events.emit(
-        user.org_id,
-        control !== null ? "registry.updated" : "registry.published",
-        { kind, slug, version },
-      );
-    } catch {
-      // best-effort
-    }
     sendJson(reply, { slug, version });
     return reply;
   });
@@ -193,7 +218,9 @@ export function registerRegistryRoutes(
     // members can only download the exact approved bundle: the requested
     // version must be the approval's version and its stored hash must equal
     // the approved one — a byte-swapped republish is undownloadable.
-    if (user.role !== "admin") {
+    // Skills are exempt (spec §1.3: no review gate — published = live), so
+    // members pull any published skill version directly.
+    if (kind !== "skill" && user.role !== "admin") {
       const approved = await gateway.registry.approvedBundle(user.org_id, kind, slug);
       if (approved === null || approved[0] !== version || stored.bundle_sha256 !== approved[1]) {
         throw ApiError.forbidden();
