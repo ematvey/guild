@@ -38,12 +38,7 @@ you.
 - **Default cargo members exclude the Tauri app** (`apps/desktop`): its
   dependency tree dominates compile time. `cargo test/build` skip it —
   target it explicitly with `-p guild-desktop`.
-- **Do not link `starlark` into the server runtime.** It enables
-  `serde_json/arbitrary_precision` cargo-globally, which breaks internally
-  tagged serde deserialization across the binary. Exec-policy rules are
-  parsed at build time (guild-server `build.rs` → JSON in `OUT_DIR`); keep
-  that indirection.
 - **Server-side workspace sessions**: `run_command` is disabled unless
   `GUILD_ALLOW_SHELL_TOOLS=1`; machine `execute` calls go through the
-  static exec-policy rules in `crates/server/assets/exec_policy_*.rules`
-  before any approval gate.
+  static exec-policy rules in `apps/server/assets/exec_policy_base.rules`
+  (TS matcher) before any approval gate.

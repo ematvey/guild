@@ -7,14 +7,12 @@ default-members = [
     "crates/protocol",
     "crates/guild-core",
     "crates/app-server",
-    "crates/server",
 ]
 members = [
     "crates/protocol",
     "apps/desktop/src-tauri",
     "crates/guild-core",
     "crates/app-server",
-    "crates/server",
     "crates/codex-execpolicy",
     "crates/codex-utils-absolute-path",
 ]

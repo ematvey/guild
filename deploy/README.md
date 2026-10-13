@@ -1,6 +1,7 @@
 # Deploy — Guild server
 
-Full server-side stack: guild-server, Postgres, ClickHouse, MinIO, Restate.
+Server-side stack: the TS server (`apps/server`, Dockerfile.server-ts),
+host Postgres, ClickHouse, MinIO.
 
 ## Run
 
@@ -48,6 +49,9 @@ cargo run -p guild-app-server -- publish --kind skill   --dir /tmp/demo-skill/de
 cargo run -p guild-app-server -- install --slug deploy-check --project /tmp/demo-project
 ```
 
+(Routines — scheduled/webhook-triggered runs — are deferred, spec decision 8:
+their routes answer 404.)
+
 ## Headless client smoke test
 
 ```bash
@@ -58,8 +62,8 @@ cargo run -p guild-app-server -- chat --model gpt-4o-mini "hello"
 
 ## Ports
 
-`GUILD_HTTP_PORT` (default 8080) and `GUILD_RESTATE_ADMIN_PORT` (default 9070)
-override the published host ports if they are taken.
+`GUILD_HTTP_PORT` (default 8080) overrides the published host port if it is
+taken.
 
 ## Teardown
 

@@ -1,0 +1,106 @@
+{
+  "bootstrap": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{}"
+  },
+  "execute_unauthenticated": {
+    "status": 401,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"missing authorization header\"}}"
+  },
+  "save_searxng_stub": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"config\":{},\"enabled\":false,\"id\":\"4140ba18-4e96-4f05-a223-f11fb125b7ee\",\"name\":\"searxng\",\"org_id\":\"01a10487-ed20-7484-967f-a4809ecbbc46\"}"
+  },
+  "admin_tools_builtin": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"invalid integration config: searxng config requires base_url\"}}"
+  },
+  "save_enable_unreachable": {
+    "status": 400,
+    "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"searxng unreachable: error sending request for url (http://127.0.0.1:1/search?q=guild&format=json)\"}}"
+  },
+  "execute_runtime_down": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"error\":\"searxng unreachable: error sending request for url (http://127.0.0.1:1/search?q=test&format=json)\",\"ok\":false}"
+  },
+  "execute_wrong_tool": {
+    "status": 404,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no such tool\"}}"
+  },
+  "execute_wrong_integration": {
+    "status": 404,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no such integration\"}}"
+  },
+  "execute_bad_body": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"body must be a JSON object\"}}"
+  },
+  "execute_always_ask": {
+    "status": 403,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"forbidden\",\"message\":\"admin role required\"}}"
+  },
+  "execute_namespaced_raw": {
+    "status": 403,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"forbidden\",\"message\":\"admin role required\"}}"
+  },
+  "list_integrations": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"items\":[{\"description\":\"Web search through a SearxNG instance\",\"slug\":\"searxng\",\"tool_count\":1}]}"
+  },
+  "list_tools": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"tools\":[{\"class\":\"read\",\"description\":\"Search the web and return the top results (title, url, snippet).\",\"name\":\"searxng_web_search\",\"parameters\":{\"properties\":{\"count\":{\"description\":\"1-10, default 5\",\"type\":\"number\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}}]}"
+  },
+  "list_tools_unknown": {
+    "status": 404,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"not_found\",\"message\":\"no such integration\"}}"
+  },
+  "approval_get_empty": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"approval\":null}"
+  },
+  "approval_put_valid": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"approval\":{\"default\":\"ask\",\"overrides\":{\"web_search\":\"never\"}}}"
+  },
+  "approval_put_bad_variant": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"invalid approval policy: unknown variant `sometimes`, expected one of `allow`, `ask`, `never`\"}}"
+  },
+  "approval_put_bad_type": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"invalid approval policy: invalid type: integer `5`, expected string or map\"}}"
+  },
+  "approval_put_bad_overrides": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": "{\"error\":{\"code\":\"bad_request\",\"message\":\"invalid approval policy: invalid type: sequence, expected a map\"}}"
+  },
+  "approval_put_clear": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"approval\":null}"
+  },
+  "approval_put_bare": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": "{\"approval\":{\"default\":\"allow\"}}"
+  }
+}

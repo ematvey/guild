@@ -9,7 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { WsServerMsg } from "../../../crates/protocol/bindings/Ws";
-import { browserFs, daemonFs, prepareTurn as assembleTurn } from "./lib/context";
+import { browserFs, daemonFs, prepareTurn as assembleTurn, type OrgSkillsApi } from "./lib/context";
 import { openExternal } from "./lib/open-external";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -1020,6 +1020,46 @@ export async function compactChat(chatId: string): Promise<void> {
   }
 }
 
+/// The org-skills HTTP surface lib/context's assembly consumes (spec §2.3):
+/// the signed-in user's installs (GET /api/v1/skills/installs) and a
+/// skill's SKILL.md body at the caller's pinned version (GET
+/// /api/v1/skills/:slug/source). Every failure degrades to null — org
+/// skills are composer sugar, a broken fetch must never block a turn.
+function orgSkillsApi(): OrgSkillsApi {
+  const get = async (path: string): Promise<unknown | null> => {
+    const token = getToken();
+    if (token === null) return null; // not signed in — no org installs
+    try {
+      const res = await fetch(apiUrl(path), {
+        headers: { authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return null;
+      return await res.json().catch(() => null);
+    } catch {
+      return null;
+    }
+  };
+  return {
+    installs: async () => {
+      const v = (await get("/api/v1/skills/installs")) as { installs?: unknown } | null;
+      const rows = Array.isArray(v?.installs) ? v!.installs : [];
+      return rows.filter(
+        (r): r is { slug: string; pinned_version: string } =>
+          typeof (r as any)?.slug === "string" && typeof (r as any)?.pinned_version === "string",
+      );
+    },
+    skillBody: async (slug, version) => {
+      const q = typeof version === "string" && version !== "" ? `?version=${encodeURIComponent(version)}` : "";
+      const v = (await get(`/api/v1/skills/${encodeURIComponent(slug)}/source${q}`)) as
+        | { skill_md?: unknown }
+        | null;
+      return typeof v?.skill_md === "string" ? v.skill_md : null;
+    },
+  };
+}
+export { orgSkillsApi };
+
 /// Expands `/name` skill mentions in a turn prompt against the local skill
 /// discovery, renders the skills index, and assembles the AGENTS.md
 /// instructions (global config-dir file + the bound project's chain, Codex
@@ -1033,7 +1073,7 @@ export async function prepareTurn(
   // bridge; browser mode has no local files and passes through untouched.
   const fs = IS_TAURI ? daemonFs(rpcCall) : browserFs;
   const scopes = await fs.scopes();
-  return assembleTurn(fs, scopes, prompt, projectDir);
+  return assembleTurn(fs, scopes, prompt, projectDir, orgSkillsApi());
 }
 
 /// In-flight mirror catch-up from the app process (single-process spec):

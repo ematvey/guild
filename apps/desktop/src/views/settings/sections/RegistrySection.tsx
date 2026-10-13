@@ -1,6 +1,7 @@
-//! RegistrySection — registry items (skills / mcp / integrations) in one
-//! data table with a kind column; the item detail page shows description,
-//! versions and the review action (approve / revert to draft).
+//! RegistrySection — registry items (mcp / integrations) in one data table
+//! with a kind column; the item detail page shows description, versions and
+//! the review action (approve / revert to draft). Skills are customized in
+//! the Skills panel, not the registry section.
 
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -9,8 +10,6 @@ import { useCachedGet } from "../use-cached-api";
 import { ArrowUpRight, Package } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../admin-api";
-import { rpcCall } from "../../../transport";
-import { resolveProjectDir } from "../resolve-project-dir";
 import { Button } from "@guild/ui/components/button";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
@@ -32,11 +31,10 @@ interface VersionRow {
   bundle_sha256: string | null;
 }
 
-const KINDS = ["skill", "mcp", "integration"] as const;
+const KINDS = ["mcp", "integration"] as const;
 type Kind = (typeof KINDS)[number];
 
 const KIND_LABELS: Record<Kind, string> = {
-  skill: "Skill",
   mcp: "MCP server",
   integration: "Integration",
 };
@@ -74,17 +72,15 @@ export default function RegistrySection({
 }
 
 function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }) {
-  const skill = useCachedGet<{ items: ItemRow[] }>("/api/v1/registry/skill");
   const mcp = useCachedGet<{ items: ItemRow[] }>("/api/v1/registry/mcp");
   const integration = useCachedGet<{ items: ItemRow[] }>(
     "/api/v1/registry/integration",
   );
   const items: Record<Kind, ItemRow[] | null> = {
-    skill: skill.data?.items ?? null,
     mcp: mcp.data?.items ?? null,
     integration: integration.data?.items ?? null,
   };
-  const error = skill.error ?? mcp.error ?? integration.error;
+  const error = mcp.error ?? integration.error;
   // null while any kind is still loading so the table shows skeletons, not a
   // premature "empty" state.
   const data = KINDS.every((k) => items[k] !== null)
@@ -182,32 +178,6 @@ function ItemDetail({
     versionsRes.reload();
   };
 
-  const install = async () => {
-    const projectDir = await resolveProjectDir();
-    if (!projectDir) {
-      toast.error("Create a project first", {
-        description: "Skills install into a project's folder; make one in the composer.",
-      });
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await rpcCall("registry.install", {
-        slug,
-        version: item?.latest_version ?? undefined,
-        project_dir: projectDir,
-      });
-      toast.success("Skill installed", { description: `${slug} → .agents/skills` });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      toast.error("Install failed", { description: msg });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const review = async (status: "approved" | "draft") => {
     // The approval must bind to the content the admin inspected: the
     // reviewed version and its bundle hash. Without them the server would
@@ -250,11 +220,6 @@ function ItemDetail({
         back={{ label: "Registry", onClick: onBack }}
         actions={
           <>
-            {kind === "skill" && item?.review_status === "approved" && (
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void install()}>
-                Install
-              </Button>
-            )}
             {item?.review_status !== "approved" ? (
               <Button size="sm" disabled={busy} onClick={() => review("approved")}>
                 Approve
@@ -284,11 +249,6 @@ function ItemDetail({
           <span className="font-mono">
             {item?.latest_version ? `v${item.latest_version}` : "—"}
           </span>
-        </FactCard>
-        <FactCard label="Installability">
-          {item?.review_status === "approved"
-            ? "Installable from the desktop app"
-            : "Not installable until approved"}
         </FactCard>
       </FactGrid>
 
