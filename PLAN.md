@@ -11,6 +11,17 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Rail tabs own URLs; tab switch resets the composer (2026-10-13).**
+  Each sidebar tab now has its own address: `/chats` (default, `/` aliases
+  to it), `/work` (also implied by `/project/<id>`), `/settings` (bare;
+  sectioned `/settings/<section>` URLs remain the settings overlay, whose
+  root-less form now canonicalizes to `/settings/account` because bare
+  `/settings` is the tab). Tab picks navigate via pushRoute, so back/forward
+  walks tab history and reloads/deep links restore the tab from the URL —
+  the localStorage tab persistence is gone. Navigating to a tab root clears
+  the open chat: switching Chats ↔ Work (or any tab) always lands on a fresh
+  composer, never the previously selected chat. `ChatRoute` gained a `tab`
+  field; `chatRoutePath` takes it as a fifth parameter.
 - **Org-wide skills shipped (2026-10-13).** The 17-task plan
   (`docs/superpowers/plans/2026-10-13-org-skills.md`, spec
   `docs/superpowers/specs/2026-10-13-org-skills-design.md`) is complete and

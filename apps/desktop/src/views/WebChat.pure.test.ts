@@ -38,17 +38,21 @@ const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
 describe("parseChatRoute / chatRoutePath", () => {
   const roundTrip = (path: string) => {
     const r = parseChatRoute(path);
-    return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills);
+    return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills, r.tab);
   };
 
   it("round-trips every route shape", () => {
     for (const path of [
-      "/",
+      "/chats",
+      "/chats",
+      "/work",
       "/thread/abc-123",
       "/thread/abc-123/device",
+      "/work/device",
       "/project/p1",
       "/project/p1/thread/abc-123",
-      "/device",
+      "/chats/device",
+      "/work/device",
       "/settings",
       "/settings/models",
       "/settings/integrations/my-slug",
@@ -61,6 +65,28 @@ describe("parseChatRoute / chatRoutePath", () => {
     ]) {
       expect(roundTrip(path)).toBe(path);
     }
+    // "/" is an alias for the Chats tab; the canonical address is /chats
+    expect(chatRoutePath(parseChatRoute("/").chatId, null, null, null, parseChatRoute("/").tab)).toBe("/chats");
+  });
+
+  it("parses the rail tabs' own addresses", () => {
+    // each panel tab owns a top-level URL; a tab root is a fresh chat
+    expect(parseChatRoute("/chats")).toMatchObject({ chatId: null, tab: "chats" });
+    expect(parseChatRoute("/work")).toMatchObject({ chatId: null, tab: "work" });
+    expect(parseChatRoute("/settings")).toMatchObject({
+      chatId: null,
+      overlay: null,
+      tab: "settings",
+    });
+    // a project filter implies the Work tab
+    expect(parseChatRoute("/project/p1")).toMatchObject({ projectId: "p1", tab: "work" });
+    // sectioned settings URLs are the overlay, not the tab
+    expect(parseChatRoute("/settings/models")).toMatchObject({
+      overlay: { kind: "settings", section: "models", detail: null },
+      tab: "chats",
+    });
+    // everything else defaults to the Chats tab
+    expect(parseChatRoute("/thread/x")).toMatchObject({ tab: "chats" });
   });
 
   it("parses every skills page state; skills is chat-independent and top-level", () => {
@@ -113,16 +139,19 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: null,
       overlay: null,
       skills: null,
+      tab: "chats",
     });
     expect(parseChatRoute("/thread/x/device")).toEqual({
       chatId: "x",
       projectId: null,
+      tab: "chats",
       overlay: { kind: "device" },
       skills: null,
     });
     expect(parseChatRoute("/settings/integrations/a/b")).toEqual({
       chatId: null,
       projectId: null,
+      tab: "chats",
       overlay: { kind: "settings", section: "integrations", detail: "a/b" },
       skills: null,
     });
@@ -132,12 +161,14 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: null,
       overlay: null,
       skills: null,
+      tab: "chats",
     });
     expect(parseChatRoute("")).toEqual({
       chatId: null,
       projectId: null,
       overlay: null,
       skills: null,
+      tab: "chats",
     });
     // a detail carrying an encoded slash parses to the full id and the
     // rebuilt path is parse-stable from there on
@@ -159,12 +190,14 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: "p1",
       overlay: null,
       skills: null,
+      tab: "work",
     });
     expect(parseChatRoute("/project/p1/thread/c1")).toEqual({
       chatId: "c1",
       projectId: "p1",
       overlay: null,
       skills: null,
+      tab: "work",
     });
     // a bare /thread/<id> has no project filter (deep link)
     expect(parseChatRoute("/thread/c1").projectId).toBeNull();
@@ -174,6 +207,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       projectId: null,
       overlay: null,
       skills: null,
+      tab: "chats",
     });
   });
 });

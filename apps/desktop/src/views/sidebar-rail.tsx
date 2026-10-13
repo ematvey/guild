@@ -14,34 +14,12 @@ import { IS_TAURI } from "../transport";
 
 export type SidebarTab = "chats" | "work" | "skills" | "settings";
 
-export const SIDEBAR_TAB_KEY = "guild.sidebarTab";
-
 const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "chats", label: "Chats", icon: MessageSquare },
   { id: "work", label: "Work", icon: FolderKanban },
   { id: "skills", label: "Skills", icon: Package },
   { id: "settings", label: "Settings", icon: Settings },
 ];
-
-/** The persisted tab, or "chats" for a missing/invalid value. */
-export function storedSidebarTab(): SidebarTab {
-  try {
-    const raw = localStorage.getItem(SIDEBAR_TAB_KEY);
-    return raw === "chats" || raw === "work" || raw === "skills" || raw === "settings" ? raw : "chats";
-  } catch {
-    return "chats";
-  }
-}
-
-/** Persists the tab; private-mode browsers may refuse writes, which is fine
- * (the tab just resets next session). */
-export function saveSidebarTab(tab: SidebarTab): void {
-  try {
-    localStorage.setItem(SIDEBAR_TAB_KEY, tab);
-  } catch {
-    // storage unavailable — keep the in-memory tab only
-  }
-}
 
 export function SidebarRail({
   activeTab,
