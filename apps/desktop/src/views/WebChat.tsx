@@ -2078,6 +2078,22 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     ta.current?.focus();
   };
 
+  /** The open chat is gone server-side (a sync hits "no such chat"): fall
+   * back to a fresh chat silently, carrying the composer text over so a
+   * resend just creates a new chat. Held in a ref because the socket effect
+   * captures callbacks once and must not see a stale route. */
+  const recoverMissingChat = () => {
+    const dead = openChatIdRef.current;
+    if (dead) {
+      const text = readDraft(draftStorage, dead);
+      if (text) writeDraft(draftStorage, null, text);
+      writeDraft(draftStorage, dead, "");
+    }
+    newChat();
+  };
+  const recoverMissingChatRef = useRef(recoverMissingChat);
+  recoverMissingChatRef.current = recoverMissingChat;
+
   /** Sidebar: new chat inside a project (the project row's hover "+").
    * Pre-picks the project so the composer binds the chat to it on send. The
    * chatId switch this triggers resets the pick per-chat — scratchPickRef
@@ -2157,6 +2173,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       onError: (message) => {
         if (message === "frames dropped — resync") {
           socketRef.current?.resync();
+        } else if (message === "no such chat" && openChatIdRef.current) {
+          // The open chat no longer exists (stale deep link, chat deleted
+          // elsewhere, server store reset): drop into a fresh chat instead
+          // of showing an error the user cannot act on.
+          recoverMissingChatRef.current();
         } else {
           setThreadLoading(false);
           toast.error(message);
