@@ -31,6 +31,14 @@ export const FIELD_KINDS = ["string", "text", "number", "boolean", "secret"];
 const TOOL_CLASSES = ["read", "write", "admin"];
 const AUTH_KINDS = ["org_secret", "org_secret_impersonated", "per_user_token"];
 
+/** Collapses a manifest description to one line: all whitespace runs
+ *  (newlines a multi-line SKILL.md frontmatter scalar or a pasted editor
+ *  field carries) become single spaces. Descriptions render one line and
+ *  feed one-line index entries, so they never store line breaks. */
+export function singleLineDescription(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 /** serde Debug render of a FieldSpec (feeds the settings error messages). */
 function debugField(f: FieldSpec): string {
   const opt = (v: unknown): string =>
