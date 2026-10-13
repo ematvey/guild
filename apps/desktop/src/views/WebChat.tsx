@@ -2490,6 +2490,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       <WorkPanel
         grouping={grouping}
         projects={projects}
+        machines={machines}
         chatId={chatId}
         onOpenChat={openChat}
         onCollapse={sidebarCollapse}
