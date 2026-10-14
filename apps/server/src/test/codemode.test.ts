@@ -179,6 +179,10 @@ describe("codemode over the chat loop", () => {
       expect(system).toContain("Tools scripts can call (`await tools.<name>(args)`)");
       expect(system).toContain("### `read`");
       expect(system).toContain("### `bash`");
+      // The guild notes section: the globals rule that stops the
+      // `tools.searchTools` misread weaker models make.
+      expect(system).toContain("Codemode rules:");
+      expect(system).toContain("NEVER as `tools.searchTools`");
       // The codemode declaration itself is the section's priciest entry and
       // the budget drops it first — the tool description carries the
       // environment details instead.

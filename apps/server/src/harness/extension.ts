@@ -19,6 +19,15 @@ export function buildSystemPrompt(orgPrompt: string | null | undefined): string 
   return `${persona} You have tools (read, write, edit, bash) that execute on the Guild server. Use them to inspect and change files before answering anything that could be about files.`;
 }
 
+/** The codemode usage notes: what the shipped tool description leaves easy
+ *  to misread — the discovery helpers are sandbox GLOBALS, not members of
+ *  `tools`, and weaker models generalize `tools.<name>` onto them. */
+export const CODEMODE_NOTES_SECTION_TEXT = [
+  "Codemode rules:",
+  "- `searchTools`, `ALL_TOOLS`, `describeTool`, `describeNamespace`, `store`, `load`, `text`, `image`, `console`, and `exit` are sandbox globals. Call them bare (`await searchTools(\"query\")`), NEVER as `tools.searchTools` — only the conversation's real tools live on `tools`.",
+  "- The `code` parameter is the raw script body: never wrapped in a code fence or quotes.",
+].join("\n");
+
 export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** Org id → stored persona lookup (org_kv.assistant_system_prompt). */
   orgPrompt(orgId: string): Promise<string | null>;
@@ -57,10 +66,16 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
       return rendered ?? undefined;
     },
   };
+  const codemodeNotes: PromptSection<ToolRegistration> = {
+    key: "codemode-notes",
+    async render() {
+      return CODEMODE_NOTES_SECTION_TEXT;
+    },
+  };
   return defineExtension({
     name: "guild",
     tools: deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools(),
-    sections: [section, skillsSection],
+    sections: [section, skillsSection, codemodeNotes],
     hooks: [createApprovalGate(deps)],
   });
 }
