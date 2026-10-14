@@ -84,9 +84,14 @@ describe("SkillRuntime.invocationDirective", () => {
   });
 
   it("returns null (never throws) when the registry read fails", async () => {
-    const broken = runtime(() => {
-      throw new Error("down");
-    });
+    const broken = new SkillRuntime({
+      log: { warn: () => {} },
+      registry: {
+        searchSkills: async () => {
+          throw new Error("down");
+        },
+      },
+    } as unknown as SkillRuntimeDeps);
     await expect(broken.invocationDirective("org-1", "/sql-explorer")).resolves.toBeNull();
   });
 });
