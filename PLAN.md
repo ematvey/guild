@@ -11,6 +11,19 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Bindings compile in place; @guild/protocol exports an identity map
+  (2026-10-14).** The NodeNext-consuming server could not actually resolve
+  `@guild/protocol/ThreadEvent.js`: the .js→.ts substitution only applies to
+  relative imports, never bare package subpaths through node_modules. The
+  package now exports an identity map (`"./*": "./*"` — the import subpath
+  already carries the .js suffix; a `./*.js` target would double it).
+  `check-bindings.sh` and the image build compile the generated .ts in place
+  (sibling .js + .d.ts, gitignored; sources stay the single source of
+  truth): tsc resolves types through the .d.ts siblings, node at runtime
+  through the real .js. The image's runtime stage copies the bindings
+  package (node_modules/@guild/protocol is a symlink into it). Desktop is
+  unaffected (extensionless relative imports via vite).
+
 - **Type single-sourcing: hub consumes generated protocol bindings; registry
   manifest moved into protocol (2026-10-14).** The hub hand-mirrored Rust
   protocol types in three places and the mirrors had drifted (the TS
