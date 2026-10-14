@@ -23,10 +23,12 @@ import {
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createModels, type MutableModels, type UserMessage } from "@earendil-works/pi-ai";
 import { mkdir } from "node:fs/promises";
 import type { Logger } from "pino";
+import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client.js";
 import { applyPostgresMigrations, PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
 import type { PlatformPool } from "../platform/db.js";
 import { applyPlatformMigrations } from "../platform/migrations.js";
@@ -134,6 +136,10 @@ export class GuildRuntime {
   /** The codemode scripts' QuickJS sandbox (one per process; a worker
    *  thread per script, 300 s deadline, no memory cap beyond wasm32). */
   private readonly codemodeSandbox = new CodemodeSandbox();
+  /** Server-side tool sandboxes (GUILD_SANDBOX=runner); null otherwise. */
+  private readonly sandboxes: SandboxPool | null;
+  /** Sandbox key → chat id, for the connect-time skill materialization. */
+  private readonly sandboxChats = new Map<string, string>();
 
   constructor(
     private readonly config: Config,
@@ -143,6 +149,17 @@ export class GuildRuntime {
     private readonly hub?: MachineDispatchHost,
     private readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">,
   ) {
+    this.sandboxes =
+      config.sandbox.mode === "runner"
+        ? new SandboxPool({
+            runner: new RunnerClient(config.sandbox.runnerUrl, config.sandbox.runnerToken),
+            log,
+            onConnected: async (target, env) => {
+              const chatId = this.sandboxChats.get(target.key);
+              if (chatId !== undefined) await this.materializeSandboxSkills(chatId, env);
+            },
+          })
+        : null;
     this.models = createModels();
     this.registry = createRegistry();
     this.threads = new ThreadStore(pool);
@@ -177,7 +194,7 @@ export class GuildRuntime {
         return { orgId: owner.org_id, userId: owner.user_id, role: res.rows[0]?.role ?? "member" };
       },
       executorKind: (conversationId) => this.executorKind(conversationId),
-      conversationDir: (conversationId, orgId) => this.dirForConversation(conversationId, orgId),
+      conversationEnv: (conversationId, orgId) => this.envForConversation(conversationId, orgId),
       materialize: (args) => this.materializeInstalledSkill(args),
     });
     this.integrationsRuntime = new IntegrationsRuntime(
@@ -308,16 +325,58 @@ export class GuildRuntime {
     return null;
   }
 
-  /** The conversation's server-side dir (the SkillRuntime deps hook): an
-   *  agent session's workspace dir when one is bound, the per-conversation
-   *  sandbox otherwise. */
-  private async dirForConversation(conversationId: number, orgId: string): Promise<string> {
+  /** The conversation's server-side sandbox: an agent session's workspace
+   *  (`workspaces/<org>/<name>`) when one is bound, the per-conversation
+   *  chat dir (`chats/<org>/<conversationId>`) otherwise. `hostDir` is
+   *  where the in-process executor keeps it (tests/dev). */
+  private async sandboxTarget(conversationId: number, orgId: string): Promise<SandboxTarget & { hostDir: string; chatId: string | null }> {
     const chatId = await this.chatOfConversation(conversationId);
     if (chatId !== null) {
       const workspace = await this.agentSessions.workspaceForChat(orgId, chatId);
-      if (workspace !== null) return `${this.config.dataDir}/workspaces/${orgId}/${workspace}`;
+      if (workspace !== null) {
+        return {
+          key: `ws:${orgId}:${workspace}`,
+          subpath: `workspaces/${orgId}/${workspace}`,
+          hostDir: `${this.config.dataDir}/workspaces/${orgId}/${workspace}`,
+          chatId,
+        };
+      }
     }
-    return `${sandboxRoot()}/${conversationId}`;
+    return {
+      key: `chat:${orgId}:${conversationId}`,
+      subpath: `chats/${orgId}/${conversationId}`,
+      hostDir: `${sandboxRoot()}/${conversationId}`,
+      chatId,
+    };
+  }
+
+  /** The execution env for a conversation's server-side tools (the
+   *  SkillRuntime deps hook and the harness env factory). Sandboxed
+   *  (runner), in-process (tests/dev), or refused (disabled). */
+  private async envForConversation(conversationId: number, orgId: string, opts: { materialize?: boolean } = {}): Promise<ExecutionEnv> {
+    const target = await this.sandboxTarget(conversationId, orgId);
+    switch (this.config.sandbox.mode) {
+      case "runner": {
+        if (target.chatId !== null) this.sandboxChats.set(target.key, target.chatId);
+        return this.sandboxes!.envFor({ key: target.key, subpath: target.subpath });
+      }
+      case "inprocess-unsafe": {
+        // NodeExecutionEnv.exec requires an existing cwd; the dir is
+        // created lazily on first tool use.
+        await mkdir(target.hostDir, { recursive: true });
+        const env = new NodeExecutionEnv({ cwd: target.hostDir });
+        if (opts.materialize && target.chatId !== null) await this.materializeSandboxSkills(target.chatId, env);
+        return env;
+      }
+      case "disabled":
+        throw new Error("server-side tools are disabled: no sandbox runner is configured (GUILD_SANDBOX_RUNNER_URL)");
+    }
+  }
+
+  /** Removes a conversation's sandbox container (its files stay on the
+   *  volume); a no-op outside runner mode. */
+  async removeSandbox(target: SandboxTarget): Promise<void> {
+    await this.sandboxes?.remove(target);
   }
 
   /** Where this conversation's tools execute — the env factory and the
@@ -341,11 +400,11 @@ export class GuildRuntime {
    *  installed org skills land under the server-side executor dir before
    *  the turn's tools run. Never throws — a broken bundle or a store
    *  failure is logged and the turn proceeds without the skill files. */
-  private async materializeSandboxSkills(chatId: string, dir: string): Promise<void> {
+  private async materializeSandboxSkills(chatId: string, env: ExecutionEnv): Promise<void> {
     try {
       const owner = await this.chats.ownerOf(chatId);
       if (owner === null) return;
-      await this.skillsRuntime.materializeIntoSandbox(owner.org_id, owner.user_id, dir);
+      await this.skillsRuntime.materializeIntoSandbox(owner.org_id, owner.user_id, env);
     } catch (error) {
       this.log.warn({ err: error, chatId }, "skill materialization failed");
     }
@@ -360,8 +419,8 @@ export class GuildRuntime {
     slug: string;
     version: string;
   }): Promise<void> {
-    const dir = await this.dirForConversation(args.conversationId, args.orgId);
-    await this.skillsRuntime.materializeSkill(args.orgId, args.slug, args.version, dir);
+    const env = await this.envForConversation(args.conversationId, args.orgId);
+    await this.skillsRuntime.materializeSkill(args.orgId, args.slug, args.version, env);
   }
 
   /** Idempotent start: migrations, harness open, watches for every mapped
@@ -426,21 +485,19 @@ export class GuildRuntime {
             dispatch: this.dispatch()!,
           });
         }
-        if (kind === "server") {
-          const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
-          const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-          const workspace = await this.agentSessions.workspaceForChat(chat.rows[0]!.org_id, chatId);
-          const dir = `${this.config.dataDir}/workspaces/${chat.rows[0]!.org_id}/${workspace}`;
-          await this.materializeSandboxSkills(chatId, dir);
+        // Agent-session workspaces and plain chats: the server-side
+        // sandbox (envForConversation picks runner / in-process / refused).
+        const chatId = await this.chatOfConversation(Number(target.conversationId));
+        if (chatId === null) {
+          // Unmapped conversations have no org to sandbox under; only the
+          // in-process executor serves them.
+          if (this.config.sandbox.mode !== "inprocess-unsafe") throw new Error("no chat is bound to this conversation");
+          const dir = `${sandboxRoot()}/${target.conversationId}`;
+          await mkdir(dir, { recursive: true });
           return new NodeExecutionEnv({ cwd: dir });
         }
-        const sandboxDir = `${sandboxRoot()}/${target.conversationId}`;
-        // NodeExecutionEnv.exec requires an existing cwd; the sandbox is
-        // created lazily on first tool use.
-        await mkdir(sandboxDir, { recursive: true });
-        const chatId = await this.chatOfConversation(Number(target.conversationId));
-        if (chatId !== null) await this.materializeSandboxSkills(chatId, sandboxDir);
-        return new NodeExecutionEnv({ cwd: sandboxDir });
+        const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
+        return this.envForConversation(Number(target.conversationId), chat.rows[0]!.org_id, { materialize: true });
       },
       onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
     }, BACKGROUND_CONTEXT);
@@ -636,6 +693,7 @@ export class GuildRuntime {
     if (this.harness) await this.harness.close(BACKGROUND_CONTEXT).catch(() => {});
     if (this.storage) await this.storage.close(BACKGROUND_CONTEXT).catch(() => {});
     await this.codemodeSandbox.close().catch(() => {});
+    await this.sandboxes?.close().catch(() => {});
   }
 }
 

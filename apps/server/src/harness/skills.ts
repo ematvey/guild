@@ -12,8 +12,9 @@
 // put, and the org event — the arch layers forbid importing the HTTP
 // module from a service, so the shape is kept in step by convention.
 
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { createHash } from "node:crypto";
 import { Type } from "typebox";
 import {
@@ -38,6 +39,12 @@ import type { MachineRequestResult } from "../hub/index.js";
 import type { TeamStore } from "../platform/store/teams.js";
 import type { ExecutorKind } from "../machines/dispatch.js";
 
+/** The registry's slug shape (registry-manifest validateManifest): every
+ *  slug the skill tools touch becomes a path segment. */
+export function validSkillSlug(slug: string): boolean {
+  return /^[a-z0-9_-]{1,64}$/.test(slug);
+}
+
 export interface SkillRuntimeDeps {
   log: { warn(message: string): void };
   registry: Pick<
@@ -59,10 +66,11 @@ export interface SkillRuntimeDeps {
   /** Where the conversation's tools execute (machine dispatch vs the
    *  server-side workspace/sandbox). */
   executorKind(conversationId: number): Promise<ExecutorKind>;
-  /** The server-side directory the conversation's files live under (the
+  /** The execution env the conversation's server-side files live in (the
    *  agent-session workspace for executor "server", the per-conversation
-   *  sandbox otherwise); the push path reads `skills/<slug>` under it. */
-  conversationDir(conversationId: number, orgId: string): Promise<string>;
+   *  sandbox otherwise), rooted at its cwd; the read/push paths read
+   *  `skills/<slug>` under it. */
+  conversationEnv(conversationId: number, orgId: string): Promise<ExecutionEnv>;
   /** Task 7's sandbox materialization (install-on-use, executor
    *  "server"); absent → skipped. */
   materialize?(args: {
@@ -449,7 +457,7 @@ export class SkillRuntime {
    *  plus every extra file; identical files are left untouched). Failures
    *  are logged and skipped — a broken bundle never blocks a turn. No
    *  installs, no object store, or a store failure → silent no-op. */
-  async materializeIntoSandbox(orgId: string, userId: string, sandboxRoot: string): Promise<void> {
+  async materializeIntoSandbox(orgId: string, userId: string, env: ExecutionEnv): Promise<void> {
     if (this.deps.objects?.get === undefined) return;
     let installs: Array<{ slug: string; pinned_version: string }>;
     try {
@@ -460,7 +468,7 @@ export class SkillRuntime {
     }
     for (const install of installs) {
       try {
-        await this.materializeSkill(orgId, install.slug, install.pinned_version, sandboxRoot);
+        await this.materializeSkill(orgId, install.slug, install.pinned_version, env);
       } catch (error) {
         this.deps.log.warn(`skill ${install.slug} materialization failed: ${(error as Error).message}`);
       }
@@ -473,7 +481,8 @@ export class SkillRuntime {
    *  The bundle's manifest.json stays out of the sandbox — push_skill
    *  rebuilds it, and a materialized copy would shadow the fresh manifest
    *  on the next push. */
-  async materializeSkill(orgId: string, slug: string, version: string, root: string): Promise<void> {
+  async materializeSkill(orgId: string, slug: string, version: string, env: ExecutionEnv): Promise<void> {
+    if (!validSkillSlug(slug)) throw new Error(`invalid skill slug: ${slug}`);
     const objects = this.deps.objects;
     if (objects?.get === undefined) throw new Error("no object store is configured");
     const meta = await this.deps.registry.getVersionMeta(orgId, "skill", slug, version);
@@ -488,16 +497,13 @@ export class SkillRuntime {
     const parsed = await parseBundle(bundle);
     for (const entry of parsed.entries) {
       if (!entry.file || entry.path === "manifest.json") continue;
-      const dest = path.join(root, "skills", slug, entry.path);
-      let existing: Buffer | undefined;
-      try {
-        existing = await readFile(dest);
-      } catch {
-        existing = undefined;
-      }
-      if (existing !== undefined && existing.equals(entry.content!)) continue;
-      await mkdir(path.dirname(dest), { recursive: true });
-      await writeFile(dest, entry.content!);
+      const dest = path.posix.join(env.cwd, "skills", slug, entry.path);
+      const existing = await env.readBinaryFile(dest, BACKGROUND_CONTEXT);
+      if (existing.ok && Buffer.from(existing.value).equals(entry.content!)) continue;
+      const dir = await env.createDir(path.posix.dirname(dest), { recursive: true }, BACKGROUND_CONTEXT);
+      if (!dir.ok) throw dir.error;
+      const written = await env.writeFile(dest, entry.content!, BACKGROUND_CONTEXT);
+      if (!written.ok) throw written.error;
     }
   }
 
@@ -520,6 +526,7 @@ export class SkillRuntime {
   }
 
   private async read(slug: string, api: ToolExecutionApi): Promise<ToolExecutionResult> {
+    if (!validSkillSlug(slug)) return this.errorResult(`invalid skill slug: ${slug}`);
     const id = await this.identity(api);
     if (id === null) return this.errorResult("no chat is bound to this conversation");
     const { orgId, userId } = id;
@@ -631,6 +638,7 @@ export class SkillRuntime {
   }
 
   private async push(slug: string, api: ToolExecutionApi): Promise<ToolExecutionResult> {
+    if (!validSkillSlug(slug)) return this.errorResult(`invalid skill slug: ${slug}`);
     const id = await this.identity(api);
     if (id === null) return this.errorResult("no chat is bound to this conversation");
     const { orgId, userId, role } = id;
@@ -740,19 +748,25 @@ export class SkillRuntime {
     );
   }
 
-  /** Reads every regular file under a directory into memory (relative
-   *  path → bytes). Throws on a missing or unreadable root — the callers
-   *  decide what absence means (push: an error text; read: fall through
-   *  to the org registry). */
-  private async walkTree(root: string): Promise<Map<string, Buffer>> {
+  /** Reads every regular file under a directory of `env` into memory
+   *  (relative path → bytes); symbolic links are skipped. Throws the env's
+   *  FileError on a missing or unreadable root — the callers decide what
+   *  absence means (push: an error text; read: fall through to the org
+   *  registry). */
+  private async walkTree(env: ExecutionEnv, root: string): Promise<Map<string, Buffer>> {
     const files = new Map<string, Buffer>();
     const walk = async (dir: string, rel: string): Promise<void> => {
-      for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const listed = await env.listDir(dir, BACKGROUND_CONTEXT);
+      if (!listed.ok) throw listed.error;
+      for (const entry of listed.value) {
         const relPath = rel === "" ? entry.name : `${rel}/${entry.name}`;
-        if (entry.isDirectory()) {
-          await walk(path.join(dir, entry.name), relPath);
-        } else if (entry.isFile()) {
-          files.set(relPath, await readFile(path.join(dir, entry.name)));
+        const full = path.posix.join(dir, entry.name);
+        if (entry.kind === "directory") {
+          await walk(full, relPath);
+        } else if (entry.kind === "file") {
+          const bytes = await env.readBinaryFile(full, BACKGROUND_CONTEXT);
+          if (!bytes.ok) throw bytes.error;
+          files.set(relPath, Buffer.from(bytes.value));
         }
       }
     };
@@ -768,12 +782,12 @@ export class SkillRuntime {
     conversationId: number,
     slug: string,
   ): Promise<Map<string, Buffer> | string> {
-    const root = path.join(await this.deps.conversationDir(conversationId, orgId), "skills", slug);
     let files: Map<string, Buffer>;
     try {
-      files = await this.walkTree(root);
+      const env = await this.deps.conversationEnv(conversationId, orgId);
+      files = await this.walkTree(env, path.posix.join(env.cwd, "skills", slug));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      if ((error as { code?: string }).code === "not_found") {
         return `no skills/${slug} directory in this conversation's workspace — create it (with SKILL.md) before pushing`;
       }
       return `could not read skills/${slug}: ${(error as Error).message}`;
@@ -794,8 +808,8 @@ export class SkillRuntime {
     slug: string,
   ): Promise<Map<string, Buffer> | null> {
     try {
-      const root = path.join(await this.deps.conversationDir(conversationId, orgId), "skills", slug);
-      const files = await this.walkTree(root);
+      const env = await this.deps.conversationEnv(conversationId, orgId);
+      const files = await this.walkTree(env, path.posix.join(env.cwd, "skills", slug));
       return files.has("SKILL.md") && files.size > 0 ? files : null;
     } catch {
       return null;

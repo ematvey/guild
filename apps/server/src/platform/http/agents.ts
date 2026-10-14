@@ -4,7 +4,7 @@
 // sandbox the harness's tools execute in (the harness env factory resolves
 // it per tool call through agent_sessions).
 
-import { mkdir, rm } from "node:fs/promises";
+import { lstat, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { ChatsCtx, GatewayCtx, IdentityCtx } from "../contexts.js";
@@ -61,6 +61,13 @@ export function registerAgentSessionRoutes(
         // cannot run must fail the request loudly: silently inheriting a
         // foreign directory is the failure this reclaim exists to prevent.
         try {
+          // A stale sandbox container of the old owner must not survive
+          // into the new session (its files are reclaimed just below).
+          await chats.runtime.removeSandbox({ key: `ws:${user.org_id}:${name}`, subpath: `workspaces/${user.org_id}/${name}` });
+          // rm never follows symlinks while recursing; the root itself is
+          // checked so a planted link cannot redirect the reclaim.
+          const stat = await lstat(dir).catch(() => null);
+          if (stat?.isSymbolicLink()) throw new Error("workspace dir is a symbolic link");
           await rm(dir, { recursive: true, force: true });
         } catch (error) {
           throw ApiError.internal(`orphan workspace dir reclaim failed: ${String(error)}`);

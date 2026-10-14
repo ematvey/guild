@@ -10,6 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import type { Context } from "@earendil-works/chord";
 import { createGuildExtension, type GuildExtensionDeps } from "../../harness/extension.js";
 import { SkillRuntime, type SkillRuntimeDeps } from "../../harness/skills.js";
@@ -85,7 +86,7 @@ function fakeDeps(options: FakeOptions): SkillRuntimeDeps {
     chatOfConversation: async () => "chat-1",
     chatOwner: async () => ({ orgId: ORG, userId: USER, role: "member" }),
     executorKind: async () => null,
-    conversationDir: async () => "/nonexistent",
+    conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
   };
 }
 
