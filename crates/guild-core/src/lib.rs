@@ -1,10 +1,7 @@
-//! Agent loop, tool definitions, provider client types. Shared by the local
-//! app-server (desktop engine) and, later, server-side agent workers.
+//! Tool definitions, approval policy, registry bundle codec. Used by the
+//! local engine (app-server); the durable conversation harness (TS server)
+//! drives the model loop.
 
 pub mod agent;
-pub mod provider;
 pub mod registry;
 pub mod tools;
-pub mod usage;
-
-pub use provider::{ChatChunk, ModelProvider, ProviderChunk, ProviderError, ProviderRequest};
