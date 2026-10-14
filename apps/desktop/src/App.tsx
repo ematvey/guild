@@ -74,6 +74,7 @@ type Profile = {
   role: string;
   display_name?: string;
   avatar_url?: string;
+  onboarded?: boolean;
 };
 
 function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
@@ -484,6 +485,9 @@ function AppInner() {
   const [role, setRole] = useState<string>("member");
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  // Onboarding: the server flags users who finished (or skipped) the
+  // first-run wizard; absent on older payloads = treated as done.
+  const [onboarded, setOnboarded] = useState(true);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -507,6 +511,7 @@ function AppInner() {
         setRole(u?.role ?? "member");
         setDisplayName(u?.display_name ?? null);
         setAvatarUrl(u?.avatar_url ?? null);
+        setOnboarded(u?.onboarded ?? true);
       })
       .finally(() => {
         // Web mode boots with a same-origin collector route; desktop waits
@@ -535,6 +540,7 @@ function AppInner() {
       setRole(profile.role);
       setDisplayName(profile.display_name ?? null);
       setAvatarUrl(profile.avatar_url ?? null);
+      setOnboarded(profile.onboarded ?? true);
     };
     return email ? (
       <WebChat
@@ -543,6 +549,8 @@ function AppInner() {
         displayName={displayName}
         avatarUrl={avatarUrl}
         onSignOut={signOut}
+        onboarded={onboarded}
+        onOnboarded={() => setOnboarded(true)}
       />
     ) : (
       <WebLogin onLoggedIn={onLoggedIn} />

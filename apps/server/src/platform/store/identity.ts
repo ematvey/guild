@@ -29,6 +29,9 @@ export interface UserRow {
   identity_type: string;
   display_name: string | null;
   avatar_url: string | null;
+  /** Set when the user finishes (or skips) the first-run onboarding wizard;
+   *  null = the wizard should show on the next web login. */
+  onboarded_at: Date | null;
   /** The auth generation of the session this row was validated through
    *  (undefined for rows read any other way). Credentials minted by the
    *  request are stamped with it. */
@@ -36,7 +39,7 @@ export interface UserRow {
 }
 
 const USER_COLUMNS =
-  "id, org_id, email, role, identity_type, display_name, avatar_url";
+  "id, org_id, email, role, identity_type, display_name, avatar_url, onboarded_at";
 
 interface UserAuthGenDbRow extends UserRow {
   password_hash: string;
@@ -197,6 +200,10 @@ export class IdentityStore {
       displayName,
       avatarUrl,
     ]);
+  }
+
+  async markOnboarded(userId: string): Promise<void> {
+    await this.pool.query("UPDATE users SET onboarded_at = now() WHERE id = $1 AND onboarded_at IS NULL", [userId]);
   }
 
   /** Password authentication. Returns the user's auth generation, which the

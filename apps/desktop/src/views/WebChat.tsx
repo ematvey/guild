@@ -77,6 +77,7 @@ import {
   type SkillsRoute,
 } from "./skills/skills-route";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
+import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
   attachmentBlobUrl,
   toolArtifactBlobUrl,
@@ -92,6 +93,7 @@ import {
 } from "../transport";
 import {
   apiUrl,
+  apiOnboarded,
   createChat,
   getChatApproval,
   listArchivedChats,
@@ -275,6 +277,10 @@ export function tabPaneLayout(
 ///   /project/<id>/thread/<cid> — open thread within its project view
 ///   /device                    — device-setup dialog, optionally over a
 ///                                thread: /thread/<id>/device
+///   /onboard                   — the onboarding guide dialog (the rail's
+///                                Help/Learn button opens it too); chat-
+///                                independent top-level route any user can
+///                                open. /help deep links alias here.
 ///   /settings[/<section>[/<detail>]]
 ///                              — the Settings tab; the section (and sub-
 ///                                page) always ride in the URL — every
@@ -290,7 +296,7 @@ export function tabPaneLayout(
 ///                                editor in edit or create mode. See
 ///                                skills-route.ts for the state contract.
 /// Back/forward, reloads and deep links all resolve through parseChatRoute.
-type ChatOverlay = { kind: "device" } | null;
+type ChatOverlay = { kind: "device" } | { kind: "onboard" } | null;
 interface ChatRoute {
   chatId: string | null;
   /** Sidebar project filter (deep-linked /project/<id>). */
@@ -342,6 +348,8 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
   if (newChat) parts.shift();
   if (parts[0] === "device")
     return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, settingsSection: null, settingsDetail: null, newChat: false };
+  if (parts[0] === "onboard" || parts[0] === "help")
+    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "onboard" }, skills: null, settingsSection: null, settingsDetail: null, newChat: false };
   if (parts[0] === "settings") {
     // Bare /settings normalizes to the default section (/settings/account,
     // via the pane effect); a section (and optional sub-page detail)
@@ -423,6 +431,11 @@ export const chatRoutePath = (
         : tab === "settings"
           ? "/settings"
           : "/chats";
+  if (overlay?.kind === "onboard") {
+    // Chat-independent top-level route: any thread/project prefix drops.
+    // /help deep links share the address (the guide is the help page).
+    return "/onboard";
+  }
   if (overlay?.kind === "device") {
     // /settings/<seg> parses as a Settings-tab section, so a device dialog
     // pushed over the Settings tab detours through /chats — the dialog is
@@ -1508,6 +1521,12 @@ type WebChatProps = {
   displayName?: string | null;
   avatarUrl?: string | null;
   onSignOut: () => void;
+  /** Web only: false = the user has not completed the first-run onboarding
+   *  wizard yet (server-side onboarded flag). Desktop skips it. */
+  onboarded?: boolean;
+  /** Flips App-level state once onboarding completes, so the wizard
+   *  unmounts without waiting for the next apiMe. */
+  onOnboarded?: () => void;
   /** Desktop multi-workspace: shows the pair/sign-in card over the running
    * app; the login activates the new workspace. Absent on the web. */
   onAddWorkspace?: () => void;
@@ -1542,7 +1561,7 @@ export default function WebChat(props: WebChatProps) {
     </ChatErrorBoundary>
   );
 }
-function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSignOut, onAddWorkspace }: WebChatProps) {
+function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSignOut, onAddWorkspace, onboarded = true, onOnboarded }: WebChatProps) {
   const outgoingScope = `${apiUrl("")}\n${email}`;
   const draftStorage = useMemo(() => scopedDraftStorage(localStorage, outgoingScope), [outgoingScope]);
   const [fileStore] = useState(() => new BrowserSendStore(outgoingScope));
@@ -1766,6 +1785,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // persists the picked mode; the load effect below skips that chat once so
   // the pick survives instead of being refetched back to "default".
   const justCreatedApprovalRef = useRef<string | null>(null);
+  // The chat whose route push should carry the optimistic busy across the
+  // open effect's busy reset: the created thread renders as working (the
+  // seeded send + busy) until the server's generating flag or a submit
+  // failure takes over.
+  const justCreatedBusyRef = useRef<string | null>(null);
   // The account-level approval default (Settings → Approvals), fetched once:
   // the label an unset chat shows on the selector trigger. The server
   // resolves the same value when the turn runs (unset policy = the AI
@@ -1990,6 +2014,16 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     window.history.replaceState(null, "", path);
     setRoute((r) => ({ ...r, settingsSection: "account", settingsDetail: null }));
   }, [route.tab, route.settingsSection, route.overlay, route.skills]);
+
+  // First-run onboarding auto-show: a user the server flags as not yet
+  // onboarded is pushed to /onboard, so the wizard owns the URL like any
+  // other surface (reload lands back in it). replaceState is wrong here —
+  // finishing the wizard navigates forward, and back from /onboard returns
+  // to the pre-login view.
+  useEffect(() => {
+    if (onboarded || route.overlay?.kind === "onboard") return;
+    pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "onboard" } });
+  }, [onboarded, route.overlay, pushRoute]);
 
   // Layout effect: the correction must land before paint, or the new block
   // shows for a frame at the old scroll offset (the reported 1-frame jump).
@@ -2236,7 +2270,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (restored) requestAnimationFrame(autoGrow);
     prevLoadedChatRef.current = chatId;
     loadSeq.current++;
-    setBusy(false);
+    if (chatId !== null && justCreatedBusyRef.current === chatId) justCreatedBusyRef.current = null;
+    else setBusy(false);
     stick.current = true;
     if (!chatId) {
       const opened = reducerRef.current.open(null);
@@ -2440,7 +2475,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
-        if (openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
+        // A first send holds the scratch composer as-is (text visible,
+        // input blocked) until the create responds and the route moves —
+        // clearing here would flash an emptied new-chat screen. The
+        // created() handover below empties the composer at navigation.
+        if (target !== null && openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
       },
     });
     if (command.accepted) { deliveringRef.current.delete(command.id); return; }
@@ -2476,17 +2515,32 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           // its busy until the server's generating flag takes over.
           sendingRef.current = true;
           if (loadSeq.current === mySeq && openChatIdRef.current === command.originChatId) {
-            // Preserve follow-up typing/files entered during chat creation.
-            writeDraft(draftStorage, cid, promptRef.current);
+            // The composer was held (blocked, text visible) on the scratch
+            // surface for the whole create, so no follow-up typing exists:
+            // the sent content travels as the optimistic send below, and
+            // the thread opens with an empty composer.
+            writeDraft(draftStorage, cid, "");
             writeDraft(draftStorage, command.originChatId, "");
-            pendingDraftsRef.current.set(cid, pendingRef.current);
+            pendingDraftsRef.current.set(cid, []);
             pendingDraftsRef.current.set(command.originChatId, []);
-            persistFiles(cid, pendingRef.current);
+            persistFiles(cid, []);
             persistFiles(command.originChatId, []);
+            promptRef.current = "";
+            setPrompt("");
+            setPending([]);
+            requestAnimationFrame(autoGrow);
             if (approvalMode !== "default") {
               justCreatedApprovalRef.current = cid;
               void setChatApproval(cid, approvalMode).catch(() => toast.error("Could not save approval mode"));
             }
+            // Seed the created chat's view with the sent message so the
+            // route push lands straight on the working thread — no
+            // skeleton between the scratch surface and the thread state.
+            setBlocks(reducerRef.current.optimisticSend({ chatId: cid, text: command.text,
+              key: command.id, sentAt: command.sentAt,
+              attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
+            justCreatedBusyRef.current = cid;
+            setBusy(true);
             pushRoute({ chatId: cid, overlay: null });
             void refreshChats();
           }
@@ -2656,6 +2710,13 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || openGenerating;
+  // A first send's create round trip on the scratch surface: the composer
+  // freezes with its text until the route moves to the created thread.
+  const holdingFirstSend = (() => {
+    if (pendingSubmitId === null || chatId !== null) return false;
+    const c = outgoingRef.current.get(pendingSubmitId);
+    return !!c && c.chatId === null && c.originChatId === null;
+  })();
 
   const grouping = useMemo(
     () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) }))),
@@ -2854,6 +2915,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         <SidebarRail
           activeTab={railTab}
           onTabChange={switchTab}
+          onOpenHelp={() =>
+            pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "onboard" } })
+          }
           email={email}
           displayName={displayName}
           avatarUrl={avatarUrl}
@@ -3220,6 +3284,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               // Not disabled while streaming: a disabled focused element
               // blurs to body, and the composer must keep focus/caret
               // during generation (send is guarded by `busy` anyway).
+              // readOnly (not disabled) for the held first send too — the
+              // screen stays frozen with the sent text until navigation.
+              readOnly={holdingFirstSend}
               disabled={models !== null && !model}
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none"
             />
@@ -3434,6 +3501,46 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           if (!o) pushRoute({ overlay: null });
         }}
       />
+
+      {/* Onboarding guide: the rail's Help/Learn button opens it, it lives
+          at /onboard (chat-independent route any user can open, /help deep
+          links alias there), and it auto-shows for users the server flags as
+          not yet onboarded — the auto-push makes the guide own the URL, so a
+          reload lands back in it. It floats over the running UI; closing it
+          from any section marks the server-side flag and returns to chats. */}
+      {(route.overlay?.kind === "onboard" || !onboarded) && (
+        <OnboardingGuide
+          onDone={(exit: OnboardingExit) => {
+            void apiOnboarded();
+            onOnboarded?.();
+            if (exit === "device") {
+              pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "device" } });
+            } else if (exit === "gateway") {
+              pushRoute({
+                chatId: null,
+                projectId: null,
+                overlay: null,
+                skills: null,
+                tab: "settings",
+                settingsSection: "gateway",
+                settingsDetail: null,
+                newChat: false,
+              });
+            } else {
+              // Plain close (Got it, skip, Esc, ✕): /onboard itself always
+              // renders the guide, so closing must leave the route.
+              pushRoute({
+                chatId: null,
+                projectId: null,
+                overlay: null,
+                skills: null,
+                tab: "chats",
+                newChat: false,
+              });
+            }
+          }}
+        />
+      )}
 
       <CreateProjectDialog
         open={createProjectOpen}
