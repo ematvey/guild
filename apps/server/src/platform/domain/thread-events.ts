@@ -18,70 +18,17 @@ import { rustFloat, rustJsonText } from "../provider/sse.js";
 export { uuidv7 } from "../time.js";
 
 // ---------------------------------------------------------------------------
-// Event value types (all optional-carrying fields exactly like the Rust enum)
+// Event value types — generated protocol bindings (protocol::api), single
+// source of truth with the Rust enum (serde internally-tagged snake_case).
 // ---------------------------------------------------------------------------
 
-export interface MessageAttachment {
-  id: string;
-  filename: string;
-  content_type: string;
-  size_bytes: number;
-  modality: string;
-}
+import type { ThreadEvent } from "@guild/protocol/ThreadEvent.js";
+import type { Block } from "@guild/protocol/Block.js";
+import type { MessageAttachment } from "@guild/protocol/MessageAttachment.js";
+import type { UsagePayload } from "@guild/protocol/UsagePayload.js";
+import type { ToolKind } from "@guild/protocol/ToolKind.js";
 
-export interface UsagePayload {
-  tokens_in?: number;
-  tokens_out?: number;
-  cost_usd?: number;
-}
-
-export type Block =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
-  | { type: "tool_call"; id: string; name: string; arguments: string };
-
-export type ThreadEvent =
-  | { type: "user_message"; content: string; attachments: MessageAttachment[] }
-  | { type: "system_message"; content: string }
-  | {
-      type: "assistant_message";
-      turn: number;
-      step: number;
-      blocks: Block[];
-      usage: UsagePayload;
-      model: string;
-      interrupted?: boolean;
-    }
-  | {
-      type: "tool_result";
-      turn: number;
-      step: number;
-      call_id: string;
-      name: string;
-      content: string;
-      is_error: boolean;
-      meta?: unknown;
-      images: string[];
-      kind?: string;
-      artifact_id?: string;
-    }
-  | {
-      type: "compaction";
-      summary: string;
-      tokens_before?: number;
-      keep_last?: number;
-      model?: string;
-      usage?: UsagePayload;
-    }
-  | { type: "approval_request"; call_id: string; name: string; arguments: string }
-  | {
-      type: "approval_decision";
-      call_id: string;
-      approved: boolean;
-      reason?: string;
-      expired: boolean;
-    }
-  | { type: "turn_error"; message: string };
+export type { Block, MessageAttachment, ThreadEvent, UsagePayload };
 
 /** One persisted thread event as the store returns it. */
 export interface ThreadEventRow {
@@ -330,7 +277,7 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
         is_error: Boolean(payload["is_error"]),
         ...(payload["meta"] === undefined || payload["meta"] === null ? {} : { meta: payload["meta"] }),
         images: Array.isArray(payload["images"]) ? (payload["images"] as string[]) : [],
-        ...(payload["kind"] === undefined ? {} : { kind: String(payload["kind"]) }),
+        ...(payload["kind"] === undefined ? {} : { kind: payload["kind"] as ToolKind }),
         ...(payload["artifact_id"] === undefined ? {} : { artifact_id: String(payload["artifact_id"]) }),
       };
     case "compaction":
