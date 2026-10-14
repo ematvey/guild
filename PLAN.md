@@ -137,7 +137,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   the `sandbox-runner` service, which alone holds the Docker socket and
   fixes the container spec. An in-sandbox agent wraps
   `NodeExecutionEnv{cwd:/workspace}`, reached over the exec stdio stream
-  (`apps/server/src/sandbox/`). Network: an internal network whose only
+  (`docs/reviews/2026-10-04-ts-server-port/src/sandbox/`). Network: an internal network whose only
   exit is a squid egress proxy (registry allowlist, private/host
   addresses denied) — addressed by IP, since Docker's embedded DNS fails
   under gVisor. Package installs persist in `/workspace/.sandbox-home`.
@@ -321,7 +321,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   Tauri-only local-machine group); composer mentions cover local + installed
   org skills only; settings' SkillsSection deleted (panel owns skill
   customization), RegistrySection keeps mcp/integration. Startup now applies
-  `apps/server/migrations` via `schema_history` (the old by-hand ritual is
+  `docs/reviews/2026-10-04-ts-server-port/migrations` via `schema_history` (the old by-hand ritual is
   retired). Branch `skills`, E2E verified live on :18080 (create -> read ->
   install-on-use pin -> panel counts -> activity feed).
 
@@ -331,7 +331,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   server-side sandbox, usage sink verified, wire parity diffed against the
   retired Rust image on a loopback port: all GET surfaces identical except
   TS's additive `org_id`/`user_id` on projects). Migrations moved to
-  `apps/server/migrations` (the TS test harnesses were the only remaining
+  `docs/reviews/2026-10-04-ts-server-port/migrations` (the TS test harnesses were the only remaining
   reader of `crates/server/migrations`); the root `Dockerfile` (Rust image)
   deleted; provenance comments naming the Rust tree cleaned across the TS
   sources; README/AGENTS/deploy docs updated. Consequences: the dev stack
@@ -459,7 +459,7 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 - **Rust tree deletion prepared — `crates/server` fully decoupled (2026-10-04).**
   Two lanes. **TS side (direct, commit `f62a520`)**: exec-policy base rules
-  relocated to `apps/server/assets/exec_policy_base.rules` (matcher default,
+  relocated to `docs/reviews/2026-10-04-ts-server-port/assets/exec_policy_base.rules` (matcher default,
   Dockerfile build+runtime copies, tests updated) — the TS server no longer
   reads anything from the Rust tree at build or runtime. **Rust side (lane
   R9, `prep/rust-removal`, commits `0891b73`/`dc0df6e`/`06e5b14`)**:
@@ -474,7 +474,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   (0 boot errors). **`crates/server/` remains on disk untouched**: deleting
   it is now a pure `git rm` gated on prod cutover + soak (rollback-image
   rebuild and the routines parity reference are the two remaining reasons
-  to keep it until then). Report: `apps/server/R9-REPORT.md`.
+  to keep it until then). Report: `docs/reviews/2026-10-04-ts-server-port/R9-REPORT.md`.
 
 - **M8: integrations chat runtime ported — the missing-tools regression fixed (2026-10-04).**
   The chat-loop integrations runtime was deferred (old decision 8) while the
@@ -496,7 +496,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   journaled; google_workspace left for the user to exercise with their own
   workspace identity. Spec decision 8 revised by this entry (dated
   amendment: integrations runtime in scope). Report:
-  `apps/server/M8-REPORT.md`.
+  `docs/reviews/2026-10-04-ts-server-port/M8-REPORT.md`.
 
 - **TS server architecture refactor: layers + narrow contexts (2026-10-04).**
   Two subagent lanes on `agent-plane` (prompt files + report verdicts, per
@@ -521,7 +521,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   during lane R2 did not recur), dev stack rebuilt from the merged tree
   (`guild-server-ts:latest`), live smoke green: login + chats list + CORS
   preflight 204, 0 error lines in server logs. Lane reports:
-  `apps/server/R1-REFACTOR-REPORT.md`, `apps/server/R2-REFACTOR-REPORT.md`.
+  `docs/reviews/2026-10-04-ts-server-port/R1-REFACTOR-REPORT.md`, `docs/reviews/2026-10-04-ts-server-port/R2-REFACTOR-REPORT.md`.
   Layer rule now: http → services (harness/chats/hub/machines) → DAL
   (platform/store) → infra (db/crypto/time/s3/clickhouse).
 
@@ -558,7 +558,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   live: an agent-session turn wrote a file into the workspace sandbox and
   read it back; the policy correctly blocked shell tools with
   `GUILD_ALLOW_SHELL_TOOLS` unset (Rust parity). Reports:
-  `apps/server/M1-REPORT.md`, `apps/server/M4-REPORT.md`.
+  `docs/reviews/2026-10-04-ts-server-port/M1-REPORT.md`, `docs/reviews/2026-10-04-ts-server-port/M4-REPORT.md`.
 - **M7 retirement landed (2026-10-04).** `apps/server` ported the last
   proxied surfaces on `m7/retire`: integration tool API (list, tools
   listing, execute with the Rust error/audit shapes; built-in connector
@@ -575,7 +575,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   internal — spec decision 8) answer the Rust 404 envelope; compose now
   runs the TS server only (with the `guild_data` volume for
   `$GUILD_DATA_DIR` workspaces). Full evidence + unported-route list +
-  cutover runbook in `apps/server/M7-REPORT.md`. 227 tests green (22
+  cutover runbook in `docs/reviews/2026-10-04-ts-server-port/M7-REPORT.md`. 227 tests green (22
   suites) on disposable `guild_m7_test_*` databases.
 
 - **M6 long tail landed (2026-10-04).** The remaining M6 surfaces run
@@ -590,14 +590,14 @@ not kept here — it lives in git and in `docs/reviews/`.
   faro ingest (exact-byte forward), and the chat-SPA serving (dist now
   built inside `Dockerfile.server-ts` stage `webui`, served from disk;
   golden byte check against the live stack is byte- and header-identical,
-  `apps/server/scripts/m6-web-golden.ts`). Deferred still proxied with
-  reasons in `apps/server/M6-REPORT.md` §3: routines CRUD/internal API
+  `docs/reviews/2026-10-04-ts-server-port/scripts/m6-web-golden.ts`). Deferred still proxied with
+  reasons in `docs/reviews/2026-10-04-ts-server-port/M6-REPORT.md` §3: routines CRUD/internal API
   (spec decision 8), the integration save path + tools listing and the
   script-side `/api/v1/integrations/*` (need the connector ports + MCP
   client; unreachable at M7). 160/160 tests green (sequential file mode —
   parallel lanes exhaust Postgres max_connections on the shared host DB).
 - **M5 hub core landed (2026-10-04).** The `InMemoryHub` seam became the
-  real `LiveHub` (`apps/server/src/hub/`): member/machine registries, 32
+  real `LiveHub` (`docs/reviews/2026-10-04-ts-server-port/src/hub/`): member/machine registries, 32
   socket caps, the 0.5.25 live-slot rule (a live machine slot is held —
   foreign-instance connects are rejected 409, same-instance reconnects
   displace only their own zombie), displacement on re-pair, and
@@ -613,7 +613,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   machine_id moves). Golden WS frames captured from a locally built Rust
   0.5.34 (disposable synthetic DB, not the live stack) and replayed
   byte-compared; 113/113 tests green; report in
-  `apps/server/M5-REPORT.md`. Remaining for later lanes: feed forwarder,
+  `docs/reviews/2026-10-04-ts-server-port/M5-REPORT.md`. Remaining for later lanes: feed forwarder,
   sync frames, tool-result completion, `reconcile_machine_tools` (all
   behind `ctx` seams).
 - **M3 harness + chats cutover landed (2026-10-04).** `apps/server` now runs
@@ -632,7 +632,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   `GET /api/v1/chats/{id}/thread/stream` pushes byte-exact ThreadState
   frames (verified against live Rust member-socket captures); the member WS
   itself stays proxied until M5. The re-runnable thread importer
-  (`npm run import-threads`, `apps/server/src/importer/`) truncates +
+  (`npm run import-threads`, `docs/reviews/2026-10-04-ts-server-port/src/importer/`) truncates +
   rebuilds `durable_*` + the mapping from `thread_events` — tested against
   real anonymized captures (314 events / 4 chats incl. approvals, tool
   loops, a compaction, an empty chat), idempotent rerun verified, CLI
@@ -640,7 +640,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   (`server-rust` runs `GUILD_ROLE=api`). Machines routes stay proxied and
   `machine_online` stays false until M5 (documented deviations).
   95/95 tests green on disposable `guild_m3_test_*` databases; report in
-  `apps/server/M3-REPORT.md`.
+  `docs/reviews/2026-10-04-ts-server-port/M3-REPORT.md`.
 
 - **M2 LLM gateway landed (2026-10-04).** `apps/server` serves the OpenAI
   and Anthropic completion surfaces natively (`/openai/v1/*`,
@@ -653,10 +653,10 @@ not kept here — it lives in git and in `docs/reviews/`.
   synthetic internal uuids for usage attribution — no schema change).
   `/api/v1/gateway/chat*` stays proxied until the M3 chats cutover.
   81/81 tests green on disposable `guild_m2_test_*` databases; report in
-  `apps/server/M2-REPORT.md`.
+  `docs/reviews/2026-10-04-ts-server-port/M2-REPORT.md`.
 
 - **M3 storage core landed early (2026-10-04).** The pi-durable Postgres
-  storage backend (`apps/server/src/storage/postgres/`: durable_\* tables
+  storage backend (`docs/reviews/2026-10-04-ts-server-port/src/storage/postgres/`: durable_\* tables
   per design decision 5, portable core + pg adapter) passes pi-durable's
   full conformance suite (23/23), reopen-across-restart tests, and
   benchmarks. pi-durable 1.0.1 gaps found so far are recorded as a dated
