@@ -394,4 +394,32 @@ describe("member-socket feed", () => {
     );
     browser.end();
   });
+
+  it("the duplex read-mark moves the caller's marker without an HTTP round trip", async () => {
+    const chat = await createChat("read duplex");
+    const eventId = crypto.randomUUID();
+    await stack.env.db.query(
+      "INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, 'user_message', $3)",
+      [eventId, chat.id, JSON.stringify({ type: "user_message", text: "read me" })],
+    );
+    const seq = (
+      await stack.env.db.query<{ seq: string }>("SELECT seq FROM thread_events WHERE id = $1", [eventId])
+    ).rows[0]!.seq;
+
+    const ws = await memberSocket();
+    ws.send(JSON.stringify({ type: "read", chat_id: chat.id }));
+    // The write is async (the socket reader's store call): poll briefly.
+    let marker: { last_read_seq: string } | undefined;
+    for (let i = 0; i < 50 && marker === undefined; i++) {
+      marker = (
+        await stack.env.db.query<{ last_read_seq: string }>(
+          "SELECT last_read_seq FROM chat_reads WHERE chat_id = $1",
+          [chat.id],
+        )
+      ).rows[0];
+      if (marker === undefined) await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(marker?.last_read_seq).toBe(seq);
+    ws.end();
+  });
 });

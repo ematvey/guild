@@ -99,7 +99,6 @@ import {
   listMachines,
   listModels,
   listProjects,
-  markChatRead,
   updateChat,
   updateProject,
   createPairingToken,
@@ -2109,7 +2108,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       gcDrafts(draftStorage, keep);
     }
   }, [chats, archivedChats]);
-  const socketRef = useRef<{ resync: () => void; stop: () => void } | null>(null);
+  const socketRef = useRef<ReturnType<typeof startSocket> | null>(null);
   const syncingChatsRef = useRef(new Map<string, number>());
 
   const settleOutgoing = (command: OutgoingCommand) => {
@@ -2179,7 +2178,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       const lastEventId = state.events[state.events.length - 1]?.id;
       if (lastEventId !== undefined && lastReadMarkRef.current.get(cid) !== lastEventId) {
         lastReadMarkRef.current.set(cid, lastEventId);
-        void markChatRead(cid);
+        socketRef.current?.markRead(cid);
         setChatStatus((prev) =>
           prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
         );
@@ -2343,10 +2342,16 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           setThreadLoading(false);
         }
       },
-      // Content is replaced only by sequenced ThreadState, never by raw deltas.
+      // Content is replaced by sequenced ThreadState at turn boundaries;
+      // within a live turn the cheap frames render the stream (deltas, tool
+      // status) through the reducer's frame merge.
       onFrame: (frame) => {
-        if (frame.chat_id === openChatIdRef.current && frame.event.type === "error") {
-          toast.error(frame.event.message ?? "Model error");
+        if (frame.chat_id === openChatIdRef.current) {
+          const applied = reducerRef.current.applyFrame(frame.event);
+          if (!applied.stale) setBlocks(applied.blocks);
+          if (frame.event.type === "error") {
+            toast.error(frame.event.message ?? "Model error");
+          }
         }
       },
       onError: (message) => {
