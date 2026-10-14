@@ -8,21 +8,26 @@ import type { ChatSummary, DirEntry, Project } from "../../transport";
 // ---- sidebar grouping ----
 
 export interface SidebarGrouping {
-  /** Every chat in list (recency) order — the Recents list never filters. */
+  /** Stateless (projectless) chats in list order — the Recents list; chats
+   * bound to a project live only under that project's row. */
   visible: ChatSummary[];
   /** Each project's chats in list order — the fold-out under the project
-   * row (they duplicate Recents rows by design). */
+   * row (Recents does not repeat them). */
   chatsByProject: Record<string, ChatSummary[]>;
 }
 
 export function sidebarGrouping(chats: ChatSummary[] | null): SidebarGrouping {
   const list = chats ?? [];
   const chatsByProject: Record<string, ChatSummary[]> = {};
+  const stateless: ChatSummary[] = [];
   for (const chat of list) {
-    if (!chat.project_id) continue;
+    if (!chat.project_id) {
+      stateless.push(chat);
+      continue;
+    }
     (chatsByProject[chat.project_id] ??= []).push(chat);
   }
-  return { visible: list, chatsByProject };
+  return { visible: stateless, chatsByProject };
 }
 
 /** The project fold-out opens showing this many chats, newest first. */

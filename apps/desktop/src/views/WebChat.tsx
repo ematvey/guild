@@ -1,15 +1,17 @@
-import { Component, useCallback, useEffect, useMemo, useRef, useState,
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type ErrorInfo, type ReactNode, type RefObject } from "react";
 import { applyMention, detectMention } from "../lib/skill-mention";
 import { daemonFs, listSkills } from "../lib/context";
+import { fetchInstalls } from "./skills/skills-api";
 import { openExternal } from "../lib/open-external";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 // Client-side tools need the desktop runtime (local files, shell); in a plain
 // browser they stay pending until the server-side timeout releases the turn.
-import Markdown, { Components } from "react-markdown";
+import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "./markdown";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import {
   ArrowUp,
@@ -17,7 +19,6 @@ import {
   ShieldCheck,
   Brain,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
   Check,
   Copy,
@@ -31,7 +32,6 @@ import {
   Image as ImageIcon,
   Loader2,
   Music,
-  PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Search,
@@ -42,10 +42,6 @@ import {
   FileDown,
   TriangleAlert,
   Wrench,
-  Archive,
-  ArchiveRestore,
-  EllipsisVertical,
-  Pencil,
   type LucideIcon,
 } from "lucide-react";
 
@@ -61,27 +57,30 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { toast } from "sonner";
-import { UserBadge } from "../components/user-badge";
 import { WorkingIndicator } from "@guild/ui/components/working-indicator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
-import { Separator } from "@guild/ui/components/separator";
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
-import { SettingsWindow } from "./settings/SettingsWindow";
+import { SettingsSectionPane } from "./settings/settings-sections";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
-import { ProjectPickerDialog } from "./projects/ProjectPickerDialog";
-import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, PROJECT_PAGE_INITIAL, PROJECT_PAGE_STEP, sidebarGrouping, type PickedProject } from "./projects/projects";
+import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
+import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "./sidebar-contents";
+import { SkillsPanel } from "./skills/SkillsPanel";
+import {
+  clampSkillsRoute,
+  SKILLS_CATALOG,
+  type SkillsRoute,
+} from "./skills/skills-route";
+import { SidebarRail, type SidebarTab } from "./sidebar-rail";
 import {
   attachmentBlobUrl,
   toolArtifactBlobUrl,
   rpcCall,
-  IS_TAURI,
   machineId,
   postApproval,
   sendChatNoStream,
@@ -130,7 +129,6 @@ import {
   readDraft,
   writeDraft,
 } from "../lib/drafts";
-import { WorkspaceMenuItems } from "./workspace-menu";
 import { BrowserSendStore } from "../lib/browser-send-store";
 import { clearCommands, detachCommandDraft, selectRestoredCommand, captureCommand, forgetCommand, matchesCommandDraft, prepareOnSendingMachine, recoveryDraft, rememberCommand, restoreCommands, submitCommand,
   type DraftAttachment, type OutgoingCommand } from "../lib/outgoing-command";
@@ -228,31 +226,64 @@ export function pruneStopping(
   return changed ? next : null;
 }
 
+/** Layout mode for one sidebar tab (desktop rail). The skills tab is a
+ *  full main-column page swap: NO sidebar aside at all — the skills page
+ *  replaces the chat thread — so picking it must not touch the persisted
+ *  sidebar collapsed state either (leaving the tab restores the sidebar
+ *  exactly as it was). Every other tab keeps the resizable panel next to
+ *  the chat, and a tab pick re-expands a collapsed panel. Mobile has no
+ *  rail aside at all (chats-only drawer) and always shows the chat. */
+export function tabPaneLayout(
+  tab: SidebarTab,
+  isMobile: boolean,
+): { aside: boolean; mainPane: "chat" | "skillsPage"; expandsPanel: boolean } {
+  if (isMobile) return { aside: false, mainPane: "chat", expandsPanel: false };
+  if (tab === "skills") return { aside: false, mainPane: "skillsPage", expandsPanel: false };
+  return { aside: true, mainPane: "chat", expandsPanel: true };
+}
+
 
 /// URL-driven navigation: the pathname is the single source of truth for
 /// where the user is. Routes:
 ///   /                          — new chat (recents view)
 ///   /thread/<id>               — open thread
-///   /project/<id>              — sidebar filtered to one project
+///   /chats                      — the Chats tab (default; a bare chat id
+///                                keeps its short form)
+///   /work                       — the Work tab
+///   /project/<id>              — sidebar filtered to one project (Work tab)
 ///   /project/<id>/thread/<cid> — open thread within its project view
 ///   /device                    — device-setup dialog, optionally over a
 ///                                thread: /thread/<id>/device
-///   /settings[/<section>[/<detail>]] — settings overlay (top-level; the
-///                                thread underneath stays loaded in app
-///                                state). <detail> addresses a sub-page
-///                                inside a section: an integration slug,
-///                                a user/team id or "new", a model route
-///                                or "add", a registry kind/slug.
+///   /settings                   — the Settings tab (bare; the section lives
+///                                in pane state)
+///   /settings/<section>[/<detail>] — the Settings tab with that section (and
+///                                sub-page) preselected — a deep link only;
+///                                tab picks navigate to bare /settings.
+///                                <detail> addresses a sub-page inside a
+///                                section: an integration slug, a user/team
+///                                id or "new", a model route or "add", a
+///                                registry kind/slug.
+///   /skills[/activity|/machine|/<slug>[/edit] | /new]
+///                              — the skills page (top-level; replaces the
+///                                main pane): tab views, a detail page, the
+///                                editor in edit or create mode. See
+///                                skills-route.ts for the state contract.
 /// Back/forward, reloads and deep links all resolve through parseChatRoute.
-type ChatOverlay =
-  | { kind: "settings"; section: string | null; detail: string | null }
-  | { kind: "device" }
-  | null;
+type ChatOverlay = { kind: "device" } | null;
 interface ChatRoute {
   chatId: string | null;
   /** Sidebar project filter (deep-linked /project/<id>). */
   projectId: string | null;
   overlay: ChatOverlay;
+  /** The skills page route, or null when the URL is not a skills one. */
+  skills: SkillsRoute | null;
+  /** Which rail panel tab the URL names: /chats, /work or /settings. */
+  tab: "chats" | "work" | "settings";
+  /** Settings-tab section/detail named by the URL (/settings/<section>/
+   * [<detail>] deep links); null elsewhere and for bare /settings, whose
+   * section lives in pane state. */
+  settingsSection: string | null;
+  settingsDetail: string | null;
 }
 
 export const parseChatRoute = (pathname: string): ChatRoute => {
@@ -261,45 +292,114 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     .split("/")
     .filter(Boolean)
     .map(decodeURIComponent);
+  // The rail's panel tabs own top-level addresses: /chats (the default),
+  // /work, and /settings (bare, or with a deep-linked section). Tab picks
+  // navigate, so back/forward and reloads restore the tab like any other
+  // route state.
+  let tab: ChatRoute["tab"] = "chats";
+  if (parts[0] === "chats" || parts[0] === "work") {
+    tab = parts[0];
+    parts.shift();
+  }
   let chatId: string | null = null;
   let projectId: string | null = null;
   if (parts[0] === "project" && parts[1]) {
     projectId = parts[1];
+    tab = "work";
     parts.splice(0, 2);
   }
   if (parts[0] === "thread" && parts[1]) {
     chatId = parts[1];
     parts.splice(0, 2);
   }
-  if (parts[0] === "device") return { chatId, projectId, overlay: { kind: "device" } };
+  if (parts[0] === "device")
+    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, settingsSection: null, settingsDetail: null };
   if (parts[0] === "settings") {
-    // Everything after the section is the sub-page id; each segment was
-    // encoded separately, so a model id like "a/b" round-trips as one part.
+    // Bare /settings is the Settings tab with the pane-state section; a
+    // section (and optional sub-page detail) preselects it. Everything
+    // after the section is the sub-page id; each segment was encoded
+    // separately, so a model id like "a/b" round-trips as one part.
+    const section = parts.length > 1 ? parts[1] : null;
     const detail = parts.length > 2 ? parts.slice(2).map(decodeURIComponent).join("/") : null;
-    return { chatId, projectId, overlay: { kind: "settings", section: parts[1] ?? null, detail } };
+    return {
+      chatId: null,
+      projectId: null,
+      tab: "settings",
+      overlay: null,
+      skills: null,
+      settingsSection: section,
+      settingsDetail: detail,
+    };
   }
-  return { chatId, projectId, overlay: null };
+  // Skills is chat-independent and top-level like settings: the URL drops
+  // any thread/project prefix, so the skills page replaces the chat.
+  if (parts[0] === "skills") {
+    const skills = parseSkillsRoute(parts.slice(1));
+    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats", settingsSection: null, settingsDetail: null };
+  }
+  return { chatId, projectId, tab, overlay: null, skills: null, settingsSection: null, settingsDetail: null };
+};
+
+/// /skills/<seg...> after the leading "skills": a bare /skills is the
+/// catalog, the reserved segments name the activity/machine tabs and the
+/// create editor, and anything else is a detail slug with an optional
+/// /edit suffix. The reserved-segment rule is what disambiguates tabs from
+/// slugs — see SkillsRoute.
+const parseSkillsRoute = (parts: string[]): SkillsRoute => {
+  const seg = parts[0];
+  if (seg === undefined) return SKILLS_CATALOG;
+  if (seg === "activity") return { view: "activity", slug: null, editor: null };
+  if (seg === "machine") return { view: "machine", slug: null, editor: null };
+  if (seg === "new") return { view: "catalog", slug: null, editor: "new" };
+  return { view: "catalog", slug: seg, editor: parts[1] === "edit" ? seg : null };
 };
 
 export const chatRoutePath = (
   chatId: string | null,
   projectId: string | null,
   overlay: ChatOverlay,
+  skills: SkillsRoute | null = null,
+  tab: ChatRoute["tab"] = "chats",
+  settingsSection: string | null = null,
+  settingsDetail: string | null = null,
 ): string => {
+  // Skills is chat-independent — top-level URL that replaces the chat view.
+  if (skills !== null) {
+    if (skills.editor === "new") return "/skills/new";
+    if (skills.slug !== null)
+      return skills.editor !== null
+        ? `/skills/${encodeURIComponent(skills.slug)}/edit`
+        : `/skills/${encodeURIComponent(skills.slug)}`;
+    if (skills.view === "activity") return "/skills/activity";
+    if (skills.view === "machine") return "/skills/machine";
+    return "/skills";
+  }
   const base = projectId
     ? `/project/${encodeURIComponent(projectId)}${
         chatId ? `/thread/${encodeURIComponent(chatId)}` : ""
       }`
     : chatId
       ? `/thread/${encodeURIComponent(chatId)}`
-      : "";
-  if (overlay?.kind === "device") return `${base}/device`;
-  // Settings is chat-independent — top-level URL even when opened over a
-  // thread (the thread stays loaded; closing the overlay restores it).
-  if (overlay?.kind === "settings")
-    return `/settings${overlay.section ? `/${encodeURIComponent(overlay.section)}` : ""}${
-      overlay.detail
-        ? "/" + overlay.detail.split("/").map(encodeURIComponent).join("/")
+      : tab === "work"
+        ? "/work"
+        : tab === "settings"
+          ? "/settings"
+          : "/chats";
+  if (overlay?.kind === "device") {
+    // /settings/<seg> parses as a Settings-tab section, so a device dialog
+    // pushed over the Settings tab detours through /chats — the dialog is
+    // chat-independent anyway.
+    return `${tab === "settings" ? "/chats" : base}/device`;
+  }
+  // The Settings tab owns /settings; a deep-linked section/detail rides in
+  // the path (tab picks navigate to bare /settings and keep the pane-state
+  // section instead).
+  if (tab === "settings")
+    return `/settings${
+      settingsSection !== null ? `/${encodeURIComponent(settingsSection)}` : ""
+    }${
+      settingsDetail !== null
+        ? "/" + settingsDetail.split("/").map(encodeURIComponent).join("/")
         : ""
     }`;
   return base || "/";
@@ -457,49 +557,35 @@ function AttachmentFileChip({
   );
 }
 
-/// Anchor for markdown content: every link routes through `openExternal`.
-/// Images never load from model/tool-controlled URLs: injected markdown
-/// could otherwise exfiltrate via the image request; a rendered placeholder
-/// links out instead.
-const mdComponents: Components = {
-  a: ({ node: _node, href, children, ...rest }) => (
-    <a
-      {...rest}
-      href={href}
-      onClick={e => {
-        if (href) {
-          e.preventDefault();
-          openExternal(href);
-        }
-      }}
-    >
-      {children}
-    </a>
-  ),
-  img: ({ node: _node, src, alt }) => {
-    const url = typeof src === "string" ? src : undefined;
-    const label = alt || url || "image";
-    return (
-      <button
-        type="button"
-        className="inline-flex max-w-full items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
-        onClick={() => url && openExternal(url)}
-      >
-        🖼 {label}
-      </button>
-    );
-  },
-};
-
 /// Per-chat workspace state lives server-side now: the chat's project
 /// (spec §5). No local folder storage — the project binding is the single
 /// source of truth.
 
-/// One row of the composer's /-autocomplete (skills.list result).
+/// One row of the composer's /-autocomplete pool: a builtin command, a
+/// local skill, or an installed org skill (spec §2.3 — uninstalled org
+/// skills are the agent's discovery surface and never mentionable).
 interface ComposerSkill {
   name: string;
   description: string;
   disabled: boolean;
+  /** true for an installed org skill (from the installs endpoint). */
+  org?: boolean;
+}
+
+/// The composer's skill pool (spec §2.3): the local rows plus the
+/// installed org skills; a slug the local list already holds folds into
+/// its local row. Pure for tests.
+export function composerSkills(
+  local: ComposerSkill[] | null,
+  installs: Array<{ slug: string; pinned_version?: string }> | null,
+): ComposerSkill[] {
+  const out = [...(local ?? [])];
+  const names = new Set(out.map((s) => s.name));
+  for (const install of installs ?? []) {
+    if (names.has(install.slug)) continue;
+    out.push({ name: install.slug, description: "", disabled: false, org: true });
+  }
+  return out;
 }
 
 /// Built-in composer commands — shown in the `/` autocomplete ahead of
@@ -517,12 +603,12 @@ export function mentionCandidates(
   builtins: { name: string; description: string }[],
   skills: ComposerSkill[] | null,
   query: string,
-): { name: string; description: string; builtin: boolean }[] {
-  const pool: { name: string; description: string; builtin: boolean }[] = [
-    ...builtins.map((c) => ({ ...c, builtin: true })),
+): { name: string; description: string; builtin: boolean; org: boolean }[] {
+  const pool: { name: string; description: string; builtin: boolean; org: boolean }[] = [
+    ...builtins.map((c) => ({ ...c, builtin: true, org: false })),
     ...(skills ?? [])
       .filter((s) => !s.disabled)
-      .map((s) => ({ name: s.name, description: s.description, builtin: false })),
+      .map((s) => ({ name: s.name, description: s.description, builtin: false, org: s.org === true })),
   ];
   return pool
     .filter((c) => query === "" || c.name.startsWith(query))
@@ -560,22 +646,6 @@ function ThreadSkeleton() {
     </div>
   );
 }
-
-/// Markdown body class shared by text blocks and tool-card excerpts.
-const MD_CLASS =
-  "[overflow-wrap:anywhere] " +
-  "[&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1,\&_h2,\&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[0.85em] [&_pre_[code]]:bg-transparent [&_pre_[code]]:p-0 [&_ul]:list-disc";
-// Long unbreakable tokens (inline code, URLs) must wrap inside the message
-// column, never widen it into a horizontal page scroll. overflow-wrap
-// inherits, so the one declaration at the top of MD_CLASS covers every
-// child; non-markdown blocks carry WRAP_ANYWHERE explicitly.
-const WRAP_ANYWHERE = "[overflow-wrap:anywhere]";
-
-/// GFM tables: block-level so wide tables scroll horizontally inside the
-/// chat column instead of squishing; cell padding keeps adjacent columns
-/// visually separated (the old rendering had none, so columns merged).
-const MD_TABLE_CLASS =
-  "[&_table]:my-2 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:text-[0.92em] [&_th]:border-b-2 [&_th]:border-border [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border-t [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-top [&_tbody_tr:nth-child(even)]:bg-muted/40";
 
 /// Status pill on tool frames and page cards.
 function StatusPill({ status }: { status: "running" | "done" | "error" }) {
@@ -1484,9 +1554,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const chatsRef = useRef<ChatSummary[] | null>(null);
   chatsRef.current = chats;
   // URL-driven navigation state (see parseChatRoute above): everything the
-  // user can navigate to — the open thread, the settings overlay with its
-  // active section, the device dialog — lives in the pathname, so back/forward,
-  // reloads and deep links all land in exactly the right place.
+  // user can navigate to — the open thread, the device dialog, the skills
+  // page, the Settings tab and its deep-linked section — lives in the
+  // pathname, so back/forward, reloads and deep links all land in exactly
+  // the right place.
   const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
   const chatId = route.chatId;
   const overlay = route.overlay;
@@ -1537,14 +1608,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const [mentionDismissed, setMentionDismissed] = useState(false);
   const [mentionIndex, setMentionIndex] = useState(0);
   useEffect(() => {
-    if (!isTauri) return;
     let cancelled = false;
-    // Skills discovery moved client-side (lib/context.ts over the fs bridge).
-    const fs = daemonFs(rpcCall);
-    fs.scopes()
-      .then((scopes) => listSkills(fs, scopes))
-      .then((rows) => {
-        if (!cancelled) setSkills(rows as ComposerSkill[]);
+    // The /-autocomplete pool = local + installed org skills (spec §2.3):
+    // local rows exist only on Tauri (the fs bridge); org installs come
+    // from the server in both modes — uninstalled org skills are never
+    // fetched, so they can never be mentioned.
+    const fs = isTauri ? daemonFs(rpcCall) : null;
+    const local = fs
+      ? fs.scopes().then((scopes) => listSkills(fs, scopes)).catch(() => null)
+      : Promise.resolve(null);
+    Promise.all([local, fetchInstalls().catch(() => null)])
+      .then(([rows, installs]) => {
+        if (!cancelled) setSkills(composerSkills(rows as ComposerSkill[] | null, installs));
       })
       .catch(() => {
         /* skills are optional composer sugar — silence */
@@ -1791,7 +1866,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   // Browser back/forward: re-derive the whole route from the URL. The
   // chatId effect below takes care of (re)loading or clearing the thread,
-  // and the overlay state opens/closes the settings/device surfaces.
+  // and the settings/device surfaces follow the parsed route.
   useEffect(() => {
     const onPop = () => setRoute(parseChatRoute(window.location.pathname));
     window.addEventListener("popstate", onPop);
@@ -1800,16 +1875,44 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   // Every navigation goes through here: history and route state move
   // together, so the URL always reflects what is on screen.
-  const pushRoute = (next: { chatId?: string | null; projectId?: string | null; overlay?: ChatOverlay }) => {
+  const pushRoute = (next: {
+    chatId?: string | null;
+    projectId?: string | null;
+    overlay?: ChatOverlay;
+    skills?: SkillsRoute | null;
+    tab?: ChatRoute["tab"];
+  }) => {
     const chatId = "chatId" in next ? (next.chatId as string | null) : route.chatId;
     const projectId = "projectId" in next ? (next.projectId as string | null) : route.projectId;
     const ov = "overlay" in next ? (next.overlay as ChatOverlay) : route.overlay;
-    const path = chatRoutePath(chatId, projectId, ov);
+    const tab = next.tab ?? route.tab;
+    // The skills page is replaced by anything that names a chat or opens a
+    // dialog overlay — those are chat-context surfaces. An overlay close
+    // (overlay: null) keeps it: the dialog was rendered over the skills page.
+    const sk =
+      "skills" in next
+        ? (next.skills as SkillsRoute | null)
+        : "chatId" in next || (next.overlay !== undefined && next.overlay !== null)
+          ? null
+          : route.skills;
+    const path = chatRoutePath(chatId, projectId, ov, sk, tab);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setRoute({ chatId, projectId, overlay: ov });
+    setRoute({
+      chatId,
+      projectId,
+      overlay: ov,
+      skills: sk,
+      tab,
+      // Tab picks keep the section in pane state; only deep links name it
+      // in the URL.
+      settingsSection: null,
+      settingsDetail: null,
+    });
   };
 
-  useEffect(() => {
+  // Layout effect: the correction must land before paint, or the new block
+  // shows for a frame at the old scroll offset (the reported 1-frame jump).
+  useLayoutEffect(() => {
     if (!stick.current) return;
     bottom.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
   }, [blocks]);
@@ -1847,10 +1950,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     void listMachines().then(setMachines).catch(() => {});
   }, [refreshProjects]);
 
-  // The composer's project binding. The chip is interactive only on a new
-  // (unsent) chat, where the pick applies when the send creates the chat;
-  // an existing chat displays its project read-only — the binding cannot
-  // change after the chat started. Projectless is the default state.
+  // The composer's project binding. The chip renders only when a project
+  // is actually bound or pre-picked (project context) — a plain chat-mode
+  // chat shows no project affordance at all. On a new (unsent) chat the
+  // pick applies when the send creates the chat; an existing chat displays
+  // its project read-only — the binding cannot change after it started.
   const [pickedProject, setPickedProject] = useState<PickedProject | null>(null);
   const pickedProjectRef = useRef<PickedProject | null>(pickedProject);
   pickedProjectRef.current = pickedProject;
@@ -1858,26 +1962,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
    * project row's "+"): the chatId switch consumes it, so the per-chat
    * reset applies to every other transition. */
   const scratchPickRef = useRef<PickedProject | null>(null);
-  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  /** Where the create-project dialog was opened from: only the composer's
-   * project picker binds the new project to the chat — the sidebar's
-   * "+" merely creates it. */
-  const createProjectFromRef = useRef<"picker" | "sidebar">("picker");
-  const openCreateProject = (from: "picker" | "sidebar") => {
-    createProjectFromRef.current = from;
+  const openCreateProject = () => {
     setCreateProjectOpen(true);
   };
   const openRow = chatId ? chats?.find((c) => c.id === chatId) : undefined;
   const currentProject = pickedProject ?? chatProjectOf(openRow);
+  // Ref mirror for effects that must read the pick without re-running on
+  // every pick change.
+  const currentProjectRef = useRef(currentProject);
+  currentProjectRef.current = currentProject;
   const pickProject = (p: PickedProject | null) => {
     setPickedProject(p);
   };
-  const projectCreated = (project: Project) => {
+  const projectCreated = () => {
     void refreshProjects();
-    if (createProjectFromRef.current !== "picker") return;
-    pickProject({ id: project.id, name: project.name, machine_label: project.machine_label, folder: project.folder });
-    setProjectPickerOpen(false);
   };
 
   // ---- sidebar row menu: rename + archive (row drop-out = list refresh) ----
@@ -1962,7 +2061,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
-        if (active) { promptRef.current = ""; setPrompt(""); setPending([]); }
+        if (active) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
       }
       restoredCommandRef.current.delete(target);
     }
@@ -2087,6 +2186,22 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     ta.current?.focus();
   };
 
+  /** The open chat is gone server-side (a sync hits "no such chat"): fall
+   * back to a fresh chat silently, carrying the composer text over so a
+   * resend just creates a new chat. Held in a ref because the socket effect
+   * captures callbacks once and must not see a stale route. */
+  const recoverMissingChat = () => {
+    const dead = openChatIdRef.current;
+    if (dead) {
+      const text = readDraft(draftStorage, dead);
+      if (text) writeDraft(draftStorage, null, text);
+      writeDraft(draftStorage, dead, "");
+    }
+    newChat();
+  };
+  const recoverMissingChatRef = useRef(recoverMissingChat);
+  recoverMissingChatRef.current = recoverMissingChat;
+
   /** Sidebar: new chat inside a project (the project row's hover "+").
    * Pre-picks the project so the composer binds the chat to it on send. The
    * chatId switch this triggers resets the pick per-chat — scratchPickRef
@@ -2166,6 +2281,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       onError: (message) => {
         if (message === "frames dropped — resync") {
           socketRef.current?.resync();
+        } else if (message === "no such chat" && openChatIdRef.current) {
+          // The open chat no longer exists (stale deep link, chat deleted
+          // elsewhere, server store reset): drop into a fresh chat instead
+          // of showing an error the user cannot act on.
+          recoverMissingChatRef.current();
         } else {
           setThreadLoading(false);
           toast.error(message);
@@ -2200,6 +2320,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         promptRef.current = recovered.text;
         setPrompt(recovered.text);
         setPending(recovered.files);
+        requestAnimationFrame(autoGrow);
       }
     }
     refreshOutgoing(n => n + 1);
@@ -2219,7 +2340,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
-        if (openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); }
+        if (openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
       },
     });
     if (command.accepted) { deliveringRef.current.delete(command.id); return; }
@@ -2313,6 +2434,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       if (!chatId) { toast.error("Compact needs an existing chat — send a message first"); return; }
       promptRef.current = "";
       setPrompt("");
+      requestAnimationFrame(autoGrow);
       setCompacting(reducerRef.current.setCompacting(chatId).compacting);
       try { await compactChat(chatId); }
       catch (e) { setCompacting(reducerRef.current.setCompacting(null).compacting); toast.error(e instanceof Error ? e.message : String(e)); }
@@ -2429,32 +2551,154 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     [chats, chatStatus],
   );
 
-  const sidebar = (
-    <SidebarContent
+  // Sidebar tab: one icon rail (desktop) switches the panel between chats,
+  // work, skills and settings. The skills tab is not panel state at all —
+  // it is the /skills... route (see below), so this state only ever holds
+  // the panel-bearing tabs. Every tab owns a top-level URL (/chats, /work,
+  // /settings): the state starts from the parsed route and follows it on
+  // back/forward, reloads and deep links — the URL is the truth.
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(route.tab);
+  useEffect(() => setSidebarTab(route.tab), [route.tab]);
+  // The rail's active tab: the skills page raises its own tab while a
+  // /skills... URL is live (rail pick, deep link, reload, back/forward).
+  const railTab: SidebarTab = route.skills !== null ? "skills" : sidebarTab;
+  // Settings tab: the section rendered inline in the main pane (the rail's
+  // Settings tab is a persistent surface, not an overlay launcher). Sub-page
+  // navigation stays local to the pane.
+  const [settingsSection, setSettingsSection] = useState<string | null>(null);
+  const [settingsDetail, setSettingsDetail] = useState<string | null>(null);
+  // A deep-linked /settings/<section>[/<detail>] preselects the section;
+  // tab picks and pane navigation keep it in pane state instead.
+  useEffect(() => {
+    if (route.tab === "settings" && route.settingsSection !== null) {
+      setSettingsSection(route.settingsSection);
+      setSettingsDetail(route.settingsDetail);
+    }
+  }, [route.tab, route.settingsSection, route.settingsDetail]);
+  const switchTab = (tab: SidebarTab) => {
+    // The skills tab is a URL route, not persisted panel state: entering it
+    // navigates to /skills, leaving it returns to the chat root — so back/
+    // forward crosses between the skills page and the chat like any other
+    // route pair, and a reload lands back on the skills page.
+    if (tab === "skills") {
+      pushRoute({ chatId: null, projectId: null, overlay: null, skills: SKILLS_CATALOG });
+      return;
+    }
+    // Panel tabs navigate too: each owns its address, back/forward walks
+    // tab history, and the navigation clears the open chat — a tab switch
+    // always lands on a fresh composer, never the previously selected chat.
+    pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, tab });
+    // A collapsed panel hides the tab's content — a tab pick is an intent
+    // to see it, so the panel re-expands on the newly picked tab.
+    if (tabPaneLayout(tab, isMobile).expandsPanel) setCollapsed(false);
+    // Entering Settings with no section picked lands on the first user
+    // section instead of an empty main pane.
+    if (tab === "settings") setSettingsSection((s) => s ?? "account");
+  };
+  const openSettingsSection = (id: string) => {
+    setSettingsSection(id);
+    setSettingsDetail(null);
+  };
+
+  const sidebarCollapse = isMobile ? undefined : () => setCollapsed(true);
+  // The mobile drawer has no rail, so it always shows the Chats panel — the
+  // persisted tab must not leak into it.
+  const chatsPanel = (
+    <ChatsPanel
       grouping={grouping}
-      projects={projects}
       loadingChats={chats === null}
       chatId={chatId}
-      email={email}
-      displayName={displayName}
-      avatarUrl={avatarUrl}
+      archivedChats={archivedChats}
       onNewChat={newChat}
-      onNewChatInProject={newChatInProject}
       onOpenChat={openChat}
-      onNewProject={() => openCreateProject("sidebar")}
-      onSignOut={signOut}
-      onAddWorkspace={onAddWorkspace}
-      onOpenSettings={() => pushRoute({ overlay: { kind: "settings", section: null, detail: null } })}
-      onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
-      onCollapse={isMobile ? undefined : () => setCollapsed(true)}
+      onCollapse={sidebarCollapse}
       onRenameChat={(id, title) => void renameChat(id, title)}
       onArchiveChat={(id) => void archiveChat(id)}
       onUnarchiveChat={(id) => void unarchiveChat(id)}
-      archivedChats={archivedChats}
-      onRenameProject={(id, name) => void renameProject(id, name)}
-      onArchiveProject={(id) => void archiveProject(id)}
     />
   );
+  const sidebar =
+    sidebarTab === "work" ? (
+      <WorkPanel
+        grouping={grouping}
+        projects={projects}
+        machines={machines}
+        chatId={chatId}
+        onOpenChat={openChat}
+        onCollapse={sidebarCollapse}
+        onNewChatInProject={newChatInProject}
+        onNewProject={openCreateProject}
+        onRenameChat={(id, title) => void renameChat(id, title)}
+        onArchiveChat={(id) => void archiveChat(id)}
+        onRenameProject={(id, name) => void renameProject(id, name)}
+        onArchiveProject={(id) => void archiveProject(id)}
+      />
+    ) : sidebarTab === "settings" ? (
+      <SettingsPanel
+        role={role}
+        activeSection={settingsSection}
+        onSelectSection={openSettingsSection}
+        onCollapse={sidebarCollapse}
+      />
+    ) : (
+      chatsPanel
+    );
+
+  // A /project/<id> route (deep link, reload, or back/forward) parses as
+  // the Work tab, so the linked project is visible — no state decision
+  // needed beyond the route-tab sync above.
+  // Chat routes: a stateless chat lands on the Chats tab; a project-bound
+  // chat belongs to its project row — it opens (or stays) on the Work tab
+  // instead of yanking the user out of it. The decision waits for the chats
+  // list; a chat not yet listed (just sent) counts as bound while the
+  // composer still carries a project pick.
+  const routeTabDecidedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!route.chatId) {
+      routeTabDecidedRef.current = null;
+      return;
+    }
+    if (routeTabDecidedRef.current === route.chatId) return; // already handled
+    if (chats === null) return; // wait for the list before deciding
+    const row = chats.find((c) => c.id === route.chatId);
+    const projectBound = row ? !!row.project_id : !!currentProjectRef.current?.id;
+    routeTabDecidedRef.current = route.chatId;
+    setSidebarTab(projectBound ? "work" : "chats");
+  }, [route.chatId, chats]);
+
+  // The Settings tab's main pane renders the picked section inline instead
+  // of the chat thread (desktop only — the mobile drawer has no settings
+  // tab).
+  const inlineSettings =
+    !isMobile && sidebarTab === "settings" && settingsSection !== null ? (
+      <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
+        <SettingsSectionPane
+          sectionId={settingsSection}
+          email={email}
+          detail={settingsDetail}
+          onDetailChange={setSettingsDetail}
+        />
+      </div>
+    ) : null;
+
+  // The skills page's URL state clamped to what this session can render
+  // (the machine tab needs the desktop fs bridge — a web deep link falls
+  // back to the catalog). Every panel state derives from it; user actions
+  // navigate through pushRoute, so the URL is always the truth.
+  const skillsRoute =
+    !isMobile && route.skills !== null ? clampSkillsRoute(route.skills, isTauri) : null;
+  // The Skills route's main pane IS the skills page — the whole column right
+  // of the rail, no sidebar panel at all (the inlineSettings pattern). The
+  // chat thread only comes back when another route is navigated to.
+  const inlineSkills = skillsRoute !== null ? (
+    <div className="flex min-h-0 flex-1 flex-col" data-scrollable>
+      <SkillsPanel
+        me={{ email, displayName: displayName ?? undefined, role }}
+        route={skillsRoute}
+        onNavigate={(next) => pushRoute({ chatId: null, projectId: null, overlay: null, skills: next })}
+      />
+    </div>
+  ) : null;
 
   // desktop: draggable resize handle. While dragging, the width transition
   // is suspended — an animated width chases the cursor and reads as lag.
@@ -2486,23 +2730,38 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   return (
     <div ref={shell} className="fixed inset-0 flex bg-background text-foreground">
+      {/* icon rail: desktop only, always visible — it switches the sidebar
+          panel between chats / work / skills / settings and carries the
+          account menu */}
+      {!isMobile && (
+        <SidebarRail
+          activeTab={railTab}
+          onTabChange={switchTab}
+          email={email}
+          displayName={displayName}
+          avatarUrl={avatarUrl}
+          onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
+          onSignOut={signOut}
+          onAddWorkspace={onAddWorkspace}
+        />
+      )}
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetContent side="left" className="w-72 p-0">
             <SheetTitle className="sr-only">Chats</SheetTitle>
-            {sidebar}
+            {chatsPanel}
           </SheetContent>
         </Sheet>
-      ) : (
+      ) : skillsRoute !== null ? null : (
         <aside
           className={`relative flex shrink-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground ${
             resizing ? "" : "transition-[width] duration-150"
           } ${collapsed ? "" : "border-r border-border"}`}
           style={{ width: collapsed ? 0 : width }}
         >
-          {/* Collapsed = fully gone: the header toggle reopens it, so no rail
-              is pre-reserved and the central pane reflows on toggle. */}
+          {/* Collapsed = panel fully gone (the icon rail stays); the header
+              toggle reopens it and the central pane reflows on toggle. */}
           {!collapsed && sidebar}
           {!collapsed && (
             <div
@@ -2542,6 +2801,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             </div>
           </div>
         )}
+        {inlineSkills ? (
+          inlineSkills
+        ) : inlineSettings ? (
+          inlineSettings
+        ) : (
+          <>
         <header className="flex items-center gap-2 border-b border-border px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
           {isMobile ? (
             <Button variant="ghost" size="icon" className="-ml-1.5 size-8" onClick={() => setOpen(true)}>
@@ -2597,7 +2862,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           <div
             ref={pane}
             data-scrollable
-            className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain"
+            className="min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
             onScroll={() => {
               const el = pane.current;
               if (!el) return;
@@ -2768,7 +3033,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   >
                     <span className="text-sm font-medium">/{sk.name}</span>
                     <span className="line-clamp-1 text-xs text-muted-foreground">
-                      {sk.builtin ? sk.description : `${sk.description} — the skill's instructions are attached when you send`}
+                      {sk.builtin
+                        ? sk.description
+                        : `${sk.description || "Installed org skill"} — the skill's instructions are attached when you send`}
                     </span>
                   </button>
                 ))}
@@ -2855,7 +3122,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 </Button>
                 {(() => {
                   const row = chatId ? chats?.find((c) => c.id === chatId) : undefined;
-                  // One chip for project + machine. The executing machine is
+                  // One read-only chip for project + machine. The composer
+                  // never binds projects: a chat is projectless unless it was
+                  // started from a project (the sidebar project row's "+",
+                  // which pre-picks the binding). The executing machine is
                   // project-derived: an existing chat inherits its bound
                   // project's machine, a new chat the picked project's. The
                   // dot renders only for a remote machine (on desktop the
@@ -2882,15 +3152,13 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     machines?.find((m) => m.machine_id === chipMachineId)?.name ??
                     chipMachineId;
                   return (
-                    (!chatId || currentProject) && (
+                    currentProject && (
                       <span
                         className="flex h-7 max-w-52 items-center gap-1.5 rounded-full bg-secondary px-2 text-muted-foreground"
                         title={
                           showMachine
-                            ? `${currentProject ? `${currentProject.name} — ` : ""}Machine: ${machineLabel}${machineOnline ? " (online)" : " (offline)"}`
-                            : currentProject
-                              ? `${currentProject.name} — ${currentProject.machine_label ?? "project"}`
-                              : "Pick the folder the agent works in"
+                            ? `${currentProject.name} — Machine: ${machineLabel}${machineOnline ? " (online)" : " (offline)"}`
+                            : `${currentProject.name} — ${currentProject.machine_label ?? "project"}`
                         }
                       >
                         {showMachine && (
@@ -2898,42 +3166,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                             className={`size-2 shrink-0 rounded-full ${machineOnline ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
                           />
                         )}
-                        {chatId ? (
-                          // An existing chat: the binding is fixed at chat
-                          // start — a bound project shows as a read-only
-                          // label; a projectless existing chat renders no
-                          // chip at all (outer guard above).
-                          <span className="flex h-7 items-center gap-1 px-2">
-                            <FolderOpen className="size-3.5 shrink-0" />
-                            <span className="hidden min-w-0 sm:block sm:flex-1">
-                              <FadeTitle text={projectChipLabel(currentProject)} />
-                            </span>
+                        <span className="flex h-7 items-center gap-1 px-2">
+                          <FolderOpen className="size-3.5 shrink-0" />
+                          <span className="hidden min-w-0 sm:block sm:flex-1">
+                            <FadeTitle text={projectChipLabel(currentProject)} />
                           </span>
-                        ) : (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 max-w-44 gap-1 rounded-full px-2 text-muted-foreground hover:text-foreground sm:max-w-40"
-                              onClick={() => setProjectPickerOpen(true)}
-                            >
-                              <FolderOpen className="size-3.5 shrink-0" />
-                              <span className="hidden min-w-0 sm:block sm:flex-1">
-                                <FadeTitle text={projectChipLabel(currentProject)} />
-                              </span>
-                            </Button>
-                            {currentProject && (
-                              <button
-                                type="button"
-                                title="Detach the project (the agent works without a folder)"
-                                className="shrink-0 rounded-full p-0.5 hover:bg-foreground/10 hover:text-foreground"
-                                onClick={() => pickProject(null)}
-                              >
-                                <XIcon className="size-3" />
-                              </button>
-                            )}
-                          </>
-                        )}
+                        </span>
                       </span>
                     )
                   );
@@ -3046,6 +3284,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             </div>
           </div>
         </div>
+          </>
+        )}
       </div>
 
       <DeviceSetupDialog
@@ -3053,16 +3293,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         onOpenChange={(o) => {
           if (!o) pushRoute({ overlay: null });
         }}
-      />
-
-      <ProjectPickerDialog
-        open={projectPickerOpen}
-        onOpenChange={setProjectPickerOpen}
-        projects={projects}
-        chats={chats}
-        current={currentProject}
-        onPick={pickProject}
-        onCreateProject={() => openCreateProject("picker")}
       />
 
       <CreateProjectDialog
@@ -3073,33 +3303,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         isTauri={isTauri}
         projects={projects}
         onCreated={projectCreated}
-      />
-
-      <SettingsWindow
-        open={overlay?.kind === "settings"}
-        onOpenChange={(o) => {
-          if (!o) pushRoute({ overlay: null });
-        }}
-        section={overlay?.kind === "settings" ? overlay.section : null}
-        detail={overlay?.kind === "settings" ? overlay.detail : null}
-        onSectionChange={(id) =>
-          pushRoute({ overlay: { kind: "settings", section: id, detail: null } })
-        }
-        onDetailChange={(d) =>
-          pushRoute({
-            overlay: {
-              kind: "settings",
-              section: overlay?.kind === "settings" ? overlay.section : null,
-              detail: d,
-            },
-          })
-        }
-        email={email}
-        role={role}
-        displayName={displayName}
-        avatarUrl={avatarUrl}
-        onOpenDevice={() => pushRoute({ overlay: { kind: "device" } })}
-        onAddWorkspace={onAddWorkspace}
       />
     </div>
   );
@@ -3305,513 +3508,3 @@ function DeviceSetupDialog({
   );
 }
 
-
-/** Sidebar row title that fades out at the right edge when it overflows
- * (instead of an ellipsis) — used by both chat and project rows. */
-function FadeTitle({ text }: { text: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [overflowing, setOverflowing] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const check = () => setOverflowing(el.scrollWidth > el.clientWidth);
-    check();
-    const ro = new ResizeObserver(check);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [text]);
-
-  const fade = overflowing
-    ? {
-        maskImage: "linear-gradient(to right, black calc(100% - 22px), transparent)",
-        WebkitMaskImage: "linear-gradient(to right, black calc(100% - 22px), transparent)",
-      }
-    : undefined;
-
-  return (
-    <span ref={ref} className="block min-w-0 flex-1 whitespace-nowrap" style={fade}>
-      {text}
-    </span>
-  );
-}
-
-/// Inline rename field: Enter or blur commits, Esc cancels; `onDone(null)`
-/// means "no change".
-function RenameInput({
-  initial,
-  onDone,
-}: {
-  initial: string;
-  onDone: (value: string | null) => void;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
-  const settled = useRef(false);
-  const finish = (commit: boolean) => {
-    if (settled.current) return;
-    settled.current = true;
-    const v = ref.current?.value.trim();
-    onDone(commit && v && v !== initial ? v : null);
-  };
-  return (
-    <input
-      ref={ref}
-      autoFocus
-      defaultValue={initial}
-      onFocus={(e) => e.currentTarget.select()}
-      onBlur={() => finish(true)}
-      onKeyDown={(e) => {
-        e.stopPropagation();
-        if (e.key === "Enter") finish(true);
-        else if (e.key === "Escape") {
-          e.preventDefault();
-          finish(false);
-        }
-      }}
-      onClick={(e) => e.stopPropagation()}
-      className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 text-sm outline-none"
-    />
-  );
-}
-
-/// Hover-revealed row menu (Rename / Archive). The trigger is absolutely
-/// positioned and shown via opacity, so the row's layout never shifts;
-/// stays visible while the menu is open.
-function RowActions({
-  onRename,
-  onArchive,
-  archiveLabel,
-}: {
-  onRename?: () => void;
-  onArchive?: () => void;
-  archiveLabel?: string;
-}) {
-  if (!onRename && !onArchive) return null;
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <span
-          role="button"
-          tabIndex={0}
-          title="Row actions"
-          onClick={(e) => e.stopPropagation()}
-          className="absolute right-1 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-sidebar text-muted-foreground shadow-sm opacity-0 outline-none transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
-        >
-          <EllipsisVertical className="size-4" />
-        </span>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-32">
-        {onRename && (
-          <DropdownMenuItem onSelect={() => onRename()}>
-            <Pencil className="size-3.5" />
-            Rename
-          </DropdownMenuItem>
-        )}
-        {onArchive && (
-          <DropdownMenuItem onSelect={() => onArchive()}>
-            {archiveLabel === "Unarchive" ? (
-              <ArchiveRestore className="size-3.5" />
-            ) : (
-              <Archive className="size-3.5" />
-            )}
-            {archiveLabel ?? "Archive"}
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function ChatListItem({
-  title,
-  active,
-  status,
-  onClick,
-  onRename,
-  onArchive,
-  archiveLabel,
-}: {
-  title: string;
-  active: boolean;
-  status: { generating: boolean; unread: boolean };
-  onClick: () => void;
-  onRename?: (title: string) => void;
-  onArchive?: () => void;
-  /** Row-menu label for the archive action ("Unarchive" in the Archived
-   * section); defaults to "Archive". */
-  archiveLabel?: string;
-}) {
-  const [editing, setEditing] = useState(false);
-  if (editing) {
-    return (
-      <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5">
-        <RenameInput
-          initial={title}
-          onDone={(v) => {
-            setEditing(false);
-            if (v) onRename?.(v);
-          }}
-        />
-      </div>
-    );
-  }
-  return (
-    // A div row hosting two siblings — the open button and the (absolutely
-    // positioned) Radix menu trigger — instead of a button containing the
-    // trigger: an interactive control nested in a button is non-conforming
-    // HTML and screen readers announce the menu trigger as part of the
-    // row's name. The background/hover classes stay on the row so hovering
-    // the trigger highlights it too.
-    <div
-      className={`group/row relative z-0 flex w-full items-center overflow-hidden rounded-md transition-colors hover:z-10 has-[[data-state=open]]:z-10 ${
-        active
-          ? "bg-accent text-accent-foreground"
-          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-      }`}
-    >
-      <button
-        onClick={onClick}
-        title={title}
-        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left outline-none"
-      >
-        <FadeTitle text={title} />
-        {status.generating ? (
-          <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-        ) : status.unread ? (
-          <span className="size-2 shrink-0 rounded-full bg-amber-400 shadow-[0_0_4px_1px_rgba(251,191,36,0.6)]" title="unseen replies" />
-        ) : null}
-      </button>
-      <RowActions
-        onRename={onRename ? () => setEditing(true) : undefined}
-        onArchive={onArchive}
-        archiveLabel={archiveLabel}
-      />
-    </div>
-  );
-}
-
-/// Project row header: fold-out toggle + shaded title + row menu. While
-/// renaming, the whole header is a plain div hosting the inline input.
-function ProjectHeader({
-  name,
-  folder,
-  open,
-  onToggle,
-  onRename,
-  onArchive,
-  onNewChat,
-}: {
-  name: string;
-  folder: string;
-  open: boolean;
-  onToggle: () => void;
-  onRename: (name: string) => void;
-  onArchive: () => void;
-  onNewChat?: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  if (editing) {
-    return (
-      <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5">
-        <RenameInput
-          initial={name}
-          onDone={(v) => {
-            setEditing(false);
-            if (v) onRename(v);
-          }}
-        />
-      </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="group/row relative z-0 flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left outline-none transition-colors text-muted-foreground hover:z-10 has-[[data-state=open]]:z-10 hover:bg-accent hover:text-accent-foreground"
-      title={folder}
-    >
-      <ChevronRight
-        className={`size-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
-      />
-      <FadeTitle text={name} />
-      {onNewChat && (
-        <span
-          role="button"
-          tabIndex={0}
-          title="New chat in this project"
-          onClick={(e) => {
-            e.stopPropagation();
-            onNewChat();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.stopPropagation();
-              e.preventDefault();
-              onNewChat();
-            }
-          }}
-          // right-1 + size-6 + 2px gap → the two hover buttons sit 2px apart
-          className="absolute right-[30px] top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-sidebar text-muted-foreground shadow-sm opacity-0 outline-none transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
-        >
-          <Plus className="size-4" />
-        </span>
-      )}
-      <RowActions onRename={() => setEditing(true)} onArchive={onArchive} />
-    </button>
-  );
-}
-
-function SidebarContent({
-  grouping,
-  projects,
-  loadingChats,
-  chatId,
-  email,
-  displayName,
-  avatarUrl,
-  onNewChat,
-  onNewChatInProject,
-  onOpenChat,
-  onNewProject,
-  onSignOut,
-  onAddWorkspace,
-  onOpenSettings,
-  onOpenDevice,
-  onCollapse,
-  onRenameChat,
-  onArchiveChat,
-  onUnarchiveChat,
-  archivedChats,
-  onRenameProject,
-  onArchiveProject,
-}: {
-  grouping: ReturnType<typeof sidebarGrouping>;
-  projects: Project[] | null;
-  /** True while the chat list is still loading (skeleton rows). */
-  loadingChats: boolean;
-  chatId: string | null;
-  email: string;
-  displayName?: string | null;
-  avatarUrl?: string | null;
-  onNewChat: () => void;
-  /** New chat with this project pre-picked (project row's hover "+"). */
-  onNewChatInProject: (project: PickedProject) => void;
-  onOpenChat: (id: string) => void;
-  onNewProject: () => void;
-  onSignOut: () => void;
-  /** Desktop multi-workspace: “Add workspace” entry in the account menu. */
-  onAddWorkspace?: () => void;
-  onOpenSettings: () => void;
-  onOpenDevice: () => void;
-  /** Desktop only: collapse the sidebar from within its own header. */
-  onCollapse?: () => void;
-  /** Row-menu actions; the implementations live with the list refresh. */
-  onRenameChat?: (id: string, title: string) => void;
-  onArchiveChat?: (id: string) => void;
-  /** Archived section: the rows and their restore action. */
-  onUnarchiveChat?: (id: string) => void;
-  archivedChats?: ChatSummary[] | null;
-  onRenameProject?: (id: string, name: string) => void;
-  onArchiveProject?: (id: string) => void;
-}) {
-  const [projectsOpen, setProjectsOpen] = useState(true);
-  const [archivedOpen, setArchivedOpen] = useState(false);
-  /** Which project fold-outs are expanded (per-session, all collapsed). */
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  /** How many chats each expanded fold-out shows; starts at
-   * PROJECT_PAGE_INITIAL, "Show more" adds PROJECT_PAGE_STEP. */
-  const [limits, setLimits] = useState<Record<string, number>>({});
-  return (
-    <div className="flex min-h-0 w-full flex-1 flex-col">
-      <div className="flex items-center justify-between px-3 py-3">
-        <span className="font-semibold">Guild</span>
-        {onCollapse && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 text-muted-foreground"
-            onClick={onCollapse}
-            title="Close sidebar"
-          >
-            <PanelLeftClose />
-          </Button>
-        )}
-      </div>
-      <div className="px-2">
-        <Button variant="ghost" className="w-full justify-start gap-2" onClick={onNewChat}>
-          <Plus /> New chat
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2">
-        {/* Projects: collapsible section; a row folds out that project's
-            chats inline (the fold-out keeps its own pagination). */}
-        <button
-          type="button"
-          onClick={() => setProjectsOpen((o) => !o)}
-          className="flex w-full items-center justify-between px-1 pb-1 pt-4 font-medium text-muted-foreground outline-none hover:text-foreground"
-        >
-          <span>Projects</span>
-          <span className="flex items-center gap-1">
-            <span
-              role="button"
-              tabIndex={0}
-              title="New project"
-              className="rounded p-0.5 hover:bg-accent hover:text-foreground"
-              onClick={(e) => {
-                e.stopPropagation();
-                onNewProject();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.stopPropagation();
-                  onNewProject();
-                }
-              }}
-            >
-              <Plus className="size-3.5" />
-            </span>
-            {projectsOpen ? (
-              <ChevronUp className="size-3.5" />
-            ) : (
-              <ChevronDown className="size-3.5" />
-            )}
-          </span>
-        </button>
-        {projectsOpen && (
-          <div className="space-y-0.5 pb-1">
-            {projects === null &&
-              [0, 1].map((i) => <Skeleton key={i} className="h-8 w-full rounded-md" />)}
-            {projects?.map((p) => {
-              const open = !!expanded[p.id];
-              const chats = grouping.chatsByProject[p.id] ?? [];
-              const limit = limits[p.id] ?? PROJECT_PAGE_INITIAL;
-              return (
-                <div key={p.id}>
-                  <ProjectHeader
-                    name={p.name}
-                    folder={p.folder}
-                    open={open}
-                    onToggle={() => setExpanded((e) => ({ ...e, [p.id]: !open }))}
-                    onRename={(name) => onRenameProject?.(p.id, name)}
-                    onArchive={() => onArchiveProject?.(p.id)}
-                    onNewChat={
-                      onNewChatInProject
-                        ? () => onNewChatInProject({ id: p.id, name: p.name, machine_label: p.machine_label })
-                        : undefined
-                    }
-                  />
-                  {open && (
-                    <div className="ml-4 space-y-0.5 border-l border-border/60 py-0.5 pl-2">
-                      {chats.slice(0, limit).map((c) => (
-                        <ChatListItem
-                          key={c.id}
-                          title={c.title || "Untitled"}
-                          active={c.id === chatId}
-                          status={{ generating: !!c.generating, unread: !!c.unread }}
-                          onClick={() => onOpenChat(c.id)}
-                          onRename={(title) => onRenameChat?.(c.id, title)}
-                          onArchive={() => onArchiveChat?.(c.id)}
-                        />
-                      ))}
-                      {chats.length === 0 && (
-                        <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet.</p>
-                      )}
-                      {chats.length > limit && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setLimits((l) => ({ ...l, [p.id]: limit + PROJECT_PAGE_STEP }))
-                          }
-                          className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground"
-                        >
-                          <ChevronDown className="size-3" />
-                          Show {Math.min(PROJECT_PAGE_STEP, chats.length - limit)} more
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {projects !== null && projects.length === 0 && (
-              <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet.</p>
-            )}
-          </div>
-        )}
-        <div className="flex items-center gap-1.5 pb-1 pt-4 font-medium text-muted-foreground">
-          <span className="px-1">Recents</span>
-        </div>
-        <div className="space-y-0.5 pb-2">
-          {loadingChats &&
-            [0, 1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-8 w-full rounded-md" style={{ opacity: 1 - i * 0.15 }} />
-            ))}
-          {!loadingChats &&
-            grouping.visible.map((c) => (
-            <ChatListItem
-              key={c.id}
-              title={c.title || "Untitled"}
-              active={c.id === chatId}
-              status={{ generating: !!c.generating, unread: !!c.unread }}
-              onClick={() => onOpenChat(c.id)}
-              onRename={(title) => onRenameChat?.(c.id, title)}
-              onArchive={() => onArchiveChat?.(c.id)}
-            />
-          ))}
-          {!loadingChats && projects !== null && grouping.visible.length === 0 && (
-            <p className="px-2 py-1.5 text-muted-foreground">No conversations yet.</p>
-          )}
-        </div>
-        {/* Archived: collapsed by default; rows open by direct link (the
-            thread always resolves) and their menu offers Unarchive. */}
-        {archivedChats != null && archivedChats.length > 0 && (
-          <div className="pb-2">
-            <button
-              type="button"
-              onClick={() => setArchivedOpen((o) => !o)}
-              className="flex w-full items-center justify-between px-1 pb-1 pt-4 font-medium text-muted-foreground outline-none hover:text-foreground"
-            >
-              <span>Archived</span>
-              {archivedOpen ? (
-                <ChevronUp className="size-3.5" />
-              ) : (
-                <ChevronDown className="size-3.5" />
-              )}
-            </button>
-            {archivedOpen && (
-              <div className="space-y-0.5">
-                {archivedChats.map((c) => (
-                  <ChatListItem
-                    key={c.id}
-                    title={c.title || "Untitled"}
-                    active={c.id === chatId}
-                    status={{ generating: !!c.generating, unread: false }}
-                    onClick={() => onOpenChat(c.id)}
-                    archiveLabel="Unarchive"
-                    onArchive={onUnarchiveChat ? () => onUnarchiveChat(c.id) : undefined}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      <Separator />
-      <div className="p-2">
-        <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl}>
-          <WorkspaceMenuItems onAddWorkspace={onAddWorkspace} onReload={() => window.location.reload()} />
-          <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
-          <DropdownMenuItem onClick={onOpenSettings}>Settings</DropdownMenuItem>
-          {/* Browser only: the desktop sign-out lives on the workspace rows
-              (inline ×) — a second button below duplicated it. */}
-          {!IS_TAURI && <DropdownMenuSeparator />}
-          {!IS_TAURI && (
-            <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
-              Sign out
-            </DropdownMenuItem>
-          )}
-        </UserBadge>
-      </div>
-    </div>
-  );
-}

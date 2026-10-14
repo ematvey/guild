@@ -1,7 +1,7 @@
 //! Agent-level types shared by the durable gateway workflow's clients:
 //! the approval decision and the approval policy (`policy`, spec §3.2).
-//! The in-memory agent loop (`run_agent`) is gone — the workflow in
-//! `crates/server/src/worker/restate.rs` is the only agent loop.
+//! The in-memory agent loop (`run_agent`) is gone — the durable
+//! conversation harness (TS server, pi-durable) drives the loop.
 
 pub mod policy;
 

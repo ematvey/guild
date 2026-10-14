@@ -16,3 +16,4 @@ pub mod mcp;
 pub mod registry_client;
 pub mod remote_context;
 pub mod session_store;
+pub mod skill_sync;

@@ -9,6 +9,7 @@ import {
   compareVersions,
   eventsToBlocks,
   mentionCandidates,
+  composerSkills,
   parseChatRoute,
   parseSearchResults,
   reconcilePendingSend,
@@ -22,8 +23,10 @@ import {
   toolDisplayName,
   upsertApproval,
   accountDefaultLabel,
+  tabPaneLayout,
   type Block,
 } from "./WebChat";
+import type { SidebarTab } from "./sidebar-rail";
 import type { ApprovalPolicy, ThreadEvent, ThreadEventRow } from "../transport";
 
 function row(seq: number, event: ThreadEvent): ThreadEventRow {
@@ -33,69 +36,198 @@ function row(seq: number, event: ThreadEvent): ThreadEventRow {
 const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
 
 describe("parseChatRoute / chatRoutePath", () => {
-  const roundTrip = (path: string) =>
-    chatRoutePath(
-      parseChatRoute(path).chatId,
-      parseChatRoute(path).projectId,
-      parseChatRoute(path).overlay,
-    );
+  const roundTrip = (path: string) => {
+    const r = parseChatRoute(path);
+    return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills, r.tab, r.settingsSection, r.settingsDetail);
+  };
 
   it("round-trips every route shape", () => {
     for (const path of [
-      "/",
+      "/chats",
+      "/chats",
+      "/work",
       "/thread/abc-123",
       "/thread/abc-123/device",
+      "/work/device",
       "/project/p1",
       "/project/p1/thread/abc-123",
-      "/device",
+      "/chats/device",
+      "/work/device",
       "/settings",
       "/settings/models",
       "/settings/integrations/my-slug",
+      "/skills",
+      "/skills/activity",
+      "/skills/machine",
+      "/skills/new",
+      "/skills/code-review",
+      "/skills/code-review/edit",
     ]) {
       expect(roundTrip(path)).toBe(path);
     }
+    // "/" is an alias for the Chats tab; the canonical address is /chats
+    expect(chatRoutePath(parseChatRoute("/").chatId, null, null, null, parseChatRoute("/").tab)).toBe("/chats");
+  });
+
+  it("parses the rail tabs' own addresses", () => {
+    // each panel tab owns a top-level URL; a tab root is a fresh chat
+    expect(parseChatRoute("/chats")).toMatchObject({ chatId: null, tab: "chats" });
+    expect(parseChatRoute("/work")).toMatchObject({ chatId: null, tab: "work" });
+    expect(parseChatRoute("/settings")).toMatchObject({
+      chatId: null,
+      overlay: null,
+      tab: "settings",
+    });
+    // a project filter implies the Work tab
+    expect(parseChatRoute("/project/p1")).toMatchObject({ projectId: "p1", tab: "work" });
+    // a sectioned settings URL deep-links the tab's section
+    expect(parseChatRoute("/settings/models")).toMatchObject({
+      tab: "settings",
+      settingsSection: "models",
+      settingsDetail: null,
+    });
+    // everything else defaults to the Chats tab
+    expect(parseChatRoute("/thread/x")).toMatchObject({ tab: "chats" });
+  });
+
+  it("parses every skills page state; skills is chat-independent and top-level", () => {
+    expect(parseChatRoute("/skills").skills).toEqual({
+      view: "catalog",
+      slug: null,
+      editor: null,
+    });
+    expect(parseChatRoute("/skills/activity").skills).toEqual({
+      view: "activity",
+      slug: null,
+      editor: null,
+    });
+    expect(parseChatRoute("/skills/machine").skills).toEqual({
+      view: "machine",
+      slug: null,
+      editor: null,
+    });
+    // "new" is a reserved segment: the create editor, not a detail slug.
+    expect(parseChatRoute("/skills/new").skills).toEqual({
+      view: "catalog",
+      slug: null,
+      editor: "new",
+    });
+    expect(parseChatRoute("/skills/code-review").skills).toEqual({
+      view: "catalog",
+      slug: "code-review",
+      editor: null,
+    });
+    expect(parseChatRoute("/skills/code-review/edit").skills).toEqual({
+      view: "catalog",
+      slug: "code-review",
+      editor: "code-review",
+    });
+    // activity/machine/new are reserved: a slug can never collide with
+    // them, so tabs parse without a slug lookup.
+    for (const reserved of ["activity", "machine", "new"]) {
+      expect(parseChatRoute(`/skills/${reserved}`).skills).toMatchObject({ slug: null });
+    }
+    // the skills page replaces the chat: no thread/project rides along
+    const r = parseChatRoute("/skills/code-review");
+    expect(r.chatId).toBeNull();
+    expect(r.projectId).toBeNull();
+    expect(r.overlay).toBeNull();
   });
 
   it("parses thread + overlay combinations", () => {
-    expect(parseChatRoute("/thread/x")).toEqual({ chatId: "x", projectId: null, overlay: null });
+    expect(parseChatRoute("/thread/x")).toEqual({
+      chatId: "x",
+      projectId: null,
+      overlay: null,
+      skills: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+    });
     expect(parseChatRoute("/thread/x/device")).toEqual({
       chatId: "x",
       projectId: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
       overlay: { kind: "device" },
+      skills: null,
     });
     expect(parseChatRoute("/settings/integrations/a/b")).toEqual({
       chatId: null,
       projectId: null,
-      overlay: { kind: "settings", section: "integrations", detail: "a/b" },
+      tab: "settings",
+      overlay: null,
+      skills: null,
+      settingsSection: "integrations",
+      settingsDetail: "a/b",
     });
     // trailing slashes and empty segments are ignored
-    expect(parseChatRoute("/thread/x/")).toEqual({ chatId: "x", projectId: null, overlay: null });
-    expect(parseChatRoute("")).toEqual({ chatId: null, projectId: null, overlay: null });
+    expect(parseChatRoute("/thread/x/")).toEqual({
+      chatId: "x",
+      projectId: null,
+      overlay: null,
+      skills: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+    });
+    expect(parseChatRoute("")).toEqual({
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+    });
     // a detail carrying an encoded slash parses to the full id and the
     // rebuilt path is parse-stable from there on
+    const deep = parseChatRoute("/settings/integrations/my%2Fslug");
     const once = chatRoutePath(
-      parseChatRoute("/settings/integrations/my%2Fslug").chatId,
-      parseChatRoute("/settings/integrations/my%2Fslug").projectId,
-      parseChatRoute("/settings/integrations/my%2Fslug").overlay,
+      deep.chatId,
+      deep.projectId,
+      deep.overlay,
+      deep.skills,
+      deep.tab,
+      deep.settingsSection,
+      deep.settingsDetail,
     );
-    expect(parseChatRoute(once).overlay).toEqual({
-      kind: "settings",
-      section: "integrations",
-      detail: "my/slug",
-    });
+    expect(parseChatRoute(once).settingsSection).toBe("integrations");
+    expect(parseChatRoute(once).settingsDetail).toBe("my/slug");
   });
 
   it("parses the project filter, with and without an open thread", () => {
-    expect(parseChatRoute("/project/p1")).toEqual({ chatId: null, projectId: "p1", overlay: null });
+    expect(parseChatRoute("/project/p1")).toEqual({
+      chatId: null,
+      projectId: "p1",
+      overlay: null,
+      skills: null,
+      tab: "work",
+      settingsSection: null,
+      settingsDetail: null,
+    });
     expect(parseChatRoute("/project/p1/thread/c1")).toEqual({
       chatId: "c1",
       projectId: "p1",
       overlay: null,
+      skills: null,
+      tab: "work",
+      settingsSection: null,
+      settingsDetail: null,
     });
     // a bare /thread/<id> has no project filter (deep link)
     expect(parseChatRoute("/thread/c1").projectId).toBeNull();
     // /project without an id is not a project route
-    expect(parseChatRoute("/project")).toEqual({ chatId: null, projectId: null, overlay: null });
+    expect(parseChatRoute("/project")).toEqual({
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+    });
   });
 });
 
@@ -611,5 +743,67 @@ describe("mentionCandidates (slash autocomplete pool)", () => {
     expect(res.every((c) => c.builtin)).toBe(true);
     const mixed = mentionCandidates(builtins, skills, "deploy");
     expect(mixed[0].builtin).toBe(false);
+  });
+});
+
+describe("composerSkills (local + installed org pool, spec §2.3)", () => {
+  const local = [
+    { name: "local-a", description: "a local skill", disabled: false },
+    { name: "dup", description: "local wins", disabled: false },
+  ];
+  const installs = [
+    { slug: "org-deploy", pinned_version: "v2" },
+    { slug: "dup", pinned_version: "v1" }, // also local: folds into the local row
+  ];
+
+  it("org group carries only installed org skills; local rows win duplicates", () => {
+    const pool = composerSkills(local, installs);
+    const orgGroup = pool.filter((s) => s.org);
+    expect(orgGroup.map((s) => s.name)).toEqual(["org-deploy"]); // `dup` is listed locally — no second entry
+    expect(pool.map((s) => s.name)).toEqual(["local-a", "dup", "org-deploy"]);
+  });
+  it("uninstalled org skills never enter (they are not in the installs list)", () => {
+    const pool = composerSkills(local, [{ slug: "org-deploy", pinned_version: "v2" }]);
+    expect(pool.some((s) => s.name === "uninstalled-org-skill" || s.org === undefined && s.name.startsWith("uninstalled"))).toBe(false);
+    expect(pool.filter((s) => s.org)).toHaveLength(1);
+  });
+  it("works with either half absent", () => {
+    expect(composerSkills(null, installs).map((s) => s.name)).toEqual(["org-deploy", "dup"]);
+    expect(composerSkills(local, null)).toEqual(local);
+    expect(composerSkills(null, null)).toEqual([]);
+  });
+  it("org entries ride the /-autocomplete pool", () => {
+    const pool = composerSkills(local, installs);
+    const candidates = mentionCandidates([{ name: "compact", description: "c" }], pool, "");
+    expect(candidates.map((c) => c.name)).toEqual(["compact", "local-a", "dup", "org-deploy"]);
+    expect(candidates.find((c) => c.name === "org-deploy")?.org).toBe(true);
+    expect(candidates.find((c) => c.name === "local-a")?.org).toBe(false);
+  });
+});
+
+describe("tabPaneLayout (rail tab → sidebar/pane layout)", () => {
+  it("the skills tab is a full-page main-pane swap with NO sidebar aside", () => {
+    expect(tabPaneLayout("skills", false)).toEqual({
+      aside: false,
+      mainPane: "skillsPage",
+      expandsPanel: false,
+    });
+  });
+
+  it("the other desktop tabs keep the panel sidebar and the chat thread", () => {
+    for (const tab of ["chats", "work", "settings"] as SidebarTab[]) {
+      expect(tabPaneLayout(tab, false)).toEqual({
+        aside: true,
+        mainPane: "chat",
+        expandsPanel: true,
+      });
+    }
+  });
+
+  it("mobile keeps the chats-only drawer behavior unchanged", () => {
+    for (const tab of ["chats", "work", "skills", "settings"] as SidebarTab[]) {
+      expect(tabPaneLayout(tab, true).mainPane).toBe("chat");
+      expect(tabPaneLayout(tab, true).aside).toBe(false);
+    }
   });
 });

@@ -25,6 +25,8 @@ interface UsageRow {
 interface SeriesRow {
   bucket: string; // RFC 3339
   group: string;
+  tokens_in: number;
+  tokens_out: number;
   cost_usd: number;
   requests: number;
 }
@@ -45,13 +47,18 @@ const PERIOD_MS: Record<Period, number> = {
 const GROUPS = ["user", "team", "model"] as const;
 type Group = (typeof GROUPS)[number];
 
-const readQuery = (): { period: Period; group: Group } => {
+const METRICS = ["cost", "tokens"] as const;
+type Metric = (typeof METRICS)[number];
+
+const readQuery = (): { period: Period; group: Group; metric: Metric } => {
   const q = new URLSearchParams(window.location.search);
   const period = q.get("period") as Period | null;
   const group = q.get("group") as Group | null;
+  const metric = q.get("metric") as Metric | null;
   return {
     period: (PERIODS as readonly string[]).includes(period ?? "") ? period! : "7d",
     group: (GROUPS as readonly string[]).includes(group ?? "") ? group! : "model",
+    metric: (METRICS as readonly string[]).includes(metric ?? "") ? metric! : "cost",
   };
 };
 
@@ -65,9 +72,11 @@ export default function UsageSection() {
   const summaryRes = useCachedGet<{
     today_cost_usd: number;
     month_cost_usd: number;
+    today_tokens?: number;
+    month_tokens?: number;
   }>("/api/v1/usage/summary");
   const summary = summaryRes.data;
-  const [{ period, group }, setView] = useState(readQuery);
+  const [{ period, group, metric }, setView] = useState(readQuery);
 
   // Back/forward: re-read period + group from the URL.
   useEffect(() => {
@@ -76,11 +85,12 @@ export default function UsageSection() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  const pick = (next: Partial<{ period: Period; group: Group }>) => {
-    const merged = { period, group, ...next };
+  const pick = (next: Partial<{ period: Period; group: Group; metric: Metric }>) => {
+    const merged = { period, group, metric, ...next };
     const url = new URL(window.location.href);
     url.searchParams.set("period", merged.period);
     url.searchParams.set("group", merged.group);
+    url.searchParams.set("metric", merged.metric);
     if (url.toString() !== window.location.href) {
       window.history.pushState(null, "", url);
     }
@@ -104,19 +114,23 @@ export default function UsageSection() {
 
   // zero-filled timeline keeps lines continuous across traffic gaps
   const timeline = useMemo<
-    { label: string; stamp: string; cost: number; requests: number }[] | null
+    { label: string; stamp: string; cost: number; tokens: number; requests: number }[] | null
   >(() => {
     const series = seriesRes.data?.rows;
     if (!series) return null;
     const buckets = period === "24h" ? 24 : PERIOD_MS[period] / 86_400_000;
     const labelOf = period === "24h" ? hourLabel : dayLabel;
-    const byStamp = new Map<number, { cost: number; requests: number }>();
+    const byStamp = new Map<number, { cost: number; tokens: number; requests: number }>();
     for (const r of series) {
       const key = new Date(r.bucket).getTime();
-      const cur = byStamp.get(key) ?? { cost: 0, requests: 0 };
-      byStamp.set(key, { cost: cur.cost + r.cost_usd, requests: cur.requests + r.requests });
+      const cur = byStamp.get(key) ?? { cost: 0, tokens: 0, requests: 0 };
+      byStamp.set(key, {
+        cost: cur.cost + r.cost_usd,
+        tokens: cur.tokens + r.tokens_in + r.tokens_out,
+        requests: cur.requests + r.requests,
+      });
     }
-    const points: { label: string; stamp: string; cost: number; requests: number }[] = [];
+    const points: { label: string; stamp: string; cost: number; tokens: number; requests: number }[] = [];
     const step = PERIOD_MS[period] / buckets;
     const start = Date.now() - PERIOD_MS[period];
     for (let i = 1; i <= buckets; i++) {
@@ -131,28 +145,41 @@ export default function UsageSection() {
         label: labelOf(iso),
         stamp: iso,
         cost: byStamp.get(tMs)?.cost ?? 0,
+        tokens: byStamp.get(tMs)?.tokens ?? 0,
         requests: byStamp.get(tMs)?.requests ?? 0,
       });
     }
     return points;
   }, [seriesRes.data, period]);
 
+  const tokensOf = (r: UsageRow) => r.tokens_in + r.tokens_out;
   const barRows = (rows ?? [])
     .slice()
-    .sort((a, b) => b.cost_usd - a.cost_usd || b.requests - a.requests)
+    .sort((a, b) =>
+      metric === "tokens"
+        ? tokensOf(b) - tokensOf(a) || b.requests - a.requests
+        : b.cost_usd - a.cost_usd || b.requests - a.requests,
+    )
     .slice(0, 8)
     .map((r) => ({
       group: r.group === "none" && group === "team" ? "no team" : r.group,
       cost: r.cost_usd,
+      tokens: tokensOf(r),
       requests: r.requests,
     }));
-  const barsByRequests = barRows.some((r) => r.requests > 0) && barRows.every((r) => r.cost === 0);
+  const barsByRequests =
+    barRows.some((r) => r.requests > 0) &&
+    barRows.every((r) => (metric === "tokens" ? r.tokens === 0 : r.cost === 0));
+  const barDataKey = barsByRequests ? "requests" : metric;
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Usage"
         description="Spend and request volume across the organization, scoped by period."
+        actions={
+          <MetricPicker metric={metric} onPick={(m) => pick({ metric: m })} />
+        }
       />
       {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -166,9 +193,18 @@ export default function UsageSection() {
               </div>
             ))
           : [
-              { label: "Spent today", value: money(summary?.today_cost_usd) },
-              { label: "Spent this month", value: money(summary?.month_cost_usd) },
-            ].map((s) => (
+              metric === "tokens"
+                ? [
+                    { label: "Tokens today", value: compact(summary?.today_tokens ?? 0) },
+                    { label: "Tokens this month", value: compact(summary?.month_tokens ?? 0) },
+                  ]
+                : [
+                    { label: "Spent today", value: money(summary?.today_cost_usd) },
+                    { label: "Spent this month", value: money(summary?.month_cost_usd) },
+                  ],
+            ]
+              .flat()
+              .map((s) => (
               <div key={s.label} className={card}>
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   {s.label}
@@ -194,7 +230,7 @@ export default function UsageSection() {
               No usage in the last {period}.
             </p>
           ) : (
-            <CostChart timeline={timeline} />
+            <CostChart timeline={timeline} metric={metric} />
           )}
         </div>
       </div>
@@ -229,8 +265,8 @@ export default function UsageSection() {
           <div className="border-b border-border px-4 py-4">
             <ChartContainer
               config={{
-                [barsByRequests ? "requests" : "cost"]: {
-                  label: barsByRequests ? "Requests" : "Cost",
+                [barDataKey]: {
+                  label: barsByRequests ? "Requests" : metric === "tokens" ? "Tokens" : "Cost",
                   color: "var(--primary)",
                 },
               }}
@@ -254,14 +290,16 @@ export default function UsageSection() {
                       formatter={(value) =>
                         barsByRequests
                           ? `${Number(value).toLocaleString()} requests`
-                          : money(Number(value))
+                          : metric === "tokens"
+                            ? `${compact(Number(value))} tokens`
+                            : money(Number(value))
                       }
                       hideLabel
                     />
                   }
                 />
                 <Bar
-                  dataKey={barsByRequests ? "requests" : "cost"}
+                  dataKey={barDataKey}
                   fill="var(--color-cost)"
                   radius={4}
                   barSize={14}
@@ -314,21 +352,26 @@ export default function UsageSection() {
   );
 }
 
-/// Cost-over-time area chart; on free ($0/Mtok) routes cost is flat zero,
-/// so the chart falls back to request volume — still a real usage signal.
+/// Cost-or-tokens over time area chart; the metric follows the page toggle.
+/// On free ($0/Mtok) routes the cost view is flat zero, so the chart falls
+/// back to request volume — still a real usage signal.
 function CostChart({
   timeline,
+  metric,
 }: {
-  timeline: { label: string; stamp: string; cost: number; requests: number }[];
+  timeline: { label: string; stamp: string; cost: number; tokens: number; requests: number }[];
+  metric: Metric;
 }) {
-  const byRequests = timeline.some((p) => p.requests > 0) && timeline.every((p) => p.cost === 0);
+  const byRequests =
+    timeline.some((p) => p.requests > 0) &&
+    timeline.every((p) => (metric === "tokens" ? p.tokens === 0 : p.cost === 0));
+  const dataKey = byRequests ? "requests" : metric;
   const config = {
-    [byRequests ? "requests" : "cost"]: {
-      label: byRequests ? "Requests" : "Cost",
+    [dataKey]: {
+      label: byRequests ? "Requests" : metric === "tokens" ? "Tokens" : "Cost",
       color: "var(--primary)",
     },
   } satisfies ChartConfig;
-  const dataKey = byRequests ? "requests" : "cost";
   return (
     <ChartContainer config={config} className="aspect-auto h-44 w-full">
       <AreaChart data={timeline} margin={{ left: 4, right: 8, top: 8 }}>
@@ -353,7 +396,11 @@ function CostChart({
                 return stamp ? fullStamp(stamp) : "";
               }}
               formatter={(value) =>
-                dataKey === "cost" ? money(Number(value)) : `${Number(value).toLocaleString()} requests`
+                dataKey === "cost"
+                  ? money(Number(value))
+                  : dataKey === "tokens"
+                    ? `${compact(Number(value))} tokens`
+                    : `${Number(value).toLocaleString()} requests`
               }
             />
           }
@@ -385,6 +432,26 @@ function PeriodPicker({ period, onPick }: { period: Period; onPick: (p: Period) 
           }`}
         >
           {p}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MetricPicker({ metric, onPick }: { metric: Metric; onPick: (m: Metric) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      {METRICS.map((m) => (
+        <button
+          key={m}
+          onClick={() => onPick(m)}
+          className={`rounded-md px-2 py-1 text-xs capitalize transition-colors ${
+            metric === m
+              ? "bg-primary text-primary-foreground"
+              : "bg-accent/50 text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {m}
         </button>
       ))}
     </div>
