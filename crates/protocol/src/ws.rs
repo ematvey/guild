@@ -102,6 +102,18 @@ pub enum WsServerMsg {
         chat_id: Uuid,
         generating: bool,
     },
+    /// Incremental durable-log fan-out: only the events appended since the
+    /// client's last view. The client renders them through the same replay
+    /// rules a full sync uses, so tool calls and approval cards land live
+    /// from the journal instead of turn-end publishes. Tag-peeking daemons
+    /// classify unknown tags as `Other` and ignore this frame.
+    ThreadEvents {
+        chat_id: Uuid,
+        /// Newest `seq` carried by `events` (client watermark guard).
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        seq: i64,
+        events: Vec<serde_json::Value>,
+    },
     /// Bracket for the state-sync of one chat.
     SyncBegin {
         chat_id: Uuid,

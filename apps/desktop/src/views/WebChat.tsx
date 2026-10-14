@@ -2386,6 +2386,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       // Sequenced ThreadState owns busy state; older status notifications cannot override it.
       onChatStatus: () => {},
       onThreadState: (state) => applyHistory(state),
+      onThreadEvents: (cid, _seq, events) => {
+        // Incremental durable-log fan-out: the same rows a refresh replays,
+        // applied live. Settles optimistic sends exactly like applyHistory.
+        const applied = reducerRef.current.applyThreadEvents(cid, _seq, events);
+        for (const row of events) {
+          if (row.event.type === "user_message") observedUserIdsRef.current.add(row.id);
+          const command = outgoingRef.current.get(row.id);
+          if (row.event.type === "user_message" && command && command.chatId === cid) settleOutgoing(command);
+        }
+        if (applied.stale) return;
+        if (cid === openChatIdRef.current) setBlocks(applied.blocks);
+      },
       onSync: (cid, phase) => {
         if (phase === "begin") {
           syncingChatsRef.current.set(cid, (syncingChatsRef.current.get(cid) ?? 0) + 1);

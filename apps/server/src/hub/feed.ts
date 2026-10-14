@@ -53,6 +53,11 @@ export class FeedForwarder implements GenerationStreamSink {
   private readonly dirtyChats = new Set<string>();
   /** Open generation identities (live_frame generation_id). */
   private readonly generations = new Map<string, string>();
+  /** Per-chat fan-out baseline: rows at/below this seq already reached the
+   *  client (full-view publishes re-baseline to the capture's max row).
+   *  Undefined = the open() baseline hasn't run yet — committed() falls
+   *  back to a full-view publish instead of guessing. */
+  private readonly sentSeqs = new Map<string, number>();
   /** Per-chat send chains: the async watermark + fan-out of one frame
    *  serializes before the next, so frame order matches emission order. */
   private readonly chains = new Map<string, Promise<void>>();
@@ -150,16 +155,18 @@ export class FeedForwarder implements GenerationStreamSink {
       this.dirtyChats.delete(chatId);
       return;
     }
-    // A streaming turn owns its view: intermediate commits (per-step
-    // assistant messages, tool results) ride the run-end publish — the
-    // generating=false flip dirties the chat exactly once per turn. Each
-    // frame carries the full event history, so per-commit publishes
-    // re-broadcast the whole thread per step.
+    this.dirtyChats.delete(chatId);
+    // An open turn owns the view: instead of re-broadcasting the whole
+    // thread per append, fan out only the rows committed since the last
+    // fan-out (thread_events frames). Tool calls, approval cards and
+    // messages all land as durable-log events — the client renders them
+    // through the same replay rules a refresh uses, live.
+    const since = this.sentSeqs.get(chatId);
     if (this.generations.has(chatId)) {
-      this.dirtyChats.delete(chatId);
+      if (since !== undefined) this.publishIncremental(chatId, chat.userId, since);
+      else this.dirtyChats.add(chatId);
       return;
     }
-    this.dirtyChats.delete(chatId);
     await this.publishView(chatId, chat.orgId, chat.userId);
   }
 
@@ -207,6 +214,11 @@ export class FeedForwarder implements GenerationStreamSink {
     if (this.views.get(chatId) === dedupe) return;
     this.views.set(chatId, dedupe);
     this.sendToUser(userId, threadStateMsg(capture));
+    // The full view carried every row of the log: the incremental lane
+    // resumes above the newest one it delivered (the capture watermark
+    // is reserved later than the read — a row can commit in between).
+    const maxRow = capture.events.reduce((max, row) => Math.max(max, row.seq), 0);
+    this.sentSeqs.set(chatId, Math.max(this.sentSeqs.get(chatId) ?? 0, maxRow));
   }
 
   // -- live generation frames (Rust Feed::drain_events) -----------------------
@@ -214,6 +226,21 @@ export class FeedForwarder implements GenerationStreamSink {
   open(chatId: string, generationId: string): void {
     this.generations.set(chatId, generationId);
     void this.ensureChat(chatId, false);
+    // Baseline on the chat's send chain (ordered before any incremental
+    // this turn commits): everything already durable reached clients via
+    // sync; the turn fans out only rows appended after this max.
+    this.enqueue(chatId, async () => {
+      if (this.generations.get(chatId) !== generationId) return;
+      try {
+        const res = await this.ctx.pool.query<{ max: string | null }>(
+          "SELECT MAX(seq) AS max FROM thread_events WHERE chat_id = $1",
+          [chatId],
+        );
+        this.sentSeqs.set(chatId, Number(res.rows[0]?.max ?? 0));
+      } catch {
+        this.sentSeqs.delete(chatId);
+      }
+    });
   }
 
   event(chatId: string, event: StreamWireEvent): void {
@@ -246,6 +273,31 @@ export class FeedForwarder implements GenerationStreamSink {
 
   dirty(chatId: string): void {
     this.dirtyChats.add(chatId);
+  }
+
+  /** One incremental fan-out on the chat's send chain: rows appended since
+   *  `since`, as a thread_events frame (same serialized chain as the live
+   *  frames, so a committed row never overtakes its own stream frames). */
+  private publishIncremental(chatId: string, userId: string, since: number): void {
+    this.enqueue(chatId, async () => {
+      if (this.generations.get(chatId) === undefined) return;
+      let rows;
+      try {
+        rows = await this.ctx.threads.listEventsSince(chatId, since);
+      } catch {
+        return;
+      }
+      if (rows.length === 0) return;
+      const maxRow = rows.reduce((max, row) => Math.max(max, row.seq), since);
+      this.sentSeqs.set(chatId, Math.max(this.sentSeqs.get(chatId) ?? 0, maxRow));
+      const frame: WsServerMsg = {
+        type: "thread_events",
+        chat_id: chatId,
+        seq: maxRow,
+        events: rows,
+      };
+      for (const sink of this.ctx.hub.sinksOfUser(userId)) sink.send(frame);
+    });
   }
 
   close(chatId: string): void {

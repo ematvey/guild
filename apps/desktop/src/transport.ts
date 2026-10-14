@@ -206,6 +206,9 @@ export type ThreadState = {
 export interface SocketHandlers {
   onConnect?: () => void;
   onThreadState?: (state: ThreadState) => void;
+  /** Incremental durable-log fan-out: rows appended since the client's
+   *  last view, rendered through the same replay rules a sync uses. */
+  onThreadEvents?: (chat_id: string, seq: number, events: ThreadEventRow[]) => void;
   onThreadList: (chats: ChatSummary[]) => void;
   onChatStatus: (frame: { chat_id: string; generating: boolean }) => void;
   onFrame: (frame: { chat_id: string; machine_id: string | null; event: StreamFrame }) => void;
@@ -299,6 +302,13 @@ export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): vo
       return;
     case "thread_state":
       handlers.onThreadState?.(message as unknown as ThreadState);
+      return;
+    case "thread_events":
+      handlers.onThreadEvents?.(
+        message.chat_id,
+        message.seq,
+        message.events as unknown as ThreadEventRow[],
+      );
       return;
     case "thread_list":
       handlers.onThreadList(message.chats as unknown as ChatSummary[]);

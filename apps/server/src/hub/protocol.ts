@@ -46,6 +46,12 @@ export type WsServerMsg =
       has_more_events?: boolean;
     }
   | { type: "sync_done"; chat_id: string }
+  | {
+      type: "thread_events";
+      chat_id: string;
+      seq: number;
+      events: unknown[];
+    }
   | { type: "pong" }
   | {
       type: "live_frame";
@@ -212,6 +218,25 @@ export function serializeServerMsg(msg: WsServerMsg): string {
       );
     case "sync_begin":
       return JSON.stringify(frame("sync_begin", [["chat_id", msg.chat_id]]));
+    case "thread_events": {
+      // Same row renderer as thread_state — event rows must stay byte-exact
+      // with the replayed log (sorted keys, ryu floats).
+      const rows = (msg.events as unknown[])
+        .map((row) => {
+          try {
+            return threadEventRowWire(row as Parameters<typeof threadEventRowWire>[0]);
+          } catch {
+            return JSON.stringify(row);
+          }
+        })
+        .join(",");
+      return wireObject([
+        ["type", "thread_events"],
+        ["chat_id", msg.chat_id],
+        ["seq", msg.seq],
+        ["events", raw(`[${rows}]`)],
+      ]);
+    }
     case "thread_state": {
       // The event rows render through the byte-exact row renderer (serde
       // Value rows: sorted keys, ryu floats) — a plain stringify would lose
