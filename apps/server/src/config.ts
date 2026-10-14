@@ -77,6 +77,10 @@ export interface Config {
   /** Exec-policy base rules file (GUILD_EXEC_POLICY_RULES). Default: the
    *  Rust tree's static asset. */
   execPolicyRulesPath: string | null;
+  /** LLM trace payload capture (GUILD_TRACE_PAYLOADS=1, default off): the
+   *  llm_payloads request/response bodies are a deliberate choice — the
+   *  metadata table (llm_calls) is always on. */
+  tracePayloads: boolean;
 }
 
 export type SandboxConfig =
@@ -183,6 +187,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // server process's cwd (pi-durable re-resolves tool cwds against it).
   const poolMax = Number(env.GUILD_POOL_MAX ?? 10);
   const dataDir = path.resolve(env.GUILD_DATA_DIR ?? "./data");
+  const tracePayloads = env.GUILD_TRACE_PAYLOADS === "1";
   return {
     faroUrl,
     webDistDir,
@@ -210,5 +215,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     approvalTimeoutMs,
     clientToolTimeoutMs,
     execPolicyRulesPath: env.GUILD_EXEC_POLICY_RULES ?? null,
+    tracePayloads,
   };
 }

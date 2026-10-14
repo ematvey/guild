@@ -35,6 +35,7 @@ import { FeedForwarder } from "../hub/feed.js";
 import { ClickhouseClient } from "./clickhouse.js";
 import { SkillReadSink } from "./skillReads.js";
 import { UsageSink } from "./usage.js";
+import { LlmTraceSink } from "./trace.js";
 import { ApiError } from "./errors.js";
 import type { GatewayCredential } from "./http/llm.js";
 import type { ChatsCtx } from "./contexts.js";
@@ -83,6 +84,8 @@ export class PlatformContext {
   readonly machineDispatch: MachineDispatch;
   readonly wsTickets: TicketStore;
   readonly usage: UsageSink;
+  /** The LLM trace sink (llm_calls + opt-in llm_payloads; trace.ts). */
+  readonly trace: LlmTraceSink;
   /** The ClickHouse skill-read sink (read_skill analytics; Task 6's
    *  detail page reads the query side). */
   readonly skillReads: SkillReadSink;
@@ -150,6 +153,7 @@ export class PlatformContext {
     this.wsTickets = new TicketStore();
     this.clickhouse = this.createClickhouse();
     this.usage = new UsageSink(this.clickhouse);
+    this.trace = new LlmTraceSink(this.clickhouse, config.tracePayloads);
     this.skillReads = new SkillReadSink(this.clickhouse);
     this.skillReads.attachPool(this.pool);
     this.chats = new ChatStore(this.pool);
@@ -158,7 +162,7 @@ export class PlatformContext {
     this.agentSessions = new AgentSessionStore(this.pool);
     this.toolArtifacts = new ToolArtifactStore(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);
-    this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads);
+    this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads, this.trace);
     // The machine dispatch registry settles pending tool waiters when a
     // machine's slot dies (the unknown-outcome sweep).
     this.hub.onMachineDisconnected = (_machineId, connId) => this.machineDispatch.unregisterConnection(connId);

@@ -7,6 +7,8 @@
 import { ApiError } from "../errors.js";
 import { forProtocol, ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec } from "../provider/types.js";
 import { enforceQuota, newRequestId, UsageEvent, UsageSink, usageCostUsd, errorText } from "../usage.js";
+import { serializeRustJson } from "../provider/sse.js";
+import type { LlmTraceSink } from "../trace.js";
 import type { GatewayStore } from "../store/gateway.js";
 
 /** The gateway pipeline's slice of the platform context. */
@@ -14,6 +16,41 @@ export interface GatewayContext {
   masterKey(): Buffer;
   gatewayStore: GatewayStore;
   usage: UsageSink;
+  trace: LlmTraceSink;
+}
+
+/** The trace-context request headers the internal callers set:
+ *  `x-guild-internal-caller` (self-reported calls — the gateway records no
+ *  llm_calls row for them), plus the chat/conversation/turn/cause context
+ *  and an optional caller-minted request id so a judge's llm_calls row and
+ *  its usage_events row join. */
+export interface GatewayTraceHeaders {
+  internalCaller: boolean;
+  requestId: string | null;
+  chatId: string | null;
+  conversationId: number | null;
+  turn: number | null;
+  cause: string;
+}
+
+const headerOr = (headers: Record<string, unknown>, name: string): string | null => {
+  const value = headers[name];
+  return typeof value === "string" && value !== "" ? value : null;
+};
+
+/** Reads the trace-context headers off a gateway request. Malformed values
+ *  degrade to null — tracing must never reject a call. */
+export function readTraceHeaders(headers: Record<string, unknown>): GatewayTraceHeaders {
+  const conversation = headerOr(headers, "x-guild-conversation-id");
+  const turn = headerOr(headers, "x-guild-turn");
+  return {
+    internalCaller: headerOr(headers, "x-guild-internal-caller") !== null,
+    requestId: headerOr(headers, "x-guild-request-id"),
+    chatId: headerOr(headers, "x-guild-chat-id"),
+    conversationId: conversation !== null && /^\d+$/.test(conversation) ? Number(conversation) : null,
+    turn: turn !== null && /^-?\d+$/.test(turn) ? Number(turn) : null,
+    cause: headerOr(headers, "x-guild-cause") ?? "",
+  };
 }
 
 /** Credential resolved by a gateway auth extractor: a real api_keys row, or
@@ -155,6 +192,9 @@ export class StreamUsageCounters {
   // the recording helpers read the totals at the guard's exit paths.
   tokensIn = 0;
   tokensOut = 0;
+  /** Provider-reported reasoning tokens (OpenAI
+   *  completion_tokens_details.reasoning_tokens). */
+  reasoningTokens = 0;
   /** Provider frames seen — a stream that produced anything counts as a
    *  billable request even if the usage totals never arrived (abort). */
   frames = 0;
@@ -165,9 +205,10 @@ export class StreamUsageCounters {
   }
 
   /** Provider usage frames carry absolute totals. */
-  set(tokensIn?: number, tokensOut?: number): void {
+  set(tokensIn?: number, tokensOut?: number, reasoningTokens?: number): void {
     if (tokensIn !== undefined) this.tokensIn = tokensIn;
     if (tokensOut !== undefined) this.tokensOut = tokensOut;
+    if (reasoningTokens !== undefined) this.reasoningTokens = reasoningTokens;
   }
 }
 
@@ -181,6 +222,7 @@ export interface Accumulated {
   finishReason: string | null;
   tokensIn: number;
   tokensOut: number;
+  reasoningTokens: number;
 }
 
 /** Drains the provider stream, folding tool-call fragments into complete
@@ -196,6 +238,7 @@ export async function accumulate(
   let finishReason: string | null = null;
   let tokensIn = 0;
   let tokensOut = 0;
+  let reasoningTokens = 0;
   for await (const item of stream) {
     if (item instanceof ProviderError) throw item;
     counters.observe();
@@ -204,7 +247,8 @@ export async function accumulate(
         text += item.textDelta;
         if (item.tokensIn !== undefined) tokensIn = item.tokensIn;
         if (item.tokensOut !== undefined) tokensOut = item.tokensOut;
-        counters.set(item.tokensIn, item.tokensOut);
+        if (item.reasoningTokens !== undefined) reasoningTokens = item.reasoningTokens;
+        counters.set(item.tokensIn, item.tokensOut, item.reasoningTokens);
         break;
       // Reasoning is preserved end to end (protocol contract: it is never
       // dropped from context): non-streaming clients get it in the response
@@ -222,7 +266,12 @@ export async function accumulate(
         break;
     }
   }
-  return { text, reasoning, calls, finishReason, tokensIn, tokensOut };
+  return { text, reasoning, calls, finishReason, tokensIn, tokensOut, reasoningTokens };
+}
+
+/** The accumulated stream's visible completion size (trace completion_chars). */
+export function completionChars(acc: { text: string; reasoning: string; calls: NonNullable<InternalMessage["tool_calls"]> }): number {
+  return acc.text.length + acc.reasoning.length + acc.calls.reduce((n, c) => n + (typeof c.arguments === "string" ? c.arguments.length : serializeRustJson(c.arguments).length), 0);
 }
 
 /** Renders the provider's canonical finish reason (or the shape-derived
@@ -246,8 +295,80 @@ export function gatewayFinishReason(reported: string | null, hasCalls: boolean):
   }
 }
 
+/** The LLM trace emission one gateway call carries: identity + context the
+ *  caller extracted from the request headers, the shared request id (it is
+ *  also the usage event's), and the outcome details the stream loop knows
+ *  at settle time. */
+export interface GatewayTraceEmission {
+  sink: LlmTraceSink;
+  requestId: string;
+  chatId: string | null;
+  conversationId: number | null;
+  turn: number | null;
+  cause: string;
+  /** Date.now() at request entry (duration_ms). */
+  startedAt: number;
+  /** The request body's character length. */
+  promptChars: number;
+}
+
+interface UsageRecordOptions {
+  /** Caller-minted request id (the judge's x-guild-request-id); generated
+   *  when absent. */
+  requestId?: string;
+  /** LLM trace emission (the OpenAI surface; the judge self-reports). */
+  trace?: GatewayTraceEmission;
+  /** Trace outcome fields the caller knows at settle time. */
+  completionChars?: number;
+  finishReason?: string | null;
+  error?: string;
+  /** The wire mode (streaming endpoints pass true). */
+  stream?: boolean;
+}
+
+async function emitTrace(
+  credential: GatewayCredential,
+  model: string,
+  provider: string,
+  priceIn: number,
+  priceOut: number,
+  counters: StreamUsageCounters,
+  requestId: string,
+  opts: UsageRecordOptions,
+): Promise<void> {
+  const t = opts.trace;
+  if (t === undefined) return;
+  await t.sink.record({
+    ts: new Date(),
+    request_id: requestId,
+    org_id: credential.orgId,
+    user_id: credential.userId,
+    session_id: credential.sessionId,
+    chat_id: t.chatId,
+    conversation_id: t.conversationId,
+    turn: t.turn,
+    caller: "model",
+    cause: t.cause,
+    model,
+    provider,
+    tokens_in: counters.tokensIn,
+    tokens_out: counters.tokensOut,
+    reasoning_tokens: counters.reasoningTokens,
+    cost_usd: usageCostUsd(counters.tokensIn, counters.tokensOut, priceIn, priceOut),
+    duration_ms: Date.now() - t.startedAt,
+    finish_reason: opts.finishReason ?? "",
+    stream: opts.stream ?? false,
+    error: opts.error ?? "",
+    verdict: null,
+    verdict_reason: "",
+    prompt_chars: t.promptChars,
+    completion_chars: opts.completionChars ?? 0,
+  });
+}
+
 /** Usage recording for a completed (non-streaming) call: synchronous before
- *  the response returns — quota checks and tests read right after. */
+ *  the response returns — quota checks and tests read right after. The
+ *  trace row rides the same request id. */
 export async function recordUsageSync(
   usage: UsageSink,
   credential: GatewayCredential,
@@ -256,19 +377,21 @@ export async function recordUsageSync(
   priceIn: number,
   priceOut: number,
   counters: StreamUsageCounters,
+  opts: UsageRecordOptions = {},
 ): Promise<void> {
-  await usage.record(
-    usageEvent(
-      credential,
-      model,
-      provider,
-      priceIn,
-      priceOut,
-      counters.tokensIn,
-      counters.tokensOut,
-      newRequestId(),
-    ),
+  const requestId = opts.requestId ?? opts.trace?.requestId ?? newRequestId();
+  const event = usageEvent(
+    credential,
+    model,
+    provider,
+    priceIn,
+    priceOut,
+    counters.tokensIn,
+    counters.tokensOut,
+    requestId,
   );
+  await usage.record(event);
+  await emitTrace(credential, model, provider, priceIn, priceOut, counters, requestId, { ...opts, finishReason: opts.finishReason ?? null });
 }
 
 /** Usage recording for a stream that exited without its final frame
@@ -283,18 +406,26 @@ export function recordUsageDropped(
   priceIn: number,
   priceOut: number,
   counters: StreamUsageCounters,
+  opts: UsageRecordOptions = {},
 ): void {
   if (counters.frames === 0) return;
-  void usage.record(
-    usageEvent(
-      credential,
-      model,
-      provider,
-      priceIn,
-      priceOut,
-      counters.tokensIn,
-      counters.tokensOut,
-      newRequestId(),
-    ),
-  );
+  void (async () => {
+    const requestId = opts.requestId ?? opts.trace?.requestId ?? newRequestId();
+    await usage.record(
+      usageEvent(
+        credential,
+        model,
+        provider,
+        priceIn,
+        priceOut,
+        counters.tokensIn,
+        counters.tokensOut,
+        requestId,
+      ),
+    );
+    await emitTrace(credential, model, provider, priceIn, priceOut, counters, requestId, {
+      ...opts,
+      finishReason: opts.finishReason ?? null,
+    });
+  })();
 }

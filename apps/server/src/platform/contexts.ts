@@ -18,6 +18,7 @@ import type { PlatformPool } from "./db.js";
 import type { ObjectStore } from "./s3.js";
 import type { ClickhouseClient } from "./clickhouse.js";
 import type { UsageSink } from "./usage.js";
+import type { LlmTraceSink } from "./trace.js";
 import type { UserRow } from "./store/identity.js";
 import type { IdentityStore } from "./store/identity.js";
 import type { PairingStore } from "./store/pairing.js";
@@ -58,6 +59,7 @@ export interface InfraContext {
   readonly objects: ObjectStore;
   readonly clickhouse: ClickhouseClient;
   readonly usage: UsageSink;
+  readonly trace: LlmTraceSink;
   masterKey(): Buffer;
 }
 
