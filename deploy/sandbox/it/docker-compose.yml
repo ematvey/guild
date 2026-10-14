@@ -1,0 +1,37 @@
+# Sandbox integration-test stack: the runner (published on loopback for the
+# test process) and the egress proxy, in their own compose project. Used by
+# scripts/sandbox-it.sh; never deployed.
+services:
+  sandbox-runner:
+    image: ${GUILD_TS_SERVER_IMAGE:-guild-server-ts:latest}
+    user: "0:0"
+    command: ["node", "dist/sandbox/runner/main.js"]
+    environment:
+      GUILD_SANDBOX_RUNNER_TOKEN: ${GUILD_SANDBOX_RUNNER_TOKEN:?set GUILD_SANDBOX_RUNNER_TOKEN}
+      GUILD_SANDBOX_IMAGE: ${GUILD_SANDBOX_IMAGE:-guild-sandbox:latest}
+      GUILD_SANDBOX_PROXY_URL: http://10.214.0.2:3128
+      GUILD_SANDBOX_IDLE_STOP_SECONDS: "60"
+      GUILD_SANDBOX_IDLE_REMOVE_SECONDS: "120"
+    ports:
+      - "127.0.0.1:${GUILD_SANDBOX_IT_PORT:-18090}:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - guild_data:/data
+  egress:
+    image: ${GUILD_SANDBOX_EGRESS_IMAGE:-guild-sandbox-egress:latest}
+    networks:
+      default: {}
+      sandbox:
+        ipv4_address: 10.214.0.2
+# Explicit subnets: hosts running many compose projects exhaust Docker's
+# default address pools.
+networks:
+  default:
+    ipam:
+      config: [{ subnet: "${GUILD_SANDBOX_IT_DEFAULT_SUBNET:-10.214.1.0/24}" }]
+  sandbox:
+    internal: true
+    ipam:
+      config: [{ subnet: "${GUILD_SANDBOX_IT_SUBNET:-10.214.0.0/24}" }]
+volumes:
+  guild_data:

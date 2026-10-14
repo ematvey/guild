@@ -1,8 +1,8 @@
 // Icon rail left of the sidebar panel (desktop): switches the panel between
-// chats, projects (work), skills and settings. The account menu lives here too —
-// it is global across tabs and never scrolls away.
+// chats, projects (work) and skills. Help and Settings sit at the bottom,
+// above the account menu — all global across tabs and never scroll away.
 
-import { FolderKanban, MessageSquare, Package, Settings } from "lucide-react";
+import { CircleHelp, FolderKanban, MessageSquare, Package, Settings } from "lucide-react";
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -18,12 +18,49 @@ const TABS: { id: SidebarTab; label: string; icon: typeof MessageSquare }[] = [
   { id: "chats", label: "Chats", icon: MessageSquare },
   { id: "work", label: "Work", icon: FolderKanban },
   { id: "skills", label: "Skills", icon: Package },
-  { id: "settings", label: "Settings", icon: Settings },
 ];
+
+/** The bottom rail buttons: Help (a popup, not a panel tab) above Settings
+ *  (the panel tab), then the account menu. */
+export type RailBottomAction = "help" | "settings";
+
+function RailButton({
+  label,
+  icon: Icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: typeof MessageSquare;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          aria-current={active}
+          onClick={onClick}
+          className={`flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
+            active
+              ? "bg-accent text-accent-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Icon className="size-5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 export function SidebarRail({
   activeTab,
   onTabChange,
+  onOpenHelp,
   email,
   displayName,
   avatarUrl,
@@ -33,6 +70,8 @@ export function SidebarRail({
 }: {
   activeTab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
+  /** The big help/learn popup (a route overlay, not a panel tab). */
+  onOpenHelp: () => void;
   email: string;
   displayName?: string | null;
   avatarUrl?: string | null;
@@ -51,39 +90,42 @@ export function SidebarRail({
           onReload={() => window.location.reload()}
         />
         {TABS.map(({ id, label, icon: Icon }) => (
-          <Tooltip key={id}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label={label}
-                aria-current={activeTab === id}
-                onClick={() => onTabChange(id)}
-                className={`flex size-9 items-center justify-center rounded-md outline-none transition-colors ${
-                  activeTab === id
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Icon className="size-5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">{label}</TooltipContent>
-          </Tooltip>
+          <RailButton
+            key={id}
+            label={label}
+            icon={Icon}
+            active={activeTab === id}
+            onClick={() => onTabChange(id)}
+          />
         ))}
       </div>
-      <div className="mt-auto p-1">
-        <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl} compact>
-          <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onTabChange("settings")}>Settings</DropdownMenuItem>
-          {/* Browser only: the desktop sign-out lives on the workspace rows
-              (inline ×). */}
-          {!IS_TAURI && <DropdownMenuSeparator />}
-          {!IS_TAURI && (
-            <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
-              Sign out
-            </DropdownMenuItem>
-          )}
-        </UserBadge>
+      <div className="mt-auto flex flex-col items-center gap-1">
+        <RailButton
+          label="Help / Learn"
+          icon={CircleHelp}
+          active={false}
+          onClick={onOpenHelp}
+        />
+        <RailButton
+          label="Settings"
+          icon={Settings}
+          active={activeTab === "settings"}
+          onClick={() => onTabChange("settings")}
+        />
+        <div className="p-1">
+          <UserBadge email={email} displayName={displayName} avatarUrl={avatarUrl} compact>
+            <DropdownMenuItem onClick={onOpenDevice}>Set up a device</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onTabChange("settings")}>Settings</DropdownMenuItem>
+            {/* Browser only: the desktop sign-out lives on the workspace rows
+                (inline ×). */}
+            {!IS_TAURI && <DropdownMenuSeparator />}
+            {!IS_TAURI && (
+              <DropdownMenuItem onClick={onSignOut} className="text-destructive focus:text-destructive">
+                Sign out
+              </DropdownMenuItem>
+            )}
+          </UserBadge>
+        </div>
       </div>
     </nav>
   );

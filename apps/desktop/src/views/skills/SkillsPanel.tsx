@@ -315,16 +315,11 @@ export function SkillsPanel({
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       {/* page header, two rows over one bottom border (prototype layout):
-          row 1 = title + count chip + grow + search + New skill; row 2 =
+          row 1 = title + grow + search + New skill; row 2 =
           underline tabs + grow + filter/sort selects (catalog only) */}
       <header className="border-b border-border bg-background px-5 pt-3">
         <div className="flex flex-wrap items-center gap-3 pb-3">
           <h1 className="text-base font-semibold tracking-[-0.01em]">Skills</h1>
-          {skills !== null && (
-            <span className="rounded-full border border-border px-2.5 py-px text-xs text-muted-foreground">
-              {skills.length} in catalog
-            </span>
-          )}
           <div className="hidden flex-1 sm:block" />
           <div className="relative w-full sm:w-[280px]">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

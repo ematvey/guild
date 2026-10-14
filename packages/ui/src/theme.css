@@ -4,13 +4,15 @@
    needs no per-view classes. Dark is the default. */
 
 @import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Inter Variable is the UI font, self-hosted so the Tauri client never
-   depends on a webfont CDN. Monospace stays the Tailwind default stack. */
+/* Inter Variable is the UI font, JetBrains Mono Variable the mono font, both
+   self-hosted so the Tauri client never depends on a webfont CDN. */
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 :root {

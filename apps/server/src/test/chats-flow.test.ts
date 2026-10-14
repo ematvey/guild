@@ -142,6 +142,28 @@ describe("chats CRUD wire", () => {
     expect(events.some((e) => e.event.type === "approval_decision")).toBe(true);
   });
 
+  it("stores tool output containing NUL characters (jsonb has no U+0000)", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+      payload: {},
+    });
+    const chat = JSON.parse(created.body) as { id: string };
+    const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
+    const row = await platform.threads.appendEvent(chat.id, {
+      type: "tool_result",
+      turn: 1,
+      step: 1,
+      call_id: "c1",
+      name: "read",
+      content: "A=1\u0000B=2\u0000",
+      is_error: false,
+      images: [],
+    });
+    expect((row.event as { content: string }).content).toBe("A=1\ufffdB=2\ufffd");
+  });
+
   it("read watermark clears unread across id flavors (seq is the order)", async () => {
     // The client-supplied message id doubles as the user_message event id
     // (idempotency contract) and is a random uuid v4 — it sorts ABOVE every

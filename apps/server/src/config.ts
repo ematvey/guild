@@ -58,9 +58,16 @@ export interface Config {
    *  session root (workspaces/<org>/<name>) lives under it. */
   dataDir: string;
   /** Whether server-side executors may run shell tools at all
-   *  (GUILD_ALLOW_SHELL_TOOLS=1; the trap note in AGENTS.md: disabled by
-   *  default, machine `execute` calls ride the exec policy instead). */
+   *  (GUILD_ALLOW_SHELL_TOOLS; default on with a sandbox runner, off
+   *  otherwise — machine `execute` calls ride the exec policy instead). */
   allowShellTools: boolean;
+  /** Where server-side tools run (GUILD_SANDBOX): `runner` — gVisor
+   *  sandboxes via the sandbox runner; `inprocess-unsafe` — in the server
+   *  process, unconfined (tests/dev only, refused in production);
+   *  `disabled` — server-side tools fail. Default: runner when
+   *  GUILD_SANDBOX_RUNNER_URL is set, else disabled in production and
+   *  inprocess-unsafe elsewhere. */
+  sandbox: SandboxConfig;
   /** Approval card deadline (GUILD_APPROVAL_TIMEOUT_MS, default 5 min — the
    *  Rust APPROVAL_TIMEOUT); the gate auto-denies when it lapses. */
   approvalTimeoutMs: number;
@@ -70,6 +77,29 @@ export interface Config {
   /** Exec-policy base rules file (GUILD_EXEC_POLICY_RULES). Default: the
    *  Rust tree's static asset. */
   execPolicyRulesPath: string | null;
+}
+
+export type SandboxConfig =
+  | { mode: "runner"; runnerUrl: string; runnerToken: string }
+  | { mode: "inprocess-unsafe" }
+  | { mode: "disabled" };
+
+export function parseSandboxConfig(env: NodeJS.ProcessEnv): SandboxConfig {
+  const runnerUrl = env.GUILD_SANDBOX_RUNNER_URL;
+  const production = env.NODE_ENV === "production";
+  const mode = env.GUILD_SANDBOX ?? (runnerUrl ? "runner" : production ? "disabled" : "inprocess-unsafe");
+  if (mode === "runner") {
+    if (!runnerUrl) throw new Error("GUILD_SANDBOX=runner requires GUILD_SANDBOX_RUNNER_URL");
+    const runnerToken = env.GUILD_SANDBOX_RUNNER_TOKEN ?? "";
+    if (runnerToken.length < 16) throw new Error("GUILD_SANDBOX_RUNNER_TOKEN must be set (16+ chars)");
+    return { mode, runnerUrl: parseUrl(runnerUrl, "GUILD_SANDBOX_RUNNER_URL").replace(/\/+$/, ""), runnerToken };
+  }
+  if (mode === "inprocess-unsafe") {
+    if (production) throw new Error("GUILD_SANDBOX=inprocess-unsafe is refused when NODE_ENV=production");
+    return { mode };
+  }
+  if (mode === "disabled") return { mode };
+  throw new Error(`GUILD_SANDBOX must be runner, inprocess-unsafe or disabled (got ${mode})`);
 }
 
 export const DEFAULT_BIND_ADDR = "0.0.0.0:8080";
@@ -143,7 +173,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const webDistDir = env.GUILD_WEB_DIST === undefined || env.GUILD_WEB_DIST === ""
     ? defaultWebDistDir()
     : env.GUILD_WEB_DIST;
-  const allowShellTools = env.GUILD_ALLOW_SHELL_TOOLS === "1";
+  const sandbox = parseSandboxConfig(env);
+  const allowShellTools = env.GUILD_ALLOW_SHELL_TOOLS === undefined || env.GUILD_ALLOW_SHELL_TOOLS === ""
+    ? sandbox.mode === "runner"
+    : env.GUILD_ALLOW_SHELL_TOOLS === "1";
   const approvalTimeoutMs = Number(env.GUILD_APPROVAL_TIMEOUT_MS ?? 300_000);
   const clientToolTimeoutMs = Number(env.GUILD_CLIENT_TOOL_TIMEOUT_MS ?? 300_000);
   // Absolute: the workspace root and sandbox root must not depend on the
@@ -173,6 +206,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     poolMax,
     dataDir,
     allowShellTools,
+    sandbox,
     approvalTimeoutMs,
     clientToolTimeoutMs,
     execPolicyRulesPath: env.GUILD_EXEC_POLICY_RULES ?? null,
