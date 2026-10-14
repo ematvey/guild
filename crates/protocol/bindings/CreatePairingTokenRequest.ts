@@ -3,5 +3,6 @@
 export type CreatePairingTokenRequest = { 
 /**
  * Token lifetime in minutes (default 30, capped server-side).
+ * JSON numbers, not TS bigint — the wire is JSON.
  */
-ttl_minutes?: bigint, };
+ttl_minutes: number, };

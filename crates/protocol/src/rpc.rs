@@ -23,6 +23,8 @@ pub const BUILD_ID: &str = env!("GUILD_BUILD_ID");
 )]
 pub struct Request {
     pub jsonrpc: String,
+    /// JSON numbers, not TS bigint — the wire is JSON.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub id: u64,
     pub protocol: u32,
     pub method: String,
@@ -54,6 +56,8 @@ impl Request {
     ts(export, export_to = "rpc/RpcError.ts", optional_fields)
 )]
 pub struct RpcError {
+    /// JSON numbers, not TS bigint — the wire is JSON.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub code: i64,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -85,6 +89,8 @@ impl RpcError {
 )]
 pub struct Response {
     pub jsonrpc: String,
+    /// JSON numbers, not TS bigint — the wire is JSON.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub id: u64,
     pub protocol: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
