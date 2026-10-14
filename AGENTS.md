@@ -19,6 +19,14 @@ you.
 
 ## Conventions
 
+- **All navigation state is URL state.** Every page, tab, panel and
+  sub-page the user can reach has its own fixed URL (rail tabs, threads,
+  projects, new chats per surface, skills pages, settings sections and
+  sub-pages). Navigation never mutates local state without a matching
+  history entry: deep link, reload and back/forward must land exactly
+  where the user was. The route model is `ChatRoute`/`pushRoute` in
+  `apps/desktop/src/views/WebChat.tsx`; the reference implementation of
+  the contract is `apps/desktop/src/views/skills/skills-route.ts`.
 - **Always redeploy after a change.** The user tests against
   `http://localhost:18080`; a local build or container restart ships
   nothing. Every task ends with the compose rebuild recipe from

@@ -68,7 +68,7 @@ import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsSectionPane } from "./settings/settings-sections";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
-import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
+import { chatProjectOf, outgoingProjectId, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "./sidebar-contents";
 import { SkillsPanel } from "./skills/SkillsPanel";
 import {
@@ -244,25 +244,26 @@ export function tabPaneLayout(
 
 
 /// URL-driven navigation: the pathname is the single source of truth for
-/// where the user is. Routes:
-///   /                          — new chat (recents view)
+/// where the user is. Every page, tab, panel and sub-page the user can
+/// reach has its own fixed address (the AGENTS.md convention). Routes:
+///   /chats[/new]               — the Chats tab (default; "/" aliases);
+///                                /new is the addressed scratch composer
+///   /work[/new]                — the Work tab, with its scratch composer
 ///   /thread/<id>               — open thread
-///   /chats                      — the Chats tab (default; a bare chat id
-///                                keeps its short form)
-///   /work                       — the Work tab
 ///   /project/<id>              — sidebar filtered to one project (Work tab)
+///   /project/<id>/new          — scratch composer pre-picked to the project
 ///   /project/<id>/thread/<cid> — open thread within its project view
 ///   /device                    — device-setup dialog, optionally over a
 ///                                thread: /thread/<id>/device
-///   /settings                   — the Settings tab (bare; the section lives
-///                                in pane state)
-///   /settings/<section>[/<detail>] — the Settings tab with that section (and
-///                                sub-page) preselected — a deep link only;
-///                                tab picks navigate to bare /settings.
-///                                <detail> addresses a sub-page inside a
-///                                section: an integration slug, a user/team
-///                                id or "new", a model route or "add", a
-///                                registry kind/slug.
+///   /settings[/<section>[/<detail>]]
+///                              — the Settings tab; the section (and sub-
+///                                page) always ride in the URL — every
+///                                section pick navigates. <detail> addresses
+///                                a sub-page inside a section: an
+///                                integration slug, a user/team id or "new",
+///                                a model route or "add", a registry
+///                                kind/slug. A bare /settings normalizes to
+///                                /settings/account (replaceState).
 ///   /skills[/activity|/machine|/<slug>[/edit] | /new]
 ///                              — the skills page (top-level; replaces the
 ///                                main pane): tab views, a detail page, the
@@ -279,6 +280,9 @@ interface ChatRoute {
   skills: SkillsRoute | null;
   /** Which rail panel tab the URL names: /chats, /work or /settings. */
   tab: "chats" | "work" | "settings";
+  /** The addressed scratch composer: /chats/new, /work/new or
+   *  /project/<id>/new. False on tab roots, open threads and other tabs. */
+  newChat: boolean;
   /** Settings-tab section/detail named by the URL (/settings/<section>/
    * [<detail>] deep links); null elsewhere and for bare /settings, whose
    * section lives in pane state. */
@@ -312,13 +316,18 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     chatId = parts[1];
     parts.splice(0, 2);
   }
+  // The reserved "new" segment addresses the scratch composer — only on a
+  // chatless surface (a thread or overlay URL never carries it).
+  const newChat = parts[0] === "new" && chatId === null;
+  if (newChat) parts.shift();
   if (parts[0] === "device")
-    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, settingsSection: null, settingsDetail: null };
+    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, settingsSection: null, settingsDetail: null, newChat: false };
   if (parts[0] === "settings") {
-    // Bare /settings is the Settings tab with the pane-state section; a
-    // section (and optional sub-page detail) preselects it. Everything
-    // after the section is the sub-page id; each segment was encoded
-    // separately, so a model id like "a/b" round-trips as one part.
+    // Bare /settings normalizes to the default section (/settings/account,
+    // via the pane effect); a section (and optional sub-page detail)
+    // preselects it. Everything after the section is the sub-page id; each
+    // segment was encoded separately, so a model id like "a/b" round-trips
+    // as one part.
     const section = parts.length > 1 ? parts[1] : null;
     const detail = parts.length > 2 ? parts.slice(2).map(decodeURIComponent).join("/") : null;
     return {
@@ -329,15 +338,16 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       skills: null,
       settingsSection: section,
       settingsDetail: detail,
+      newChat: false,
     };
   }
   // Skills is chat-independent and top-level like settings: the URL drops
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
     const skills = parseSkillsRoute(parts.slice(1));
-    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats", settingsSection: null, settingsDetail: null };
+    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats", settingsSection: null, settingsDetail: null, newChat: false };
   }
-  return { chatId, projectId, tab, overlay: null, skills: null, settingsSection: null, settingsDetail: null };
+  return { chatId, projectId, tab, overlay: null, skills: null, settingsSection: null, settingsDetail: null, newChat };
 };
 
 /// /skills/<seg...> after the leading "skills": a bare /skills is the
@@ -362,6 +372,7 @@ export const chatRoutePath = (
   tab: ChatRoute["tab"] = "chats",
   settingsSection: string | null = null,
   settingsDetail: string | null = null,
+  newChat = false,
 ): string => {
   // Skills is chat-independent — top-level URL that replaces the chat view.
   if (skills !== null) {
@@ -373,6 +384,13 @@ export const chatRoutePath = (
     if (skills.view === "activity") return "/skills/activity";
     if (skills.view === "machine") return "/skills/machine";
     return "/skills";
+  }
+  // The scratch composer is a chatless surface: the project-bound form
+  // implies the Work tab, the bare form rides on /chats/new or /work/new.
+  // An overlay URL never carries the segment (the dialog is chatless too).
+  if (overlay === null && chatId === null && newChat && tab !== "settings") {
+    if (projectId) return `/project/${encodeURIComponent(projectId)}/new`;
+    return tab === "work" ? "/work/new" : "/chats/new";
   }
   const base = projectId
     ? `/project/${encodeURIComponent(projectId)}${
@@ -1881,11 +1899,15 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     overlay?: ChatOverlay;
     skills?: SkillsRoute | null;
     tab?: ChatRoute["tab"];
+    newChat?: boolean;
+    settingsSection?: string | null;
+    settingsDetail?: string | null;
   }) => {
     const chatId = "chatId" in next ? (next.chatId as string | null) : route.chatId;
     const projectId = "projectId" in next ? (next.projectId as string | null) : route.projectId;
     const ov = "overlay" in next ? (next.overlay as ChatOverlay) : route.overlay;
-    const tab = next.tab ?? route.tab;
+    // A project-bound address implies the Work tab (the parse agrees).
+    const tab = next.tab ?? (projectId ? "work" : route.tab);
     // The skills page is replaced by anything that names a chat or opens a
     // dialog overlay — those are chat-context surfaces. An overlay close
     // (overlay: null) keeps it: the dialog was rendered over the skills page.
@@ -1895,20 +1917,48 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         : "chatId" in next || (next.overlay !== undefined && next.overlay !== null)
           ? null
           : route.skills;
-    const path = chatRoutePath(chatId, projectId, ov, sk, tab);
+    // The scratch composer is chatless: it drops with any open thread,
+    // overlay or skills page, and never rides on the Settings tab.
+    const newChat =
+      ("newChat" in next ? !!next.newChat : route.newChat) &&
+      chatId === null &&
+      ov === null &&
+      sk === null &&
+      tab !== "settings";
+    // The Settings tab owns its section in the URL: a navigation naming a
+    // section/detail carries it, one leaving the tab drops it, and a
+    // section pick resets the sub-page unless the pick names one too. The
+    // device dialog keeps the section (an overlay close restores it; the
+    // dialog's URL detours through /chats regardless).
+    const settingsSection =
+      "settingsSection" in next
+        ? (next.settingsSection as string | null)
+        : tab === "settings" && sk === null
+          ? route.settingsSection
+          : null;
+    const settingsDetail =
+      "settingsDetail" in next
+        ? (next.settingsDetail as string | null)
+        : "settingsSection" in next
+          ? null
+          : tab === "settings" && sk === null
+            ? route.settingsDetail
+            : null;
+    const path = chatRoutePath(chatId, projectId, ov, sk, tab, settingsSection, settingsDetail, newChat);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setRoute({
-      chatId,
-      projectId,
-      overlay: ov,
-      skills: sk,
-      tab,
-      // Tab picks keep the section in pane state; only deep links name it
-      // in the URL.
-      settingsSection: null,
-      settingsDetail: null,
-    });
+    setRoute({ chatId, projectId, overlay: ov, skills: sk, tab, newChat, settingsSection, settingsDetail });
   };
+
+  // A bare /settings arrival (deep link, old bookmark, back/forward)
+  // normalizes to the default section — the Settings tab always has a
+  // sectioned address. replaceState: the normalization is not a step back.
+  useEffect(() => {
+    if (route.tab !== "settings" || route.settingsSection !== null) return;
+    if (route.overlay !== null || route.skills !== null) return;
+    const path = chatRoutePath(null, null, null, null, "settings", "account", null);
+    window.history.replaceState(null, "", path);
+    setRoute((r) => ({ ...r, settingsSection: "account", settingsDetail: null }));
+  }, [route.tab, route.settingsSection, route.overlay, route.skills]);
 
   // Layout effect: the correction must land before paint, or the new block
   // shows for a frame at the old scroll offset (the reported 1-frame jump).
@@ -1958,10 +2008,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const [pickedProject, setPickedProject] = useState<PickedProject | null>(null);
   const pickedProjectRef = useRef<PickedProject | null>(pickedProject);
   pickedProjectRef.current = pickedProject;
-  /** A pick made for the scratch view the navigation is entering (the
-   * project row's "+"): the chatId switch consumes it, so the per-chat
-   * reset applies to every other transition. */
-  const scratchPickRef = useRef<PickedProject | null>(null);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const openCreateProject = () => {
     setCreateProjectOpen(true);
@@ -1972,9 +2018,23 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // every pick change.
   const currentProjectRef = useRef(currentProject);
   currentProjectRef.current = currentProject;
-  const pickProject = (p: PickedProject | null) => {
-    setPickedProject(p);
-  };
+  // The scratch pick is route state: the addressed new-chat surface
+  // (/project/<id>/new) pre-picks its project for the first send; every
+  // other surface — a tab root, an open thread — starts unbound. The pick
+  // never waits for the projects list (a send before it loads must still
+  // bind): the name fills in when the list arrives.
+  useEffect(() => {
+    if (route.chatId !== null || !route.newChat || route.projectId === null) {
+      setPickedProject(null);
+      return;
+    }
+    const p = projects?.find((x) => x.id === route.projectId);
+    setPickedProject(
+      p
+        ? { id: p.id, name: p.name, machine_label: p.machine_label }
+        : { id: route.projectId, name: "", machine_label: undefined },
+    );
+  }, [route.chatId, route.newChat, route.projectId, projects]);
   const projectCreated = () => {
     void refreshProjects();
   };
@@ -2122,15 +2182,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   // Chat switches keep cached content visible until the socket's History
   // frame overwrites it, then request a fresh sync for the new chat. The
-  // project pick is per-chat: a pending pick (pre-first-send) or an old
-  // chat's pick never carries over — except one carried in explicitly for
-  // the destination (scratchPickRef: the project row's "+" enters the
-  // scratch view with its project pre-picked).
+  // composer's project pick is not touched here — it is route state, owned
+  // by the pick effect below (an open thread is never pre-picked).
   const prevLoadedChatRef = useRef<string | null>(chatId);
   useEffect(() => {
-    const intendedPick = scratchPickRef.current;
-    scratchPickRef.current = null;
-    setPickedProject(pickAfterChatSwitch(chatId, intendedPick));
     // Per-chat draft: load the destination chat's saved composer text
     // instead of keeping the previous chat's text in the input. This
     // restore also marks the chat the persist effect may write for — from
@@ -2178,10 +2233,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   };
 
   const newChat = () => {
-    // Navigation only: the chatId effect selects the new open chat and asks
-    // the member socket to reconcile it. The new chat is projectless, so the
-    // route's project id drops with it.
-    pushRoute({ chatId: null, projectId: null, overlay: null });
+    // Navigation only: the route moves to the addressed scratch composer
+    // (/chats/new, or /work/new when entered from the Work tab); the
+    // chatId effect clears the thread and the pick effect drops any pick.
+    pushRoute({
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      newChat: true,
+      tab: route.tab === "work" ? "work" : "chats",
+    });
     setOpen(false);
     ta.current?.focus();
   };
@@ -2203,13 +2265,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   recoverMissingChatRef.current = recoverMissingChat;
 
   /** Sidebar: new chat inside a project (the project row's hover "+").
-   * Pre-picks the project so the composer binds the chat to it on send. The
-   * chatId switch this triggers resets the pick per-chat — scratchPickRef
-   * carries this pick through that same switch. */
+   * Navigates to the project's addressed scratch view — the pick effect
+   * derives the composer's binding from the route. */
   const newChatInProject = (project: PickedProject) => {
-    scratchPickRef.current = project;
-    pickProject(project);
-    newChat();
+    pushRoute({ chatId: null, projectId: project.id, overlay: null, skills: null, newChat: true });
+    setOpen(false);
+    ta.current?.focus();
   };
 
   const autoGrow = () => {
@@ -2563,18 +2624,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // /skills... URL is live (rail pick, deep link, reload, back/forward).
   const railTab: SidebarTab = route.skills !== null ? "skills" : sidebarTab;
   // Settings tab: the section rendered inline in the main pane (the rail's
-  // Settings tab is a persistent surface, not an overlay launcher). Sub-page
-  // navigation stays local to the pane.
-  const [settingsSection, setSettingsSection] = useState<string | null>(null);
-  const [settingsDetail, setSettingsDetail] = useState<string | null>(null);
-  // A deep-linked /settings/<section>[/<detail>] preselects the section;
-  // tab picks and pane navigation keep it in pane state instead.
-  useEffect(() => {
-    if (route.tab === "settings" && route.settingsSection !== null) {
-      setSettingsSection(route.settingsSection);
-      setSettingsDetail(route.settingsDetail);
-    }
-  }, [route.tab, route.settingsSection, route.settingsDetail]);
+  // Settings tab is a persistent surface, not an overlay launcher). The
+  // section and its sub-page live in the route — every pick navigates.
+  const settingsSection = route.settingsSection;
   const switchTab = (tab: SidebarTab) => {
     // The skills tab is a URL route, not persisted panel state: entering it
     // navigates to /skills, leaving it returns to the chat root — so back/
@@ -2587,17 +2639,32 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     // Panel tabs navigate too: each owns its address, back/forward walks
     // tab history, and the navigation clears the open chat — a tab switch
     // always lands on a fresh composer, never the previously selected chat.
-    pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, tab });
+    // Entering Settings lands on the current section, or the default one —
+    // the Settings tab always has a sectioned address.
+    pushRoute({
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      tab,
+      newChat: false,
+      ...(tab === "settings"
+        ? { settingsSection: route.settingsSection ?? "account", settingsDetail: null }
+        : {}),
+    });
     // A collapsed panel hides the tab's content — a tab pick is an intent
     // to see it, so the panel re-expands on the newly picked tab.
     if (tabPaneLayout(tab, isMobile).expandsPanel) setCollapsed(false);
-    // Entering Settings with no section picked lands on the first user
-    // section instead of an empty main pane.
-    if (tab === "settings") setSettingsSection((s) => s ?? "account");
   };
   const openSettingsSection = (id: string) => {
-    setSettingsSection(id);
-    setSettingsDetail(null);
+    // Navigation: the section pick owns its /settings/<section> address, so
+    // back/forward walks the sections and a reload restores the pick.
+    pushRoute({ tab: "settings", settingsSection: id, settingsDetail: null });
+  };
+  const openSettingsDetail = (detail: string | null) => {
+    // Navigation: a sub-page opens on /settings/<section>/<detail>; closing
+    // it returns to the bare section address.
+    pushRoute({ tab: "settings", settingsDetail: detail });
   };
 
   const sidebarCollapse = isMobile ? undefined : () => setCollapsed(true);
@@ -2675,8 +2742,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         <SettingsSectionPane
           sectionId={settingsSection}
           email={email}
-          detail={settingsDetail}
-          onDetailChange={setSettingsDetail}
+          detail={route.settingsDetail}
+          onDetailChange={openSettingsDetail}
         />
       </div>
     ) : null;

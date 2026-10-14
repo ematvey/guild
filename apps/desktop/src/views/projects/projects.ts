@@ -71,19 +71,6 @@ export function outgoingProjectId(picked: PickedProject | null | undefined): str
   return picked?.id ?? null;
 }
 
-/** The composer pick a chat-switch applies to the destination view. The pick
- * is per-chat: entering an existing chat always drops any pending pick (the
- * binding cannot change after the chat started), and entering the scratch
- * view keeps only a pick carried in explicitly FOR that navigation — the
- * project row's "+" pre-picks its project, and without this carve-out the
- * switch's reset would wipe it before the first send could bind it. */
-export function pickAfterChatSwitch(
-  chatId: string | null,
-  intendedPick: PickedProject | null,
-): PickedProject | null {
-  return chatId === null ? intendedPick : null;
-}
-
 // ---- the picker dialog's recency ordering ----
 
 /** Projects that have chats, most recently used first (chat list order). */
