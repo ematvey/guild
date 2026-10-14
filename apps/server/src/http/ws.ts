@@ -509,6 +509,13 @@ async function driveSocket(
     if (finished || isBinary) return;
     const message = parseClientMsg(data.toString("utf8"));
     if (message === null) return; // unknown envelopes are discarded, not fatal
+    // Liveness ping: echoed without the per-message DB revalidation the
+    // other client messages run — the ping path must stay cheap and can
+    // never queue behind them.
+    if (message.type === "ping") {
+      sink.send({ type: "pong" });
+      return;
+    }
     if (message.type === "sync" && message.chat_id !== null) {
       if (!sink.startSync()) {
         finish("reader");
