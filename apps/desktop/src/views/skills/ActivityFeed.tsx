@@ -163,13 +163,20 @@ export function activityEmptyState(filter: SkillActivityFilter): string {
 export function ActivityFeed() {
   const [filter, setFilter] = useState<SkillActivityFilter>("all");
   const [events, setEvents] = useState<SkillActivityEvent[] | null>(null);
+  // True once the current filter's fetch resolved — separates "still
+  // loading" from "the fetch failed" (both have events === null).
+  const [settled, setSettled] = useState(false);
 
   // Refetch on tab mount and on every pill change (mounts are the tab
   // switch path — SkillsPanel renders the feed only while it is active).
   useEffect(() => {
     let live = true;
+    setSettled(false);
     skillsActivity(filter).then((result) => {
-      if (live) setEvents(result);
+      if (live) {
+        setEvents(result);
+        setSettled(true);
+      }
     });
     return () => {
       live = false;
@@ -178,7 +185,9 @@ export function ActivityFeed() {
 
   const rows = activityRows(events ?? [], filter);
   const empty = events !== null && events.length === 0 ? activityEmptyState(filter) : null;
-  const failed = events === null;
+  // Failure note only when the fetch resolved null and there are no rows
+  // to show; a failed refetch keeps the previous rows visible.
+  const failed = settled && events === null;
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
