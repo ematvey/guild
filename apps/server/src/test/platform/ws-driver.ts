@@ -1,9 +1,8 @@
-// The golden-WS scenario driver: one module, two consumers. `capture`
-// (scripts/capture-ws-fixtures.mjs) runs it against the LIVE Rust server
-// (built from crates/, disposable DB) and records the raw frames; the
-// vitest replay runs the identical scenario against the TS implementation
-// and byte-compares every text frame after masking dynamic values
-// (uuids/timestamps/tickets) with the same normalizer.
+// The golden-WS scenario driver: one scenario, two runs. The vitest replay
+// runs the scripted scenario against the TS implementation and byte-compares
+// every text frame after masking dynamic values (uuids/timestamps/tickets)
+// with the same normalizer. Fixtures were captured from the live Rust
+// server (crates/) into platform/fixtures/ws-golden.json.
 
 import WebSocket from "ws";
 import crypto from "node:crypto";

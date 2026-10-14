@@ -16,7 +16,7 @@ by no single project:
 |---|---|---|---|
 | Postgres 17 | `/srv/postgres` | `127.0.0.1:5432` (published `0.0.0.0`) | admin `postgres` / `REDACTED_HOST_POSTGRES_PASSWORD`; Guild db/role: `guild`/`guild` |
 | ClickHouse 26.5 | `/srv/clickhouse` | `0.0.0.0:8123` (HTTP) | `ch_user` / `ch_passwd` |
-| RustFS (S3) | systemd `rustfs.service`, data `/srv/rustfs` | `0.0.0.0:9950` S3 API, `:9951` console | `rustfsadmin` / `rustfsadmin` |
+| RustFS (S3) | systemd `rustfs.service`, data `/srv/rustfs` | `0.0.0.0:9950` S3 API, `:9951` console | dedicated IAM users (guild, posthog, other); root pair rotated 2026-10-15, lives only in `/etc/default/rustfs` |
 | Faro collector (Alloy+Loki) | `/srv/faro` | `0.0.0.0:12347` Faro receiver (`/collect`), Loki loopback `127.0.0.1:3100` | none (per-app rate limiting) |
 
 Guild proxies browser telemetry through the server: `POST /faro/collect`

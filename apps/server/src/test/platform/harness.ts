@@ -15,6 +15,7 @@ import {
 import { applyPlatformMigrations } from "../../platform/migrations.js";
 import { buildApp } from "../../app.js";
 import { loadConfig } from "../../config.js";
+import { testS3AccessKeyId, testS3SecretAccessKey } from "./s3-creds.js";
 
 // vitest runs with cwd = apps/server; the migrations live in the Rust tree
 // (the historical record the TS schema ports verbatim).
@@ -24,9 +25,8 @@ export const MIGRATIONS_DIR = path.join(REPO_ROOT, "apps/server/migrations");
 export const TEST_ADMIN_URL =
   process.env.GUILD_M1_TEST_DATABASE_URL ?? "postgres://guild:guild@localhost:5432/guild";
 export const TEST_S3_URL = process.env.GUILD_M1_TEST_S3_URL ?? "http://localhost:9950";
-export const TEST_S3_ACCESS_KEY_ID = process.env.GUILD_M1_TEST_S3_ACCESS_KEY_ID ?? "rustfsadmin";
-export const TEST_S3_SECRET_ACCESS_KEY =
-  process.env.GUILD_M1_TEST_S3_SECRET_ACCESS_KEY ?? "rustfsadmin";
+export const TEST_S3_ACCESS_KEY_ID = testS3AccessKeyId("GUILD_M1_TEST_S3_ACCESS_KEY_ID");
+export const TEST_S3_SECRET_ACCESS_KEY = testS3SecretAccessKey("GUILD_M1_TEST_S3_SECRET_ACCESS_KEY");
 
 function randomSuffix(): string {
   const bytes = new Uint8Array(6);
