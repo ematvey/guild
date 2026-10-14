@@ -11,6 +11,15 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Branch reconciliation: master merged into develop, develop merged back (2026-10-14).**
+  The 0.5.43 hotfixes went master → cherry-pick → develop, leaving the branches
+  forked at different SHAs. Resolved by merging master into develop (PLAN.md got
+  the read-mark + prod-cutover entries in chronological order; bridge.ts and the
+  tests took develop's superset — the coalescing fix plus the HTTP-parity test)
+  and then `--no-ff` merging develop back into master, so both branches share
+  history again. Lesson recorded: hotfix on master, but land it via the
+  develop → master release merge next time — cherry-picks fork the graph.
+
 - **GET /api/v1/chats is hub-coupled (2026-10-14).** The M3-era
   `machine_online = false` hardcode in `chatWire` survived the M5 hub
   cutover: the HTTP thread list (and the single-chat CRUD responses) always
