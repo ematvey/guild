@@ -25,6 +25,7 @@ import {
   fetchInstalls,
   skillsList,
   skillsPin,
+  skillsUninstall,
   type SkillInstall,
 } from "./skills-api";
 import { Button } from "@guild/ui/components/button";
@@ -92,6 +93,31 @@ export async function toggleDisabled(
 ): Promise<void> {
   const fs = daemonFs(rpc);
   await setSkillDisabled(fs, await fs.scopes(), row.path, row.disabled);
+}
+
+/** The uninstall wiring shared by the org-install rows and the local
+ *  installed rows: server-first — the pin must go, or the next sync
+ *  re-installs the folder a local-only delete removed — then a best-effort
+ *  local folder removal so the panel doesn't wait for the machine-sync
+ *  push. A server refusal (a dir copied in carrying provenance but no
+ *  install record) falls back to the local-only removal. */
+export async function uninstallSkill(
+  slug: string,
+  rpc: (method: string, params: any, timeoutMs?: number) => Promise<any>,
+  localGlobal: boolean,
+): Promise<void> {
+  const res = await skillsUninstall(slug);
+  const projectDir = (await resolveProjectDir()) ?? undefined;
+  if (!res.ok) {
+    await rpc("registry.uninstall", { slug, global: localGlobal, project_dir: projectDir });
+    return;
+  }
+  try {
+    await rpc("registry.uninstall", { slug, global: localGlobal, project_dir: projectDir });
+  } catch {
+    // The folder was never materialized here or is already gone — the
+    // machine-sync push owns the rest of the fleet.
+  }
 }
 
 function SourceBadge({ row }: { row: LocalSkillRow }) {
@@ -229,6 +255,23 @@ export default function LocalSkills() {
                       Update pin
                     </Button>
                   )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="shrink-0 text-destructive hover:text-destructive"
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void act(
+                        `rm-org-${vm.slug}`,
+                        () => uninstallSkill(vm.slug, rpcCall, true),
+                        `Uninstalled ${vm.slug}`,
+                      )
+                    }
+                    title="Delete the install: the pin goes and every machine's copy is removed at its next sync (this machine's immediately)"
+                  >
+                    <Trash2 className="size-4" />
+                    Uninstall
+                  </Button>
                 </div>
               );
             })}
@@ -317,12 +360,12 @@ export default function LocalSkills() {
                     onClick={() =>
                       void act(
                         `rm-${row.path}`,
-                        async () =>
-                          rpcCall("registry.uninstall", {
-                            slug: row.provenance?.slug ?? row.name,
-                            global: row.scope === "user",
-                            project_dir: (await resolveProjectDir()) ?? undefined,
-                          }),
+                        () =>
+                          uninstallSkill(
+                            row.provenance?.slug ?? row.name,
+                            rpcCall,
+                            row.scope === "user",
+                          ),
                         "Skill uninstalled",
                       )
                     }

@@ -11,6 +11,24 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Skills: uninstall deletes the pin; machines pull their sync at connect (0.5.42-ish, 2026-10-14).**
+  Two gaps in the org-skills loop closed. *Uninstall*: the Skills panel's org-installs
+  rows gain an Uninstall button, and the local-machine rows' existing Uninstall now goes
+  server-first (`DELETE /api/v1/skills/:slug/install`) — the old desktop path deleted only
+  the local folder, which the next sync re-installed — with a local-only fallback for dirs
+  carrying provenance but no install record (a folder copied in from another machine), plus
+  a best-effort immediate local removal so the panel doesn't wait for the fleet push.
+  *Always-sync*: the machine now pulls its desired install list itself at every link connect
+  (`GET /api/v1/skills/sync-payload`, a new user-authed route serving the same payload the
+  change pushes use; Rust `pull_skills` runs the standard converge — download pinned
+  bundles, sweep provenance-carrying dirs the list omits, never touch plain user dirs).
+  This closes the case the connect push deliberately skipped: a zero-pin user's stale
+  physical copies used to survive forever, because the empty converge frame was suppressed
+  at connect (the WS golden replay pins the machine-connect frame stream byte-exactly, so
+  the server still never pushes at connect — the pull is HTTP, invisible to that stream).
+  The `skipWhenEmpty` option and the `wsSkillsSync` connect seam are removed; change
+  triggers (install/pin/uninstall) keep pushing. Desktop client needs a rebuild/release to
+  ship the pull (binary rebuilt locally).
 - **User-owned MCP servers + the codemode tool (0.5.40, 2026-10-14).** Two
   branches merged (`user-mcp`, `codemode`), both built by subagents in their
   own worktrees and browser-E2E-verified live on :18080.

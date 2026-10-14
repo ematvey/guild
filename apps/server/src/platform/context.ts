@@ -113,12 +113,10 @@ export class PlatformContext {
    *    + turn completion).
    *  - wsMachineReconcile: the dispatch lane's uncertain-execution sweep at
    *    machine connect (Rust reconcile_machine_tools).
-   *  - wsSkillsSync: the skills lane's fleet-sync push at machine connect.
    *  - wsLog: trace sink for the socket supervisor (server log in Rust). */
   wsSync?: ChatsCtx["wsSync"];
   wsToolResult?: ChatsCtx["wsToolResult"];
   wsMachineReconcile?: ChatsCtx["wsMachineReconcile"];
-  wsSkillsSync?: ChatsCtx["wsSkillsSync"];
   wsLog?: ChatsCtx["wsLog"];
 
   constructor(
@@ -171,13 +169,6 @@ export class PlatformContext {
     };
     this.wsMachineReconcile = async (machineId, connId) => {
       this.machineDispatch.reconcileMachine(machineId, connId);
-    };
-    this.wsSkillsSync = (orgId, userId) => {
-      void this.runtime.skillsRuntime
-        .syncUser(orgId, userId, { skipWhenEmpty: true })
-        .catch((error) =>
-          log.warn(`skills fleet sync failed: ${error instanceof Error ? error.message : String(error)}`),
-        );
     };
     this.feed = new FeedForwarder(this);
     this.feed.start();

@@ -416,4 +416,30 @@ describe("skills api", () => {
     const anon = await e.env.app.inject({ method: "GET", url: "/api/v1/skills/teams" });
     expect(anon.statusCode).toBe(401);
   });
+
+  it("GET /skills/sync-payload serves the machine's desired install list (the connect-time pull)", async () => {
+    await createSkill("pull-skill", "# pull me");
+    // Create auto-installs for the publisher, pinned at v1.
+    const withInstall = await inject("GET", "/api/v1/skills/sync-payload", e.memberToken);
+    expect(withInstall.statusCode).toBe(200);
+    const entry = (withInstall.json() as { skills: Array<Record<string, string>> }).skills.find(
+      (s) => s.slug === "pull-skill",
+    );
+    expect(entry).toMatchObject({ slug: "pull-skill", version: "v1" });
+    expect(entry!["bundle_sha256"]).toMatch(/^[0-9a-f]{64}$/);
+    expect(entry!["url"]).toContain("/api/v1/registry/skill/pull-skill/v1/bundle");
+
+    // After the uninstall the pull omits the slug — absence is the
+    // removal signal the machine's sync acts on.
+    await inject("DELETE", "/api/v1/skills/pull-skill/install", e.memberToken);
+    const after = await inject("GET", "/api/v1/skills/sync-payload", e.memberToken);
+    expect(after.statusCode).toBe(200);
+    expect(
+      (after.json() as { skills: Array<{ slug: string }> }).skills.some((s) => s.slug === "pull-skill"),
+    ).toBe(false);
+
+    // Unauthenticated callers are rejected like any other user route.
+    const anon = await e.env.app.inject({ method: "GET", url: "/api/v1/skills/sync-payload" });
+    expect(anon.statusCode).toBe(401);
+  });
 });

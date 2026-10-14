@@ -132,6 +132,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, ctx: Platform
     registerRegistryRoutes(scope, gateway, auth, ctx.objects);
     registerSkillRoutes(scope, gateway, auth, ctx.objects, ctx.skills, {
       onInstallChange: (orgId, userId) => ctx.runtime.skillsRuntime.syncUser(orgId, userId),
+      runtime: ctx.runtime.skillsRuntime,
     });
     registerReleaseRoutes(scope, gateway, auth, ctx.objects);
     registerProjectRoutes(scope, gateway, auth);
