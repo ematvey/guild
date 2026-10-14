@@ -2218,8 +2218,13 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       setThreadLoading(false);
     } else if (skipLoadRef.current === chatId) {
       // Keep the optimistic first-send block: the created chat adopts the
-      // scratch view; the socket still reconciles the new chat.
+      // scratch view; the socket still reconciles the new chat. The turn's
+      // send is still in flight (submit runs after create), so keep the
+      // optimistic busy — clearing it here left a dead window with no
+      // Working indicator or stop button until the server's generating
+      // flag arrived, and the indicator visibly blinked in late.
       skipLoadRef.current = null;
+      setBusy(true);
       setBlocks(reducerRef.current.adopt(chatId).blocks);
     } else {
       // The reducer's per-chat cache: a switch-back renders its last content

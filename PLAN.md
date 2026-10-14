@@ -11,6 +11,20 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **First-send submit: no dead window, no duplicated stream render (2026-10-14).**
+  Two bugs behind the flicker a first-send screencast showed. (1) The
+  chatId effect's unconditional `setBusy(false)` wiped the optimistic busy
+  the moment the created chat's route landed, so nothing indicated work —
+  no Working shimmer, no stop button — between route adoption and the
+  server's first `generating=true` frame (~1s); the adopt branch now keeps
+  the busy (the submit is still in flight there by construction). (2)
+  Stream frames key reasoning blocks per-stream (`live-N` whenever a
+  thinking delta opens after a text tail); the commit's buffer strip
+  removed only the two sentinel keys, so those orphans kept rendering
+  above the durable copies — the response appeared twice. The strip is now
+  by key prefix (`live-`/`unpersisted-`). Regression test in
+  thread-reducer.test.ts.
+
 - **Server-side tools run in gVisor sandboxes via a sandbox-runner (2026-10-14, branch `sandbox-runner`).**
   Server file/shell tools ran in the Fastify process, unconfined
   (`NodeExecutionEnv` takes absolute paths as-is: a full-access chat could
@@ -188,7 +202,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   protocol, guild-core, app-server, codex-execpolicy(+utils), desktop
   Tauri.
 
-## Latest decisions- **Sidebar icon rail — chats and project chats separated.** The chat
+- **Sidebar icon rail — chats and project chats separated.** The chat
   sidebar grew a ChatGPT-desktop-style narrow icon rail (desktop only,
   always visible even when the panel is collapsed) with three tabs:
   Chats (workspace switcher, New chat, Recents, Archived), Work (projects
