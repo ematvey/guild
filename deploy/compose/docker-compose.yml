@@ -98,7 +98,7 @@ services:
     image: ${GUILD_TS_SERVER_IMAGE:-guild-server-ts:latest}
     restart: unless-stopped
     user: "0:0"
-    command: ["node", "dist/sandbox/runner/main.js"]
+    command: ["bun", "src/sandbox/runner/main.ts"]
     env_file: config.env
     environment:
       GUILD_SANDBOX_IMAGE: ${GUILD_SANDBOX_IMAGE:-guild-sandbox:latest}
