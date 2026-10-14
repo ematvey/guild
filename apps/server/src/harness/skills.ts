@@ -141,6 +141,31 @@ function localSlugOf(line: string): string | null {
   return match === null ? null : match[1]!.trim();
 }
 
+/** The slash invocation a user text starts with: `/slug` plus optional
+ *  rest. Pure for tests. `compact` is the builtin composer command, never
+ *  a skill slug. */
+export function parseSkillInvocation(text: string): { slug: string; args: string } | null {
+  const match = /^\/([a-z0-9_-]{1,64})(?:[ \t]+([\s\S]*))?$/.exec(text.trim());
+  if (match === null || match[1] === "compact") return null;
+  return { slug: match[1]!, args: (match[2] ?? "").trim() };
+}
+
+/** The directive appended to a user message that invokes a skill: the
+ *  composer's `/`-trigger must deterministically load the named skill,
+ *  not rely on the model noticing the prefix. Local = the machine's own
+ *  skills/<slug> tree; otherwise read_skill installs-on-use. Pure for
+ *  tests. */
+export function skillInvocationDirective(inv: { slug: string; args: string }, local: boolean): string {
+  const tail =
+    inv.args === ""
+      ? "No arguments were given."
+      : `The rest of the message is the invocation's arguments:\n${inv.args}`;
+  const how = local
+    ? `it is a local skill on this machine — read its skills/${inv.slug}/SKILL.md and follow it`
+    : `call read_skill with slug "${inv.slug}" and follow the skill's instructions`;
+  return `(The /${inv.slug} at the start of this message is a Guild skill invocation — ${how} before answering. ${tail})`;
+}
+
 function clipDescription(description: string): string {
   return description.length > DESCRIPTION_CLIP ? `${description.slice(0, DESCRIPTION_CLIP)}…` : description;
 }
@@ -321,6 +346,26 @@ export class SkillRuntime {
       if (dropped > 0) lines.push(`(${dropped} more org skills — use search_skills)`);
     }
     return lines.join("\n");
+  }
+
+  /** The directive for a user text that starts with a known skill slug:
+   *  a machine-local slug from the client's index stash wins, then the org
+   *  catalog (installed or not — read_skill installs on use). Unknown
+   *  slugs return null so ordinary `/`-prefixed text passes through
+   *  untouched. Store failures render no directive (logged), never
+   *  thrown. */
+  async invocationDirective(orgId: string, text: string, localIndex?: string): Promise<string | null> {
+    const inv = parseSkillInvocation(text);
+    if (inv === null) return null;
+    const localSlugs = new Set(localLinesOf(localIndex).map(localSlugOf));
+    if (localSlugs.has(inv.slug)) return skillInvocationDirective(inv, true);
+    try {
+      const items = await this.deps.registry.searchSkills(orgId, inv.slug, INDEX_LIMIT);
+      if (items.some((i) => i.slug === inv.slug)) return skillInvocationDirective(inv, false);
+    } catch (error) {
+      this.deps.log.warn(`skill invocation resolve failed: ${(error as Error).message}`);
+    }
+    return null;
   }
 
   /** The org portion's lines: installs with pin/update markers first, then
