@@ -11,6 +11,24 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Settings + new-chat navigation are URL-driven (2026-10-14).** The
+  principle landed with its gaps closed. *Settings*: every section pick
+  navigates to `/settings/<section>` and every sub-page to
+  `/settings/<section>/<detail>` (`openSettingsSection`/`openSettingsDetail`
+  go through pushRoute; the pane-state section is gone — the route is the
+  only source, so back/forward walks sections and a reload restores the
+  pick). A bare `/settings` normalizes to `/settings/account` via
+  replaceState; tab picks land on the current-or-default section. The
+  device-dialog detour keeps the section in memory (its URL still goes
+  through /chats). *New chats*: the scratch composer is addressed —
+  `/chats/new`, `/work/new`, `/project/<id>/new` (the reserved `new`
+  segment, skills-route style) — and the project pre-pick is route state
+  (the pick effect derives it from the URL, no more scratchPickRef),
+  upgrading to `/project/<id>/thread/<cid>` on first send. `tab` roots stay
+  bare; `newChat` drops on any chat/overlay/skills/settings navigation.
+  `pickAfterChatSwitch` removed (route replaces it). Review:
+  `docs/reviews/2026-10-14-url-navigation-review.md`.
+
 - **All navigation state is URL-driven (principle, 2026-10-14).** Recorded
   in AGENTS.md conventions: every reachable page/tab/panel/sub-page has its
   own fixed URL; navigation never changes local state without a history
