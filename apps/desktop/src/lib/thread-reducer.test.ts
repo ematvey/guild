@@ -178,6 +178,47 @@ describe("applyState: replay-during-generating (incremental, not re-derived)", (
     ).toBe(false);
   });
 
+  it("strips ws-streamed buffer orphans at commit, not just the sentinel keys", () => {
+    // First-send stream: thinking_delta frames arriving after a text tail
+    // open reasoning blocks under per-stream keys (`live-N`); a commit that
+    // stripped only `unpersisted-<chat>`/`live-thinking-<chat>` left those
+    // orphans rendering above the durable copies — the response showed twice.
+    const r = createThreadReducer();
+    r.open(null);
+    r.optimisticSend({ chatId: null, text: "hello world", key: "cmd-1", sentAt: 0, attachments: [] });
+    r.bindPending("c1", "cmd-1");
+    r.adopt("c1");
+    r.applyState(state("c1", 2, [echo(1, "hello world", "cmd-1")], "", "", true));
+    r.applyFrame({ type: "thinking_delta", content: "thinking part one" });
+    r.applyFrame({ type: "delta", content: "partial answer - **" });
+    r.applyFrame({ type: "thinking_delta", content: "more thinking" });
+    const committed = r.applyState(
+      state(
+        "c1",
+        3,
+        [
+          echo(1, "hello world", "cmd-1"),
+          row(2, {
+            type: "assistant_message",
+            turn: 1,
+            step: 0,
+            model: "m",
+            usage,
+            blocks: [
+              { type: "reasoning" as const, text: "thinking part one more thinking" },
+              { type: "text" as const, text: "full answer" },
+            ],
+          }),
+        ],
+        "",
+        "",
+        false,
+      ),
+    );
+    expect(committed.blocks.map((b) => b.kind)).toEqual(["user", "reasoning", "text"]);
+    expect(committed.blocks.every((b) => !b.key.startsWith("live-") && !b.key.startsWith("unpersisted-"))).toBe(true);
+  });
+
   it("marks out-of-order states stale and changes nothing", () => {
     const r = createThreadReducer();
     r.open("c1");

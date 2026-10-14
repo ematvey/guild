@@ -702,9 +702,14 @@ export function createThreadReducer(): ThreadReducer {
       v.watermark = state.seq;
       // The model buffers are authoritative and server-side (commit clears
       // them and lands the assistant_message in one view change): strip the
-      // previous buffer blocks, then re-stamp from this state.
+      // previous buffer blocks, then re-stamp from this state. The strip is
+      // by key prefix, not by the two sentinel keys alone: ws stream frames
+      // key their blocks per-stream (`live-N` for reasoning segments opened
+      // after a text tail, `unpersisted-<chat>` for text), and a commit that
+      // only removed the sentinels left those orphans rendering below the
+      // durable copies — the response appeared twice.
       let blocks = v.blocks.filter(
-        (b) => b.key !== `unpersisted-${cid}` && b.key !== `live-thinking-${cid}`,
+        (b) => !b.key.startsWith("unpersisted-") && !b.key.startsWith("live-"),
       );
       if (state.thinking)
         blocks = upsertThinking(blocks, state.thinking, true, `live-thinking-${cid}`);
