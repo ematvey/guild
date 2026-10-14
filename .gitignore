@@ -17,3 +17,5 @@ tsconfig.tsbuildinfo
 # Round-review work products live under docs/reviews/ at merge time
 .fixer-prompt.md
 FIX-REPORT.md
+deploy/compose/config.env.bak*
+deploy/compose/.env.bak*
