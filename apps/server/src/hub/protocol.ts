@@ -46,6 +46,7 @@ export type WsServerMsg =
       has_more_events?: boolean;
     }
   | { type: "sync_done"; chat_id: string }
+  | { type: "pong" }
   | {
       type: "live_frame";
       chat_id: string;
@@ -178,6 +179,8 @@ export function serializeServerMsg(msg: WsServerMsg): string {
       return JSON.stringify(frame("displaced", []));
     case "auth_required":
       return JSON.stringify(frame("auth_required", []));
+    case "pong":
+      return JSON.stringify(frame("pong", []));
     case "tool_dispatch":
       return JSON.stringify(
         frame("tool_dispatch", [
@@ -258,6 +261,7 @@ export function serializeServerMsg(msg: WsServerMsg): string {
  *  reader without closing the socket. */
 export type WsClientMsg =
   | { type: "sync"; chat_id: string | null }
+  | { type: "ping" }
   | { type: "read"; chat_id: string }
   | {
       type: "machine_response";
@@ -285,6 +289,8 @@ export function parseClientMsg(text: string): WsClientMsg | null {
   }
   if (raw === null || typeof raw !== "object" || typeof raw["type"] !== "string") return null;
   switch (raw["type"]) {
+    case "ping":
+      return { type: "ping" };
     case "sync": {
       const chatId = raw["chat_id"];
       if (

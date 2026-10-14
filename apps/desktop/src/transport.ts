@@ -344,6 +344,40 @@ export function startSocket(
   let connecting = false;
   let needsRefresh = false;
   const viewWatermarks = new Map<string, number>();
+  // Liveness: browsers auto-pong protocol-level pings below JS, so the tab
+  // cannot hear the server's heartbeat. This side sends app-level pings and
+  // watches for ANY server frame back — a stalled tunnel (half-open socket)
+  // looks "open" but delivers nothing; without this watchdog the tab stays
+  // deaf until an external event kills the connection.
+  const PING_INTERVAL_MS = 5_000;
+  const DEAD_AFTER_MS = 15_000;
+  let lastFrameAt = 0;
+  let pingsTimer: ReturnType<typeof setInterval> | null = null;
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+  const noteFrame = (): void => {
+    lastFrameAt = Date.now();
+  };
+  const livenessLoop = (): void => {
+    if (pingsTimer !== null) return;
+    pingsTimer = setInterval(() => {
+      if (stopped) return;
+      if (socket?.readyState === 1) {
+        try { socket.send(JSON.stringify({ type: "ping" })); } catch { /* closing */ }
+      }
+    }, PING_INTERVAL_MS);
+    watchdogTimer = setInterval(() => {
+      if (stopped || socket === null || socket.readyState !== 1) return;
+      if (lastFrameAt !== 0 && Date.now() - lastFrameAt > DEAD_AFTER_MS) {
+        // Half-open black hole: force the reconnect path (onclose fires).
+        try { socket.close(); } catch { /* already closing */ }
+      }
+    }, 2_000);
+  };
+  const livenessStop = (): void => {
+    if (pingsTimer !== null) { clearInterval(pingsTimer); pingsTimer = null; }
+    if (watchdogTimer !== null) { clearInterval(watchdogTimer); watchdogTimer = null; }
+  };
 
   const sendSync = () => {
     if (socket?.readyState !== 1) return;
@@ -369,11 +403,13 @@ export function startSocket(
       current.onopen = () => {
         if (socket !== current || stopped) return;
         viewWatermarks.clear();
+        noteFrame();
         opts.onConnect?.();
         sendSync();
       };
       current.onmessage = (event) => {
         if (socket !== current || stopped || typeof event.data !== "string") return;
+        noteFrame();
         try {
           const message = JSON.parse(event.data) as WsServerMsg;
           if (message.type === "auth_required") {
@@ -423,10 +459,31 @@ export function startSocket(
     }
   };
 
+  livenessLoop();
+  // Wake-ups and network flips leave half-open sockets behind: re-check
+  // liveness (and resync when healthy) the moment the tab is live again.
+  const wakeCheck = (): void => {
+    if (stopped) return;
+    if (socket === null || socket.readyState !== 1) {
+      if (lastFrameAt === 0 || Date.now() - lastFrameAt > DEAD_AFTER_MS) void connect();
+    } else if (Date.now() - lastFrameAt > DEAD_AFTER_MS) {
+      try { socket.close(); } catch { /* already closing */ }
+    } else {
+      sendSync();
+    }
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", wakeCheck);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") wakeCheck();
+    });
+  }
+
   void connect();
   return {
     stop: () => {
       stopped = true;
+      livenessStop();
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       reconnectTimer = null;
       const current = socket;

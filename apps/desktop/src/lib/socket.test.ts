@@ -213,4 +213,37 @@ describe("startSocket", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
+
+  it("pings while open and force-reconnects a silent (half-open) socket", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("localStorage", { getItem: () => "client" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ ticket: "t" }) })));
+    const sockets: FakeSocket[] = [];
+    const connection = startSocket({
+      onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+      getOpenChatId: () => null,
+      socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0].open();
+
+    // Healthy socket: pings flow every 5s, pongs keep the watchdog quiet.
+    for (let i = 0; i < 6; i++) {
+      await vi.advanceTimersByTimeAsync(5_000);
+      sockets[0].onmessage?.({ data: JSON.stringify({ type: "pong" }) });
+    }
+    expect(sockets[0].closed).toBe(false);
+
+    // Silence: no pong (half-open tunnel). The watchdog closes the socket
+    // after 15s without any server frame; the reconnect timer then dials a
+    // fresh one and the open sync re-derives the missed state.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(sockets[0].closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(sockets.length).toBe(2);
+
+    connection.stop();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 });
