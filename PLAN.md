@@ -11,6 +11,26 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **The member socket goes quiet mid-turn; the read-mark rides the duplex (2026-10-14).**
+  Two streaming-path corrections. *Views publish only at turn boundaries now*: the
+  bridge no longer dirties the feed on streamed deltas (`message_start` partial /
+  `message_update`), and `committed()` skips the view publish while the chat's
+  generation is open — the `generating=false` flip dirties the chat exactly once,
+  and the 100ms poll broadcasts the turn's single final `thread_state`. Each frame
+  carries the full event history, so per-delta publishes re-broadcast the whole
+  thread per chunk (observed live: 165 `/read` POSTs + 1.4 MB transferred over one
+  active turn). The client renders the in-turn stream from the cheap `live_frame`s
+  through the reducer's dormant `applyFrame` (the wire contract "content is
+  sequenced-ThreadState-only" holds — frames render deltas, the turn-end state
+  reconciles). *The read-mark moved onto the socket*: a new client→server
+  `WsClientMsg::Read { chat_id }` (protocol crate + TS parser mirror, bindings
+  regenerated) writes the same `chat_reads` row the REST route did, on the duplex
+  the frames already ride — the fetch-based `markChatRead` is gone, and the client
+  fires it only when the applied view carries events newer than the last marked
+  one (per-frame POSTing would otherwise have continued over the socket). Tests:
+  parser cases (hub) + the duplex write (ws-feed); the pre-existing environmental
+  `app.test` SPA-503 failure is unrelated (fails on a clean tree).
+
 - **Prod cutover complete — the TS server serves :18081 (2026-10-14, 0.5.42).**
   The `guild-live` compose project runs `guild-server-ts:prod` (its own tag, set via
   `GUILD_TS_SERVER_IMAGE` in `deploy/compose/.env`), built from the deliberate

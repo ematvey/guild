@@ -216,53 +216,45 @@ export class ChatBridge {
           // The first partial commit arrives as message_start with the
           // content streamed so far (Rust: the first ProviderChunk::Text
           // already emits its Delta) — seed the buffers and stream it.
-          let moved = false;
           for (const block of (event.message as { content: { type: string; text?: string; thinking?: string }[] }).content) {
             if (block.type === "text" && block.text) {
               state.buffers.text += block.text;
               this.emitStream(state, { type: "delta", content: block.text });
-              moved = true;
             } else if (block.type === "thinking" && block.thinking) {
               state.buffers.thinking += block.thinking;
               this.emitStream(state, { type: "thinking_delta", content: block.thinking });
-              moved = true;
             }
           }
-          if (moved && this.streamSink && state.chatId) this.streamSink.dirty(state.chatId);
+          // No dirty() here: live frames carry the stream; the view poll
+          // publishes only at turn boundaries (Rust parity: the run-end
+          // generating flip is the turn's single view broadcast).
         }
         return;
       }
       case "message_update": {
-        let moved = false;
         for (const change of event.changes) {
           if (change.type === "text_delta") {
             state.buffers.text += change.delta;
             this.emitStream(state, { type: "delta", content: change.delta });
-            moved = true;
           } else if (change.type === "thinking_delta") {
             state.buffers.thinking += change.delta;
             this.emitStream(state, { type: "thinking_delta", content: change.delta });
-            moved = true;
           } else if (change.type === "text_start") {
             // A block inserted whole holds its text so far (the first chunk
             // of the block rides the insert).
             const block = change.block as { text?: string };
             state.buffers.text += block.text ?? "";
             if (block.text) this.emitStream(state, { type: "delta", content: block.text });
-            moved = true;
           } else if (change.type === "thinking_start") {
             const block = change.block as { thinking?: string };
             state.buffers.thinking += block.thinking ?? "";
             if (block.thinking) this.emitStream(state, { type: "thinking_delta", content: block.thinking });
-            moved = true;
           } else if (change.type === "block" && change.block.type === "text") {
             state.buffers.text += change.block.text;
             this.emitStream(state, { type: "delta", content: change.block.text });
-            moved = true;
           } else if (change.type === "block" && change.block.type === "thinking") {
             state.buffers.thinking += change.block.thinking;
             this.emitStream(state, { type: "thinking_delta", content: change.block.thinking });
-            moved = true;
           } else if (change.type === "message") {
             // The whole partial was replaced: resync the buffers (the stream
             // frames already delivered the prefix; the view poll corrects).
@@ -272,10 +264,9 @@ export class ChatBridge {
               if (block.type === "text") state.buffers.text += block.text ?? "";
               else if (block.type === "thinking") state.buffers.thinking += block.thinking ?? "";
             }
-            moved = true;
           }
         }
-        if (moved && this.streamSink && state.chatId) this.streamSink.dirty(state.chatId);
+        // No dirty() on deltas — same turn-boundary contract as above.
         return;
       }
       case "message_end": {

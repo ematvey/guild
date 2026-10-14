@@ -473,6 +473,18 @@ async function driveSocket(
         if (message.chat_id !== null) await runSyncStarted(chats, current, message.chat_id, sink);
         return;
       }
+      if (message.type === "read") {
+        // The duplex read-mark: same chat_reads write the REST route makes,
+        // but on the member socket the turn already rides — no separate HTTP
+        // round trip per new content. Ownership is markRead's own gate;
+        // failures are cosmetic and dropped.
+        try {
+          await chats.chats.markRead(current.org_id, message.chat_id, current);
+        } catch {
+          /* not found / forbidden — cosmetic */
+        }
+        return;
+      }
       if (message.type === "machine_response") {
         hub.resolveMachineResponse(
           member,

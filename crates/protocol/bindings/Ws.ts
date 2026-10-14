@@ -14,7 +14,7 @@ export type MachineContext = { instructions?: string, skills_index: string, skil
  * tool-result endpoint). `MachineResponse` answers a `MachineRequest` the
  * server sent over this socket (control-plane ops: folder browse).
  */
-export type WsClientMsg = { "type": "sync", chat_id?: string, } | { "type": "machine_response", request_id: string, ok: boolean, payload?: JsonValue, error?: string, } | { "type": "tool_result", chat_id: string, call_id: string, content: string, is_error: boolean, meta?: JsonValue, images: Array<string>, };
+export type WsClientMsg = { "type": "sync", chat_id?: string, } | { "type": "read", chat_id: string, } | { "type": "machine_response", request_id: string, ok: boolean, payload?: JsonValue, error?: string, } | { "type": "tool_result", chat_id: string, call_id: string, content: string, is_error: boolean, meta?: JsonValue, images: Array<string>, };
 
 /**
  * Server → client. ThreadState is the only rendered-content source: both
