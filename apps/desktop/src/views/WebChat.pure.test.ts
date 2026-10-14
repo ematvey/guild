@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   artifactCardOf,
   busyAfterThreadPush,
+  sendButtonState,
   chatRoutePath,
   compareVersions,
   eventsToBlocks,
@@ -605,6 +606,35 @@ describe("busyAfterThreadPush (a list push cannot un-busy an in-flight send)", (
     expect(busyAfterThreadPush([row(true)], "chat-1", false)).toBe(true);
     expect(busyAfterThreadPush([row(false)], "chat-1", false)).toBe(false);
     expect(busyAfterThreadPush([row(false)], null, false)).toBe(false);
+  });
+
+  it("never busies the new-chat composer off an in-flight first send", () => {
+    // The first send's pending state is the dedicated pending-submit
+    // spinner; busy here feeds stopMode, and a Stop button for a turn that
+    // does not exist yet is a lie. A list push during creation must not
+    // busy the scratch composer.
+    expect(busyAfterThreadPush([row(false)], null, true)).toBe(false);
+    expect(busyAfterThreadPush([], null, true)).toBe(false);
+  });
+});
+
+describe("sendButtonState (pending submit holds the button until the turn exists)", () => {
+  const base = { hasContent: true, hasModel: true, generating: false, stopping: false, submitting: false };
+
+  it("send when idle with content, disabled without", () => {
+    expect(sendButtonState(base)).toBe("send");
+    expect(sendButtonState({ ...base, hasContent: false })).toBe("send");
+  });
+
+  it("a first-send submit in flight shows the spinner, not Stop", () => {
+    // Regression: the optimistic busy fed stopMode and offered Stop for a
+    // turn that had not started — the chat does not even exist yet.
+    expect(sendButtonState({ ...base, hasContent: false, submitting: true })).toBe("pending");
+  });
+
+  it("an existing turn outranks the pending submit; the stop click refines Stop", () => {
+    expect(sendButtonState({ ...base, hasContent: false, generating: true, submitting: true })).toBe("stop");
+    expect(sendButtonState({ ...base, hasContent: false, generating: true, stopping: true })).toBe("stopping");
   });
 });
 

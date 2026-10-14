@@ -187,14 +187,35 @@ export function offlineMachine(
 /** Whether the open chat shows busy after a thread-list push: while a
  * send's HTTP round trip is in flight the pushed list predates the
  * server's generating flag, so its false must not clear the optimistic
- * busy (a second send could race the first). */
+ * busy (a second send could race the first). A first send is exempt: its
+ * pending state lives in the dedicated pending-submit spinner, and busy
+ * here feeds stopMode — a Stop button for a turn that does not exist is a
+ * lie. */
 export function busyAfterThreadPush(
   chats: ChatSummary[],
   openChatId: string | null,
   sendInFlight: boolean,
 ): boolean {
-  if (sendInFlight) return true;
+  if (sendInFlight && openChatId !== null) return true;
   return !!chats.find((c) => c.id === openChatId)?.generating;
+}
+
+/** The composer's send button: the four states it can honestly show.
+ * Precedence: the stop click's own state, then a live turn (Stop), then a
+ * first-send submit in flight (spinner — the chat does not exist yet, so
+ * there is no turn to stop and nothing to send again), then the plain
+ * send/queue arrow. */
+export type SendButtonMode = "send" | "pending" | "stop" | "stopping";
+export function sendButtonState(input: {
+  hasContent: boolean;
+  hasModel: boolean;
+  generating: boolean;
+  stopping: boolean;
+  submitting: boolean;
+}): SendButtonMode {
+  if (input.generating && !input.hasContent) return input.stopping ? "stopping" : "stop";
+  if (input.submitting) return "pending";
+  return "send";
 }
 
 /** Drops a chat's cancellation-in-progress flag once that chat's own
@@ -1600,6 +1621,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // chatId comparison here — a null-vs-null comparison once held and the
   // line flashed on every first send.
   const [compacting, setCompacting] = useState(false);
+  // First-send submit in flight: the id of the outgoing command whose
+  // create/prepare/send round trip has not landed yet. The scratch view
+  // renders nothing optimistically (the chat does not exist), so this id —
+  // not busy — carries the pending state: the send button spins until the
+  // create responds and the route moves to the real chat.
+  const [pendingSubmitId, setPendingSubmitId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const promptRef = useRef(prompt);
   promptRef.current = prompt;
@@ -1838,7 +1865,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     };
   }, []);
   const loadSeq = useRef(0); // guards against stale chat switches landing last
-  const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
 
   loadStateRef.current = { busy, threadLoading };
 
@@ -2216,19 +2242,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       const opened = reducerRef.current.open(null);
       setBlocks(opened.blocks);
       setThreadLoading(false);
-    } else if (skipLoadRef.current === chatId) {
-      // Keep the optimistic first-send block: the created chat adopts the
-      // scratch view; the socket still reconciles the new chat. The turn's
-      // send is still in flight (submit runs after create), so keep the
-      // optimistic busy — clearing it here left a dead window with no
-      // Working indicator or stop button until the server's generating
-      // flag arrived, and the indicator visibly blinked in late.
-      skipLoadRef.current = null;
-      setBusy(true);
-      setBlocks(reducerRef.current.adopt(chatId).blocks);
     } else {
       // The reducer's per-chat cache: a switch-back renders its last content
       // immediately, so switching never flashes a skeleton over known blocks.
+      // A just-created chat lands here too: its view is empty, so the
+      // skeleton holds until the first thread state (the user message and
+      // the turn) arrives — the render is pure server truth.
       const opened = reducerRef.current.open(chatId);
       setThreadLoading(!opened.restored);
       setBlocks(opened.blocks);
@@ -2426,13 +2445,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     });
     if (command.accepted) { deliveringRef.current.delete(command.id); return; }
     const mySeq = loadSeq.current;
-    if (openChatIdRef.current === target) {
+    if (target === null) {
+      // First send: the chat does not exist yet, so nothing renders
+      // optimistically — the composer's pending-submit spinner carries the
+      // state until the create responds and the route moves.
+      setPendingSubmitId(command.id);
+      sendingRef.current = false;
+    } else if (openChatIdRef.current === target) {
       setBusy(true);
       setBlocks(reducerRef.current.optimisticSend({ chatId: target, text: command.text,
         key: command.id, sentAt: command.sentAt,
         attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
+      sendingRef.current = true;
+    } else {
+      sendingRef.current = false;
     }
-    sendingRef.current = true;
     try {
       await submitCommand(command, {
         checkpoint: persistCommand,
@@ -2444,7 +2471,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         },
         created: (cid) => {
           if (!mountedRef.current) return;
-          reducerRef.current.bindPending(cid, command.id);
+          // The chat exists server-side: from here the turn's submission is
+          // an in-flight round trip against a real chat — pushes must keep
+          // its busy until the server's generating flag takes over.
+          sendingRef.current = true;
           if (loadSeq.current === mySeq && openChatIdRef.current === command.originChatId) {
             // Preserve follow-up typing/files entered during chat creation.
             writeDraft(draftStorage, cid, promptRef.current);
@@ -2453,7 +2483,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             pendingDraftsRef.current.set(command.originChatId, []);
             persistFiles(cid, pendingRef.current);
             persistFiles(command.originChatId, []);
-            skipLoadRef.current = cid;
             if (approvalMode !== "default") {
               justCreatedApprovalRef.current = cid;
               void setChatApproval(cid, approvalMode).catch(() => toast.error("Could not save approval mode"));
@@ -2501,6 +2530,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     } finally {
       deliveringRef.current.delete(command.id);
       if (!mountedRef.current) return;
+      setPendingSubmitId(cur => cur === command.id ? null : cur);
       sendingRef.current = [...outgoingRef.current.values()].some(c => c.running && (c.chatId ?? c.originChatId) === openChatIdRef.current);
       if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) setBusy(false);
       refreshOutgoing(n => n + 1);
@@ -3334,33 +3364,56 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   // state (pulsing square, "Stopping…") until the server's
                   // generating=false lands — the stop is cooperative
                   // server-side, so this is the only immediate feedback the
-                  // click can honestly get.
-                  const generating = busy || openGenerating;
+                  // click can honestly get. A first-send submit in flight
+                  // (create/prepare/send round trip, the chat not on the
+                  // server yet) shows the pending spinner instead: there is
+                  // no turn to stop and nothing to send again.
+                  const pendingCommand = pendingSubmitId !== null
+                    ? outgoingRef.current.get(pendingSubmitId)
+                    : undefined;
+                  const submitting = !!pendingCommand &&
+                    (pendingCommand.chatId ?? pendingCommand.originChatId) === (chatId ?? null);
+                  const generating = openGenerating || (busy && !submitting);
                   const hasContent = !!prompt.trim() || pending.length > 0;
-                  const stopMode = generating && !hasContent;
-                  const stoppingMode = stopMode && !!chatId && !!stopping[chatId];
+                  const mode = sendButtonState({
+                    hasContent,
+                    hasModel: !!model,
+                    generating,
+                    stopping: !!chatId && !!stopping[chatId],
+                    submitting,
+                  });
                   return (
                     <Button
                       size="icon"
                       className="size-7 rounded-full"
                       onClick={() =>
-                        stopMode ? void requestStop() : void send(generating ? "queue" : "normal")
+                        mode === "stop" || mode === "stopping"
+                          ? void requestStop()
+                          : void send(generating ? "queue" : "normal")
                       }
-                      disabled={stoppingMode ? true : stopMode ? false : !model || !hasContent}
+                      disabled={
+                        mode === "pending" ||
+                        mode === "stopping" ||
+                        (mode === "send" && (!model || !hasContent))
+                      }
                       title={
-                        stoppingMode
+                        mode === "stopping"
                           ? "Stopping…"
-                          : stopMode
+                          : mode === "stop"
                             ? "Stop"
-                            : generating
-                              ? "Queue (Ctrl+Enter sends immediately)"
-                              : "Send"
+                            : mode === "pending"
+                              ? "Sending…"
+                              : generating
+                                ? "Queue (Ctrl+Enter sends immediately)"
+                                : "Send"
                       }
                     >
-                      {stopMode ? (
+                      {mode === "stop" || mode === "stopping" ? (
                         <Square
-                          className={`size-3.5 fill-current ${stoppingMode ? "animate-pulse" : ""}`}
+                          className={`size-3.5 fill-current ${mode === "stopping" ? "animate-pulse" : ""}`}
                         />
+                      ) : mode === "pending" ? (
+                        <Loader2 className="size-3.5 animate-spin" />
                       ) : (
                         <ArrowUp />
                       )}

@@ -11,6 +11,24 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **First send renders no optimistic bubble — pending submit until the chat exists (2026-10-14).**
+  The scratch-view optimistic send (bubble in the LOOSE view, adopted by the
+  created chat via `skipLoadRef`) is gone: a first send now clears the
+  composer into a durable command and holds a pending-submit spinner on the
+  send button (state `pendingSubmitId`, precedence stopping > Stop >
+  pending > send in `sendButtonState`) while create/prepare/send are in
+  flight; nothing renders optimistically because there is nothing to render
+  into. When `createChat` responds the route moves once and the thread shows
+  a skeleton until the first server thread state (user message + turn)
+  lands — the render is pure server truth. The reducer's `adopt`/`bindPending`
+  stay for the reducer API but no first-send caller remains; sends from
+  existing chats keep their optimistic bubble. `busyAfterThreadPush` no
+  longer busies the null-chat composer off an in-flight first send, and
+  `sendingRef` is scoped to the open chat (set in `created()`), so a
+  background send can't busy an unrelated open chat. Also fixed en route:
+  the previous commit's adopt-branch busy no longer applies (branch
+  deleted).
+
 - **First-send submit: no dead window, no duplicated stream render (2026-10-14).**
   Two bugs behind the flicker a first-send screencast showed. (1) The
   chatId effect's unconditional `setBusy(false)` wiped the optimistic busy
