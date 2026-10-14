@@ -20,6 +20,7 @@ import {
   readSummary,
   shaPrefix,
   initialsOf,
+  skillMdPreviewBody,
   sparkRects,
   updateAvailable,
 } from "./SkillDetail";
@@ -316,5 +317,19 @@ describe("actionVariant (the top bar's per-action button style)", () => {
     expect(actionVariant("Edit")).toBe("outline");
     expect(actionVariant("Require approval")).toBe("outline");
     expect(actionVariant("Remove approval")).toBe("outline");
+  });
+});
+
+describe("skillMdPreviewBody", () => {
+  it("strips the leading frontmatter block", () => {
+    expect(skillMdPreviewBody("---\nname: x\ndescription: y\n---\n\n# Body\n")).toBe("\n# Body\n");
+  });
+
+  it("handles CRLF frontmatter and a missing trailing newline", () => {
+    expect(skillMdPreviewBody("---\r\nname: x\r\n---\r\nbody")).toBe("body");
+  });
+
+  it("leaves files without frontmatter unchanged", () => {
+    expect(skillMdPreviewBody("# No frontmatter\n---\n")).toBe("# No frontmatter\n---\n");
   });
 });
