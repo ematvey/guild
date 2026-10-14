@@ -11,6 +11,20 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Server runtime is Bun — no server compile, no dist (2026-10-14).**
+  `Dockerfile.server-ts` no longer runs tsc for the server: the runtime
+  stage installs Bun (copied from oven/bun:1 into the node:22-slim base,
+  so node stays available) and executes `apps/server/src` directly
+  (`bun src/index.ts`); the sandbox-runner service runs
+  `bun src/sandbox/runner/main.ts` the same way. The only compile left in
+  the server image is the generated protocol bindings (their .js/.d.ts
+  siblings are what make @guild/protocol imports resolvable at all — Bun
+  does not substitute extensions through bare package exports either,
+  measured 2026-10-14). Local scripts: `start` → bun, `dev` stays tsx,
+  `typecheck` stays tsc (fed by check-bindings.sh's compile). The sandbox
+  agent keeps running node inside the separate guild-sandbox image —
+  untouched. Schema-first IDL (protobuf) for the protocol remains the
+  longer-term direction (see Future directions).
 - **Bindings compile in place; @guild/protocol exports an identity map
   (2026-10-14).** The NodeNext-consuming server could not actually resolve
   `@guild/protocol/ThreadEvent.js`: the .js→.ts substitution only applies to
@@ -856,6 +870,14 @@ not kept here — it lives in git.
 
 ## Future directions
 
+- **Schema-first protocol types (protobuf or similar), dropping the
+  Rust-side ts-rs generation** (maintainer, 2026-10-14): define the wire types
+  once in a language-neutral IDL and generate both the Rust and TS types
+  from it, instead of Rust being the source of truth with ts-rs emitting
+  `crates/protocol/bindings/*.ts`. Removes the npm-workspace-inside-crates
+  oddity and the per-type export tests. Precondition for picking the tool:
+  it must preserve the freshness gate (generated-vs-committed diff) and the
+  64-bit wire-field number handling (`ts(type = "number")` today).
 - **A future review loop** (when a meaningful diff accumulates): start from a
   surface-coverage map rather than a full-diff audit — see
   `2026-09-24-loop-summary.md` (git history) for the per-surface pass counts
