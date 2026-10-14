@@ -150,6 +150,15 @@ export class FeedForwarder implements GenerationStreamSink {
       this.dirtyChats.delete(chatId);
       return;
     }
+    // A streaming turn owns its view: intermediate commits (per-step
+    // assistant messages, tool results) ride the run-end publish — the
+    // generating=false flip dirties the chat exactly once per turn. Each
+    // frame carries the full event history, so per-commit publishes
+    // re-broadcast the whole thread per step.
+    if (this.generations.has(chatId)) {
+      this.dirtyChats.delete(chatId);
+      return;
+    }
     this.dirtyChats.delete(chatId);
     await this.publishView(chatId, chat.orgId, chat.userId);
   }

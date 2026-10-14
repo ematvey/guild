@@ -289,6 +289,12 @@ describe("wire codec", () => {
     expect(parseClientMsg('{"type":"sync","chat_id":null}')).toEqual({ type: "sync", chat_id: null });
     expect(parseClientMsg('{"type":"sync"}')).toEqual({ type: "sync", chat_id: null });
     expect(parseClientMsg('{"type":"sync","chat_id":"nope"}')).toBeNull();
+    expect(parseClientMsg('{"type":"read","chat_id":"00000000-0000-0000-0000-000000000000"}')).toEqual({
+      type: "read",
+      chat_id: "00000000-0000-0000-0000-000000000000",
+    });
+    expect(parseClientMsg('{"type":"read"}')).toBeNull();
+    expect(parseClientMsg('{"type":"read","chat_id":"nope"}')).toBeNull();
     expect(
       (parseClientMsg(
         '{"type":"tool_result","chat_id":"00000000-0000-0000-0000-000000000000","call_id":"old","content":"text","is_error":false,"meta":null}',
