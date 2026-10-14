@@ -12,7 +12,13 @@ COPY package.json package-lock.json ./
 COPY apps/desktop/package.json apps/desktop/
 COPY apps/server/package.json apps/server/
 COPY packages/ui/package.json packages/ui/
+# Generated protocol bindings: the @guild/protocol workspace package the
+# server's TS imports for its wire types (same recipe as the server image).
+COPY crates/protocol/bindings ./crates/protocol/bindings
 RUN npm ci --workspace apps/server --no-audit --no-fund
+# Compiled bindings (.js + .d.ts siblings) so the NodeNext tsc resolves
+# the @guild/protocol/* imports.
+RUN npm run build --workspace @guild/protocol
 COPY apps/server/src ./apps/server/src
 COPY apps/server/tsconfig.json apps/server/tsconfig.json
 RUN npm run build --workspace apps/server
