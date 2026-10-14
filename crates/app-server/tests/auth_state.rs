@@ -554,14 +554,6 @@ async fn restore_keeps_a_dead_token_row_and_falls_back_to_the_live_one() {
 #[tokio::test]
 async fn login_refreshes_org_identity_into_the_store() {
     let server = fake_cloud().await;
-    let user = json!({
-        "id": uuid::Uuid::now_v7(),
-        "email": "a@b.c",
-        "org_id": uuid::Uuid::now_v7(),
-        "role": "member",
-        "display_name": null,
-        "avatar_url": null,
-    });
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path("/api/v1/org"))
         .respond_with(move |_: &wiremock::Request| {
