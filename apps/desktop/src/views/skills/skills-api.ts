@@ -25,6 +25,15 @@ export interface SkillItem {
 }
 
 /** One published version row (GET /api/v1/skills/:slug). */
+/** Renders a registry version with exactly one "v" prefix. The server
+ *  stores its own computed versions pre-prefixed ("v1") while
+ *  user-published ones can be bare ("0.1.0") — naive `v${v}` templates
+ *  render "vv1" for the former. */
+export function displayVersion(version: string): string {
+  return `v${version.replace(/^v/, "")}`;
+}
+
+/** One published version row (GET /api/v1/skills/:slug). */
 export interface SkillVersion {
   version: string;
   published_at: string;

@@ -21,6 +21,7 @@ import { rpcCall } from "../../transport";
 import { resolveProjectDir } from "../settings/resolve-project-dir";
 import { daemonFs, listSkills, setSkillDisabled } from "../../lib/context";
 import {
+  displayVersion,
   fetchInstalls,
   skillsList,
   skillsPin,
@@ -99,7 +100,7 @@ function SourceBadge({ row }: { row: LocalSkillRow }) {
     const v = row.provenance?.version;
     return (
       <Badge variant="outline" className="border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400">
-        Yours{v ? ` · v${v}` : ""}
+        Yours{v ? ` · ${displayVersion(v)}` : ""}
       </Badge>
     );
   }
@@ -107,7 +108,7 @@ function SourceBadge({ row }: { row: LocalSkillRow }) {
     const p = row.provenance;
     return (
       <Badge variant="outline" className="border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400">
-        Installed{p?.version ? ` v${p.version}` : ""}
+        Installed{p?.version ? ` ${displayVersion(p.version)}` : ""}
         {p?.publisher ? ` by ${p.publisher}` : ""}
       </Badge>
     );
@@ -204,7 +205,9 @@ export default function LocalSkills() {
                     <span className="font-medium">/{vm.slug}</span>
                     <p className="text-xs text-muted-foreground">
                       pinned at {vm.pinnedVersion}
-                      {latest.has(vm.slug) ? ` · latest v${latest.get(vm.slug)}` : ""}
+                      {latest.has(vm.slug)
+                        ? ` · latest ${displayVersion(latest.get(vm.slug) ?? "")}`
+                        : ""}
                     </p>
                   </div>
                   {vm.updateAvailable && vm.pinTarget !== null && (

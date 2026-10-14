@@ -10,6 +10,7 @@ import { useCachedGet } from "../use-cached-api";
 import { ArrowUpRight, Package } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../admin-api";
+import { displayVersion } from "../../skills/skills-api";
 import { Button } from "@guild/ui/components/button";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
@@ -116,7 +117,7 @@ function RegistryList({ onOpen }: { onOpen: (kind: Kind, slug: string) => void }
         header: "Version",
         cell: ({ row }) => (
           <span className="font-mono text-xs tabular-nums text-muted-foreground">
-            {row.original.latest_version ? `v${row.original.latest_version}` : "—"}
+            {row.original.latest_version ? displayVersion(row.original.latest_version) : "—"}
           </span>
         ),
       },
@@ -247,7 +248,7 @@ function ItemDetail({
         </FactCard>
         <FactCard label="Latest version">
           <span className="font-mono">
-            {item?.latest_version ? `v${item.latest_version}` : "—"}
+            {item?.latest_version ? displayVersion(item.latest_version) : "—"}
           </span>
         </FactCard>
       </FactGrid>

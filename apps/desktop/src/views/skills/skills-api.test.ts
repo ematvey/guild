@@ -5,7 +5,14 @@
 // and the teams list the owner selector uses.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { myTeams, skillsGate, skillsInstall, skillsSave, skillsUninstall } from "./skills-api";
+import {
+  displayVersion,
+  myTeams,
+  skillsGate,
+  skillsInstall,
+  skillsSave,
+  skillsUninstall,
+} from "./skills-api";
 
 const token = "test-token-123";
 
@@ -124,5 +131,17 @@ describe("myTeams (the owner selector's team list)", () => {
       vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })),
     );
     expect(await myTeams()).toBeNull();
+  });
+});
+
+describe("displayVersion", () => {
+  it("renders exactly one v prefix for server-computed versions", () => {
+    expect(displayVersion("v1")).toBe("v1");
+    expect(displayVersion("v12")).toBe("v12");
+  });
+
+  it("prefixes bare user-published versions", () => {
+    expect(displayVersion("0.1.0")).toBe("v0.1.0");
+    expect(displayVersion("2")).toBe("v2");
   });
 });
