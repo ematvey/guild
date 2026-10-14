@@ -3,5 +3,6 @@
 //! JSON-RPC envelope carries `protocol: PROTOCOL_VERSION`.
 
 pub mod api;
+pub mod registry;
 pub mod rpc;
 pub mod ws;
