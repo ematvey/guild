@@ -4,8 +4,8 @@
 // and the panel tabs (the "On this machine" tab exists only in Tauri —
 // the IS_TAURI=false fixture hides it).
 
-import { describe, expect, it } from "vitest";
-import { installRow, sourceBadge, toggleDisabled, type LocalSkillRow } from "./LocalSkills";
+import { describe, expect, it, vi } from "vitest";
+import { installRow, sourceBadge, toggleDisabled, uninstallSkill, type LocalSkillRow } from "./LocalSkills";
 import { panelTabs } from "./SkillsPanel";
 import type { SkillInstall } from "./skills-api";
 
@@ -104,5 +104,50 @@ describe("panelTabs (the IS_TAURI fixture)", () => {
     const browser = panelTabs(false).map(([value]) => value);
     expect(browser).toEqual(["catalog", "activity"]);
     expect(browser).not.toContain("machine");
+  });
+});
+
+describe("uninstallSkill (server-first, local cleanup second)", () => {
+  type Rpc = (method: string, params: any, timeoutMs?: number) => Promise<any>;
+  const okFetch = () =>
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+
+  it("removes the pin first, then the local folder (org installs live in the home scope)", async () => {
+    okFetch();
+    const rpc = vi.fn(async (_method: string, _params: any) => ({ result: { uninstalled: "deploy" } }));
+    await uninstallSkill("deploy", rpc as unknown as Rpc, true);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls[0]![0]).toBe("registry.uninstall");
+    expect(rpc.mock.calls[0]![1]).toMatchObject({ slug: "deploy", global: true });
+  });
+
+  it("swallows the local cleanup's failure — the machine-sync push owns the rest", async () => {
+    okFetch();
+    const rpc = vi.fn(async (_method: string, _params: any) => {
+      throw new Error("not materialized here");
+    });
+    await expect(uninstallSkill("deploy", rpc as unknown as Rpc, true)).resolves.toBeUndefined();
+  });
+
+  it("falls back to local-only removal when the server has no install record (a copied-in dir)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ message: "not installed" }), { status: 404 })),
+    );
+    const rpc = vi.fn(async (_method: string, _params: any) => ({ result: {} }));
+    await uninstallSkill("deploy", rpc as unknown as Rpc, false);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls[0]![1]).toMatchObject({ slug: "deploy", global: false });
+  });
+
+  it("propagates a failed local-only fallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ message: "not installed" }), { status: 404 })),
+    );
+    const rpc = vi.fn(async (_method: string, _params: any) => {
+      throw new Error("remove failed");
+    });
+    await expect(uninstallSkill("deploy", rpc as unknown as Rpc, true)).rejects.toThrow("remove failed");
   });
 });

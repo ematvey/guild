@@ -279,14 +279,14 @@ describe("skills syncUser", () => {
     expect(fx.calls).toEqual([]);
   });
 
-  it("connect-time with zero installs pushes nothing (the WS golden replay pins the connect frame stream)", async () => {
+  it("zero installs is still a payload (the machine's pull serves it — the empty converge frame)", async () => {
     const fx = makeFixture({ selfBaseUrl: SELF });
     fx.machines = [{ machine_id: "m-1" }];
     fx.online = new Set(["m-1"]);
 
-    await fx.runtime.syncUser(ORG, USER, { skipWhenEmpty: true });
+    const payload = await fx.runtime.syncPayload(ORG, USER);
 
-    expect(fx.calls).toEqual([]);
+    expect(payload).toEqual({ skills: [] });
     expect(fx.warns).toEqual([]);
   });
 

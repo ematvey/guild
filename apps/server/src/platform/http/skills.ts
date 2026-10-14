@@ -9,6 +9,7 @@ import type { GatewayCtx, IdentityCtx } from "../contexts.js";
 import type { ObjectStore } from "../s3.js";
 import type { SkillStore } from "../store/skills.js";
 import type { UserRow } from "../store/identity.js";
+import type { SkillRuntime } from "../../harness/skills.js";
 import { ApiError } from "../errors.js";
 import { requireUser } from "./error.js";
 import { rustJsonText } from "../provider/sse.js";
@@ -21,6 +22,9 @@ export interface SkillRouteOptions {
   /** Install/pin changes fan out to the user's machines (Task 8 wires the
    *  skills runtime's syncUser; unset stays a no-op). */
   onInstallChange?: (orgId: string, userId: string) => void | Promise<void>;
+  /** The skills runtime — the connect-time pull route serves its
+   *  syncPayload (the machine's desired install list). */
+  runtime?: SkillRuntime;
 }
 
 function sendJson(reply: FastifyReply, value: unknown): void {
@@ -162,6 +166,7 @@ export function registerSkillRoutes(
   options: SkillRouteOptions = {},
 ): void {
   const onInstallChange = options.onInstallChange ?? (() => {});
+  const runtime = options.runtime;
 
   app.post("/api/v1/skills", async (req, reply) => {
     const user = await requireUser(auth, req);
@@ -320,6 +325,13 @@ export function registerSkillRoutes(
       })),
     );
     sendJson(reply, { items });
+    return reply;
+  });
+
+  app.get("/api/v1/skills/sync-payload", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    if (runtime === undefined) throw ApiError.notFound("no skills runtime");
+    sendJson(reply, await runtime.syncPayload(user.org_id, user.id));
     return reply;
   });
 

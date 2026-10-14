@@ -371,9 +371,10 @@ async function driveSocket(
     }
     machineRegistered = true;
     await registerMachineRecord(chats, user, machineId, meta, peerIp, query.client_id ?? "", hub);
-    // The fresh slot catches up on its owner's install list (spec §4) —
-    // fire-and-forget; failures land in the skills runtime's log.
-    chats.wsSkillsSync?.(user.org_id, user.id);
+    // Skills convergence at connect is the machine's own HTTP pull
+    // (`GET /api/v1/skills/sync-payload`, Rust machine_link.rs) — no
+    // sync frame rides the machine-connect stream (the WS golden replay
+    // pins it byte-exactly); change-trigger pushes remain server-side.
   } else {
     if (!hub.registerMember(member)) {
       await sendTerminal(socket, { type: "error", message: "too many connections" });

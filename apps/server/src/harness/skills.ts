@@ -346,43 +346,19 @@ export class SkillRuntime {
     return this.lastIndex.get(conversationId as ConversationId);
   }
 
-  /** The fleet sync push (spec §4): the user's install list is the
-   *  machine's desired state — every install becomes
-   *  `{ slug, version, bundle_sha256, url }` (the bundle URL under this
-   *  server's own base, fetched by the machine with its own auth), and the
-   *  machine converges by fetching newer bundles and dropping
-   *  locally-held slugs the list omits — an uninstall's row is gone, so
-   *  absence is the removal signal and no removed tombstones are tracked.
-   *  One push per machine row the hub reports live; the pushes are
-   *  fire-and-forget — syncUser returns once they are dispatched, and a
-   *  per-machine failure is logged without touching the other machines
-   *  (the ClickHouse sink's never-throw discipline, per machine). No
-   *  machine store, no machines, or a store failure → silent no-op
-   *  (logged).
-   *
-   *  Zero installs push an empty `skills` list — a meaningful "you should
-   *  have nothing" frame that converges a machine still holding the last
-   *  uninstalled skill — EXCEPT at connect time: `opts.skipWhenEmpty`
-   *  (set by the ws connect seam only) keeps the machine-connect frame
-   *  stream free of sync traffic for skill-less users (the WS golden
-   *  replay pins that stream byte-exactly). */
-  async syncUser(orgId: string, userId: string, opts?: { skipWhenEmpty?: boolean }): Promise<void> {
-    const machines = this.deps.machines;
-    if (machines === undefined) return;
-    let rows: MachineRow[];
-    try {
-      rows = await machines.listForUser(orgId, userId);
-    } catch (error) {
-      this.deps.log.warn(`skills sync skipped: machine list failed: ${(error as Error).message}`);
-      return;
-    }
-    if (rows.length === 0) return;
+  /** The desired install list for one user, in the sync wire shape: every
+   *  install becomes `{ slug, version, bundle_sha256, url }` (the bundle
+   *  URL under this server's own base, fetched by the machine with its own
+   *  auth). Shared by the change-trigger pushes (syncUser) and the
+   *  machine's connect-time HTTP pull (`GET /api/v1/skills/sync-payload`).
+   *  A pin with no version row is dropped (logged) — it can never
+   *  materialize. */
+  async syncPayload(orgId: string, userId: string): Promise<{ skills: Array<{ slug: string; version: string; bundle_sha256: string; url?: string }> }> {
     let installs: Array<{ slug: string; pinned_version: string }>;
     try {
       installs = await this.deps.skills.listForUser(orgId, userId);
     } catch (error) {
-      this.deps.log.warn(`skills sync skipped: install list failed: ${(error as Error).message}`);
-      return;
+      throw new Error(`install list failed: ${(error as Error).message}`);
     }
     const skills: Array<{ slug: string; version: string; bundle_sha256: string; url?: string }> = [];
     for (const install of installs) {
@@ -404,12 +380,44 @@ export class SkillRuntime {
         this.deps.log.warn(`skills sync: ${install.slug} meta lookup failed: ${(error as Error).message}`);
       }
     }
-    const payload = { skills };
-    // Connect-time only: zero installs → no push, so the machine connect
-    // frame stream stays free of sync traffic for skill-less users (the
-    // WS golden replay pins that stream). Change triggers (install/pin/
-    // uninstall) always push — the empty list is the converge frame.
-    if (skills.length === 0 && opts?.skipWhenEmpty === true) return;
+    return { skills };
+  }
+
+  /** The fleet sync push (spec §4): the user's install list is the
+   *  machine's desired state — the machine converges by fetching the
+   *  pinned bundles and dropping locally-held slugs the list omits — an
+   *  uninstall's row is gone, so absence is the removal signal and no
+   *  removed tombstones are tracked. One push per machine row the hub
+   *  reports live; the pushes are fire-and-forget — syncUser returns once
+   *  they are dispatched, and a per-machine failure is logged without
+   *  touching the other machines (the ClickHouse sink's never-throw
+   *  discipline, per machine). No machine store, no machines, or a store
+   *  failure → silent no-op (logged).
+   *
+   *  Only change triggers push (install/pin/uninstall) — the empty list
+   *  is a meaningful "you should have nothing" converge frame. Connect
+   *  time does NOT push: the machine pulls the same payload itself
+   *  (`GET /api/v1/skills/sync-payload`), which also converges the
+   *  empty-pin case without adding frames to the machine-connect stream
+   *  the WS golden replay pins byte-exactly. */
+  async syncUser(orgId: string, userId: string): Promise<void> {
+    const machines = this.deps.machines;
+    if (machines === undefined) return;
+    let rows: MachineRow[];
+    try {
+      rows = await machines.listForUser(orgId, userId);
+    } catch (error) {
+      this.deps.log.warn(`skills sync skipped: machine list failed: ${(error as Error).message}`);
+      return;
+    }
+    if (rows.length === 0) return;
+    let payload: { skills: Array<{ slug: string; version: string; bundle_sha256: string; url?: string }> };
+    try {
+      payload = await this.syncPayload(orgId, userId);
+    } catch (error) {
+      this.deps.log.warn(`skills sync skipped: install list failed: ${(error as Error).message}`);
+      return;
+    }
     for (const row of rows) {
       if (this.deps.machineOnline?.(row.machine_id) === false) continue;
       const pending = this.deps.machineRequest?.({
