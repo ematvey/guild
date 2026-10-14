@@ -334,6 +334,21 @@ async fn ws_session(
     });
 
     let hooks = crate::artifacts::registry_hooks(cloud.clone(), shared.artifacts.clone());
+    // Connect-time skills pull: converge the home skill scope to the
+    // server's pinned installs — including "nothing pinned", which no
+    // change push ever spells out (a dir copied in from another machine
+    // with provenance but no pin must not live forever). Fire-and-forget:
+    // a failed pull waits for the next change push or reconnect.
+    let pull_cloud = cloud.clone();
+    tokio::spawn(async move {
+        match pull_skills(&pull_cloud).await {
+            Ok(summary) => crate::dtrace::dtrace(&format!(
+                "skills connect pull: updated={:?} removed={:?} failed={:?}",
+                summary["updated"], summary["removed"], summary["failed"]
+            )),
+            Err(e) => crate::dtrace::dtrace(&format!("skills connect pull failed: {e}")),
+        }
+    });
     let mut last_inbound = tokio::time::Instant::now();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(heartbeat_secs()));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -481,17 +496,10 @@ fn skills_root() -> PathBuf {
         .unwrap_or_else(|_| crate::fs_bridge::home_dir())
 }
 
-/// One `skills.sync_v1` request over the link: fills in each entry's
-/// bundle URL when the server omitted it (the machine's own authenticated
-/// registry bundle endpoint — the same one install_skill uses), then
-/// converges the home skill scope. The bearer-auth fetch path is the
-/// machine link's own cloud client, exactly like artifact prefetch.
-async fn sync_skills(
-    payload: &serde_json::Value,
-    cloud: &CloudClient,
-) -> Result<serde_json::Value, String> {
-    let base = cloud.base_url.trim_end_matches('/');
-    let mut payload = payload.clone();
+/// Fills each sync entry's bundle URL when the server omitted it: the
+/// machine's own authenticated registry bundle endpoint — the same one
+/// install_skill uses.
+fn fill_sync_urls(payload: &mut serde_json::Value, base: &str) {
     if let Some(skills) = payload["skills"].as_array_mut() {
         for entry in skills {
             let missing = entry["url"]
@@ -508,6 +516,18 @@ async fn sync_skills(
             }
         }
     }
+}
+
+/// One `skills.sync_v1` request over the link: fills in each entry's
+/// bundle URL when the server omitted it, then converges the home skill
+/// scope. The bearer-auth fetch path is the machine link's own cloud
+/// client, exactly like artifact prefetch.
+async fn sync_skills(
+    payload: &serde_json::Value,
+    cloud: &CloudClient,
+) -> Result<serde_json::Value, String> {
+    let mut payload = payload.clone();
+    fill_sync_urls(&mut payload, cloud.base_url.trim_end_matches('/'));
     crate::skill_sync::sync(
         &payload,
         |url: String| {
@@ -515,6 +535,56 @@ async fn sync_skills(
             async move { crate::skill_sync::fetch_bundle(&cloud, &url).await }
         },
         &skills_root(),
+    )
+    .await
+}
+
+/// The connect-time skills pull (skill sync spec §4): the machine fetches
+/// its user's desired install list over HTTP (`GET
+/// /api/v1/skills/sync-payload`, user-token authed) and converges the home
+/// skill scope — the same handler the server's `skills.sync_v1` push
+/// drives, but machine-initiated so even a zero-pin user's stale copies
+/// (a dir copied in from another machine) converge away at every link
+/// connect. The server deliberately never pushes at connect — the WS
+/// golden replay pins the machine-connect frame stream byte-exactly —
+/// hence this pull.
+async fn pull_skills(cloud: &CloudClient) -> Result<serde_json::Value, String> {
+    pull_skills_at(cloud, &skills_root()).await
+}
+
+/// `pull_skills` with an explicit root — the test seam (the env-var root
+/// races parallel tests).
+async fn pull_skills_at(
+    cloud: &CloudClient,
+    root: &Path,
+) -> Result<serde_json::Value, String> {
+    let url = format!(
+        "{}/api/v1/skills/sync-payload",
+        cloud.base_url.trim_end_matches('/')
+    );
+    let resp = cloud
+        .http_pub()
+        .get(&url)
+        .bearer_auth(&cloud.token)
+        .send()
+        .await
+        .map_err(|e| format!("sync payload fetch failed: {e}"))?;
+    let resp = CloudClient::check(resp)
+        .await
+        .map_err(|e| format!("sync payload fetch failed: {e}"))?;
+    let payload: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("sync payload decode failed: {e}"))?;
+    let mut payload = payload;
+    fill_sync_urls(&mut payload, cloud.base_url.trim_end_matches('/'));
+    crate::skill_sync::sync(
+        &payload,
+        |url: String| {
+            let cloud = cloud.clone();
+            async move { crate::skill_sync::fetch_bundle(&cloud, &url).await }
+        },
+        root,
     )
     .await
 }
@@ -1426,8 +1496,124 @@ mod tests {
         std::fs::remove_dir_all(temp).unwrap();
     }
 
-    /// Sends one `machine_request` through the mock hub relay and awaits
-    /// the machine's `machine_response` with the same `request_id`.
+    /// The connect-time skills pull end-to-end against a mock server: the
+    /// payload endpoint serves the desired install list, the machine
+    /// materializes the pinned bundle (provenance sidecar included), sweeps
+    /// a stale provenance-carrying dir the list omits, and leaves plain
+    /// user dirs alone — the converge that keeps physically copied skill
+    /// dirs in step with the server's pins at every link connect, then the
+    /// empty-payload pull that converges a zero-pin user to nothing.
+    #[tokio::test]
+    async fn connect_pull_converges_home_scope_to_pins() {
+        let temp = temp_scoped_dir("connect-pull");
+        let bundle_src = temp.join("bundle-src/demo-skill");
+        std::fs::create_dir_all(&bundle_src).unwrap();
+        std::fs::write(
+            bundle_src.join("SKILL.md"),
+            "---\nname: demo-skill\ndescription: t\n---\nPULLED-BODY",
+        )
+        .unwrap();
+        let (bundle_bytes, _) = guild_core::registry::pack_skill(&bundle_src, "v2").unwrap();
+        let bundle_sha = {
+            use sha2::{Digest as _, Sha256};
+            hex::encode(Sha256::digest(&bundle_bytes))
+        };
+
+        let skills_home = temp.join("skills-home");
+        let stale = skills_home.join(".agents/skills/stale-skill");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("SKILL.md"), "old").unwrap();
+        crate::registry_client::write_sidecar(
+            &stale,
+            &crate::registry_client::SkillProvenance {
+                source: "registry".into(),
+                slug: "stale-skill".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let user_dir = skills_home.join(".agents/skills/user-skill");
+        std::fs::create_dir_all(&user_dir).unwrap();
+        std::fs::write(user_dir.join("SKILL.md"), "mine").unwrap();
+
+        // The payload flips to empty mid-test (the uninstall converge).
+        let payload = Arc::new(std::sync::Mutex::new(serde_json::json!({"skills": [
+            {"slug": "demo-skill", "version": "v2", "bundle_sha256": bundle_sha}
+        ]})));
+        let bundle = Arc::new(std::sync::Mutex::new(bundle_bytes));
+        let payload_route = payload.clone();
+        let bundle_route = bundle.clone();
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/skills/sync-payload",
+                axum::routing::get(move |headers: axum::http::HeaderMap| {
+                    let payload = payload_route.lock().unwrap().clone();
+                    async move {
+                        if headers
+                            .get(axum::http::header::AUTHORIZATION)
+                            .and_then(|v| v.to_str().ok())
+                            != Some("Bearer tok")
+                        {
+                            return (axum::http::StatusCode::UNAUTHORIZED, axum::Json(payload));
+                        }
+                        (axum::http::StatusCode::OK, axum::Json(payload))
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/registry/skill/{slug}/{version}/bundle",
+                axum::routing::get(
+                    move |headers: axum::http::HeaderMap,
+                          axum::extract::Path((slug, version)): axum::extract::Path<(String, String)>| async move {
+                        if headers
+                            .get(axum::http::header::AUTHORIZATION)
+                            .and_then(|v| v.to_str().ok())
+                            != Some("Bearer tok")
+                        {
+                            return (axum::http::StatusCode::UNAUTHORIZED, Vec::new());
+                        }
+                        if slug != "demo-skill" || version != "v2" {
+                            return (axum::http::StatusCode::NOT_FOUND, Vec::new());
+                        }
+                        (axum::http::StatusCode::OK, bundle_route.lock().unwrap().clone())
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let cloud = CloudClient {
+            base_url: base,
+            token: "tok".into(),
+        };
+        let summary = pull_skills_at(&cloud, &skills_home).await.unwrap();
+        assert_eq!(summary["updated"], serde_json::json!(["demo-skill"]));
+        assert_eq!(summary["removed"], serde_json::json!(["stale-skill"]));
+        assert_eq!(summary["failed"], serde_json::json!([]));
+        let skill_dir = skills_home.join(".agents/skills/demo-skill");
+        let skill_md =
+            std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        assert!(skill_md.contains("PULLED-BODY"));
+        assert!(
+            skill_dir.join("agents/guild.yaml").exists(),
+            "pulled dir carries the provenance sidecar"
+        );
+        assert!(
+            user_dir.join("SKILL.md").exists(),
+            "a plain user dir is never touched"
+        );
+
+        // The empty payload (every pin gone) converges the pulled dir away.
+        *payload.lock().unwrap() = serde_json::json!({"skills": []});
+        let summary = pull_skills_at(&cloud, &skills_home).await.unwrap();
+        assert_eq!(summary["removed"], serde_json::json!(["demo-skill"]));
+        assert!(!skill_dir.exists());
+        assert!(user_dir.join("SKILL.md").exists());
+
+        server.abort();
+        std::fs::remove_dir_all(temp).unwrap();
+    }
     async fn hub_request(
         req_tx: &tokio::sync::mpsc::UnboundedSender<String>,
         resp_rx: &mut tokio::sync::mpsc::UnboundedReceiver<String>,
