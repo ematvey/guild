@@ -1,0 +1,338 @@
+// The approval gate (approval_gate + exec_and_approval_gate onto the
+// pi-durable tool-task hook):
+//
+// 1. Static exec policy (codex model) for command-bearing tools: a matched
+//    `allow` rule skips the gate entirely; `forbidden` is a hard deny whose
+//    text is the rule's justification; `prompt`/unmatched fall through.
+// 2. The interactive approval gate behind it: the chat's approval mode
+//    (composer selector) wins over the chat owner's account policy; the
+//    unresolved default is the AI judge ("approve for me"). Never → denied
+//    by policy; Ask → the gate.
+// 3. The gate appends the ApprovalRequest thread event (the audit trail and
+//    every attached client's pending card — same rows as the Rust gate),
+//    then suspends the tool task until the decision arrives on the approval
+//    API (POST /api/v1/gateway/chat/{id}/approvals/{callId} → journaled
+//    ApprovalDecision event) or the 5-minute timeout auto-denies. The
+//    suspension is recoverable: a restart re-runs the gate, which finds the
+//    recorded decision (echo semantics) or re-enters the wait.
+//
+// The batch contract (server-side workspace agent sessions) skips the
+// interactive gate — trusted workspace, pre-approved — but the exec policy
+// still applies, exactly like the Rust server-local executor.
+
+import { hook, ToolTask } from "@earendil-works/pi-durable";
+import type { TaskRuntime } from "@earendil-works/pi-durable";
+import type { ToolCall } from "@earendil-works/pi-ai";
+import type { ExecutorKind } from "../machines/dispatch.js";
+import type { Logger } from "pino";
+import type { PlatformPool } from "../platform/db.js";
+import type { ThreadStore } from "../platform/store/thread.js";
+import { approvalDecisionEvent, approvalRequestEvent } from "../platform/domain/thread-events.js";
+import { uuidv5 } from "../platform/time.js";
+import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
+import type { IntegrationGate } from "./integrations.js";
+
+export const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
+
+/** Built-in "Approve for me" policy prompt (codex-style: only escalate
+ *  potentially unsafe actions). Admin-tunable via the org KV key. */
+export const DEFAULT_APPROVAL_POLICY_PROMPT =
+  "You are the safety gate for an AI assistant that runs tools on the user's machine. You are given one proposed tool action as JSON. Decide whether it is safe to run automatically, without asking the user first.\n\nApprove routine, low-risk actions: reading files, ordinary read-only shell commands (ls, dir, cat, git status, git log, ping, date), writing or editing files inside the user's workspace, web searches, and fetching public URLs.\n\nAsk the user when the action is potentially unsafe: destructive or irreversible operations (deleting files or data, force-pushing, dropping or truncating databases, factory resets), anything touching files outside the workspace or system locations, installing or upgrading software, killing processes or services, sending credentials or secrets anywhere, spending money, sending messages or email on the user's behalf, or anything unusual for a coding assistant.\n\nReply with ONLY a JSON object, no other text: {\"approve\": true, \"reason\": \"one short sentence\"} where approve=true means run it silently and approve=false means the user must be asked first.";
+
+const APPROVAL_POLICY_TIMEOUT_MS = 30_000;
+const GATE_POLL_MS = 500;
+const JUDGE_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+
+/** Server default approval policy for client tools (design §A): read-only
+ *  tools flow, state-changing tools ask. */
+export const SERVER_DEFAULT_POLICY = { default: "ask", overrides: { read_file: "allow" } };
+
+/** The pi-durable tool names → the guild-core tool classes the policy
+ *  vocabulary (overrides, the admin surface) is keyed by. */
+export function toolClass(name: string): string {
+  switch (name) {
+    case "read":
+      return "read_file";
+    case "bash":
+      return "execute";
+    case "write":
+      return "write_file";
+    case "edit":
+      return "edit_file";
+    default:
+      return name;
+  }
+}
+
+/** serde_json-compatible canonical re-serialization of a parsed tool-call
+ *  argument value (sorted keys) — the deterministic request/decision event
+ *  bodies ride on it. */
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`).join(",")}}`;
+}
+
+export interface ApprovalGateDeps {
+  pool: PlatformPool;
+  threads: ThreadStore;
+  log: Logger;
+  execPolicy: ExecPolicy;
+  approvalTimeoutMs: number;
+  /** The loopback gateway base URL + internal key (the judge's model
+   *  access — decision 7 metering). A missing internal key disables the
+   *  judge: unresolved policies ask, the safe direction. */
+  selfBaseUrl: string;
+  internalKey: string | null;
+  /** conversationId → chat id (the runtime's chat mapping). */
+  chatOfConversation(conversationId: number): Promise<string | null>;
+  /** Where this conversation's tools execute (drives the shell allowlist +
+   *  the batch contract). */
+  executorKind(conversationId: number): Promise<ExecutorKind>;
+  /** The integrations chat runtime (M8): the integration tool envelope —
+   *  reads flow, an `always_ask` curation or a write-class tool forces the
+   *  card ahead of the chat's approval mode (org governance wins). */
+  integrations?: IntegrationGate;
+  /** The conversation's configured model (the judge's route). */
+  currentModel(conversationId: number): Promise<string | null>;
+  /** Server-side shell allowlist (GUILD_ALLOW_SHELL_TOOLS). */
+  allowShellTools: boolean;
+}
+
+interface ChatPolicyRow {
+  chat_mode: string | null;
+  user_policy: Record<string, unknown> | null;
+}
+
+/** Effective policy for a user: the user's stored policy (migration 0026 —
+ *  approval is user-scoped), or the server default when unset or unreadable
+ *  (the safe direction). */
+function resolvePolicy(stored: Record<string, unknown> | null): { default: string | null; overrides: Record<string, string> } {
+  if (stored === null || typeof stored !== "object") {
+    return SERVER_DEFAULT_POLICY as { default: string; overrides: Record<string, string> };
+  }
+  const overrides: Record<string, string> = {};
+  const raw = stored["overrides"];
+  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "string") overrides[k] = v;
+    }
+  }
+  const dflt = typeof stored["default"] === "string" ? stored["default"] : null;
+  return { default: dflt, overrides };
+}
+
+function forTool(policy: { default: string | null; overrides: Record<string, string> }, name: string): "allow" | "ask" | "never" {
+  const override = policy.overrides[name];
+  if (override === "allow" || override === "ask" || override === "never") return override;
+  const dflt = policy.default;
+  if (dflt === "allow" || dflt === "ask" || dflt === "never") return dflt;
+  return "ask"; // safest
+}
+
+/** The AI judge (Rust approval_policy_verdict): one short loopback gateway
+ *  call, org-metered like any internal call. Any failure — route missing,
+ *  quota, timeout, unparsable verdict — asks the user. Returns null when the
+ *  judge cannot decide (callers treat null as Ask). */
+async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: string, model: string, call: ToolCall): Promise<boolean | null> {
+  if (deps.internalKey === null) return null;
+  try {
+    const promptRes = await deps.pool.query<{ value: string | null }>(
+      "SELECT value FROM org_kv WHERE org_id = $1 AND key = $2",
+      [orgId, APPROVAL_POLICY_PROMPT_KEY],
+    );
+    const prompt = promptRes.rows[0]?.value?.trim() || DEFAULT_APPROVAL_POLICY_PROMPT;
+    const action = canonicalJson({ tool: call.name, arguments: call.arguments });
+    const body = {
+      model,
+      stream: false,
+      max_tokens: 200,
+      messages: [
+        { role: "system", content: prompt },
+        { role: "user", content: action },
+      ],
+    };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), APPROVAL_POLICY_TIMEOUT_MS);
+    timer.unref?.();
+    let raw: string;
+    try {
+      const res = await fetch(`${deps.selfBaseUrl}/openai/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${deps.internalKey}`,
+          "x-guild-org-id": orgId,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!res.ok) return null; // quota/route failures ask the user
+      const parsed = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+      raw = parsed.choices?.[0]?.message?.content ?? "";
+    } finally {
+      clearTimeout(timer);
+    }
+    void chatId;
+    const s = raw.trim();
+    const a = s.indexOf("{");
+    const b = s.lastIndexOf("}");
+    if (a === -1 || b < a) return null;
+    const verdict = JSON.parse(s.slice(a, b + 1)) as { approve?: unknown };
+    return typeof verdict.approve === "boolean" ? verdict.approve : null;
+  } catch (error) {
+    deps.log.warn({ err: error }, "approval policy judge failed, asking the user");
+    return null;
+  }
+}
+
+/** The chat's approval mode (composer selector) + the chat owner's account
+ *  policy — one row like the Rust gate's journaled read; a read failure
+ *  falls back to the server default (the safe direction). */
+async function readChatPolicy(deps: ApprovalGateDeps, chatId: string): Promise<ChatPolicyRow> {
+  try {
+    const res = await deps.pool.query<{ chat_mode: string | null; user_policy: Record<string, unknown> | null }>(
+      "SELECT c.approval->>'default' AS chat_mode, u.approval AS user_policy FROM chats c JOIN users u ON u.id = c.user_id WHERE c.id = $1",
+      [chatId],
+    );
+    const row = res.rows[0];
+    if (!row) return { chat_mode: null, user_policy: null };
+    return row;
+  } catch (error) {
+    deps.log.warn({ err: error, chatId }, "approval policy read failed, using server default");
+    return { chat_mode: null, user_policy: null };
+  }
+}
+
+/** The recorded decision for one call, if any (the route journals it). */
+async function recordedDecision(deps: ApprovalGateDeps, chatId: string, callId: string): Promise<{ approved: boolean; reason: string | null } | null> {
+  const res = await deps.pool.query<{ approved: boolean; reason: string | null }>(
+    `SELECT (payload->>'approved')::boolean AS approved, payload->>'reason' AS reason
+     FROM thread_events WHERE chat_id = $1 AND type = 'approval_decision' AND payload->>'call_id' = $2
+     ORDER BY seq DESC LIMIT 1`,
+    [chatId, callId],
+  );
+  const row = res.rows[0];
+  return row ? { approved: row.approved, reason: row.reason } : null;
+}
+
+/** The gate wait: returns `undefined` (approved → run the tool) or a block
+ *  text (denied). The tool task suspends inside this hook until a decision
+ *  event lands or the timeout lapses. */
+async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<never, never, never, never>, chatId: string, call: ToolCall, context: Parameters<TaskRuntime<never, never, never, never>["sleep"]>[1]): Promise<{ block: string } | undefined> {
+  const argsJson = canonicalJson(call.arguments);
+  // Journaled request with a deterministic id: a recovery re-run of the gate
+  // re-appends the same row (ON CONFLICT no-op), never a duplicate card.
+  const requestId = uuidv5(JUDGE_NAMESPACE, `guild-approval-request:${chatId}:${call.id}`);
+  await deps.threads.appendEvent(chatId, approvalRequestEvent(call.id, call.name, argsJson), requestId);
+
+  const deadline = Date.now() + deps.approvalTimeoutMs;
+  while (true) {
+    const decision = await recordedDecision(deps, chatId, call.id);
+    if (decision !== null) {
+      if (decision.approved) return undefined;
+      return { block: decision.reason ? `denied by user: ${decision.reason}` : "denied by user" };
+    }
+    if (Date.now() >= deadline) {
+      // The 5-minute auto-deny (Rust APPROVAL_TIMEOUT): journaled like a
+      // decision, then the denied tool result.
+      const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
+      await deps.threads.appendEvent(
+        chatId,
+        approvalDecisionEvent(call.id, false, "timed out awaiting approval"),
+        decisionId,
+      );
+      return { block: "denied by user: timed out awaiting approval" };
+    }
+    // Stop responsiveness: the stop path aborts the conversation's tasks;
+    // an aborted run cancels this hook's context (the sleep rejects).
+    await runtime.sleep(Date.now() + GATE_POLL_MS, context);
+  }
+}
+
+/** The beforeTool hook: exec policy → shell allowlist → approval policy →
+ *  the interactive gate. */
+export function createApprovalGate(deps: ApprovalGateDeps) {
+  return hook(ToolTask, {
+    async beforeTool(call: ToolCall, api, context) {
+      const runtime = api as unknown as TaskRuntime<never, never, never, never>;
+      const chatId = await deps.chatOfConversation(Number(runtime.conversationId));
+      if (chatId === null) return undefined; // unmapped conversation: no gate
+      const executor = await deps.executorKind(Number(runtime.conversationId));
+      const isCommandTool = call.name === "bash" || call.name === "execute";
+
+      // 1. Static exec policy (the machine `execute` path's rules, applied
+      //    to the harness's bash tool — same rules, same matcher).
+      if (isCommandTool) {
+        const decision = evaluateExecute(deps.execPolicy, call.arguments);
+        if (decision.kind === "deny") {
+          return { block: `denied by exec policy: ${decision.reason}` };
+        }
+        // Server-side executors honor the shell allowlist (the Rust
+        // run_server_tool check); machine-bound chats run on the desktop's
+        // own executor.
+        if (executor !== "machine" && !deps.allowShellTools) {
+          return { block: "denied: shell tools are disabled on this server" };
+        }
+        if (decision.kind === "allow") return undefined; // static allow skips the gate
+      }
+
+      // 1b. Integration tools (M8): the connector envelope. Guild-provided
+      //     disclosure and read-class tools flow; an always_ask curation
+      //     forces the card; any other class falls through to the chat's
+      //     approval mode below (full_access flows, ask/approve_for_me
+      //     gate). The batch contract (server-side workspace sessions)
+      //     skips the interactive gate like every server tool.
+      if (deps.integrations !== undefined) {
+        const decision = await deps.integrations.gateDecision(Number(runtime.conversationId), call.name);
+        if (decision === "ask" && executor !== "server") {
+          return waitForApproval(deps, runtime, chatId, call, context);
+        }
+        if (decision === "skip") return undefined;
+        if (decision === "ask") return undefined;
+        // "policy" and undefined fall through to the chat approval mode.
+      }
+
+      // 2. The batch contract: server-side workspace sessions are
+      //    pre-approved — no interactive gate (the exec policy above still
+      //    ran). Everything else gates by policy.
+      if (executor === "server" && !isCommandTool) {
+        // Non-shell server tools (read/write/edit) run under the same batch
+        // contract in the Rust server-local executor.
+        return undefined;
+      }
+
+      // 3. Approval policy: chat mode wins; unset resolves through the
+      //    account policy or the AI judge.
+      const chat = await deps.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
+      const orgId = chat.rows[0]?.org_id;
+      if (orgId === undefined) return undefined;
+      const { chat_mode, user_policy } = await readChatPolicy(deps, chatId);
+      let decision: "allow" | "ask" | "never";
+      if (chat_mode === "approve_for_me") {
+        decision = "ask";
+      } else if (chat_mode === "full_access" || chat_mode === "allow") {
+        decision = "allow";
+      } else if (chat_mode === "ask" || chat_mode === "never") {
+        decision = "ask";
+      } else if (user_policy !== null) {
+        decision = forTool(resolvePolicy(user_policy), toolClass(call.name));
+      } else {
+        decision = "ask";
+      }
+      // The judge path (approve_for_me, or an unset account policy): a
+      // routine action runs silently, anything flagged asks.
+      if (chat_mode === "approve_for_me" || (chat_mode === null && user_policy === null)) {
+        const model = await deps.currentModel(Number(runtime.conversationId));
+        const verdict = model === null ? null : await judgeVerdict(deps, orgId, chatId, model, call);
+        if (verdict === true) return undefined;
+      }
+      if (decision === "never") return { block: "denied by policy" };
+      if (decision === "allow") return undefined;
+
+      // 4. Ask: the gate.
+      return waitForApproval(deps, runtime, chatId, call, context);
+    },
+  });
+}
