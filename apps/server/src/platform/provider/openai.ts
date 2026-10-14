@@ -10,6 +10,7 @@ import {
   type ProviderRequest,
   type ToolCall,
 } from "./types.js";
+import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";
 import { rustJsonText, sseDataStreams } from "./sse.js";
 
 /** The output-token-limit dialect for a model name: OpenAI reasoning
@@ -41,7 +42,8 @@ export function openAiBody(req: ProviderRequest): Record<string, unknown> {
   for (const m of req.messages) {
     if (m.role === "tool") {
       const mv: Record<string, unknown> = { role: "tool", content: m.content };
-      if (m.tool_call_id !== null) mv["tool_call_id"] = m.tool_call_id;
+      if (m.tool_call_id !== undefined && m.tool_call_id !== null)
+      mv["tool_call_id"] = m.tool_call_id;
       messages.push(mv);
       for (const uri of m.images) {
         pendingToolMedia.push({ type: "image_url", image_url: { url: uri } });
@@ -63,7 +65,7 @@ export function openAiBody(req: ProviderRequest): Record<string, unknown> {
         ]
       : m.content;
     const mv: Record<string, unknown> = { role: m.role, content };
-    if (m.tool_calls !== null) {
+    if (m.tool_calls !== undefined && m.tool_calls !== null) {
       mv["tool_calls"] = m.tool_calls.map((c) => ({
         id: c.id,
         type: "function",
@@ -76,7 +78,8 @@ export function openAiBody(req: ProviderRequest): Record<string, unknown> {
         },
       }));
     }
-    if (m.tool_call_id !== null) mv["tool_call_id"] = m.tool_call_id;
+    if (m.tool_call_id !== undefined && m.tool_call_id !== null)
+      mv["tool_call_id"] = m.tool_call_id;
     // dsh rule: reasoning is resent on EVERY reasoning-carrying turn, never
     // dropped from context (design §B.1).
     if (m.reasoning !== null && m.reasoning !== "") {
@@ -277,7 +280,7 @@ async function* openAiStream(res: Response): AsyncIterable<ProviderChunk | Provi
           argumentsValue = p.arguments;
         }
       }
-      const call: ToolCall = { id: p.id, name: p.name, arguments: argumentsValue };
+      const call: ToolCall = { id: p.id, name: p.name, arguments: argumentsValue as JsonValue };
       yield { kind: "toolCallDone", call };
     }
   }

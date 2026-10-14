@@ -10,6 +10,7 @@ import {
   type ProviderRequest,
   type ToolCall,
 } from "./types.js";
+import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";
 import { sseDataStreams } from "./sse.js";
 
 /** Anthropic requires an explicit cap on every request. */
@@ -71,7 +72,7 @@ export function anthropicBody(req: ProviderRequest): Record<string, unknown> {
       if (m.content.trim() !== "") {
         blocks.push({ type: "text", text: m.content });
       }
-      for (const c of m.tool_calls) {
+      for (const c of m.tool_calls ?? []) {
         // A tool_use block truncated by max_tokens persists partial JSON (a
         // non-object value); the wire requires an object, so anything else
         // goes as an empty input.
@@ -388,7 +389,7 @@ async function* anthropicStream(res: Response): AsyncIterable<ProviderChunk | Pr
             argumentsValue = p.arguments;
           }
         }
-        const call: ToolCall = { id: p.id, name: p.name, arguments: argumentsValue };
+        const call: ToolCall = { id: p.id, name: p.name, arguments: argumentsValue as JsonValue };
         yield { kind: "toolCallDone", call };
       }
     }

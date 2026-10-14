@@ -113,9 +113,6 @@ export function toInternal(req: AnthropicRequest): [string | null, InternalMessa
         content: m.content,
         images: [],
         audio: [],
-        tool_calls: null,
-        tool_call_id: null,
-        reasoning: null,
       });
       continue;
     }
@@ -159,9 +156,8 @@ export function toInternal(req: AnthropicRequest): [string | null, InternalMessa
         content: text,
         images: [],
         audio: [],
-        tool_calls: calls.length > 0 ? calls : null,
-        tool_call_id: null,
-        reasoning: reasoning !== "" ? reasoning : null,
+        ...(calls.length > 0 ? { tool_calls: calls } : {}),
+        ...(reasoning !== "" ? { reasoning } : {}),
       });
     } else {
       // user turns: tool_result blocks become tool messages FIRST (a user
@@ -193,9 +189,6 @@ export function toInternal(req: AnthropicRequest): [string | null, InternalMessa
           content: text,
           images,
           audio: [],
-          tool_calls: null,
-          tool_call_id: null,
-          reasoning: null,
         });
       }
     }
@@ -234,9 +227,7 @@ function toolResultMessage(b: Record<string, unknown>): InternalMessage {
     content,
     images,
     audio: [],
-    tool_calls: null,
     tool_call_id: typeof b["tool_use_id"] === "string" ? b["tool_use_id"] : "",
-    reasoning: null,
   };
 }
 
@@ -270,6 +261,7 @@ function toToolSpecs(tools: AnthropicTool[]): ToolSpec[] {
     name: t.name,
     description: t.description ?? "",
     parameters: t.input_schema ?? { type: "object", properties: {} },
+    kind: "generic",
   }));
 }
 
