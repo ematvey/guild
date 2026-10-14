@@ -336,7 +336,7 @@ export function startSocket(
     getOpenChatId: () => string | null;
     socketFactory?: SocketFactory;
   },
-): { stop: () => void; resync: () => void } {
+): { stop: () => void; resync: () => void; markRead: (chatId: string) => void } {
   const factory = opts.socketFactory ?? ((url: string) => openSocket(url));
   let socket: SocketLike | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -434,6 +434,12 @@ export function startSocket(
       current?.close();
     },
     resync: () => sendSync(),
+    // The duplex read-mark: rides the member socket the turn's frames
+    // already arrive on — no separate HTTP request per new content.
+    markRead: (chatId: string) => {
+      if (socket?.readyState !== 1) return;
+      socket.send(JSON.stringify({ type: "read", chat_id: chatId }));
+    },
   };
 } // shared with the settings window client code
 
@@ -642,20 +648,6 @@ export interface ChatSummary {
   project_machine_label?: string;
   /** Whether the bound machine's socket is live right now. */
   machine_online?: boolean;
-}
-
-/** Marks the chat read for the caller: the thread-list dot clears. */
-export async function markChatRead(id: string): Promise<void> {
-  const t = getToken();
-  if (!t) return;
-  try {
-    await fetch(apiUrl(`/api/v1/chats/${encodeURIComponent(id)}/read`), {
-      method: "POST",
-      headers: { authorization: `Bearer ${t}` },
-    });
-  } catch {
-    /* cosmetic — ignore */
-  }
 }
 
 export interface MachineInfo {

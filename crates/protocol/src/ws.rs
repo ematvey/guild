@@ -28,6 +28,12 @@ pub enum WsClientMsg {
     Sync {
         chat_id: Option<Uuid>,
     },
+    /// The member socket's duplex read-mark: moves the caller's marker to
+    /// the chat's newest event (the REST POST /chats/:id/read, on the wire
+    /// the turn already rides).
+    Read {
+        chat_id: Uuid,
+    },
     MachineResponse {
         request_id: String,
         ok: bool,

@@ -258,6 +258,7 @@ export function serializeServerMsg(msg: WsServerMsg): string {
  *  reader without closing the socket. */
 export type WsClientMsg =
   | { type: "sync"; chat_id: string | null }
+  | { type: "read"; chat_id: string }
   | {
       type: "machine_response";
       request_id: string;
@@ -294,6 +295,11 @@ export function parseClientMsg(text: string): WsClientMsg | null {
         return null;
       }
       return { type: "sync", chat_id: chatId ?? null };
+    }
+    case "read": {
+      const chatId = raw["chat_id"];
+      if (typeof chatId !== "string" || !UUID_RE.test(chatId)) return null;
+      return { type: "read", chat_id: chatId };
     }
     case "machine_response": {
       const requestId = raw["request_id"];
