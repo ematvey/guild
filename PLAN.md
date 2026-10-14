@@ -11,6 +11,13 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **All navigation state is URL-driven (principle, 2026-10-14).** Recorded
+  in AGENTS.md conventions: every reachable page/tab/panel/sub-page has its
+  own fixed URL; navigation never changes local state without a history
+  entry. Review of the current gaps (settings section + detail navigation,
+  new-chat addresses `/chats/new`, `/work/new`, `/project/<id>/new`) is in
+  `docs/reviews/2026-10-14-url-navigation-review.md`.
+
 - **Prod releases move to a branch flow (2026-10-14).** A `prod` branch now
   tracks the deployed release: each release is a `--no-ff` merge of develop
   into prod (release commit: `daff203`, 0.5.42), `~/guild-live` deploys from
