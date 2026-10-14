@@ -28,9 +28,10 @@ import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import { approvalDecisionEvent, approvalRequestEvent, type JudgeVerdict } from "../platform/domain/thread-events.js";
-import { uuidv5 } from "../platform/time.js";
+import { uuidv5, uuidv7 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { IntegrationGate } from "./integrations.js";
+import type { LlmTraceSink } from "../platform/trace.js";
 
 export const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
 
@@ -42,6 +43,11 @@ export const DEFAULT_APPROVAL_POLICY_PROMPT =
 const APPROVAL_POLICY_TIMEOUT_MS = 30_000;
 const GATE_POLL_MS = 500;
 const JUDGE_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+
+/** Pinned identities for judge trace rows without a resolvable chat owner
+ *  (same pattern as the internal gateway key's synthetic ids). */
+const INTERNAL_JUDGE_USER_UUID = uuidv5(JUDGE_NAMESPACE, "guild-llm-judge-user");
+const INTERNAL_JUDGE_SESSION_UUID = uuidv5(JUDGE_NAMESPACE, "guild-llm-judge-session");
 
 /** Server default approval policy for client tools (design §A): read-only
  *  tools flow, state-changing tools ask. */
@@ -96,6 +102,10 @@ export interface ApprovalGateDeps {
   integrations?: IntegrationGate;
   /** The conversation's configured model (the judge's route). */
   currentModel(conversationId: number): Promise<string | null>;
+  /** The LLM trace sink: the judge self-reports its calls (caller='judge',
+   *  verdict, cause carrying the tool call). A missing sink disables only
+   *  the tracing, never the gate. */
+  trace?: LlmTraceSink | null;
   /** Server-side shell allowlist (GUILD_ALLOW_SHELL_TOOLS). */
   allowShellTools: boolean;
 }
@@ -143,7 +153,7 @@ interface JudgeOutcome {
   ms: number;
 }
 
-async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: string, model: string, call: ToolCall): Promise<JudgeOutcome> {
+async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: string, userId: string | null, model: string, call: ToolCall): Promise<JudgeOutcome> {
   const startedAt = Date.now();
   const undecided: JudgeOutcome = { approve: null, reason: null, ms: 0 };
   if (deps.internalKey === null) return undecided;
@@ -151,6 +161,16 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
   // fresh-per-path object (an earlier log read a never-mutated original
   // and reported `null` for every verdict, hiding working approvals).
   let settled: JudgeOutcome | undefined;
+  // Self-reported trace facts: the request id (also sent to the gateway so
+  // its usage_events row joins), the response usage, and the failure text.
+  const requestId = uuidv7();
+  let usageIn = 0;
+  let usageOut = 0;
+  let finishReason = "";
+  let errorTextTrace = "";
+  let requestPayload: string | null = null;
+  let responsePayload: string | null = null;
+  let attempted = false;
   try {
     const promptRes = await deps.pool.query<{ value: string | null }>(
       "SELECT value FROM org_kv WHERE org_id = $1 AND key = $2",
@@ -171,22 +191,40 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
     timer.unref?.();
     let raw: string;
     try {
+      attempted = true;
+      requestPayload = JSON.stringify(body);
       const res = await fetch(`${deps.selfBaseUrl}/openai/v1/chat/completions`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${deps.internalKey}`,
           "x-guild-org-id": orgId,
+          // The gateway records no llm_calls row for internal-caller
+          // requests: the judge self-reports with the full outcome.
+          "x-guild-internal-caller": "judge",
+          "x-guild-request-id": requestId,
+          ...(userId !== null ? { "x-guild-user-id": userId } : {}),
+          "x-guild-chat-id": chatId,
+          "x-guild-cause": `approval-gate:${call.name}:${call.id}`,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
       if (!res.ok) {
         deps.log.warn({ chatId, status: res.status, ms: Date.now() - startedAt }, "approval judge: gateway rejected the call");
+        errorTextTrace = `gateway status ${res.status}`;
         settled = { ...undecided, ms: Date.now() - startedAt }; // quota/route failures ask the user
         return settled;
       }
-      const parsed = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+      const rawBody = await res.text();
+      responsePayload = rawBody;
+      const parsed = JSON.parse(rawBody) as {
+        choices?: { finish_reason?: string; message?: { content?: string } }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      usageIn = parsed.usage?.prompt_tokens ?? 0;
+      usageOut = parsed.usage?.completion_tokens ?? 0;
+      finishReason = parsed.choices?.[0]?.finish_reason ?? "";
       raw = parsed.choices?.[0]?.message?.content ?? "";
     } finally {
       clearTimeout(timer);
@@ -197,12 +235,14 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
     const b = s.lastIndexOf("}");
     if (a === -1 || b < a) {
       deps.log.warn({ chatId, ms: Date.now() - startedAt, raw: s.slice(0, 200) }, "approval judge: no JSON in the verdict");
+      errorTextTrace = "no JSON in the verdict";
       settled = { ...undecided, ms: Date.now() - startedAt };
       return settled;
     }
     const verdict = JSON.parse(s.slice(a, b + 1)) as { approve?: unknown; reason?: unknown };
     if (typeof verdict.approve !== "boolean") {
       deps.log.warn({ chatId, ms: Date.now() - startedAt, raw: s.slice(0, 200) }, "approval judge: unparsable verdict");
+      errorTextTrace = "unparsable verdict";
       settled = { ...undecided, ms: Date.now() - startedAt };
       return settled;
     }
@@ -214,6 +254,7 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
     return settled;
   } catch (error) {
     deps.log.warn({ err: error }, "approval policy judge failed, asking the user");
+    errorTextTrace = error instanceof Error ? error.message : String(error);
     settled = { ...undecided, ms: Date.now() - startedAt };
     return settled;
   } finally {
@@ -223,6 +264,42 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
         { chatId, model, ms: done.ms, approve: done.approve, reason: done.reason },
         "approval judge verdict",
       );
+    }
+    // Self-report the call (caller='judge'): one row per attempted gateway
+    // call — verdict, cause, usage, error text. Failures are logged and
+    // dropped; the gate must never depend on the trace sink.
+    if (attempted && deps.trace) {
+      void deps.trace
+        .record({
+          ts: new Date(),
+          request_id: requestId,
+          org_id: orgId,
+          user_id: userId ?? INTERNAL_JUDGE_USER_UUID,
+          session_id: INTERNAL_JUDGE_SESSION_UUID,
+          chat_id: chatId,
+          conversation_id: null,
+          turn: null,
+          caller: "judge",
+          cause: `approval-gate:${call.name}:${call.id}`,
+          model,
+          provider: "gateway",
+          tokens_in: usageIn,
+          tokens_out: usageOut,
+          reasoning_tokens: 0,
+          cost_usd: 0,
+          duration_ms: done.ms,
+          finish_reason: finishReason,
+          stream: false,
+          error: errorTextTrace,
+          verdict: done.approve,
+          verdict_reason: done.reason ?? "",
+          prompt_chars: requestPayload?.length ?? 0,
+          completion_chars: responsePayload?.length ?? 0,
+        })
+        .then(async () => {
+          if (requestPayload !== null) await deps.trace!.recordPayload(requestId, orgId, "request", requestPayload!);
+          if (responsePayload !== null) await deps.trace!.recordPayload(requestId, orgId, "response", responsePayload!);
+        });
     }
   }
 }
@@ -356,9 +433,13 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
 
       // 3. Approval policy: chat mode wins; unset resolves through the
       //    account policy or the AI judge.
-      const chat = await deps.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
+      const chat = await deps.pool.query<{ org_id: string; user_id: string }>(
+        "SELECT org_id, user_id FROM chats WHERE id = $1",
+        [chatId],
+      );
       const orgId = chat.rows[0]?.org_id;
       if (orgId === undefined) return undefined;
+      const chatOwnerId = chat.rows[0]?.user_id ?? null;
       const { chat_mode, user_policy } = await readChatPolicy(deps, chatId);
       let decision: "allow" | "ask" | "never";
       if (chat_mode === "approve_for_me") {
@@ -381,7 +462,7 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
           // A judge-less card is the symptom, never the cause: surface it.
           deps.log.warn({ chatId, callId: call.id }, "approval judge skipped: conversation has no model");
         }
-        judged = model === null ? null : await judgeVerdict(deps, orgId, chatId, model, call);
+        judged = model === null ? null : await judgeVerdict(deps, orgId, chatId, chatOwnerId, model, call);
         if (judged !== null && judged.approve === true) return undefined;
       }
       if (decision === "never") return { block: "denied by policy" };

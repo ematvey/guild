@@ -9,14 +9,17 @@ import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError } from "../errors.js"
 import { requireJsonBody } from "./error.js";
 import {
   accumulate,
+  completionChars,
   dispatch,
   gatewayFinishReason,
   recordUsageDropped,
   recordUsageSync,
+  readTraceHeaders,
   StreamUsageCounters,
   ProxyError,
   type GatewayContext,
   type GatewayCredential,
+  type GatewayTraceEmission,
 } from "./llm.js";
 import type { GatewayCtx } from "../contexts.js";
 import { rustJsonText, serializeRustJson } from "../provider/sse.js";
@@ -307,12 +310,40 @@ async function handleChatCompletions(
           kind: "generic",
         }))
       : null;
+  const traceHeaders = readTraceHeaders(req.headers as Record<string, unknown>);
+  const startedAt = Date.now();
+  // One request id across the usage event, the llm_calls row, and the
+  // payload rows; internal callers may pin their own (the judge's
+  // self-reported row joins its usage_events row through it).
+  const requestId = traceHeaders.requestId ?? uuidv7();
+  const promptChars = (req as never as Record<symbol, string>)[RAW_BODY]?.length ?? 0;
+  // Internal callers (the judge) self-report their own llm_calls rows — the
+  // gateway records none (it cannot know the verdict it hasn't parsed).
+  const trace: GatewayTraceEmission | undefined = traceHeaders.internalCaller
+    ? undefined
+    : {
+        sink: gateway.trace,
+        requestId,
+        chatId: traceHeaders.chatId,
+        conversationId: traceHeaders.conversationId,
+        turn: traceHeaders.turn,
+        cause: traceHeaders.cause,
+        startedAt,
+        promptChars,
+      };
+  // The judge reads this to join its self-reported row to the usage event.
+  reply.header("x-guild-request-id", requestId);
   const call = await dispatch(gateway, credential.orgId, req0.model, system, messages, tools, limitField ?? null);
   const completionId = `chatcmpl-${uuidv7()}`;
   const model = call.model;
   const providerName = call.provider;
 
   if (req0.stream === true) {
+    // Payload capture rides the trace emission: internal callers (the
+    // judge) self-report their payloads, so the gateway records none.
+    if (trace !== undefined) {
+      void gateway.trace.recordPayload(requestId, credential.orgId, "request", (req as never as Record<symbol, string>)[RAW_BODY] ?? "");
+    }
     streamChunks(gateway, credential, reply, call.stream, {
       includeUsage: req0.stream_options?.include_usage === true,
       model,
@@ -321,8 +352,13 @@ async function handleChatCompletions(
       priceOut: call.priceOut,
       usage: call.usage,
       completionId,
+      trace,
+      requestId,
     });
     return;
+  }
+  if (trace !== undefined) {
+    void gateway.trace.recordPayload(requestId, credential.orgId, "request", (req as never as Record<symbol, string>)[RAW_BODY] ?? "");
   }
   const counters = new StreamUsageCounters();
   let acc;
@@ -331,28 +367,40 @@ async function handleChatCompletions(
   } catch (error) {
     // An in-stream provider error after frames still records (a request was
     // served); nothing observed → nothing billed.
-    recordUsageDropped(gateway.usage, credential, model, providerName, call.priceIn, call.priceOut, counters);
+    recordUsageDropped(gateway.usage, credential, model, providerName, call.priceIn, call.priceOut, counters, {
+      requestId,
+      trace,
+      error: error instanceof ProviderError ? error.message : String(error),
+    });
     throw new ApiError(502, "provider_error", error instanceof ProviderError ? error.message : String(error));
   }
-  await recordUsageSync(call.usage, credential, model, providerName, call.priceIn, call.priceOut, counters);
   const finishReason = gatewayFinishReason(acc.finishReason, acc.calls.length > 0);
+  await recordUsageSync(call.usage, credential, model, providerName, call.priceIn, call.priceOut, counters, {
+    requestId,
+    trace,
+    completionChars: completionChars(acc),
+    finishReason,
+    stream: false,
+  });
   const message: Record<string, unknown> = { role: "assistant", content: acc.text };
   if (acc.calls.length > 0) message["tool_calls"] = toOpenAiToolCalls(acc.calls);
   if (acc.reasoning !== "") message["reasoning_content"] = acc.reasoning;
-  reply.type("application/json").send(
-    rustJsonText({
-      id: completionId,
-      object: "chat.completion",
-      created: Math.floor(Date.now() / 1000),
-      model,
-      choices: [{ index: 0, message, finish_reason: finishReason }],
-      usage: {
-        prompt_tokens: acc.tokensIn,
-        completion_tokens: acc.tokensOut,
-        total_tokens: acc.tokensIn + acc.tokensOut,
-      },
-    }),
-  );
+  const responseBody = rustJsonText({
+    id: completionId,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, message, finish_reason: finishReason }],
+    usage: {
+      prompt_tokens: acc.tokensIn,
+      completion_tokens: acc.tokensOut,
+      total_tokens: acc.tokensIn + acc.tokensOut,
+    },
+  });
+  if (trace !== undefined) {
+    void gateway.trace.recordPayload(requestId, credential.orgId, "response", responseBody);
+  }
+  reply.type("application/json").send(responseBody);
 }
 
 interface StreamMeta {
@@ -362,6 +410,10 @@ interface StreamMeta {
   priceOut: number;
   usage: UsageSink;
   completionId: string;
+  trace: GatewayTraceEmission | undefined;
+  /** The request id shared by the usage event + trace row (the judge may
+   *  pin it through x-guild-request-id). */
+  requestId: string;
   /** stream_options.include_usage (OpenAI semantics): the final usage chunk
    *  (empty choices) rides before [DONE]. Only clients that ask for it see
    *  the extra frame — the default stream stays byte-identical to the Rust
@@ -394,6 +446,10 @@ function streamChunks(
 
   const calls: ToolCall[] = [];
   let finishReason: string | null = null;
+  let textLen = 0;
+  let reasoningLen = 0;
+  const completionText: string[] = [];
+  const completionReasoning: string[] = [];
 
   const frames = async function* (): AsyncIterable<string> {
     // Guard semantics (the Rust StreamUsageGuard): usage records exactly
@@ -402,10 +458,12 @@ function streamChunks(
     // frames, client disconnect). A stream that produced nothing records
     // nothing.
     let settled = false;
+    let streamError = "";
     try {
       yield sseDataFrame(chunk({ role: "assistant" }, null));
       for await (const item of provStream) {
         if (item instanceof ProviderError) {
+          streamError = item.message;
           yield sseDataFrame(rustJsonText({ error: { message: item.message, type: "provider_error" } }));
           return;
         }
@@ -414,9 +472,13 @@ function streamChunks(
         counters.observe();
         if (item.kind === "text") {
           if (item.textDelta !== "") yield sseDataFrame(chunk({ content: item.textDelta }, null));
-          counters.set(item.tokensIn, item.tokensOut);
+          textLen += item.textDelta.length;
+          completionText.push(item.textDelta);
+          counters.set(item.tokensIn, item.tokensOut, item.reasoningTokens);
         } else if (item.kind === "thinking") {
           if (item.textDelta !== "") yield sseDataFrame(chunk({ reasoning_content: item.textDelta }, null));
+          reasoningLen += item.textDelta.length;
+          completionReasoning.push(item.textDelta);
         } else if (item.kind === "toolCallDelta") {
           // fragments are folded into the Done frame by the adapter layer
         } else if (item.kind === "toolCallDone") {
@@ -454,8 +516,27 @@ function streamChunks(
         meta.priceIn,
         meta.priceOut,
         counters,
+        {
+          requestId: meta.requestId,
+          trace: meta.trace,
+          completionChars: textLen + reasoningLen + calls.reduce((n, c) => n + (typeof c.arguments === "string" ? c.arguments.length : 0), 0),
+          finishReason: finish,
+          stream: true,
+        },
       );
       settled = true;
+      if (meta.trace !== undefined) {
+        void gateway.trace.recordPayload(
+          meta.requestId,
+          credential.orgId,
+          "response",
+          JSON.stringify({
+            content: completionText.join(""),
+            reasoning_content: completionReasoning.join(""),
+            ...(calls.length > 0 ? { tool_calls: calls } : {}),
+          }),
+        );
+      }
       yield sseDataFrame(chunk({}, finish));
       if (meta.includeUsage) {
         yield sseDataFrame(
@@ -484,6 +565,7 @@ function streamChunks(
           meta.priceIn,
           meta.priceOut,
           counters,
+          { requestId: meta.requestId, trace: meta.trace, stream: true, error: streamError },
         );
       }
     }

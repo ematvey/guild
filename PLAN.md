@@ -11,6 +11,48 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **LLM observability is live: every model + judge call traces into ClickHouse (2026-10-15).**
+  Two TS-owned tables (idempotent DDL on the trace sink's first use, TTL-managed):
+  `guild.llm_calls` — one row per LLM call with caller/cause/verdict metadata
+  (90-day TTL) — and `guild.llm_payloads` — request/response bodies, opt-in via
+  `GUILD_TRACE_PAYLOADS=1` (dev only for now; 14-day TTL). Contract: the gateway
+  inserts `caller='model'` rows and skips everything trace-shaped for requests
+  carrying `x-guild-internal-caller`; the approval judge self-reports
+  `caller='judge'` rows with `cause=approval-gate:<tool>:<call_id>`, the verdict,
+  and the chat owner as user id. One request id spans `usage_events`,
+  `llm_calls`, and `llm_payloads` (the judge pins its own via
+  `x-guild-request-id`, so its trace row joins the usage row the gateway
+  metered). In-app turn context (chat/conversation/turn + owner user id) rides
+  request headers through the loopback provider — a per-org slot set by
+  `submitTurn`, best effort: two same-org turns in flight overlap on it, and
+  the latest turn's context wins (judge rows are exact; client/machine lanes
+  can set the same headers where they know the context). Attribution side
+  effect: internal model calls now carry the real chat owner as
+  `usage_events.user_id` (previously the synthetic internal-caller uuid) —
+  per-user usage breakdowns become truthful, org quota math unchanged.
+  Known gap: judge trace rows carry `reasoning_tokens = 0` — the gateway's
+  non-stream usage body does not include `completion_tokens_details` (the
+  summary joins cost from `usage_events` instead, so judge cost is right).
+  API: admin `/api/v1/admin/observability/{calls,summary}` + per-row payloads
+  (admin only); member `/api/v1/observability/{calls,summary}` force-scoped to
+  the session user — no org id is ever trusted from the client. UI: settings →
+  Observability (visible to everyone; admins see the org, members themselves)
+  at `/settings/observability` with the open row at
+  `/settings/observability/<request_id>` and period/caller/model/chat filters
+  in the URL query; explicit empty state distinguishes "no calls recorded"
+  from "ClickHouse unreachable". Payload duplication trap (fixed): the gateway
+  must not capture payloads for internal-caller requests — the judge
+  self-reports its own. Verified on the dev stack (:18080, `GUILD_TRACE_PAYLOADS=1`):
+  three turns with gated `hubspot_api` calls produced model rows (chat/turn/
+  owner attributed, cause `turn-step`) and judge rows (verdict=true,
+  cause carrying the tool call id); admin API + summary + payloads verified;
+  UI smoke passed (deep link, filters, row drawer with payloads). Tests:
+  `apps/server/src/test/trace.test.ts` (sink DDL + round-trip, gateway
+  emission + internal-caller skip, judge self-report, member scoping),
+  `apps/desktop/src/views/settings/sections/observability.pure.test.ts`
+  (URL contract). Pre-existing failure not touched by this work:
+  `platform/golden.test.ts` fails on the base commit too (stale `/me` golden
+  missing the `onboarded` field).
 - **Server runtime is Bun — no server compile, no dist (2026-10-14).**
   `Dockerfile.server-ts` no longer runs tsc for the server: the runtime
   stage installs Bun (copied from oven/bun:1 into the node:22-slim base,

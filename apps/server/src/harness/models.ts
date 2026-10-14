@@ -14,6 +14,42 @@ export function guildProviderId(orgId: string): string {
   return `guild:${orgId}`;
 }
 
+/** The trace context one in-app turn rides on: every loopback model call
+ *  the harness makes while this turn runs forwards it as request headers so
+ *  the gateway's llm_calls rows carry chat/turn attribution and the chat
+ *  owner's user id. Keyed by org — the provider (and therefore the auth
+ *  resolve that merges the headers) is per-org; two same-org turns in
+ *  flight overlap on the slot and the latest turn's context wins (best
+ *  effort; the judge self-reports its rows with exact context). */
+export interface GuildTurnTraceContext {
+  orgId: string;
+  chatId: string;
+  conversationId: number;
+  turn: number | null;
+  userId: string | null;
+}
+
+const turnTraceContexts = new Map<string, GuildTurnTraceContext>();
+
+/** Sets the trace context the org's next loopback model calls carry. */
+export function setGuildTurnTraceContext(ctx: GuildTurnTraceContext): void {
+  turnTraceContexts.set(ctx.orgId, ctx);
+}
+
+/** The current context's request headers (empty when none is set). */
+export function guildTurnTraceHeaders(orgId: string): Record<string, string> {
+  const ctx = turnTraceContexts.get(orgId);
+  if (ctx === undefined) return {};
+  const headers: Record<string, string> = {
+    "x-guild-chat-id": ctx.chatId,
+    "x-guild-conversation-id": String(ctx.conversationId),
+    "x-guild-cause": "turn-step",
+  };
+  if (ctx.turn !== null) headers["x-guild-turn"] = String(ctx.turn);
+  if (ctx.userId !== null) headers["x-guild-user-id"] = ctx.userId;
+  return headers;
+}
+
 export interface GuildRouteInfo {
   /** The route's model name (what external clients call it). */
   model: string;
@@ -65,9 +101,13 @@ export function ensureOrgProvider(
             // from the resolved key; the org scoping rides as a request
             // header resolved alongside it (applyAuth merges auth.headers
             // into every request — provider-level static headers do not
-            // reach the stream path).
+            // reach the stream path). The current turn's trace context
+            // (chat/conversation/turn/owner) rides the same way.
             apiKey: config.internalKey ?? "missing",
-            headers: { "x-guild-org-id": orgId },
+            headers: {
+              "x-guild-org-id": orgId,
+              ...guildTurnTraceHeaders(orgId),
+            },
           },
         }),
       },

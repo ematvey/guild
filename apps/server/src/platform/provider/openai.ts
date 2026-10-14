@@ -137,6 +137,8 @@ export function parseOpenAiFrame(data: string): OpenAiFrame {
   const usage = v["usage"] as Record<string, unknown> | null | undefined;
   const tokensIn = numberField(usage?.["prompt_tokens"]);
   const tokensOut = numberField(usage?.["completion_tokens"]);
+  const details = usage?.["completion_tokens_details"] as Record<string, unknown> | undefined;
+  const reasoningTokens = numberField(details?.["reasoning_tokens"]);
   const choice = ((v["choices"] as unknown[] | undefined) ?? [])[0] as
     | Record<string, unknown>
     | undefined;
@@ -144,11 +146,11 @@ export function parseOpenAiFrame(data: string): OpenAiFrame {
   const chunks: ProviderChunk[] = [];
   const reasoning = delta["reasoning_content"];
   if (typeof reasoning === "string" && reasoning !== "") {
-    chunks.push({ kind: "thinking", textDelta: reasoning, tokensIn, tokensOut });
+    chunks.push({ kind: "thinking", textDelta: reasoning, tokensIn, tokensOut, reasoningTokens });
   }
   const textDelta = typeof delta["content"] === "string" ? delta["content"] : "";
   if (textDelta !== "" || (chunks.length === 0 && (tokensIn !== undefined || tokensOut !== undefined))) {
-    chunks.push({ kind: "text", textDelta, tokensIn, tokensOut });
+    chunks.push({ kind: "text", textDelta, tokensIn, tokensOut, reasoningTokens });
   }
   const toolCallDeltas: OpenAiFrame["toolCallDeltas"] = [];
   const tcs = delta["tool_calls"];

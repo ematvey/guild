@@ -32,6 +32,7 @@ describe("loadConfig", () => {
       approvalTimeoutMs: 300_000,
       clientToolTimeoutMs: 300_000,
       execPolicyRulesPath: null,
+      tracePayloads: false,
     });
     expect(DEFAULT_BIND_ADDR).toBe("0.0.0.0:8080");
     expect(DEFAULT_LOG_LEVEL).toBe("info");

@@ -54,7 +54,8 @@ import { createGuildExtension, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } f
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
-import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
+import { ensureOrgProvider, guildProviderId, setGuildTurnTraceContext, type GuildRouteInfo } from "./models.js";
+import type { LlmTraceSink } from "../platform/trace.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 
@@ -93,6 +94,8 @@ export class GuildRuntime {
   private readonly bridge: ChatBridge;
   private readonly watches = new Map<string, AgentEventStream>();
   private readonly chatToConversation = new Map<string, number>();
+  /** Per-chat turn counters (the llm_calls turn column; best effort). */
+  private readonly turnCounters = new Map<string, number>();
   private storage: PostgresDurableStorage | undefined;
   private harness: Harness | undefined;
   /** Test/diagnostic access to the owned harness (read-only usage). */
@@ -148,6 +151,8 @@ export class GuildRuntime {
     objects?: ObjectStore,
     private readonly hub?: MachineDispatchHost,
     private readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">,
+    /** The LLM trace sink: the approval judge self-reports through it. */
+    private readonly trace?: LlmTraceSink,
   ) {
     this.sandboxes =
       config.sandbox.mode === "runner"
@@ -306,6 +311,7 @@ export class GuildRuntime {
         },
       },
       skillRuntime: this.skillsRuntime,
+      trace: this.trace,
       currentModel: async (conversationId) => {
         await this.start();
         const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
@@ -569,6 +575,21 @@ export class GuildRuntime {
   async submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
     const conversation = await this.conversationForChat(chatId, orgId);
     await this.refreshOrgModels(orgId);
+    // The turn's trace context: every loopback model call this turn makes
+    // carries chat/conversation/turn + the chat owner as request headers
+    // (the gateway's llm_calls rows attribute through them; the judge
+    // self-reports its own). Per-conversation counter, best effort under
+    // same-org concurrency (the latest turn's context wins).
+    const turnNo = (this.turnCounters.get(chatId) ?? 0) + 1;
+    this.turnCounters.set(chatId, turnNo);
+    const owner = await this.chats.ownerOf(chatId);
+    setGuildTurnTraceContext({
+      orgId,
+      chatId,
+      conversationId: Number(conversation.id),
+      turn: turnNo,
+      userId: owner?.user_id ?? null,
+    });
     // Integrations (M8): per turn the org's enabled plugins resolve into a
     // snapshot, the per-org extension carries their tools, and the
     // conversation's agent selection + tool allow-list are refreshed
@@ -617,9 +638,7 @@ export class GuildRuntime {
     // model never has to guess the prefix's meaning). The typed text stays
     // verbatim; images make the content an array, so only its text part
     // carries the directive.
-    const owner = await this.chats.ownerOf(chatId);
-    const directive =
-      owner === null ? null : await this.skillsRuntime.invocationDirective(orgId, input.content, input.skillsIndex);
+    const directive = owner === null ? null : await this.skillsRuntime.invocationDirective(orgId, input.content, input.skillsIndex);
     const submission = await conversation.submit(
       {
         type: "input",

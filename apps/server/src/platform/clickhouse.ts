@@ -113,7 +113,7 @@ function bindParams(sql: string, params: BindValue[]): string {
       break;
     }
     const value = params[i];
-    if (value === undefined) throw new Error(`query binds ${i + 1} parameters but more '?' remain`);
+    if (value === undefined) throw new Error(`query binds ${i + 1} parameters but more '?' remain: ${sql.slice(0, 120)}`);
     out += rest.slice(0, idx);
     out += typeof value === "string" ? escapedString(value) : String(value);
     rest = rest.slice(idx + 1);

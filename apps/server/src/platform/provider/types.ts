@@ -27,6 +27,8 @@ export interface ChatChunk {
   textDelta: string;
   tokensIn?: number;
   tokensOut?: number;
+  /** Usage-frame detail (OpenAI completion_tokens_details.reasoning_tokens). */
+  reasoningTokens?: number;
 }
 
 export type ProviderChunk =
