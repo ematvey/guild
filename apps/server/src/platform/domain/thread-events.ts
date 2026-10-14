@@ -23,6 +23,8 @@ export { uuidv7 } from "../time.js";
 // ---------------------------------------------------------------------------
 
 import type { ThreadEvent } from "@guild/protocol/ThreadEvent.js";
+import type { JudgeVerdict } from "@guild/protocol/JudgeVerdict.js";
+export type { JudgeVerdict };
 import type { Block } from "@guild/protocol/Block.js";
 import type { MessageAttachment } from "@guild/protocol/MessageAttachment.js";
 import type { UsagePayload } from "@guild/protocol/UsagePayload.js";
@@ -102,8 +104,20 @@ export function compactionEvent(
   return ev;
 }
 
-export function approvalRequestEvent(callId: string, name: string, args: string): ThreadEvent {
-  return { type: "approval_request", call_id: callId, name, arguments: args };
+export function approvalRequestEvent(
+  callId: string,
+  name: string,
+  args: string,
+  judge?: JudgeVerdict,
+): ThreadEvent {
+  const ev: ThreadEvent & { judge?: JudgeVerdict } = {
+    type: "approval_request",
+    call_id: callId,
+    name,
+    arguments: args,
+  };
+  if (judge !== undefined) ev.judge = judge;
+  return ev;
 }
 
 export function approvalDecisionEvent(
