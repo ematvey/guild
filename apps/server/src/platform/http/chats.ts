@@ -26,6 +26,13 @@ import { modalityOf } from "../../chats/turn-text.js";
 // Wire shapes (serde field order / skip rules)
 // ---------------------------------------------------------------------------
 
+/** The hub-aware online flag for a chat row's bound machine — the same
+ *  truth threadListSnapshot (ws push) and GET /api/v1/machines use. Null
+ *  binding → false (the flag is hub-coupled only when a machine exists). */
+export function machineOnlineOf(chats: ChatsCtx, row: { machine_id: string | null }): boolean {
+  return row.machine_id !== null && chats.hub.machineOnline(row.machine_id);
+}
+
 /** protocol::api::Chat (struct serialization). */
 export function chatWire(row: {
   id: string;
@@ -40,6 +47,10 @@ export function chatWire(row: {
   project_id: string | null;
   project_name?: string | null;
   project_machine_label?: string | null;
+  /** Hub-computed liveness of the bound machine; callers must pass it —
+   *  a hardcoded false desyncs this surface from the ws push and the
+   *  machines list (the "offline" banner vs green pin mismatch). */
+  machine_online?: boolean;
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {
     id: row.id,
@@ -55,12 +66,12 @@ export function chatWire(row: {
   if (row.project_id !== null) out.project_id = row.project_id;
   if (row.project_name) out.project_name = row.project_name;
   if (row.project_machine_label) out.project_machine_label = row.project_machine_label;
-  out.machine_online = false; // hub-coupled until M5 (documented boundary)
+  out.machine_online = row.machine_online ?? false;
   return out;
 }
 
-/** The thread list rows (http/feed.rs thread_list): hub-aware online flags
- *  stay false until M5 owns the hub. */
+/** The thread list rows (http/feed.rs thread_list) — hub-aware online
+ *  flags, identical to the ws push's threadListSnapshot. */
 async function threadList(chats: ChatsCtx, orgId: string, userId: string, archived: boolean): Promise<unknown[]> {
   const rows = archived ? await chats.chats.listArchivedChats(orgId, userId) : await chats.chats.listChats(orgId, userId);
   return rows.map((row) =>
@@ -77,6 +88,7 @@ async function threadList(chats: ChatsCtx, orgId: string, userId: string, archiv
       project_id: row.project_id,
       project_name: row.project_name,
       project_machine_label: row.project_machine_label,
+      machine_online: machineOnlineOf(chats, row),
     }),
   );
 }
@@ -136,7 +148,7 @@ export function registerChatsRoutes(
     const chat = projectId
       ? await chats.chats.createChatForProject(user.org_id, user.id, title, projectId)
       : await chats.chats.createChat(user.org_id, user.id, title, null);
-    return reply.status(200).send(chatWire({ ...chat, unread: false }));
+    return reply.status(200).send(chatWire({ ...chat, unread: false, machine_online: machineOnlineOf(chats, chat) }));
   });
 
   app.get("/api/v1/chats", async (req, reply) => {
@@ -180,7 +192,7 @@ export function registerChatsRoutes(
     const raw = body["project_id"];
     const projectId = typeof raw === "string" && raw !== "" ? validateUuid(raw) : null;
     const chat = await chats.chats.setProject(user.org_id, chatId, user, projectId);
-    return reply.status(200).send(chatWire({ ...chat }));
+    return reply.status(200).send(chatWire({ ...chat, machine_online: machineOnlineOf(chats, chat) }));
   });
 
   app.get("/api/v1/chats/:id/approval", async (req, reply) => {
@@ -237,7 +249,7 @@ export function registerChatsRoutes(
       await chats.runtime.stopChat(chatId).catch(() => {});
       await chats.turnCommands.cancelAllWaiting(chatId);
     }
-    return reply.status(200).send(chatWire({ ...chat, unread: false }));
+    return reply.status(200).send(chatWire({ ...chat, unread: false, machine_online: machineOnlineOf(chats, chat) }));
   });
 
   // --- Gateway chat commands (the M3 flip of gateway.rs's chat half) ---

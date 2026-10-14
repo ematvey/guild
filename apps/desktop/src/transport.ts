@@ -519,6 +519,7 @@ export async function apiLogin(
   role: string;
   display_name?: string;
   avatar_url?: string;
+  onboarded?: boolean;
 }> {
   const res = await fetch(`${url.replace(/\/$/, "")}/api/v1/auth/login`, {
     method: "POST",
@@ -533,6 +534,7 @@ export async function apiLogin(
     role: v.user?.role ?? "member",
     display_name: v.user?.display_name,
     avatar_url: v.user?.avatar_url,
+    onboarded: v.user?.onboarded ?? true,
   };
 }
 
@@ -551,6 +553,7 @@ export async function apiMe(): Promise<{
   role: string;
   display_name?: string;
   avatar_url?: string;
+  onboarded?: boolean;
 } | null> {
   const token = getToken();
   if (!token) return null;
@@ -567,7 +570,19 @@ export async function apiMe(): Promise<{
     role: v.role ?? "member",
     display_name: v.display_name ?? undefined,
     avatar_url: v.avatar_url ?? undefined,
+    onboarded: v.onboarded ?? true,
   };
+}
+
+/** Marks the first-run onboarding wizard as done (finished or skipped). */
+export async function apiOnboarded(): Promise<void> {
+  try {
+    await fetch(apiUrl("/api/v1/me/onboarded"), {
+      method: "PUT",
+      headers: { authorization: `Bearer ${getToken()}` },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* best effort — the wizard just re-shows on next login */ }
 }
 
 export async function listModels(): Promise<string[] | null> {
@@ -822,7 +837,8 @@ export type ThreadEvent =
       reason?: string | null;
       /** Nobody was waiting when the decision landed; the call never ran. */
       expired?: boolean;
-    };
+    }
+  | { type: "turn_error"; message: string };
 
 export interface ThreadEventRow {
   id: string;

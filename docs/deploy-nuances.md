@@ -152,7 +152,8 @@ Notes:
 
 ## 4. Compose stack details
 
-- Default `up` starts only `server`; postgres/clickhouse/minio are behind
+- Default `up` starts `server`, `sandbox-runner`, `egress` and the
+  build-only `sandbox-image` (exits at once); postgres/clickhouse/minio are behind
   the `fullstack` profile (`--profile fullstack` to use them). The server
   has no compose-service deps — the host services must already be up. If
   the server crash-loops on boot, check the host services first
@@ -167,9 +168,50 @@ Notes:
   `restate_data` volume on the host still exists — drop it when the
   pre-cutover confidence window closes.
 - Host port override: `GUILD_HTTP_PORT` (18080 here) in `config.env`.
-- Server-side agent sessions store under `GUILD_DATA_DIR=/data`;
-  `GUILD_ALLOW_SHELL_TOOLS=1` (commented out) is the opt-in for
-  `run_command` in server sessions.
+- Server-side agent sessions store under `GUILD_DATA_DIR=/data`
+  (`workspaces/<org>/<name>`, plain chats `chats/<org>/<id>`); their tools
+  run in gVisor sandboxes — see §4a.
+
+### 4a. Sandboxes (server-side tools)
+
+Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
+
+- **Host prerequisite: the `runsc` runtime.** The runner refuses to start
+  without it. Install (once per Docker host): unpack a pinned, checksum-
+  verified gVisor release (`gvisor.tar.bz2` from
+  `storage.googleapis.com/gvisor/releases/release/<ver>/x86_64/`) to
+  `/usr/local/lib/gvisor/` (runsc needs `gvisor-bin/` next to it), add
+  `"runsc": {"path": "/usr/local/lib/gvisor/runsc", "runtimeArgs":
+  ["--overlay2=root:self"]}` under `runtimes` in `/etc/docker/daemon.json`,
+  `sudo systemctl reload docker` (a reload, not a restart: running
+  containers are untouched). Check: `docker info | grep -i runsc`.
+  devbox: release 20261005.0, installed 2026-10-14.
+- **config.env** needs `GUILD_SANDBOX_RUNNER_TOKEN` (shared by server and
+  runner; `openssl rand -hex 32`). The server gets
+  `GUILD_SANDBOX_RUNNER_URL` from compose.
+- **Two stacks on one host** (dev `compose`, prod `guild-prod`) each need
+  their own sandbox subnet and egress IP, set in `deploy/compose/.env`:
+  `GUILD_SANDBOX_SUBNET` (default `10.213.0.0/24`) and
+  `GUILD_SANDBOX_EGRESS_IP` (default `10.213.0.2`), plus
+  `GUILD_SANDBOX_IMAGE` / `GUILD_SANDBOX_EGRESS_IMAGE` tags (`:prod`) so
+  one stack's build can't swap the other's images. Docker's default
+  address pools are exhausted on devbox — every new network needs an
+  explicit subnet.
+- **The egress proxy is addressed by IP**, never by name: Docker's embedded
+  DNS does not work inside gVisor sandboxes. The allowlist is
+  `deploy/sandbox/egress/allowed-domains.txt` (mounted; `docker compose
+  restart egress` after editing).
+- **Sandbox containers are not compose services**: `docker ps --filter
+  label=guild.sandbox.project=compose`. Idle ones stop after 15 min and
+  are removed after 24 h; their files stay on the volume. `docker compose
+  down` does not remove running sandboxes — the runner re-adopts them on
+  its next start.
+- **The server runs as uid 1000** (`node`) since the sandbox change; the
+  runner hands root-owned data dirs from older volumes to uid 1000 on its
+  first boot.
+- **Integration tests**: `scripts/sandbox-it.sh` builds `:sbx-it` images
+  and runs the runner + e2e suites in a throwaway `guild-sbx-it` project
+  (subnets `10.214.0.0/24`, `10.214.1.0/24`; runner on loopback :18090).
 
 ---
 

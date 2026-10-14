@@ -68,7 +68,7 @@ import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
 import { SettingsSectionPane } from "./settings/settings-sections";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
-import { chatProjectOf, outgoingProjectId, pickAfterChatSwitch, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
+import { chatProjectOf, outgoingProjectId, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
 import { ChatsPanel, FadeTitle, SettingsPanel, WorkPanel } from "./sidebar-contents";
 import { SkillsPanel } from "./skills/SkillsPanel";
 import {
@@ -77,6 +77,7 @@ import {
   type SkillsRoute,
 } from "./skills/skills-route";
 import { SidebarRail, type SidebarTab } from "./sidebar-rail";
+import { OnboardingGuide, type OnboardingExit } from "./onboarding";
 import {
   attachmentBlobUrl,
   toolArtifactBlobUrl,
@@ -92,6 +93,7 @@ import {
 } from "../transport";
 import {
   apiUrl,
+  apiOnboarded,
   createChat,
   getChatApproval,
   listArchivedChats,
@@ -187,14 +189,35 @@ export function offlineMachine(
 /** Whether the open chat shows busy after a thread-list push: while a
  * send's HTTP round trip is in flight the pushed list predates the
  * server's generating flag, so its false must not clear the optimistic
- * busy (a second send could race the first). */
+ * busy (a second send could race the first). A first send is exempt: its
+ * pending state lives in the dedicated pending-submit spinner, and busy
+ * here feeds stopMode — a Stop button for a turn that does not exist is a
+ * lie. */
 export function busyAfterThreadPush(
   chats: ChatSummary[],
   openChatId: string | null,
   sendInFlight: boolean,
 ): boolean {
-  if (sendInFlight) return true;
+  if (sendInFlight && openChatId !== null) return true;
   return !!chats.find((c) => c.id === openChatId)?.generating;
+}
+
+/** The composer's send button: the four states it can honestly show.
+ * Precedence: the stop click's own state, then a live turn (Stop), then a
+ * first-send submit in flight (spinner — the chat does not exist yet, so
+ * there is no turn to stop and nothing to send again), then the plain
+ * send/queue arrow. */
+export type SendButtonMode = "send" | "pending" | "stop" | "stopping";
+export function sendButtonState(input: {
+  hasContent: boolean;
+  hasModel: boolean;
+  generating: boolean;
+  stopping: boolean;
+  submitting: boolean;
+}): SendButtonMode {
+  if (input.generating && !input.hasContent) return input.stopping ? "stopping" : "stop";
+  if (input.submitting) return "pending";
+  return "send";
 }
 
 /** Drops a chat's cancellation-in-progress flag once that chat's own
@@ -243,32 +266,37 @@ export function tabPaneLayout(
 
 
 /// URL-driven navigation: the pathname is the single source of truth for
-/// where the user is. Routes:
-///   /                          — new chat (recents view)
+/// where the user is. Every page, tab, panel and sub-page the user can
+/// reach has its own fixed address (the AGENTS.md convention). Routes:
+///   /chats[/new]               — the Chats tab (default; "/" aliases);
+///                                /new is the addressed scratch composer
+///   /work[/new]                — the Work tab, with its scratch composer
 ///   /thread/<id>               — open thread
-///   /chats                      — the Chats tab (default; a bare chat id
-///                                keeps its short form)
-///   /work                       — the Work tab
 ///   /project/<id>              — sidebar filtered to one project (Work tab)
+///   /project/<id>/new          — scratch composer pre-picked to the project
 ///   /project/<id>/thread/<cid> — open thread within its project view
 ///   /device                    — device-setup dialog, optionally over a
 ///                                thread: /thread/<id>/device
-///   /settings                   — the Settings tab (bare; the section lives
-///                                in pane state)
-///   /settings/<section>[/<detail>] — the Settings tab with that section (and
-///                                sub-page) preselected — a deep link only;
-///                                tab picks navigate to bare /settings.
-///                                <detail> addresses a sub-page inside a
-///                                section: an integration slug, a user/team
-///                                id or "new", a model route or "add", a
-///                                registry kind/slug.
+///   /onboard                   — the onboarding guide dialog (the rail's
+///                                Help/Learn button opens it too); chat-
+///                                independent top-level route any user can
+///                                open. /help deep links alias here.
+///   /settings[/<section>[/<detail>]]
+///                              — the Settings tab; the section (and sub-
+///                                page) always ride in the URL — every
+///                                section pick navigates. <detail> addresses
+///                                a sub-page inside a section: an
+///                                integration slug, a user/team id or "new",
+///                                a model route or "add", a registry
+///                                kind/slug. A bare /settings normalizes to
+///                                /settings/account (replaceState).
 ///   /skills[/activity|/machine|/<slug>[/edit] | /new]
 ///                              — the skills page (top-level; replaces the
 ///                                main pane): tab views, a detail page, the
 ///                                editor in edit or create mode. See
 ///                                skills-route.ts for the state contract.
 /// Back/forward, reloads and deep links all resolve through parseChatRoute.
-type ChatOverlay = { kind: "device" } | null;
+type ChatOverlay = { kind: "device" } | { kind: "onboard" } | null;
 interface ChatRoute {
   chatId: string | null;
   /** Sidebar project filter (deep-linked /project/<id>). */
@@ -278,6 +306,9 @@ interface ChatRoute {
   skills: SkillsRoute | null;
   /** Which rail panel tab the URL names: /chats, /work or /settings. */
   tab: "chats" | "work" | "settings";
+  /** The addressed scratch composer: /chats/new, /work/new or
+   *  /project/<id>/new. False on tab roots, open threads and other tabs. */
+  newChat: boolean;
   /** Settings-tab section/detail named by the URL (/settings/<section>/
    * [<detail>] deep links); null elsewhere and for bare /settings, whose
    * section lives in pane state. */
@@ -311,13 +342,20 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
     chatId = parts[1];
     parts.splice(0, 2);
   }
+  // The reserved "new" segment addresses the scratch composer — only on a
+  // chatless surface (a thread or overlay URL never carries it).
+  const newChat = parts[0] === "new" && chatId === null;
+  if (newChat) parts.shift();
   if (parts[0] === "device")
-    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, settingsSection: null, settingsDetail: null };
+    return { chatId, projectId, tab, overlay: { kind: "device" }, skills: null, settingsSection: null, settingsDetail: null, newChat: false };
+  if (parts[0] === "onboard" || parts[0] === "help")
+    return { chatId: null, projectId: null, tab: "chats", overlay: { kind: "onboard" }, skills: null, settingsSection: null, settingsDetail: null, newChat: false };
   if (parts[0] === "settings") {
-    // Bare /settings is the Settings tab with the pane-state section; a
-    // section (and optional sub-page detail) preselects it. Everything
-    // after the section is the sub-page id; each segment was encoded
-    // separately, so a model id like "a/b" round-trips as one part.
+    // Bare /settings normalizes to the default section (/settings/account,
+    // via the pane effect); a section (and optional sub-page detail)
+    // preselects it. Everything after the section is the sub-page id; each
+    // segment was encoded separately, so a model id like "a/b" round-trips
+    // as one part.
     const section = parts.length > 1 ? parts[1] : null;
     const detail = parts.length > 2 ? parts.slice(2).map(decodeURIComponent).join("/") : null;
     return {
@@ -328,15 +366,16 @@ export const parseChatRoute = (pathname: string): ChatRoute => {
       skills: null,
       settingsSection: section,
       settingsDetail: detail,
+      newChat: false,
     };
   }
   // Skills is chat-independent and top-level like settings: the URL drops
   // any thread/project prefix, so the skills page replaces the chat.
   if (parts[0] === "skills") {
     const skills = parseSkillsRoute(parts.slice(1));
-    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats", settingsSection: null, settingsDetail: null };
+    return { chatId: null, projectId: null, overlay: null, skills, tab: "chats", settingsSection: null, settingsDetail: null, newChat: false };
   }
-  return { chatId, projectId, tab, overlay: null, skills: null, settingsSection: null, settingsDetail: null };
+  return { chatId, projectId, tab, overlay: null, skills: null, settingsSection: null, settingsDetail: null, newChat };
 };
 
 /// /skills/<seg...> after the leading "skills": a bare /skills is the
@@ -361,6 +400,7 @@ export const chatRoutePath = (
   tab: ChatRoute["tab"] = "chats",
   settingsSection: string | null = null,
   settingsDetail: string | null = null,
+  newChat = false,
 ): string => {
   // Skills is chat-independent — top-level URL that replaces the chat view.
   if (skills !== null) {
@@ -373,6 +413,13 @@ export const chatRoutePath = (
     if (skills.view === "machine") return "/skills/machine";
     return "/skills";
   }
+  // The scratch composer is a chatless surface: the project-bound form
+  // implies the Work tab, the bare form rides on /chats/new or /work/new.
+  // An overlay URL never carries the segment (the dialog is chatless too).
+  if (overlay === null && chatId === null && newChat && tab !== "settings") {
+    if (projectId) return `/project/${encodeURIComponent(projectId)}/new`;
+    return tab === "work" ? "/work/new" : "/chats/new";
+  }
   const base = projectId
     ? `/project/${encodeURIComponent(projectId)}${
         chatId ? `/thread/${encodeURIComponent(chatId)}` : ""
@@ -384,6 +431,11 @@ export const chatRoutePath = (
         : tab === "settings"
           ? "/settings"
           : "/chats";
+  if (overlay?.kind === "onboard") {
+    // Chat-independent top-level route: any thread/project prefix drops.
+    // /help deep links share the address (the guide is the help page).
+    return "/onboard";
+  }
   if (overlay?.kind === "device") {
     // /settings/<seg> parses as a Settings-tab section, so a device dialog
     // pushed over the Settings tab detours through /chats — the dialog is
@@ -1469,6 +1521,12 @@ type WebChatProps = {
   displayName?: string | null;
   avatarUrl?: string | null;
   onSignOut: () => void;
+  /** Web only: false = the user has not completed the first-run onboarding
+   *  wizard yet (server-side onboarded flag). Desktop skips it. */
+  onboarded?: boolean;
+  /** Flips App-level state once onboarding completes, so the wizard
+   *  unmounts without waiting for the next apiMe. */
+  onOnboarded?: () => void;
   /** Desktop multi-workspace: shows the pair/sign-in card over the running
    * app; the login activates the new workspace. Absent on the web. */
   onAddWorkspace?: () => void;
@@ -1503,7 +1561,7 @@ export default function WebChat(props: WebChatProps) {
     </ChatErrorBoundary>
   );
 }
-function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSignOut, onAddWorkspace }: WebChatProps) {
+function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSignOut, onAddWorkspace, onboarded = true, onOnboarded }: WebChatProps) {
   const outgoingScope = `${apiUrl("")}\n${email}`;
   const draftStorage = useMemo(() => scopedDraftStorage(localStorage, outgoingScope), [outgoingScope]);
   const [fileStore] = useState(() => new BrowserSendStore(outgoingScope));
@@ -1582,6 +1640,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // chatId comparison here — a null-vs-null comparison once held and the
   // line flashed on every first send.
   const [compacting, setCompacting] = useState(false);
+  // First-send submit in flight: the id of the outgoing command whose
+  // create/prepare/send round trip has not landed yet. The scratch view
+  // renders nothing optimistically (the chat does not exist), so this id —
+  // not busy — carries the pending state: the send button spins until the
+  // create responds and the route moves to the real chat.
+  const [pendingSubmitId, setPendingSubmitId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const promptRef = useRef(prompt);
   promptRef.current = prompt;
@@ -1721,6 +1785,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // persists the picked mode; the load effect below skips that chat once so
   // the pick survives instead of being refetched back to "default".
   const justCreatedApprovalRef = useRef<string | null>(null);
+  // The chat whose route push should carry the optimistic busy across the
+  // open effect's busy reset: the created thread renders as working (the
+  // seeded send + busy) until the server's generating flag or a submit
+  // failure takes over.
+  const justCreatedBusyRef = useRef<string | null>(null);
   // The account-level approval default (Settings → Approvals), fetched once:
   // the label an unset chat shows on the selector trigger. The server
   // resolves the same value when the turn runs (unset policy = the AI
@@ -1820,7 +1889,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     };
   }, []);
   const loadSeq = useRef(0); // guards against stale chat switches landing last
-  const skipLoadRef = useRef<string | null>(null); // chatId whose URL move must not trigger a refetch (first send)
 
   loadStateRef.current = { busy, threadLoading };
 
@@ -1886,11 +1954,15 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     overlay?: ChatOverlay;
     skills?: SkillsRoute | null;
     tab?: ChatRoute["tab"];
+    newChat?: boolean;
+    settingsSection?: string | null;
+    settingsDetail?: string | null;
   }) => {
     const chatId = "chatId" in next ? (next.chatId as string | null) : route.chatId;
     const projectId = "projectId" in next ? (next.projectId as string | null) : route.projectId;
     const ov = "overlay" in next ? (next.overlay as ChatOverlay) : route.overlay;
-    const tab = next.tab ?? route.tab;
+    // A project-bound address implies the Work tab (the parse agrees).
+    const tab = next.tab ?? (projectId ? "work" : route.tab);
     // The skills page is replaced by anything that names a chat or opens a
     // dialog overlay — those are chat-context surfaces. An overlay close
     // (overlay: null) keeps it: the dialog was rendered over the skills page.
@@ -1900,20 +1972,58 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         : "chatId" in next || (next.overlay !== undefined && next.overlay !== null)
           ? null
           : route.skills;
-    const path = chatRoutePath(chatId, projectId, ov, sk, tab);
+    // The scratch composer is chatless: it drops with any open thread,
+    // overlay or skills page, and never rides on the Settings tab.
+    const newChat =
+      ("newChat" in next ? !!next.newChat : route.newChat) &&
+      chatId === null &&
+      ov === null &&
+      sk === null &&
+      tab !== "settings";
+    // The Settings tab owns its section in the URL: a navigation naming a
+    // section/detail carries it, one leaving the tab drops it, and a
+    // section pick resets the sub-page unless the pick names one too. The
+    // device dialog keeps the section (an overlay close restores it; the
+    // dialog's URL detours through /chats regardless).
+    const settingsSection =
+      "settingsSection" in next
+        ? (next.settingsSection as string | null)
+        : tab === "settings" && sk === null
+          ? route.settingsSection
+          : null;
+    const settingsDetail =
+      "settingsDetail" in next
+        ? (next.settingsDetail as string | null)
+        : "settingsSection" in next
+          ? null
+          : tab === "settings" && sk === null
+            ? route.settingsDetail
+            : null;
+    const path = chatRoutePath(chatId, projectId, ov, sk, tab, settingsSection, settingsDetail, newChat);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setRoute({
-      chatId,
-      projectId,
-      overlay: ov,
-      skills: sk,
-      tab,
-      // Tab picks keep the section in pane state; only deep links name it
-      // in the URL.
-      settingsSection: null,
-      settingsDetail: null,
-    });
+    setRoute({ chatId, projectId, overlay: ov, skills: sk, tab, newChat, settingsSection, settingsDetail });
   };
+
+  // A bare /settings arrival (deep link, old bookmark, back/forward)
+  // normalizes to the default section — the Settings tab always has a
+  // sectioned address. replaceState: the normalization is not a step back.
+  useEffect(() => {
+    if (route.tab !== "settings" || route.settingsSection !== null) return;
+    if (route.overlay !== null || route.skills !== null) return;
+    const path = chatRoutePath(null, null, null, null, "settings", "account", null);
+    window.history.replaceState(null, "", path);
+    setRoute((r) => ({ ...r, settingsSection: "account", settingsDetail: null }));
+  }, [route.tab, route.settingsSection, route.overlay, route.skills]);
+
+  // First-run onboarding auto-show: a user the server flags as not yet
+  // onboarded is pushed to /onboard, so the wizard owns the URL like any
+  // other surface (reload lands back in it). replaceState is wrong here —
+  // finishing the wizard navigates forward, and back from /onboard returns
+  // to the pre-login view.
+  useEffect(() => {
+    if (onboarded || route.overlay?.kind === "onboard") return;
+    pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "onboard" } });
+  }, [onboarded, route.overlay, pushRoute]);
 
   // Layout effect: the correction must land before paint, or the new block
   // shows for a frame at the old scroll offset (the reported 1-frame jump).
@@ -1963,10 +2073,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const [pickedProject, setPickedProject] = useState<PickedProject | null>(null);
   const pickedProjectRef = useRef<PickedProject | null>(pickedProject);
   pickedProjectRef.current = pickedProject;
-  /** A pick made for the scratch view the navigation is entering (the
-   * project row's "+"): the chatId switch consumes it, so the per-chat
-   * reset applies to every other transition. */
-  const scratchPickRef = useRef<PickedProject | null>(null);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const openCreateProject = () => {
     setCreateProjectOpen(true);
@@ -1977,9 +2083,23 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // every pick change.
   const currentProjectRef = useRef(currentProject);
   currentProjectRef.current = currentProject;
-  const pickProject = (p: PickedProject | null) => {
-    setPickedProject(p);
-  };
+  // The scratch pick is route state: the addressed new-chat surface
+  // (/project/<id>/new) pre-picks its project for the first send; every
+  // other surface — a tab root, an open thread — starts unbound. The pick
+  // never waits for the projects list (a send before it loads must still
+  // bind): the name fills in when the list arrives.
+  useEffect(() => {
+    if (route.chatId !== null || !route.newChat || route.projectId === null) {
+      setPickedProject(null);
+      return;
+    }
+    const p = projects?.find((x) => x.id === route.projectId);
+    setPickedProject(
+      p
+        ? { id: p.id, name: p.name, machine_label: p.machine_label }
+        : { id: route.projectId, name: "", machine_label: undefined },
+    );
+  }, [route.chatId, route.newChat, route.projectId, projects]);
   const projectCreated = () => {
     void refreshProjects();
   };
@@ -2131,15 +2251,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   // Chat switches keep cached content visible until the socket's History
   // frame overwrites it, then request a fresh sync for the new chat. The
-  // project pick is per-chat: a pending pick (pre-first-send) or an old
-  // chat's pick never carries over — except one carried in explicitly for
-  // the destination (scratchPickRef: the project row's "+" enters the
-  // scratch view with its project pre-picked).
+  // composer's project pick is not touched here — it is route state, owned
+  // by the pick effect below (an open thread is never pre-picked).
   const prevLoadedChatRef = useRef<string | null>(chatId);
   useEffect(() => {
-    const intendedPick = scratchPickRef.current;
-    scratchPickRef.current = null;
-    setPickedProject(pickAfterChatSwitch(chatId, intendedPick));
     // Per-chat draft: load the destination chat's saved composer text
     // instead of keeping the previous chat's text in the input. This
     // restore also marks the chat the persist effect may write for — from
@@ -2155,20 +2270,19 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if (restored) requestAnimationFrame(autoGrow);
     prevLoadedChatRef.current = chatId;
     loadSeq.current++;
-    setBusy(false);
+    if (chatId !== null && justCreatedBusyRef.current === chatId) justCreatedBusyRef.current = null;
+    else setBusy(false);
     stick.current = true;
     if (!chatId) {
       const opened = reducerRef.current.open(null);
       setBlocks(opened.blocks);
       setThreadLoading(false);
-    } else if (skipLoadRef.current === chatId) {
-      // Keep the optimistic first-send block: the created chat adopts the
-      // scratch view; the socket still reconciles the new chat.
-      skipLoadRef.current = null;
-      setBlocks(reducerRef.current.adopt(chatId).blocks);
     } else {
       // The reducer's per-chat cache: a switch-back renders its last content
       // immediately, so switching never flashes a skeleton over known blocks.
+      // A just-created chat lands here too: its view is empty, so the
+      // skeleton holds until the first thread state (the user message and
+      // the turn) arrives — the render is pure server truth.
       const opened = reducerRef.current.open(chatId);
       setThreadLoading(!opened.restored);
       setBlocks(opened.blocks);
@@ -2187,10 +2301,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   };
 
   const newChat = () => {
-    // Navigation only: the chatId effect selects the new open chat and asks
-    // the member socket to reconcile it. The new chat is projectless, so the
-    // route's project id drops with it.
-    pushRoute({ chatId: null, projectId: null, overlay: null });
+    // Navigation only: the route moves to the addressed scratch composer
+    // (/chats/new, or /work/new when entered from the Work tab); the
+    // chatId effect clears the thread and the pick effect drops any pick.
+    pushRoute({
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      newChat: true,
+      tab: route.tab === "work" ? "work" : "chats",
+    });
     setOpen(false);
     ta.current?.focus();
   };
@@ -2212,13 +2333,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   recoverMissingChatRef.current = recoverMissingChat;
 
   /** Sidebar: new chat inside a project (the project row's hover "+").
-   * Pre-picks the project so the composer binds the chat to it on send. The
-   * chatId switch this triggers resets the pick per-chat — scratchPickRef
-   * carries this pick through that same switch. */
+   * Navigates to the project's addressed scratch view — the pick effect
+   * derives the composer's binding from the route. */
   const newChatInProject = (project: PickedProject) => {
-    scratchPickRef.current = project;
-    pickProject(project);
-    newChat();
+    pushRoute({ chatId: null, projectId: project.id, overlay: null, skills: null, newChat: true });
+    setOpen(false);
+    ta.current?.focus();
   };
 
   const autoGrow = () => {
@@ -2355,18 +2475,30 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         writeDraft(draftStorage, target, "");
         pendingDraftsRef.current.set(target, []);
         persistFiles(target, []);
-        if (openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
+        // A first send holds the scratch composer as-is (text visible,
+        // input blocked) until the create responds and the route moves —
+        // clearing here would flash an emptied new-chat screen. The
+        // created() handover below empties the composer at navigation.
+        if (target !== null && openChatIdRef.current === target) { promptRef.current = ""; setPrompt(""); setPending([]); requestAnimationFrame(autoGrow); }
       },
     });
     if (command.accepted) { deliveringRef.current.delete(command.id); return; }
     const mySeq = loadSeq.current;
-    if (openChatIdRef.current === target) {
+    if (target === null) {
+      // First send: the chat does not exist yet, so nothing renders
+      // optimistically — the composer's pending-submit spinner carries the
+      // state until the create responds and the route moves.
+      setPendingSubmitId(command.id);
+      sendingRef.current = false;
+    } else if (openChatIdRef.current === target) {
       setBusy(true);
       setBlocks(reducerRef.current.optimisticSend({ chatId: target, text: command.text,
         key: command.id, sentAt: command.sentAt,
         attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
+      sendingRef.current = true;
+    } else {
+      sendingRef.current = false;
     }
-    sendingRef.current = true;
     try {
       await submitCommand(command, {
         checkpoint: persistCommand,
@@ -2378,20 +2510,37 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         },
         created: (cid) => {
           if (!mountedRef.current) return;
-          reducerRef.current.bindPending(cid, command.id);
+          // The chat exists server-side: from here the turn's submission is
+          // an in-flight round trip against a real chat — pushes must keep
+          // its busy until the server's generating flag takes over.
+          sendingRef.current = true;
           if (loadSeq.current === mySeq && openChatIdRef.current === command.originChatId) {
-            // Preserve follow-up typing/files entered during chat creation.
-            writeDraft(draftStorage, cid, promptRef.current);
+            // The composer was held (blocked, text visible) on the scratch
+            // surface for the whole create, so no follow-up typing exists:
+            // the sent content travels as the optimistic send below, and
+            // the thread opens with an empty composer.
+            writeDraft(draftStorage, cid, "");
             writeDraft(draftStorage, command.originChatId, "");
-            pendingDraftsRef.current.set(cid, pendingRef.current);
+            pendingDraftsRef.current.set(cid, []);
             pendingDraftsRef.current.set(command.originChatId, []);
-            persistFiles(cid, pendingRef.current);
+            persistFiles(cid, []);
             persistFiles(command.originChatId, []);
-            skipLoadRef.current = cid;
+            promptRef.current = "";
+            setPrompt("");
+            setPending([]);
+            requestAnimationFrame(autoGrow);
             if (approvalMode !== "default") {
               justCreatedApprovalRef.current = cid;
               void setChatApproval(cid, approvalMode).catch(() => toast.error("Could not save approval mode"));
             }
+            // Seed the created chat's view with the sent message so the
+            // route push lands straight on the working thread — no
+            // skeleton between the scratch surface and the thread state.
+            setBlocks(reducerRef.current.optimisticSend({ chatId: cid, text: command.text,
+              key: command.id, sentAt: command.sentAt,
+              attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
+            justCreatedBusyRef.current = cid;
+            setBusy(true);
             pushRoute({ chatId: cid, overlay: null });
             void refreshChats();
           }
@@ -2435,6 +2584,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     } finally {
       deliveringRef.current.delete(command.id);
       if (!mountedRef.current) return;
+      setPendingSubmitId(cur => cur === command.id ? null : cur);
       sendingRef.current = [...outgoingRef.current.values()].some(c => c.running && (c.chatId ?? c.originChatId) === openChatIdRef.current);
       if (command.error && openChatIdRef.current === (command.chatId ?? command.originChatId)) setBusy(false);
       refreshOutgoing(n => n + 1);
@@ -2560,6 +2710,13 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || openGenerating;
+  // A first send's create round trip on the scratch surface: the composer
+  // freezes with its text until the route moves to the created thread.
+  const holdingFirstSend = (() => {
+    if (pendingSubmitId === null || chatId !== null) return false;
+    const c = outgoingRef.current.get(pendingSubmitId);
+    return !!c && c.chatId === null && c.originChatId === null;
+  })();
 
   const grouping = useMemo(
     () => sidebarGrouping(chats === null ? null : chats.map((c) => ({ ...c, ...(chatStatus[c.id] ?? {}) }))),
@@ -2578,18 +2735,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // /skills... URL is live (rail pick, deep link, reload, back/forward).
   const railTab: SidebarTab = route.skills !== null ? "skills" : sidebarTab;
   // Settings tab: the section rendered inline in the main pane (the rail's
-  // Settings tab is a persistent surface, not an overlay launcher). Sub-page
-  // navigation stays local to the pane.
-  const [settingsSection, setSettingsSection] = useState<string | null>(null);
-  const [settingsDetail, setSettingsDetail] = useState<string | null>(null);
-  // A deep-linked /settings/<section>[/<detail>] preselects the section;
-  // tab picks and pane navigation keep it in pane state instead.
-  useEffect(() => {
-    if (route.tab === "settings" && route.settingsSection !== null) {
-      setSettingsSection(route.settingsSection);
-      setSettingsDetail(route.settingsDetail);
-    }
-  }, [route.tab, route.settingsSection, route.settingsDetail]);
+  // Settings tab is a persistent surface, not an overlay launcher). The
+  // section and its sub-page live in the route — every pick navigates.
+  const settingsSection = route.settingsSection;
   const switchTab = (tab: SidebarTab) => {
     // The skills tab is a URL route, not persisted panel state: entering it
     // navigates to /skills, leaving it returns to the chat root — so back/
@@ -2602,17 +2750,32 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     // Panel tabs navigate too: each owns its address, back/forward walks
     // tab history, and the navigation clears the open chat — a tab switch
     // always lands on a fresh composer, never the previously selected chat.
-    pushRoute({ chatId: null, projectId: null, overlay: null, skills: null, tab });
+    // Entering Settings lands on the current section, or the default one —
+    // the Settings tab always has a sectioned address.
+    pushRoute({
+      chatId: null,
+      projectId: null,
+      overlay: null,
+      skills: null,
+      tab,
+      newChat: false,
+      ...(tab === "settings"
+        ? { settingsSection: route.settingsSection ?? "account", settingsDetail: null }
+        : {}),
+    });
     // A collapsed panel hides the tab's content — a tab pick is an intent
     // to see it, so the panel re-expands on the newly picked tab.
     if (tabPaneLayout(tab, isMobile).expandsPanel) setCollapsed(false);
-    // Entering Settings with no section picked lands on the first user
-    // section instead of an empty main pane.
-    if (tab === "settings") setSettingsSection((s) => s ?? "account");
   };
   const openSettingsSection = (id: string) => {
-    setSettingsSection(id);
-    setSettingsDetail(null);
+    // Navigation: the section pick owns its /settings/<section> address, so
+    // back/forward walks the sections and a reload restores the pick.
+    pushRoute({ tab: "settings", settingsSection: id, settingsDetail: null });
+  };
+  const openSettingsDetail = (detail: string | null) => {
+    // Navigation: a sub-page opens on /settings/<section>/<detail>; closing
+    // it returns to the bare section address.
+    pushRoute({ tab: "settings", settingsDetail: detail });
   };
 
   const sidebarCollapse = isMobile ? undefined : () => setCollapsed(true);
@@ -2690,8 +2853,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         <SettingsSectionPane
           sectionId={settingsSection}
           email={email}
-          detail={settingsDetail}
-          onDetailChange={setSettingsDetail}
+          detail={route.settingsDetail}
+          onDetailChange={openSettingsDetail}
         />
       </div>
     ) : null;
@@ -2752,6 +2915,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         <SidebarRail
           activeTab={railTab}
           onTabChange={switchTab}
+          onOpenHelp={() =>
+            pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "onboard" } })
+          }
           email={email}
           displayName={displayName}
           avatarUrl={avatarUrl}
@@ -3118,6 +3284,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               // Not disabled while streaming: a disabled focused element
               // blurs to body, and the composer must keep focus/caret
               // during generation (send is guarded by `busy` anyway).
+              // readOnly (not disabled) for the held first send too — the
+              // screen stays frozen with the sent text until navigation.
+              readOnly={holdingFirstSend}
               disabled={models !== null && !model}
               className="max-h-40 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none"
             />
@@ -3262,33 +3431,56 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   // state (pulsing square, "Stopping…") until the server's
                   // generating=false lands — the stop is cooperative
                   // server-side, so this is the only immediate feedback the
-                  // click can honestly get.
-                  const generating = busy || openGenerating;
+                  // click can honestly get. A first-send submit in flight
+                  // (create/prepare/send round trip, the chat not on the
+                  // server yet) shows the pending spinner instead: there is
+                  // no turn to stop and nothing to send again.
+                  const pendingCommand = pendingSubmitId !== null
+                    ? outgoingRef.current.get(pendingSubmitId)
+                    : undefined;
+                  const submitting = !!pendingCommand &&
+                    (pendingCommand.chatId ?? pendingCommand.originChatId) === (chatId ?? null);
+                  const generating = openGenerating || (busy && !submitting);
                   const hasContent = !!prompt.trim() || pending.length > 0;
-                  const stopMode = generating && !hasContent;
-                  const stoppingMode = stopMode && !!chatId && !!stopping[chatId];
+                  const mode = sendButtonState({
+                    hasContent,
+                    hasModel: !!model,
+                    generating,
+                    stopping: !!chatId && !!stopping[chatId],
+                    submitting,
+                  });
                   return (
                     <Button
                       size="icon"
                       className="size-7 rounded-full"
                       onClick={() =>
-                        stopMode ? void requestStop() : void send(generating ? "queue" : "normal")
+                        mode === "stop" || mode === "stopping"
+                          ? void requestStop()
+                          : void send(generating ? "queue" : "normal")
                       }
-                      disabled={stoppingMode ? true : stopMode ? false : !model || !hasContent}
+                      disabled={
+                        mode === "pending" ||
+                        mode === "stopping" ||
+                        (mode === "send" && (!model || !hasContent))
+                      }
                       title={
-                        stoppingMode
+                        mode === "stopping"
                           ? "Stopping…"
-                          : stopMode
+                          : mode === "stop"
                             ? "Stop"
-                            : generating
-                              ? "Queue (Ctrl+Enter sends immediately)"
-                              : "Send"
+                            : mode === "pending"
+                              ? "Sending…"
+                              : generating
+                                ? "Queue (Ctrl+Enter sends immediately)"
+                                : "Send"
                       }
                     >
-                      {stopMode ? (
+                      {mode === "stop" || mode === "stopping" ? (
                         <Square
-                          className={`size-3.5 fill-current ${stoppingMode ? "animate-pulse" : ""}`}
+                          className={`size-3.5 fill-current ${mode === "stopping" ? "animate-pulse" : ""}`}
                         />
+                      ) : mode === "pending" ? (
+                        <Loader2 className="size-3.5 animate-spin" />
                       ) : (
                         <ArrowUp />
                       )}
@@ -3309,6 +3501,46 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           if (!o) pushRoute({ overlay: null });
         }}
       />
+
+      {/* Onboarding guide: the rail's Help/Learn button opens it, it lives
+          at /onboard (chat-independent route any user can open, /help deep
+          links alias there), and it auto-shows for users the server flags as
+          not yet onboarded — the auto-push makes the guide own the URL, so a
+          reload lands back in it. It floats over the running UI; closing it
+          from any section marks the server-side flag and returns to chats. */}
+      {(route.overlay?.kind === "onboard" || !onboarded) && (
+        <OnboardingGuide
+          onDone={(exit: OnboardingExit) => {
+            void apiOnboarded();
+            onOnboarded?.();
+            if (exit === "device") {
+              pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: { kind: "device" } });
+            } else if (exit === "gateway") {
+              pushRoute({
+                chatId: null,
+                projectId: null,
+                overlay: null,
+                skills: null,
+                tab: "settings",
+                settingsSection: "gateway",
+                settingsDetail: null,
+                newChat: false,
+              });
+            } else {
+              // Plain close (Got it, skip, Esc, ✕): /onboard itself always
+              // renders the guide, so closing must leave the route.
+              pushRoute({
+                chatId: null,
+                projectId: null,
+                overlay: null,
+                skills: null,
+                tab: "chats",
+                newChat: false,
+              });
+            }
+          }}
+        />
+      )}
 
       <CreateProjectDialog
         open={createProjectOpen}

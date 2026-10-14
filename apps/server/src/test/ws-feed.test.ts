@@ -395,6 +395,49 @@ describe("member-socket feed", () => {
     browser.end();
   });
 
+  it("the HTTP thread list agrees with the hub — same truth as the machines list", { timeout: TEST_TIMEOUT }, async () => {
+    // Regression: GET /api/v1/chats hardcoded machine_online=false, so the
+    // webchat showed the "machine is offline" banner while the sidebar's
+    // machines-derived pin showed green (an always-online machine never
+    // triggers a presence-change push to correct the stale HTTP row).
+    const chat = await createChat("http parity chat");
+    await stack.env.db.query(
+      `INSERT INTO machines (machine_id, org_id, user_id, label)
+       VALUES ('fix-http-m1', $1, $2, 'Desk')`,
+      [stack.orgId, stack.memberId],
+    );
+    await stack.env.db.query("UPDATE chats SET machine_id = 'fix-http-m1', machine_label = 'Desk' WHERE id = $1", [chat.id]);
+
+    const onlineOf = async (): Promise<boolean | undefined> => {
+      const res = await stack.env.app.inject({
+        method: "GET",
+        url: "/api/v1/chats",
+        headers: auth(stack.memberToken),
+      });
+      expect(res.statusCode).toBe(200);
+      const chats = (JSON.parse(res.body) as { chats: { id: string; machine_online: boolean }[] }).chats;
+      return chats.find((c) => c.id === chat.id)?.machine_online;
+    };
+    expect(await onlineOf()).toBe(false);
+
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/ws/ticket",
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    const ticket = (JSON.parse(res.body) as { ticket: string }).ticket;
+    const machine = new ScriptedClient(
+      base,
+      `ticket=${ticket}&client_id=${crypto.randomUUID()}&machine_id=fix-http-m1&machine_name=Desk&instance_id=${crypto.randomUUID()}&resume=false`,
+    );
+    await machine.open();
+    expect(await onlineOf()).toBe(true);
+
+    machine.end();
+    await machine.closed();
+    expect(await onlineOf()).toBe(false);
+  });
+
   it("the duplex read-mark moves the caller's marker without an HTTP round trip", async () => {
     const chat = await createChat("read duplex");
     const eventId = crypto.randomUUID();

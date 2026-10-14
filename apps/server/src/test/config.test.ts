@@ -28,12 +28,25 @@ describe("loadConfig", () => {
       poolMax: 10,
       dataDir: path.resolve("./data"),
       allowShellTools: false,
+      sandbox: { mode: "inprocess-unsafe" },
       approvalTimeoutMs: 300_000,
       clientToolTimeoutMs: 300_000,
       execPolicyRulesPath: null,
     });
     expect(DEFAULT_BIND_ADDR).toBe("0.0.0.0:8080");
     expect(DEFAULT_LOG_LEVEL).toBe("info");
+  });
+
+  it("resolves the sandbox mode", () => {
+    const base = { GUILD_MASTER_KEY_HEX: "11".repeat(32), GUILD_JWT_SECRET: "s" };
+    const runner = loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://sandbox-runner:8090/", GUILD_SANDBOX_RUNNER_TOKEN: "t".repeat(32) });
+    expect(runner.sandbox).toEqual({ mode: "runner", runnerUrl: "http://sandbox-runner:8090", runnerToken: "t".repeat(32) });
+    expect(runner.allowShellTools).toBe(true);
+    expect(loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://r:1", GUILD_SANDBOX_RUNNER_TOKEN: "t".repeat(32), GUILD_ALLOW_SHELL_TOOLS: "0" }).allowShellTools).toBe(false);
+    expect(loadConfig({ ...base, NODE_ENV: "production" }).sandbox).toEqual({ mode: "disabled" });
+    expect(() => loadConfig({ ...base, NODE_ENV: "production", GUILD_SANDBOX: "inprocess-unsafe" })).toThrow(/refused/);
+    expect(() => loadConfig({ ...base, GUILD_SANDBOX_RUNNER_URL: "http://r:1" })).toThrow(/TOKEN/);
+    expect(() => loadConfig({ ...base, GUILD_SANDBOX: "yolo" })).toThrow(/GUILD_SANDBOX/);
   });
 
   it("reads GUILD_BIND_ADDR and GUILD_LOG_LEVEL", () => {

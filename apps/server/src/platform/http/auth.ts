@@ -21,6 +21,7 @@ export function userInfo(u: UserRow): Record<string, unknown> {
     role: u.role,
     display_name: u.display_name,
     avatar_url: u.avatar_url,
+    onboarded: u.onboarded_at != null,
   };
 }
 
@@ -180,6 +181,14 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
     }
     await ctx.identity.setApproval(user.id, value);
     return reply.status(200).type("application/json").send(rustJsonText({ approval: value }));
+  });
+
+  // Marks the first-run onboarding wizard as done (finished or skipped).
+  // Idempotent; the flag rides in login/me responses as `onboarded`.
+  app.put("/api/v1/me/onboarded", async (req, reply) => {
+    const user = await requireUser(ctx, req);
+    await ctx.identity.markOnboarded(user.id);
+    return reply.status(200).send({ ok: true });
   });
 }
 

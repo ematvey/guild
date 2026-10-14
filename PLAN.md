@@ -11,6 +11,173 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Branch reconciliation: master merged into develop, develop merged back (2026-10-14).**
+  The 0.5.43 hotfixes went master → cherry-pick → develop, leaving the branches
+  forked at different SHAs. Resolved by merging master into develop (PLAN.md got
+  the read-mark + prod-cutover entries in chronological order; bridge.ts and the
+  tests took develop's superset — the coalescing fix plus the HTTP-parity test)
+  and then `--no-ff` merging develop back into master, so both branches share
+  history again. Lesson recorded: hotfix on master, but land it via the
+  develop → master release merge next time — cherry-picks fork the graph.
+
+- **GET /api/v1/chats is hub-coupled (2026-10-14).** The M3-era
+  `machine_online = false` hardcode in `chatWire` survived the M5 hub
+  cutover: the HTTP thread list (and the single-chat CRUD responses) always
+  reported the bound machine offline while the ws push
+  (threadListSnapshot) and GET /api/v1/machines told the truth. The
+  webchat's offline banner keys off the HTTP row, the sidebar pin off the
+  machines list — an always-online machine never triggers a
+  presence-change push, so the banner stayed "X is offline" under a green
+  pin indefinitely. The HTTP surfaces now compute the flag via
+  `machineOnlineOf` (the same hub truth); regression test in
+  ws-feed.test.ts pins HTTP/push/machines parity.
+- **Trailing reasoning no longer splits the live answer (2026-10-14).**
+  Backends that emit a reasoning delta after the answer began (local vLLM,
+  DeepSeek-class models) streamed as [thinking][text][thinking][text] — the
+  live frames relay arrival order while the durable assistant message
+  flattens into one reasoning + one text block, so the live view and the
+  replay disagreed mid-sentence. Same root cause as paseo#2803 and
+  svkozak/pi-acp#96. Fix in the bridge (one producer of live frames): once
+  answer text streams for the current assistant message, thinking deltas
+  stop being emitted live and only accumulate into the view buffer — the
+  tail joins the reasoning block at the turn-boundary restamp, matching the
+  durable form with no added latency.
+- **Silent turn deaths now surface + shutdown drains (2026-10-14).** A turn
+  whose generation task fails (model unreachable, deploy restart mid-turn)
+  used to vanish: the failure rode only a live error frame — no persisted
+  event, so a reload or lost socket left the thread with no answer and no
+  error. Now the bridge persists a `turn_error` thread event on
+  `task_failed` (new ThreadEvent variant, protocol + bindings + reducer;
+  renders as the existing destructive error card, "Turn failed: …"), and
+  SIGTERM drains first: `runtime.drainChats()` aborts every generating chat
+  while sockets are alive (tasks settle, generating flips, terminal frames
+  reach clients) before the listener closes, with a 5s grace before
+  `app.close()`. Found via the 01a13a57 thread: approvals ran, tools
+  executed, then the model calls died with instant loopback connection
+  errors during a concurrent deploy churn.
+
+- **First send: hold the screen, land straight on working (2026-10-14).**
+  Refines the pending-submit design above after a new screencast: the two
+  intermediate states (emptied composer on the scratch surface, then the
+  thread skeleton) are gone. The scratch composer now HOLDS during the
+  create — sent text stays visible, input is blocked (`readOnly`, keeps
+  focus), the send button shows the pending spinner — and the detach only
+  clears the persisted draft, not the visible composer. When createChat
+  responds, `created()` seeds the created chat's reducer view with the
+  optimistic send and carries busy across the route push
+  (`justCreatedBusyRef`: the chatId effect skips its busy reset once), so
+  navigation lands directly on the working thread — user message plus
+  WorkingIndicator — and the first server thread state takes over from
+  there. A failed create/submit still falls into the retry card with the
+  text already in the composer.
+
+- **One onboarding guide over the running UI (2026-10-14).** The separate
+  help popup is gone — the rail's Help/Learn button opens the onboarding
+  guide itself: a big dialog floating over the live app (not a blank
+  full-screen takeover), selected topic on the left, switchable section list
+  on the right (Welcome, Desktop app, Connect other tools, Chatting,
+  Projects). One address, `/onboard`, chat-independent top-level; /help deep
+  links parse onto it and chatRoutePath never emits /help. Auto-push for
+  not-yet-onboarded users stays (`users.onboarded_at`, migration 0069;
+  `onboarded` in login/me; `PUT /api/v1/me/onboarded` marks it — the guide
+  owns the URL on reload). Closing from any section (Got it / skip / Esc /
+  ✕) marks the flag and navigates to /chats — /onboard itself always renders
+  the guide. The desktop/gateway section buttons still jump to the device
+  dialog / /settings/gateway after marking the flag. Desktop skips the
+  auto-show (its own pair/sign-in flow) but /onboard works there too. Copy:
+  plain-language, non-technical — "Guild is your private AI workspace".
+
+- **First send renders no optimistic bubble — pending submit until the chat exists (2026-10-14).**
+  The scratch-view optimistic send (bubble in the LOOSE view, adopted by the
+  created chat via `skipLoadRef`) is gone: a first send now clears the
+  composer into a durable command and holds a pending-submit spinner on the
+  send button (state `pendingSubmitId`, precedence stopping > Stop >
+  pending > send in `sendButtonState`) while create/prepare/send are in
+  flight; nothing renders optimistically because there is nothing to render
+  into. When `createChat` responds the route moves once and the thread shows
+  a skeleton until the first server thread state (user message + turn)
+  lands — the render is pure server truth. The reducer's `adopt`/`bindPending`
+  stay for the reducer API but no first-send caller remains; sends from
+  existing chats keep their optimistic bubble. `busyAfterThreadPush` no
+  longer busies the null-chat composer off an in-flight first send, and
+  `sendingRef` is scoped to the open chat (set in `created()`), so a
+  background send can't busy an unrelated open chat. Also fixed en route:
+  the previous commit's adopt-branch busy no longer applies (branch
+  deleted).
+
+- **First-send submit: no dead window, no duplicated stream render (2026-10-14).**
+  Two bugs behind the flicker a first-send screencast showed. (1) The
+  chatId effect's unconditional `setBusy(false)` wiped the optimistic busy
+  the moment the created chat's route landed, so nothing indicated work —
+  no Working shimmer, no stop button — between route adoption and the
+  server's first `generating=true` frame (~1s); the adopt branch now keeps
+  the busy (the submit is still in flight there by construction). (2)
+  Stream frames key reasoning blocks per-stream (`live-N` whenever a
+  thinking delta opens after a text tail); the commit's buffer strip
+  removed only the two sentinel keys, so those orphans kept rendering
+  above the durable copies — the response appeared twice. The strip is now
+  by key prefix (`live-`/`unpersisted-`). Regression test in
+  thread-reducer.test.ts.
+
+- **Server-side tools run in gVisor sandboxes via a sandbox-runner (2026-10-14, branch `sandbox-runner`).**
+  Server file/shell tools ran in the Fastify process, unconfined
+  (`NodeExecutionEnv` takes absolute paths as-is: a full-access chat could
+  read the master key from `/proc/self/environ`). Now: one `runsc`
+  container per workspace session / plain chat, mounting only its
+  `guild_data` subpath, non-root, read-only rootfs, no secrets; created by
+  the `sandbox-runner` service, which alone holds the Docker socket and
+  fixes the container spec. An in-sandbox agent wraps
+  `NodeExecutionEnv{cwd:/workspace}`, reached over the exec stdio stream
+  (`apps/server/src/sandbox/`). Network: an internal network whose only
+  exit is a squid egress proxy (registry allowlist, private/host
+  addresses denied) — addressed by IP, since Docker's embedded DNS fails
+  under gVisor. Package installs persist in `/workspace/.sandbox-home`.
+  Server runs as uid 1000; `GUILD_SANDBOX` fails closed in production;
+  shell tools default on with a runner. Also fixed on the way: skill slug
+  traversal, and NUL bytes in tool output breaking thread journaling.
+  Host: gVisor 20261005.0 on devbox. Single-host compose only; Kubernetes
+  deferred. Plan + decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`;
+  deploy notes: `docs/deploy-nuances.md` §4a.
+
+- **Settings + new-chat navigation are URL-driven (2026-10-14).** The
+  principle landed with its gaps closed. *Settings*: every section pick
+  navigates to `/settings/<section>` and every sub-page to
+  `/settings/<section>/<detail>` (`openSettingsSection`/`openSettingsDetail`
+  go through pushRoute; the pane-state section is gone — the route is the
+  only source, so back/forward walks sections and a reload restores the
+  pick). A bare `/settings` normalizes to `/settings/account` via
+  replaceState; tab picks land on the current-or-default section. The
+  device-dialog detour keeps the section in memory (its URL still goes
+  through /chats). *New chats*: the scratch composer is addressed —
+  `/chats/new`, `/work/new`, `/project/<id>/new` (the reserved `new`
+  segment, skills-route style) — and the project pre-pick is route state
+  (the pick effect derives it from the URL, no more scratchPickRef),
+  upgrading to `/project/<id>/thread/<cid>` on first send. `tab` roots stay
+  bare; `newChat` drops on any chat/overlay/skills/settings navigation.
+  `pickAfterChatSwitch` removed (route replaces it). Review:
+  `docs/reviews/2026-10-14-url-navigation-review.md`.
+
+- **All navigation state is URL-driven (principle, 2026-10-14).** Recorded
+  in AGENTS.md conventions: every reachable page/tab/panel/sub-page has its
+  own fixed URL; navigation never changes local state without a history
+  entry. Review of the current gaps (settings section + detail navigation,
+  new-chat addresses `/chats/new`, `/work/new`, `/project/<id>/new`) is in
+  `docs/reviews/2026-10-14-url-navigation-review.md`.
+
+- **Prod releases move to a branch flow (2026-10-14).** A `prod` branch now
+  tracks the deployed release: each release is a `--no-ff` merge of develop
+  into prod (release commit: `daff203`, 0.5.42), `~/guild-prod` deploys from
+  it (detached HEAD at the merge commit — the branch name is taken by the
+  main checkout), and the merge is also merged back into develop so the
+  branches never diverge. The first merge surfaced real master-side fixes
+  develop had lost: `release-clients.sh` requires `VITE_DEFAULT_SERVER_URL`
+  (the deployment's public URL bakes into the client bundle — releases built
+  without it default fresh installs to localhost:18080), the prod-deploy
+  README, and the per-deployment release checklist in deploy-nuances.md.
+  0.5.42 artifacts were re-published to both deployments with the URL baked
+  (dev → guild.example.com, prod → guild.example.org); sessions used for
+  the publish API were throwaway Postgres rows, deleted after.
+
 - **The member socket goes quiet mid-turn; the read-mark rides the duplex (2026-10-14).**
   Two streaming-path corrections. *Views publish only at turn boundaries now*: the
   bridge no longer dirties the feed on streamed deltas (`message_start` partial /
@@ -165,7 +332,7 @@ not kept here — it lives in git and in `docs/reviews/`.
   protocol, guild-core, app-server, codex-execpolicy(+utils), desktop
   Tauri.
 
-## Latest decisions- **Sidebar icon rail — chats and project chats separated.** The chat
+- **Sidebar icon rail — chats and project chats separated.** The chat
   sidebar grew a ChatGPT-desktop-style narrow icon rail (desktop only,
   always visible even when the panel is collapsed) with three tabs:
   Chats (workspace switcher, New chat, Recents, Archived), Work (projects

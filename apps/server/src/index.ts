@@ -11,9 +11,18 @@ async function main(): Promise<void> {
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
       app.log.info({ signal }, "shutting down");
-      app.close().catch((err) => {
-        app.log.error(err, "error during shutdown");
-        process.exit(1);
+      // Drain in-flight turns while the sockets are still alive: the abort
+      // settles runs, flips the generating flag, and delivers the terminal
+      // frames before the listener closes (docker stop gives ~10s).
+      const drain = app.platform.runtime.drainChats().catch((err) => {
+        app.log.error(err, "chat drain failed");
+      });
+      const grace = new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref());
+      void Promise.race([drain, grace]).then(() => {
+        app.close().catch((err) => {
+          app.log.error(err, "error during shutdown");
+          process.exit(1);
+        });
       });
     });
   }

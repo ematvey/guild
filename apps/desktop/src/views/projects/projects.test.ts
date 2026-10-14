@@ -16,7 +16,6 @@ import {
   filterProjects,
   linuxJoin,
   outgoingProjectId,
-  pickAfterChatSwitch,
   pickerFor,
   pickerReducer,
   projectChipLabel,
@@ -102,27 +101,6 @@ describe("outgoingProjectId (request-wins only for an in-session pick)", () => {
     // fetched) must never ride on the request.
     expect(outgoingProjectId(null)).toBeNull();
     expect(outgoingProjectId(undefined)).toBeNull();
-  });
-});
-
-describe("pickAfterChatSwitch (per-chat pick with a carried-in exception)", () => {
-  const pick = { id: "p1", name: "web" };
-
-  it("keeps a pick carried in for the scratch view (the project row's +)", () => {
-    // Regression: the switch from an open chat to the scratch view used to
-    // wipe the "+" pre-pick, so the first send created the chat projectless;
-    // only a second "+" click (chatId already null, no reset) stuck.
-    expect(pickAfterChatSwitch(null, pick)).toBe(pick);
-  });
-
-  it("drops a pending pick when entering an existing chat", () => {
-    // The binding cannot change after the chat started.
-    expect(pickAfterChatSwitch("c1", pick)).toBeNull();
-  });
-
-  it("drops everything when the switch carries no pick", () => {
-    expect(pickAfterChatSwitch(null, null)).toBeNull();
-    expect(pickAfterChatSwitch("c1", null)).toBeNull();
   });
 });
 

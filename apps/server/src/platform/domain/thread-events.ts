@@ -80,7 +80,8 @@ export type ThreadEvent =
       approved: boolean;
       reason?: string;
       expired: boolean;
-    };
+    }
+  | { type: "turn_error"; message: string };
 
 /** One persisted thread event as the store returns it. */
 export interface ThreadEventRow {
@@ -169,6 +170,10 @@ export function approvalDecisionEvent(
   return ev;
 }
 
+export function turnErrorEvent(message: string): ThreadEvent {
+  return { type: "turn_error", message };
+}
+
 // ---------------------------------------------------------------------------
 // Wire rendering (byte-compat with the Rust serde_json output)
 // ---------------------------------------------------------------------------
@@ -230,6 +235,8 @@ export function threadEventWire(event: ThreadEvent): string {
         reason: event.reason,
         expired: event.expired ?? false,
       });
+    case "turn_error":
+      return obj({ type: "turn_error", message: event.message });
     default:
       throw new Error(`unknown thread event type ${(event as { type?: string }).type}`);
   }
@@ -350,6 +357,8 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
         ...(payload["reason"] === undefined ? {} : { reason: String(payload["reason"]) }),
         expired: Boolean(payload["expired"] ?? false),
       };
+    case "turn_error":
+      return { type: "turn_error", message: String(payload["message"] ?? "") };
     default:
       return undefined;
   }

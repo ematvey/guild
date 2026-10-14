@@ -78,10 +78,74 @@ services:
     extra_hosts:
       # reach the host-published shared services (postgres/clickhouse/rustfs)
       - "host.docker.internal:host-gateway"
+    environment:
+      # Server-side tools run in gVisor sandboxes via the runner below
+      # (GUILD_SANDBOX_RUNNER_TOKEN is shared through config.env).
+      GUILD_SANDBOX_RUNNER_URL: http://sandbox-runner:8090
     volumes:
       # GUILD_DATA_DIR: the server-side workspace sessions root
-      # (workspaces/<org>/<name>).
+      # (workspaces/<org>/<name>) and plain-chat sandboxes (chats/<org>/<id>).
       - guild_data:/data
+
+  sandbox-runner:
+    # The only process holding the Docker socket: creates one gVisor
+    # sandbox per workspace (runsc runtime, internal network, the workspace
+    # subpath of guild_data mounted at /workspace) and bridges the server's
+    # RPC connections to the agent inside. Never published. Same image as
+    # the server, run as root for the socket. Discovers its compose project
+    # from its own labels (volume <project>_guild_data, network
+    # <project>_sandbox). Plan: docs/plans/2026-10-14-sandbox-runner-gvisor.md.
+    image: ${GUILD_TS_SERVER_IMAGE:-guild-server-ts:latest}
+    restart: unless-stopped
+    user: "0:0"
+    command: ["node", "dist/sandbox/runner/main.js"]
+    env_file: config.env
+    environment:
+      GUILD_SANDBOX_IMAGE: ${GUILD_SANDBOX_IMAGE:-guild-sandbox:latest}
+      # By address: Docker's embedded DNS does not work under gVisor, and
+      # proxied clients never need DNS themselves (CONNECT carries the name).
+      GUILD_SANDBOX_PROXY_URL: http://${GUILD_SANDBOX_EGRESS_IP:-10.213.0.2}:3128
+    depends_on:
+      - sandbox-image
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Subpath dirs are created and handed to the sandbox uid here.
+      - guild_data:/data
+
+  sandbox-image:
+    # Build-only: `docker compose up --build` builds the sandbox image the
+    # runner creates sandboxes from; the container itself exits at once.
+    image: ${GUILD_SANDBOX_IMAGE:-guild-sandbox:latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile.sandbox
+    entrypoint: ["true"]
+    restart: "no"
+
+  egress:
+    # The sandboxes' only way out: squid with a registry allowlist
+    # (../sandbox/egress/allowed-domains.txt) and a deny for private and
+    # host addresses after DNS resolution.
+    image: ${GUILD_SANDBOX_EGRESS_IMAGE:-guild-sandbox-egress:latest}
+    build:
+      context: ../sandbox/egress
+    restart: unless-stopped
+    volumes:
+      - ../sandbox/egress/allowed-domains.txt:/etc/squid/allowed-domains.txt:ro
+    networks:
+      default: {}
+      sandbox:
+        ipv4_address: ${GUILD_SANDBOX_EGRESS_IP:-10.213.0.2}
+
+networks:
+  # Sandboxes join only this network: no gateway, so no internet, host, or
+  # compose service is reachable except the egress proxy.
+  sandbox:
+    internal: true
+    # Explicit subnet (hosts with many compose projects exhaust Docker's
+    # default pools); stacks sharing a host each pick their own.
+    ipam:
+      config: [{ subnet: "${GUILD_SANDBOX_SUBNET:-10.213.0.0/24}" }]
 
 volumes:
   pgdata:

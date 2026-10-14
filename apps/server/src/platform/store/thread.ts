@@ -36,7 +36,11 @@ export class ThreadStore {
    *  `guild_thread_committed` in the same transaction (the member-socket
    *  sync channel; the M5 lane's listener consumes it). */
   async appendEvent(chatId: string, event: ThreadEvent, id?: string): Promise<ThreadEventRow> {
-    const payload = JSON.stringify(event);
+    // Postgres jsonb cannot hold U+0000 (tool output can: binary files,
+    // /proc/*/environ); every NUL becomes U+FFFD.
+    const payload = JSON.stringify(event, (_key, value: unknown) =>
+      typeof value === "string" && value.includes("\u0000") ? value.replaceAll("\u0000", "\ufffd") : value,
+    );
     const eventType = event.type;
     const eventId = id ?? uuidv7();
     const client = await this.pool.connect();

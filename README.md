@@ -87,8 +87,10 @@ curl -X POST localhost:8080/openai/v1/chat/completions \
 ## Server-side workspace sessions (execution backend, M6)
 
 The server can run the agent loop against a per-org workspace directory
-(`$GUILD_DATA_DIR/workspaces/<org>/<name>`), with file/git tools enabled and
-`run_command` disabled unless `GUILD_ALLOW_SHELL_TOOLS=1`:
+(`$GUILD_DATA_DIR/workspaces/<org>/<name>`). Its tools run in that
+workspace's gVisor sandbox (the `sandbox-runner` compose service; see
+`docs/deploy-nuances.md` §4a); shell tools are on with a runner unless
+`GUILD_ALLOW_SHELL_TOOLS=0`, and still pass the exec-policy gate:
 
 ```bash
 curl -X POST localhost:8080/api/v1/agents/sessions -H "authorization: Bearer $TOKEN" \

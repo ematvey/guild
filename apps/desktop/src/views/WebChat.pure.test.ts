@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   artifactCardOf,
   busyAfterThreadPush,
+  sendButtonState,
   chatRoutePath,
   compareVersions,
   eventsToBlocks,
@@ -38,18 +39,20 @@ const usage = { tokens_in: 0, tokens_out: 0, cost_usd: 0 };
 describe("parseChatRoute / chatRoutePath", () => {
   const roundTrip = (path: string) => {
     const r = parseChatRoute(path);
-    return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills, r.tab, r.settingsSection, r.settingsDetail);
+    return chatRoutePath(r.chatId, r.projectId, r.overlay, r.skills, r.tab, r.settingsSection, r.settingsDetail, r.newChat);
   };
 
   it("round-trips every route shape", () => {
     for (const path of [
       "/chats",
-      "/chats",
+      "/chats/new",
       "/work",
+      "/work/new",
       "/thread/abc-123",
       "/thread/abc-123/device",
       "/work/device",
       "/project/p1",
+      "/project/p1/new",
       "/project/p1/thread/abc-123",
       "/chats/device",
       "/work/device",
@@ -70,16 +73,26 @@ describe("parseChatRoute / chatRoutePath", () => {
   });
 
   it("parses the rail tabs' own addresses", () => {
-    // each panel tab owns a top-level URL; a tab root is a fresh chat
-    expect(parseChatRoute("/chats")).toMatchObject({ chatId: null, tab: "chats" });
-    expect(parseChatRoute("/work")).toMatchObject({ chatId: null, tab: "work" });
+    // each panel tab owns a top-level URL; a tab root is no chat open, and
+    // /new is the addressed scratch composer
+    expect(parseChatRoute("/chats")).toMatchObject({ chatId: null, tab: "chats", newChat: false });
+    expect(parseChatRoute("/work")).toMatchObject({ chatId: null, tab: "work", newChat: false });
+    expect(parseChatRoute("/chats/new")).toMatchObject({ chatId: null, tab: "chats", newChat: true });
+    expect(parseChatRoute("/work/new")).toMatchObject({ chatId: null, tab: "work", newChat: true });
     expect(parseChatRoute("/settings")).toMatchObject({
       chatId: null,
       overlay: null,
       tab: "settings",
     });
-    // a project filter implies the Work tab
-    expect(parseChatRoute("/project/p1")).toMatchObject({ projectId: "p1", tab: "work" });
+    // a project filter implies the Work tab; /new on it is the project's
+    // scratch composer with the pick implied by the URL
+    expect(parseChatRoute("/project/p1")).toMatchObject({ projectId: "p1", tab: "work", newChat: false });
+    expect(parseChatRoute("/project/p1/new")).toMatchObject({
+      chatId: null,
+      projectId: "p1",
+      tab: "work",
+      newChat: true,
+    });
     // a sectioned settings URL deep-links the tab's section
     expect(parseChatRoute("/settings/models")).toMatchObject({
       tab: "settings",
@@ -143,6 +156,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      newChat: false,
     });
     expect(parseChatRoute("/thread/x/device")).toEqual({
       chatId: "x",
@@ -152,6 +166,38 @@ describe("parseChatRoute / chatRoutePath", () => {
       settingsDetail: null,
       overlay: { kind: "device" },
       skills: null,
+      newChat: false,
+    });
+    // /help deep links alias the onboarding guide (the guide IS the help
+    // page); chatRoutePath never emits /help.
+    expect(parseChatRoute("/thread/x/help")).toMatchObject({
+      chatId: null,
+      overlay: { kind: "onboard" },
+    });
+    expect(parseChatRoute("/help")).toEqual({
+      chatId: null,
+      projectId: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+      overlay: { kind: "onboard" },
+      skills: null,
+      newChat: false,
+    });
+    // onboarding: chat-independent top-level surface, prefixes drop
+    expect(parseChatRoute("/onboard")).toEqual({
+      chatId: null,
+      projectId: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+      overlay: { kind: "onboard" },
+      skills: null,
+      newChat: false,
+    });
+    expect(parseChatRoute("/project/p1/thread/c1/onboard")).toMatchObject({
+      chatId: null,
+      overlay: { kind: "onboard" },
     });
     expect(parseChatRoute("/settings/integrations/a/b")).toEqual({
       chatId: null,
@@ -161,6 +207,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       skills: null,
       settingsSection: "integrations",
       settingsDetail: "a/b",
+      newChat: false,
     });
     // trailing slashes and empty segments are ignored
     expect(parseChatRoute("/thread/x/")).toEqual({
@@ -171,6 +218,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      newChat: false,
     });
     expect(parseChatRoute("")).toEqual({
       chatId: null,
@@ -180,6 +228,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      newChat: false,
     });
     // a detail carrying an encoded slash parses to the full id and the
     // rebuilt path is parse-stable from there on
@@ -192,6 +241,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       deep.tab,
       deep.settingsSection,
       deep.settingsDetail,
+      deep.newChat,
     );
     expect(parseChatRoute(once).settingsSection).toBe("integrations");
     expect(parseChatRoute(once).settingsDetail).toBe("my/slug");
@@ -206,6 +256,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "work",
       settingsSection: null,
       settingsDetail: null,
+      newChat: false,
     });
     expect(parseChatRoute("/project/p1/thread/c1")).toEqual({
       chatId: "c1",
@@ -215,6 +266,7 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "work",
       settingsSection: null,
       settingsDetail: null,
+      newChat: false,
     });
     // a bare /thread/<id> has no project filter (deep link)
     expect(parseChatRoute("/thread/c1").projectId).toBeNull();
@@ -227,7 +279,33 @@ describe("parseChatRoute / chatRoutePath", () => {
       tab: "chats",
       settingsSection: null,
       settingsDetail: null,
+      newChat: false,
     });
+  });
+
+  it("addresses the scratch composer per surface", () => {
+    // The new-chat composer is a route like any other: back/forward steps
+    // between it and open threads, a reload restores it, and the
+    // project-bound form carries the pick in the URL.
+    expect(chatRoutePath(null, null, null, null, "chats", null, null, true)).toBe("/chats/new");
+    expect(chatRoutePath(null, null, null, null, "work", null, null, true)).toBe("/work/new");
+    expect(chatRoutePath(null, "p1", null, null, "work", null, null, true)).toBe("/project/p1/new");
+    // the segment never survives a chat or overlay (chatless surfaces only)
+    expect(chatRoutePath("c1", null, null, null, "chats", null, null, true)).toBe("/thread/c1");
+    expect(chatRoutePath(null, null, { kind: "device" }, null, "chats", null, null, true)).toBe("/chats/device");
+    // onboarding: always bare /onboard, whatever it rides on; no /help
+    // emission — help deep links parse onto /onboard
+    expect(chatRoutePath("c1", "p1", { kind: "onboard" })).toBe("/onboard");
+    expect(parseChatRoute(chatRoutePath("c1", "p1", { kind: "onboard" }))).toMatchObject({
+      overlay: { kind: "onboard" },
+    });
+    // and never rides on the Settings tab
+    expect(chatRoutePath(null, null, null, null, "settings", "models", null, true)).toBe("/settings/models");
+    expect(parseChatRoute("/chats/new")).toMatchObject({ newChat: true, chatId: null });
+    // a thread address never parses as a scratch composer
+    expect(parseChatRoute("/thread/x").newChat).toBe(false);
+    // an open thread inside a project keeps the filter, drops the segment
+    expect(parseChatRoute("/project/p1/thread/c1").newChat).toBe(false);
   });
 });
 
@@ -565,6 +643,35 @@ describe("busyAfterThreadPush (a list push cannot un-busy an in-flight send)", (
     expect(busyAfterThreadPush([row(true)], "chat-1", false)).toBe(true);
     expect(busyAfterThreadPush([row(false)], "chat-1", false)).toBe(false);
     expect(busyAfterThreadPush([row(false)], null, false)).toBe(false);
+  });
+
+  it("never busies the new-chat composer off an in-flight first send", () => {
+    // The first send's pending state is the dedicated pending-submit
+    // spinner; busy here feeds stopMode, and a Stop button for a turn that
+    // does not exist yet is a lie. A list push during creation must not
+    // busy the scratch composer.
+    expect(busyAfterThreadPush([row(false)], null, true)).toBe(false);
+    expect(busyAfterThreadPush([], null, true)).toBe(false);
+  });
+});
+
+describe("sendButtonState (pending submit holds the button until the turn exists)", () => {
+  const base = { hasContent: true, hasModel: true, generating: false, stopping: false, submitting: false };
+
+  it("send when idle with content, disabled without", () => {
+    expect(sendButtonState(base)).toBe("send");
+    expect(sendButtonState({ ...base, hasContent: false })).toBe("send");
+  });
+
+  it("a first-send submit in flight shows the spinner, not Stop", () => {
+    // Regression: the optimistic busy fed stopMode and offered Stop for a
+    // turn that had not started — the chat does not even exist yet.
+    expect(sendButtonState({ ...base, hasContent: false, submitting: true })).toBe("pending");
+  });
+
+  it("an existing turn outranks the pending submit; the stop click refines Stop", () => {
+    expect(sendButtonState({ ...base, hasContent: false, generating: true, submitting: true })).toBe("stop");
+    expect(sendButtonState({ ...base, hasContent: false, generating: true, stopping: true })).toBe("stopping");
   });
 });
 

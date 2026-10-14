@@ -622,6 +622,10 @@ pub enum ThreadEvent {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         expired: bool,
     },
+    /// The turn's generation failed (model unreachable, route gone). The
+    /// thread shows it as a terminal error card; excluded from model-facing
+    /// history derivation.
+    TurnError { message: String },
 }
 
 /// The fixed set of machine tools executed by the attached client. This is
