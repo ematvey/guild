@@ -132,6 +132,41 @@ describe("bridge generation stream", () => {
     expect(deps.rows.map((r) => r.event.type)).toEqual(["tool_result", "assistant_message"]);
   });
 
+  it("coalesces trailing reasoning: thinking after text started is buffered, not streamed", async () => {
+    // Local vLLM emits a reasoning delta after the answer has begun; the
+    // live stream must keep the thought block open (the tail joins the
+    // durable reasoning block at the turn boundary instead of splitting
+    // the answer into [thinking][text][thinking][text]).
+    const deps = fakeDeps([{ id: "cmd-3", position: 1 }]);
+    const bridge = new ChatBridge(deps);
+    const out = sink();
+    bridge.setStream(out);
+    bridge.bind("conv-1", "chat-1", "org-1");
+
+    await bridge.handle("conv-1", [{ type: "run_start", inputs: [1n] } as never]);
+    await bridge.handle("conv-1", [
+      {
+        type: "message_update",
+        usage: {},
+        changes: [
+          { type: "thinking_delta", contentIndex: 0, delta: "long thought" },
+          { type: "text_delta", contentIndex: 1, delta: "answer start" },
+          { type: "thinking_delta", contentIndex: 0, delta: " trailing tail" },
+          { type: "text_delta", contentIndex: 1, delta: " rest" },
+        ],
+      } as never,
+    ]);
+
+    const events = out.record.events.map(([, e]) => e);
+    expect(events).toEqual([
+      { type: "thinking_delta", content: "long thought" },
+      { type: "delta", content: "answer start" },
+      { type: "delta", content: " rest" },
+    ]);
+    // The tail still lands in the view poll's thinking buffer.
+    expect(bridge.state("conv-1").buffers.thinking).toBe("long thought trailing tail");
+  });
+
   it("a run failure sends Error; a stop sends the zero-usage Done with the last event id", async () => {
     const deps = fakeDeps([{ id: "cmd-2", position: 1 }]);
     const bridge = new ChatBridge(deps);
