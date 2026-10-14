@@ -107,7 +107,7 @@ export default function GeneralSection() {
         <div className="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
           {org?.logo_url ? (
             <img
-              src={`${org.logo_url}?v=${logoTick}`}
+              src={`${apiUrl(org.logo_url)}?v=${logoTick}`}
               alt="Workspace logo"
               className="size-full object-contain"
             />
