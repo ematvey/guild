@@ -10,6 +10,8 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, File, Folder, Info, Lock } from "lucide-react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { Badge } from "@guild/ui/components/badge";
 import { Avatar } from "@guild/ui/components/avatar";
@@ -30,6 +32,15 @@ import {
   type SkillMe,
   type SkillSourceFile,
 } from "./skills-api";
+import { MD_CLASS, MD_TABLE_CLASS, mdComponents } from "../markdown";
+
+/** SKILL.md body without the leading YAML frontmatter block: the detail
+ * page header already shows name/description, so the preview starts at
+ * the markdown content. Files without frontmatter return unchanged. */
+export function skillMdPreviewBody(skillMd: string): string {
+  const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(skillMd);
+  return match === null ? skillMd : skillMd.slice(match[0].length);
+}
 
 /** True when the viewer's install sits behind the latest version. */
 export function updateAvailable(detail: SkillDetailData): boolean {
@@ -290,6 +301,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
     files: SkillSourceFile[];
   } | null>(null);
   const [selectedFile, setSelectedFile] = useState("SKILL.md");
+  const [rawSkillMd, setRawSkillMd] = useState(false);
   const [busy, setBusy] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
   const [forkSlug, setForkSlug] = useState(`${slug}-fork`);
@@ -421,6 +433,12 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
       <p className="p-10 text-center text-[13px] text-muted-foreground">
         Content not inlined in the bundle manifest.
       </p>
+    ) : currentPath === "SKILL.md" && !rawSkillMd ? (
+      <div className={`px-4 py-3 text-[13.5px] leading-[1.6] text-foreground ${MD_CLASS} ${MD_TABLE_CLASS}`}>
+        <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+          {skillMdPreviewBody(source.skill_md)}
+        </Markdown>
+      </div>
     ) : (
       <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-[12.3px] leading-[1.55] text-foreground">
         {source.skill_md}
@@ -431,6 +449,15 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card px-3.5 py-2 text-xs font-medium text-muted-foreground">
         <span className="truncate">{currentPath}</span>
         <span className="flex-1" />
+        {currentPath === "SKILL.md" && (
+          <button
+            type="button"
+            onClick={() => setRawSkillMd((v) => !v)}
+            className="shrink-0 rounded px-1.5 py-0.5 text-xs outline-none hover:bg-accent"
+          >
+            {rawSkillMd ? "Preview" : "Raw"}
+          </button>
+        )}
         <span className="shrink-0 tabular-nums">{viewerMeta}</span>
       </div>
       {viewerBody}
