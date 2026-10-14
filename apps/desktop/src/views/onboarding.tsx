@@ -5,7 +5,7 @@
 // section completes the server-side onboarding flag.
 
 import { useState } from "react";
-import { Bot, FolderKanban, KeyRound, MonitorSmartphone, MessagesSquare } from "lucide-react";
+import { Bot, FolderKanban, KeyRound, MonitorSmartphone, MessagesSquare, Package } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import {
   Dialog,
@@ -89,13 +89,56 @@ function ChatSection() {
         do things for you, not just talk.
       </p>
       <p>
-        When it needs to do something important, Guild asks you first. You
-        decide how much it may do on its own in <b>Settings → Approvals</b>.
+        When it needs to do something important — edit files, run commands —
+        Guild checks with you first. How much it may do on its own is set per
+        chat, right next to the message box (the small shield button):
+      </p>
+      <Step n={1}>
+        <b>Ask for approval</b> — Guild asks you before anything potentially
+        unsafe. Safest choice.
+      </Step>
+      <Step n={2}>
+        <b>Approve for me</b> — a separate AI checks each action for you and
+        only stops the risky ones.
+      </Step>
+      <Step n={3}>
+        <b>Full access</b> — the assistant acts on its own, within your
+        organization's rules.
+      </Step>
+      <p>
+        The setting applies to that chat only. Your overall default lives in{" "}
+        <b>Settings → Approvals</b>.
       </p>
       <p>
-        Two handy extras: type <code>/</code> in the message box to use a{" "}
-        <b>skill</b> (a ready-made recipe the assistant follows), and use the
-        paperclip to attach files.
+        Two handy extras: type <code>/</code> in the message box for{" "}
+        <b>skills</b> and built-in <b>commands</b> (see the Skills topic), and
+        use the paperclip to attach files.
+      </p>
+    </div>
+  );
+}
+
+function SkillsSection() {
+  return (
+    <div className="space-y-2 text-sm text-muted-foreground">
+      <p>
+        A skill is a ready-made recipe the assistant follows — for a report
+        format, a coding task, any routine you repeat. Instead of explaining
+        it every time, you type <code>/</code> in the message box and pick
+        the skill.
+      </p>
+      <Step n={1}>
+        Click <b>Skills</b> in the left bar. The <b>Catalog</b> tab lists
+        skills shared across your organization — open one to see what it
+        does, then install it for your own chats.
+      </Step>
+      <Step n={2}>
+        Use <code>/</code> in any chat to run an installed skill.
+      </Step>
+      <p>
+        On the desktop app you can also write your own skills (the{" "}
+        <b>On this machine</b> tab) and publish them to the Catalog for
+        everyone.
       </p>
     </div>
   );
@@ -117,6 +160,11 @@ function ProjectsSection() {
         Start chats inside the project — they automatically work with that
         folder, so you never have to explain where things are.
       </Step>
+      <p>
+        Project chats work like any other chat — including the approval
+        setting next to the message box, explained in the <b>Chatting</b>
+        topic.
+      </p>
     </div>
   );
 }
@@ -139,9 +187,9 @@ const SECTIONS: {
         </p>
         <p>
           You're already set up to chat. Pick any topic on the right to learn
-          the things people add later: an app for their own computer, a way to
-          connect their other tools, and projects to keep work organized. You
-          can skip all of it.
+          the things people add later: an app for their own computer, a way
+          to connect their other tools, ready-made skills, and projects to
+          keep work organized. You can skip all of it.
         </p>
       </div>
     ),
@@ -149,6 +197,7 @@ const SECTIONS: {
   { id: "desktop", label: "Desktop app", icon: MonitorSmartphone, body: () => <DesktopSection /> },
   { id: "gateway", label: "Connect other tools", icon: KeyRound, body: () => <GatewaySection /> },
   { id: "chat", label: "Chatting", icon: MessagesSquare, body: () => <ChatSection /> },
+  { id: "skills", label: "Skills", icon: Package, body: () => <SkillsSection /> },
   { id: "projects", label: "Projects", icon: FolderKanban, body: () => <ProjectsSection /> },
 ];
 

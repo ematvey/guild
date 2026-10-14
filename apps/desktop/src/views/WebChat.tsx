@@ -3291,7 +3291,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 }
               }}
               rows={1}
-              placeholder={models === null || model ? "Message Guild…" : "No model available"}
+              placeholder={
+                models === null || model
+                  ? "Type / for skills and commands"
+                  : "No model available"
+              }
               data-scrollable
               // Not disabled while streaming: a disabled focused element
               // blurs to body, and the composer must keep focus/caret
