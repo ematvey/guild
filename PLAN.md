@@ -11,6 +11,73 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **GET /api/v1/chats is hub-coupled (2026-10-14).** The M3-era
+  `machine_online = false` hardcode in `chatWire` survived the M5 hub
+  cutover: the HTTP thread list (and the single-chat CRUD responses) always
+  reported the bound machine offline while the ws push
+  (threadListSnapshot) and GET /api/v1/machines told the truth. The
+  webchat's offline banner keys off the HTTP row, the sidebar pin off the
+  machines list — an always-online machine never triggers a
+  presence-change push, so the banner stayed "X is offline" under a green
+  pin indefinitely. The HTTP surfaces now compute the flag via
+  `machineOnlineOf` (the same hub truth); regression test in
+  ws-feed.test.ts pins HTTP/push/machines parity.
+- **Trailing reasoning no longer splits the live answer (2026-10-14).**
+  Backends that emit a reasoning delta after the answer began (local vLLM,
+  DeepSeek-class models) streamed as [thinking][text][thinking][text] — the
+  live frames relay arrival order while the durable assistant message
+  flattens into one reasoning + one text block, so the live view and the
+  replay disagreed mid-sentence. Same root cause as paseo#2803 and
+  svkozak/pi-acp#96. Fix in the bridge (one producer of live frames): once
+  answer text streams for the current assistant message, thinking deltas
+  stop being emitted live and only accumulate into the view buffer — the
+  tail joins the reasoning block at the turn-boundary restamp, matching the
+  durable form with no added latency.
+- **Silent turn deaths now surface + shutdown drains (2026-10-14).** A turn
+  whose generation task fails (model unreachable, deploy restart mid-turn)
+  used to vanish: the failure rode only a live error frame — no persisted
+  event, so a reload or lost socket left the thread with no answer and no
+  error. Now the bridge persists a `turn_error` thread event on
+  `task_failed` (new ThreadEvent variant, protocol + bindings + reducer;
+  renders as the existing destructive error card, "Turn failed: …"), and
+  SIGTERM drains first: `runtime.drainChats()` aborts every generating chat
+  while sockets are alive (tasks settle, generating flips, terminal frames
+  reach clients) before the listener closes, with a 5s grace before
+  `app.close()`. Found via the 01a13a57 thread: approvals ran, tools
+  executed, then the model calls died with instant loopback connection
+  errors during a concurrent deploy churn.
+
+- **First send: hold the screen, land straight on working (2026-10-14).**
+  Refines the pending-submit design above after a new screencast: the two
+  intermediate states (emptied composer on the scratch surface, then the
+  thread skeleton) are gone. The scratch composer now HOLDS during the
+  create — sent text stays visible, input is blocked (`readOnly`, keeps
+  focus), the send button shows the pending spinner — and the detach only
+  clears the persisted draft, not the visible composer. When createChat
+  responds, `created()` seeds the created chat's reducer view with the
+  optimistic send and carries busy across the route push
+  (`justCreatedBusyRef`: the chatId effect skips its busy reset once), so
+  navigation lands directly on the working thread — user message plus
+  WorkingIndicator — and the first server thread state takes over from
+  there. A failed create/submit still falls into the retry card with the
+  text already in the composer.
+
+- **One onboarding guide over the running UI (2026-10-14).** The separate
+  help popup is gone — the rail's Help/Learn button opens the onboarding
+  guide itself: a big dialog floating over the live app (not a blank
+  full-screen takeover), selected topic on the left, switchable section list
+  on the right (Welcome, Desktop app, Connect other tools, Chatting,
+  Projects). One address, `/onboard`, chat-independent top-level; /help deep
+  links parse onto it and chatRoutePath never emits /help. Auto-push for
+  not-yet-onboarded users stays (`users.onboarded_at`, migration 0069;
+  `onboarded` in login/me; `PUT /api/v1/me/onboarded` marks it — the guide
+  owns the URL on reload). Closing from any section (Got it / skip / Esc /
+  ✕) marks the flag and navigates to /chats — /onboard itself always renders
+  the guide. The desktop/gateway section buttons still jump to the device
+  dialog / /settings/gateway after marking the flag. Desktop skips the
+  auto-show (its own pair/sign-in flow) but /onboard works there too. Copy:
+  plain-language, non-technical — "Guild is your private AI workspace".
+
 - **First send renders no optimistic bubble — pending submit until the chat exists (2026-10-14).**
   The scratch-view optimistic send (bubble in the LOOSE view, adopted by the
   created chat via `skipLoadRef`) is gone: a first send now clears the

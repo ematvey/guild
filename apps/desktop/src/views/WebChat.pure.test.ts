@@ -168,6 +168,37 @@ describe("parseChatRoute / chatRoutePath", () => {
       skills: null,
       newChat: false,
     });
+    // /help deep links alias the onboarding guide (the guide IS the help
+    // page); chatRoutePath never emits /help.
+    expect(parseChatRoute("/thread/x/help")).toMatchObject({
+      chatId: null,
+      overlay: { kind: "onboard" },
+    });
+    expect(parseChatRoute("/help")).toEqual({
+      chatId: null,
+      projectId: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+      overlay: { kind: "onboard" },
+      skills: null,
+      newChat: false,
+    });
+    // onboarding: chat-independent top-level surface, prefixes drop
+    expect(parseChatRoute("/onboard")).toEqual({
+      chatId: null,
+      projectId: null,
+      tab: "chats",
+      settingsSection: null,
+      settingsDetail: null,
+      overlay: { kind: "onboard" },
+      skills: null,
+      newChat: false,
+    });
+    expect(parseChatRoute("/project/p1/thread/c1/onboard")).toMatchObject({
+      chatId: null,
+      overlay: { kind: "onboard" },
+    });
     expect(parseChatRoute("/settings/integrations/a/b")).toEqual({
       chatId: null,
       projectId: null,
@@ -262,6 +293,12 @@ describe("parseChatRoute / chatRoutePath", () => {
     // the segment never survives a chat or overlay (chatless surfaces only)
     expect(chatRoutePath("c1", null, null, null, "chats", null, null, true)).toBe("/thread/c1");
     expect(chatRoutePath(null, null, { kind: "device" }, null, "chats", null, null, true)).toBe("/chats/device");
+    // onboarding: always bare /onboard, whatever it rides on; no /help
+    // emission — help deep links parse onto /onboard
+    expect(chatRoutePath("c1", "p1", { kind: "onboard" })).toBe("/onboard");
+    expect(parseChatRoute(chatRoutePath("c1", "p1", { kind: "onboard" }))).toMatchObject({
+      overlay: { kind: "onboard" },
+    });
     // and never rides on the Settings tab
     expect(chatRoutePath(null, null, null, null, "settings", "models", null, true)).toBe("/settings/models");
     expect(parseChatRoute("/chats/new")).toMatchObject({ newChat: true, chatId: null });
