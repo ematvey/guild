@@ -11,7 +11,7 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
-- **Skills: uninstall deletes the pin; machines pull their sync at connect (0.5.42-ish, 2026-10-14).**
+- **Skills: uninstall deletes the pin; machines pull their sync at connect (0.5.42, 2026-10-14).**
   Two gaps in the org-skills loop closed. *Uninstall*: the Skills panel's org-installs
   rows gain an Uninstall button, and the local-machine rows' existing Uninstall now goes
   server-first (`DELETE /api/v1/skills/:slug/install`) — the old desktop path deleted only
