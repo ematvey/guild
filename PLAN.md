@@ -11,6 +11,20 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Prod releases move to a branch flow (2026-10-14).** A `prod` branch now
+  tracks the deployed release: each release is a `--no-ff` merge of develop
+  into prod (release commit: `daff203`, 0.5.42), `~/guild-live` deploys from
+  it (detached HEAD at the merge commit — the branch name is taken by the
+  main checkout), and the merge is also merged back into develop so the
+  branches never diverge. The first merge surfaced real master-side fixes
+  develop had lost: `release-clients.sh` requires `VITE_DEFAULT_SERVER_URL`
+  (the deployment's public URL bakes into the client bundle — releases built
+  without it default fresh installs to localhost:18080), the prod-deploy
+  README, and the per-deployment release checklist in deploy-nuances.md.
+  0.5.42 artifacts were re-published to both deployments with the URL baked
+  (dev → guild.example.com, prod → guild.example.org); sessions used for
+  the publish API were throwaway Postgres rows, deleted after.
+
 - **Skills: uninstall deletes the pin; machines pull their sync at connect (0.5.42, 2026-10-14).**
   Two gaps in the org-skills loop closed. *Uninstall*: the Skills panel's org-installs
   rows gain an Uninstall button, and the local-machine rows' existing Uninstall now goes
