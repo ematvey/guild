@@ -11,6 +11,15 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Release 0.5.44 (2026-10-14).** First release through the reconciled
+  flow: develop → master `--no-ff` (f347971) carried the sandbox-runner
+  (gVisor), URL-driven navigation, the onboarding guide, webchat
+  first-send/coalescing/turn_error fixes, JetBrains Mono, and the skills
+  markdown viewer; version bumped everywhere to 0.5.44
+  (`scripts/bump-version.sh`), client artifacts published to both
+  deployments with their URLs baked (dev → guild.example.com :18080, prod →
+  guild.example.org :18081), servers rebuilt on both stacks.
+
 - **Branch reconciliation: master merged into develop, develop merged back (2026-10-14).**
   The 0.5.43 hotfixes went master → cherry-pick → develop, leaving the branches
   forked at different SHAs. Resolved by merging master into develop (PLAN.md got
