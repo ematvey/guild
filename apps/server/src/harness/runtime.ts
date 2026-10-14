@@ -228,7 +228,10 @@ export class GuildRuntime {
     this.guildExtension = createGuildExtension(this.extensionDeps());
     this.registry.install(this.guildExtension);
     this.registry.install(CodingTools);
-    this.codemodeExtension = createCodemodeExtension({ sandbox: this.codemodeSandbox });
+    // models: false — guild's gateway carries only chat models, so the
+    // scripts' `models.classify`/`generateImages` surface would be a dead
+    // end and its description dead prompt weight.
+    this.codemodeExtension = createCodemodeExtension({ sandbox: this.codemodeSandbox, models: false });
     this.registry.install(this.codemodeExtension);
   }
 
