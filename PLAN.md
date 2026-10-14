@@ -169,6 +169,42 @@ not kept here — it lives in git and in `docs/reviews/`.
   (dev → guild.example.com, prod → guild.example.org); sessions used for
   the publish API were throwaway Postgres rows, deleted after.
 
+- **The member socket goes quiet mid-turn; the read-mark rides the duplex (2026-10-14).**
+  Two streaming-path corrections. *Views publish only at turn boundaries now*: the
+  bridge no longer dirties the feed on streamed deltas (`message_start` partial /
+  `message_update`), and `committed()` skips the view publish while the chat's
+  generation is open — the `generating=false` flip dirties the chat exactly once,
+  and the 100ms poll broadcasts the turn's single final `thread_state`. Each frame
+  carries the full event history, so per-delta publishes re-broadcast the whole
+  thread per chunk (observed live: 165 `/read` POSTs + 1.4 MB transferred over one
+  active turn). The client renders the in-turn stream from the cheap `live_frame`s
+  through the reducer's dormant `applyFrame` (the wire contract "content is
+  sequenced-ThreadState-only" holds — frames render deltas, the turn-end state
+  reconciles). *The read-mark moved onto the socket*: a new client→server
+  `WsClientMsg::Read { chat_id }` (protocol crate + TS parser mirror, bindings
+  regenerated) writes the same `chat_reads` row the REST route did, on the duplex
+  the frames already ride — the fetch-based `markChatRead` is gone, and the client
+  fires it only when the applied view carries events newer than the last marked
+  one (per-frame POSTing would otherwise have continued over the socket). Tests:
+  parser cases (hub) + the duplex write (ws-feed); the pre-existing environmental
+  `app.test` SPA-503 failure is unrelated (fails on a clean tree).
+
+- **Prod cutover complete — the TS server serves :18081 (2026-10-14, 0.5.42).**
+  The `guild-prod` compose project runs `guild-server-ts:prod` (its own tag, set via
+  `GUILD_TS_SERVER_IMAGE` in `deploy/compose/.env`), built from the deliberate
+  develop → master merge. The Rust-era config debris is gone: `config.env` carries
+  `GUILD_INTERNAL_KEY` now; `GUILD_ROLE`/`GUILD_INTERNAL_TOKEN`/`GUILD_RESTATE_*` and
+  `.env`'s `GUILD_SERVER_IMAGE` are deleted. Restate retired with it: container
+  `guild-prod-restate-1` and volume `guild-prod_restate_data` removed. Cutover
+  sequence per `docs/plans/2026-10-04-ts-server-prod-cutover-runbook.md`: pre-backup
+  `~/backups/guild_prod-2026-10-14-1300.sql`; final importer run on the prod DB
+  (`6 chats → 6 conversations, 145 events → 145 entries` — exact match; note the
+  host-run importer needs `host.docker.internal` rewritten to `localhost`, the
+  runbook's literal command fails with ENOTFOUND); `schema_history` was already
+  current (0068), so startup migrations were no-ops. Both machines reconnected
+  (WORKSTATION @ 0.5.42, guild-machine @ 0.5.34 — the latter is due a client update),
+  zero error-level log lines at startup.
+
 - **Skills: uninstall deletes the pin; machines pull their sync at connect (0.5.42, 2026-10-14).**
   Two gaps in the org-skills loop closed. *Uninstall*: the Skills panel's org-installs
   rows gain an Uninstall button, and the local-machine rows' existing Uninstall now goes
@@ -314,13 +350,15 @@ not kept here — it lives in git and in `docs/reviews/`.
   column). Server-only; no client change.
 
 - **Prod is a separate checkout** (`~/guild-prod`, branch master, compose
-  stack on :18081, public at guild.example.org). Deploy to prod by
-  fast-forwarding its master from ~/guild's develop (fetch the local path,
-  merge --ff-only — its docker-compose.yml carries prod-local edits, so
-  never rebase it) and `docker compose build server && up -d` there. First
+  stack on :18081, public at guild.example.org). Deploy to prod by a
+  deliberate merge of develop into its master (a release merge, e.g.
+  "release 0.5.42 — merge develop into prod") — never a blind
+  fast-forward: develop → master crossings are meant to be deliberate,
+  and its docker-compose.yml carries prod-local edits, so never rebase it
+  either. Then `docker compose build server && up -d` there. First
   multi-workspace deploy: 0.5.32 on 2026-09-30. The 0.5.22→0.5.32 jump
   exposed that an untracked migration file breaks the tree — migrations
-  must be committed with their store/mod.rs entries.
+  must be committed with the code that reads them.
 
 - **Multi-workspace auth — the daemon holds N live sessions, one per
   server.** The desktop client can now be signed into two guild servers
@@ -634,13 +672,15 @@ not kept here — it lives in git and in `docs/reviews/`.
   `docs/plans/2026-10-04-ts-server-pi-durable-plan.md`. Work branch:
   `agent-plane` (worktree `~/guild-wt-agent-plane`).
 - **Prod is a separate checkout** (`~/guild-prod`, branch master, compose
-  stack on :18081, public at guild.example.org). Deploy to prod by
-  fast-forwarding its master from ~/guild's develop (fetch the local path,
-  merge --ff-only — its docker-compose.yml carries prod-local edits, so
-  never rebase it) and `docker compose build server && up -d` there. First
+  stack on :18081, public at guild.example.org). Deploy to prod by a
+  deliberate merge of develop into its master (a release merge, e.g.
+  "release 0.5.42 — merge develop into prod") — never a blind
+  fast-forward: develop → master crossings are meant to be deliberate,
+  and its docker-compose.yml carries prod-local edits, so never rebase it
+  either. Then `docker compose build server && up -d` there. First
   multi-workspace deploy: 0.5.32 on 2026-09-30. The 0.5.22→0.5.32 jump
   exposed that an untracked migration file breaks the tree — migrations
-  must be committed with their store/mod.rs entries.
+  must be committed with the code that reads them.
 
 - **Multi-workspace auth — the daemon holds N live sessions, one per
   server.** The desktop client can now be signed into two guild servers
