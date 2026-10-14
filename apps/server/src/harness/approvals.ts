@@ -250,26 +250,37 @@ async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<neve
   await deps.threads.appendEvent(chatId, approvalRequestEvent(call.id, call.name, argsJson, judge), requestId);
 
   const deadline = Date.now() + deps.approvalTimeoutMs;
-  while (true) {
-    const decision = await recordedDecision(deps, chatId, call.id);
-    if (decision !== null) {
-      if (decision.approved) return undefined;
-      return { block: decision.reason ? `denied by user: ${decision.reason}` : "denied by user" };
+  try {
+    while (true) {
+      const decision = await recordedDecision(deps, chatId, call.id);
+      if (decision !== null) {
+        if (decision.approved) return undefined;
+        return { block: decision.reason ? `denied by user: ${decision.reason}` : "denied by user" };
+      }
+      if (Date.now() >= deadline) {
+        // The 5-minute auto-deny (Rust APPROVAL_TIMEOUT): journaled like a
+        // decision, then the denied tool result.
+        const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
+        await deps.threads.appendEvent(
+          chatId,
+          approvalDecisionEvent(call.id, false, "timed out awaiting approval"),
+          decisionId,
+        );
+        return { block: "denied by user: timed out awaiting approval" };
+      }
+      // Stop responsiveness: the stop path aborts the conversation's tasks;
+      // an aborted run cancels this hook's context (the sleep rejects).
+      await runtime.sleep(Date.now() + GATE_POLL_MS, context);
     }
-    if (Date.now() >= deadline) {
-      // The 5-minute auto-deny (Rust APPROVAL_TIMEOUT): journaled like a
-      // decision, then the denied tool result.
-      const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
-      await deps.threads.appendEvent(
-        chatId,
-        approvalDecisionEvent(call.id, false, "timed out awaiting approval"),
-        decisionId,
-      );
-      return { block: "denied by user: timed out awaiting approval" };
-    }
-    // Stop responsiveness: the stop path aborts the conversation's tasks;
-    // an aborted run cancels this hook's context (the sleep rejects).
-    await runtime.sleep(Date.now() + GATE_POLL_MS, context);
+  } catch (error) {
+    // An abort (stop, displacement, recovery) must not orphan the card:
+    // journal the denial so the client's PENDING resolves and the journal
+    // stays replayable.
+    const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
+    await deps.threads
+      .appendEvent(chatId, approvalDecisionEvent(call.id, false, "aborted before decision"), decisionId)
+      .catch(() => {});
+    throw error;
   }
 }
 
