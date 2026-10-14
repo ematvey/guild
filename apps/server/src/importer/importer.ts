@@ -330,7 +330,12 @@ async function appendEventEntry(
     case "approval_decision": {
       await tx.appendEntry(conversationId, {
         kind: "guild.approval_decision",
-        data: { call_id: ev.call_id, approved: ev.approved, ...(ev.reason === undefined ? {} : { reason: ev.reason }), expired: ev.expired },
+        data: {
+          call_id: ev.call_id,
+          approved: ev.approved,
+          ...(ev.reason === undefined ? {} : { reason: ev.reason }),
+          expired: ev.expired ?? false,
+        },
       });
       return null;
     }
