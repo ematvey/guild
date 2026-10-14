@@ -27,7 +27,7 @@ import type { ExecutorKind } from "../machines/dispatch.js";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { ThreadStore } from "../platform/store/thread.js";
-import { approvalDecisionEvent, approvalRequestEvent } from "../platform/domain/thread-events.js";
+import { approvalDecisionEvent, approvalRequestEvent, type JudgeVerdict } from "../platform/domain/thread-events.js";
 import { uuidv5 } from "../platform/time.js";
 import { evaluateExecute, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { IntegrationGate } from "./integrations.js";
@@ -133,10 +133,20 @@ function forTool(policy: { default: string | null; overrides: Record<string, str
 
 /** The AI judge (Rust approval_policy_verdict): one short loopback gateway
  *  call, org-metered like any internal call. Any failure — route missing,
- *  quota, timeout, unparsable verdict — asks the user. Returns null when the
- *  judge cannot decide (callers treat null as Ask). */
-async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: string, model: string, call: ToolCall): Promise<boolean | null> {
-  if (deps.internalKey === null) return null;
+ *  quota, timeout, unparsable verdict — asks the user. Returns null as the
+ *  approve field when the judge cannot decide (callers treat that as Ask).
+ *  The full outcome (verdict, reason, latency) is logged and journaled on
+ *  the approval request so cards explain why they asked. */
+interface JudgeOutcome {
+  approve: boolean | null;
+  reason: string | null;
+  ms: number;
+}
+
+async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: string, model: string, call: ToolCall): Promise<JudgeOutcome> {
+  const startedAt = Date.now();
+  const outcome: JudgeOutcome = { approve: null, reason: null, ms: 0 };
+  if (deps.internalKey === null) return outcome;
   try {
     const promptRes = await deps.pool.query<{ value: string | null }>(
       "SELECT value FROM org_kv WHERE org_id = $1 AND key = $2",
@@ -168,7 +178,7 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      if (!res.ok) return null; // quota/route failures ask the user
+      if (!res.ok) return { ...outcome, ms: Date.now() - startedAt }; // quota/route failures ask the user
       const parsed = (await res.json()) as { choices?: { message?: { content?: string } }[] };
       raw = parsed.choices?.[0]?.message?.content ?? "";
     } finally {
@@ -178,12 +188,24 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
     const s = raw.trim();
     const a = s.indexOf("{");
     const b = s.lastIndexOf("}");
-    if (a === -1 || b < a) return null;
-    const verdict = JSON.parse(s.slice(a, b + 1)) as { approve?: unknown };
-    return typeof verdict.approve === "boolean" ? verdict.approve : null;
+    if (a === -1 || b < a) return { ...outcome, ms: Date.now() - startedAt };
+    const verdict = JSON.parse(s.slice(a, b + 1)) as { approve?: unknown; reason?: unknown };
+    if (typeof verdict.approve !== "boolean") return { ...outcome, ms: Date.now() - startedAt };
+    return {
+      approve: verdict.approve,
+      reason: typeof verdict.reason === "string" ? verdict.reason : null,
+      ms: Date.now() - startedAt,
+    };
   } catch (error) {
     deps.log.warn({ err: error }, "approval policy judge failed, asking the user");
-    return null;
+    return { ...outcome, ms: Date.now() - startedAt };
+  } finally {
+    if (outcome.approve !== null || outcome.ms > 0) {
+      deps.log.info(
+        { chatId, model, ms: outcome.ms, approve: outcome.approve, reason: outcome.reason },
+        "approval judge verdict",
+      );
+    }
   }
 }
 
@@ -220,12 +242,12 @@ async function recordedDecision(deps: ApprovalGateDeps, chatId: string, callId: 
 /** The gate wait: returns `undefined` (approved → run the tool) or a block
  *  text (denied). The tool task suspends inside this hook until a decision
  *  event lands or the timeout lapses. */
-async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<never, never, never, never>, chatId: string, call: ToolCall, context: Parameters<TaskRuntime<never, never, never, never>["sleep"]>[1]): Promise<{ block: string } | undefined> {
+async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<never, never, never, never>, chatId: string, call: ToolCall, context: Parameters<TaskRuntime<never, never, never, never>["sleep"]>[1], judge?: JudgeVerdict): Promise<{ block: string } | undefined> {
   const argsJson = canonicalJson(call.arguments);
   // Journaled request with a deterministic id: a recovery re-run of the gate
   // re-appends the same row (ON CONFLICT no-op), never a duplicate card.
   const requestId = uuidv5(JUDGE_NAMESPACE, `guild-approval-request:${chatId}:${call.id}`);
-  await deps.threads.appendEvent(chatId, approvalRequestEvent(call.id, call.name, argsJson), requestId);
+  await deps.threads.appendEvent(chatId, approvalRequestEvent(call.id, call.name, argsJson, judge), requestId);
 
   const deadline = Date.now() + deps.approvalTimeoutMs;
   while (true) {
@@ -323,16 +345,22 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       }
       // The judge path (approve_for_me, or an unset account policy): a
       // routine action runs silently, anything flagged asks.
+      let judged: JudgeOutcome | null = null;
       if (chat_mode === "approve_for_me" || (chat_mode === null && user_policy === null)) {
         const model = await deps.currentModel(Number(runtime.conversationId));
-        const verdict = model === null ? null : await judgeVerdict(deps, orgId, chatId, model, call);
-        if (verdict === true) return undefined;
+        judged = model === null ? null : await judgeVerdict(deps, orgId, chatId, model, call);
+        if (judged !== null && judged.approve === true) return undefined;
       }
       if (decision === "never") return { block: "denied by policy" };
       if (decision === "allow") return undefined;
 
-      // 4. Ask: the gate.
-      return waitForApproval(deps, runtime, chatId, call, context);
+      // 4. Ask: the gate. A definite judge verdict rides the card so it can
+      // show why it asked; an indecisive judge (null) is logged only.
+      const judgeOnCard: JudgeVerdict | undefined =
+        judged !== null && judged.approve !== null
+          ? { approve: judged.approve, reason: judged.reason ?? undefined, ms: judged.ms }
+          : undefined;
+      return waitForApproval(deps, runtime, chatId, call, context, judgeOnCard);
     },
   });
 }
