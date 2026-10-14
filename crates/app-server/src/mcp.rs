@@ -5,7 +5,7 @@
 use anyhow::Context;
 use guild_core::tools::{Approval, Tool, ToolFailure, ToolOutcome};
 use protocol::api::ToolSpec;
-use rmcp::model::{CallToolRequestParams, ClientInfo, Implementation};
+use rmcp::model::{CallToolRequestParams, ClientConfig, Implementation};
 use rmcp::service::{serve_client, RoleClient, RunningService};
 use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
 use serde::Deserialize;
@@ -71,7 +71,7 @@ impl McpHandle {
     }
 
     pub async fn connect(name: &str, cfg: &McpServerConfig) -> anyhow::Result<Self> {
-        let mut info = ClientInfo::default();
+        let mut info = ClientConfig::default();
         info.client_info = Implementation::new("guild", "0.1.0");
         let service: Service = if let Some(cmd) = &cfg.command {
             let [program, args @ ..] = cmd.as_slice() else {

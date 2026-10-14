@@ -59,7 +59,7 @@ async fn silent_server(listener: tokio::net::TcpListener, connects: Arc<AtomicU3
                 async move {
                     connects.fetch_add(1, Ordering::SeqCst);
                     ws.on_upgrade(|socket| async move {
-                        let (mut sink, mut stream) = socket.split();
+                        let (mut sink, stream) = socket.split();
                         let _ = sink
                             .send(axum::extract::ws::Message::text(
                                 serde_json::json!({"type": "hello"}).to_string(),

@@ -2282,7 +2282,7 @@ mod error_frame_tests {
             client_id: "client-1".into(),
             machine_name: "box".into(),
         };
-        let (tx, mut rx) = watch::channel(Some(config.clone()));
+        let (_tx, mut rx) = watch::channel(Some(config.clone()));
         let (_shutdown, mut stop) = watch::channel(false);
         let session = tokio::spawn(async move {
             ws_session(

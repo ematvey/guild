@@ -14,7 +14,6 @@ use uuid::Uuid;
 /// owned and tested there.
 #[derive(Clone)]
 struct MockHub {
-    frames_tx: tokio::sync::mpsc::UnboundedSender<WsServerMsg>,
     commands_tx: tokio::sync::mpsc::UnboundedSender<serde_json::Value>,
     ack_delay_ms: Arc<AtomicU64>,
     generation: Uuid,
@@ -134,7 +133,6 @@ async fn cloud_command_uses_ws_for_output_and_json_for_acknowledgment() {
     let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
     let (base_url, server) = spawn_mock_hub(
         MockHub {
-            frames_tx: frames_tx.clone(),
             commands_tx,
             ack_delay_ms: Arc::new(AtomicU64::new(0)),
             generation,
@@ -197,7 +195,6 @@ async fn cloud_command_buffers_frames_that_arrive_before_the_ack() {
     let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
     let (base_url, server) = spawn_mock_hub(
         MockHub {
-            frames_tx: frames_tx.clone(),
             commands_tx,
             ack_delay_ms: Arc::new(AtomicU64::new(500)),
             generation,
