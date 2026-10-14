@@ -2,5 +2,11 @@
   "name": "@guild/protocol",
   "private": true,
   "version": "0.0.0",
-  "description": "Generated TS type bindings for crates/protocol (ts-rs). Do not edit; regenerate with scripts/check-bindings.sh."
+  "description": "Generated TS type bindings for crates/protocol (ts-rs). Do not edit; regenerate with scripts/check-bindings.sh.",
+  "exports": {
+    "./*": "./*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
 }

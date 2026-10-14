@@ -19,6 +19,10 @@ COPY packages/ui/package.json packages/ui/
 # server's TS imports for its wire types (installed by npm ci, read by tsc).
 COPY crates/protocol/bindings ./crates/protocol/bindings
 RUN npm ci --workspace apps/server --no-audit --no-fund
+# Compiled bindings: the package serves its files as-is ("./*": "./*"), so
+# node at runtime resolves imports to real .js (tsc types come from the
+# .d.ts siblings the same emit produces). Sources stay generated .ts.
+RUN npm run build --workspace @guild/protocol
 COPY apps/server/src ./apps/server/src
 COPY apps/server/tsconfig.json apps/server/tsconfig.json
 # The static exec-policy rules: the TS matcher loads the shared rule set
@@ -52,6 +56,10 @@ ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/server/package.json ./apps/server/package.json
+# The @guild/protocol package the dist imports resolve through node_modules:
+# the workspace symlink points here, so the package (exports map + compiled
+# .js/.d.ts) must exist at runtime too.
+COPY --from=build /app/crates/protocol/bindings ./crates/protocol/bindings
 # The chat SPA: GUILD_WEB_DIST's default (../desktop/dist from the server
 # cwd) resolves here.
 COPY --from=webui /app/apps/desktop/dist ./apps/desktop/dist

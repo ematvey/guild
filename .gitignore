@@ -20,3 +20,8 @@ FIX-REPORT.md
 deploy/compose/config.env.bak*
 deploy/compose/.env.bak*
 .worktrees/
+
+# Generated compile output next to the @guild/protocol bindings sources
+# (scripts/check-bindings.sh compiles them; the .ts sources are the truth).
+crates/protocol/bindings/**/*.js
+crates/protocol/bindings/**/*.d.ts

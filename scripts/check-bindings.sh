@@ -11,6 +11,13 @@ cargo test -p protocol --features ts --quiet
 # the cargo test run above — this only rewrites import specifiers in place.
 find crates/protocol/bindings -name '*.ts' -exec perl -pi -e 's{(from "\.[^"]*?)(?<!\.js)"}{$1.js"}g' {} +
 
+# Compile the generated sources in place: the @guild/protocol package's
+# exports map serves the files as-is ("./*": "./*"), so node at runtime needs
+# real .js (with .d.ts siblings for tsc) next to the generated .ts. The
+# outputs are gitignored; sources stay the single source of truth.
+find crates/protocol/bindings -name '*.js' -o -name '*.d.ts' | xargs rm -f
+(cd crates/protocol/bindings && npx tsc -p tsconfig.json)
+
 # Uncommitted NEW files would not show in git diff — catch them too.
 if ! git diff --exit-code -- crates/protocol/bindings >/dev/null || \
    [ -n "$(git status --porcelain -- crates/protocol/bindings)" ]; then
