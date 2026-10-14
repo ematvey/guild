@@ -90,6 +90,20 @@ export class ThreadStore {
     return res.rows.map(toRow).filter((row): row is ThreadEventRow => row !== undefined);
   }
 
+  /** Events appended after `sinceSeq` (the incremental fan-out lane):
+   *  chat-scoped, no org join — the feed calls this only for chats whose
+   *  owner it already resolved. */
+  async listEventsSince(chatId: string, sinceSeq: number): Promise<ThreadEventRow[]> {
+    const res = await this.pool.query<EventRowDb>(
+      `SELECT e.id, e.chat_id, e.seq, e.payload,
+              to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+       FROM thread_events e
+       WHERE e.chat_id = $1 AND e.seq > $2 ORDER BY e.seq`,
+      [chatId, sinceSeq],
+    );
+    return res.rows.map(toRow).filter((row): row is ThreadEventRow => row !== undefined);
+  }
+
   /** Highest `turn` value in the chat's log (0 when empty). */
   async latestTurn(chatId: string): Promise<number> {
     const res = await this.pool.query<{ max: number | null }>(
