@@ -1,7 +1,18 @@
-// Manifest validation (crates/guild-core/src/registry.rs validate_manifest
-// and validate_v2). Message texts mirror the Rust anyhow strings, including
-// the FieldSpec debug render, because the publish handler passes them
-// straight into the 400 body.
+// Manifest validation — the TS port of protocol/src/registry.rs's
+// validate_manifest/validate_v2 (the Rust originals moved there with the
+// manifest wire types; the strict typed shape is the generated binding
+// @guild/protocol/BundleManifest, consumed wherever a manifest is trusted).
+// Message texts mirror the Rust anyhow strings, including the FieldSpec
+// debug render, because the publish handler passes them straight into the
+// 400 body.
+//
+// The `Manifest` interface below is deliberately loose (fields `unknown`):
+// it is the untrusted-input shape the validators walk — user-submitted JSON
+// before it has proven itself. Do not replace it with the strict binding.
+
+import type { BundleManifest } from "@guild/protocol/BundleManifest.js";
+
+export type { BundleManifest };
 
 export interface FieldSpec {
   name: string;
