@@ -822,6 +822,20 @@ export function createThreadReducer(): ThreadReducer {
           if (tb) {
             tb.status = frame.is_error ? "error" : "done";
             tb.content = frame.content ?? tb.content;
+          } else if (frame.call_id) {
+            // A fast tool's completion frame can beat the anchor event's
+            // notify fan-out: provision the finished row here — the durable
+            // assistant_message adopts it (no duplicate).
+            const fresh: ToolBlock = {
+              callId: frame.call_id,
+              name: frame.name ?? "tool",
+              args: "",
+              executor: frame.executor === "client" ? "client" : "server",
+              status: frame.is_error ? "error" : "done",
+              content: frame.content,
+            };
+            v.toolsByCall.set(frame.call_id, fresh);
+            v.blocks.push({ kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` });
           }
           break;
         }

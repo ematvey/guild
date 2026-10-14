@@ -276,6 +276,29 @@ describe("applyThreadEvents: incremental journal fan-out", () => {
     expect(toolBlocks).toHaveLength(1);
     expect((toolBlocks[0] as { tool: { args: string } }).tool.args).toBe("{}");
   });
+
+  it("tool_completed can beat the anchor event's fan-out and still renders", () => {
+    const r = createThreadReducer(); r.open("chat");
+    const first = r.applyFrame({ type: "tool_completed", call_id: "call-9", name: "hubspot_api", content: "result", is_error: false });
+    expect(first.blocks.filter((b) => b.kind === "tool")).toHaveLength(1);
+    // The anchor adopts the provisioned row instead of duplicating it.
+    const applied = r.applyThreadEvents("chat", 12, [
+      row(11, {
+        type: "assistant_message",
+        turn: 1,
+        step: 0,
+        model: "m",
+        usage,
+        blocks: [{ type: "tool_call", id: "call-9", name: "hubspot_api", arguments: "{\"q\":1}" } as never],
+      }),
+    ]);
+    const toolBlocks = applied.blocks.filter((b) => b.kind === "tool");
+    expect(toolBlocks).toHaveLength(1);
+    const tool = (toolBlocks[0] as { tool: { args: string; content?: string; status: string } }).tool;
+    expect(tool.args).toBe("{\"q\":1}");
+    expect(tool.content).toBe("result");
+    expect(tool.status).toBe("done");
+  });
 });
 
 describe("applyState: approval upsert mid-stream", () => {
