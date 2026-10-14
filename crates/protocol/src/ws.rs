@@ -25,6 +25,11 @@ pub struct MachineContext {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "Ws.ts", optional_fields))]
 pub enum WsClientMsg {
+    /// Liveness probe: the server answers with a `pong` server frame
+    /// without any per-message session revalidation. Web clients cannot
+    /// observe protocol-level pings (browsers auto-pong below JS), so this
+    /// app-level round trip is their only liveness signal.
+    Ping {},
     Sync {
         chat_id: Option<Uuid>,
     },
@@ -132,6 +137,9 @@ pub enum WsServerMsg {
     SyncDone {
         chat_id: Uuid,
     },
+    /// Liveness probe answer to a client `ping`. Daemons tag-peek frames and
+    /// ignore unknown types, so older clients are unaffected.
+    Pong {},
     /// Non-replayable generation events for a command-scoped stream consumer.
     /// View clients use ThreadState exclusively, never append these deltas to it.
     LiveFrame {
