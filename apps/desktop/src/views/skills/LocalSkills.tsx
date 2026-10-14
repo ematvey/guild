@@ -10,11 +10,9 @@ import {
   Ban,
   CircleArrowUp,
   CircleCheck,
-  Download,
   RefreshCw,
   Trash2,
   Upload,
-  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { rpcCall } from "../../transport";
@@ -38,7 +36,6 @@ import {
   DialogFooter,
   DialogTitle,
 } from "@guild/ui/components/dialog";
-import { EmptyState } from "../settings/components/empty-state";
 import { Spinner } from "@guild/ui/components/spinner";
 
 /** One local skill row (the rpc list's entry, shaped for the UI). */
@@ -285,13 +282,7 @@ export default function LocalSkills() {
         </div>
       ) : error ? (
         <p className="text-sm text-destructive">{error}</p>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          icon={Download as LucideIcon}
-          title="No skills found"
-          hint="Create a folder with a SKILL.md (name + description frontmatter) in .agents/skills, or install one from the Registry."
-        />
-      ) : (
+      ) : rows.length === 0 ? null : (
         <div className="overflow-hidden rounded-lg border border-border">
           {rows.map((row) => (
             <div
