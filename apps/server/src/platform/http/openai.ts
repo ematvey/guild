@@ -21,6 +21,7 @@ import {
 import type { GatewayCtx } from "../contexts.js";
 import { rustJsonText, serializeRustJson } from "../provider/sse.js";
 import { ProviderError, type InternalMessage, type ProviderChunk, type ToolSpec, type ToolCall } from "../provider/types.js";
+import type { JsonValue } from "@guild/protocol/serde_json/JsonValue.js";
 import { sseDataFrame, sseReply } from "./sse-writer.js";
 import { uuidv7 } from "../time.js";
 import type { UsageSink } from "../usage.js";
@@ -147,16 +148,16 @@ export function toInternalMessages(msgs: OpenAiMessage[]): [string | null, Inter
         content: decoded.text,
         images: decoded.images,
         audio: decoded.audio,
-        tool_calls:
-          m.tool_calls !== undefined && m.tool_calls !== null
-            ? m.tool_calls.map((c) => ({
+        ...(m.tool_calls !== undefined && m.tool_calls !== null
+          ? {
+              tool_calls: m.tool_calls.map((c) => ({
                 id: c.id,
                 name: c.function.name,
-                arguments: parseToolArguments(c.function.arguments),
-              }))
-            : null,
-        tool_call_id: null,
-        reasoning: m.reasoning_content || null,
+                arguments: parseToolArguments(c.function.arguments) as JsonValue,
+              })),
+            }
+          : {}),
+        ...(m.reasoning_content ? { reasoning: m.reasoning_content } : {}),
       });
     } else if (m.role === "tool") {
       out.push({
@@ -164,9 +165,7 @@ export function toInternalMessages(msgs: OpenAiMessage[]): [string | null, Inter
         content: decoded.text,
         images: [],
         audio: [],
-        tool_calls: null,
         tool_call_id: m.tool_call_id ?? "",
-        reasoning: null,
       });
     } else {
       out.push({
@@ -174,9 +173,7 @@ export function toInternalMessages(msgs: OpenAiMessage[]): [string | null, Inter
         content: decoded.text,
         images: [],
         audio: [],
-        tool_calls: null,
-        tool_call_id: m.tool_call_id ?? null,
-        reasoning: null,
+        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
       });
     }
   }
@@ -307,6 +304,7 @@ async function handleChatCompletions(
           name: t.function.name,
           description: t.function.description ?? "",
           parameters: t.function.parameters ?? { type: "object", properties: {} },
+          kind: "generic",
         }))
       : null;
   const call = await dispatch(gateway, credential.orgId, req0.model, system, messages, tools, limitField ?? null);

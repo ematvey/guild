@@ -2,39 +2,21 @@
 // every supported provider conforms to either the OpenAI wire shape or the
 // Anthropic wire shape. Route resolution keys off the wire protocol, never
 // off the provider's display name.
+//
+// Message/ToolCall/ToolSpec/MessageAudio come from the generated protocol
+// bindings (crates/protocol/bindings, from protocol::api) — single source of
+// truth, no hand mirrors.
+import type { Message } from "@guild/protocol/Message.js";
+import type { MessageAudio } from "@guild/protocol/MessageAudio.js";
+import type { ToolCall } from "@guild/protocol/ToolCall.js";
+import type { ToolSpec } from "@guild/protocol/ToolSpec.js";
 
-/** One audio part on a user turn (OpenAI `input_audio` contract). */
-export interface MessageAudio {
-  data: string;
-  format: string;
-}
+export type { MessageAudio, ToolCall, ToolSpec };
 
-/** One tool invocation on an assistant turn. `arguments` carries the parsed
- *  JSON object (or a raw unparseable upstream buffer kept verbatim). */
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: unknown;
-}
-
-/** A declared tool for agentic turns. */
-export interface ToolSpec {
-  name: string;
-  description: string;
-  parameters: unknown;
-}
-
-/** The internal model-facing message (protocol::api::Message). Images ride
- *  as data URIs; reasoning is replayed to the model, never dropped. */
-export interface InternalMessage {
-  role: string;
-  content: string;
-  images: string[];
-  audio: MessageAudio[];
-  tool_calls: ToolCall[] | null;
-  tool_call_id: string | null;
-  reasoning: string | null;
-}
+/** The internal model-facing message = protocol::api::Message. Optional
+ *  fields are absent (not null) in payloads — serde defaults on the Rust
+ *  side. */
+export type InternalMessage = Message;
 
 export function hasMedia(message: InternalMessage): boolean {
   return message.images.length > 0 || message.audio.length > 0;
