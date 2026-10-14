@@ -460,6 +460,10 @@ export interface ThreadReducer {
    * model buffers, settles the pending send and reconciles a manual
    * compaction. Returns `stale` for an out-of-order state. */
   applyState(state: ThreadState): ApplyResult;
+  /** One incremental durable-log fan-out (thread_events frame): applies the
+   *  fresh rows through the same replay rules a sync uses and advances the
+   *  watermark. Never re-stamps buffers — in-flight deltas stay untouched. */
+  applyThreadEvents(chatId: string, seq: number, events: ThreadEventRow[]): ApplyResult;
   /** One live stream frame (deltas, tool status, approval cards). The wire
    * contract keeps view content sequenced-ThreadState-only (LiveFrames are
    * a non-replayable command-consumer stream), so the chat view does not
@@ -562,15 +566,25 @@ export function createThreadReducer(): ThreadReducer {
           } else if (b.type === "text") {
             v.blocks.push({ kind: "text", text: b.text, key: seqKey(v.blocks.length - start) });
           } else {
-            const tb: ToolBlock = {
-              callId: b.id,
-              name: b.name,
-              args: b.arguments,
-              executor: CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server",
-              status: "done",
-            };
-            v.toolsByCall.set(b.id, tb);
-            v.blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(v.blocks.length - start) });
+            // A live tool_started frame may have provisioned this row before
+            // the carrying message fanned out: adopt it instead of pushing a
+            // duplicate block.
+            const existing = v.toolsByCall.get(b.id);
+            if (existing) {
+              existing.name = b.name;
+              existing.args = b.arguments;
+              existing.executor = CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server";
+            } else {
+              const tb: ToolBlock = {
+                callId: b.id,
+                name: b.name,
+                args: b.arguments,
+                executor: CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server",
+                status: "done",
+              };
+              v.toolsByCall.set(b.id, tb);
+              v.blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(v.blocks.length - start) });
+            }
           }
         }
         if (ev.interrupted) {
@@ -749,6 +763,19 @@ export function createThreadReducer(): ThreadReducer {
       return result(v);
     },
 
+    applyThreadEvents(chatId, seq, events) {
+      const v = viewOf(chatId);
+      const fresh = events
+        .filter((r) => r.seq > v.lastEventSeq)
+        .sort((a, b) => a.seq - b.seq);
+      for (const row of fresh) {
+        applyEvent(v, row);
+        v.lastEventSeq = Math.max(v.lastEventSeq, row.seq);
+      }
+      v.watermark = Math.max(v.watermark, seq);
+      return result(v);
+    },
+
     applyFrame(frame) {
       const v = viewOf(current);
       switch (frame.type) {
@@ -772,7 +799,22 @@ export function createThreadReducer(): ThreadReducer {
         }
         case "tool_started": {
           const tb = frame.call_id ? v.toolsByCall.get(frame.call_id) : undefined;
-          if (tb) tb.status = "running";
+          if (tb) {
+            tb.status = "running";
+          } else if (frame.call_id) {
+            // The row's carrying assistant step fans out through the event
+            // lane a beat later: provision the block now so the call shows
+            // the moment it starts (applyEvent adopts it — no duplicate).
+            const fresh: ToolBlock = {
+              callId: frame.call_id,
+              name: frame.name ?? "tool",
+              args: frame.arguments ?? "",
+              executor: frame.executor === "client" ? "client" : "server",
+              status: "running",
+            };
+            v.toolsByCall.set(frame.call_id, fresh);
+            v.blocks.push({ kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` });
+          }
           break;
         }
         case "tool_completed": {
@@ -780,6 +822,20 @@ export function createThreadReducer(): ThreadReducer {
           if (tb) {
             tb.status = frame.is_error ? "error" : "done";
             tb.content = frame.content ?? tb.content;
+          } else if (frame.call_id) {
+            // A fast tool's completion frame can beat the anchor event's
+            // notify fan-out: provision the finished row here — the durable
+            // assistant_message adopts it (no duplicate).
+            const fresh: ToolBlock = {
+              callId: frame.call_id,
+              name: frame.name ?? "tool",
+              args: "",
+              executor: frame.executor === "client" ? "client" : "server",
+              status: frame.is_error ? "error" : "done",
+              content: frame.content,
+            };
+            v.toolsByCall.set(frame.call_id, fresh);
+            v.blocks.push({ kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` });
           }
           break;
         }

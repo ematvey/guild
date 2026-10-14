@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { routeMessage, startSocket, type SocketHandlers, type SocketLike } from "../transport";
+import type { ThreadEventRow } from "../transport";
+import type { ThreadEvent } from "../transport";
 
 const chat = { id: "chat-1", title: "Chat", created_at: "now" };
 const delta = { type: "delta" as const, content: "hello" };
+
+function row(seq: number, event: ThreadEvent): ThreadEventRow {
+  return { id: `e${seq}`, seq, event, created_at: "t" };
+}
 
 class FakeSocket implements SocketLike {
   readyState = 0;
@@ -68,6 +74,16 @@ describe("routeMessage", () => {
     routeMessage({ type: "error", message: "bad" }, handlers);
     routeMessage({ type: "org_event", event: {} }, handlers);
     expect(calls.slice(-2)).toEqual(["error:bad", "org"]);
+  });
+
+  it("routes incremental thread_events frames to their handler", () => {
+    const seen: { chatId: string; seq: number; rows: ThreadEventRow[] }[] = [];
+    routeMessage(
+      { type: "thread_events", chat_id: "chat-1", seq: 9, events: [row(9, { type: "user_message", content: "go" })] } as never,
+      { onThreadList: () => {}, onChatStatus: () => {}, onFrame: () => {}, onSync: () => {},
+        onThreadEvents: (chatId, seq, rows) => seen.push({ chatId, seq, rows }) },
+    );
+    expect(seen).toEqual([{ chatId: "chat-1", seq: 9, rows: [row(9, { type: "user_message", content: "go" })] }]);
   });
 });
 
