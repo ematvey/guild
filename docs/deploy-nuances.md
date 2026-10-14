@@ -291,6 +291,11 @@ Design and decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`.
   and `VITE_DEFAULT_SERVER_URL` set to its public URL. Verify six release rows
   (Windows installer, Linux AppImage, two macOS DMGs, two macOS updater
   archives) and a four-platform `/api/v1/updates/latest.json` response.
+- The release script assumes `node_modules` is current: it does NOT run
+  `npm ci`. Any commit that adds/moves a frontend dependency (e.g. a new
+  `packages/ui` dep) must be followed by `npm ci` in the release checkout,
+  or the vite build fails on unresolved imports (hit 2026-10-14 with
+  `@fontsource-variable/jetbrains-mono`).
 - Local desktop dev: `npm run dev` (vite, port 1420 strict) +
   `npm run tauri dev`; `devUrl` in `tauri.conf.json` points at :1420. The
   GUI spawns `guild-desktop engine` — same binary, so rebuild the Rust
