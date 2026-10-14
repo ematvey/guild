@@ -156,13 +156,15 @@ not kept here — it lives in git and in `docs/reviews/`.
   column). Server-only; no client change.
 
 - **Prod is a separate checkout** (`~/guild-prod`, branch master, compose
-  stack on :18081, public at guild.example.org). Deploy to prod by
-  fast-forwarding its master from ~/guild's develop (fetch the local path,
-  merge --ff-only — its docker-compose.yml carries prod-local edits, so
-  never rebase it) and `docker compose build server && up -d` there. First
+  stack on :18081, public at guild.example.org). Deploy to prod by a
+  deliberate merge of develop into its master (a release merge, e.g.
+  "release 0.5.42 — merge develop into prod") — never a blind
+  fast-forward: develop → master crossings are meant to be deliberate,
+  and its docker-compose.yml carries prod-local edits, so never rebase it
+  either. Then `docker compose build server && up -d` there. First
   multi-workspace deploy: 0.5.32 on 2026-09-30. The 0.5.22→0.5.32 jump
   exposed that an untracked migration file breaks the tree — migrations
-  must be committed with their store/mod.rs entries.
+  must be committed with the code that reads them.
 
 - **Multi-workspace auth — the daemon holds N live sessions, one per
   server.** The desktop client can now be signed into two guild servers
@@ -476,13 +478,15 @@ not kept here — it lives in git and in `docs/reviews/`.
   `docs/plans/2026-10-04-ts-server-pi-durable-plan.md`. Work branch:
   `agent-plane` (worktree `~/guild-wt-agent-plane`).
 - **Prod is a separate checkout** (`~/guild-prod`, branch master, compose
-  stack on :18081, public at guild.example.org). Deploy to prod by
-  fast-forwarding its master from ~/guild's develop (fetch the local path,
-  merge --ff-only — its docker-compose.yml carries prod-local edits, so
-  never rebase it) and `docker compose build server && up -d` there. First
+  stack on :18081, public at guild.example.org). Deploy to prod by a
+  deliberate merge of develop into its master (a release merge, e.g.
+  "release 0.5.42 — merge develop into prod") — never a blind
+  fast-forward: develop → master crossings are meant to be deliberate,
+  and its docker-compose.yml carries prod-local edits, so never rebase it
+  either. Then `docker compose build server && up -d` there. First
   multi-workspace deploy: 0.5.32 on 2026-09-30. The 0.5.22→0.5.32 jump
   exposed that an untracked migration file breaks the tree — migrations
-  must be committed with their store/mod.rs entries.
+  must be committed with the code that reads them.
 
 - **Multi-workspace auth — the daemon holds N live sessions, one per
   server.** The desktop client can now be signed into two guild servers
