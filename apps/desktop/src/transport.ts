@@ -822,7 +822,8 @@ export type ThreadEvent =
       reason?: string | null;
       /** Nobody was waiting when the decision landed; the call never ran. */
       expired?: boolean;
-    };
+    }
+  | { type: "turn_error"; message: string };
 
 export interface ThreadEventRow {
   id: string;
