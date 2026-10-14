@@ -11,6 +11,22 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Prod cutover complete — the TS server serves :18081 (2026-10-14, 0.5.42).**
+  The `guild-live` compose project runs `guild-server-ts:prod` (its own tag, set via
+  `GUILD_TS_SERVER_IMAGE` in `deploy/compose/.env`), built from the deliberate
+  develop → master merge. The Rust-era config debris is gone: `config.env` carries
+  `GUILD_INTERNAL_KEY` now; `GUILD_ROLE`/`GUILD_INTERNAL_TOKEN`/`GUILD_RESTATE_*` and
+  `.env`'s `GUILD_SERVER_IMAGE` are deleted. Restate retired with it: container
+  `guild-live-restate-1` and volume `guild-live_restate_data` removed. Cutover
+  sequence per `docs/plans/2026-10-04-ts-server-prod-cutover-runbook.md`: pre-backup
+  `~/backups/guild_live-2026-10-14-1300.sql`; final importer run on the prod DB
+  (`6 chats → 6 conversations, 145 events → 145 entries` — exact match; note the
+  host-run importer needs `host.docker.internal` rewritten to `localhost`, the
+  runbook's literal command fails with ENOTFOUND); `schema_history` was already
+  current (0068), so startup migrations were no-ops. Both machines reconnected
+  (WORKSTATION @ 0.5.42, guild-machine @ 0.5.34 — the latter is due a client update),
+  zero error-level log lines at startup.
+
 - **Skills: uninstall deletes the pin; machines pull their sync at connect (0.5.42, 2026-10-14).**
   Two gaps in the org-skills loop closed. *Uninstall*: the Skills panel's org-installs
   rows gain an Uninstall button, and the local-machine rows' existing Uninstall now goes
