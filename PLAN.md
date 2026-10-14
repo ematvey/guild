@@ -11,6 +11,34 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Type single-sourcing: hub consumes generated protocol bindings; registry
+  manifest moved into protocol (2026-10-14).** The hub hand-mirrored Rust
+  protocol types in three places and the mirrors had drifted (the TS
+  ToolSpec was missing the `kind` field). Now: `apps/server` imports the
+  generated `crates/protocol/bindings/*.ts` directly — bindings are an npm
+  workspace package (`@guild/protocol`, `crates/protocol/bindings
+  /package.json`), and the freshness gate (`scripts/check-bindings.sh`)
+  normalizes ts-rs's extensionless imports to NodeNext `.js` specifiers so
+  NodeNext tsc resolves them (bundler-mode desktop is unaffected).
+  Swapped: provider message types (InternalMessage = generated Message;
+  builders omit optional fields instead of writing nulls — serde defaults
+  accept both) and the thread-event model (domain/thread-events.ts re-
+  exports generated ThreadEvent/Block/MessageAttachment/UsagePayload;
+  ThreadEventRow stays local). 64-bit wire fields got `ts(type =
+  "number")` (bigint on a JSON wire throws in JSON.stringify). The
+  registry manifest model (BundleManifest + section types + validate
+  manifest/validate_v2/tool_class) moved verbatim into
+  `protocol/src/registry.rs` and generates 7 new bindings; guild-core
+  keeps the tar.gz codec and re-exports the model; registry-manifest.ts
+  re-exports the binding and keeps its deliberately-loose `Manifest` as
+  the untrusted-input validator shape. Also in this pass: guild-core's
+  dead Rust provider clients and usage sink deleted (the TS durable
+  harness drives the loop), 12 orphaned workspace deps dropped, stale
+  pipe_probe examples removed, docs/reviews deleted (history lives in
+  git), all `--all-targets` warnings fixed. The protobuf question was
+  considered and declined: the wire is JSON end-to-end (browser clients,
+  persisted journals, wiremock fixtures) and the duplication was ~300
+  lines — the binding package solves it without a wire-format migration.
 - **Release 0.5.44 (2026-10-14).** First release through the reconciled
   flow: develop → master `--no-ff` (f347971) carried the sandbox-runner
   (gVisor), URL-driven navigation, the onboarding guide, webchat
