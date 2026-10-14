@@ -611,8 +611,25 @@ export class GuildRuntime {
             { type: "text", text: input.content },
             ...input.images.map((image) => ({ type: "image" as const, mimeType: image.mimeType, data: image.data })),
           ];
+    // The composer's /-trigger is deterministic: a text that starts with a
+    // known skill slug gets the read-and-follow directive appended (the
+    // model never has to guess the prefix's meaning). The typed text stays
+    // verbatim; images make the content an array, so only its text part
+    // carries the directive.
+    const owner = await this.chats.ownerOf(chatId);
+    const directive =
+      owner === null ? null : await this.skillsRuntime.invocationDirective(orgId, input.content, input.skillsIndex);
     const submission = await conversation.submit(
-      { type: "input", content, requestId: input.requestId },
+      {
+        type: "input",
+        content:
+          directive === null
+            ? content
+            : Array.isArray(content)
+              ? [{ type: "text", text: `${input.content}\n\n${directive}` }, ...content.slice(1)]
+              : `${content}\n\n${directive}`,
+        requestId: input.requestId,
+      },
       BACKGROUND_CONTEXT,
     );
     return Number(submission.id);
