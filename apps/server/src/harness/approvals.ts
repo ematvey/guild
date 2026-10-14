@@ -145,8 +145,12 @@ interface JudgeOutcome {
 
 async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: string, model: string, call: ToolCall): Promise<JudgeOutcome> {
   const startedAt = Date.now();
-  const outcome: JudgeOutcome = { approve: null, reason: null, ms: 0 };
-  if (deps.internalKey === null) return outcome;
+  const undecided: JudgeOutcome = { approve: null, reason: null, ms: 0 };
+  if (deps.internalKey === null) return undecided;
+  // The verdict actually returned — the finally's log reads this, not a
+  // fresh-per-path object (an earlier log read a never-mutated original
+  // and reported `null` for every verdict, hiding working approvals).
+  let settled: JudgeOutcome | undefined;
   try {
     const promptRes = await deps.pool.query<{ value: string | null }>(
       "SELECT value FROM org_kv WHERE org_id = $1 AND key = $2",
@@ -157,7 +161,9 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
     const body = {
       model,
       stream: false,
-      max_tokens: 200,
+      // Reasoning models spend the budget on reasoning_content before the
+      // JSON answer — 200 left the content empty and every verdict null.
+      max_tokens: 2_000,
       messages: [
         { role: "system", content: prompt },
         { role: "user", content: action },
@@ -178,7 +184,11 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      if (!res.ok) return { ...outcome, ms: Date.now() - startedAt }; // quota/route failures ask the user
+      if (!res.ok) {
+        deps.log.warn({ chatId, status: res.status, ms: Date.now() - startedAt }, "approval judge: gateway rejected the call");
+        settled = { ...undecided, ms: Date.now() - startedAt }; // quota/route failures ask the user
+        return settled;
+      }
       const parsed = (await res.json()) as { choices?: { message?: { content?: string } }[] };
       raw = parsed.choices?.[0]?.message?.content ?? "";
     } finally {
@@ -188,21 +198,32 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
     const s = raw.trim();
     const a = s.indexOf("{");
     const b = s.lastIndexOf("}");
-    if (a === -1 || b < a) return { ...outcome, ms: Date.now() - startedAt };
+    if (a === -1 || b < a) {
+      deps.log.warn({ chatId, ms: Date.now() - startedAt, raw: s.slice(0, 200) }, "approval judge: no JSON in the verdict");
+      settled = { ...undecided, ms: Date.now() - startedAt };
+      return settled;
+    }
     const verdict = JSON.parse(s.slice(a, b + 1)) as { approve?: unknown; reason?: unknown };
-    if (typeof verdict.approve !== "boolean") return { ...outcome, ms: Date.now() - startedAt };
-    return {
+    if (typeof verdict.approve !== "boolean") {
+      deps.log.warn({ chatId, ms: Date.now() - startedAt, raw: s.slice(0, 200) }, "approval judge: unparsable verdict");
+      settled = { ...undecided, ms: Date.now() - startedAt };
+      return settled;
+    }
+    settled = {
       approve: verdict.approve,
       reason: typeof verdict.reason === "string" ? verdict.reason : null,
       ms: Date.now() - startedAt,
     };
+    return settled;
   } catch (error) {
     deps.log.warn({ err: error }, "approval policy judge failed, asking the user");
-    return { ...outcome, ms: Date.now() - startedAt };
+    settled = { ...undecided, ms: Date.now() - startedAt };
+    return settled;
   } finally {
-    if (outcome.approve !== null || outcome.ms > 0) {
+    const done = settled ?? undecided;
+    if (done.ms > 0) {
       deps.log.info(
-        { chatId, model, ms: outcome.ms, approve: outcome.approve, reason: outcome.reason },
+        { chatId, model, ms: done.ms, approve: done.approve, reason: done.reason },
         "approval judge verdict",
       );
     }
@@ -359,6 +380,10 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       let judged: JudgeOutcome | null = null;
       if (chat_mode === "approve_for_me" || (chat_mode === null && user_policy === null)) {
         const model = await deps.currentModel(Number(runtime.conversationId));
+        if (model === null) {
+          // A judge-less card is the symptom, never the cause: surface it.
+          deps.log.warn({ chatId, callId: call.id }, "approval judge skipped: conversation has no model");
+        }
         judged = model === null ? null : await judgeVerdict(deps, orgId, chatId, model, call);
         if (judged !== null && judged.approve === true) return undefined;
       }

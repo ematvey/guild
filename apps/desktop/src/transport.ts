@@ -1354,7 +1354,7 @@ export async function postApproval(
   reason?: string,
 ): Promise<ApprovalPostResult> {
   const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${chatId}/approvals/${callId}`), {
+  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${chatId}/approvals/${encodeURIComponent(callId)}`), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(reason === undefined ? { approved } : { approved, reason }),
