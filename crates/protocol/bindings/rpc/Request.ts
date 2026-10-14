@@ -4,4 +4,8 @@ import type { JsonValue } from "../serde_json/JsonValue.js";
 /**
  * Request from client to server (either side can be "client").
  */
-export type Request = { jsonrpc: string, id: bigint, protocol: number, method: string, params: JsonValue, };
+export type Request = { jsonrpc: string, 
+/**
+ * JSON numbers, not TS bigint — the wire is JSON.
+ */
+id: number, protocol: number, method: string, params: JsonValue, };

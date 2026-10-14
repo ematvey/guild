@@ -5,4 +5,8 @@ import type { RpcError } from "./RpcError.js";
 /**
  * Reply to a `Request`.
  */
-export type Response = { jsonrpc: string, id: bigint, protocol: number, result?: JsonValue, error?: RpcError, };
+export type Response = { jsonrpc: string, 
+/**
+ * JSON numbers, not TS bigint — the wire is JSON.
+ */
+id: number, protocol: number, result?: JsonValue, error?: RpcError, };

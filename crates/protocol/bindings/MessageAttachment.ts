@@ -4,7 +4,11 @@
  * A file attached to a user turn (chip metadata: the bytes live in object
  * storage; documents' text is inlined into the turn content).
  */
-export type MessageAttachment = { id: string, filename: string, content_type: string, size_bytes: bigint, 
+export type MessageAttachment = { id: string, filename: string, content_type: string, 
+/**
+ * JSON numbers, not TS bigint — the wire is JSON.
+ */
+size_bytes: number, 
 /**
  * `image` | `audio` | `video` | `document` — derived from the content
  * type; drives chip rendering and model-modality gating.

@@ -56,6 +56,8 @@ pub struct PairResponse {
 pub struct CreatePairingTokenRequest {
     /// Token lifetime in minutes (default 30, capped server-side).
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// JSON numbers, not TS bigint — the wire is JSON.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub ttl_minutes: Option<i64>,
 }
 
@@ -524,6 +526,8 @@ pub struct MessageAttachment {
     pub id: Uuid,
     pub filename: String,
     pub content_type: String,
+    /// JSON numbers, not TS bigint — the wire is JSON.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub size_bytes: i64,
     /// `image` | `audio` | `video` | `document` — derived from the content
     /// type; drives chip rendering and model-modality gating.
