@@ -161,9 +161,6 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
     const body = {
       model,
       stream: false,
-      // Reasoning models spend the budget on reasoning_content before the
-      // JSON answer — 200 left the content empty and every verdict null.
-      max_tokens: 2_000,
       messages: [
         { role: "system", content: prompt },
         { role: "user", content: action },
