@@ -19,3 +19,4 @@ tsconfig.tsbuildinfo
 FIX-REPORT.md
 deploy/compose/config.env.bak*
 deploy/compose/.env.bak*
+.worktrees/
