@@ -1512,6 +1512,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const [filesReady, setFilesReady] = useState(false);
   const deliveringRef = useRef(new Set<string>());
   const observedUserIdsRef = useRef(new Set<string>());
+  // The newest event id whose read-marker POST already fired per chat:
+  // thread_state frames arrive per streamed delta batch, and marking read
+  // per frame spammed /read hundreds of times over one active turn — the
+  // marker only needs to move when the view carries events it hasn't
+  // covered yet.
+  const lastReadMarkRef = useRef(new Map<string, string>());
   const storageFailure = (reason?: unknown) => {
     console.error("Browser send storage write failed:", reason);
     if (!storageWarningRef.current && mountedRef.current) {
@@ -2110,13 +2116,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setBlocks(applied.blocks);
     setCompacting(applied.compacting);
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
-      void markChatRead(cid);
-      setChatStatus((prev) =>
-        prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
-      );
-      setChats((prev) =>
-        prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
-      );
+      const lastEventId = state.events[state.events.length - 1]?.id;
+      if (lastEventId !== undefined && lastReadMarkRef.current.get(cid) !== lastEventId) {
+        lastReadMarkRef.current.set(cid, lastEventId);
+        void markChatRead(cid);
+        setChatStatus((prev) =>
+          prev[cid]?.unread ? { ...prev, [cid]: { ...prev[cid], unread: false } } : prev,
+        );
+        setChats((prev) =>
+          prev?.map((c) => (c.id === cid && c.unread ? { ...c, unread: false } : c)) ?? prev,
+        );
+      }
     }
   };
 
