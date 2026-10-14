@@ -23,6 +23,7 @@ import {
   assistantMessageEvent,
   compactionEvent,
   toolResultEvent,
+  turnErrorEvent,
   unwrapCompactionSummary,
   type Block,
   type ThreadEvent,
@@ -205,6 +206,9 @@ export class ChatBridge {
         if (event.kind !== "pi.generation" || state.generationId === null || state.doneSent) return;
         state.doneSent = true;
         state.failure = event.message;
+        // Persisted so the failure survives reload and socket loss — the
+        // live error frame alone dies with the connection (deploy restarts).
+        await this.append(state, turnErrorEvent(event.message));
         this.emitStream(state, { type: "error", code: "provider", message: event.message });
         return;
       }

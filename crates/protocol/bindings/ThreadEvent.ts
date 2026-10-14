@@ -46,4 +46,4 @@ artifact_id?: string | null, } | { "type": "compaction", summary: string, tokens
  * Nobody was waiting when the decision landed: the turn is gone, so
  * the call can never execute. The card stays visible as expired.
  */
-expired?: boolean, };
+expired?: boolean, } | { "type": "turn_error", message: string, };

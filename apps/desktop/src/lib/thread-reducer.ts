@@ -285,6 +285,9 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
           },
         });
         break;
+      case "turn_error":
+        blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(inEvent++) });
+        break;
     }
   }
   // Resolved approvals are decisions, not conversation content: a card whose
@@ -650,6 +653,9 @@ export function createThreadReducer(): ThreadReducer {
             keepLast: ev.keep_last ?? null,
           },
         });
+        break;
+      case "turn_error":
+        v.blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(0) });
         break;
     }
   }

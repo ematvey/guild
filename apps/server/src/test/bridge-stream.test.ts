@@ -147,6 +147,10 @@ describe("bridge generation stream", () => {
     const events = out.record.events.map(([, e]) => e);
     expect(events).toEqual([{ type: "error", code: "provider", message: "provider exploded" }]);
     expect(out.record.closed).toEqual(["chat-1"]);
+    // The failure is also persisted: the thread keeps the error card across
+    // reloads and lost sockets.
+    expect(deps.rows.map((r) => r.event.type)).toEqual(["turn_error"]);
+    expect(deps.rows[0]!.event).toEqual({ type: "turn_error", message: "provider exploded" });
 
     // A stopped run: the interrupted prefix persists (no inline Done), the
     // run end sends the zero-usage Done with the interrupted row's id.

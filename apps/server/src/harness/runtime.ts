@@ -683,9 +683,20 @@ export class GuildRuntime {
     return this.chatToConversation.get(chatId);
   }
 
+  /** Settles every generating chat before shutdown: aborts the in-flight
+   *  generation so tasks settle, the generating flag flips, and the terminal
+   *  frames reach clients while the process and its sockets are alive. */
+  async drainChats(): Promise<void> {
+    const rows = await this.pool.query<{ id: string }>("SELECT id FROM chats WHERE generating = true");
+    for (const row of rows.rows) {
+      await this.stopChat(row.id).catch(() => {});
+    }
+  }
+
   async close(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    await this.drainChats().catch(() => {});
     for (const stream of this.watches.values()) {
       await stream.stop().catch(() => {});
     }
