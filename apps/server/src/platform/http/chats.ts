@@ -269,10 +269,14 @@ export function registerChatsRoutes(
     return reply.status(200).send(JSON.stringify({ stopped: true }));
   });
 
-  app.post("/api/v1/gateway/chat/:id/approvals/:callId", async (req, reply) => {
+  app.post("/api/v1/gateway/chat/:id/approvals/*", async (req, reply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
-    const callId = (req.params as Record<string, string>)["callId"] ?? "";
+    // Nested (codemode) call ids carry a `/` (`<parent>/<key>`): older
+    // clients pass it unencoded, so take the wildcard remainder whole and
+    // decode it.
+    const raw = (req.params as Record<string, string>)["*"] ?? "";
+    const callId = decodeURIComponent(raw);
     await chats.chats.getChat(user.org_id, chatId, user);
     const body = requireJsonBody(req);
     if (typeof body["approved"] !== "boolean") {

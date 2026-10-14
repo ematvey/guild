@@ -309,9 +309,10 @@ export class GuildRuntime {
       currentModel: async (conversationId) => {
         await this.start();
         const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
-        if (!conversation) return null;
-        const agent = await conversation.agent(BACKGROUND_CONTEXT);
-        return agent.model?.modelId ?? null;
+        const agent = conversation ? await conversation.agent(BACKGROUND_CONTEXT) : undefined;
+        const resolved = agent?.model?.modelId ?? null;
+        this.log.info({ conversationId, found: conversation !== undefined, agentModel: resolved }, "currentModel probe");
+        return resolved;
       },
     };
   }
