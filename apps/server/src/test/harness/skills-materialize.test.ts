@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { packBundle } from "../../platform/bundle.js";
 import { SkillRuntime, type SkillRuntimeDeps } from "../../harness/skills.js";
 
@@ -84,7 +85,7 @@ function makeFixture(): Fixture {
     chatOfConversation: async () => null,
     chatOwner: async () => null,
     executorKind: async () => null,
-    conversationDir: async () => "/nonexistent",
+    conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
   };
   return { runtime: new SkillRuntime(deps), warns, objects, metas, installs };
 }
@@ -137,7 +138,7 @@ describe("materializeIntoSandbox", () => {
     seedSkill(fx, "hello", "v2", "# Deploy\nRun the checklist.", { "scripts/run.sh": "echo hi\n" });
     seedSkill(fx, "other", "v1", "# Other");
     const root = newRoot();
-    await fx.runtime.materializeIntoSandbox(ORG, USER, root);
+    await fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }));
     expect(readFileSync(path.join(root, "skills", "hello", "SKILL.md"), "utf8")).toBe("# Deploy\nRun the checklist.");
     expect(readFileSync(path.join(root, "skills", "hello", "scripts", "run.sh"), "utf8")).toBe("echo hi\n");
     expect(readFileSync(path.join(root, "skills", "other", "SKILL.md"), "utf8")).toBe("# Other");
@@ -148,7 +149,7 @@ describe("materializeIntoSandbox", () => {
 
   it("is a silent no-op when the user has no installs", async () => {
     const root = newRoot();
-    await fx.runtime.materializeIntoSandbox(ORG, USER, root);
+    await fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }));
     expect(existsSync(path.join(root, "skills"))).toBe(false);
     expect(fx.warns).toEqual([]);
   });
@@ -158,7 +159,7 @@ describe("materializeIntoSandbox", () => {
     fx.objects.set(`registry/${ORG}/skill/broken/v1/bundle.tar.gz`, Buffer.from("this is not gzip"));
     seedSkill(fx, "good", "v1", "# Good");
     const root = newRoot();
-    await expect(fx.runtime.materializeIntoSandbox(ORG, USER, root)).resolves.toBeUndefined();
+    await expect(fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }))).resolves.toBeUndefined();
     expect(existsSync(path.join(root, "skills", "good", "SKILL.md"))).toBe(true);
     expect(fx.warns.length).toBeGreaterThan(0);
     expect(fx.warns[0]).toMatch(/broken/);
@@ -177,7 +178,7 @@ describe("materializeIntoSandbox", () => {
     fx.installs.push({ slug: "ghost-version", pinned_version: "v9", installed_at: "t" });
     seedSkill(fx, "good", "v1", "# Good");
     const root = newRoot();
-    await expect(fx.runtime.materializeIntoSandbox(ORG, USER, root)).resolves.toBeUndefined();
+    await expect(fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }))).resolves.toBeUndefined();
     expect(existsSync(path.join(root, "skills", "good", "SKILL.md"))).toBe(true);
     expect(existsSync(path.join(root, "skills", "ghost-object"))).toBe(false);
     expect(existsSync(path.join(root, "skills", "ghost-version"))).toBe(false);
@@ -192,7 +193,7 @@ describe("materializeIntoSandbox", () => {
     }));
     seedSkill(fx, "good", "v1", "# Good");
     const root = newRoot();
-    await expect(fx.runtime.materializeIntoSandbox(ORG, USER, root)).resolves.toBeUndefined();
+    await expect(fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }))).resolves.toBeUndefined();
     expect(existsSync(path.join(root, "skills", "tampered"))).toBe(false);
     expect(existsSync(path.join(root, "skills", "good", "SKILL.md"))).toBe(true);
   });
@@ -200,7 +201,7 @@ describe("materializeIntoSandbox", () => {
   it("overwrites an existing slug dir with new content but leaves identical files untouched", async () => {
     seedSkill(fx, "hello", "v1", "# V1 body");
     const root = newRoot();
-    await fx.runtime.materializeIntoSandbox(ORG, USER, root);
+    await fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }));
     const mdPath = path.join(root, "skills", "hello", "SKILL.md");
     expect(readFileSync(mdPath, "utf8")).toBe("# V1 body");
     // Age the file, then re-materialize unchanged: the identical file is
@@ -223,7 +224,7 @@ describe("materializeIntoSandbox", () => {
       skill_md_text: "# V1 body",
       files: null,
     });
-    await fx.runtime.materializeIntoSandbox(ORG, USER, root);
+    await fx.runtime.materializeIntoSandbox(ORG, USER, new NodeExecutionEnv({ cwd: root }));
     expect(readFileSync(runPath, "utf8")).toBe("echo v1b\n");
     expect(statSync(mdPath).mtimeMs).toBe(0);
   });
@@ -233,7 +234,7 @@ describe("materializeSkill (the read_skill install-on-use dep)", () => {
   it("materializes a single skill into the given dir", async () => {
     seedSkill(fx, "solo", "v3", "# Solo", { "refs/a.md": "A" });
     const root = newRoot();
-    await fx.runtime.materializeSkill(ORG, "solo", "v3", root);
+    await fx.runtime.materializeSkill(ORG, "solo", "v3", new NodeExecutionEnv({ cwd: root }));
     expect(readFileSync(path.join(root, "skills", "solo", "SKILL.md"), "utf8")).toBe("# Solo");
     expect(readFileSync(path.join(root, "skills", "solo", "refs", "a.md"), "utf8")).toBe("A");
   });
@@ -241,6 +242,6 @@ describe("materializeSkill (the read_skill install-on-use dep)", () => {
   it("throws for a missing object (the read_skill caller catches)", async () => {
     fx.installs.push({ slug: "ghost", pinned_version: "v1", installed_at: "t" });
     const root = newRoot();
-    await expect(fx.runtime.materializeSkill(ORG, "ghost", "v1", root)).rejects.toThrow(/no object|no such skill version/);
+    await expect(fx.runtime.materializeSkill(ORG, "ghost", "v1", new NodeExecutionEnv({ cwd: root }))).rejects.toThrow(/no object|no such skill version/);
   });
 });

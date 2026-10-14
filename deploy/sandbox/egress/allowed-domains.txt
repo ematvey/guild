@@ -1,0 +1,18 @@
+# Hostnames sandboxes may reach through the egress proxy. A leading dot
+# matches subdomains too. github.com is deliberately absent (pushing with a
+# prompt-injected token is the obvious exfiltration path); add it per
+# deployment if git dependencies are needed.
+
+# npm / yarn
+registry.npmjs.org
+.yarnpkg.com
+# Python
+pypi.org
+files.pythonhosted.org
+# Rust
+crates.io
+static.crates.io
+index.crates.io
+# Go
+proxy.golang.org
+sum.golang.org

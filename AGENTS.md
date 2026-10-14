@@ -46,7 +46,10 @@ you.
 - **Default cargo members exclude the Tauri app** (`apps/desktop`): its
   dependency tree dominates compile time. `cargo test/build` skip it —
   target it explicitly with `-p guild-desktop`.
-- **Server-side workspace sessions**: `run_command` is disabled unless
-  `GUILD_ALLOW_SHELL_TOOLS=1`; machine `execute` calls go through the
-  static exec-policy rules in `apps/server/assets/exec_policy_base.rules`
+- **Server-side tools run in gVisor sandboxes** (workspace sessions and
+  plain chats) via the `sandbox-runner` compose service — never in the
+  server process. Production refuses `GUILD_SANDBOX=inprocess-unsafe`; the
+  test suite uses it by default. Sandbox integration tests need the host's
+  `runsc` runtime: `scripts/sandbox-it.sh`. Shell calls still go through
+  the static exec-policy rules in `apps/server/assets/exec_policy_base.rules`
   (TS matcher) before any approval gate.

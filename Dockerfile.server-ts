@@ -61,5 +61,12 @@ COPY --from=build /app/apps/server/assets/exec_policy_base.rules /app/apps/serve
 # order (platform/migrations.ts, schema_history-tracked).
 COPY --from=build /app/apps/server/migrations /app/apps/server/migrations
 WORKDIR /app/apps/server
+# Non-root: model-driven tools never run in this process (they run in
+# sandbox containers via the sandbox runner), but the server still must not
+# be root. uid 1000 (`node`) matches the sandbox uid, so both sides of the
+# shared /data volume agree on ownership. The sandbox runner reuses this
+# image as root (it needs the Docker socket) with its own command.
+RUN mkdir -p /data && chown node:node /data
+USER node
 EXPOSE 8080
 CMD ["node", "dist/index.js"]

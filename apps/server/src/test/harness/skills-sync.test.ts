@@ -9,6 +9,7 @@
 // of this same method (http/ws.ts seam + platform/http/register.ts).
 
 import { describe, expect, it } from "vitest";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { SkillRuntime, type SkillRuntimeDeps } from "../../harness/skills.js";
 import type { MachineRow } from "../../platform/store/machines.js";
 
@@ -74,7 +75,7 @@ function makeFixture(options: { selfBaseUrl?: string } = {}): Fixture {
     chatOfConversation: async () => null,
     chatOwner: async () => null,
     executorKind: async () => null,
-    conversationDir: async () => "/nonexistent",
+    conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
     machines: { listForUser: async () => fx.machines as MachineRow[] },
     machineOnline: (machineId) => fx.online.has(machineId),
     machineRequest: async (args) => {
@@ -215,7 +216,7 @@ describe("skills syncUser", () => {
       chatOfConversation: async () => null,
       chatOwner: async () => null,
       executorKind: async () => null,
-      conversationDir: async () => "/nonexistent",
+      conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
     });
 
     await runtime.syncUser(ORG, USER);
@@ -254,7 +255,7 @@ describe("skills syncUser", () => {
       chatOfConversation: async () => null,
       chatOwner: async () => null,
       executorKind: async () => null,
-      conversationDir: async () => "/nonexistent",
+      conversationEnv: async () => new NodeExecutionEnv({ cwd: "/nonexistent" }),
       machines: { listForUser: async () => { throw new Error("db down"); } },
       machineOnline: () => true,
       machineRequest: async (args) => {

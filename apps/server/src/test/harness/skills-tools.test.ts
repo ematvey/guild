@@ -7,6 +7,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import type { Context } from "@earendil-works/chord";
 import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
 import { SkillRuntime, descriptionFromSkillMd, type SkillRuntimeDeps } from "../../harness/skills.js";
@@ -111,7 +112,7 @@ function fakeDeps(options: FakeOptions): { deps: SkillRuntimeDeps; recorded: Rec
     chatOfConversation: async () => CHAT,
     chatOwner: async () => ({ orgId: ORG, userId: USER, role: "member" }),
     executorKind: async () => options.executor ?? null,
-    conversationDir: async () => options.dir ?? "/nonexistent",
+    conversationEnv: async () => new NodeExecutionEnv({ cwd: options.dir ?? "/nonexistent" }),
     materialize: async (args) => {
       recorded.materialized.push(args as unknown as Record<string, unknown>);
     },
@@ -460,7 +461,7 @@ describe("push_skill", () => {
       writeFileSync(path.join(dir, "skills", "hello", "scripts", "run.sh"), "echo hi\n", "utf8");
       const install = { slug: "hello", pinned_version: "v1", installed_at: "2026-01-01T00:00:00.000Z" };
       const { deps, recorded } = fakeDeps({ install, executor: "server", versions: [{ version: "v1" }] });
-      (deps as unknown as { conversationDir: () => Promise<string> }).conversationDir = async () => dir;
+      (deps as unknown as { conversationEnv: () => Promise<NodeExecutionEnv> }).conversationEnv = async () => new NodeExecutionEnv({ cwd: dir });
       const runtime = makeRuntime(deps);
       const push = runtime.tools().find((t) => t.name === "push_skill")!;
       const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(
@@ -492,7 +493,7 @@ describe("push_skill", () => {
         executor: "server",
         versions: [{ version: "v1" }, { version: "v3" }],
       });
-      (deps as unknown as { conversationDir: () => Promise<string> }).conversationDir = async () => dir;
+      (deps as unknown as { conversationEnv: () => Promise<NodeExecutionEnv> }).conversationEnv = async () => new NodeExecutionEnv({ cwd: dir });
       const runtime = makeRuntime(deps);
       const push = runtime.tools().find((t) => t.name === "push_skill")!;
       const result = await (push.execute as (args: unknown, api: ToolExecutionApi, ctx: Context) => Promise<ToolExecutionResult>)(

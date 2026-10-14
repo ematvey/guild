@@ -11,6 +11,26 @@ not kept here — it lives in git and in `docs/reviews/`.
 
 ## Latest decisions
 
+- **Server-side tools run in gVisor sandboxes via a sandbox-runner (2026-10-14, branch `sandbox-runner`).**
+  Server file/shell tools ran in the Fastify process, unconfined
+  (`NodeExecutionEnv` takes absolute paths as-is: a full-access chat could
+  read the master key from `/proc/self/environ`). Now: one `runsc`
+  container per workspace session / plain chat, mounting only its
+  `guild_data` subpath, non-root, read-only rootfs, no secrets; created by
+  the `sandbox-runner` service, which alone holds the Docker socket and
+  fixes the container spec. An in-sandbox agent wraps
+  `NodeExecutionEnv{cwd:/workspace}`, reached over the exec stdio stream
+  (`apps/server/src/sandbox/`). Network: an internal network whose only
+  exit is a squid egress proxy (registry allowlist, private/host
+  addresses denied) — addressed by IP, since Docker's embedded DNS fails
+  under gVisor. Package installs persist in `/workspace/.sandbox-home`.
+  Server runs as uid 1000; `GUILD_SANDBOX` fails closed in production;
+  shell tools default on with a runner. Also fixed on the way: skill slug
+  traversal, and NUL bytes in tool output breaking thread journaling.
+  Host: gVisor 20261005.0 on devbox. Single-host compose only; Kubernetes
+  deferred. Plan + decisions: `docs/plans/2026-10-14-sandbox-runner-gvisor.md`;
+  deploy notes: `docs/deploy-nuances.md` §4a.
+
 - **Settings + new-chat navigation are URL-driven (2026-10-14).** The
   principle landed with its gaps closed. *Settings*: every section pick
   navigates to `/settings/<section>` and every sub-page to

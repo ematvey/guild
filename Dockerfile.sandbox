@@ -1,0 +1,42 @@
+# Sandbox image: what server-side agent tools run in (one container per
+# workspace, under gVisor, created by the sandbox runner — see
+# docs/plans/2026-10-14-sandbox-runner-gvisor.md). Holds the system
+# toolchain (packages cannot be apt-installed at runtime: non-root,
+# read-only rootfs) and the guild-sandbox-agent the runner execs per RPC
+# connection. No Guild secrets or server code beyond the agent.
+
+# Build stage: compile the agent (the server's sandbox/ sources).
+FROM node:22 AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/desktop/package.json apps/desktop/
+COPY apps/server/package.json apps/server/
+COPY packages/ui/package.json packages/ui/
+RUN npm ci --workspace apps/server --no-audit --no-fund
+COPY apps/server/src ./apps/server/src
+COPY apps/server/tsconfig.json apps/server/tsconfig.json
+RUN npm run build --workspace apps/server
+
+# Agent deps: pi-durable (NodeExecutionEnv) and chord only.
+FROM node:22 AS agent-deps
+WORKDIR /opt/guild
+COPY --from=build /app/node_modules/@earendil-works/pi-durable/package.json /tmp/pi-durable.json
+COPY --from=build /app/node_modules/@earendil-works/chord/package.json /tmp/chord.json
+RUN node -e ' \
+  const d = require("/tmp/pi-durable.json").version, c = require("/tmp/chord.json").version; \
+  require("fs").writeFileSync("package.json", JSON.stringify({ name: "guild-sandbox-agent", private: true, type: "module", \
+    dependencies: { "@earendil-works/pi-durable": d, "@earendil-works/chord": c } }));' \
+  && npm install --omit=dev --no-audit --no-fund
+
+FROM node:22-bookworm
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+       ripgrep jq python3-pip python3-venv python3-dev pkg-config libssl-dev \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=agent-deps /opt/guild /opt/guild
+COPY --from=build /app/apps/server/dist/sandbox/agent.js /app/apps/server/dist/sandbox/serve.js /app/apps/server/dist/sandbox/protocol.js /opt/guild/
+# uid 1000 is the image's `node` user; the runner runs every sandbox
+# process as 1000:1000.
+USER 1000:1000
+WORKDIR /workspace
+CMD ["sleep", "infinity"]
