@@ -4,7 +4,7 @@ Goal: resolve the 2026-09-23 full review's concrete defects, retain the current 
 
 Architecture: preserve the single durable ChatRunner and shared frontend. Tighten trusted executor selection, journal all control-flow decisions, and make outgoing commands and queue consumption durable identities. Keep two subagents active maximum; parent owns integration and deployment.
 
-Spec: docs/reviews/2026-09-23-full/REVIEW.md, docs/PRD.md, docs/SRS.md. Current concurrency baseline ca3420b (0.5.19); preserve other sessions' commits and changes. No commits or client release publishing without authorization. Generated protocol bindings must be regenerated. Tests must use scoped disposable databases; no production mutation as a test. Redeploy via docs/deploy-nuances.md section 2 with live bundle verification. No Superpowers workflow.
+Spec: REVIEW.md of 2026-09-23-full (git history), docs/PRD.md, docs/SRS.md. Current concurrency baseline ca3420b (0.5.19); preserve other sessions' commits and changes. No commits or client release publishing without authorization. Generated protocol bindings must be regenerated. Tests must use scoped disposable databases; no production mutation as a test. Redeploy via docs/deploy-nuances.md section 2 with live bundle verification. No Superpowers workflow.
 
 ## Batch A — server boundary enforcement (server subagent)
 
