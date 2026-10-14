@@ -40,6 +40,13 @@ export type Block =
   | { type: "reasoning"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: string };
 
+export interface JudgeVerdict {
+  approve: boolean;
+  reason?: string;
+  /** Judge round-trip time in milliseconds. */
+  ms?: number;
+}
+
 export type ThreadEvent =
   | { type: "user_message"; content: string; attachments: MessageAttachment[] }
   | { type: "system_message"; content: string }
@@ -73,7 +80,13 @@ export type ThreadEvent =
       model?: string;
       usage?: UsagePayload;
     }
-  | { type: "approval_request"; call_id: string; name: string; arguments: string }
+  | {
+      type: "approval_request";
+      call_id: string;
+      name: string;
+      arguments: string;
+      judge?: JudgeVerdict;
+    }
   | {
       type: "approval_decision";
       call_id: string;
@@ -155,8 +168,20 @@ export function compactionEvent(
   return ev;
 }
 
-export function approvalRequestEvent(callId: string, name: string, args: string): ThreadEvent {
-  return { type: "approval_request", call_id: callId, name, arguments: args };
+export function approvalRequestEvent(
+  callId: string,
+  name: string,
+  args: string,
+  judge?: JudgeVerdict,
+): ThreadEvent {
+  const ev: ThreadEvent & { judge?: JudgeVerdict } = {
+    type: "approval_request",
+    call_id: callId,
+    name,
+    arguments: args,
+  };
+  if (judge !== undefined) ev.judge = judge;
+  return ev;
 }
 
 export function approvalDecisionEvent(

@@ -530,6 +530,21 @@ pub struct MessageAttachment {
     pub modality: String,
 }
 
+/// The approval judge's verdict on one gated tool call (the "approve for
+/// me" policy LLM). Journaled on the approval request so the thread shows
+/// why a call asked instead of running silently.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, optional_fields))]
+pub struct JudgeVerdict {
+    pub approve: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Judge round-trip time in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms: Option<u32>,
+}
+
 /// One durable thread event — the append-only source of truth for a chat.
 /// Model-facing message history and client rendering are both derivations of
 /// these events (deepseek-harness session model).
@@ -609,6 +624,10 @@ pub enum ThreadEvent {
         call_id: String,
         name: String,
         arguments: String,
+        /// The approval judge's verdict on this call, when the judge ran
+        /// (absent when the judge was skipped or unavailable).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        judge: Option<JudgeVerdict>,
     },
     /// The decision for a prior `approval_request`. First answer wins; the
     /// timeout auto-denies.
