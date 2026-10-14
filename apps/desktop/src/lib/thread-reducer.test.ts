@@ -229,6 +229,55 @@ describe("applyState: replay-during-generating (incremental, not re-derived)", (
   });
 });
 
+describe("applyThreadEvents: incremental journal fan-out", () => {
+  it("applies fresh rows live; a later sync with the same rows dedupes", () => {
+    const r = createThreadReducer(); r.open("chat");
+    const applied = r.applyThreadEvents("chat", 10, [
+      row(9, assistantText("hi", 1)),
+      row(8, { type: "user_message", content: "go" }),
+    ]);
+    expect(applied.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
+    // Rows at/below the watermark replay nothing.
+    const again = r.applyThreadEvents("chat", 10, [row(9, assistantText("hi", 1))]);
+    expect(again.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
+    // A full sync with the same log adds no duplicates.
+    const synced = r.applyState(state("chat", 11, [
+      row(8, { type: "user_message", content: "go" }),
+      row(9, assistantText("hi", 1)),
+    ], "", "", false));
+    expect(synced.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
+  });
+
+  it("never regresses the watermark", () => {
+    const r = createThreadReducer(); r.open("chat");
+    r.applyState(state("chat", 50, [row(10, { type: "user_message", content: "a" })]));
+    r.applyThreadEvents("chat", 5, [row(4, { type: "user_message", content: "old" })]);
+    // A stale thread_state with an older seq is still recognized as stale.
+    expect(r.applyState(state("chat", 5, [])).stale).toBe(true);
+  });
+
+  it("tool_started provisions the row; the carrying message adopts it (no duplicate)", () => {
+    const r = createThreadReducer(); r.open("chat");
+    r.applyFrame({ type: "tool_started", call_id: "call-1", name: "hubspot_api", arguments: "{}", executor: "server" });
+    expect(r.applyFrame({ type: "noop" } as never).blocks.map((b) => b.kind)).toEqual(["tool"]);
+    // The durable assistant_message carrying the same call fans out a beat
+    // later: adopt the provisioned block, don't push a second one.
+    const applied = r.applyThreadEvents("chat", 12, [
+      row(11, {
+        type: "assistant_message",
+        turn: 1,
+        step: 0,
+        model: "m",
+        usage,
+        blocks: [{ type: "tool_call", id: "call-1", name: "hubspot_api", arguments: "{}" } as never],
+      }),
+    ]);
+    const toolBlocks = applied.blocks.filter((b) => b.kind === "tool");
+    expect(toolBlocks).toHaveLength(1);
+    expect((toolBlocks[0] as { tool: { args: string } }).tool.args).toBe("{}");
+  });
+});
+
 describe("applyState: approval upsert mid-stream", () => {
   const request = row(2, { type: "approval_request", call_id: "c1", name: "execute", arguments: "{}" });
 

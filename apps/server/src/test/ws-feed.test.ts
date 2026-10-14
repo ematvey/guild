@@ -238,6 +238,53 @@ describe("member-socket feed", () => {
     ws.end();
   });
 
+  it("delivers mid-turn journal rows to the socket before the run-end view", { timeout: TEST_TIMEOUT }, async () => {
+    const chat = await createChat("feed incremental");
+    const ws = await memberSocket();
+
+    // The turn's user_message lands in the durable journal while the slow
+    // model is still streaming. It must reach the socket mid-turn — as a
+    // thread_events frame (the incremental fan-out) or an early generating
+    // view — not only inside the run-end ThreadState.
+    void fetch(`${base}/api/v1/gateway/chat`, {
+      method: "POST",
+      headers: auth(stack.memberToken),
+      body: JSON.stringify({
+        chat_id: chat.id,
+        model: "GLM-Slow-Model",
+        messages: [{ role: "user", content: "say hello" }],
+      }),
+    });
+    const midTurn = await waitFrame(
+      ws,
+      (f) =>
+        f.chat_id === chat.id &&
+        ((f.type === "thread_events" &&
+          (f.events as { event: { type: string } }[]).some((e) => e.event.type === "user_message")) ||
+          (f.type === "thread_state" && f.generating === true &&
+            (f.events as { event: { type: string } }[]).some((e) => e.event.type === "user_message"))),
+      20_000,
+    );
+    const rows = midTurn.events as { seq: number; event: { type: string } }[];
+    expect(rows.map((e) => e.event.type)).toContain("user_message");
+    if (midTurn.type === "thread_events") {
+      // The frame's watermark is at least the newest row it carries.
+      expect(midTurn.seq as number).toBeGreaterThanOrEqual(Math.max(...rows.map((r) => r.seq)));
+    }
+
+    // The run-end view still settles the thread (full reconcile).
+    await waitFrame(
+      ws,
+      (f) =>
+        f.type === "thread_state" &&
+        f.chat_id === chat.id &&
+        !f.generating &&
+        (f.events as { event: { type: string } }[]).some((e) => e.event.type === "assistant_message"),
+      20_000,
+    );
+    ws.end();
+  });
+
   it("answers sync with SyncBegin → byte-exact ThreadState → SyncDone", { timeout: TEST_TIMEOUT }, async () => {
     const chat = await createChat("sync chat");
     const ws = await memberSocket();
