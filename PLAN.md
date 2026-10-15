@@ -11,6 +11,16 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Release 0.5.46 (2026-10-15).** First release cut straight from develop's
+  working tree: the approval-gate idempotency fixes (below), the agent
+  sessions' queued mid-turn sends (steer/queue chips, withdrawal), the
+  sidebar's recent-activity sort (+ the `(chat_id, seq)` index migration),
+  the eventless-chat fix in the thread-list probe, and the pending-send
+  adoption fix (the durable echo now clears the optimistic marker).
+  develop → master `--no-ff`; servers rebuilt on both stacks (:18080,
+  :18081); client artifacts published to both deployments with their URLs
+  baked; both updater manifests serve 0.5.46.
+
 - **Approval gate survives recovery re-runs; cards stop dying mid-wait (2026-10-15).**
   The gate is recoverable (pi-durable re-drives suspended tool tasks), but its
   card re-append was not idempotent: the deterministic request id met a
