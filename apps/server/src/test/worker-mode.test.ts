@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { masterKeyBytes, encryptSecret } from "../platform/crypto.js";
 
 let stack: M2Stack;
 let port: number;
@@ -50,6 +51,23 @@ const sseDelta = (content: string): string =>
 const sseDone = (): string =>
   'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
+  "data: [DONE]\n\n";
+
+const toolCallSse = (name: string, args: string): string =>
+  'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_wm","type":"function","function":{"name":"' +
+  name +
+  '","arguments":' +
+  JSON.stringify(args) +
+  "}}]}}]}\n\n" +
+  'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
+  'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
+  "data: [DONE]\n\n";
+
+const finalSse = (text: string): string =>
+  'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
+  `data: {"choices":[{"delta":{"content":"${text}"}}]}\n\n` +
+  'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+  'data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2}}\n\n' +
   "data: [DONE]\n\n";
 
 async function submit(chatId: string, content: string): Promise<void> {
@@ -157,21 +175,6 @@ describe("worker-per-chat (fork supervisor)", () => {
   it("a machine-bound chat dispatches its tool through the IPC proxy to the hub", async () => {
     const platformOf = (): import("../platform/context.js").PlatformContext =>
       (stack.env.app as unknown as { platform: import("../platform/context.js").PlatformContext }).platform;
-    const toolCallSse = (name: string, args: string): string =>
-      'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_wm","type":"function","function":{"name":"' +
-      name +
-      '","arguments":' +
-      JSON.stringify(args) +
-      "}}]}}]}\n\n" +
-      'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
-      'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
-      "data: [DONE]\n\n";
-    const finalSse =
-      'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
-      'data: {"choices":[{"delta":{"content":"kernel answer"}}]}\n\n' +
-      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
-      'data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2}}\n\n' +
-      "data: [DONE]\n\n";
 
     // The fake daemon speaks the shipped-client executor contract against
     // the PARENT's hub; the worker reaches it only through the proxy.
@@ -248,4 +251,75 @@ describe("worker-per-chat (fork supervisor)", () => {
     }, 60_000);
     ws.close();
   }, 120_000);
+
+  it("killing a worker mid-tool-call keeps integration tools on the resumed run", async () => {
+    // The vendor answers slowly, so the kill lands while the integration
+    // tool call is pending — the resume must re-dispatch it through a
+    // freshly provisioned registry, not lose the integration toolset.
+    const vendorRequests: string[] = [];
+    const vendor = createServer((req, res) => {
+      vendorRequests.push(req.url ?? "");
+      setTimeout(() => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, channels: [{ id: "C1", name: "general" }] }));
+      }, 1_200);
+    });
+    await new Promise<void>((resolve) => vendor.listen(0, "127.0.0.1", resolve));
+    const vendorBase = `http://127.0.0.1:${(vendor.address() as AddressInfo).port}`;
+
+    await stack.env.db.query(
+      "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'slack', $2, true) ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
+      [stack.orgId, JSON.stringify({ base_url: vendorBase, tools: { conversations_list: { enabled: true, approval: "always_allow" } } })],
+    );
+    const master = masterKeyBytes(stack.env.config.masterKeyHex);
+    await stack.env.db.query(
+      "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'slack', 'bot_token', $2) ON CONFLICT (org_id, integration, name) DO NOTHING",
+      [stack.orgId, encryptSecret(master, "xoxb-test")],
+    );
+
+    const chatId = await createChat("worker kill mid integration call");
+    stack.mock.setResponses([
+      { body: toolCallSse("slack_conversations_list", JSON.stringify({ limit: 5 })) },
+      // The resumed run's own new call: it must resolve through a
+      // re-provisioned registry, not die with the interrupted one.
+      { body: toolCallSse("slack_conversations_list", JSON.stringify({ limit: 5 })) },
+      { body: finalSse("resumed with tools") },
+    ]);
+
+    const sent = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/turns`,
+      headers: auth(stack.memberToken),
+      payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "list slack channels" }] },
+    });
+    expect(sent.statusCode).toBe(200);
+
+    // First dispatch through the integration tool — kill while it is in
+    // flight (the vendor's 1.2s delay covers the wait).
+    await waitFor(async () => vendorRequests.length > 0, 60_000);
+    const pid = stack.env.app.platform.supervisor!.pidOf(chatId);
+    expect(pid).toBeDefined();
+    process.kill(pid!, "SIGKILL");
+
+    // The respawned worker re-drives the run: the interrupted call settles,
+    // the model issues a NEW integration call, and that one must resolve —
+    // the vendor serves it and its result reaches the thread.
+    await waitFor(async () => (await lastAssistant(chatId)).includes("resumed with tools"), 60_000);
+    await waitFor(async () => vendorRequests.length >= 2, 30_000);
+    const thread = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/threads/${chatId}`,
+      headers: auth(stack.memberToken),
+    });
+    const events = (JSON.parse(thread.body) as { events: { event: Record<string, unknown> }[] }).events;
+    const results = events.filter((e) => e.event.type === "tool_result");
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(
+      results.some((e) => String((e.event as { content: string }).content).includes("general")),
+    ).toBe(true);
+    for (const e of results) {
+      expect(String((e.event as { content: string }).content)).not.toContain("does not exist");
+    }
+    vendor.close();
+  }, 180_000);
 });
