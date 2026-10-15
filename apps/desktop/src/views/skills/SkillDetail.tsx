@@ -644,7 +644,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
           <div className="overflow-x-auto rounded-lg border border-border bg-card">
             <table className="w-full border-collapse text-[13px]">
               <thead>
-                <tr className="text-left text-[11px] font-medium text-muted-foreground">
+                <tr className="text-left text-xs font-medium text-muted-foreground">
                   <th className="border-b border-border px-2.5 py-1.5">Version</th>
                   <th className="border-b border-border px-2.5 py-1.5">Published</th>
                   <th className="border-b border-border px-2.5 py-1.5">By</th>
@@ -700,7 +700,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
                           <Button
                             variant="outline"
                             size="sm"
-                            className="ml-1.5 h-[26px] px-2 text-[11px]"
+                            className="ml-1.5 h-[26px] px-2 text-xs"
                             disabled={busy}
                             aria-label={`Pin ${detail.slug} at ${v.version}`}
                             onClick={() =>
@@ -733,19 +733,19 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
           <div className="flex flex-wrap gap-3">
             <div className="flex min-w-[130px] flex-col gap-0.5 rounded-lg border border-border bg-card px-4 py-3">
               <span className="text-xl font-semibold">{detail.installs}</span>
-              <span className="text-[11px] text-muted-foreground">installs</span>
+              <span className="text-xs text-muted-foreground">installs</span>
             </div>
             <div className="flex min-w-[130px] flex-col gap-0.5 rounded-lg border border-border bg-card px-4 py-3">
               <span className="text-xl font-semibold">{detail.latest_version ?? "—"}</span>
-              <span className="text-[11px] text-muted-foreground">latest</span>
+              <span className="text-xs text-muted-foreground">latest</span>
             </div>
             <div className="flex min-w-[130px] flex-col gap-0.5 rounded-lg border border-border bg-card px-4 py-3">
               <span className="text-xl font-semibold">{detail.versions.length}</span>
-              <span className="text-[11px] text-muted-foreground">versions</span>
+              <span className="text-xs text-muted-foreground">versions</span>
             </div>
             <div className="min-w-[240px] flex-1 rounded-lg border border-border bg-card px-4 py-3">
               <span className="text-xl font-semibold">{detail.read_stats?.total ?? 0}</span>
-              <span className="block text-[11px] text-muted-foreground">
+              <span className="block text-xs text-muted-foreground">
                 reads in the last 30 days
               </span>
               {detail.read_stats != null && detail.read_stats.series.length > 0 && (

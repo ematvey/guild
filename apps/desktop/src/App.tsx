@@ -136,7 +136,7 @@ function WebLogin({ onLoggedIn }: { onLoggedIn: (profile: Profile) => void }) {
           </Button>
           {sso && (
             <>
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
                 <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
               </div>
               <Button
@@ -448,7 +448,7 @@ function DesktopApp() {
             </>
           )}
           {appVersion && (
-            <p className="text-center text-[11px] text-muted-foreground/70">Guild v{appVersion}</p>
+            <p className="text-center text-xs text-muted-foreground/70">Guild v{appVersion}</p>
           )}
           {addWorkspace && (
             <button

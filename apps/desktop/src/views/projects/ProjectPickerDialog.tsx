@@ -152,7 +152,7 @@ function ProjectRow({
         <Folder className="size-4 shrink-0 text-muted-foreground" />
       )}
       <span className="min-w-0 flex-1 truncate font-medium">{project.name}</span>
-      <span className="shrink-0 rounded-full bg-secondary px-1.5 py-px text-[10px] text-muted-foreground">
+      <span className="shrink-0 rounded-full bg-secondary px-1.5 py-px text-xs text-muted-foreground">
         {project.machine_label ?? project.machine_id}
       </span>
     </button>

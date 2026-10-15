@@ -205,7 +205,7 @@ export default function LocalSkills() {
     <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          Read from <code className="text-[11px]">.agents/skills</code> in the project and your
+          Read from <code className="text-xs">.agents/skills</code> in the project and your
           home directory, plus Guild-installed skills.
         </p>
         <Button size="sm" variant="ghost" onClick={() => void reload()} title="Re-scan skill folders">
@@ -295,7 +295,7 @@ export default function LocalSkills() {
                     /{row.name}
                   </span>
                   <SourceBadge row={row} />
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     {SCOPE_LABELS[row.scope] ?? row.scope}
                   </span>
                   {row.disabled && (
