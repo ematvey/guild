@@ -658,6 +658,17 @@ export class GuildRuntime {
     // its model through the registry, and without this it fails no_model —
     // submit-time refresh alone only covers turns submitted in this process.
     await this.refreshAllOrgModels();
+    // Tool provisioning rides the same path a submit uses: a re-driven run
+    // (crash or deploy restart) must issue new integration/MCP calls
+    // against a provisioned surface, not the fresh process's core-only
+    // registry.
+    const pendingChats = new Set((await this.chatsWithPendingWork()).map((row) => row.chatId));
+    for (const [chatId, conversationId] of this.chatToConversation) {
+      if (!pendingChats.has(chatId)) continue;
+      await this.provisionResumedConversation(chatId, conversationId).catch((error) =>
+        this.log.warn({ err: error, chatId }, "resume tool provisioning failed"),
+      );
+    }
     // Re-drives the runs the previous process left pending (a crash, or a
     // deploy restart that skipped the drain): the turn continues where it
     // stopped instead of ending as interrupted.
@@ -667,6 +678,16 @@ export class GuildRuntime {
     // submit; the sweep failing must not block the turn.
     await this.sweepExpiredCommands();
     this.harnessOpenedAt = Date.now();
+  }
+
+  /** Provisions one resumed conversation's tools — the submit path's
+   *  provisioning, keyed by chat. */
+  private async provisionResumedConversation(chatId: string, conversationId: string | number): Promise<void> {
+    const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
+    if (chat.rows[0] === undefined) return;
+    const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
+    if (!conversation) return;
+    await this.provisionTurnTools(conversation, chatId, chat.rows[0].org_id);
   }
 
   /** The reopen backoff ladder (first attempt immediate, then capped). */
@@ -769,6 +790,30 @@ export class GuildRuntime {
     return conversation;
   }
 
+  /** The per-turn tool provisioning submit and resume share: resolve the
+   *  org's enabled integrations + the chat owner's MCP servers into
+   *  extensions + tools and configure the conversation with them. Submit
+   *  runs it before admission; resume runs it before the re-driven run —
+   *  a resumed run must see the same tool surface a submitted one gets
+   *  (the fresh process's registry carries only the base extensions). */
+  private async provisionTurnTools(conversation: Conversation, chatId: string, orgId: string): Promise<void> {
+    const prepared = await this.integrationsRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
+    const userPrepared = await this.userMcpRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
+    // A "clear" must still reconfigure — it drops that runtime's stale
+    // extension — so the conversation is left untouched only when both
+    // runtimes have never configured it and have nothing to add now.
+    if (prepared.action !== "none" || userPrepared.action !== "none") {
+      const base = this.baseConfiguration();
+      await conversation.configure(
+        {
+          extensions: [...base.extensions, ...prepared.extensions, ...userPrepared.extensions],
+          tools: [...base.tools, ...prepared.tools, ...userPrepared.tools],
+        },
+        BACKGROUND_CONTEXT,
+      );
+    }
+  }
+
   /** Submits a user turn into the chat's conversation: the model provider
    *  for the org is refreshed from the gateway routes, the agent's model is
    *  configured, and the input is durably admitted (queued in the inbox when
@@ -798,28 +843,15 @@ export class GuildRuntime {
       turn: turnNo,
       userId: owner?.user_id ?? null,
     });
-    // Integrations (M8): per turn the org's enabled plugins resolve into a
-    // snapshot, the per-org extension carries their tools, and the
-    // conversation's agent selection + tool allow-list are refreshed
-    // (role-filtered like the Rust disclosure filter). User MCP servers:
-    // the chat owner's enabled servers declare their tools the same way
-    // (one extension + bare registrations). Orgs/users with neither keep
-    // the exact previous configure behavior.
-    const prepared = await this.integrationsRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
-    const userPrepared = await this.userMcpRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
-    // A "clear" must still reconfigure — it drops that runtime's stale
-    // extension — so the conversation is left untouched only when both
-    // runtimes have never configured it and have nothing to add now.
-    if (prepared.action !== "none" || userPrepared.action !== "none") {
-      const base = this.baseConfiguration();
-      await conversation.configure(
-        {
-          extensions: [...base.extensions, ...prepared.extensions, ...userPrepared.extensions],
-          tools: [...base.tools, ...prepared.tools, ...userPrepared.tools],
-        },
-        BACKGROUND_CONTEXT,
-      );
-    }
+    // Integrations (M8) + user MCP: the shared per-turn provisioning (the
+    // same call the resume path makes before a re-driven run) — the org's
+    // enabled plugins resolve into a snapshot, the per-org extension
+    // carries their tools, and the conversation's agent selection + tool
+    // allow-list are refreshed (role-filtered like the Rust disclosure
+    // filter). User MCP servers: the chat owner's enabled servers declare
+    // their tools the same way (one extension + bare registrations).
+    // Orgs/users with neither keep the exact previous configure behavior.
+    await this.provisionTurnTools(conversation, chatId, orgId);
     // The combined skills index section renders at turn start from the
     // stash; a turn whose client sent no index re-renders from the server
     // portion alone (browser/server turns never send one).
