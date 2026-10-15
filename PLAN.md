@@ -11,6 +11,24 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **The storage layer survives transient Postgres failures instead of sealing the session (2026-10-15).**
+  Root cause of the chat wedge (incident 2026-10-15): pi-durable is fail-stop by design —
+  "nothing retries, that is the Storage's to retry" — and the Postgres adapter never retried,
+  so one transient blip sealed every Session in the process until the next deploy restart.
+  Fixes: `PgPoolDatabase` retries connection-class failures on plain reads/read transactions
+  and bounds every write transaction server-side (`SET LOCAL` idle-in-transaction + statement
+  timeouts) with a client watchdog that destroys a stalled socket (a hung commit can no longer
+  hold the `durable_metadata` row lock). `PostgresDurableStorage.commit` retries through
+  transient failures and adopts an already-applied batch via a `durable_commits` row
+  (migration v3) keyed by the batch's full ID-set fingerprint — adoption arms only after the
+  call saw a transient failure, because the conformance contract demands a clean ID-claim
+  conflict reject immediately (first-ID keying falsely adopted foreign batches). Also: an
+  empty route read no longer wipes the org's live model catalog mid-turn (`ensureOrgModel`
+  guard — the `no_model` trigger); turn commands whose delivery threw are marked failed and
+  stale `pending` commands are swept at startup and per-submit (the wedge left two immortal
+  pending rows); the `conversationForChat` reset logs loudly (thread replay deferred).
+  `docs/SRS.md` SRS-46 carries the always-allow piece of the same day.
+
 - **Full durability: deploys resume turns instead of ending them (2026-10-15).**
   The SIGTERM drain (below) is gone. A deploy's shutdown now hard-exits
   (`process.exit` on SIGTERM/SIGINT, no graceful close): pi-durable's graceful
