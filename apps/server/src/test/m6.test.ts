@@ -755,6 +755,28 @@ describe("M6 admin integrations (read paths)", () => {
     expect(badName.statusCode).toBe(400); // the path segment arrives decoded as bad/name → invalid
   });
 
+  it("curates a tool to always_allow and reads the curation back", async () => {
+    const rows = await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = 'github'", [e.orgId]);
+    const rowId = rows.rows[0]!.id as string;
+    const put = await inject("PUT", `/api/v1/admin/integrations/${rowId}/tools/get_file`, e.adminToken, {
+      enabled: true,
+      approval: "always_allow",
+    });
+    expect(put.statusCode).toBe(200);
+    expect(json(put)).toEqual({ name: "get_file", enabled: true, approval: "always_allow" });
+
+    const stored = await e.env.db.query("SELECT config FROM integrations WHERE id = $1", [rowId]);
+    expect(((stored.rows[0]!.config as Record<string, unknown>)["tools"] as Record<string, unknown>)["get_file"]).toEqual({
+      enabled: true,
+      approval: "always_allow",
+    });
+
+    // The curated tool list echoes the value back (not collapsed to default).
+    const list = await inject("GET", `/api/v1/admin/integrations/${rowId}/tools`, e.adminToken);
+    const tool = ((json(list)["tools"] ?? []) as Record<string, unknown>[]).find((t) => t["name"] === "get_file");
+    expect(tool!["approval"]).toBe("always_allow");
+  });
+
   it("deletes an integration row with its secrets", async () => {
     const delGithub = await inject("DELETE", `/api/v1/admin/integrations/${(await e.env.db.query("SELECT id FROM integrations WHERE org_id = $1 AND name = 'github'", [e.orgId])).rows[0]!.id}`, e.adminToken);
     expect(delGithub.statusCode).toBe(200);

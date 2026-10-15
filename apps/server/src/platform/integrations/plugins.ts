@@ -75,12 +75,17 @@ export function unnamespacedTool(slug: string, tool: string): string | null {
 /** Per-tool approval value forcing a durable approval prompt on every call. */
 export const TOOL_APPROVAL_ALWAYS_ASK = "always_ask";
 
+/** Per-tool approval value letting every call flow without an approval
+ *  prompt — the chat's approval mode and the chat owner's account policy
+ *  never gate it (the org's call: the tool is non-sensitive). */
+export const TOOL_APPROVAL_ALWAYS_ALLOW = "always_allow";
+
 /** One tool's admin curation as stored on the integration row's config:
  *  `config.tools[<raw tool name>] = { enabled, approval }`. Absent from the
  *  stored config: adapter-bound (built-in connector) → enabled, follow user
  *  policy; MCP-bound (live discovery) → disabled — nothing is exposed that
  *  the admin did not approve. Unknown approval values read as the default. */
-export function toolCurate(rowConfig: Json, mcp: boolean, rawTool: string): { enabled: boolean; alwaysAsk: boolean } {
+export function toolCurate(rowConfig: Json, mcp: boolean, rawTool: string): { enabled: boolean; alwaysAsk: boolean; alwaysAllow: boolean } {
   const tools = rowConfig["tools"];
   const stored =
     tools !== null && typeof tools === "object" && !Array.isArray(tools)
@@ -91,9 +96,10 @@ export function toolCurate(rowConfig: Json, mcp: boolean, rawTool: string): { en
     return {
       enabled: typeof c["enabled"] === "boolean" ? c["enabled"] : !mcp,
       alwaysAsk: c["approval"] === TOOL_APPROVAL_ALWAYS_ASK,
+      alwaysAllow: c["approval"] === TOOL_APPROVAL_ALWAYS_ALLOW,
     };
   }
-  return { enabled: !mcp, alwaysAsk: false };
+  return { enabled: !mcp, alwaysAsk: false, alwaysAllow: false };
 }
 
 /** Class rank for the policy rule: read < write < admin. */
