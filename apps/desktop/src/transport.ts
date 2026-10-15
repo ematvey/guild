@@ -730,6 +730,10 @@ export interface ChatSummary {
   project_machine_label?: string;
   /** Whether the bound machine's socket is live right now. */
   machine_online?: boolean;
+  /** The chat's latest thread event (RFC3339), falling back to created_at —
+   *  the sidebar's recent-activity sort key. List rows carry it; the live
+   *  thread-event fan-out moves it forward as turns land. */
+  last_activity_at?: string;
 }
 
 export interface MachineInfo {
@@ -849,7 +853,20 @@ export type MessageAttachmentMeta = {
 };
 
 export type ThreadEvent =
-  | { type: "user_message"; content: string; attachments?: MessageAttachmentMeta[] }
+  | {
+      type: "user_message";
+      content: string;
+      attachments?: MessageAttachmentMeta[];
+      /** Admitted while a turn was still generating: not yet seen by the
+       *  model — rendered as a queued chip above the composer, not a
+       *  transcript bubble, until the agent picks it up (the server moves
+       *  the event and clears the flag at placement). */
+      queued?: boolean;
+      /** Requested placement for the same chip: "steer" joins the running
+       *  turn at the next tool boundary; "queue" (and absent) runs as the
+       *  next turn's input. */
+      mode?: "steer" | "queue";
+    }
   | { type: "system_message"; content: string }
   | {
       type: "assistant_message";
@@ -1078,6 +1095,30 @@ export async function stopChat(chatId: string): Promise<boolean> {
 }
 
 /// Compacts the thread manually (the /compact composer command): one
+/** Withdraws one queued (not yet placed) mid-turn send — the queued-chip
+ *  trash button. False = it just got placed (409): refresh, the message is
+ *  already transitioning to a delivered transcript bubble. */
+export async function withdrawQueued(chatId: string, messageId: string): Promise<boolean> {
+  const token = getToken();
+  const res = await fetch(
+    apiUrl(`/api/v1/gateway/chat/${encodeURIComponent(chatId)}/pending/${encodeURIComponent(messageId)}`),
+    {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-guild-client-id": clientId(),
+      },
+    },
+  );
+  if (res.status === 409) return false;
+  if (!res.ok) {
+    const v = await res.json().catch(() => ({}));
+    throw new Error(v?.error?.message ?? res.statusText);
+  }
+  return true;
+}
+
+/// Summarizes the chat's history (POST /compact): the model-authored
 /// summarization call replaces the pre-compaction history in the model's
 /// view. Fire-and-forget — the compaction card lands via the thread sync.
 export async function compactChat(chatId: string): Promise<void> {

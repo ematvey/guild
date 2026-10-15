@@ -565,6 +565,19 @@ pub enum ThreadEvent {
         content: String,
         #[serde(default)]
         attachments: Vec<MessageAttachment>,
+        /// Admitted while a turn was still generating: the model has not
+        /// seen this message yet — it sits in the conversation's inbox and
+        /// is placed at the next boundary (or never, if withdrawn). The
+        /// desktop renders it as a queued chip above the composer instead
+        /// of a transcript bubble; the bridge clears the flag (and moves
+        /// the row to the placement position) when the input is placed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        queued: Option<bool>,
+        /// Requested placement for the same chip: "steer" (joins the
+        /// running turn at the next tool boundary) or "queue" (runs as the
+        /// next turn's input). Absent on old events and idle sends.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<String>,
     },
     /// Server-owned system prompt for this turn. Log-only: rebuilds the
     /// request header on derivation, never rendered as a chat message.

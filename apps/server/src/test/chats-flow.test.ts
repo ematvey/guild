@@ -106,6 +106,34 @@ describe("chats CRUD wire", () => {
     expect((JSON.parse(activeList.body) as { chats: { id: string }[] }).chats.some((c) => c.id === chat.id)).toBe(false);
   });
 
+  it("orders the sidebar list by recent activity, not creation", async () => {
+    const app = stack.env.app.inject;
+    const created = async (title: string) =>
+      JSON.parse(
+        (await app({
+          method: "POST",
+          url: "/api/v1/chats",
+          headers: auth(stack.memberToken),
+          payload: { title },
+        })).body,
+      ) as { id: string };
+    // B is created after A — creation order alone would keep B on top.
+    const a = await created("older chat, live turn");
+    const b = await created("newer chat, never used");
+    const platform = (stack.env.app as unknown as { platform: PlatformContext }).platform;
+    await platform.threads.appendEvent(a.id, { type: "user_message", content: "hello", attachments: [] });
+
+    const list = JSON.parse(
+      (await app({ method: "GET", url: "/api/v1/chats", headers: auth(stack.memberToken) })).body,
+    ) as { chats: { id: string; created_at: string; last_activity_at: string }[] };
+    const rows = list.chats.filter((c) => c.id === a.id || c.id === b.id);
+    expect(rows.map((r) => r.id)).toEqual([a.id, b.id]);
+    // Every list row carries the activity stamp; the never-used chat falls
+    // back to its creation time, the active one to its latest event.
+    expect(rows[1]!.last_activity_at).toBe(rows[1]!.created_at);
+    expect(Date.parse(rows[0]!.last_activity_at)).toBeGreaterThan(Date.parse(rows[1]!.last_activity_at));
+  });
+
   it("mark-read + approval routes answer in the settled shape", async () => {
     const created = await stack.env.app.inject({
       method: "POST",

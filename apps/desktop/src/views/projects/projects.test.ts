@@ -64,6 +64,36 @@ describe("sidebarGrouping", () => {
     expect(sidebarGrouping(null)).toEqual({ visible: [], chatsByProject: {} });
   });
 
+  it("sorts each surface by recent activity, most recent first", () => {
+    // Real stamps: the server's list order is already activity order — the
+    // client-side re-sort matters when live event pushes move a background
+    // chat's stamp forward between list refreshes.
+    const active = [
+      chat("old-quiet", "p1", "2026-10-15T09:00:00Z"),
+      chat("busy", "p1", "2026-10-15T08:00:00Z"),
+      chat("fresh-idle", "p1", "2026-10-15T10:00:00Z"),
+    ];
+    (active[1] as ChatSummary).last_activity_at = "2026-10-15T12:00:00Z";
+    const g = sidebarGrouping(active);
+    // The chat whose latest event is newest leads, even though a newer
+    // creation and an older creation surround it.
+    expect(g.chatsByProject["p1"].map((c) => c.id)).toEqual(["busy", "fresh-idle", "old-quiet"]);
+  });
+
+  it("sorts recents by recent activity too", () => {
+    const active = [
+      chat("quiet", undefined, "2026-10-15T09:00:00Z"),
+      chat("live", undefined, "2026-10-15T08:00:00Z"),
+    ];
+    (active[1] as ChatSummary).last_activity_at = "2026-10-15T12:00:00Z";
+    expect(sidebarGrouping(active).visible.map((c) => c.id)).toEqual(["live", "quiet"]);
+  });
+
+  it("rows without a stamp keep the stable list order (placeholder stamps parse as NaN → 0)", () => {
+    const g = sidebarGrouping([chat("a", "p1"), chat("b", "p1"), chat("c", "p1")]);
+    expect(g.chatsByProject["p1"].map((c) => c.id)).toEqual(["a", "b", "c"]);
+  });
+
   it("pagination constants: a fold-out opens with 5, each click adds 20", () => {
     expect(PROJECT_PAGE_INITIAL).toBe(5);
     expect(PROJECT_PAGE_STEP).toBe(20);

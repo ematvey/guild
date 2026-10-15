@@ -42,6 +42,8 @@ import {
   FileDown,
   TriangleAlert,
   Wrench,
+  Trash2,
+  CornerDownRight,
   type LucideIcon,
 } from "lucide-react";
 
@@ -90,6 +92,7 @@ import {
   setMachineIdentity,
   stopChat,
   uploadAttachment,
+  withdrawQueued,
 } from "../transport";
 import {
   apiUrl,
@@ -2216,7 +2219,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     } }));
     // ThreadState carries the chat's project fields: a live re-bind from
     // another device updates this client's row, so the chip and the sidebar
-    // agree without a reload.
+    // agree without a reload. It also carries the log through its last row:
+    // that row's stamp is the chat's recent-activity sort key (the sidebar
+    // fold-outs re-sort on it).
+    const activity = state.events[state.events.length - 1]?.created_at;
     setChats(prev =>
       prev?.map(c =>
         c.id === cid
@@ -2225,6 +2231,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               project_id: state.project_id,
               project_name: state.project_name,
               project_machine_label: state.project_machine_label,
+              ...(activity !== undefined ? { last_activity_at: activity } : {}),
             }
           : c,
       ) ?? prev,
@@ -2395,6 +2402,20 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           const command = outgoingRef.current.get(row.id);
           if (row.event.type === "user_message" && command && command.chatId === cid) settleOutgoing(command);
         }
+        // Recent-activity sort key: a background chat's durable rows move its
+        // sidebar row (Recents / its project fold-out) forward between list
+        // refreshes. Newer-only — a replayed or stale batch must not regress
+        // the stamp the thread-state lane already advanced.
+        const activity = events[events.length - 1]?.created_at;
+        if (activity !== undefined) {
+          setChats(prev => {
+            const row = prev?.find((c) => c.id === cid);
+            if (!row) return prev;
+            if (row.last_activity_at !== undefined
+              && Date.parse(row.last_activity_at) >= Date.parse(activity)) return prev;
+            return prev!.map((c) => (c.id === cid ? { ...c, last_activity_at: activity } : c));
+          });
+        }
         if (applied.stale) return;
         if (cid === openChatIdRef.current) setBlocks(applied.blocks);
       },
@@ -2506,6 +2527,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       setBusy(true);
       setBlocks(reducerRef.current.optimisticSend({ chatId: target, text: command.text,
         key: command.id, sentAt: command.sentAt,
+        ...(command.sendMode ? { queued: true, queuedMode: command.sendMode } : {}),
         attachments: command.attachments.map(a => ({ ...a, file: undefined, id: command.uploaded.get(a.id)?.id ?? `pending-${a.id}` })) }).blocks);
       sendingRef.current = true;
     } else {
@@ -2638,6 +2660,24 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     // Persist the immutable file snapshot before detaching the composer.
     await deliverOutgoing(command);
   };
+
+  /** Trash on a queued chip: withdraws the not-yet-placed send server-side.
+   *  The chip drops on success; 409 means the input was just placed — the
+   *  delivery flow converts it to a transcript bubble (refresh incoming). */
+  const withdrawChip = useCallback(async (block: Block) => {
+    const cid = chatId;
+    if (!cid || !block.eventId) return;
+    try {
+      const ok = await withdrawQueued(cid, block.eventId);
+      if (!ok) {
+        toast.info("Message was just delivered to the agent");
+        return;
+      }
+      setBlocks(reducerRef.current.dropQueued(cid, block.eventId).blocks);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }, [chatId]);
 
   useEffect(() => {
     let active = true;
@@ -3065,7 +3105,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           >
             <div className="mx-auto w-full max-w-3xl space-y-4 px-4 pb-32 pt-6">
               {blocks.map((b, i) =>
-                b.kind === "user" ? (
+                b.kind === "user" && b.queued ? null : b.kind === "user" ? (
                   <div
                     key={b.key}
                     className={`ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 ${WRAP_ANYWHERE}`}
@@ -3160,6 +3200,41 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 e.target.value = "";
               }}
             />
+            {(() => {
+              const queuedChips = blocks.filter((b) => b.kind === "user" && b.queued);
+              if (queuedChips.length === 0) return null;
+              return (
+                <div className="space-y-1.5 px-1 pb-2">
+                  {queuedChips.map((b) => (
+                    <div
+                      key={b.key}
+                      className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm"
+                    >
+                      <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate" title={b.text}>
+                        {b.text}
+                      </span>
+                      {b.attachments && b.attachments.length > 0 && (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          +{b.attachments.length}
+                        </span>
+                      )}
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {b.queuedMode === "steer" ? "Steer" : "Queued"}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Remove queued message"
+                        className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        onClick={() => void withdrawChip(b)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             {[...outgoingRef.current.values()].filter(c => c.error && (c.chatId ?? c.originChatId) === chatId).map(command => (
               <div key={command.id} className="px-2 pb-2 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">

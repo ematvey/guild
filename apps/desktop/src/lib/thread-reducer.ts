@@ -28,6 +28,12 @@ export interface ToolBlock {
   /// Coarse category from the server (web_search | web_browse | generic):
   /// drives the native label/icon regardless of the providing integration.
   kind?: string;
+  /// Wall-clock stamps (ISO) for the working card's elapsed time: when the
+  /// call was issued (the anchor event row / the stream frame) and when its
+  /// result landed (the tool_result row / frame). Absent on a call that
+  /// never finished.
+  ts?: string;
+  endTs?: string;
 }
 
 /// One durable approval gate (design spec section F): a client tool waiting
@@ -116,16 +122,30 @@ export interface Block {
   /// Stable React key. Derived blocks use the source event's seq (plus an
   /// in-event index); streaming-built blocks use a live counter.
   key: string;
+  /// kind === "user": the backing thread-event id (the turn command id —
+  /// delivery/withdrawal reconcile matches blocks by it, not by key: a
+  /// delivered queued send MOVES to a fresh seq).
+  eventId?: string;
   /// kind === "user": context attachment chips (metadata only; images may
   /// carry a local preview URL for optimistic rendering).
   attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
   /// An optimistic user command not yet present in the durable history.
   pending?: boolean;
+  /// Admitted while a turn was generating: not yet seen by the model —
+  /// rendered as a queued chip above the composer, not a transcript bubble,
+  /// until the inbox places it (the server clears the flag at placement).
+  queued?: boolean;
+  /// Requested placement for the same chip: "steer" | "queue".
+  queuedMode?: "steer" | "queue";
   /// kind === "reasoning": the accumulated thinking text.
   reasoningText?: string;
   /// kind === "text": the turn was stopped mid-stream; the text is the
   /// delivered prefix.
   interrupted?: boolean;
+  /// Event timestamp (ISO): when this block's source event row landed —
+  /// the working card's timeline anchor. Stream-built blocks stamp the
+  /// frame's arrival instead (kept across the re-stamp, never reset).
+  ts?: string;
   tool?: ToolBlock;
   approval?: ApprovalBlock;
   compaction?: CompactionBlock;
@@ -137,6 +157,47 @@ export interface PendingSend {
   key: string;
   sentAt: number;
   attachments?: (MessageAttachmentMeta & { previewUrl?: string })[];
+  /// Sent while the chat was generating: the optimistic block renders as a
+  /// queued chip from the start (the durable echo keeps the flag).
+  queued?: boolean;
+  queuedMode?: "steer" | "queue";
+}
+
+/** The queued-chip fields a user_message event carries (absent = delivered). */
+function queuedFieldsOf(ev: { queued?: boolean; mode?: "steer" | "queue" }): {
+  queued?: boolean;
+  queuedMode?: "steer" | "queue";
+} {
+  return ev.queued ? { queued: true, queuedMode: ev.mode ?? "queue" } : {};
+}
+
+function clearedQueuedFields(): { queued: undefined; queuedMode: undefined } {
+  return { queued: undefined, queuedMode: undefined };
+}
+
+/** Delivery/withdrawal reconcile for one view's queued sends against the
+ *  authoritative log: a queued block whose echo row lost the flag (moved to
+ *  the placement position) is delivered — the fan-out lane already
+ *  repositioned it, this just re-stamps; a queued block whose row VANISHED
+ *  was withdrawn (trash / stop / archive) — it leaves the transcript. The
+ *  authoritative ThreadState carries the full log, so this runs on every
+ *  state application; the fan-out lane cannot see deletions. */
+function reconcileQueuedSends(blocks: Block[], rows: ThreadEventRow[]): Block[] {
+  const byId = new Map<string, ThreadEventRow>();
+  for (const r of rows) {
+    const prev = byId.get(r.id);
+    if (!prev || r.seq > prev.seq) byId.set(r.id, r);
+  }
+  return blocks.flatMap((b) => {
+    if (b.kind !== "user" || b.eventId === undefined) return [b];
+    const row = byId.get(b.eventId);
+    if (!row) return b.pending ? [b] : []; // withdrawn; an in-flight optimistic send keeps waiting for its echo
+    if (row.event.type !== "user_message") return [b];
+    // Identity-preserving: untouched blocks keep their object so the
+    // applyEvent dedupe and React memoization keep working.
+    if (!!b.queued === (row.event.queued === true) && (!row.event.queued || b.queuedMode === (row.event.mode ?? "queue"))) return [b];
+    return [{ ...b, ...clearedQueuedFields(), ...(row.event.queued ? { queued: true, queuedMode: row.event.mode ?? "queue" } : {}) }];
+  });
 }
 
 // ---------- derivation (event log → blocks) ----------
@@ -146,6 +207,10 @@ let liveKeyCounter = 0;
 function liveKey(): string {
   return `live-${++liveKeyCounter}`;
 }
+
+/// Arrival stamp for stream-built blocks: the durable rows carry their own
+/// created_at; the live lane only has the wall clock.
+const nowIso = () => new Date().toISOString();
 
 /// Tools the desktop executor runs locally (mirrors protocol `client_tool_specs`).
 const CLIENT_TOOL_NAMES = [
@@ -188,6 +253,9 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
           kind: "user",
           text: cut >= 0 ? ev.content.slice(0, cut) : ev.content,
           attachments: ev.attachments,
+          eventId: row.id,
+          ...queuedFieldsOf(ev),
+          ts: row.created_at,
           key: seqKey(inEvent++),
         });
         break;
@@ -198,7 +266,7 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
         const start = blocks.length;
         for (const b of ev.blocks) {
           if (b.type === "reasoning") {
-            blocks.push({ kind: "reasoning", text: "", reasoningText: b.text, key: seqKey(inEvent++) });
+            blocks.push({ kind: "reasoning", text: "", reasoningText: b.text, ts: row.created_at, key: seqKey(inEvent++) });
           } else if (b.type === "text") {
             blocks.push({ kind: "text", text: b.text, key: seqKey(inEvent++) });
           } else {
@@ -208,6 +276,7 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
               args: b.arguments,
               executor: CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server",
               status: "done", // filled by the matching tool_result below
+              ts: row.created_at,
             };
             toolsByCall.set(b.id, tb);
             blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(inEvent++) });
@@ -232,6 +301,7 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
           tb.status = ev.is_error ? "error" : "done";
           tb.meta = meta;
           tb.kind = kind;
+          tb.endTs = row.created_at;
         } else {
           // Orphan result (call block missing): render it anyway rather than drop it.
           blocks.push({
@@ -246,6 +316,8 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
               content: ev.content,
               meta,
               kind,
+              ts: row.created_at,
+              endTs: row.created_at,
             },
             key: seqKey(inEvent++),
           });
@@ -367,6 +439,7 @@ function upsertThinking(
   content: string,
   seed: boolean,
   seedKey?: string,
+  ts?: string,
 ): Block[] {
   const last = blocks[blocks.length - 1];
   // A stable key keeps the Frame instance (and its open/collapsed state)
@@ -382,7 +455,13 @@ function upsertThinking(
   }
   return [
     ...blocks,
-    { kind: "reasoning", text: "", reasoningText: content, key: seedKey ?? liveKey() },
+    {
+      kind: "reasoning",
+      text: "",
+      reasoningText: content,
+      ts: ts ?? nowIso(),
+      key: seedKey ?? liveKey(),
+    },
   ];
 }
 
@@ -402,8 +481,11 @@ export function reconcilePendingSend(
       kind: "user",
       text: pending.text,
       key: pending.key,
+      eventId: pending.key,
       attachments: pending.attachments,
+      ts: nowIso(),
       pending: true,
+      ...(pending.queued ? { queued: true, queuedMode: pending.queuedMode ?? "queue" } : {}),
     },
   ];
 }
@@ -487,6 +569,10 @@ export interface ThreadReducer {
   /** Appends an error block to the current view (create-chat failure,
    * attachment upload failure). */
   appendError(text: string): ApplyResult;
+  /** The user trashed a queued chip: drops the block (and the pending
+   * marker) at once — the server's withdrawal reconcile confirms it for
+   * every client via the state republish. */
+  dropQueued(chatId: string | null, key: string): ApplyResult;
   /** The send's HTTP request failed: the optimistic block goes, an error
    * block takes its place, and the pending marker is released. */
   failSend(chatId: string | null, key: string, errorText: string): ApplyResult;
@@ -548,10 +634,33 @@ export function createThreadReducer(): ThreadReducer {
         const at = ev.content.indexOf("\n\n[Attachment: ");
         const inv = ev.content.indexOf("\n\n---\nInvoked skills");
         const cut = [at, inv].filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1;
+        // Delivery of a queued send MOVES the echo to a fresh seq: a block
+        // for this event id already renders (the queued chip) — reposition
+        // it at the placement point (array end = seq order here) with the
+        // flag cleared, instead of appending a twin.
+        const existing = v.blocks.find((b) => b.kind === "user" && b.eventId === row.id);
+        if (existing) {
+          v.blocks = [
+            ...v.blocks.filter((b) => b !== existing),
+            {
+              ...existing,
+              text: cut >= 0 ? ev.content.slice(0, cut) : ev.content,
+              attachments: ev.attachments,
+              key: seqKey(0),
+              ts: row.created_at,
+              pending: false,
+              ...clearedQueuedFields(),
+            },
+          ];
+          break;
+        }
         v.blocks.push({
           kind: "user",
           text: cut >= 0 ? ev.content.slice(0, cut) : ev.content,
           attachments: ev.attachments,
+          eventId: row.id,
+          ...queuedFieldsOf(ev),
+          ts: row.created_at,
           key: seqKey(0),
         });
         break;
@@ -563,27 +672,41 @@ export function createThreadReducer(): ThreadReducer {
         // block the deltas built (stream frames / the state stamp) and the
         // trailing streamed text are superseded by this event's blocks —
         // drop them or the step renders twice (the fan-out lane has no
-        // ThreadState publish behind it to strip the buffers).
+        // ThreadState publish behind it to strip the buffers). The live
+        // block's open-time carries onto its durable successor, or the
+        // working card's elapsed clock resets at every commit.
+        const liveThinkTs = v.blocks
+          .filter((b) => b.kind === "reasoning" && b.key.startsWith("live-"))
+          .at(-1)?.ts;
         v.blocks = v.blocks.filter(
           (b) =>
             !(b.kind === "reasoning" && b.key.startsWith("live-")) &&
             !(b.kind === "text" && b.key.startsWith("unpersisted-")),
         );
         const start = v.blocks.length;
+        let reasoningSeen = false;
         for (const b of ev.blocks) {
           if (b.type === "reasoning") {
-            v.blocks.push({ kind: "reasoning", text: "", reasoningText: b.text, key: seqKey(v.blocks.length - start) });
+            v.blocks.push({
+              kind: "reasoning",
+              text: "",
+              reasoningText: b.text,
+              ts: !reasoningSeen && liveThinkTs ? liveThinkTs : row.created_at,
+              key: seqKey(v.blocks.length - start),
+            });
+            reasoningSeen = true;
           } else if (b.type === "text") {
             v.blocks.push({ kind: "text", text: b.text, key: seqKey(v.blocks.length - start) });
           } else {
             // A live tool_started frame may have provisioned this row before
             // the carrying message fanned out: adopt it instead of pushing a
-            // duplicate block.
+            // duplicate block (its arrival stamp is the call's true start).
             const existing = v.toolsByCall.get(b.id);
             if (existing) {
               existing.name = b.name;
               existing.args = b.arguments;
               existing.executor = CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server";
+              existing.ts = existing.ts ?? row.created_at;
             } else {
               const tb: ToolBlock = {
                 callId: b.id,
@@ -591,6 +714,7 @@ export function createThreadReducer(): ThreadReducer {
                 args: b.arguments,
                 executor: CLIENT_TOOL_NAMES.includes(b.name) ? "client" : "server",
                 status: "done",
+                ts: row.created_at,
               };
               v.toolsByCall.set(b.id, tb);
               v.blocks.push({ kind: "tool", text: "", tool: tb, key: seqKey(v.blocks.length - start) });
@@ -616,6 +740,7 @@ export function createThreadReducer(): ThreadReducer {
           tb.status = ev.is_error ? "error" : "done";
           tb.meta = meta;
           tb.kind = kind;
+          tb.endTs = row.created_at;
         } else {
           v.blocks.push({
             kind: "tool",
@@ -629,6 +754,8 @@ export function createThreadReducer(): ThreadReducer {
               content: ev.content,
               meta,
               kind,
+              ts: row.created_at,
+              endTs: row.created_at,
             },
             key: seqKey(0),
           });
@@ -738,11 +865,17 @@ export function createThreadReducer(): ThreadReducer {
       // after a text tail, `unpersisted-<chat>` for text), and a commit that
       // only removed the sentinels left those orphans rendering below the
       // durable copies — the response appeared twice.
+      // The live-thinking stamp publishes ~10×/s while thinking streams: its
+      // replacement carries the ORIGINAL open-time across, or the working
+      // card's elapsed clock resets on every publish.
+      const liveThinkTs = v.blocks
+        .filter((b) => b.kind === "reasoning" && b.key.startsWith("live-"))
+        .at(-1)?.ts;
       let blocks = v.blocks.filter(
         (b) => !b.key.startsWith("unpersisted-") && !b.key.startsWith("live-"),
       );
       if (state.thinking)
-        blocks = upsertThinking(blocks, state.thinking, true, `live-thinking-${cid}`);
+        blocks = upsertThinking(blocks, state.thinking, true, `live-thinking-${cid}`, liveThinkTs ?? nowIso());
       if (state.text)
         blocks = [...blocks, { kind: "text", text: state.text, key: `unpersisted-${cid}` }];
       v.blocks = blocks;
@@ -755,9 +888,14 @@ export function createThreadReducer(): ThreadReducer {
           v.blocks = v.blocks.filter(b => !(b.key === key && b.pending));
         } else if (!v.blocks.some(b => b.key === key)) {
           v.blocks = [...v.blocks, { kind: "user", text: pending.text, key,
-            attachments: pending.attachments, pending: true }];
+            eventId: key, attachments: pending.attachments, pending: true,
+            ...(pending.queued ? { queued: true, queuedMode: pending.queuedMode ?? "queue" } : {}) }];
         }
       }
+      // Queued sends reconcile against the authoritative log: withdrawal
+      // deletes the echo (no fan-out row exists to announce it) and
+      // delivery moves it — both land here via the state republish.
+      v.blocks = reconcileQueuedSends(v.blocks, state.events);
       // Pending /compact reconciliation: a newly appeared compaction event
       // is the success signal; the server's busy flag dropping back to false
       // without one means the compaction failed (nothing was appended).
@@ -811,6 +949,7 @@ export function createThreadReducer(): ThreadReducer {
           const tb = frame.call_id ? v.toolsByCall.get(frame.call_id) : undefined;
           if (tb) {
             tb.status = "running";
+            tb.ts = tb.ts ?? nowIso();
           } else if (frame.call_id) {
             // The row's carrying assistant step fans out through the event
             // lane a beat later: provision the block now so the call shows
@@ -821,6 +960,7 @@ export function createThreadReducer(): ThreadReducer {
               args: frame.arguments ?? "",
               executor: frame.executor === "client" ? "client" : "server",
               status: "running",
+              ts: nowIso(),
             };
             v.toolsByCall.set(frame.call_id, fresh);
             v.blocks.push({ kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` });
@@ -832,6 +972,7 @@ export function createThreadReducer(): ThreadReducer {
           if (tb) {
             tb.status = frame.is_error ? "error" : "done";
             tb.content = frame.content ?? tb.content;
+            tb.endTs = nowIso();
           } else if (frame.call_id) {
             // A fast tool's completion frame can beat the anchor event's
             // notify fan-out: provision the finished row here — the durable
@@ -843,6 +984,8 @@ export function createThreadReducer(): ThreadReducer {
               executor: frame.executor === "client" ? "client" : "server",
               status: frame.is_error ? "error" : "done",
               content: frame.content,
+              ts: nowIso(),
+              endTs: nowIso(),
             };
             v.toolsByCall.set(frame.call_id, fresh);
             v.blocks.push({ kind: "tool", text: "", tool: fresh, key: `frame-${frame.call_id}` });
@@ -877,7 +1020,10 @@ export function createThreadReducer(): ThreadReducer {
           text: pending.text,
           pending: true,
           key: pending.key,
+          eventId: pending.key,
           attachments: pending.attachments,
+          ts: nowIso(),
+          ...(pending.queued ? { queued: true, queuedMode: pending.queuedMode ?? "queue" } : {}),
         },
       ];
       pendingOf(pending.chatId ?? LOOSE).set(pending.key, pending);
@@ -914,6 +1060,14 @@ export function createThreadReducer(): ThreadReducer {
       const v = viewOf(current);
       v.blocks = [...v.blocks, { kind: "error", text, key: liveKey() }];
       return result(v);
+    },
+
+    dropQueued(chatId, key) {
+      const target = chatId ?? LOOSE;
+      pendingOf(target).delete(key);
+      const v = viewOf(target);
+      v.blocks = v.blocks.filter((b) => !(b.key === key || (b.kind === "user" && b.eventId === key)));
+      return result(viewOf(current));
     },
 
     failSend(chatId, key, errorText) {

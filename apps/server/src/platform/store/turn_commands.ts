@@ -52,7 +52,13 @@ export class TurnCommandStore {
    *  payload): the command row and the visible user_message echo either
    *  both commit or neither does. Locks the chat row (archived chats
    *  reject), applies an explicit project binding, inserts the command and
-   *  the thread event under one id, and notifies the thread channel. */
+   *  the thread event under one id, and notifies the thread channel.
+   *  `userEvent.queued` marks a send admitted while a turn was still
+   *  generating: the echo is visible history (the user typed it), but the
+   *  model has not seen it yet — the desktop renders it as a queued chip,
+   *  not a transcript bubble, until the inbox places it (the bridge's
+   *  delivery moves the row and clears the flag). `userEvent.mode` records
+   *  the requested placement (steer vs follow-up) for the same chip. */
   async accept(
     id: string,
     org: string,
@@ -60,7 +66,7 @@ export class TurnCommandStore {
     chat: string,
     request: unknown,
     payload: unknown,
-    userEvent: { content: string; attachments: unknown[] },
+    userEvent: { content: string; attachments: unknown[]; queued?: boolean; mode?: "steer" | "queue" },
   ): Promise<TurnCommand> {
     const client = await this.pool.connect();
     try {
@@ -130,7 +136,13 @@ export class TurnCommandStore {
             await client.query("UPDATE chats SET project_id=$2 WHERE id=$1", [chat, binding.project]);
           }
         }
-        const eventPayload = JSON.stringify({ type: "user_message", content: userEvent.content, attachments: userEvent.attachments });
+        const eventPayload = JSON.stringify({
+          type: "user_message",
+          content: userEvent.content,
+          attachments: userEvent.attachments,
+          ...(userEvent.queued ? { queued: true } : {}),
+          ...(userEvent.mode ? { mode: userEvent.mode } : {}),
+        });
         const eventRes = await client.query(
           "INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1,$2,'user_message',$3::jsonb) ON CONFLICT (id) DO NOTHING",
           [id, chat, eventPayload],
@@ -242,6 +254,26 @@ export class TurnCommandStore {
     await this.pool.query(
       "UPDATE turn_commands SET status = 'cancelled', finished_at = now() WHERE chat_id = $1 AND finished_at IS NULL AND status IN ('pending','submitted')",
       [chat],
+    );
+  }
+
+  /** The command row by id + chat (the withdraw path; no request material
+   *  to re-verify — the caller is org/user-gated by the route). */
+  async byId(id: string, chat: string): Promise<TurnCommand | undefined> {
+    const res = await this.pool.query<TurnCommand>(
+      "SELECT id, org_id, user_id, chat_id, request, payload, status, invocation_id, position FROM turn_commands WHERE id = $1 AND chat_id = $2",
+      [id, chat],
+    );
+    return res.rows[0];
+  }
+
+  /** Marks one unfinished command cancelled regardless of its submission
+   *  identity (the withdraw path: a never-submitted command has no
+   *  invocation; a settled row keeps its outcome). */
+  async settleCancelledById(id: string, chat: string): Promise<void> {
+    await this.pool.query(
+      "UPDATE turn_commands SET status = 'cancelled', finished_at = coalesce(finished_at, now()) WHERE id = $1 AND chat_id = $2 AND finished_at IS NULL",
+      [id, chat],
     );
   }
 

@@ -737,7 +737,7 @@ describe("pending send reconciliation", () => {
       sentAt: Date.parse("2026-09-16T00:00:00.000Z"),
     };
     expect(reconcilePendingSend([], [], pending)).toEqual([
-      { kind: "user", text: "still sending", key: "pending-1", pending: true },
+      { kind: "user", text: "still sending", key: "pending-1", pending: true, eventId: "pending-1", ts: expect.any(String) },
     ]);
   });
 

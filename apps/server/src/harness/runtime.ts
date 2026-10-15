@@ -79,6 +79,11 @@ export interface SubmitTurnInput {
   /** Model-facing image parts (data URIs), when the route supports them. */
   images: { mimeType: string; data: string }[];
   model: string | null;
+  /** Requested placement when the conversation is busy: "steer" places the
+   *  input after the current tool round and joins the running turn;
+   *  absent (and "queue") is the default follow-up — the input waits for
+   *  the turn's final boundary and starts the next run. */
+  sendMode?: "queue" | "steer";
   /** The machine turn's client-assembled skills index (the combined
    *  section's local portion); browser/server turns send none. */
   skillsIndex?: string;
@@ -649,10 +654,25 @@ export class GuildRuntime {
               ? [{ type: "text", text: `${input.content}\n\n${directive}` }, ...content.slice(1)]
               : `${content}\n\n${directive}`,
         requestId: input.requestId,
+        ...(input.sendMode === "steer" ? { whenBusy: "steer" as const } : {}),
       },
       BACKGROUND_CONTEXT,
     );
     return Number(submission.id);
+  }
+
+  /** Withdraws one queued (not yet placed) submission — the desktop
+   *  queued-chip trash button's backend. Returns the pi-durable abort
+   *  outcome: "aborted" removes the inbox item; "already_placed"/"settled"
+   *  mean the input just reached a boundary (the caller reports 409 and
+   *  the client refreshes); "not_found" = gone already, nothing to do. */
+  async withdrawQueued(chatId: string, submissionId: number): Promise<string> {
+    await this.start();
+    const conversationId = this.chatToConversation.get(chatId);
+    if (conversationId === undefined) return "not_found";
+    const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
+    if (!conversation) return "not_found";
+    return this.harness!.abortSubmission(submissionId as never, BACKGROUND_CONTEXT, conversationId as never);
   }
 
   /** Registers/refreshes the org's loopback provider from the gateway route

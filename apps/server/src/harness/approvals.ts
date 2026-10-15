@@ -40,7 +40,7 @@ export const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
 export const DEFAULT_APPROVAL_POLICY_PROMPT =
   "You are the safety gate for an AI assistant that runs tools on the user's machine. You are given one proposed tool action as JSON. Decide whether it is safe to run automatically, without asking the user first.\n\nApprove routine, low-risk actions: reading files, ordinary read-only shell commands (ls, dir, cat, git status, git log, ping, date), writing or editing files inside the user's workspace, web searches, and fetching public URLs.\n\nAsk the user when the action is potentially unsafe: destructive or irreversible operations (deleting files or data, force-pushing, dropping or truncating databases, factory resets), anything touching files outside the workspace or system locations, installing or upgrading software, killing processes or services, sending credentials or secrets anywhere, spending money, sending messages or email on the user's behalf, or anything unusual for a coding assistant.\n\nReply with ONLY a JSON object, no other text: {\"approve\": true, \"reason\": \"one short sentence\"} where approve=true means run it silently and approve=false means the user must be asked first.";
 
-const APPROVAL_POLICY_TIMEOUT_MS = 30_000;
+const APPROVAL_POLICY_TIMEOUT_MS = 10_000;
 const GATE_POLL_MS = 500;
 const JUDGE_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 
@@ -334,6 +334,31 @@ async function recordedDecision(deps: ApprovalGateDeps, chatId: string, callId: 
   return row ? { approved: row.approved, reason: row.reason } : null;
 }
 
+/** The card this call already has on the journal, if any: the gate runs
+ *  recoverably (pi-durable re-drives suspended tool tasks), and a re-run
+ *  must reuse the shown card — never re-judge (a second metered call) or
+ *  re-append. A live card never carries approve=true (that verdict runs
+ *  the tool silently, before any card). */
+async function existingApprovalRequest(deps: ApprovalGateDeps, chatId: string, callId: string): Promise<JudgeVerdict | undefined> {
+  const res = await deps.pool.query<{ judge: Record<string, unknown> | null }>(
+    `SELECT payload->>'judge' AS judge FROM thread_events
+     WHERE chat_id = $1 AND type = 'approval_request' AND payload->>'call_id' = $2
+     ORDER BY seq DESC LIMIT 1`,
+    [chatId, callId],
+  );
+  const raw = res.rows[0]?.judge;
+  if (raw === null || raw === undefined) return undefined;
+  const approve = raw["approve"];
+  const reason = raw["reason"];
+  const ms = raw["ms"];
+  if (typeof approve !== "boolean") return undefined;
+  return {
+    approve,
+    reason: typeof reason === "string" ? reason : undefined,
+    ms: typeof ms === "number" ? ms : 0,
+  };
+}
+
 /** The gate wait: returns `undefined` (approved → run the tool) or a block
  *  text (denied). The tool task suspends inside this hook until a decision
  *  event lands or the timeout lapses. */
@@ -354,14 +379,16 @@ async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<neve
       }
       if (Date.now() >= deadline) {
         // The 5-minute auto-deny (Rust APPROVAL_TIMEOUT): journaled like a
-        // decision, then the denied tool result.
+        // decision, then the denied tool result. The text tells the model
+        // the call is dead — a plain "denied" invites an immediate retry,
+        // which gated again and burned another 5-minute cycle.
         const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
         await deps.threads.appendEvent(
           chatId,
-          approvalDecisionEvent(call.id, false, "timed out awaiting approval"),
+          approvalDecisionEvent(call.id, false, "approval timed out — the call was not run; do not retry it, continue without it or ask the user"),
           decisionId,
         );
-        return { block: "denied by user: timed out awaiting approval" };
+        return { block: "approval timed out — the call was not run; do not retry it, continue without it or ask the user" };
       }
       // Stop responsiveness: the stop path aborts the conversation's tasks;
       // an aborted run cancels this hook's context (the sleep rejects).
@@ -454,16 +481,22 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
         decision = "ask";
       }
       // The judge path (approve_for_me, or an unset account policy): a
-      // routine action runs silently, anything flagged asks.
+      // routine action runs silently, anything flagged asks. A card this
+      // call already has (a recovery re-run) short-circuits the judge.
       let judged: JudgeOutcome | null = null;
       if (chat_mode === "approve_for_me" || (chat_mode === null && user_policy === null)) {
-        const model = await deps.currentModel(Number(runtime.conversationId));
-        if (model === null) {
-          // A judge-less card is the symptom, never the cause: surface it.
-          deps.log.warn({ chatId, callId: call.id }, "approval judge skipped: conversation has no model");
+        const existing = await existingApprovalRequest(deps, chatId, call.id);
+        if (existing !== undefined) {
+          judged = { approve: existing.approve, reason: existing.reason ?? null, ms: existing.ms ?? 0 };
+        } else {
+          const model = await deps.currentModel(Number(runtime.conversationId));
+          if (model === null) {
+            // A judge-less card is the symptom, never the cause: surface it.
+            deps.log.warn({ chatId, callId: call.id }, "approval judge skipped: conversation has no model");
+          }
+          judged = model === null ? null : await judgeVerdict(deps, orgId, chatId, chatOwnerId, model, call);
+          if (judged !== null && judged.approve === true) return undefined;
         }
-        judged = model === null ? null : await judgeVerdict(deps, orgId, chatId, chatOwnerId, model, call);
-        if (judged !== null && judged.approve === true) return undefined;
       }
       if (decision === "never") return { block: "denied by policy" };
       if (decision === "allow") return undefined;

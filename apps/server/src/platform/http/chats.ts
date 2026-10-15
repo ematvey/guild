@@ -47,6 +47,10 @@ export function chatWire(row: {
   project_id: string | null;
   project_name?: string | null;
   project_machine_label?: string | null;
+  /** List rows only: the chat's latest thread event (RFC3339), falling back
+   *  to created_at — the sidebar's recent-activity sort key. Single-chat
+   *  responses omit it (their key order is wire-pinned). */
+  last_activity_at?: string;
   /** Hub-computed liveness of the bound machine; callers must pass it —
    *  a hardcoded false desyncs this surface from the ws push and the
    *  machines list (the "offline" banner vs green pin mismatch). */
@@ -63,6 +67,7 @@ export function chatWire(row: {
   if (row.machine_label !== null) out.machine_label = row.machine_label;
   out.generating = row.generating;
   out.unread = row.unread ?? false;
+  if (row.last_activity_at !== undefined) out.last_activity_at = row.last_activity_at;
   if (row.project_id !== null) out.project_id = row.project_id;
   if (row.project_name) out.project_name = row.project_name;
   if (row.project_machine_label) out.project_machine_label = row.project_machine_label;
@@ -88,6 +93,7 @@ async function threadList(chats: ChatsCtx, orgId: string, userId: string, archiv
       project_id: row.project_id,
       project_name: row.project_name,
       project_machine_label: row.project_machine_label,
+      last_activity_at: row.last_activity_at,
       machine_online: machineOnlineOf(chats, row),
     }),
   );
@@ -267,6 +273,31 @@ export function registerChatsRoutes(
     await chats.turnCommands.cancelWaitingHead(chatId);
     await chats.runtime.stopChat(chatId);
     return reply.status(200).send(JSON.stringify({ stopped: true }));
+  });
+
+  /** Withdraws one queued (not yet placed) mid-turn send — the desktop
+   *  queued-chip trash button. The never-delivered echo leaves the thread
+   *  log; a placed or settled input is reported 409 (the chip is already
+   *  transitioning to a delivered message on the client). */
+  app.delete("/api/v1/gateway/chat/:id/pending/:messageId", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    const messageId = parseUuidParam(req, "messageId");
+    await chats.chats.getChat(user.org_id, chatId, user);
+    const command = await chats.turnCommands.byId(messageId, chatId);
+    if (!command) throw ApiError.notFound("no such message");
+    if (command.status !== "pending" && command.status !== "submitted") {
+      throw ApiError.conflict("already_settled", "message already settled");
+    }
+    if (command.invocation_id !== null && command.invocation_id.startsWith("sub:")) {
+      const outcome = await chats.runtime.withdrawQueued(chatId, Number(command.invocation_id.slice(4)));
+      if (outcome !== "aborted" && outcome !== "not_found") {
+        throw ApiError.conflict("already_placed", "message already placed — refresh to see it delivered");
+      }
+    }
+    await chats.turnCommands.settleCancelledById(messageId, chatId);
+    await chats.threads.deleteQueuedEvent(chatId, messageId);
+    return reply.status(200).send(JSON.stringify({ withdrawn: true }));
   });
 
   app.post("/api/v1/gateway/chat/:id/approvals/*", async (req, reply) => {
@@ -473,17 +504,24 @@ async function submitTurn(
   // window). A failed accept or submit restores the previous flag.
   const priorGenerating = await chats.chats.isGenerating(user.org_id, chatId);
   await chats.chats.setGenerating(user.org_id, chatId, true);
+  const sendMode = body["send_mode"] === "steer" ? ("steer" as const) : body["send_mode"] === "queue" ? ("queue" as const) : undefined;
   let command;
   try {
     command = await chats
       .turnCommands
-      .accept(commandId, user.org_id, user.id, chatId, request, payload, { content, attachments: chips });
+      .accept(commandId, user.org_id, user.id, chatId, request, payload, {
+        content,
+        attachments: chips,
+        queued: priorGenerating,
+        mode: sendMode,
+      });
     const submissionId = await chats.runtime.submitTurn(chatId, user.org_id, {
       orgId: user.org_id,
       requestId: commandId,
       content,
       images,
       model,
+      ...(sendMode !== undefined ? { sendMode } : {}),
       ...(skillsIndex !== undefined ? { skillsIndex } : {}),
     });
     await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
