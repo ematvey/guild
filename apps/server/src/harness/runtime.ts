@@ -174,7 +174,13 @@ export class GuildRuntime {
      *  admission routes over IPC and the server opens no harness. */
     private readonly supervisor?: ForkSupervisor,
     /** Worker side: this process serves exactly one chat (worker/main.ts). */
-    private readonly workerScope?: { chatId: string },
+    private readonly workerScope?: {
+      chatId: string;
+      /** The IPC machine-dispatch proxy (worker/dispatch-proxy.ts): the
+       *  worker has no hub, so machine-bound chats proxy dispatch to the
+       *  server's hub-backed registry over the fork channel. */
+      dispatch?: Pick<import("../machines/dispatch.js").MachineDispatch, "dispatch">;
+    },
   ) {
     this.sandboxes =
       config.sandbox.mode === "runner"
@@ -576,10 +582,24 @@ export class GuildRuntime {
         const kind = await this.executorKind(Number(target.conversationId));
         if (kind === "machine") {
           if (this.workerScope) {
-            // Worker mode v1: machine dispatch lives in the server's hub;
-            // the IPC dispatch proxy is a follow-up. Machine-bound chats
-            // must stay in supervisor mode until it lands.
-            throw new Error("machine-bound chats are not served in worker mode yet");
+            if (!this.workerScope.dispatch) {
+              throw new Error("machine-bound chats in worker mode require the dispatch proxy");
+            }
+            const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
+            const chat = await this.pool.query<{ machine_id: string; machine_label: string | null; org_id: string; project_folder: string | null }>(
+              `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
+               FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.id = $1`,
+              [chatId],
+            );
+            const row = chat.rows[0]!;
+            return new MachineExecutionEnv({
+              machineId: row.machine_id,
+              orgId: row.org_id,
+              chatId,
+              workdir: row.project_folder,
+              timeoutMs: this.config.clientToolTimeoutMs,
+              dispatch: this.workerScope.dispatch,
+            });
           }
           const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
           const chat = await this.pool.query<{ machine_id: string; machine_label: string | null; org_id: string; project_folder: string | null }>(

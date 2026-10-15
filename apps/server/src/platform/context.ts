@@ -175,7 +175,10 @@ export class PlatformContext {
     // flag-gated: GUILD_WORKER_MODE=on).
     this.supervisor =
       config.workerMode === "on"
-        ? new ForkSupervisor(config, log, async (chatId) => {
+        ? new ForkSupervisor(
+            config,
+            log,
+            async (chatId) => {
             const res = await this.pool.query<{ pending: boolean }>(
               `SELECT EXISTS (
                  SELECT 1 FROM chat_conversations c
@@ -187,7 +190,12 @@ export class PlatformContext {
               [chatId],
             );
             return res.rows[0]?.pending === true;
-          })
+          },
+            // Workers proxy machine-tool dispatch to the hub-backed
+            // registry (this.machineDispatch resolves lazily at call time
+            // — the runtime below is not constructed yet here).
+            (call) => this.machineDispatch.dispatch(call),
+          )
         : undefined;
     this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads, this.trace, this.supervisor);
     // The machine dispatch registry settles pending tool waiters when a

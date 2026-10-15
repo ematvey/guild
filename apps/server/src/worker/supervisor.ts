@@ -9,7 +9,8 @@ import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import type { Config } from "../config.js";
-import type { WorkerMessage, WorkerRequest, WorkerResponse } from "./protocol.js";
+import type { MachineToolOutcome } from "../machines/dispatch.js";
+import type { MachineDispatchCall, WorkerMessage, WorkerRequest, WorkerResponse } from "./protocol.js";
 
 const WORKER_ENTRY = fileURLToPath(new URL("./main.ts", import.meta.url));
 
@@ -98,6 +99,9 @@ export class ForkSupervisor {
     /** Pending-work probe for respawn decisions: does the chat's
      *  conversation still have live tasks or queued submissions? */
     private readonly hasPendingWork: (chatId: string) => Promise<boolean>,
+    /** Machine-tool dispatch on the server's hub (workers proxy their
+     *  env calls here; undefined only in degenerate test stacks). */
+    private readonly dispatchMachine?: (call: MachineDispatchCall) => Promise<MachineToolOutcome>,
   ) {}
 
   private startHeartbeatSweeper(): void {
@@ -196,6 +200,28 @@ export class ForkSupervisor {
     }
     if (message.t === "heartbeat") {
       handle.lastBeat = Date.now();
+      return;
+    }
+    // Worker-initiated machine dispatch (the IPC proxy): the hub-backed
+    // registry does the real frame send + result wait on the server side.
+    if (message.t === "dispatch") {
+      void (async () => {
+        if (!this.dispatchMachine) {
+          handle.child.send({ t: "result", ref: message.ref, ok: false, error: "machine dispatch unavailable" });
+          return;
+        }
+        try {
+          const outcome = await this.dispatchMachine(message.call);
+          handle.child.send({ t: "result", ref: message.ref, ok: true, data: outcome });
+        } catch (error) {
+          handle.child.send({
+            t: "result",
+            ref: message.ref,
+            ok: false,
+            error: (error as Error)?.message ?? String(error),
+          });
+        }
+      })();
       return;
     }
     if (message.t === "result") {
