@@ -11,6 +11,19 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Chat isolation: per-chat durable workers under a supervisor (2026-10-15).**
+  Decided after the day's durability incidents (poisoned `pi.live` document
+  SessionFailed every chat; a transient Postgres failure sealed the session
+  until redeploy). Requirement: one chat's failure never takes down another,
+  recovery is automatic. Plan: `docs/plans/2026-10-15-chat-isolation-plan.md`.
+  M0 ships the pi-idiomatic in-process supervisor (`harness.closed` → reopen,
+  the framework's own recovery pattern) immediately; M1 takes the
+  scoped-harness proposal upstream (one harness per storage is pi-durable's
+  assumption — the scheduler adopts every conversation's tasks, verified in
+  source); M2 runs each active chat in its own worker process (scoped
+  harness + bridge + IPC for frames/approvals/machine dispatch), spawned by
+  admission, reaped at idle, resumed after death; M3 makes it the only path.
+  Discussion preceded the doc; implementation starts at M0.
 - **The storage layer survives transient Postgres failures instead of sealing the session (2026-10-15).**
   Root cause of the chat wedge (incident 2026-10-15): pi-durable is fail-stop by design —
   "nothing retries, that is the Storage's to retry" — and the Postgres adapter never retried,
