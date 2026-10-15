@@ -211,6 +211,43 @@ describe("bridge generation stream", () => {
     expect(deps2.rows[0]!.event.type).toBe("assistant_message");
   });
 
+  it("a pi.compaction entry lands as a compaction event, string or block content", async () => {
+    const wrapped = (summary: string) =>
+      `The conversation history before this point was compacted into the following summary:\n\n<summary>\n${summary}\n</summary>`;
+    // pi-durable compactions carry the summary as text blocks.
+    const deps = fakeDeps([]);
+    const bridge = new ChatBridge(deps);
+    bridge.bind("conv-1", "chat-1", "org-1");
+    await bridge.handle("conv-1", [
+      {
+        type: "entry_appended",
+        entry: {
+          id: 9,
+          kind: "pi.compaction",
+          data: { reason: "threshold" },
+          head: 5,
+          model: [{ role: "user", content: [{ type: "text", text: wrapped("the user wants TURN-1-OK") }] }],
+        } as never,
+      },
+    ]);
+    // The importer's synthetic compactions carry a plain string.
+    await bridge.handle("conv-1", [
+      {
+        type: "entry_appended",
+        entry: {
+          id: 10,
+          kind: "pi.compaction",
+          data: { reason: "manual" },
+          model: [{ role: "user", content: "[Conversation summary so far]\n\nimported summary" }],
+        } as never,
+      },
+    ]);
+    expect(deps.rows.map((r) => r.event)).toEqual([
+      { type: "compaction", summary: "the user wants TURN-1-OK" },
+      { type: "compaction", summary: "[Conversation summary so far]\n\nimported summary" },
+    ]);
+  });
+
   it("renders the stream events byte-exactly (ryu floats, declaration order)", () => {
     expect(streamEventWire({ type: "delta", content: "he\"llo" })).toBe('{"type":"delta","content":"he\\"llo"}');
     expect(streamEventWire({ type: "done", message_id: "abc", cost_usd: 0, tokens_in: 3, tokens_out: 2 })).toBe(
