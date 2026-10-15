@@ -3383,7 +3383,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     {chatView === "casual" ? "Turn failed" : e.b.text}
                   </div>
                 ) : (
-                  <div key={e.b.key} className="group relative">
+                  <div key={e.b.key} className={`group relative ${chatView === "casual" ? "py-2" : ""}`}>
                     <div
                       className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS}`}
                     >
