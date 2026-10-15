@@ -22,8 +22,13 @@ not kept here — it lives in git.
   its harness entirely (no second scheduler); admission moves into workers
   via IPC with `requestId` dedupe; frames need no IPC (the bridge's
   thread_events + pg_notify path already crosses process boundaries);
-  spawn on first admission or pending-work-at-boot; quiescence + 10 min
-  grace reap. Next: the worker process entry + spawner + routing rework.
+  spawn on first admission or pending-work-at-boot. **M2 shipped**
+  (`b314458`, flag-gated `GUILD_WORKER_MODE=on`): fork supervisor, worker
+  entry, IPC routing for admission/control, journal-driven boot recovery +
+  respawn; `mintId` made cross-process-atomic (in-memory watermark reused
+  ids across harnesses); SIGKILL-isolation gate green; suite at baseline.
+  M2.5 remains: idle reap, approval/compaction live verification, machine
+  dispatch IPC proxy, then flip the flag on dev → prod.
 - **The storage layer survives transient Postgres failures instead of sealing the session (2026-10-15).**
   Root cause of the chat wedge (incident 2026-10-15): pi-durable is fail-stop by design —
   "nothing retries, that is the Storage's to retry" — and the Postgres adapter never retried,
