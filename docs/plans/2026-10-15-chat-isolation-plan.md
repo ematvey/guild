@@ -1,13 +1,13 @@
-# Chat isolation — per-chat durable workers under a supervisor
+# Chat isolation — worker-per-chat: decided and building
 
 maintainer, 2026-10-15. Outcome of the durability incidents (the poisoned
 `pi.live` document that SessionFailed every chat, the sealed session after a
 transient Postgres failure, the SIGTERM drain). Requirement: **every chat is
 fully isolated** — one chat's failure may never take down another chat, and
-recovery must be automatic. Direction settled in discussion: worker processes
-per chat, supervised, built on pi-durable's own recovery model rather than a
-hand-rolled daemon. Discussion only preceded this doc; implementation starts
-at M0.
+recovery must be automatic. DECISION 2026-10-15 (maintainer): build the
+worker-per-chat model with IPC — “should be more scalable” — not gated on
+upstream. M0 (the in-process supervisor) shipped first (`fe67fd8`) and stays:
+it is the recovery primitive workers reuse.
 
 ## The framework facts this stands on (verified in pi-durable source)
 
@@ -28,43 +28,41 @@ at M0.
   pending; `replay: "safe"` tools rerun, others hand the model an
   `interrupted` result with the committed output.
 
-## Architecture
+## Architecture (as decided)
 
-Main server (unchanged surfaces): HTTP + ws, durable **admission**
-(submit / withdraw / stop / approve-resolve — all atomic commits with
-`requestId` dedupe, safe from any process), the hub and machine links, and
-member-socket fan-out.
+**The main server stops owning a harness.** Two harnesses over one storage
+two schedulers adopting everything; but the admission path does not need a
+scheduler — it needs to commit. So admission moves into the workers:
 
-Worker per active conversation: a child process of the server container that
-owns a **scoped harness** — one conversation's tasks, submissions, documents,
-and entries only — plus the bridge (thread_events / turn_commands /
-generating projections), the codemode sandbox, and its executor envs.
-Machine dispatch and oversized-result spill proxy to the main server over
-IPC; live frames flow worker → main server → member sockets.
-
-Lifecycle, driven by the journal:
-
-- **Spawn** on the first admission into a conversation with no live worker
-  (submit, steer, approve, compact), and on server boot for every
-  conversation with pending work (the resume-on-boot scan replaces today's
-  `resume()`-everything).
-- **Run** until the conversation is idle — no live tasks, no queued
-  submissions — plus a grace window, then exit cleanly. A clean exit leaves
-  pending work pending (pi-durable close semantics); the next touch resumes.
-- **Recover** from any crash by respawn + resume; the client sees the turn
-  continue, not an error. A worker crash never touches another chat.
-- **Reopen** (in-worker, pi-idiomatic) on `harness.closed` with
-  `reason: "failed"` — transient storage errors cost a reopen, not the
-  process. Reopen storm → bounded backoff, then the worker exits and lets
-  the spawner's respawn backoff take over.
+- Main server: HTTP + ws, the hub and machine links, member-socket fan-out,
+  the spawner, and IPC routing. No `Harness.open` anywhere.
+- Worker per active conversation: forks with a **scoped harness**
+  (`ScopedDurableStorage` over one conversation — every scan forced onto the
+  scope, by-id readers refusing foreign records; `2fe2d57`, proven by test:
+  a scoped harness cannot adopt another conversation's pending task). Owns
+  the bridge, codemode sandbox, executor envs; serves IPC: submit (with
+  `requestId` dedupe), steer, stop, approve-resolve, compact.
+- Frames need no IPC: the worker's bridge writes `thread_events` +
+  `pg_notify` through the platform pool exactly as today — the main
+  server's existing notify relay reaches the client sockets. IPC carries
+  only control (submit/stop/approve/steer) and worker lifecycle.
+- Spawn on first admission into a conversation with no live worker (the
+  spawner forks, waits for readiness, then sends the submit), and on boot
+  for every conversation with pending work (live tasks or queued
+  submissions — a direct SQL scan, not a harness). Respawn on death.
+- Idle reap: quiescence (no live tasks, no queued submissions, no in-flight
+  IPC) plus a 10 min grace → clean close (pending stays pending, the same
+  path as crash recovery, at a turn boundary so nothing converts to
+  failed). The worker fleet then tracks “conversations active in the last
+  10 minutes”, not “chats ever created”.
 
 Isolation ladder (each step strictly widens the boundary):
 
-1. M0 supervisor, same process — self-healing, shared heap.
-2. M2 worker processes — fault isolation, per-worker heap.
+1. ~~M0 supervisor, same process~~ **shipped** (`fe67fd8`) — heals transient
+   failures in-process; workers reuse its reopen loop.
+2. M2 worker processes — fault isolation, per-worker heap (this milestone).
 3. Future: workers as sandbox microVMs (the sandbox-runner pattern extended
-   to whole turns) — the "hypervisor" end state. Out of scope here; the
-   worker boundary is what a later VM sweep would wrap.
+   to whole turns) — the “hypervisor” end state.
 
 ## Milestones
 
@@ -88,34 +86,18 @@ settles the harness; the supervisor reopens; an in-flight turn resumes and
 completes; a second fault one minute later reopens again. No manual
 restart.
 
-### M1 — the upstream scoped-harness proposal
+### M1 — scoped storage (shipped) + upstream proposal
 
-File `earendil-works/pi` (pi-durable is experimental; the API moves):
-`Harness.open(storage, { scope: conversationId })` — the scheduler adopts
-only in-scope tasks and submissions; document reads/writes and id minting
-stay global (they are transactional and safe cross-process today).
+Shipped: `ScopedDurableStorage` (`2fe2d57`) — scan-forcing + by-id refusal,
+with the double-drive proof test. The upstream proposal to `earendil-works/pi`
+(`Harness.open(storage, { scope: conversationId })` as a first-class API)
+continues in parallel: when it lands, the adapter wrapper is replaced by the
+framework's own guarantee, semantics unchanged.
 
-Questions the proposal must answer:
-
-- Scoped scheduler: the `open()` scan and the queued-submission scan filter
-  by conversation. Adopting *only in-scope* running tasks keeps the
-  reset-to-pending semantics intact.
-- Is a scoped harness + an unscoped harness (the server's admission path)
-  over one storage a supported combination? Admission only commits
-  submissions/entries; it never resumes — the framework's
-  "resubmitting with the same requestId finds the submission already
-  admitted" rule is what makes this safe on paper.
-- `abandonOnRestart` and worker reaping: a clean close is preferred at idle;
-  hard death mid-codemode relies on the documented restart abort — confirm
-  a scoped harness re-drives it identically.
-
-Fallback if upstream declines or lags: a Guild-owned scoped storage adapter
-(scan filters by conversation). Experimental flag, never default — the
-scheduler's global scans are the invariant we would be narrowing without
-the framework's promise.
-
-Gate: a decision (accepted API shape or the fallback design) written back
-into this doc.
+Remaining questions for the proposal (informed by what the adapter relies
+on): scan filtering by conversation; by-id record checks; the assumption
+that a scoped session commits only to its scope (true because its ids come
+from scope-filtered reads); `abandonOnRestart` re-drive inside a scope.
 
 ### M2 — the worker runtime
 

@@ -11,19 +11,19 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
-- **Chat isolation: per-chat durable workers under a supervisor (2026-10-15).**
-  Decided after the day's durability incidents (poisoned `pi.live` document
-  SessionFailed every chat; a transient Postgres failure sealed the session
-  until redeploy). Requirement: one chat's failure never takes down another,
-  recovery is automatic. Plan: `docs/plans/2026-10-15-chat-isolation-plan.md`.
-  M0 ships the pi-idiomatic in-process supervisor (`harness.closed` → reopen,
-  the framework's own recovery pattern) immediately; M1 takes the
-  scoped-harness proposal upstream (one harness per storage is pi-durable's
-  assumption — the scheduler adopts every conversation's tasks, verified in
-  source); M2 runs each active chat in its own worker process (scoped
-  harness + bridge + IPC for frames/approvals/machine dispatch), spawned by
-  admission, reaped at idle, resumed after death; M3 makes it the only path.
-  Discussion preceded the doc; implementation starts at M0.
+- **Chat isolation: worker-per-chat with IPC — building (decided 2026-10-15).**
+  Same incidents as above; the user decided worker-per-chat is the goal
+  ("should be more scalable"), not gated on upstream. Plan:
+  `docs/plans/2026-10-15-chat-isolation-plan.md`. Shipped so far: M0
+  supervisor (`fe67fd8` — in-process `harness.closed` → reopen with backoff),
+  the scoped-echo UUID fix (`9ee39b5`), and `ScopedDurableStorage` (`2fe2d57`)
+  with the double-drive proof: a harness over a scoped storage cannot adopt
+  another conversation's pending task. Architecture: the main server drops
+  its harness entirely (no second scheduler); admission moves into workers
+  via IPC with `requestId` dedupe; frames need no IPC (the bridge's
+  thread_events + pg_notify path already crosses process boundaries);
+  spawn on first admission or pending-work-at-boot; quiescence + 10 min
+  grace reap. Next: the worker process entry + spawner + routing rework.
 - **The storage layer survives transient Postgres failures instead of sealing the session (2026-10-15).**
   Root cause of the chat wedge (incident 2026-10-15): pi-durable is fail-stop by design —
   "nothing retries, that is the Storage's to retry" — and the Postgres adapter never retried,
