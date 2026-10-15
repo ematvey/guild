@@ -225,7 +225,7 @@ describe("worker-per-chat (fork supervisor)", () => {
     expect(created.statusCode).toBe(200);
     const chatId = (JSON.parse(created.body) as { id: string }).id;
     await platformOf().chats.setMachine(stack.orgId, chatId, machineId, machineId);
-    stack.mock.setResponses([{ body: toolCallSse("bash", JSON.stringify({ command: "uname -r" })) }, { body: finalSse }]);
+    stack.mock.setResponses([{ body: toolCallSse("bash", JSON.stringify({ command: "uname -r" })) }, { body: finalSse("kernel answer") }]);
     const sent = await stack.env.app.inject({
       method: "POST",
       url: `/api/v1/threads/${chatId}/turns`,
