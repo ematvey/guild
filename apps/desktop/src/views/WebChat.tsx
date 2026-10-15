@@ -3385,7 +3385,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 ) : (
                   <div key={e.b.key} className={`group relative ${chatView === "casual" ? "py-2" : ""}`}>
                     <div
-                      className={`max-w-none space-y-2 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}
+                      className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}
                     >
                       <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                         {e.b.text}
