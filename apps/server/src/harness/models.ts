@@ -78,6 +78,12 @@ export function ensureOrgProvider(
   orgId: string,
   routes: readonly GuildRouteInfo[],
 ): void {
+  // An empty route read must not wipe the org's live catalog: the provider
+  // is rebuilt on every submit, and a transient empty read here once failed
+  // a running turn mid-flight with "model is not available" (no_model). The
+  // stale catalog keeps serving; the gateway rejects a genuinely removed
+  // route with a proper error at call time.
+  if (routes.length === 0) return;
   const id = guildProviderId(orgId);
   const baseUrl = `${config.selfBaseUrl.replace(/\/+$/, "")}/openai/v1`;
   const provider = createProvider({

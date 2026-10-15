@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { apply, type Op } from "@earendil-works/chord/delta";
 import type { Context } from "@earendil-works/chord";
 import { StorageRequestError } from "@earendil-works/pi-durable";
@@ -34,6 +35,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import type { PostgresDatabase, PostgresExecutor } from "./executor.js";
 import { applyPostgresMigrations } from "./migrations.js";
+import { isTransientDbError, RETRY_DELAYS_MS, sleep } from "./pg.js";
 
 // pi-durable 1.0.1 does not export its branding helpers from the package entry;
 // the erased brands are phantom types, so trusted numeric boundaries brand with casts.
@@ -154,6 +156,23 @@ const writeId = (write: StorageWrite): number | undefined => {
   }
 };
 
+/** The batch fingerprint: a hash of every record ID the batch touches —
+ *  claimed IDs (conversation/entry/task/submission/document.create/copy)
+ *  and re-touched document IDs (change/retire). Identifying a commit by the
+ *  full set (not just the smallest ID) keeps distinct batches that share a
+ *  record ID (document changes re-touch the same document) from adopting
+ *  each other. */
+const batchFingerprint = (writes: readonly StorageWrite[]): string | undefined => {
+  const ids: number[] = [];
+  for (const write of writes) {
+    const id = write.type === "document.change" || write.type === "document.retire" ? write.id : writeId(write);
+    if (id !== undefined) ids.push(id);
+  }
+  if (ids.length === 0) return undefined;
+  ids.sort((a, b) => a - b);
+  return createHash("sha256").update(JSON.stringify(ids)).digest("hex");
+};
+
 interface DocumentAction {
   retire: boolean;
   create?: DocumentCreate;
@@ -203,6 +222,43 @@ export class PostgresDurableStorage implements Storage {
     this.assertOpen();
     const documentActions = this.prepareDocumentActions(writes);
     const candidateNextId = this.candidateNextId(writes);
+    const fingerprint = batchFingerprint(writes);
+    // Adoption and retry arm only after THIS call saw a connection-class
+    // failure: that is the only situation where the outcome is genuinely
+    // unknown. A clean attempt (a first-seen ID conflict, say) must reject
+    // exactly as the storage contract demands — the conformance suite
+    // re-commits already-claimed IDs and expects the throw.
+    let sawTransient = false;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.commitOnce(writes, documentActions, candidateNextId, fingerprint);
+      } catch (error) {
+        if (isTransientDbError(error)) sawTransient = true;
+        // The failed attempt may have committed: the connection can die
+        // after the backend applied the transaction but before the client
+        // learns the outcome. The durable_commits row identifies an
+        // applied batch by its ID-set fingerprint — adopt instead of
+        // double-applying (the ID claims would reject the retry) or
+        // failing the session.
+        if (sawTransient && fingerprint !== undefined) {
+          const adopted = await this.adoptCommit(fingerprint).catch(() => undefined);
+          if (adopted !== undefined) {
+            this.nextId = Math.max(this.nextId, candidateNextId);
+            return adopted;
+          }
+        }
+        if (!sawTransient || attempt >= RETRY_DELAYS_MS.length) throw error;
+        await sleep(RETRY_DELAYS_MS[attempt]!);
+      }
+    }
+  }
+
+  private async commitOnce(
+    writes: readonly StorageWrite[],
+    documentActions: Map<DocumentId, DocumentAction>,
+    candidateNextId: number,
+    fingerprint: string | undefined,
+  ): Promise<Seq> {
     const seq = await this.db.transaction(async (tx) => {
       // FOR UPDATE serializes concurrent commits on the metadata row.
       const metadata = await tx.query<{ next_id: number; next_seq: number }>(
@@ -214,6 +270,12 @@ export class PostgresDurableStorage implements Storage {
       await this.checkDocumentActions(tx, documentActions);
       for (const write of writes) await this.applyTableWrite(tx, write, committedSeq);
       await this.applyDocumentActions(tx, documentActions, committedSeq);
+      if (fingerprint !== undefined) {
+        await tx.query("INSERT INTO durable_commits (key, seq) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [
+          fingerprint,
+          committedSeq,
+        ]);
+      }
       await tx.query("UPDATE durable_metadata SET next_id = $1, next_seq = $2 WHERE singleton = 1", [
         Math.max(metadata[0]!.next_id, candidateNextId),
         committedSeq + 1,
@@ -222,6 +284,13 @@ export class PostgresDurableStorage implements Storage {
     });
     this.nextId = Math.max(this.nextId, candidateNextId);
     return seq;
+  }
+
+  /** The seq of the commit that already applied this exact batch (same
+   *  full ID-set fingerprint), if any. */
+  private async adoptCommit(fingerprint: string): Promise<Seq | undefined> {
+    const rows = await this.db.query<{ seq: number }>("SELECT seq FROM durable_commits WHERE key = $1", [fingerprint]);
+    return rows.length === 0 ? undefined : asSeq(rows[0]!.seq);
   }
 
   async mintId<I extends Id<string>>(): Promise<I> {

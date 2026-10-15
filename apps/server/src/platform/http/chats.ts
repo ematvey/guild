@@ -527,6 +527,10 @@ async function submitTurn(
     await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
   } catch (error) {
     await chats.chats.setGenerating(user.org_id, chatId, priorGenerating);
+    // The delivery failed after the accept committed: mark the command so
+    // it stops claiming a pending turn (the echo stays — the user typed
+    // it). The alternative was an immortal pending row.
+    await chats.turnCommands.failUnsubmitted(commandId).catch(() => {});
     throw error;
   }
   await chats.chats.setGenerating(user.org_id, chatId, true);

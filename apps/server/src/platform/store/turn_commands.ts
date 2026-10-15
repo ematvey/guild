@@ -277,6 +277,29 @@ export class TurnCommandStore {
     );
   }
 
+  /** Marks one command failed when its delivery into the durable
+   *  conversation threw (the accept's echo stays — the user typed it — but
+   *  the row stops claiming a pending delivery). */
+  async failUnsubmitted(id: string): Promise<void> {
+    await this.pool.query(
+      "UPDATE turn_commands SET status = 'failed', finished_at = coalesce(finished_at, now()) WHERE id = $1 AND status = 'pending' AND finished_at IS NULL",
+      [id],
+    );
+  }
+
+  /** Fails every never-delivered command older than the bound: a pending
+   *  row older than a few seconds means its submit threw (the accept and
+   *  the submit run back to back), and a wedged durable layer once left
+   *  such rows forever. Queued (delivered, waiting) commands carry later
+   *  statuses and are untouched. */
+  async sweepExpired(maxAgeSeconds: number): Promise<number> {
+    const res = await this.pool.query<{ count: string }>(
+      "WITH swept AS (UPDATE turn_commands SET status = 'failed', finished_at = now() WHERE status = 'pending' AND finished_at IS NULL AND created_at < now() - ($1 || ' seconds')::interval RETURNING 1) SELECT count(*) FROM swept",
+      [String(maxAgeSeconds)],
+    );
+    return Number(res.rows[0]?.count ?? 0);
+  }
+
   /** Finds a command by its durable submission identity (the bridge's
    *  run_start/run_end carry submission ids). */
   async byInvocation(invocation: string): Promise<TurnCommand[]> {

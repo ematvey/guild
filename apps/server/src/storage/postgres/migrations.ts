@@ -94,7 +94,29 @@ const INITIAL_SCHEMA = [
 ];
 
 /** Immutable, ordered schema history. Append new migrations after the initial schema ships. */
-export const DURABLE_POSTGRES_MIGRATIONS = [{ version: 1, statements: INITIAL_SCHEMA }];
+export const DURABLE_POSTGRES_MIGRATIONS = [
+  { version: 1, statements: INITIAL_SCHEMA },
+  {
+    version: 2,
+    statements: [
+      // Commit adoption: one row per applied write batch. An
+      // intermediate build keyed rows by the batch's smallest record ID.
+      "CREATE TABLE durable_commits (\n\t\tfirst_id BIGINT PRIMARY KEY,\n\t\tseq BIGINT NOT NULL\n\t)",
+    ],
+  },
+  {
+    version: 3,
+    statements: [
+      // v3 re-keys durable_commits by the hash of the batch's full ID
+      // set: a first-ID key would let a distinct batch that re-touches an
+      // already-claimed ID adopt a foreign commit. The rows are ephemeral
+      // bookkeeping (they only matter while a commit's outcome is in
+      // flight), so replacing the table loses nothing.
+      "DROP TABLE durable_commits",
+      "CREATE TABLE durable_commits (\n\t\tkey TEXT PRIMARY KEY,\n\t\tseq BIGINT NOT NULL\n\t)",
+    ],
+  },
+];
 
 export const CURRENT_POSTGRES_SCHEMA_VERSION = DURABLE_POSTGRES_MIGRATIONS.at(-1)?.version ?? 0;
 
