@@ -1945,7 +1945,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     window.addEventListener("guild:sidebar-width-changed", resync);
     return () => window.removeEventListener("guild:sidebar-width-changed", resync);
   }, []);
-  const bottom = useRef<HTMLDivElement>(null);
   // Sticky-scroll: while streaming, follow the generated text ONLY when the
   // pane is already at the bottom; scrolling up detaches into free scroll,
   // scrolling back to the last character re-attaches . The scroll handler keeps `stick.current` truthful.
@@ -2124,7 +2123,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // shows for a frame at the old scroll offset (the reported 1-frame jump).
   useLayoutEffect(() => {
     if (!stick.current) return;
-    bottom.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
+    const el = pane.current;
+    // True max scroll, not scrollIntoView on a bottom sentinel: a sentinel
+    // sits above the composer-offset padding, and aligning it with the
+    // scrollport bottom leaves the last lines behind the floating composer.
+    if (el) el.scrollTop = el.scrollHeight;
   }, [blocks]);
 
   const refreshChats = async () => {
@@ -3437,7 +3440,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     />
                   </div>
                 )}
-              <div ref={bottom} />
             </div>
           </div>
         )}
