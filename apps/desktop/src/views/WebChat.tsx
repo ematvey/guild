@@ -1039,8 +1039,8 @@ function HoverStamp({ ts, side }: { ts?: string; side: "left" | "right" }) {
 
 /// Casual-view replacement for one contiguous thinking/tool run: pulsing
 /// "Agent is working Ns" while the run is the turn's live tail, settling to
-/// "Agent worked for S seconds". The py padding (immune to the list's
-/// space-y margins) gives the entry more breathing room than a paragraph.
+/// "Agent worked for S seconds". The small py padding (immune to the list's
+/// space-y margins) keeps consecutive runs from stacking without gaps.
 /// The worked-for label for one contiguous thinking/tool run, or null when
 /// the entry should not render at all: a completed run under one second
 /// (and one without stamps at all) carries no information — "worked for 0
@@ -1073,7 +1073,7 @@ function WorkedForBlock({ run, active, stopping, nowMs }: {
   const label = workRunLabel(run, active, stopping, nowMs);
   if (label === null) return null;
   return (
-    <div className="py-2 text-sm text-muted-foreground">
+    <div className="py-0.5 text-sm text-muted-foreground">
       {active ? <span className="animate-pulse">{label}</span> : label}
     </div>
   );
@@ -2894,14 +2894,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // each contiguous thinking/tool run with one WorkedForBlock and keeps
   // only user messages, agent text, pending approvals and terminal errors
   // (compaction cards and queued-send chips stay out).
-  const displayEntries = useMemo(() => {
+  const { entries: displayEntries, finalAgent } = useMemo(() => {
     type Plain = { kind: "plain"; b: Block; i: number };
     type Entry = { kind: "work"; run: Block[] } | Plain;
-    if (chatView === "technical") {
-      const out: Entry[] = [];
-      blocks.forEach((b, i) => out.push({ kind: "plain", b, i }));
-      return out;
-    }
     const entries: Entry[] = [];
     let run: Block[] = [];
     const flush = () => {
@@ -2909,6 +2904,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       run = [];
     };
     blocks.forEach((b, i) => {
+      if (chatView !== "casual") {
+        entries.push({ kind: "plain", b, i });
+        return;
+      }
       if (b.kind === "reasoning" || b.kind === "tool") {
         run.push(b);
         return;
@@ -2920,7 +2919,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       }
     });
     flush();
-    return entries;
+    // Hover stamps under agent text mark only the turn's final message: an
+    // intermediate text block between tool runs is context, not the answer,
+    // and stamping each one costs hover space under the whole transcript.
+    const finalAgent = new Set<number>();
+    let agentSinceUser = false;
+    for (let k = entries.length - 1; k >= 0; k--) {
+      const e = entries[k];
+      if (e.kind === "plain" && e.b.kind === "text") {
+        if (!agentSinceUser) finalAgent.add(e.i);
+        agentSinceUser = true;
+      } else if (e.kind === "plain" && e.b.kind === "user") {
+        agentSinceUser = false;
+      }
+    }
+    return { entries, finalAgent };
   }, [blocks, chatView]);
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || openGenerating;
@@ -3394,7 +3407,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                         <div className="text-xs text-muted-foreground">stopped</div>
                       )}
                     </div>
-                    <HoverStamp ts={e.b.ts} side="left" />
+                    {finalAgent.has(e.i) && <HoverStamp ts={e.b.ts} side="left" />}
                   </div>
                 ),
               )}
