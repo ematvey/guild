@@ -1,7 +1,7 @@
 // Attachment endpoints:
 // upload bytes into object storage and reference them from a chat.
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityCtx } from "../contexts.js";
 import type { InfraContext } from "../contexts.js";
 import { ApiError, sortedJson } from "../errors.js";
@@ -17,7 +17,9 @@ function queryOne(req: { url: string }, name: string): string | undefined {
 }
 
 export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx, infra: InfraContext): void {
-  app.post("/api/v1/chats/:chatId/attachments", async (req, reply) => {
+  // Deprecated alias: /api/v1/chats/:chatId/attachments (the thread-domain
+  // rename — /api/v1/threads/:chatId/attachments is primary).
+  const uploadAttachment = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(ctx, req);
     const chatId = parseUuidParam(req, "chatId");
     const rawFilename = queryOne(req, "filename");
@@ -46,9 +48,12 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx,
       key,
     );
     return reply.status(200).send(sortedJson(row));
-  });
+  };
+  app.post("/api/v1/chats/:chatId/attachments", uploadAttachment);
+  app.post("/api/v1/threads/:chatId/attachments", uploadAttachment);
 
-  app.get("/api/v1/chats/:chatId/attachments", async (req, reply) => {
+  // Deprecated alias: GET /api/v1/chats/:chatId/attachments.
+  const listAttachments = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(ctx, req);
     const chatId = parseUuidParam(req, "chatId");
     await getChatOwned(infra.pool, user.org_id, chatId, user);
@@ -56,7 +61,9 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: IdentityCtx,
     return reply
       .status(200)
       .send({ attachments: rows.map((r) => sortedJson(r)) });
-  });
+  };
+  app.get("/api/v1/chats/:chatId/attachments", listAttachments);
+  app.get("/api/v1/threads/:chatId/attachments", listAttachments);
 
   app.get("/api/v1/attachments/:id", async (req, reply) => {
     const user = await requireUser(ctx, req);
