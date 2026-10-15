@@ -25,6 +25,7 @@ import {
   upsertApproval,
   accountDefaultLabel,
   tabPaneLayout,
+  workRunLabel,
   type Block,
 } from "./WebChat";
 import type { SidebarTab } from "./sidebar-rail";
@@ -912,5 +913,39 @@ describe("tabPaneLayout (rail tab → sidebar/pane layout)", () => {
       expect(tabPaneLayout(tab, true).mainPane).toBe("chat");
       expect(tabPaneLayout(tab, true).aside).toBe(false);
     }
+  });
+});
+
+describe("workRunLabel (casual worked-for entry)", () => {
+  const run = (start?: string, end?: string): Block[] => [
+    {
+      kind: "tool",
+      text: "",
+      key: "k",
+      tool: { callId: "c", name: "sh", args: "", executor: "server", status: "done", ts: start, endTs: end },
+    },
+  ];
+
+  it("a completed run under one second renders nothing", () => {
+    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.500Z"), false, false, 0)).toBeNull();
+    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:00.000Z"), false, false, 0)).toBeNull();
+  });
+
+  it("a completed run without stamps renders nothing; longer runs spell the duration", () => {
+    expect(workRunLabel(run(undefined, undefined), false, false, 0)).toBeNull();
+    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:00:07.000Z"), false, false, 0)).toBe(
+      "Agent worked for 7 seconds",
+    );
+    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", "2026-10-15T12:01:23.000Z"), false, false, 0)).toBe(
+      "Agent worked for 1m 23s",
+    );
+  });
+
+  it("live states always render, even before any stamp exists", () => {
+    expect(workRunLabel(run(undefined, undefined), true, false, 0)).toBe("Agent is working");
+    expect(workRunLabel(run("2026-10-15T12:00:00.000Z", undefined), true, false, Date.parse("2026-10-15T12:00:05.000Z"))).toBe(
+      "Agent is working 5s",
+    );
+    expect(workRunLabel(run(undefined, undefined), true, true, 0)).toBe("Agent is stopping");
   });
 });
