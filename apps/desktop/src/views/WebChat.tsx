@@ -3107,9 +3107,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS}`}
                   >
                     <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                      {/* streaming caret rides INSIDE the markdown source so
-                          it lands on the forming line, not below the block */}
-                      {streaming && i === blocks.length - 1 ? `${b.text}▍` : b.text}
+                      {b.text}
                     </Markdown>
                     {b.interrupted && !streaming && (
                       <div className="text-xs text-muted-foreground">stopped</div>
@@ -3129,9 +3127,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               )}
               {/* Working shimmer: the turn is generating but the log's tail
                   is not already animating — before the first token, after a
-                  finished tool frame, or on a silent gap. A live text tail
-                  rides its own ▍ caret and live thinking shows "Thinking…",
-                  so those tails get no second indicator. */}
+                  finished tool frame, or on a silent gap. Live thinking shows
+                  "Thinking…", so those tails get no second indicator. */}
               {streaming &&
                 !(
                   blocks.length > 0 &&
