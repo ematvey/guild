@@ -74,8 +74,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";
-import { HotkeyHint } from "../components/hotkey-hint";
+import { DesktopTooltip } from "../components/desktop-tooltip";
 import { SettingsSectionPane } from "./settings/settings-sections";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
 import { chatProjectOf, outgoingProjectId, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
@@ -3261,23 +3260,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             // Expanded: the collapse button lives in the sidebar's own header
             // (right side); only the reopen button stays here.
             collapsed && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="-ml-1.5 size-8 text-muted-foreground"
-                    onClick={() => setCollapsed(false)}
-                    aria-label="Toggle sidebar"
-                  >
-                    <PanelLeftOpen />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  Toggle sidebar
-                  <HotkeyHint combo="mod+B" />
-                </TooltipContent>
-              </Tooltip>
+              <DesktopTooltip label="Toggle sidebar" hotkey="mod+B">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="-ml-1.5 size-8 text-muted-foreground"
+                  onClick={() => setCollapsed(false)}
+                  aria-label="Toggle sidebar"
+                >
+                  <PanelLeftOpen />
+                </Button>
+              </DesktopTooltip>
             )
           )}
           <span className="min-w-0 flex-1 truncate font-medium">
