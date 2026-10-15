@@ -11,6 +11,13 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Never touch prod while developing (user-mandated 2026-10-15).** Dev
+  work targets the dev stack only (`:18080`), including client-release
+  publishes (the dev-paired desktop polls dev's updater manifest — a
+  release that skips dev leaves it showing the old version). Prod
+  (`:18081`, `~/guild-prod`) is touched only on the user's explicit ask.
+  Recorded in AGENTS.md and the workspace memory.
+
 - **Machine-dispatch IPC proxy shipped (`a94047b`) + dev worker soak
   started (2026-10-15).** Machine-bound chats — the user's primary
   surface — now serve in worker mode: the worker's ExecutionEnv proxies

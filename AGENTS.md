@@ -35,6 +35,11 @@ you.
 - **Sessions run this repo concurrently.** Check `git log` / `git status`
   for fresh commits before and after editing; pull/rebase rather than
   clobber.
+- **Never touch prod while developing.** Dev tasks act on the dev stack
+  only (`:18080`, `compose`, db `guild` — including its release registry;
+  publish client releases to dev so the dev-paired desktop sees them).
+  The prod stack (`:18081`, `~/guild-prod`, db `guild_prod`) is only
+  touched when the user explicitly asks for a prod deploy/release.
 - `PLAN.md` is the changelog of decisions. Code comments describe what code
   is and does now — no history narration in comments.
 
