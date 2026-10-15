@@ -11,6 +11,12 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Releases 0.5.49–0.5.50 (2026-10-15).** Worked-for label spacing
+  iteration: v4 `space-y` puts the margin on the previous sibling's bottom,
+  so negative margins on the label only shaped its top — the label now
+  carries a real 10px bottom margin (`-mt-1.5! mb-2.5! py-0`), verified
+  symmetric in the live UI. Shipped web + desktop release per the rule.
+
 - **Release 0.5.48 shipped (2026-10-15).** Cut from develop only, all six
   artifacts published against dev's updater manifest. Carries the chat UI
   fixes from tonight: sticky scroll lands on true max scroll (last lines no
