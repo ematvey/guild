@@ -103,6 +103,14 @@ export class GuildRuntime {
   private readonly turnCounters = new Map<string, number>();
   private storage: PostgresDurableStorage | undefined;
   private harness: Harness | undefined;
+  /** The durable database facade, created once at startup (the platform
+   *  pool outlives the runtime; the facade must not end it). Reused by
+   *  every supervisor reopen. */
+  private durableDb: PgPoolDatabase | undefined;
+  /** Supervisor state (the reopen loop below). */
+  private reopenAttempts = 0;
+  private harnessOpenedAt = 0;
+  private reopening = false;
   /** Test/diagnostic access to the owned harness (read-only usage). */
   harnessForTest(): Harness | undefined {
     return this.harness;
@@ -445,12 +453,12 @@ export class GuildRuntime {
   private async startOnce(): Promise<void> {
     // The shared platform pool outlives the runtime (PlatformContext owns
     // it); the database facade must not end it on storage close.
-    const db = new SharedPoolDatabase(this.pool);
+    this.durableDb = new SharedPoolDatabase(this.pool);
     // Platform schema first: the mapping below references chats(id), and
     // every route handler assumes apps/server/migrations are current.
     // Failure throws — startup must not come up on a stale schema.
     await applyPlatformMigrations(this.pool, { log: this.log });
-    await applyPostgresMigrations(db);
+    await applyPostgresMigrations(this.durableDb!);
     await applyChatMappingMigration(this.pool);
     // The skill_reads ClickHouse DDL: ensured once at startup (spec §3's
     // detail-page stats read the table; record() also awaits it). ClickHouse
@@ -461,6 +469,18 @@ export class GuildRuntime {
     } catch (error) {
       this.log.warn({ err: error }, "skill_reads table ensure failed");
     }
+    await this.openHarness();
+  }
+
+  /** Opens the durable storage + harness and attaches everything a resumed
+   *  session needs. Both the startup path and the supervisor's reopen path
+   *  run this — pi-durable's documented recovery for a failed session is
+   *  reopen + resume: commits are atomic, so the journal is consistent, and
+   *  a sealed session takes no writes, so in-flight tasks stay pending and
+   *  resume re-drives them. */
+  private async openHarness(): Promise<void> {
+    const db = this.durableDb;
+    if (!db) throw new Error("openHarness before startOnce");
     this.storage = await PostgresDurableStorage.open(db);
     const harness = await Harness.open(this.storage, {
       models: this.models,
@@ -514,6 +534,13 @@ export class GuildRuntime {
       onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
     }, BACKGROUND_CONTEXT);
     this.harness = harness;
+    // Supervisor: a storage error closes the Harness by itself; its
+    // documented host pattern is to reopen on failure. A deliberate close
+    // (app shutdown) must not reopen.
+    void harness.closed.then((end) => {
+      if (end.reason !== "failed" || this.stopped) return;
+      void this.scheduleReopen(end.error);
+    });
     await this.loadMapping();
     // Watches attach before resume: a re-driven run must start with its
     // watch already live. Attached after, the attach snapshot is not
@@ -536,6 +563,40 @@ export class GuildRuntime {
     // left two pending rows forever) — swept at startup and on every
     // submit; the sweep failing must not block the turn.
     await this.sweepExpiredCommands();
+    this.harnessOpenedAt = Date.now();
+  }
+
+  /** The reopen backoff ladder (first attempt immediate, then capped). */
+  private static readonly REOPEN_DELAYS_MS = [0, 1_000, 5_000, 30_000];
+
+  /** pi-durable's reopen loop with backoff. The backoff resets after ten
+   *  minutes of stable running, so an isolated transient failure costs one
+   *  reopen instead of a permanent 30s recovery tail. Concurrent failures
+   *  (the old and the new harness both settling) collapse into one loop. */
+  private async scheduleReopen(error: unknown): Promise<void> {
+    if (this.reopening || this.stopped) return;
+    this.reopening = true;
+    try {
+      if (Date.now() - this.harnessOpenedAt > 10 * 60_000) this.reopenAttempts = 0;
+      let lastError = error;
+      for (;;) {
+        const delays = GuildRuntime.REOPEN_DELAYS_MS;
+        const delay = delays[Math.min(this.reopenAttempts, delays.length - 1)]!;
+        this.reopenAttempts++;
+        this.log.error({ err: lastError, attempt: this.reopenAttempts, delayMs: delay }, "durable session failed; reopening");
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        if (this.stopped) return;
+        try {
+          await this.openHarness();
+          this.log.info({ attempt: this.reopenAttempts }, "durable session reopened");
+          return;
+        } catch (reopenError) {
+          lastError = reopenError;
+        }
+      }
+    } finally {
+      this.reopening = false;
+    }
   }
 
   /** Fails turn commands whose delivery never happened (pending = the

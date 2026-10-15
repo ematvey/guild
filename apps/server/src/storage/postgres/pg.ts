@@ -101,6 +101,16 @@ function destroyClient(client: Queryable, reason: Error): void {
  * `transaction` and `readTransaction` run on a dedicated client so their
  * queries share one connection; the pool serves plain queries concurrently.
  */
+// --- Fault-injection seam (tests only) -----------------------------------
+
+// When armed, the next operation through any PgPoolDatabase facade throws.
+// Supervisor tests use it to force a durable session failure without touching
+// Postgres itself; production never arms a fault.
+let armedFault: (() => Error) | undefined;
+export function armDurableFault(next: () => Error): void {
+  armedFault = next;
+}
+
 export class PgPoolDatabase implements PostgresDatabase {
   private readonly pool: pg.Pool;
 
@@ -109,19 +119,28 @@ export class PgPoolDatabase implements PostgresDatabase {
     this.pool = pool;
   }
 
+  private consumeFault(): void {
+    const next = armedFault;
+    armedFault = undefined;
+    if (next) throw next();
+  }
+
   query<T extends PostgresRow = PostgresRow>(sql: string, params?: readonly unknown[]): Promise<T[]> {
     // Plain reads: idempotent, so a connection-level failure retries on a
     // fresh checkout instead of failing the durable session.
+    this.consumeFault();
     return withDbRetries(async () => executorFor(this.pool).query<T>(sql, params));
   }
 
   async transaction<T>(callback: (tx: PostgresExecutor) => Promise<T>): Promise<T> {
+    this.consumeFault();
     return this.isolatedTransaction(callback, "BEGIN", true);
   }
 
   async readTransaction<T>(callback: (tx: PostgresExecutor) => Promise<T>): Promise<T> {
     // Read-only snapshot: idempotent as a whole, so a connection-level
     // failure retries instead of failing the durable session.
+    this.consumeFault();
     return withDbRetries(() => this.isolatedTransaction(callback, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", false));
   }
 
