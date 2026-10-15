@@ -73,6 +73,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";
+import { HotkeyHint } from "../components/hotkey-hint";
 import { SettingsSectionPane } from "./settings/settings-sections";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
 import { chatProjectOf, outgoingProjectId, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
@@ -2433,6 +2435,26 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   };
   const recoverMissingChatRef = useRef(recoverMissingChat);
   recoverMissingChatRef.current = recoverMissingChat;
+  const newChatRef = useRef(newChat);
+  newChatRef.current = newChat;
+  // Global hotkeys (desktop): Cmd/Ctrl+B toggles the sidebar, Cmd/Ctrl+N
+  // opens a new thread. No printable key involved, so typing anywhere is
+  // unaffected; the browser has no own bindings for these combos.
+  useEffect(() => {
+    if (isMobile) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (e.code === "KeyB") {
+        e.preventDefault();
+        setCollapsed((c) => !c);
+      } else if (e.code === "KeyN") {
+        e.preventDefault();
+        newChatRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isMobile]);
 
   /** Sidebar: new chat inside a project (the project row's hover "+").
    * Navigates to the project's addressed scratch view — the pick effect
@@ -3237,15 +3259,23 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             // Expanded: the collapse button lives in the sidebar's own header
             // (right side); only the reopen button stays here.
             collapsed && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="-ml-1.5 size-8 text-muted-foreground"
-                onClick={() => setCollapsed(false)}
-                title="Open sidebar"
-              >
-                <PanelLeftOpen />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="-ml-1.5 size-8 text-muted-foreground"
+                    onClick={() => setCollapsed(false)}
+                    aria-label="Toggle sidebar"
+                  >
+                    <PanelLeftOpen />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  Toggle sidebar
+                  <HotkeyHint combo="mod+B" />
+                </TooltipContent>
+              </Tooltip>
             )
           )}
           <span className="min-w-0 flex-1 truncate font-medium">
