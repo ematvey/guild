@@ -1041,12 +1041,11 @@ function HoverStamp({ ts, side }: { ts?: string; side: "left" | "right" }) {
 /// "Agent is working Ns" while the run is the turn's live tail, settling to
 /// "Agent worked for S seconds". The py padding (immune to the list's
 /// space-y margins) gives the entry more breathing room than a paragraph.
-function WorkedForBlock({ run, active, stopping, nowMs }: {
-  run: Block[];
-  active: boolean;
-  stopping: boolean;
-  nowMs: number;
-}) {
+/// The worked-for label for one contiguous thinking/tool run, or null when
+/// the entry should not render at all: a completed run under one second
+/// (and one without stamps at all) carries no information — "worked for 0
+/// seconds" is noise. Live states always render.
+export function workRunLabel(run: Block[], active: boolean, stopping: boolean, nowMs: number): string | null {
   const start = run[0]?.kind === "tool" ? run[0].tool?.ts : run[0]?.ts;
   const last = run[run.length - 1];
   const end = last.kind === "tool" ? (last.tool?.endTs ?? last.tool?.ts) : last.ts;
@@ -1054,17 +1053,27 @@ function WorkedForBlock({ run, active, stopping, nowMs }: {
     if (!start) return null;
     const to = active ? nowMs : end ? Date.parse(end) : null;
     if (to === null || isNaN(to)) return null;
-    return Math.max(0, Math.round((to - Date.parse(start)) / 1000));
+    // Floor, not round: a 0.5s run must read as sub-second (hidden), never
+    // round up to a fictional "1 seconds".
+    return Math.max(0, Math.floor((to - Date.parse(start)) / 1000));
   })();
-  const label = stopping
-    ? "Agent is stopping"
-    : active
-      ? `Agent is working${secs !== null ? ` ${secs}s` : ""}`
-      : secs !== null
-        ? `Agent worked for ${secs < 60 ? `${secs} seconds` : `${Math.floor(secs / 60)}m ${secs % 60}s`}`
-        : "Agent worked";
+  if (stopping) return "Agent is stopping";
+  if (active) return secs !== null ? `Agent is working ${secs}s` : "Agent is working";
+  if (secs === null || secs < 1) return null;
+  if (secs < 60) return `Agent worked for ${secs} ${secs === 1 ? "second" : "seconds"}`;
+  return `Agent worked for ${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
+function WorkedForBlock({ run, active, stopping, nowMs }: {
+  run: Block[];
+  active: boolean;
+  stopping: boolean;
+  nowMs: number;
+}) {
+  const label = workRunLabel(run, active, stopping, nowMs);
+  if (label === null) return null;
   return (
-    <div className="py-3 text-sm text-muted-foreground">
+    <div className="py-2 text-sm text-muted-foreground">
       {active ? <span className="animate-pulse">{label}</span> : label}
     </div>
   );
