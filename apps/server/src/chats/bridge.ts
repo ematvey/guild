@@ -350,8 +350,17 @@ export class ChatBridge {
         // transcript message. The accept-time echo was flagged `queued`
         // (not yet seen by the model); move it to a fresh seq with the
         // flag cleared so the desktop renders it at the placement position.
-        if (event.record.status === "placed" && typeof event.record.requestId === "string") {
-          await this.deps.threads.deliverQueuedEvent(state.chatId, event.record.requestId).catch(() => {});
+        // A fast run closes the placed→done window inside one watch batch,
+        // so the delivered record may only ever carry the terminal status:
+        // deliver on both (a no-op when the echo is absent or already
+        // delivered).
+        if (
+          (event.record.status === "placed" || event.record.status === "done") &&
+          typeof event.record.requestId === "string"
+        ) {
+          await this.deps.threads.deliverQueuedEvent(state.chatId, event.record.requestId).catch((error) => {
+            this.deps.log.error({ err: error, chatId: state.chatId, requestId: event.record.requestId }, "queued echo delivery failed");
+          });
           return;
         }
         // Settled-but-unanswered inputs (stop / archive withdrawal): mark
@@ -362,7 +371,9 @@ export class ChatBridge {
           const commands = await this.deps.turnCommands.byInvocation(invocationOf(Number(event.record.id)));
           for (const command of commands) {
             await this.deps.turnCommands.settleCancelled(command.id, invocationOf(Number(event.record.id)));
-            await this.deps.threads.deleteQueuedEvent(state.chatId, command.id).catch(() => {});
+            await this.deps.threads.deleteQueuedEvent(state.chatId, command.id).catch((error) => {
+              this.deps.log.error({ err: error, chatId: state.chatId, command: command.id }, "queued echo withdrawal failed");
+            });
           }
         }
         return;
