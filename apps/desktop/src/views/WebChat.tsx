@@ -3043,7 +3043,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
 
   const sidebarCollapse = isMobile ? undefined : () => setCollapsed(true);
   // The mobile drawer has no rail, so it always shows the Chats panel — the
-  // persisted tab must not leak into it.
+  // persisted tab must not leak into it. Its header carries the sheet's
+  // close button (the built-in corner close is suppressed: it would sit on
+  // top of the header's new-thread plus).
   const chatsPanel = (
     <ChatsPanel
       grouping={grouping}
@@ -3192,9 +3194,20 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       {/* desktop sidebar: resizable + collapsible; mobile: drawer */}
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>
-          <SheetContent side="left" className="w-72 p-0">
+          <SheetContent side="left" className="w-72 p-0" hideClose>
             <SheetTitle className="sr-only">Chats</SheetTitle>
-            {chatsPanel}
+            <ChatsPanel
+              grouping={grouping}
+              loadingChats={chats === null}
+              chatId={chatId}
+              archivedChats={archivedChats}
+              onNewChat={newChat}
+              onOpenChat={openChat}
+              onClose={() => setOpen(false)}
+              onRenameChat={(id, title) => void renameChat(id, title)}
+              onArchiveChat={(id) => void archiveChat(id)}
+              onUnarchiveChat={(id) => void unarchiveChat(id)}
+            />
           </SheetContent>
         </Sheet>
       ) : skillsRoute !== null ? null : (
