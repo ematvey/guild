@@ -9,7 +9,7 @@
 // bridge committed durable output; guild_chat_status → generating flips),
 // same events the Rust feed's listener consumes.
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, IdentityCtx } from "../contexts.js";
 import type { PlatformPool } from "../db.js";
 import { requireUser } from "./error.js";
@@ -73,7 +73,7 @@ export function registerThreadStreamRoute(
   auth: IdentityCtx,
   pool: PlatformPool,
 ): void {
-  app.get("/api/v1/chats/:id/thread/stream", async (req: FastifyRequest, reply) => {
+  const streamThread = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = (req.params as { id: string }).id;
     // Owner/admin gate (404 for strangers), same as GET /thread.
@@ -83,5 +83,8 @@ export function registerThreadStreamRoute(
       clientGone = true;
     });
     sseReply(reply, stateFrames(chats, pool, user.org_id, chatId, user.id, () => clientGone));
-  });
+  };
+  // Deprecated alias: GET /api/v1/chats/:id/thread/stream.
+  app.get("/api/v1/chats/:id/thread/stream", streamThread);
+  app.get("/api/v1/threads/:id/stream", streamThread);
 }

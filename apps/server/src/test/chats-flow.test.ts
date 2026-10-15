@@ -356,6 +356,60 @@ describe("gateway/chat turn flow", () => {
     expect(Number(commandsAfter.rows[0]!.n)).toBe(1);
   }, TEST_TIMEOUT);
 
+  it("the /api/v1/threads surface: path-carried chat, thread read under the renamed prefix", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+      payload: { title: "threads surface chat" },
+    });
+    const chat = JSON.parse(created.body) as { id: string };
+
+    stack.mock.setResponses([
+      {
+        body:
+          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
+          sseDelta("via threads path") +
+          sseDone(),
+      },
+    ]);
+    // The path carries the chat; no chat_id in the body.
+    const res = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chat.id}/turns`,
+      headers: auth(stack.memberToken),
+      payload: {
+        model: "GLM-Test-Model",
+        messages: [{ role: "user", content: "threads path turn" }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const ack = JSON.parse(res.body) as Record<string, unknown>;
+    expect(ack.accepted).toBe(true);
+
+    await waitFor(async () => {
+      const thread = await stack.env.app.inject({
+        method: "GET",
+        url: `/api/v1/threads/${chat.id}`,
+        headers: auth(stack.memberToken),
+      });
+      const rows = (JSON.parse(thread.body) as { events: { event: { type: string } }[] }).events;
+      return rows.some((e) => e.event.type === "assistant_message");
+    });
+
+    // And the legacy alias still answers with the same handler.
+    const legacyRead = await stack.env.app.inject({
+      method: "GET",
+      url: `/api/v1/chats/${chat.id}/thread`,
+      headers: auth(stack.memberToken),
+    });
+    expect(legacyRead.statusCode).toBe(200);
+    const legacyRows = (JSON.parse(legacyRead.body) as { events: { event: Record<string, unknown> }[] }).events;
+    const assistant = legacyRows.find((r) => r.event.type === "assistant_message");
+    const blocks = (assistant!.event as { blocks: { type: string; text?: string }[] }).blocks;
+    expect(blocks.some((b) => b.type === "text" && b.text === "via threads path")).toBe(true);
+  }, TEST_TIMEOUT);
+
   it("rejects malformed submissions with the serde-style 422 text", async () => {
     for (const payload of [
       { model: "GLM-Test-Model", messages: [] },
