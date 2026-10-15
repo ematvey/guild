@@ -31,6 +31,7 @@ import { AgentSessionStore } from "./store/agentSessions.js";
 import { ToolArtifactStore } from "./store/toolArtifacts.js";
 import { machineDispatch, type MachineDispatch } from "../machines/dispatch.js";
 import { GuildRuntime } from "../harness/runtime.js";
+import { ForkSupervisor } from "../worker/supervisor.js";
 import { NotifyHub } from "./notify.js";
 import { FeedForwarder } from "../hub/feed.js";
 import { ClickhouseClient } from "./clickhouse.js";
@@ -106,6 +107,9 @@ export class PlatformContext {
    *  guild_events) — one dedicated connection shared by all subscribers. */
   readonly notify: NotifyHub;
   readonly runtime: GuildRuntime;
+  /** Worker-per-chat: the fork supervisor (undefined when worker mode is
+   *  off). The runtime routes admission through it and closes it. */
+  readonly supervisor: ForkSupervisor | undefined;
   /** The member-socket feed forwarder (M5/ws-feed lane): notify fan-in →
    *  ThreadState views, LiveFrame generation streams, ChatStatus, org
    *  events, presence-driven ThreadList — all to the chat owner's sinks. */
@@ -166,7 +170,26 @@ export class PlatformContext {
     this.agentSessions = new AgentSessionStore(this.pool);
     this.toolArtifacts = new ToolArtifactStore(this.pool);
     this.notify = new NotifyHub(config.databaseUrl, log);
-    this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads, this.trace);
+    // Worker-per-chat mode: the server forks one worker per active chat and
+    // holds no harness itself; admission routes over IPC (worker mode is
+    // flag-gated: GUILD_WORKER_MODE=on).
+    this.supervisor =
+      config.workerMode === "on"
+        ? new ForkSupervisor(config, log, async (chatId) => {
+            const res = await this.pool.query<{ pending: boolean }>(
+              `SELECT EXISTS (
+                 SELECT 1 FROM chat_conversations c
+                 WHERE c.chat_id = $1 AND (
+                   EXISTS (SELECT 1 FROM tasks t WHERE t.conversation_id = c.conversation_id AND t.status IN ('pending', 'running', 'waiting'))
+                   OR EXISTS (SELECT 1 FROM submissions s WHERE s.conversation_id = c.conversation_id AND s.status = 'queued')
+                 )
+               ) AS pending`,
+              [chatId],
+            );
+            return res.rows[0]?.pending === true;
+          })
+        : undefined;
+    this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads, this.trace, this.supervisor);
     // The machine dispatch registry settles pending tool waiters when a
     // machine's slot dies (the unknown-outcome sweep).
     this.hub.onMachineDisconnected = (_machineId, connId) => this.machineDispatch.unregisterConnection(connId);
