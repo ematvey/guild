@@ -79,6 +79,10 @@ export class ThreadStore {
    *  notifies so live views reconcile (the fan-out lane re-delivers the
    *  moved row; the state lane re-captures the whole log). */
   async deliverQueuedEvent(chatId: string, id: string): Promise<ThreadEventRow | undefined> {
+    // Submissions that are not user turns never have a queued echo, and
+    // compaction runs use "compaction:<taskId>" request ids: a non-UUID id
+    // must not reach the uuid-typed id column (the cast would throw).
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return undefined;
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
