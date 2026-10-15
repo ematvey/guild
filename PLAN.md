@@ -11,6 +11,23 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Thread-domain rename: /api/v1/threads is primary — shipped in 0.5.47
+  (2026-10-15).** The user asked for the full chats → threads rename, staged
+  by release coupling: (1) server routes (`1622f35`) — every thread surface
+  lives at `/api/v1/threads/*` (CRUD, submit with the chat id on the path,
+  stop/compact/approvals/pending/read/project/events/stream) with every
+  `/api/v1/chats…` and `/api/v1/gateway/chat…` path a deprecated alias on
+  the same handler, marked in code; (2) the desktop transport (`8882a68`)
+  speaks only the new paths + `/api/v1/models` — shipped desktop-first only
+  because the server aliases went live first; (3) after this release lands
+  on clients: wire FIELD renames (`chat_id` → `thread_id` in payloads, ws
+  frames, `{chats:[]}` → `{threads:[]}`) both-sides in one release; (4)
+  internal renames (DB tables, stores, Rust protocol, desktop state) have
+  no wire impact and can trickle. "Gateway" vocabulary now means only the
+  OpenAI/Anthropic API-gateway surface (`/openai/v1`, `/anthropic/v1`).
+  Desktop 0.5.47 published against prod; aliases retire only after all
+  clients are on ≥0.5.47.
+
 - **Chat isolation: worker-per-chat with IPC — building (decided 2026-10-15).**
   Same incidents as above; the user decided worker-per-chat is the goal
   ("should be more scalable"), not gated on upstream. Plan:
