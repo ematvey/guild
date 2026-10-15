@@ -56,7 +56,7 @@ export const NATIVE_ROUTE_GROUPS: NativeRouteGroup[] = [
   { name: "llm-gateway", paths: ["/openai/v1/*", "/anthropic/v1/*"] },
   { name: "machines", paths: ["/api/v1/machines", "/api/v1/machines/*"] },
   { name: "hub-ws", paths: ["/api/v1/ws/ticket"] },
-  { name: "chats", paths: ["/api/v1/chats", "/api/v1/chats/*", "/api/v1/gateway/chat", "/api/v1/gateway/chat/*"] },
+  { name: "chats", paths: ["/api/v1/chats", "/api/v1/chats/*", "/api/v1/gateway/chat", "/api/v1/gateway/chat/*", "/api/v1/threads", "/api/v1/threads/*"] },
   // M6 long tail: registry, releases, projects, teams, admin users/prompts.
   { name: "registry", paths: ["/api/v1/registry/*"] },
   { name: "skills", paths: ["/api/v1/skills", "/api/v1/skills/*"] },

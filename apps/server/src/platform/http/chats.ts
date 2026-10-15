@@ -1,17 +1,21 @@
-// Chat routes: chat CRUD + thread read/append + approval override + read
-// markers +
-// project binding, and the gateway turn-submission routes (POST
-// /api/v1/gateway/chat → a pi-durable submission; stop/compact/approval
-// decision). The machines routes stay proxied until the hub lane (M5): the
-// connection dot and fs dispatch need the real machine registry.
+// Thread routes: the thread lifecycle (create/list/patch/archive, project
+// binding, read markers, approval policy) and the turn surface (submit,
+// stop, compact, approval decisions, queued-chip withdraw, engine append).
+// Primary since 2026-10-15: /api/v1/threads/* — the domain rename staged in
+// (the wire FIELD names stay "chat"-shaped until the desktop release can
+// follow; see PLAN). Every /api/v1/chats… and /api/v1/gateway/chat… route
+// is a deprecated alias riding the same handler, kept until the desktop
+// release ships the new transport paths and is retired after.
 //
-// Chat events stream over the member WS in the Rust server (ThreadState /
-// SyncBegin / LiveFrame frames); M5 owns that socket. The additive SSE
-// endpoint below (GET /api/v1/chats/{id}/thread/stream) serves the same
-// ThreadState frames from the pi-durable watch — the M5 lane reuses the
-// frame builders for the byte-compat member socket.
+// The machines routes stay proxied until the hub lane (M5): the connection
+// dot and fs dispatch need the real machine registry.
+//
+// Thread events stream over the member WS (ThreadState / SyncBegin /
+// LiveFrame frames). The additive SSE endpoint (GET /api/v1/threads/{id}/
+// stream, aliased at /api/v1/chats/{id}/thread/stream) serves the same
+// ThreadState frames from the pi-durable watch.
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatsCtx, GatewayCtx, IdentityCtx } from "../contexts.js";
 import type { ObjectStore } from "../s3.js";
 import { ApiError, DESERIALIZE_PREFIX, RAW_BODY, TextError, sortedJson } from "../errors.js";
@@ -142,7 +146,10 @@ export function registerChatsRoutes(
   auth: IdentityCtx,
   objects: ObjectStore,
 ): void {
-  app.post("/api/v1/chats", async (req, reply) => {
+  // The thread API: /api/v1/threads is the primary surface (2026-10-15
+  // domain rename, staged — the wire field names stay "chat"-shaped until
+  // the desktop release can follow); /api/v1/chats… aliases remain.
+  const createThread = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
     const rawTitle = body["title"];
@@ -155,23 +162,51 @@ export function registerChatsRoutes(
       ? await chats.chats.createChatForProject(user.org_id, user.id, title, projectId)
       : await chats.chats.createChat(user.org_id, user.id, title, null);
     return reply.status(200).send(chatWire({ ...chat, unread: false, machine_online: machineOnlineOf(chats, chat) }));
-  });
+  };
+  // Deprecated alias (the desktop transport lags releases): POST /api/v1/chats.
+  app.post("/api/v1/chats", createThread);
+  app.post("/api/v1/threads", createThread);
 
-  app.get("/api/v1/chats", async (req, reply) => {
+  const listThreads = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const archived = ["1", "true"].includes(queryParam(req, "archived") ?? "");
     const list = await threadList(chats, user.org_id, user.id, archived);
     return reply.status(200).send(JSON.stringify({ chats: list }));
-  });
+  };
+  // Deprecated alias: GET /api/v1/chats.
+  app.get("/api/v1/chats", listThreads);
+  app.get("/api/v1/threads", listThreads);
 
-  app.get("/api/v1/chats/:id/thread", async (req, reply) => {
+  // --- Thread API (2026-10-15): the turn/thread surface lives under
+  // /api/v1/threads/:id — the resource is the thread, turns are its
+  // subresource, and /api/v1/gateway is freed for the OpenAI/Anthropic
+  // API-gateway surface. The /api/v1/gateway/chat… paths stay as
+  // deprecated aliases (the desktop embeds its transport and lags
+  // releases); they are the same handlers, byte-identical contracts.
+
+  const threadRead = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.getChat(user.org_id, chatId, user);
     return reply.status(200).type("application/json").send(await threadBody(chats, gateway, user, chatId));
-  });
+  };
+  // Deprecated alias: GET /api/v1/chats/:id/thread.
+  app.get("/api/v1/chats/:id/thread", threadRead);
+  app.get("/api/v1/threads/:id", threadRead);
 
-  app.post("/api/v1/chats/:id/thread", async (req, reply) => {
+  const stopTurn = async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    await chats.chats.getChat(user.org_id, chatId, user);
+    await chats.turnCommands.cancelWaitingHead(chatId);
+    await chats.runtime.stopChat(chatId);
+    return reply.status(200).send(JSON.stringify({ stopped: true }));
+  };
+  // Deprecated alias: POST /api/v1/gateway/chat/:id/stop.
+  app.post("/api/v1/gateway/chat/:id/stop", stopTurn);
+  app.post("/api/v1/threads/:id/stop", stopTurn);
+
+  const appendThreadEvent = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.getChat(user.org_id, chatId, user);
@@ -189,9 +224,12 @@ export function registerChatsRoutes(
     return reply
       .status(200)
       .send(`{"created_at":${JSON.stringify(row.created_at)},"event":${threadEventWire(row.event)},"id":${JSON.stringify(row.id)},"seq":${row.seq}}`);
-  });
+  };
+  // Deprecated alias: POST /api/v1/chats/:id/thread (the engine-path append).
+  app.post("/api/v1/chats/:id/thread", appendThreadEvent);
+  app.post("/api/v1/threads/:id/events", appendThreadEvent);
 
-  app.post("/api/v1/chats/:id/project", async (req, reply) => {
+  const setThreadProject = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
@@ -199,16 +237,23 @@ export function registerChatsRoutes(
     const projectId = typeof raw === "string" && raw !== "" ? validateUuid(raw) : null;
     const chat = await chats.chats.setProject(user.org_id, chatId, user, projectId);
     return reply.status(200).send(chatWire({ ...chat, machine_online: machineOnlineOf(chats, chat) }));
-  });
+  };
+  // Deprecated alias: POST /api/v1/chats/:id/project.
+  app.post("/api/v1/chats/:id/project", setThreadProject);
+  app.post("/api/v1/threads/:id/project", setThreadProject);
 
-  app.get("/api/v1/chats/:id/approval", async (req, reply) => {
+  const approvalMode = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const approval = await chats.chats.approval(user.org_id, user.id, chatId);
     return reply.status(200).send(JSON.stringify({ default: approval?.default ?? null }));
-  });
+  };
+  // Deprecated alias: GET|POST /api/v1/chats/:id/approval (the per-chat
+  // approval policy). GET:
+  app.get("/api/v1/chats/:id/approval", approvalMode);
+  app.get("/api/v1/threads/:id/approval", approvalMode);
 
-  app.post("/api/v1/chats/:id/approval", async (req, reply) => {
+  const setApprovalMode = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
@@ -228,16 +273,22 @@ export function registerChatsRoutes(
     }
     await chats.chats.setApproval(user.org_id, user.id, chatId, policy);
     return reply.status(200).send(JSON.stringify({ default: responseMode }));
-  });
+  };
+  // Deprecated alias: POST /api/v1/chats/:id/approval.
+  app.post("/api/v1/chats/:id/approval", setApprovalMode);
+  app.post("/api/v1/threads/:id/approval", setApprovalMode);
 
-  app.post("/api/v1/chats/:id/read", async (req, reply) => {
+  const markThreadRead = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.markRead(user.org_id, chatId, user);
     return reply.status(200).send(JSON.stringify({ ok: true }));
-  });
+  };
+  // Deprecated alias: POST /api/v1/chats/:id/read.
+  app.post("/api/v1/chats/:id/read", markThreadRead);
+  app.post("/api/v1/threads/:id/read", markThreadRead);
 
-  app.patch("/api/v1/chats/:id", async (req, reply) => {
+  const patchThread = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const body = requireJsonBody(req);
@@ -256,30 +307,33 @@ export function registerChatsRoutes(
       await chats.turnCommands.cancelAllWaiting(chatId);
     }
     return reply.status(200).send(chatWire({ ...chat, unread: false, machine_online: machineOnlineOf(chats, chat) }));
-  });
+  };
+  // Deprecated alias: PATCH /api/v1/chats/:id (rename/archive).
+  app.patch("/api/v1/chats/:id", patchThread);
+  app.patch("/api/v1/threads/:id", patchThread);
 
   // --- Gateway chat commands (the M3 flip of gateway.rs's chat half) ---
 
+  // The desktop sends the turn body with chat_id inside; the thread API
+  // takes the chat from the path — both reach the same submit core.
+  // Deprecated alias: POST /api/v1/gateway/chat (chat_id in the body).
   app.post("/api/v1/gateway/chat", async (req, reply) => {
     const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
     return reply.status(200).type("application/json").send(await submitTurn(chats, gateway, auth, objects, user, req, body));
   });
-
-  app.post("/api/v1/gateway/chat/:id/stop", async (req, reply) => {
+  app.post("/api/v1/threads/:chatId/turns", async (req, reply) => {
     const user = await requireUser(auth, req);
-    const chatId = parseUuidParam(req, "id");
-    await chats.chats.getChat(user.org_id, chatId, user);
-    await chats.turnCommands.cancelWaitingHead(chatId);
-    await chats.runtime.stopChat(chatId);
-    return reply.status(200).send(JSON.stringify({ stopped: true }));
+    const body = requireJsonBody(req);
+    const chatId = parseUuidParam(req, "chatId");
+    return reply.status(200).type("application/json").send(await submitTurn(chats, gateway, auth, objects, user, req, body, chatId));
   });
 
   /** Withdraws one queued (not yet placed) mid-turn send — the desktop
    *  queued-chip trash button. The never-delivered echo leaves the thread
    *  log; a placed or settled input is reported 409 (the chip is already
    *  transitioning to a delivered message on the client). */
-  app.delete("/api/v1/gateway/chat/:id/pending/:messageId", async (req, reply) => {
+  const withdrawPending = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     const messageId = parseUuidParam(req, "messageId");
@@ -298,9 +352,12 @@ export function registerChatsRoutes(
     await chats.turnCommands.settleCancelledById(messageId, chatId);
     await chats.threads.deleteQueuedEvent(chatId, messageId);
     return reply.status(200).send(JSON.stringify({ withdrawn: true }));
-  });
+  };
+  // Deprecated alias: DELETE /api/v1/gateway/chat/:id/pending/:messageId.
+  app.delete("/api/v1/gateway/chat/:id/pending/:messageId", withdrawPending);
+  app.delete("/api/v1/threads/:id/pending/:messageId", withdrawPending);
 
-  app.post("/api/v1/gateway/chat/:id/approvals/*", async (req, reply) => {
+  const resolveApproval = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     // Nested (codemode) call ids carry a `/` (`<parent>/<key>`): older
@@ -368,15 +425,21 @@ export function registerChatsRoutes(
         }),
       ),
     );
-  });
+  };
+  // Deprecated alias: POST /api/v1/gateway/chat/:id/approvals/*.
+  app.post("/api/v1/gateway/chat/:id/approvals/*", resolveApproval);
+  app.post("/api/v1/threads/:id/approvals/*", resolveApproval);
 
-  app.post("/api/v1/gateway/chat/:id/compact", async (req, reply) => {
+  const compactTurn = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.getChat(user.org_id, chatId, user);
     await chats.runtime.compactChat(chatId);
     return reply.status(200).send(JSON.stringify({ ok: true }));
-  });
+  };
+  // Deprecated alias: POST /api/v1/gateway/chat/:id/compact.
+  app.post("/api/v1/gateway/chat/:id/compact", compactTurn);
+  app.post("/api/v1/threads/:id/compact", compactTurn);
 }
 
 // ---------------------------------------------------------------------------
@@ -391,12 +454,17 @@ async function submitTurn(
   user: UserRow,
   req: FastifyRequest,
   body: Record<string, unknown>,
+  /** The thread API takes the chat from the path; the legacy
+   *  /api/v1/gateway/chat alias keeps it in the body. */
+  pathChatId?: string,
 ): Promise<string> {
   // Required fields (serde rejection text, line/column = raw body length).
   const rawLength = ((req as never as Record<symbol, string>)[RAW_BODY]?.length as number | undefined) ?? 0;
   void rawLength;
-  const chatIdRaw = body["chat_id"];
-  if (chatIdRaw === undefined) throw missingField(req, "chat_id");
+  let chatIdRaw: unknown = body["chat_id"];
+  if (pathChatId !== undefined) {
+    chatIdRaw = pathChatId;
+  } else if (chatIdRaw === undefined) throw missingField(req, "chat_id");
   if (typeof chatIdRaw !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatIdRaw)) {
     throw invalidTypeText(req, "chat_id");
   }
