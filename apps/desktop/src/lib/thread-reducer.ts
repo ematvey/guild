@@ -559,6 +559,16 @@ export function createThreadReducer(): ThreadReducer {
       case "system_message":
         break; // server-owned prompt, log-only
       case "assistant_message": {
+        // This step's streamed buffers are now durable: the live reasoning
+        // block the deltas built (stream frames / the state stamp) and the
+        // trailing streamed text are superseded by this event's blocks —
+        // drop them or the step renders twice (the fan-out lane has no
+        // ThreadState publish behind it to strip the buffers).
+        v.blocks = v.blocks.filter(
+          (b) =>
+            !(b.kind === "reasoning" && b.key.startsWith("live-")) &&
+            !(b.kind === "text" && b.key.startsWith("unpersisted-")),
+        );
         const start = v.blocks.length;
         for (const b of ev.blocks) {
           if (b.type === "reasoning") {

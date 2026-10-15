@@ -229,6 +229,58 @@ describe("applyState: replay-during-generating (incremental, not re-derived)", (
   });
 });
 
+describe("applyThreadEvents: live buffer supersession", () => {
+  it("a mid-turn durable assistant_message replaces the streamed thinking buffer — no duplicate", () => {
+    // Turn in flight: thinking streams as live frames, then the step's
+    // assistant_message fans out through the journal lane. No ThreadState
+    // publish comes mid-turn (the run-end flip is the turn's only view
+    // broadcast), so the fan-out itself must retire the live buffer block —
+    // otherwise the reasoning renders twice until a refresh re-derives.
+    const r = createThreadReducer();
+    r.open("c1");
+    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go" })]));
+    r.applyFrame({ type: "thinking_delta", content: "thinking part one" });
+    r.applyFrame({ type: "thinking_delta", content: " more thinking" });
+    const fanned = r.applyThreadEvents("c1", 3, [
+      row(2, {
+        type: "assistant_message",
+        turn: 1,
+        step: 0,
+        model: "m",
+        usage,
+        blocks: [
+          { type: "reasoning" as const, text: "thinking part one more thinking" },
+          { type: "tool_call" as const, id: "c9", name: "execute", arguments: "{}" },
+        ],
+      }),
+    ]);
+    const reasoning = fanned.blocks.filter((b) => b.kind === "reasoning");
+    expect(reasoning).toHaveLength(1);
+    expect(reasoning[0]!.reasoningText).toBe("thinking part one more thinking");
+    expect(reasoning[0]!.key).toBe("2:0");
+    expect(fanned.blocks.map((b) => b.key)).toEqual(["1:0", "2:0", "2:1"]);
+  });
+
+  it("a mid-turn durable assistant_message replaces the streamed text buffer — no duplicate", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go" })]));
+    r.applyFrame({ type: "delta", content: "partial answer" });
+    const fanned = r.applyThreadEvents("c1", 3, [
+      row(2, {
+        type: "assistant_message",
+        turn: 1,
+        step: 0,
+        model: "m",
+        usage,
+        blocks: [{ type: "text" as const, text: "partial answer" }],
+      }),
+    ]);
+    expect(fanned.blocks.map((b) => b.kind)).toEqual(["user", "text"]);
+    expect(fanned.blocks.every((b) => !b.key.startsWith("live-") && !b.key.startsWith("unpersisted-"))).toBe(true);
+  });
+});
+
 describe("applyThreadEvents: incremental journal fan-out", () => {
   it("applies fresh rows live; a later sync with the same rows dedupes", () => {
     const r = createThreadReducer(); r.open("chat");
