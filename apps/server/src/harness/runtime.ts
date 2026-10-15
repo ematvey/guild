@@ -16,8 +16,10 @@ import {
   watchEvents,
   type AgentEventStream,
   type Conversation,
+  type ConversationId,
   type Extension,
   type Registry,
+  type Storage,
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
@@ -30,6 +32,8 @@ import { mkdir } from "node:fs/promises";
 import type { Logger } from "pino";
 import { RunnerClient, SandboxPool, type SandboxTarget } from "../sandbox/client.js";
 import { applyPostgresMigrations, PgPoolDatabase, PostgresDurableStorage } from "../storage/postgres/index.js";
+import { ScopedDurableStorage } from "../storage/postgres/scoped.js";
+import { ForkSupervisor } from "../worker/supervisor.js";
 import type { PlatformPool } from "../platform/db.js";
 import { applyPlatformMigrations } from "../platform/migrations.js";
 import { GatewayStore } from "../platform/store/gateway.js";
@@ -101,7 +105,7 @@ export class GuildRuntime {
   private readonly chatToConversation = new Map<string, number>();
   /** Per-chat turn counters (the llm_calls turn column; best effort). */
   private readonly turnCounters = new Map<string, number>();
-  private storage: PostgresDurableStorage | undefined;
+  private storage: Storage | undefined;
   private harness: Harness | undefined;
   /** The durable database facade, created once at startup (the platform
    *  pool outlives the runtime; the facade must not end it). Reused by
@@ -166,6 +170,11 @@ export class GuildRuntime {
     private readonly skillReads?: Pick<SkillReadSink, "record" | "ensureOnce">,
     /** The LLM trace sink: the approval judge self-reports through it. */
     private readonly trace?: LlmTraceSink,
+    /** Worker-per-chat: the server's forker (worker mode only). When set,
+     *  admission routes over IPC and the server opens no harness. */
+    private readonly supervisor?: ForkSupervisor,
+    /** Worker side: this process serves exactly one chat (worker/main.ts). */
+    private readonly workerScope?: { chatId: string },
   ) {
     this.sandboxes =
       config.sandbox.mode === "runner"
@@ -469,7 +478,63 @@ export class GuildRuntime {
     } catch (error) {
       this.log.warn({ err: error }, "skill_reads table ensure failed");
     }
+    if (this.workerScope) {
+      // Worker: bootstrap its chat's conversation mapping (create on first
+      // touch), then open the scoped harness for exactly that conversation.
+      await this.bootstrapWorkerConversation();
+    } else if (this.supervisor) {
+      // Server in worker mode: no harness here — a second scheduler would
+      // adopt the workers' tasks. Boot recovery spawns workers for every
+      // conversation the journal says still has pending work.
+      await this.supervisor.recoverFromJournal(await this.chatsWithPendingWork());
+      return;
+    }
     await this.openHarness();
+  }
+
+  /** Worker-only: resolve (or create) the conversation this worker serves.
+   *  Conversation creation needs a Session, and the scoped harness cannot
+   *  create conversations outside its scope — a transient unscoped harness
+   *  does it, opened and closed without ever resuming: its adoption scan
+   *  only resets running→pending rows (the checkpoint is preserved and the
+   *  journal stays consistent either way; the scoped harness that follows
+   *  re-derives from the journal as usual). */
+  private async bootstrapWorkerConversation(): Promise<void> {
+    const chatId = this.workerScope!.chatId;
+    const existing = await this.pool.query<{ conversation_id: string | number }>(
+      "SELECT conversation_id FROM chat_conversations WHERE chat_id = $1",
+      [chatId],
+    );
+    if (existing.rows.length > 0) {
+      this.chatToConversation.set(chatId, Number(existing.rows[0]!.conversation_id));
+      return;
+    }
+    const bootstrap = await Harness.open(
+      await PostgresDurableStorage.open(this.durableDb!),
+      { models: this.models, registry: this.registry, onReport: (error) => this.log.warn({ err: error }, "bootstrap harness report") },
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      const conversation = await bootstrap.createConversation({ ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT);
+      await this.pool.query(
+        "INSERT INTO chat_conversations (chat_id, conversation_id) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id",
+        [chatId, Number(conversation.id)],
+      );
+      this.chatToConversation.set(chatId, Number(conversation.id));
+    } finally {
+      await bootstrap.close(BACKGROUND_CONTEXT).catch(() => {});
+    }
+  }
+
+  /** Server-side boot scan: chats whose conversation has live tasks or
+   *  queued submissions (the journal is the registry). */
+  private async chatsWithPendingWork(): Promise<{ chatId: string }[]> {
+    const res = await this.pool.query<{ chat_id: string }>(
+      `SELECT DISTINCT c.chat_id FROM chat_conversations c
+       WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.conversation_id = c.conversation_id AND t.status IN ('pending', 'running', 'waiting'))
+          OR EXISTS (SELECT 1 FROM submissions s WHERE s.conversation_id = c.conversation_id AND s.status = 'queued')`,
+    );
+    return res.rows.map((row) => ({ chatId: row.chat_id }));
   }
 
   /** Opens the durable storage + harness and attaches everything a resumed
@@ -481,7 +546,16 @@ export class GuildRuntime {
   private async openHarness(): Promise<void> {
     const db = this.durableDb;
     if (!db) throw new Error("openHarness before startOnce");
-    this.storage = await PostgresDurableStorage.open(db);
+    if (this.workerScope) {
+      // The worker's view: every scan forced onto its conversation, by-id
+      // reads refusing foreign records — the boundary that keeps the
+      // scheduler from adopting another conversation's work.
+      const conversationId = this.chatToConversation.get(this.workerScope.chatId);
+      if (conversationId === undefined) throw new Error("worker has no conversation mapping");
+      this.storage = new ScopedDurableStorage(await PostgresDurableStorage.open(db), conversationId as ConversationId);
+    } else {
+      this.storage = await PostgresDurableStorage.open(db);
+    }
     const harness = await Harness.open(this.storage, {
       models: this.models,
       registry: this.registry,
@@ -501,6 +575,12 @@ export class GuildRuntime {
         // runtime used for regular chats.
         const kind = await this.executorKind(Number(target.conversationId));
         if (kind === "machine") {
+          if (this.workerScope) {
+            // Worker mode v1: machine dispatch lives in the server's hub;
+            // the IPC dispatch proxy is a follow-up. Machine-bound chats
+            // must stay in supervisor mode until it lands.
+            throw new Error("machine-bound chats are not served in worker mode yet");
+          }
           const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
           const chat = await this.pool.query<{ machine_id: string; machine_label: string | null; org_id: string; project_folder: string | null }>(
             `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
@@ -541,7 +621,10 @@ export class GuildRuntime {
       if (end.reason !== "failed" || this.stopped) return;
       void this.scheduleReopen(end.error);
     });
-    await this.loadMapping();
+    // The worker's mapping was bootstrapped for exactly its chat; loading
+    // the full table here would attach foreign conversations' watches, and
+    // the scoped harness refuses them by design.
+    if (!this.workerScope) await this.loadMapping();
     // Watches attach before resume: a re-driven run must start with its
     // watch already live. Attached after, the attach snapshot is not
     // delivered as run_start, and the bridge misses the generation id and
@@ -671,6 +754,12 @@ export class GuildRuntime {
    *  configured, and the input is durably admitted (queued in the inbox when
    *  busy — steering/follow-up semantics, decision 12). */
   async submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
+    if (this.supervisor) {
+      // Worker mode: the full admission path (conversation bootstrap,
+      // configure, integrations, submit) runs in the worker; the server
+      // keeps only the projections the routes own.
+      return this.supervisor.submit(chatId, input);
+    }
     await this.sweepExpiredCommands();
     const conversation = await this.conversationForChat(chatId, orgId);
     await this.refreshOrgModels(orgId);
@@ -761,6 +850,7 @@ export class GuildRuntime {
    *  mean the input just reached a boundary (the caller reports 409 and
    *  the client refreshes); "not_found" = gone already, nothing to do. */
   async withdrawQueued(chatId: string, submissionId: number): Promise<string> {
+    if (this.supervisor) return this.supervisor.withdraw(chatId, submissionId);
     await this.start();
     const conversationId = this.chatToConversation.get(chatId);
     if (conversationId === undefined) return "not_found";
@@ -805,6 +895,10 @@ export class GuildRuntime {
   /** Stops the chat's in-flight generation: withdraws queued inputs, aborts
    *  the ordinary ownership scope, and waits until it is idle. */
   async stopChat(chatId: string): Promise<void> {
+    if (this.supervisor) {
+      await this.supervisor.stop(chatId);
+      return;
+    }
     await this.start();
     const conversationId = this.chatToConversation.get(chatId);
     if (conversationId === undefined) return;
@@ -818,6 +912,7 @@ export class GuildRuntime {
    *  conversation-owned compaction task summarizes while the conversation
    *  keeps working; the summary lands as a Compaction thread event. */
   async compactChat(chatId: string): Promise<boolean> {
+    if (this.supervisor) return this.supervisor.compact(chatId);
     await this.start();
     const conversationId = this.chatToConversation.get(chatId);
     if (conversationId === undefined) return false;
@@ -848,6 +943,7 @@ export class GuildRuntime {
   async close(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    await this.supervisor?.close();
     for (const stream of this.watches.values()) {
       await stream.stop().catch(() => {});
     }

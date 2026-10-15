@@ -295,8 +295,18 @@ export class PostgresDurableStorage implements Storage {
 
   async mintId<I extends Id<string>>(): Promise<I> {
     this.assertOpen();
-    if (!Number.isSafeInteger(this.nextId)) throw new Error("ID space is exhausted");
-    return this.nextId++ as I;
+    // Cross-process safe: with worker-per-chat, several harnesses mint from
+    // one id space, so the counter lives in the metadata row and each mint
+    // is its own atomic increment. The in-memory watermark is only a floor
+    // now (commits still advance it monotonically via Math.max).
+    const rows = await this.db.query<{ id: number }>(
+      "UPDATE durable_metadata SET next_id = next_id + 1 WHERE singleton = 1 RETURNING next_id - 1 AS id",
+    );
+    if (rows.length === 0) throw new Error("Durable Postgres metadata is missing");
+    const id = rows[0]!.id;
+    if (!Number.isSafeInteger(id)) throw new Error("ID space is exhausted");
+    this.nextId = Math.max(this.nextId, id + 1);
+    return id as unknown as I;
   }
 
   async conversation(id: ConversationId, _context: Context): Promise<ConversationRecord | undefined> {

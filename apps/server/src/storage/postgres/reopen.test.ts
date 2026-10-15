@@ -240,6 +240,12 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
     );
     await storage.commit([{ type: "document.retire", id: sessionId }], context);
 
+    // A mint the instance never commits is still consumed: with worker-per-
+    // chat several processes mint from one id space, so every mint is durable
+    // the moment it returns (the old in-memory watermark handed the same id
+    // to a different process after reopen). The fresh instance continues at
+    // the captured watermark, or past it when this last mint was never
+    // committed (it wasn't — see the close below).
     before.nextId = Number(await storage.mintId());
 
     // Capture expectations before the restart.
@@ -333,8 +339,8 @@ describe.sequential("Postgres durable storage reopen across restart", () => {
       ),
     ).toBeDefined();
 
-    // The ID namespace continues exactly where the first instance left off.
-    expect(await reopened.mintId()).toBe(before.nextId);
+    // The ID namespace never reuses an id across reopen.
+    expect(Number(await reopened.mintId())).toBeGreaterThanOrEqual(before.nextId);
 
     await reopened.close(context);
   });

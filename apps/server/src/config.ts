@@ -81,6 +81,9 @@ export interface Config {
    *  llm_payloads request/response bodies are a deliberate choice — the
    *  metadata table (llm_calls) is always on. */
   tracePayloads: boolean;
+  /** Worker-per-chat mode: "on" forks a worker per active chat and the
+   *  server holds no harness; "off" (default) runs everything in-process. */
+  workerMode: "off" | "on";
 }
 
 export type SandboxConfig =
@@ -214,7 +217,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sandbox,
     approvalTimeoutMs,
     clientToolTimeoutMs,
-    execPolicyRulesPath: env.GUILD_EXEC_POLICY_RULES ?? null,
+    execPolicyRulesPath: env.GUILD_EXEC_POLICY_RULES || null,
     tracePayloads,
+    // Worker-per-chat: when "on", the server holds no harness — admission
+    // routes over IPC to a forked worker per active chat (see
+    // worker/supervisor.ts). Default off until the rollout completes.
+    workerMode: env.GUILD_WORKER_MODE === "on" ? ("on" as const) : ("off" as const),
   };
 }
