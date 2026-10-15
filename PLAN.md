@@ -11,6 +11,16 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Resume shares the submit provisioning path (`df5bf4f`, 2026-10-16).**
+  The hubspot soak incident: a worker death mid-turn respawned a fresh
+  process whose registry carried only core tools — integration/MCP tools
+  vanished for the rest of the turn (prepareTurn ran at submit only).
+  Provisioning is now one method (`provisionTurnTools`) called from
+  `submitTurn` and from `openHarness` before `resume()` for every
+  conversation with pending work. Gate: kill mid-integration-call → the
+  resumed run's NEW call must resolve (red before, green after).
+
+
 - **Releases 0.5.49–0.5.50 (2026-10-15).** Worked-for label spacing
   iteration: v4 `space-y` puts the margin on the previous sibling's bottom,
   so negative margins on the label only shaped its top — the label now
