@@ -1073,7 +1073,7 @@ function WorkedForBlock({ run, active, stopping, nowMs }: {
   const label = workRunLabel(run, active, stopping, nowMs);
   if (label === null) return null;
   return (
-    <div className="-my-1.5 py-0 text-sm text-muted-foreground">
+    <div className="-my-1.5! py-0 text-sm text-muted-foreground">
       {active ? <span className="animate-pulse">{label}</span> : label}
     </div>
   );
