@@ -102,7 +102,10 @@ export class ThreadStore {
       // ride along (type is NOT NULL — omitting it fails the insert), only
       // the seq (position) and the cleared flag change.
       const inserted = await client.query<EventRowDb>(
-        "INSERT INTO thread_events (id, chat_id, seq, type, payload, created_at) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3, $4::jsonb, $5) RETURNING id, chat_id, seq, type, payload, created_at",
+        // created_at rides through to_char like every other reader here —
+        // a raw RETURNING hands the pg driver's Date to
+        // pgTimestampToRfc3339, which expects the microsecond text shape.
+        "INSERT INTO thread_events (id, chat_id, seq, type, payload, created_at) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3, $4::jsonb, $5) RETURNING id, chat_id, seq, type, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at",
         [id, chatId, row.type, JSON.stringify(payload), row.created_at],
       );
       await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
