@@ -682,7 +682,9 @@ export async function saveChatViewMode(mode: ChatViewMode): Promise<void> {
 export async function listModels(): Promise<string[] | null> {
   try {
     const token = getToken();
-    const res = await fetch(apiUrl("/api/v1/gateway/models"), {
+  // /api/v1/models is primary since the 2026-10-15 thread rename; the
+  // server keeps /api/v1/gateway/models as a deprecated alias.
+  const res = await fetch(apiUrl("/api/v1/models"), {
       headers: { authorization: `Bearer ${token}` },
     });
     // null = request failed (distinguishable from a legitimately empty list)
@@ -807,7 +809,7 @@ export interface ChatMessage {
 export async function listChats(): Promise<ChatSummary[] | null> {
   try {
     const token = getToken();
-    const res = await fetch(apiUrl("/api/v1/chats"), {
+    const res = await fetch(apiUrl("/api/v1/threads"), {
       headers: { authorization: `Bearer ${token}` },
     });
     // null = request failed (distinguishable from a legitimately empty list)
@@ -827,7 +829,7 @@ export async function listChats(): Promise<ChatSummary[] | null> {
 export async function listArchivedChats(): Promise<ChatSummary[] | null> {
   try {
     const token = getToken();
-    const res = await fetch(apiUrl("/api/v1/chats?archived=1"), {
+    const res = await fetch(apiUrl("/api/v1/threads?archived=1"), {
       headers: { authorization: `Bearer ${token}` },
     });
     if (!res.ok) return null;
@@ -847,7 +849,7 @@ export async function updateChat(
   id: string,
   patch: { title?: string; archived?: boolean },
 ): Promise<void> {
-  const res = await fetch(apiUrl(`/api/v1/chats/${id}`), {
+  const res = await fetch(apiUrl(`/api/v1/threads/${id}`), {
     method: "PATCH",
     headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
     body: JSON.stringify(patch),
@@ -960,7 +962,7 @@ export interface ThreadEventRow {
 
 export async function createChat(title: string, projectId?: string | null): Promise<string | null> {
   const token = getToken();
-  const res = await fetch(apiUrl("/api/v1/chats"), {
+  const res = await fetch(apiUrl("/api/v1/threads"), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify({ title, ...(projectId ? { project_id: projectId } : {}) }),
@@ -998,7 +1000,7 @@ export async function uploadAttachment(
   file: File,
 ): Promise<MessageAttachmentMeta> {
   const res = await fetch(
-    apiUrl(`/api/v1/chats/${chatId}/attachments?filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`),
+    apiUrl(`/api/v1/threads/${chatId}/attachments?filename=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`),
     {
       method: "POST",
       headers: { authorization: `Bearer ${getToken()}` },
@@ -1057,7 +1059,10 @@ export async function sendChatNoStream(
   const token = getToken();
   let res: Response;
   try {
-    res = await fetch(apiUrl("/api/v1/gateway/chat"), {
+    // The thread API: the chat id rides the path (POST /api/v1/threads/:id/turns);
+    // the old POST /api/v1/gateway/chat (chat_id in the body) is a deprecated
+    // server alias.
+    res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/turns`), {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1066,7 +1071,6 @@ export async function sendChatNoStream(
         ...(IS_TAURI ? { "x-guild-machine-id": machineId() } : {}),
       },
       body: JSON.stringify({
-        chat_id: chatId,
         user_message_id: messageId,
         model,
         messages: [{ role: "user", content: prompt }],
@@ -1106,7 +1110,7 @@ export async function sendChatNoStream(
 /// at once; true when the server accepted the stop.
 export async function stopChat(chatId: string): Promise<boolean> {
   const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${encodeURIComponent(chatId)}/stop`), {
+  const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/stop`), {
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
@@ -1128,7 +1132,7 @@ export async function stopChat(chatId: string): Promise<boolean> {
 export async function withdrawQueued(chatId: string, messageId: string): Promise<boolean> {
   const token = getToken();
   const res = await fetch(
-    apiUrl(`/api/v1/gateway/chat/${encodeURIComponent(chatId)}/pending/${encodeURIComponent(messageId)}`),
+    apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/pending/${encodeURIComponent(messageId)}`),
     {
       method: "DELETE",
       headers: {
@@ -1150,7 +1154,7 @@ export async function withdrawQueued(chatId: string, messageId: string): Promise
 /// view. Fire-and-forget — the compaction card lands via the thread sync.
 export async function compactChat(chatId: string): Promise<void> {
   const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${encodeURIComponent(chatId)}/compact`), {
+  const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/compact`), {
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
@@ -1239,7 +1243,7 @@ export async function setChatProject(
   chatId: string,
   projectId: string | null,
 ): Promise<ChatSummary | null> {
-  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/project`), {
+  const res = await fetch(apiUrl(`/api/v1/threads/${chatId}/project`), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
     body: JSON.stringify({ project_id: projectId }),
@@ -1422,7 +1426,7 @@ export async function postApproval(
   reason?: string,
 ): Promise<ApprovalPostResult> {
   const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/gateway/chat/${chatId}/approvals/${encodeURIComponent(callId)}`), {
+  const res = await fetch(apiUrl(`/api/v1/threads/${chatId}/approvals/${encodeURIComponent(callId)}`), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(reason === undefined ? { approved } : { approved, reason }),
@@ -1464,7 +1468,7 @@ export async function setApprovalPolicyPrompt(prompt: string): Promise<void> {
 export async function getChatApproval(chatId: string): Promise<ChatApprovalMode | null> {
   try {
     const token = getToken();
-    const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/approval`), {
+    const res = await fetch(apiUrl(`/api/v1/threads/${chatId}/approval`), {
       headers: { authorization: `Bearer ${token}` },
     });
     if (!res.ok) return null;
@@ -1484,7 +1488,7 @@ export async function setChatApproval(
   mode: ChatApprovalMode | "default",
 ): Promise<void> {
   const token = getToken();
-  const res = await fetch(apiUrl(`/api/v1/chats/${chatId}/approval`), {
+  const res = await fetch(apiUrl(`/api/v1/threads/${chatId}/approval`), {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ default: mode }),

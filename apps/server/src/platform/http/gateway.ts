@@ -16,12 +16,16 @@ async function requireAdminUser(ctx: IdentityCtx, req: FastifyRequest) {
 }
 
 export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: GatewayCtx, ctx: IdentityCtx): void {
-  // User-facing: the org's enabled models.
-  app.get("/api/v1/gateway/models", async (req) => {
+  // User-facing: the org's enabled models. /api/v1/models is primary since
+  // the 2026-10-15 thread rename freed /api/v1/gateway for the OpenAI/
+  // Anthropic API-gateway surface; the old path is a deprecated alias.
+  const listModels = async (req: FastifyRequest) => {
     const user = await requireUser(ctx, req);
     const list = await gateway.gatewayStore.listModels(user.org_id);
     return rustJsonText({ models: list });
-  });
+  };
+  app.get("/api/v1/models", listModels);
+  app.get("/api/v1/gateway/models", listModels);
 
   app.get("/api/v1/admin/gateway/routes", async (req) => {
     const admin = await requireAdminUser(ctx, req);
