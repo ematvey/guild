@@ -14,6 +14,8 @@ import remarkGfm from "remark-gfm";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "./markdown";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import {
+  Archive,
+  ArchiveRestore,
   ArrowUp,
   ShieldAlert,
   ShieldCheck,
@@ -22,6 +24,7 @@ import {
   ChevronUp,
   Check,
   Copy,
+  EllipsisVertical,
   FileDiff,
   Download,
   FileText,
@@ -33,6 +36,7 @@ import {
   Loader2,
   Music,
   PanelLeftOpen,
+  Pencil,
   Plus,
   Search,
   FolderOpen,
@@ -59,6 +63,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
 import { useIsMobile } from "@guild/ui/hooks/use-mobile";
@@ -98,12 +103,14 @@ import {
   apiUrl,
   apiOnboarded,
   createChat,
+  fetchChatViewMode,
   getChatApproval,
   listArchivedChats,
   listChats,
   listMachines,
   listModels,
   listProjects,
+  saveChatViewMode,
   updateChat,
   updateProject,
   createPairingToken,
@@ -119,6 +126,7 @@ import {
   type ApprovalPolicy,
   type ChatApprovalMode,
   type ChatSummary,
+  type ChatViewMode,
   type MachineInfo,
   type MessageAttachmentMeta,
   type Project,
@@ -997,6 +1005,68 @@ function CompactionCard({ c }: { c: CompactionBlock }) {
         {c.keepLast != null && <p className="text-muted-foreground">kept last {c.keepLast} messages</p>}
       </div>
     </Frame>
+  );
+}
+
+/// Hover-revealed message timestamp: always mounted (absolute within the
+/// inter-message gap, hidden via opacity) so showing it never reflows the
+/// thread. Locale-aware shortest unambiguous form: time only for today,
+/// + month/day within the year, + year for older messages.
+function prettyStamp(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const now = new Date();
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return time;
+  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+  return `${d.toLocaleDateString(undefined, opts)}, ${time}`;
+}
+
+function HoverStamp({ ts, side }: { ts?: string; side: "left" | "right" }) {
+  if (!ts) return null;
+  const text = prettyStamp(ts);
+  if (!text) return null;
+  return (
+    <div
+      aria-hidden
+      className={`pointer-events-none absolute -bottom-4 ${side === "right" ? "right-0" : "left-0"} text-xs leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100`}
+    >
+      {text}
+    </div>
+  );
+}
+
+/// Casual-view replacement for one contiguous thinking/tool run: pulsing
+/// "Agent is working Ns" while the run is the turn's live tail, settling to
+/// "Agent worked for S seconds". The py padding (immune to the list's
+/// space-y margins) gives the entry more breathing room than a paragraph.
+function WorkedForBlock({ run, active, stopping, nowMs }: {
+  run: Block[];
+  active: boolean;
+  stopping: boolean;
+  nowMs: number;
+}) {
+  const start = run[0]?.kind === "tool" ? run[0].tool?.ts : run[0]?.ts;
+  const last = run[run.length - 1];
+  const end = last.kind === "tool" ? (last.tool?.endTs ?? last.tool?.ts) : last.ts;
+  const secs = (() => {
+    if (!start) return null;
+    const to = active ? nowMs : end ? Date.parse(end) : null;
+    if (to === null || isNaN(to)) return null;
+    return Math.max(0, Math.round((to - Date.parse(start)) / 1000));
+  })();
+  const label = stopping
+    ? "Agent is stopping"
+    : active
+      ? `Agent is working${secs !== null ? ` ${secs}s` : ""}`
+      : secs !== null
+        ? `Agent worked for ${secs < 60 ? `${secs} seconds` : `${Math.floor(secs / 60)}m ${secs % 60}s`}`
+        : "Agent worked";
+  return (
+    <div className="py-3 text-sm text-muted-foreground">
+      {active ? <span className="animate-pulse">{label}</span> : label}
+    </div>
   );
 }
 
@@ -2759,9 +2829,85 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setStopping((prev) => pruneStopping(prev, chatStatus, chats) ?? prev);
   }, [chats, chatStatus]);
 
-  const activeTitle = chats?.find((c) => c.id === chatId)?.title ?? "New chat";
+  const activeChat = chats?.find((c) => c.id === chatId);
+  const activeTitle = activeChat?.title ?? "New chat";
+  // Archived-chats membership is the only archived flag the client holds
+  // (ChatSummary rows don't carry one).
+  const chatArchived = !!archivedChats?.some((c) => c.id === chatId);
+  // The header menu's rename: a popup dialog around the sidebar's rename
+  // transport. Enter or Save commits, Esc/cancel discards.
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const commitRename = useCallback(async () => {
+    const v = renameValue.trim();
+    setRenameOpen(false);
+    if (!chatId || !v || v === activeChat?.title) return;
+    await renameChat(chatId, v);
+  }, [chatId, renameValue, activeChat, renameChat]);
+  // The header menu's archive: the open chat navigates back to the chats
+  // list after archiving (an archived thread is a dead end for sending).
+  const headerArchive = useCallback(async () => {
+    if (!chatId) return;
+    if (chatArchived) {
+      await unarchiveChat(chatId);
+      return;
+    }
+    await archiveChat(chatId);
+    pushRoute({ chatId: null, projectId: null, skills: null, newChat: false, overlay: null });
+  }, [chatId, chatArchived, archiveChat, unarchiveChat, pushRoute]);
+  // The chat view mode (casual/technical): per-user server-side (user_kv);
+  // the toggle applies locally and PUTs best-effort.
+  const [chatView, setChatView] = useState<ChatViewMode>("casual");
+  useEffect(() => {
+    void fetchChatViewMode().then(setChatView);
+  }, []);
+  const setChatViewPersist = useCallback((m: ChatViewMode) => {
+    setChatView(m);
+    void saveChatViewMode(m);
+  }, []);
+  // Casual's counting "Agent is working Ns" ticks once per second while the
+  // turn streams.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  // View entries: technical renders the transcript 1:1; casual replaces
+  // each contiguous thinking/tool run with one WorkedForBlock and keeps
+  // only user messages, agent text, pending approvals and terminal errors
+  // (compaction cards and queued-send chips stay out).
+  const displayEntries = useMemo(() => {
+    type Plain = { kind: "plain"; b: Block; i: number };
+    type Entry = { kind: "work"; run: Block[] } | Plain;
+    if (chatView === "technical") {
+      const out: Entry[] = [];
+      blocks.forEach((b, i) => out.push({ kind: "plain", b, i }));
+      return out;
+    }
+    const entries: Entry[] = [];
+    let run: Block[] = [];
+    const flush = () => {
+      if (run.length) entries.push({ kind: "work", run });
+      run = [];
+    };
+    blocks.forEach((b, i) => {
+      if (b.kind === "reasoning" || b.kind === "tool") {
+        run.push(b);
+        return;
+      }
+      flush();
+      if (b.kind === "user" && !b.queued) entries.push({ kind: "plain", b, i });
+      else if (b.kind === "text" || b.kind === "error" || (b.kind === "approval" && b.approval)) {
+        entries.push({ kind: "plain", b, i });
+      }
+    });
+    flush();
+    return entries;
+  }, [blocks, chatView]);
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || openGenerating;
+  useEffect(() => {
+    if (chatView !== "casual" || !streaming) return;
+    setNowTick(Date.now());
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [chatView, streaming]);
   // A first send's create round trip on the scratch surface: the composer
   // freezes with its text until the route moves to the created thread.
   const holdingFirstSend = (() => {
@@ -3067,6 +3213,64 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               activeTitle
             )}
           </span>
+          {chatId && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="-mr-1.5 size-8 shrink-0 text-muted-foreground"
+                  title="Chat options"
+                >
+                  <EllipsisVertical />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuItem onSelect={() => { setRenameValue(activeChat?.title ?? ""); setRenameOpen(true); }}>
+                  <Pencil className="size-4" />
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void headerArchive()}>
+                  {chatArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+                  {chatArchived ? "Unarchive" : "Archive"}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setChatViewPersist("casual")}>
+                  <Check className={`size-4 ${chatView === "casual" ? "" : "opacity-0"}`} />
+                  Casual view
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setChatViewPersist("technical")}>
+                  <Check className={`size-4 ${chatView === "technical" ? "" : "opacity-0"}`} />
+                  Technical view
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle>Rename chat</DialogTitle>
+              </DialogHeader>
+              <input
+                autoFocus
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onFocus={(e) => e.currentTarget.select()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void commitRename();
+                }}
+                className="min-w-0 w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none"
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setRenameOpen(false)}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={() => void commitRename()}>
+                  Save
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </header>
 
         {offlineMachineBanner && (
@@ -3104,54 +3308,65 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             }}
           >
             <div className="mx-auto w-full max-w-3xl space-y-4 px-4 pb-32 pt-6">
-              {blocks.map((b, i) =>
-                b.kind === "user" && b.queued ? null : b.kind === "user" ? (
-                  <div
-                    key={b.key}
-                    className={`ml-auto w-fit max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 ${WRAP_ANYWHERE}`}
-                  >
-                    {b.text && <div className="whitespace-pre-wrap">{b.text}</div>}
-                    {b.attachments && b.attachments.length > 0 && (
-                      <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
-                        {b.attachments.filter((a) => a.modality === "image").map((a) => (
-                          <AttachmentImageThumb key={a.id} att={a} />
-                        ))}
-                        {b.attachments.filter((a) => a.modality !== "image").map((a) => (
-                          <AttachmentFileChip key={a.id} att={a} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : b.kind === "reasoning" ? (
-                  <ReasoningFrame
-                    key={b.key}
-                    text={b.reasoningText ?? ""}
-                    live={streaming && i === blocks.length - 1}
+              {displayEntries.map((e, i) =>
+                e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
+                e.kind === "work" ? (
+                  <WorkedForBlock
+                    key={`work-${e.run[0]!.key}`}
+                    run={e.run}
+                    active={streaming && i === displayEntries.length - 1}
+                    stopping={!!(chatId && stopping[chatId])}
+                    nowMs={nowTick}
                   />
-                ) : b.kind === "tool" && b.tool ? (
-                  <ToolFrame key={b.key} t={b.tool} />
-                ) : b.kind === "approval" && b.approval ? (
-                  <ApprovalCard key={b.key} a={b.approval} chatId={chatId} />
-                ) : b.kind === "compaction" && b.compaction ? (
-                  <CompactionCard key={b.key} c={b.compaction} />
-                ) : b.kind === "error" ? (
+                ) : e.b.kind === "user" ? (
+                  <div key={e.b.key} className="group relative ml-auto w-fit max-w-[80%]">
+                    <div className={`rounded-2xl bg-secondary px-4 py-2.5 ${WRAP_ANYWHERE}`}>
+                      {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
+                      {e.b.attachments && e.b.attachments.length > 0 && (
+                        <div className="mt-1 flex max-w-full flex-wrap items-start justify-end gap-2">
+                          {e.b.attachments.filter((a) => a.modality === "image").map((a) => (
+                            <AttachmentImageThumb key={a.id} att={a} />
+                          ))}
+                          {e.b.attachments.filter((a) => a.modality !== "image").map((a) => (
+                            <AttachmentFileChip key={a.id} att={a} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <HoverStamp ts={e.b.ts} side="right" />
+                  </div>
+                ) : e.b.kind === "reasoning" ? (
+                  <ReasoningFrame
+                    key={e.b.key}
+                    text={e.b.reasoningText ?? ""}
+                    live={streaming && e.i === blocks.length - 1}
+                  />
+                ) : e.b.kind === "tool" && e.b.tool ? (
+                  <ToolFrame key={e.b.key} t={e.b.tool} />
+                ) : e.b.kind === "approval" && e.b.approval ? (
+                  <ApprovalCard key={e.b.key} a={e.b.approval} chatId={chatId} />
+                ) : e.b.kind === "compaction" && e.b.compaction ? (
+                  <CompactionCard key={e.b.key} c={e.b.compaction} />
+                ) : e.b.kind === "error" ? (
                   <div
-                    key={b.key}
-                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive"
+                    key={e.b.key}
+                    className={`w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive ${chatView === "casual" ? "text-sm" : ""}`}
                   >
-                    {b.text}
+                    {chatView === "casual" ? "Turn failed" : e.b.text}
                   </div>
                 ) : (
-                  <div
-                    key={b.key}
-                    className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS}`}
-                  >
-                    <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                      {b.text}
-                    </Markdown>
-                    {b.interrupted && !streaming && (
-                      <div className="text-xs text-muted-foreground">stopped</div>
-                    )}
+                  <div key={e.b.key} className="group relative">
+                    <div
+                      className={`max-w-none space-y-2 leading-relaxed ${MD_CLASS} ${MD_TABLE_CLASS}`}
+                    >
+                      <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                        {e.b.text}
+                      </Markdown>
+                      {e.b.interrupted && !streaming && (
+                        <div className="text-xs text-muted-foreground">stopped</div>
+                      )}
+                    </div>
+                    <HoverStamp ts={e.b.ts} side="left" />
                   </div>
                 ),
               )}
@@ -3165,11 +3380,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   <span>Compacting thread…</span>
                 </div>
               )}
-              {/* Working shimmer: the turn is generating but the log's tail
-                  is not already animating — before the first token, after a
-                  finished tool frame, or on a silent gap. Live thinking shows
-                  "Thinking…", so those tails get no second indicator. */}
-              {streaming &&
+              {/* Working shimmer (technical view only — casual's work runs
+                  carry their own live indicator): the turn is generating but
+                  the log's tail is not already animating. */}
+              {chatView === "technical" &&
+                streaming &&
                 !(
                   blocks.length > 0 &&
                   (blocks[blocks.length - 1].kind === "text" ||

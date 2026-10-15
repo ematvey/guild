@@ -652,6 +652,33 @@ export async function apiOnboarded(): Promise<void> {
   } catch { /* best effort — the wizard just re-shows on next login */ }
 }
 
+export type ChatViewMode = "casual" | "technical";
+
+/** The signed-in user's chat view mode (user_kv server-side). Default and
+ *  failure fallback: casual. */
+export async function fetchChatViewMode(): Promise<ChatViewMode> {
+  try {
+    const res = await fetch(apiUrl("/api/v1/me/settings"), {
+      headers: { authorization: `Bearer ${getToken()}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return "casual";
+    const v = await res.json().catch(() => ({}));
+    return v.chat_view === "technical" ? "technical" : "casual";
+  } catch { return "casual"; }
+}
+
+export async function saveChatViewMode(mode: ChatViewMode): Promise<void> {
+  try {
+    await fetch(apiUrl("/api/v1/me/settings"), {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: `Bearer ${getToken()}` },
+      body: JSON.stringify({ chat_view: mode }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* best effort — the toggle already applied locally */ }
+}
+
 export async function listModels(): Promise<string[] | null> {
   try {
     const token = getToken();

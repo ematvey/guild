@@ -190,6 +190,28 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: IdentityCtx, pool:
     await ctx.identity.markOnboarded(user.id);
     return reply.status(200).send({ ok: true });
   });
+
+  // The signed-in user's preferences (user_kv). Currently one key:
+  // `chat_view` — the thread view mode. An absent key means the default
+  // "casual"; unknown values are rejected with 400.
+  const CHAT_VIEWS = ["casual", "technical"] as const;
+  app.get("/api/v1/me/settings", async (req, reply) => {
+    const user = await requireUser(ctx, req);
+    const view = await ctx.userKv.get(user.id, "chat_view");
+    return reply.status(200).type("application/json")
+      .send(rustJsonText({ chat_view: CHAT_VIEWS.includes(view as never) ? view : "casual" }));
+  });
+
+  app.put("/api/v1/me/settings", async (req, reply) => {
+    const user = await requireUser(ctx, req);
+    const body = requireJsonBody(req);
+    const view = body["chat_view"];
+    if (typeof view !== "string" || !CHAT_VIEWS.includes(view as never)) {
+      throw ApiError.badRequest("chat_view must be \"casual\" or \"technical\"");
+    }
+    await ctx.userKv.put(user.id, "chat_view", view);
+    return reply.status(200).type("application/json").send(rustJsonText({ chat_view: view }));
+  });
 }
 
 /** serde-shaped check of a guild-core ApprovalPolicy: `{ default?:

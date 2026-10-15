@@ -683,3 +683,27 @@ describe("GET/PUT /api/v1/me/approval", () => {
     expect(badOverrides.body).toBe(CAPTURE.approval_put_bad_overrides.body);
   });
 });
+
+// ---------- /api/v1/me/settings ----------
+
+describe("GET/PUT /api/v1/me/settings", () => {
+  it("GET defaults to casual before any save; PUT persists per user and rejects unknown values", async () => {
+    const empty = await call("GET", "/api/v1/me/settings", e.memberToken);
+    expect(empty.statusCode).toBe(200);
+    expect(JSON.parse(empty.body)).toEqual({ chat_view: "casual" });
+
+    const put = await call("PUT", "/api/v1/me/settings", e.memberToken, { chat_view: "technical" });
+    expect(put.statusCode).toBe(200);
+    expect(JSON.parse(put.body)).toEqual({ chat_view: "technical" });
+    const row = (
+      await e.env.db.query(
+        "SELECT value FROM user_kv WHERE key = 'chat_view' AND user_id = (SELECT id FROM users WHERE email LIKE 'm7-member-%')",
+      )
+    ).rows[0]!;
+    expect(row.value).toBe("technical");
+    expect(JSON.parse((await call("GET", "/api/v1/me/settings", e.memberToken)).body)).toEqual({ chat_view: "technical" });
+
+    const bad = await call("PUT", "/api/v1/me/settings", e.memberToken, { chat_view: "fancy" });
+    expect(bad.statusCode).toBe(400);
+  });
+});
