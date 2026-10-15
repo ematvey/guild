@@ -11,6 +11,16 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Release 0.5.48 shipped (2026-10-15).** Cut from develop only, all six
+  artifacts published against dev's updater manifest. Carries the chat UI
+  fixes from tonight: sticky scroll lands on true max scroll (last lines no
+  longer hide behind the composer while streaming), hover stamps wait for
+  turn end, tightened worked-for spacing. Rule recorded in AGENTS.md:
+  desktop-affecting changes ship a client release in the same task — a
+  web-only deploy leaves installed clients on the old bundle.
+
+## Latest decisions
+
 - **Never touch prod while developing (user-mandated 2026-10-15).** Dev
   work targets the dev stack only (`:18080`), including client-release
   publishes (the dev-paired desktop polls dev's updater manifest — a
