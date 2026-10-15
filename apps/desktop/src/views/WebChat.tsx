@@ -2897,7 +2897,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // each contiguous thinking/tool run with one WorkedForBlock and keeps
   // only user messages, agent text, pending approvals and terminal errors
   // (compaction cards and queued-send chips stay out).
-  const { entries: displayEntries, finalAgent } = useMemo(() => {
+  const { entries: displayEntries, finalAgent, lastAgent } = useMemo(() => {
     type Plain = { kind: "plain"; b: Block; i: number };
     type Entry = { kind: "work"; run: Block[] } | Plain;
     const entries: Entry[] = [];
@@ -2925,18 +2925,22 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     // Hover stamps under agent text mark only the turn's final message: an
     // intermediate text block between tool runs is context, not the answer,
     // and stamping each one costs hover space under the whole transcript.
+    // The last agent text gets no stamp while streaming — more tool runs or
+    // text may still follow, so only the turn's end can call it final.
     const finalAgent = new Set<number>();
+    let lastAgent: number | null = null;
     let agentSinceUser = false;
     for (let k = entries.length - 1; k >= 0; k--) {
       const e = entries[k];
       if (e.kind === "plain" && e.b.kind === "text") {
         if (!agentSinceUser) finalAgent.add(e.i);
         agentSinceUser = true;
+        if (lastAgent === null) lastAgent = e.i;
       } else if (e.kind === "plain" && e.b.kind === "user") {
         agentSinceUser = false;
       }
     }
-    return { entries, finalAgent };
+    return { entries, finalAgent, lastAgent };
   }, [blocks, chatView]);
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || openGenerating;
@@ -3410,7 +3414,9 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                         <div className="text-xs text-muted-foreground">stopped</div>
                       )}
                     </div>
-                    {finalAgent.has(e.i) && <HoverStamp ts={e.b.ts} side="left" />}
+                    {finalAgent.has(e.i) && !(streaming && e.i === lastAgent) && (
+                      <HoverStamp ts={e.b.ts} side="left" />
+                    )}
                   </div>
                 ),
               )}
