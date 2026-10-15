@@ -135,14 +135,20 @@ streams undisturbed. Full suite at the pre-existing failure baseline.
 
 ### M2.5 — rollout + gaps before M3
 
+- **Machine dispatch over IPC — shipped (`a94047b`).** The worker's env
+  proxies machine-tool dispatch to the server's hub-backed registry over
+  the fork channel (`worker/dispatch-proxy.ts`; timeoutMs + 30s grace so
+  the server's authoritative outcome wins). Gate: a fake daemon on the
+  parent hub proves worker env → IPC → hub frame → tool_result → settled
+  turn. Machine-bound chats now serve in worker mode; `GUILD_WORKER_MODE=on`
+  flipped on the dev stack and a live turn completed through a forked
+  worker (soak started 2026-10-15).
 - Idle reap (quiescence + grace) — designed, not yet built; workers run
   until closed.
-- Approval-gate + compaction + steering flows exercised against a live
-  worker-mode deployment (the gates' unit paths are journaled and should
-  carry over; verify live).
-- Machine dispatch over IPC (worker → server hub proxy) — until then,
-  machine-bound chats stay in supervisor mode.
-- Flip `GUILD_WORKER_MODE=on` on the dev stack, soak, then prod.
+- Approval-gate + compaction + steering flows exercised against the live
+  worker-mode dev deployment (the gates' unit paths are journaled and
+  should carry over; verify live).
+- Prod flip after the dev soak stays clean.
 
 ### M3 — worker-per-chat as the default + cleanup
 

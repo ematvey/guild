@@ -11,6 +11,23 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Machine-dispatch IPC proxy shipped (`a94047b`) + dev worker soak
+  started (2026-10-15).** Machine-bound chats — the user's primary
+  surface — now serve in worker mode: the worker's ExecutionEnv proxies
+  tool dispatch to the server's hub over the fork channel, so the hub
+  stays the only machine-connection owner. Dev runs
+  `GUILD_WORKER_MODE=on` (a live turn completed through a forked worker);
+  prod stays supervisor-mode until the soak is clean. Remaining M2.5:
+  idle reap, live approval/compaction/steering verification, prod flip.
+
+- **Release 0.5.47 shipped (2026-10-15).** The thread-domain rename rode
+  it end to end: server routes (`1622f35`), desktop transport (`8882a68`,
+  `/api/v1/threads` + `/api/v1/models`, chat id on the path), version
+  bump `2ace1c6`, master sync `5f4676a`; all six artifacts published
+  against prod and the updater manifest serves them (auto-update picks
+  them up within 15 min of client launch). Wire FIELD renames
+  (`chat_id` → `thread_id`) are the next release's coupling decision.
+
 - **Thread-domain rename: /api/v1/threads is primary — shipped in 0.5.47
   (2026-10-15).** The user asked for the full chats → threads rename, staged
   by release coupling: (1) server routes (`1622f35`) — every thread surface
