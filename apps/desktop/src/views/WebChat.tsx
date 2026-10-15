@@ -3328,7 +3328,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     nowMs={nowTick}
                   />
                 ) : e.b.kind === "user" ? (
-                  <div key={e.b.key} className="group relative ml-auto w-fit max-w-[80%]">
+                  <div
+                    key={e.b.key}
+                    className={`group relative ml-auto w-fit max-w-[80%] ${chatView === "casual" ? "py-2" : ""}`}
+                  >
                     <div className={`rounded-2xl bg-secondary px-4 py-2.5 ${WRAP_ANYWHERE}`}>
                       {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
                       {e.b.attachments && e.b.attachments.length > 0 && (
