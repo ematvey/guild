@@ -14,6 +14,7 @@ import {
   PanelLeftClose,
   Pencil,
   Plus,
+  X,
 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
 import { DesktopTooltip } from "../components/desktop-tooltip";
@@ -334,6 +335,23 @@ export function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
   ) : null;
 }
 
+/** Drawer close for the mobile sidebar sheet: the built-in SheetContent
+ *  corner close is suppressed there (it would sit on top of the header's
+ *  new-thread button), so the header carries its own labeled X. */
+export function CloseSidebarButton({ onClose }: { onClose: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="size-7 text-muted-foreground"
+      onClick={onClose}
+      aria-label="Close sidebar"
+    >
+      <X />
+    </Button>
+  );
+}
+
 // ---- Chats tab ----
 
 export function ChatsPanel({
@@ -344,6 +362,7 @@ export function ChatsPanel({
   onNewChat,
   onOpenChat,
   onCollapse,
+  onClose,
   onRenameChat,
   onArchiveChat,
   onUnarchiveChat,
@@ -358,6 +377,9 @@ export function ChatsPanel({
   onOpenChat: (id: string) => void;
   /** Desktop only: collapse the sidebar from within its own header. */
   onCollapse?: () => void;
+  /** Mobile drawer only: close the sheet from the panel header (the
+   *  sheet's built-in corner close is suppressed to keep this row clean). */
+  onClose?: () => void;
   onRenameChat?: (id: string, title: string) => void;
   onArchiveChat?: (id: string) => void;
   onUnarchiveChat?: (id: string) => void;
@@ -386,6 +408,7 @@ export function ChatsPanel({
             </span>
           </DesktopTooltip>
           <CollapseButton onCollapse={onCollapse} />
+          {onClose !== undefined && <CloseSidebarButton onClose={onClose} />}
         </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2">

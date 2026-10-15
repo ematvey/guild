@@ -12,9 +12,14 @@ function SheetContent({
   className,
   children,
   side = "left",
+  hideClose = false,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "bottom" | "left" | "right";
+  /** Omit the built-in corner close — for sheets whose content provides
+   *  its own (the mobile sidebar's header close would otherwise sit on
+   *  top of the panel's new-thread button). */
+  hideClose?: boolean;
 }) {
   return (
     <SheetPrimitive.Portal>
@@ -31,10 +36,12 @@ function SheetContent({
         {...props}
       >
         {children}
-        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm outline-none opacity-70 transition-opacity hover:opacity-100">
-          <X className="size-4" />
-          <span className="sr-only">Close</span>
-        </SheetPrimitive.Close>
+        {!hideClose && (
+          <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm outline-none opacity-70 transition-opacity hover:opacity-100">
+            <X className="size-4" />
+            <span className="sr-only">Close</span>
+          </SheetPrimitive.Close>
+        )}
       </SheetPrimitive.Content>
     </SheetPrimitive.Portal>
   );
