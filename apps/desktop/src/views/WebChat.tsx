@@ -1696,6 +1696,19 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // pruneStopping lifts the flag when that push (or the list push) lands,
   // requestStop on a rejected/failed stop.
   const [stopping, setStopping] = useState<Record<string, true>>({});
+  // The composer floats over the chat content; the scroll pane needs its
+  // live height as bottom padding — a fixed guess breaks as soon as the
+  // composer stack grows (queued chips, attachments, a taller textarea).
+  const composerRef = useRef<HTMLDivElement>(null);
+  const [composerH, setComposerH] = useState(128);
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setComposerH(el.offsetHeight));
+    ro.observe(el);
+    setComposerH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   const chatsRef = useRef<ChatSummary[] | null>(null);
   chatsRef.current = chats;
   // URL-driven navigation state (see parseChatRoute above): everything the
@@ -3316,7 +3329,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
               stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
             }}
           >
-            <div className="mx-auto w-full max-w-3xl space-y-4 px-4 pb-32 pt-6">
+            <div
+              className="mx-auto w-full max-w-3xl space-y-4 px-4 pt-6"
+              style={{ paddingBottom: composerH + 20 }}
+            >
               {displayEntries.map((e, i) =>
                 e.kind === "plain" && e.b.kind === "user" && e.b.queued ? null :
                 e.kind === "work" ? (
@@ -3414,8 +3430,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         )}
 
         {/* composer: floats over the chat content; the scroll pane runs
-            full-height behind it */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4">
+            full-height behind it and offsets it by its measured height */}
+        <div
+          ref={composerRef}
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4"
+        >
           <div className="pointer-events-auto mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm">
             <input
               ref={fileInput}
