@@ -99,33 +99,50 @@ on): scan filtering by conversation; by-id record checks; the assumption
 that a scoped session commits only to its scope (true because its ids come
 from scope-filtered reads); `abandonOnRestart` re-drive inside a scope.
 
-### M2 — the worker runtime
+### M2 — the worker runtime (fork implementation shipped)
 
-- `apps/server/src/worker/`: the worker entry (scoped harness + bridge +
-  codemode sandbox + executor env resolution), IPC surface (frames out;
-  resolve/stop/withdraw/compact in), idle reap (quiescence watchdog, 10m
-  default), heartbeat so the spawner can detect a wedged worker.
-- Spawner in the main server: registry of live workers (in-memory + a
-  `durable_metadata`-adjacent row for boot reconciliation), spawn/kill,
-  respawn backoff per conversation, boot scan spawning workers for
-  conversations with pending work.
-- The bridge moves into the worker unchanged (it already writes only its
-  conversation's projections); `chats.generating` flips move over IPC.
-- Approval gates: the waiting task lives in the worker; the approval API
-  resolves it over IPC. The gate's idempotent re-append and judge verdict
-  reuse (2026-10-15 fixes) carry over as-is.
-- Machine dispatch: `MachineExecutionEnv` in the worker calls the main
-  server's hub over IPC (the hub keeps machine links and the exec-policy
-  matcher).
-- Live frames: the worker's bridge emits over IPC into the main server's
-  stream sink (the current `setStreamSink` seam).
-- Resource caps per worker (`--max-old-space-size`, and container-level CPU
-  shares later); a worker OOM kills one chat, which resumes.
+Shipped (`b314458`, flag-gated `GUILD_WORKER_MODE=on`, default off):
 
-Gate: the full pipeline runs against a worker — submit → queue → place →
-deliver → approval → answer; kill -9 the worker mid-turn → respawn → the
-turn completes; two conversations run in two workers and one's crash leaves
-the other streaming; the restart-resume test (now worker-shaped) passes.
+- `apps/server/src/worker/`: `main.ts` (the worker entry — scoped harness +
+  bridge + codemode sandbox + executor envs for exactly one chat),
+  `supervisor.ts` (the ForkSupervisor: fork, ready handshake with queued
+  admission, heartbeat staleness reaper, respawn-with-backoff while the
+  journal slice has pending work, SIGTERM-then-SIGKILL close),
+  `protocol.ts` (the IPC contract: submit/withdraw/stop/compact +
+  ready/heartbeat — frames and approvals deliberately ride Postgres).
+- Routing: `GuildRuntime.submitTurn/withdrawQueued/stopChat/compactChat`
+  branch on the supervisor; the server's `startOnce` skips the harness and
+  runs boot recovery (`recoverFromJournal`) instead. The worker's runtime
+  is the same class with `workerScope` set — its `openHarness` wraps a
+  `ScopedDurableStorage`, and its `loadMapping` is skipped (the bootstrap
+  owns the mapping).
+- First-touch conversation bootstrap: a transient unscoped harness creates
+  the conversation and writes the mapping, opened and closed without ever
+  resuming (its adoption scan only resets running→pending rows, which the
+  journal absorbs). Upstream wishlist: a no-adopt `Harness.open` or a
+  harness-free `createConversation`.
+- `mintId` is now an atomic increment of the durable_metadata counter —
+  the in-memory watermark handed the same id to two processes once more
+  than one harness existed. Mints are durable on return; the reopen test
+  pins the stronger contract.
+- Machine-bound chats throw a clear error in worker mode until the IPC
+  dispatch proxy lands (follow-up).
+
+Gates proven by `worker-mode.test.ts`: a turn completes through a forked
+worker; two chats run in two workers; SIGKILL of one worker mid-turn
+resumes its turn via respawn with zero `turn_error` while the other chat
+streams undisturbed. Full suite at the pre-existing failure baseline.
+
+### M2.5 — rollout + gaps before M3
+
+- Idle reap (quiescence + grace) — designed, not yet built; workers run
+  until closed.
+- Approval-gate + compaction + steering flows exercised against a live
+  worker-mode deployment (the gates' unit paths are journaled and should
+  carry over; verify live).
+- Machine dispatch over IPC (worker → server hub proxy) — until then,
+  machine-bound chats stay in supervisor mode.
+- Flip `GUILD_WORKER_MODE=on` on the dev stack, soak, then prod.
 
 ### M3 — worker-per-chat as the default + cleanup
 
