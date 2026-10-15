@@ -513,14 +513,25 @@ export class GuildRuntime {
       },
       onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
     }, BACKGROUND_CONTEXT);
-    harness.resume();
     this.harness = harness;
     await this.loadMapping();
+    // Watches attach before resume: a re-driven run must start with its
+    // watch already live. Attached after, the attach snapshot is not
+    // delivered as run_start, and the bridge misses the generation id and
+    // the turn-command claims for the whole resumed run.
     for (const [chatId, conversationId] of this.chatToConversation) {
-      this.attachWatch(chatId, conversationId).catch((error) =>
+      await this.attachWatch(chatId, conversationId).catch((error) =>
         this.log.error({ err: error, chatId }, "watch attach failed"),
       );
     }
+    // Org model providers register before resume: a re-driven run resolves
+    // its model through the registry, and without this it fails no_model —
+    // submit-time refresh alone only covers turns submitted in this process.
+    await this.refreshAllOrgModels();
+    // Re-drives the runs the previous process left pending (a crash, or a
+    // deploy restart that skipped the drain): the turn continues where it
+    // stopped instead of ending as interrupted.
+    harness.resume();
   }
 
   private async loadMapping(): Promise<void> {
@@ -675,6 +686,17 @@ export class GuildRuntime {
     return this.harness!.abortSubmission(submissionId as never, BACKGROUND_CONTEXT, conversationId as never);
   }
 
+  /** Registers/refreshes every org's loopback provider (startup path: the
+   *  resumed runs of a restart resolve models without a fresh submit). */
+  private async refreshAllOrgModels(): Promise<void> {
+    const orgs = await this.pool.query<{ id: string }>("SELECT id FROM orgs");
+    for (const org of orgs.rows) {
+      await this.refreshOrgModels(org.id).catch((error) =>
+        this.log.warn({ err: error, orgId: org.id }, "org model refresh failed"),
+      );
+    }
+  }
+
   /** Registers/refreshes the org's loopback provider from the gateway route
    *  table (the provider's model catalog = the org's enabled routes). */
   async refreshOrgModels(orgId: string): Promise<void> {
@@ -740,20 +762,9 @@ export class GuildRuntime {
     return this.chatToConversation.get(chatId);
   }
 
-  /** Settles every generating chat before shutdown: aborts the in-flight
-   *  generation so tasks settle, the generating flag flips, and the terminal
-   *  frames reach clients while the process and its sockets are alive. */
-  async drainChats(): Promise<void> {
-    const rows = await this.pool.query<{ id: string }>("SELECT id FROM chats WHERE generating = true");
-    for (const row of rows.rows) {
-      await this.stopChat(row.id).catch(() => {});
-    }
-  }
-
   async close(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
-    await this.drainChats().catch(() => {});
     for (const stream of this.watches.values()) {
       await stream.stop().catch(() => {});
     }
