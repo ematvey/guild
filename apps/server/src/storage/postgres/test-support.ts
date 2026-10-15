@@ -67,6 +67,7 @@ export async function resetDurableTables(executor: PostgresExecutor): Promise<vo
     "entries",
     "conversations",
     "record_ids",
+    "durable_commits",
     "durable_metadata",
     "durable_schema",
   ]) {

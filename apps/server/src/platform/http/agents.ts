@@ -198,6 +198,7 @@ async function submitSessionTurn(
     await chats.turnCommands.submitted(commandId, `sub:${submissionId}`);
   } catch (error) {
     await chats.chats.setGenerating(user.org_id, body.chat_id, priorGenerating);
+    await chats.turnCommands.failUnsubmitted(commandId).catch(() => {});
     throw error;
   }
   await chats.chats.setGenerating(user.org_id, body.chat_id, true);

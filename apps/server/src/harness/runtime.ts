@@ -34,8 +34,8 @@ import type { PlatformPool } from "../platform/db.js";
 import { applyPlatformMigrations } from "../platform/migrations.js";
 import { GatewayStore } from "../platform/store/gateway.js";
 import { ChatStore } from "../platform/store/chats.js";
-import { ThreadStore } from "../platform/store/thread.js";
 import { TurnCommandStore } from "../platform/store/turn_commands.js";
+import { ThreadStore } from "../platform/store/thread.js";
 import { AgentSessionStore } from "../platform/store/agentSessions.js";
 import { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import { EventStore } from "../platform/store/events.js";
@@ -532,6 +532,21 @@ export class GuildRuntime {
     // deploy restart that skipped the drain): the turn continues where it
     // stopped instead of ending as interrupted.
     harness.resume();
+    // Never-delivered commands of past failed submits (the durable wedge
+    // left two pending rows forever) — swept at startup and on every
+    // submit; the sweep failing must not block the turn.
+    await this.sweepExpiredCommands();
+  }
+
+  /** Fails turn commands whose delivery never happened (pending = the
+   *  accept committed but the submit threw — the two run back to back). */
+  private async sweepExpiredCommands(): Promise<void> {
+    try {
+      const swept = await this.turnCommands.sweepExpired(15 * 60);
+      if (swept > 0) this.log.warn({ swept }, "expired pending turn commands failed by sweep");
+    } catch (error) {
+      this.log.warn({ err: error }, "turn command sweep failed");
+    }
   }
 
   private async loadMapping(): Promise<void> {
@@ -572,6 +587,12 @@ export class GuildRuntime {
       if (conversation) return conversation;
       this.chatToConversation.delete(chatId);
       await this.pool.query("DELETE FROM chat_conversations WHERE chat_id = $1", [chatId]);
+      // The durable conversation is gone but the thread journal is not: the
+      // reset below starts an EMPTY conversation — the model loses every
+      // prior turn's context (observed 2026-10-15: after a durable wedge,
+      // the next message ran on a fresh conversation and the model had no
+      // prior context). Loud, so the gap stays diagnosable.
+      this.log.warn({ chatId, conversationId: known }, "chat's durable conversation is gone; resetting to an empty conversation (thread history is not replayed)");
     }
     const conversation = await this.harness!.createConversation({ ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT);
     await this.pool.query(
@@ -589,6 +610,7 @@ export class GuildRuntime {
    *  configured, and the input is durably admitted (queued in the inbox when
    *  busy — steering/follow-up semantics, decision 12). */
   async submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
+    await this.sweepExpiredCommands();
     const conversation = await this.conversationForChat(chatId, orgId);
     await this.refreshOrgModels(orgId);
     // The turn's trace context: every loopback model call this turn makes
