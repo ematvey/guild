@@ -479,7 +479,11 @@ joins on email, and only an admin may override it to another member. The
 admin's per-tool config (`{enabled, approval}` per tool on the integration
 row) is the source of truth for exposure and approval: disabled tools are
 invisible to the model and the script API; `always_ask` forces the approval
-gate ahead of the user policy; adapter-declared tools default enabled
+gate ahead of the user policy; `always_allow` lets the call flow with no
+approval gate regardless of the chat's approval mode or the user policy —
+the org's grant for non-sensitive tools (read-class tools flow by default
+already; this also covers write/admin-class tools the org deems safe);
+adapter-declared tools default enabled
 (covered by the reviewed manifest) while MCP-discovered tools land disabled
 until curated.
 

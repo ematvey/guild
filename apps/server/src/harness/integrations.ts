@@ -119,8 +119,11 @@ function toolMatches(slug: string, specName: string, callName: string): boolean 
 
 /** The approval-gate consultation surface (harness/integrations.ts
  *  IntegrationsRuntime implements it). "ask" = the card is forced
- *  (always_ask curation); "policy" = the call falls through to the chat's
- *  approval mode (full_access flows, ask gates). */
+ *  (always_ask curation); "skip" = the call flows without a gate
+ *  (read-class tools, or an always_allow curation — the org grants the
+ *  tool past the chat's approval mode and the user policy); "policy" = the
+ *  call falls through to the chat's approval mode (full_access flows, ask
+ *  gates). */
 export type IntegrationGateClassification = "skip" | "ask" | "policy" | undefined;
 
 /** The approval-gate consultation surface (harness/integrations.ts
@@ -345,11 +348,12 @@ export class IntegrationsRuntime {
   }
 
   /** The approval-gate classification of one call (restate.rs
-   *  server_tool_step's gate): Guild-provided disclosure tools and
-   *  read-class tools flow without a gate; an `always_ask` curation or a
-   *  write-class tool forces the card — org governance wins over the chat's
-   *  approval mode. `undefined` = not an integration tool (the generic
-   *  policy applies). */
+   *  server_tool_step's gate): Guild-provided disclosure tools, read-class
+   *  tools, and always_allow-curated tools flow without a gate; an
+   *  `always_ask` curation or a write-class tool forces the card / follows
+   *  the chat's approval mode — org governance wins over the chat's
+   *  approval mode in both directions. `undefined` = not an integration
+   *  tool (the generic policy applies). */
   async gateDecision(conversationId: number, callName: string): Promise<IntegrationGateClassification> {
     // Cheap path: a name this runtime never registered and no auto-tool
     // shape cannot be an integration tool — coding tools pay no resolve.
@@ -363,7 +367,9 @@ export class IntegrationsRuntime {
     if (target === undefined) return undefined;
     const { turn, info } = target;
     const raw = unnamespacedTool(turn.slug, info.spec.name) ?? info.spec.name;
-    if (toolCurate(turn.rowConfig, turn.executor === "mcp", raw).alwaysAsk) return "ask";
+    const curation = toolCurate(turn.rowConfig, turn.executor === "mcp", raw);
+    if (curation.alwaysAsk) return "ask";
+    if (curation.alwaysAllow) return "skip";
     return info.class === "read" ? "skip" : "policy";
   }
 

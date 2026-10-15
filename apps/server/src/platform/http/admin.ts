@@ -329,8 +329,8 @@ export function registerAdminIntegrationRoutes(app: FastifyInstance, gateway: Ga
     const enabled = record["enabled"];
     if (typeof enabled !== "boolean") throw ApiError.badRequest("enabled must be a boolean");
     const approval = typeof record["approval"] === "string" ? record["approval"] : "default";
-    if (approval !== "default" && approval !== "always_ask") {
-      throw ApiError.badRequest("approval must be default or always_ask");
+    if (approval !== "default" && approval !== "always_ask" && approval !== "always_allow") {
+      throw ApiError.badRequest("approval must be default, always_ask or always_allow");
     }
     const name = await gateway.integrations.curateTool(admin.org_id, id, tool, enabled, approval);
     // Durable, org-queryable audit of the governance change.
@@ -728,6 +728,6 @@ function curatedToolJson(
     class: cls,
     description,
     enabled: curate.enabled,
-    approval: curate.alwaysAsk ? "always_ask" : "default",
+    approval: curate.alwaysAsk ? "always_ask" : curate.alwaysAllow ? "always_allow" : "default",
   };
 }

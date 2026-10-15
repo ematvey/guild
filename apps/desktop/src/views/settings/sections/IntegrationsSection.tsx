@@ -918,7 +918,7 @@ interface CuratedTool {
   class: string;
   description: string;
   enabled: boolean;
-  approval: "default" | "always_ask";
+  approval: "default" | "always_ask" | "always_allow";
 }
 
 interface ToolsResponse {
@@ -1044,6 +1044,7 @@ function ToolCuration({
               >
                 <option value="default">Follow user policy</option>
                 <option value="always_ask">Always ask</option>
+                <option value="always_allow">Always allow</option>
               </select>
             </li>
           ))}

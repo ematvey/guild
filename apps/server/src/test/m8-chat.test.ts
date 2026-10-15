@@ -97,7 +97,9 @@ beforeAll(async () => {
   memberToken = stack.memberToken;
 
   // Seed atlassian (token secret) + slack with an always_ask-curated read
-  // tool (org governance overrides the read flow onto the card).
+  // tool (org governance overrides the read flow onto the card) and an
+  // always_allow-curated write tool (org governance overrides the gate in
+  // the other direction — the call flows with no card).
   const { masterKeyBytes, encryptSecret } = await import("../platform/crypto.js");
   const master = masterKeyBytes(stack.env.config.masterKeyHex);
   await stack.env.db.query(
@@ -110,7 +112,7 @@ beforeAll(async () => {
   );
   await stack.env.db.query(
     "INSERT INTO integrations (org_id, name, config, enabled) VALUES ($1, 'slack', $2, true) ON CONFLICT (org_id, name) DO UPDATE SET config = EXCLUDED.config",
-    [orgId, JSON.stringify({ base_url: `${vendorBase}/api`, tools: { conversations_list: { enabled: true, approval: "always_ask" } } })],
+    [orgId, JSON.stringify({ base_url: `${vendorBase}/api`, tools: { conversations_list: { enabled: true, approval: "always_ask" }, post_message: { enabled: true, approval: "always_allow" } } })],
   );
   await stack.env.db.query(
     "INSERT INTO integration_secrets (org_id, integration, name, secret_enc) VALUES ($1, 'slack', 'bot_token', $2) ON CONFLICT (org_id, integration, name) DO NOTHING",
@@ -141,39 +143,40 @@ function scriptFor(...responses: { body: string }[]): void {
   stack.mock.setResponses(responses);
 }
 
-async function threadEvents(chatId: string): Promise<Record<string, unknown>[]> {
+async function threadEvents(chatId: string, token = memberToken): Promise<Record<string, unknown>[]> {
   const res = await stack.env.app.inject({
     method: "GET",
     url: `/api/v1/chats/${chatId}/thread`,
-    headers: auth(),
+    headers: auth(token),
   });
+  if (res.statusCode !== 200) throw new Error(`thread GET ${res.statusCode}: ${res.body}`);
   return (JSON.parse(res.body) as { events: Record<string, unknown>[] }).events;
 }
 
-async function createChat(title: string): Promise<string> {
+async function createChat(title: string, token = memberToken): Promise<string> {
   const res = await stack.env.app.inject({
     method: "POST",
     url: "/api/v1/chats",
-    headers: auth(),
+    headers: auth(token),
     payload: { title },
   });
   expect(res.statusCode).toBe(200);
   return (JSON.parse(res.body) as { id: string }).id;
 }
 
-async function submitTurn(chatId: string, content: string): Promise<void> {
+async function submitTurn(chatId: string, content: string, token = memberToken): Promise<void> {
   const submit = await stack.env.app.inject({
     method: "POST",
     url: "/api/v1/gateway/chat",
-    headers: auth(),
+    headers: auth(token),
     payload: { chat_id: chatId, model: "GLM-Test-Model", messages: [{ role: "user", content }] },
   });
   expect(submit.statusCode).toBe(200);
 }
 
-async function turnSettled(chatId: string): Promise<void> {
+async function turnSettled(chatId: string, token = memberToken): Promise<void> {
   await waitFor(async () => {
-    const events = await threadEvents(chatId);
+    const events = await threadEvents(chatId, token);
     const last = events[events.length - 1];
     if (last === undefined) return false;
     const ev = last.event as { type?: string; blocks?: { type: string }[] };
@@ -310,6 +313,33 @@ describe("M8: integrations chat runtime", () => {
       const ev = result.event as { content: string; is_error: boolean };
       expect(ev.is_error).toBe(true);
       expect(ev.content).toContain("denied by user: not now");
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "an always_allow-curated write-class tool flows without an approval card",
+    async () => {
+      // post_message is write-class: the default curation would fall
+      // through to the chat's approval mode (an unresolved policy asks via
+      // the judge). The always_allow curation skips the gate entirely —
+      // the org's grant wins over the user policy, no card, no judge.
+      const chatId = await createChat("m8-always-allow", stack.adminToken);
+      scriptFor(
+        { body: toolCallSse("slack_post_message", JSON.stringify({ channel: "C1", text: "hello from the test" })) },
+        { body: finalSse },
+      );
+      await submitTurn(chatId, "post to slack", stack.adminToken);
+      await turnSettled(chatId, stack.adminToken);
+
+      const events = await threadEvents(chatId, stack.adminToken);
+      expect(events.find((e) => (e.event as { type?: string }).type === "approval_request")).toBeUndefined();
+      const call = toolCalls(events).find((b) => (b as { name: string }).name === "slack_post_message");
+      expect(call).toBeDefined();
+      const result = toolResults(events).find((e) => (e.event as { call_id: string }).call_id === (call as { id: string }).id);
+      expect(result).toBeDefined();
+      expect((result!.event as { is_error: boolean }).is_error).toBe(false);
+      expect((result!.event as { content: string }).content).toContain("1760000000.000100");
     },
     TEST_TIMEOUT,
   );

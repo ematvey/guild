@@ -97,8 +97,9 @@ export interface ApprovalGateDeps {
    *  the batch contract). */
   executorKind(conversationId: number): Promise<ExecutorKind>;
   /** The integrations chat runtime (M8): the integration tool envelope —
-   *  reads flow, an `always_ask` curation or a write-class tool forces the
-   *  card ahead of the chat's approval mode (org governance wins). */
+   *  read-class tools and always_allow-curated tools flow; an `always_ask`
+   *  curation forces the card, any other class follows the chat's approval
+   *  mode (org governance wins in both directions). */
   integrations?: IntegrationGate;
   /** The conversation's configured model (the judge's route). */
   currentModel(conversationId: number): Promise<string | null>;
@@ -434,11 +435,12 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       }
 
       // 1b. Integration tools (M8): the connector envelope. Guild-provided
-      //     disclosure and read-class tools flow; an always_ask curation
-      //     forces the card; any other class falls through to the chat's
-      //     approval mode below (full_access flows, ask/approve_for_me
-      //     gate). The batch contract (server-side workspace sessions)
-      //     skips the interactive gate like every server tool.
+      //     disclosure, read-class, and always_allow-curated tools flow;
+      //     an always_ask curation forces the card; any other class falls
+      //     through to the chat's approval mode below (full_access flows,
+      //     ask/approve_for_me gate). The batch contract (server-side
+      //     workspace sessions) skips the interactive gate like every
+      //     server tool.
       if (deps.integrations !== undefined) {
         const decision = await deps.integrations.gateDecision(Number(runtime.conversationId), call.name);
         if (decision === "ask" && executor !== "server") {
