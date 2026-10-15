@@ -5,8 +5,10 @@
 // the dead one's turn resumed by the respawn.
 
 import { createServer } from "node:http";
+import crypto from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import WebSocket from "ws";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 
 let stack: M2Stack;
@@ -150,5 +152,100 @@ describe("worker-per-chat (fork supervisor)", () => {
     });
     const eventsA = (JSON.parse(threadA.body) as { events: { event: Record<string, unknown> }[] }).events;
     expect(eventsA.some((e) => e.event.type === "turn_error")).toBe(false);
+  }, 120_000);
+
+  it("a machine-bound chat dispatches its tool through the IPC proxy to the hub", async () => {
+    const platformOf = (): import("../platform/context.js").PlatformContext =>
+      (stack.env.app as unknown as { platform: import("../platform/context.js").PlatformContext }).platform;
+    const toolCallSse = (name: string, args: string): string =>
+      'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_wm","type":"function","function":{"name":"' +
+      name +
+      '","arguments":' +
+      JSON.stringify(args) +
+      "}}]}}]}\n\n" +
+      'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
+      'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
+      "data: [DONE]\n\n";
+    const finalSse =
+      'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
+      'data: {"choices":[{"delta":{"content":"kernel answer"}}]}\n\n' +
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+      'data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2}}\n\n' +
+      "data: [DONE]\n\n";
+
+    // The fake daemon speaks the shipped-client executor contract against
+    // the PARENT's hub; the worker reaches it only through the proxy.
+    const ticket = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/ws/ticket",
+      headers: { authorization: `Bearer ${stack.memberToken}` },
+    });
+    expect(ticket.statusCode).toBe(200);
+    const machineId = "worker-dispatch-machine";
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${port}/api/v1/ws?ticket=${(JSON.parse(ticket.body) as { ticket: string }).ticket}` +
+        `&machine_id=${machineId}&instance_id=${crypto.randomUUID()}`,
+    );
+    const openPromise = new Promise<void>((resolve, reject) => {
+      ws.on("open", resolve);
+      ws.on("error", reject);
+    });
+    const dispatches: Record<string, unknown>[] = [];
+    ws.on("message", (data: Buffer) => {
+      const msg = JSON.parse(data.toString("utf8")) as Record<string, unknown>;
+      if (msg["type"] === "tool_dispatch") {
+        dispatches.push(msg);
+        ws.send(
+          JSON.stringify({
+            type: "tool_result",
+            chat_id: msg["chat_id"],
+            call_id: msg["call_id"],
+            content: "Linux workstation 6.1.0",
+            is_error: false,
+            meta: null,
+          }),
+        );
+      }
+    });
+    await openPromise;
+
+    await waitFor(async () => {
+      const owner = await platformOf().machines.ownerOf(machineId);
+      return owner !== null && owner[0] === stack.memberId;
+    });
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/threads",
+      headers: auth(stack.memberToken),
+      payload: { title: "worker machine chat" },
+    });
+    expect(created.statusCode).toBe(200);
+    const chatId = (JSON.parse(created.body) as { id: string }).id;
+    await platformOf().chats.setMachine(stack.orgId, chatId, machineId, machineId);
+    stack.mock.setResponses([{ body: toolCallSse("bash", JSON.stringify({ command: "uname -r" })) }, { body: finalSse }]);
+    const sent = await stack.env.app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${chatId}/turns`,
+      headers: auth(stack.memberToken),
+      payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "what kernel is running" }] },
+    });
+    expect(sent.statusCode).toBe(200);
+
+    await waitFor(async () => dispatches.length > 0, 30_000);
+    expect(dispatches[0]!["type"]).toBe("tool_dispatch");
+    expect(dispatches[0]!["name"]).toBe("execute");
+    await waitFor(async () => {
+      const thread = await stack.env.app.inject({
+        method: "GET",
+        url: `/api/v1/threads/${chatId}`,
+        headers: auth(stack.memberToken),
+      });
+      const events = (JSON.parse(thread.body) as { events: { event: Record<string, unknown> }[] }).events;
+      const result = events.find((e) => e.event.type === "tool_result");
+      if (!result) return false;
+      expect((result.event as { content: string }).content).toBe("Linux workstation 6.1.0");
+      return events.some((e) => e.event.type === "assistant_message");
+    }, 60_000);
+    ws.close();
   }, 120_000);
 });

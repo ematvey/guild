@@ -9,7 +9,8 @@ import { ObjectStore } from "../platform/s3.js";
 import { createPlatformPool } from "../platform/db.js";
 import { GuildRuntime } from "../harness/runtime.js";
 import { loadConfig } from "../config.js";
-import type { WorkerRequest } from "./protocol.js";
+import type { WorkerRequest, WorkerResponse } from "./protocol.js";
+import { IpcMachineDispatch } from "./dispatch-proxy.js";
 
 const config = loadConfig(process.env);
 const log = pino({ level: config.logLevel });
@@ -19,8 +20,12 @@ if (!chatId) throw new Error("GUILD_WORKER_CHAT_ID is not set — this entry is 
 
 const pool = createPlatformPool(config.databaseUrl, config.poolMax);
 const objects = new ObjectStore(config);
+// The worker has no hub connection: machine-tool dispatch proxies to the
+// server over the fork IPC channel (worker/dispatch-proxy.ts).
+const ipcDispatch = new IpcMachineDispatch((message) => send(message));
 const runtime = new GuildRuntime(config, pool, log, objects, undefined, undefined, undefined, undefined, {
   chatId,
+  dispatch: ipcDispatch,
 });
 
 let heartbeat: NodeJS.Timeout | undefined;
@@ -52,17 +57,23 @@ async function main(): Promise<void> {
 }
 
 process.on("message", (raw: unknown) => {
-  const message = raw as WorkerRequest;
+  const message = raw as WorkerRequest | WorkerResponse;
   if (!message || typeof message !== "object" || !("t" in message)) return;
+  // A dispatch reply (the server answering a worker-initiated proxy call).
+  if (message.t === "result") {
+    ipcDispatch.onResponse(message as WorkerResponse);
+    return;
+  }
+  const request = message as WorkerRequest;
   void (async () => {
     try {
       let data: unknown;
-      switch (message.t) {
+      switch (request.t) {
         case "submit":
-          data = await runtime.submitTurn(chatId, message.input.orgId, message.input);
+          data = await runtime.submitTurn(chatId, request.input.orgId, request.input);
           break;
         case "withdraw":
-          data = await runtime.withdrawQueued(chatId, message.submissionId);
+          data = await runtime.withdrawQueued(chatId, request.submissionId);
           break;
         case "stop":
           await runtime.stopChat(chatId);
@@ -72,10 +83,10 @@ process.on("message", (raw: unknown) => {
           data = await runtime.compactChat(chatId);
           break;
       }
-      send({ t: "result", ref: message.ref, ok: true, data });
+      send({ t: "result", ref: request.ref, ok: true, data });
     } catch (error) {
-      send({ t: "result", ref: message.ref, ok: false, error: (error as Error)?.message ?? String(error) });
-      log.error({ err: error, chatId, kind: message.t }, "worker request failed");
+      send({ t: "result", ref: request.ref, ok: false, error: (error as Error)?.message ?? String(error) });
+      log.error({ err: error, chatId, kind: request.t }, "worker request failed");
     }
   })();
 });

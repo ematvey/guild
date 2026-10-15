@@ -208,7 +208,7 @@ export interface MachineEnvOptions {
    *  the executor errors the machine tools). */
   workdir: string | null;
   timeoutMs: number;
-  dispatch: MachineDispatch;
+  dispatch: Pick<MachineDispatch, "dispatch">;
 }
 
 /** An ExecutionEnv whose file/shell operations run on the chat's bound
