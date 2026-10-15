@@ -16,6 +16,8 @@ import {
   Plus,
 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";
+import { HotkeyHint } from "../components/hotkey-hint";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -315,18 +317,27 @@ function ProjectHeader({
   );
 }
 
-/** Collapse button shared by every panel header (desktop only). */
+/** Collapse button shared by every panel header (desktop only). The
+ *  tooltip carries the toggle hotkey like the rail's tooltips do. */
 export function CollapseButton({ onCollapse }: { onCollapse?: () => void }) {
   return onCollapse ? (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="size-7 text-muted-foreground"
-      onClick={onCollapse}
-      title="Close sidebar"
-    >
-      <PanelLeftClose />
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 text-muted-foreground"
+          onClick={onCollapse}
+          aria-label="Toggle sidebar"
+        >
+          <PanelLeftClose />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        Toggle sidebar
+        <HotkeyHint combo="mod+B" />
+      </TooltipContent>
+    </Tooltip>
   ) : null;
 }
 
@@ -367,18 +378,26 @@ export function ChatsPanel({
             Projects panel. */}
         <span className="font-semibold">Chats</span>
         <span className="flex items-center gap-1">
-          <span
-            role="button"
-            tabIndex={0}
-            title="New chat"
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={onNewChat}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") onNewChat();
-            }}
-          >
-            <Plus className="size-4" />
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="New thread"
+                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={onNewChat}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") onNewChat();
+                }}
+              >
+                <Plus className="size-4" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              New thread
+              <HotkeyHint combo="mod+N" />
+            </TooltipContent>
+          </Tooltip>
           <CollapseButton onCollapse={onCollapse} />
         </span>
       </div>
