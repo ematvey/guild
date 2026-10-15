@@ -114,7 +114,7 @@ export function WorkspaceMenuItems({
                 className="size-4 shrink-0 rounded object-contain"
               />
             ) : (
-              <span className="flex size-4 shrink-0 items-center justify-center rounded bg-muted text-[9px] font-semibold text-muted-foreground">
+              <span className="flex size-4 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold text-muted-foreground">
                 {label.slice(0, 1).toUpperCase()}
               </span>
             )}
@@ -177,7 +177,7 @@ export function WorkspaceRailButton({
                   className="size-6 shrink-0 rounded object-contain"
                 />
               ) : (
-                <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-semibold text-muted-foreground">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold text-muted-foreground">
                   {label.slice(0, 1).toUpperCase()}
                 </span>
               )}
@@ -230,7 +230,7 @@ export function WorkspaceSwitcher({
               className="size-5 shrink-0 rounded object-contain"
             />
           ) : activeRow ? (
-            <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold text-muted-foreground">
               {label.slice(0, 1).toUpperCase()}
             </span>
           ) : null}

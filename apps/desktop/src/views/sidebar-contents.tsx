@@ -272,7 +272,7 @@ function ProjectHeader({
       />
       <FadeTitle text={name} />
       {machine?.name && (
-        <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground/70">
+        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
           {machine.online !== undefined &&
             (machine.online ? (
               <span className="relative flex size-1.5 shrink-0">
@@ -395,7 +395,7 @@ export function ChatsPanel({
             </TooltipTrigger>
             <TooltipContent side="bottom">
               New thread
-              <HotkeyHint combo="mod+N" />
+              <HotkeyHint combo="mod+N" browserCombo="Ctrl+Alt+N" />
             </TooltipContent>
           </Tooltip>
           <CollapseButton onCollapse={onCollapse} />
@@ -628,7 +628,7 @@ export function SettingsPanel({
           if (items.length === 0) return null;
           return (
             <div key={g.key}>
-              <p className="px-1 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              <p className="px-1 pb-1 pt-4 text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
                 {g.label}
               </p>
               <div className="space-y-0.5">

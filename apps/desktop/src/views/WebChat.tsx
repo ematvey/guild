@@ -1,6 +1,7 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type ErrorInfo, type ReactNode, type RefObject } from "react";
 import { applyMention, detectMention } from "../lib/skill-mention";
+import { IS_TAURI } from "../transport";
 import { daemonFs, listSkills } from "../lib/context";
 import { fetchInstalls } from "./skills/skills-api";
 import { openExternal } from "../lib/open-external";
@@ -720,7 +721,7 @@ function StatusPill({ status }: { status: "running" | "done" | "error" }) {
   }[status];
   return (
     <span
-      className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${cls}`}
+      className={`shrink-0 rounded-full border px-1.5 py-px text-xs uppercase tracking-wide ${cls}`}
     >
       {status}
     </span>
@@ -1089,7 +1090,7 @@ function statusPillCls(ok: boolean): string {
 
 function TruncatedBadge() {
   return (
-    <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
+    <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-xs uppercase tracking-wide text-amber-600 dark:text-amber-400">
       truncated
     </span>
   );
@@ -1147,7 +1148,7 @@ function ArtifactDownloadCard({ card }: { card: ArtifactCard }) {
       )}
       {card.path && (
         <span
-          className="hidden w-full truncate font-mono text-[10px] text-muted-foreground/60 sm:block"
+          className="hidden w-full truncate font-mono text-xs text-muted-foreground/60 sm:block"
           title={card.path}
         >
           {card.path}
@@ -1247,7 +1248,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
           {/* pills only for failures: HTTP errors surface, 2xx stays quiet */}
           {m?.status_code != null && m.status_code >= 400 && (
             <span
-              className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${statusPillCls(false)}`}
+              className={`shrink-0 rounded-full border px-1.5 py-px text-xs uppercase tracking-wide ${statusPillCls(false)}`}
             >
               {m.status_code}
             </span>
@@ -1285,7 +1286,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
         {/* failures only: a clean exit stays quiet */}
         {m?.exit_code != null && m.exit_code !== 0 && (
           <span
-            className={`inline-block rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${statusPillCls(false)}`}
+            className={`inline-block rounded-full border px-1.5 py-px text-xs uppercase tracking-wide ${statusPillCls(false)}`}
           >
             exit {m.exit_code}
           </span>
@@ -1303,7 +1304,7 @@ function ToolBody({ t }: { t: ToolBlock }) {
             {m?.path}
           </span>
           {m?.total_lines != null && (
-            <span className="shrink-0 text-[10px]">
+            <span className="shrink-0 text-xs">
               {lines.length}/{m.total_lines} lines
             </span>
           )}
@@ -1425,7 +1426,7 @@ function ApprovalPill({ status }: { status: "pending" | "approved" | "denied" | 
   }[status];
   return (
     <span
-      className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] uppercase tracking-wide ${cls}`}
+      className={`shrink-0 rounded-full border px-1.5 py-px text-xs uppercase tracking-wide ${cls}`}
     >
       {status}
     </span>
@@ -2437,17 +2438,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   recoverMissingChatRef.current = recoverMissingChat;
   const newChatRef = useRef(newChat);
   newChatRef.current = newChat;
-  // Global hotkeys (desktop): Cmd/Ctrl+B toggles the sidebar, Cmd/Ctrl+N
-  // opens a new thread. No printable key involved, so typing anywhere is
-  // unaffected; the browser has no own bindings for these combos.
+  // Global hotkeys (desktop client + browser): Cmd/Ctrl+B toggles the
+  // sidebar; Cmd/Ctrl+N opens a new thread on the desktop client, while
+  // browsers hear only Ctrl+Alt+N — Chrome and friends reserve plain
+  // Ctrl+N at the browser level and never deliver it to the page.
   useEffect(() => {
     if (isMobile) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
-      if (e.code === "KeyB") {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey) return;
+      if (e.code === "KeyB" && !e.altKey) {
         e.preventDefault();
         setCollapsed((c) => !c);
-      } else if (e.code === "KeyN") {
+      } else if (e.code === "KeyN" && (IS_TAURI ? true : e.altKey)) {
         e.preventDefault();
         newChatRef.current();
       }

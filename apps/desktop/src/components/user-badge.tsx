@@ -39,7 +39,7 @@ export function UserBadge({
         src={avatarUrl}
         fallback={initials}
         className="size-7"
-        fallbackClassName="bg-primary text-[11px] font-semibold text-primary-foreground"
+        fallbackClassName="bg-primary text-xs font-semibold text-primary-foreground"
       />
       {!compact && (
         <>
