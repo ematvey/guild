@@ -11,6 +11,30 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Full durability: deploys resume turns instead of ending them (2026-10-15).**
+  The SIGTERM drain (below) is gone. A deploy's shutdown now hard-exits
+  (`process.exit` on SIGTERM/SIGINT, no graceful close): pi-durable's graceful
+  close turned out to be what destroyed resumability — its abort signal kills
+  the in-flight model call, the generation runner classifies that as a
+  retryable error, re-drives against its own dead signal with backoff, and
+  settles the task failed (measured: 5.9s of close, task terminal, run lost).
+  A hard stop leaves the journal consistent (commits are atomic) and the run
+  pending, and the next process resumes it. Three gaps closed so a resumed run
+  actually completes: watches attach before `harness.resume()` (attached
+  after, the attach snapshot is not delivered as `run_start`, so the bridge
+  misses the generation id and the turn-command claims); org model providers
+  register at startup (`refreshAllOrgModels`) — submit-time refresh alone
+  meant a resumed run failed `no_model`; the shutdown handler no longer calls
+  the drain. Proven by a new restart-resume test: a turn killed mid-stream
+  (connections destroyed, storage unreachable) resumes in a fresh process and
+  completes. Also in passing: the 13:27 poisoning incident (the `pi.live`
+  document of conversation 5206 took delta ops it could no longer
+  materialize — `unresolvable path: ["generation","message","content",0]` —
+  and every new session died on it at watch attach, `SessionFailed` for all
+  chats) was repaired by deleting the one poisoned ephemeral document;
+  `scripts/durable-repair.mjs` scans for and removes such documents
+  (`--fix`). Found via the user's screencast of a thread that accepted two
+  messages and never answered.
 - **`always_allow` tool curation — the org grants a tool past the approval gate (2026-10-15).**
   The per-tool admin curation on an integration row gains a third approval
   value next to `default` and `always_ask`: `always_allow` classifies the

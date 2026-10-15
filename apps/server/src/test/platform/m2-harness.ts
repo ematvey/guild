@@ -130,7 +130,9 @@ export async function createM2TestEnv(
     if (done) return;
     done = true;
     await app.close();
-    await dbPool.end();
+    // A test that simulated a hard process stop may have ended the pool
+    // already; a second end must not fail the cleanup.
+    await dbPool.end().catch(() => {});
     if (withClickhouse) await dropClickhouseDatabase(clickhouseDatabase);
     const dropper = new pg.Pool({ connectionString: TEST_ADMIN_URL, max: 1, idleTimeoutMillis: 2000 });
     try {
@@ -205,6 +207,10 @@ export async function startMockUpstream(
       res.writeHead(404).end();
       return;
     }
+    // A restart test closes the app mid-stream: the aborted fetch leaves a
+    // dead socket under the writer — swallow its errors and stop early.
+    res.on("error", () => {});
+    req.on("error", () => {});
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
@@ -225,7 +231,7 @@ export async function startMockUpstream(
         const delay = scripted.chunkDelayMs ?? 150;
         let index = 0;
         const writeNext = (): void => {
-          if (index >= scripted.chunks!.length) {
+          if (res.destroyed || index >= scripted.chunks!.length) {
             res.end();
             return;
           }

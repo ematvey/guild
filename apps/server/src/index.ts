@@ -11,19 +11,14 @@ async function main(): Promise<void> {
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
       app.log.info({ signal }, "shutting down");
-      // Drain in-flight turns while the sockets are still alive: the abort
-      // settles runs, flips the generating flag, and delivers the terminal
-      // frames before the listener closes (docker stop gives ~10s).
-      const drain = app.platform.runtime.drainChats().catch((err) => {
-        app.log.error(err, "chat drain failed");
-      });
-      const grace = new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref());
-      void Promise.race([drain, grace]).then(() => {
-        app.close().catch((err) => {
-          app.log.error(err, "error during shutdown");
-          process.exit(1);
-        });
-      });
+      // Hard exit, no graceful close: pi-durable's close signals the
+      // in-flight generations, and the runner converts that abort into a
+      // failed terminal outcome through its retry path — a deploy would
+      // still end every running turn. A hard stop leaves the journal
+      // consistent (commits are atomic) and the runs pending, so the next
+      // process's harness.resume() re-drives them: the turn continues
+      // where it stopped instead of ending as interrupted.
+      process.exit(0);
     });
   }
 
