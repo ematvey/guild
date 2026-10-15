@@ -268,7 +268,7 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
           if (b.type === "reasoning") {
             blocks.push({ kind: "reasoning", text: "", reasoningText: b.text, ts: row.created_at, key: seqKey(inEvent++) });
           } else if (b.type === "text") {
-            blocks.push({ kind: "text", text: b.text, key: seqKey(inEvent++) });
+            blocks.push({ kind: "text", text: b.text, ts: row.created_at, key: seqKey(inEvent++) });
           } else {
             const tb: ToolBlock = {
               callId: b.id,
@@ -696,7 +696,7 @@ export function createThreadReducer(): ThreadReducer {
             });
             reasoningSeen = true;
           } else if (b.type === "text") {
-            v.blocks.push({ kind: "text", text: b.text, key: seqKey(v.blocks.length - start) });
+            v.blocks.push({ kind: "text", text: b.text, ts: row.created_at, key: seqKey(v.blocks.length - start) });
           } else {
             // A live tool_started frame may have provisioned this row before
             // the carrying message fanned out: adopt it instead of pushing a

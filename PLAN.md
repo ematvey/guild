@@ -11,6 +11,23 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Chat view modes — casual/technical, header kebab, hover timestamps (2026-10-15).**
+  Designed by grill (doc: `docs/plans/2026-10-15-chat-view-modes-design.md`). The
+  thread header gains a kebab menu: Rename (popup dialog), Archive/Unarchive
+  (archiving the open chat navigates to the chats list), a divider, and the view
+  picker. The mode persists per user server-side: `user_kv` (migration 0071,
+  user-scoped mirror of org_kv) + `GET/PUT /api/v1/me/settings` with
+  `{ chat_view }`; absent = default **casual**. Casual view only affects
+  thinking/tool blocks: each contiguous run collapses into one
+  "Agent is working Ns" (pulsing, counts up) → "Agent worked for S seconds"
+  entry (casual-only, extra padding around it, absent on pure-text turns);
+  pending approvals stay, compaction cards hide, terminal turn errors show bare
+  ("Turn failed"), tool errors hide. Hover timestamps: user/agent-text messages
+  (both views) carry an always-mounted, opacity-hidden, absolutely positioned
+  strip below the message (zero reflow); locale-aware — time only today, +
+  month/day within the year, + year older. Reducer now stamps durable text
+  blocks with `ts` (tool/reasoning already carried it). In technical view the
+  rendering is byte-identical to before.
 - **Release 0.5.46 (2026-10-15).** First release cut straight from develop's
   working tree: the approval-gate idempotency fixes (below), the agent
   sessions' queued mid-turn sends (steer/queue chips, withdrawal), the

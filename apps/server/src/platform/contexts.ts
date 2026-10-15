@@ -34,6 +34,7 @@ import type { ReleaseStore } from "./store/releases.js";
 import type { ProjectStore } from "./store/projects.js";
 import type { TeamStore } from "./store/teams.js";
 import type { OrgKvStore, KvStore } from "./store/org_kv.js";
+import type { UserKvStore } from "./store/user_kv.js";
 import type { IntegrationStore, IntegrationSecretStore } from "./store/integrations.js";
 import type { UserMcpStore } from "./store/userMcp.js";
 import type { ChatStore } from "./store/chats.js";
@@ -75,6 +76,8 @@ export interface IdentityCtx {
   readonly teams: TeamStore;
   readonly orgKv: OrgKvStore;
   readonly kv: KvStore;
+  /** Per-user preference rows (user_kv): the chat view mode. */
+  readonly userKv: UserKvStore;
   readonly events: EventStore;
   /** User-owned MCP server rows (the user_mcp settings surface + runtime). */
   readonly userMcp: UserMcpStore;
