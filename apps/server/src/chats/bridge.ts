@@ -505,8 +505,16 @@ export class ChatBridge {
         return;
       }
       case "pi.compaction": {
+        // pi-durable compactions carry the summary as text blocks; the
+        // importer's synthetic ones carry a plain string.
         const summary = entry.model?.find((m) => m.role === "user");
-        const text = summary && summary.role === "user" && typeof summary.content === "string" ? summary.content : "";
+        const raw = summary?.content;
+        const text =
+          typeof raw === "string"
+            ? raw
+            : Array.isArray(raw)
+              ? raw.map((b) => (b.type === "text" ? b.text : "")).join("")
+              : "";
         const ev = compactionEvent(unwrapCompactionSummary(text));
         await this.append(state, ev);
         return;
