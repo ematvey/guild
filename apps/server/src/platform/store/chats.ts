@@ -35,6 +35,9 @@ export interface ChatListRow {
   project_id: string | null;
   project_name: string | null;
   project_machine_label: string | null;
+  /** The chat's latest thread event (RFC3339), falling back to created_at
+   *  for a chat with no events — the sidebar's recent-activity sort key. */
+  last_activity_at: string;
 }
 
 const CHAT_ROW_SELECT = `SELECT id, org_id, user_id, title,
@@ -51,11 +54,21 @@ const LIST_SELECT = `SELECT c.id, c.org_id, c.user_id, c.title,
     (c.generating = false AND EXISTS (
       SELECT 1 FROM thread_events e
       WHERE e.chat_id = c.id AND e.type = 'assistant_message'
-        AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq))) AS unread
+        AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq))) AS unread,
+    to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
   FROM chats c
   LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
   LEFT JOIN projects pr ON pr.id = c.project_id
-  LEFT JOIN machines m ON m.machine_id = pr.machine_id`;
+  LEFT JOIN machines m ON m.machine_id = pr.machine_id
+  LEFT JOIN LATERAL (
+    SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
+  ) le ON true`;
+
+/** The sidebar lists sort by recent activity, not creation: a chat's place
+ *  follows its latest thread event (creation is its initial activity), so a
+ *  chat with a fresh turn rises above a newer chat that never got one. */
+const LIST_ORDER = `ORDER BY COALESCE(le.created_at, c.created_at) DESC, c.id DESC`;
 
 function rowToChat(r: Record<string, unknown>): ChatRow {
   return {
@@ -155,7 +168,7 @@ export class ChatStore {
   async listChats(orgId: string, userId: string): Promise<ChatListRow[]> {
     const res = await this.pool.query<Record<string, unknown>>(
       `${LIST_SELECT} WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL
-       ORDER BY c.created_at DESC, c.id DESC`,
+       ${LIST_ORDER}`,
       [orgId, userId],
     );
     return res.rows.map(rowToList);
@@ -166,12 +179,17 @@ export class ChatStore {
       `SELECT c.id, c.org_id, c.user_id, c.title,
               to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
               c.machine_id, c.machine_label, c.generating, c.project_id,
-              pr.name AS project_name, m.label AS project_machine_label, false AS unread
+              pr.name AS project_name, m.label AS project_machine_label, false AS unread,
+              to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
        FROM chats c
        LEFT JOIN projects pr ON pr.id = c.project_id
        LEFT JOIN machines m ON m.machine_id = pr.machine_id
+       LEFT JOIN LATERAL (
+         SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
+       ) le ON true
        WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NOT NULL
-       ORDER BY c.created_at DESC, c.id DESC`,
+       ${LIST_ORDER}`,
       [orgId, userId],
     );
     return res.rows.map(rowToList);
@@ -439,6 +457,7 @@ function rowToList(r: Record<string, unknown>): ChatListRow {
     project_id: (r.project_id as string | null) ?? null,
     project_name: (r.project_name as string | null) ?? null,
     project_machine_label: (r.project_machine_label as string | null) ?? null,
+    last_activity_at: pgTimestampToRfc3339(r.last_activity_at as string),
   };
 }
 

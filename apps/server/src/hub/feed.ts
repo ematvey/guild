@@ -416,6 +416,7 @@ export async function threadListSnapshot(chats: ChatsCtx, pool: PlatformPool, us
     project_id: string | null;
     project_name: string | null;
     project_machine_label: string | null;
+    last_activity_at: string;
   }>(
     `SELECT c.id, c.org_id, c.user_id, c.title,
             to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
@@ -424,13 +425,18 @@ export async function threadListSnapshot(chats: ChatsCtx, pool: PlatformPool, us
             c.generating = false AND EXISTS (
               SELECT 1 FROM thread_events e
               WHERE e.chat_id = c.id AND e.type = 'assistant_message'
-                AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq)) AS unread
+                AND (r.last_read_seq IS NULL OR e.seq > r.last_read_seq)) AS unread,
+            to_char(COALESCE(le.created_at, c.created_at) AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_activity_at
      FROM chats c
      LEFT JOIN chat_reads r ON r.chat_id = c.id AND r.user_id = $2
      LEFT JOIN projects pr ON pr.id = c.project_id
      LEFT JOIN machines m ON m.machine_id = pr.machine_id
+     LEFT JOIN LATERAL (
+       SELECT e.created_at FROM thread_events e WHERE e.chat_id = c.id ORDER BY e.seq DESC LIMIT 1
+     ) le ON true
      WHERE c.org_id = $1 AND c.user_id = $2 AND c.archived_at IS NULL
-     ORDER BY c.created_at DESC, c.id DESC`,
+     ORDER BY COALESCE(le.created_at, c.created_at) DESC, c.id DESC`,
     [user.org_id, user.id],
   );
   return res.rows.map((chat) => {
@@ -448,6 +454,7 @@ export async function threadListSnapshot(chats: ChatsCtx, pool: PlatformPool, us
       created_at: pgTimestampToRfc3339(chat.created_at),
       generating: chat.generating,
       id: chat.id,
+      last_activity_at: pgTimestampToRfc3339(chat.last_activity_at),
       ...(chat.machine_id !== null ? { machine_id: chat.machine_id } : {}),
       ...(label !== null ? { machine_label: label } : {}),
       machine_online: online,

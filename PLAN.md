@@ -11,6 +11,27 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Approval gate survives recovery re-runs; cards stop dying mid-wait (2026-10-15).**
+  The gate is recoverable (pi-durable re-drives suspended tool tasks), but its
+  card re-append was not idempotent: the deterministic request id met a
+  payload that always differs (the judge verdict rides the card, including
+  its wall-clock `ms`), the old `ON CONFLICT … WHERE payload =` guard skipped
+  the row, `appendEvent` threw, and pi-durable settled the call as
+  "Tool call blocked: thread event append returned no row" — while the user
+  still saw the pending card, which then resolved as "aborted before
+  decision". Observed live: three chats' gates re-driven in the same
+  millisecond, five consecutive 5-minute auto-denies as the model retried
+  each denied call. Fixes: `appendEvent` re-appends are first-writer-wins
+  (conflict returns the existing row, never throws); a gate re-run reuses
+  the shown card's judge verdict instead of re-judging; the judge timeout
+  drops 30s → 10s (a stalled judge must not hold the card — it shares the
+  local model pool with the user's own streaming turn); the timeout block
+  text now forbids retrying the call (the old "denied by user: timed out"
+  invited the retry loop). Card delivery itself measured fine: journal row →
+  ws client in ~5ms. Also fixed in passing: the sidebar's latest-activity
+  probe in `feed.ts` used `CROSS JOIN LATERAL`, dropping event-less chats
+  (machine-presence flip never reached the browser for a fresh chat).
+
 - **LLM observability is live: every model + judge call traces into ClickHouse (2026-10-15).**
   Two TS-owned tables (idempotent DDL on the trace sink's first use, TTL-managed):
   `guild.llm_calls` — one row per LLM call with caller/cause/verdict metadata

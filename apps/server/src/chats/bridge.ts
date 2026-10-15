@@ -345,12 +345,24 @@ export class ChatBridge {
         return;
       }
       case "submission": {
+        // Placement (queued → placed): the durable inbox actually handed
+        // the input to a run — the Codex-style queued chip becomes a real
+        // transcript message. The accept-time echo was flagged `queued`
+        // (not yet seen by the model); move it to a fresh seq with the
+        // flag cleared so the desktop renders it at the placement position.
+        if (event.record.status === "placed" && typeof event.record.requestId === "string") {
+          await this.deps.threads.deliverQueuedEvent(state.chatId, event.record.requestId).catch(() => {});
+          return;
+        }
         // Settled-but-unanswered inputs (stop / archive withdrawal): mark
-        // cancelled so no waiting head wedges the chat.
+        // cancelled so no waiting head wedges the chat, and drop the
+        // never-delivered queued echo — a withdrawn input leaves no
+        // transcript trace, exactly like a chip the user trashed.
         if (event.record.status === "unanswered") {
           const commands = await this.deps.turnCommands.byInvocation(invocationOf(Number(event.record.id)));
           for (const command of commands) {
             await this.deps.turnCommands.settleCancelled(command.id, invocationOf(Number(event.record.id)));
+            await this.deps.threads.deleteQueuedEvent(state.chatId, command.id).catch(() => {});
           }
         }
         return;

@@ -31,10 +31,13 @@ export class ThreadStore {
   constructor(private readonly pool: PlatformPool) {}
 
   /** Appends one event: uuid v7 id, `seq` from the BIGSERIAL (global write
-   *  order). `id` supplied = idempotent re-append (retried durable writes),
-   *  same ON CONFLICT semantics as the Rust append_event_with_id. Notifies
-   *  `guild_thread_committed` in the same transaction (the member-socket
-   *  sync channel; the M5 lane's listener consumes it). */
+   *  order). `id` supplied = idempotent re-append: the first version wins
+   *  and a conflicting re-append returns the existing row unchanged. The
+   *  approval gate re-runs recoverably and re-appends its card with a
+   *  fresh judge timestamp in the payload — the re-append must keep the
+   *  shown card, never fail the tool. Notifies `guild_thread_committed`
+   *  in the same transaction (the member-socket sync channel; the M5
+   *  lane's listener consumes it). */
   async appendEvent(chatId: string, event: ThreadEvent, id?: string): Promise<ThreadEventRow> {
     // Postgres jsonb cannot hold U+0000 (tool output can: binary files,
     // /proc/*/environ); every NUL becomes U+FFFD.
@@ -49,7 +52,6 @@ export class ThreadStore {
       const res = await client.query<EventRowDb>(
         `INSERT INTO thread_events (id, chat_id, type, payload) VALUES ($1, $2, $3, $4::jsonb)
          ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
-         WHERE thread_events.chat_id = EXCLUDED.chat_id AND thread_events.payload = EXCLUDED.payload
          RETURNING id, chat_id, seq, payload, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at`,
         [eventId, chatId, eventType, payload],
       );
@@ -66,6 +68,58 @@ export class ThreadStore {
     } finally {
       client.release();
     }
+  }
+
+  /** Delivery of one queued user_message echo (the Codex-style queued-send
+   *  UX): the echo was written at accept time flagged `queued` — not yet
+   *  seen by the model — and this moves it to a fresh seq with the flag
+   *  removed when the durable inbox actually places the input. No-op when
+   *  the row is missing or already delivered. Reserves a new watermark and
+   *  notifies so live views reconcile (the fan-out lane re-delivers the
+   *  moved row; the state lane re-captures the whole log). */
+  async deliverQueuedEvent(chatId: string, id: string): Promise<ThreadEventRow | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const res = await client.query<EventRowDb>(
+        "SELECT id, chat_id, seq, payload, created_at FROM thread_events WHERE id = $1 AND chat_id = $2 FOR UPDATE",
+        [id, chatId],
+      );
+      const row = res.rows[0];
+      if (!row || (row.payload as Record<string, unknown> | null)?.queued !== true) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      const payload = { ...(row.payload as Record<string, unknown>) };
+      delete payload.queued;
+      await client.query("DELETE FROM thread_events WHERE id = $1 AND chat_id = $2", [id, chatId]);
+      const inserted = await client.query<EventRowDb>(
+        "INSERT INTO thread_events (id, chat_id, seq, payload) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3::jsonb) RETURNING id, chat_id, seq, payload, created_at",
+        [id, chatId, JSON.stringify(payload)],
+      );
+      await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
+      await client.query("COMMIT");
+      const moved = inserted.rows[0]!;
+      return toRow(moved);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Withdrawal of one queued echo (user trash / stop / archive): removes
+   *  the never-delivered flagged row; a delivered or absent row is left
+   *  alone. Reserves a watermark and notifies so live views reconcile. */
+  async deleteQueuedEvent(chatId: string, id: string): Promise<void> {
+    const res = await this.pool.query(
+      "DELETE FROM thread_events WHERE id = $1 AND chat_id = $2 AND payload->>'queued' = 'true'",
+      [id, chatId],
+    );
+    if (res.rowCount === 0) return;
+    await this.watermark();
+    await this.pool.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
   }
 
   /** Reserves a watermark in the same order space as the durable rows

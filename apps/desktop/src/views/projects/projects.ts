@@ -8,12 +8,30 @@ import type { ChatSummary, DirEntry, Project } from "../../transport";
 // ---- sidebar grouping ----
 
 export interface SidebarGrouping {
-  /** Stateless (projectless) chats in list order — the Recents list; chats
-   * bound to a project live only under that project's row. */
+  /** Stateless (projectless) chats, most recently active first — the Recents
+   *  list; chats bound to a project live only under that project's row. */
   visible: ChatSummary[];
-  /** Each project's chats in list order — the fold-out under the project
-   * row (Recents does not repeat them). */
+  /** Each project's chats, most recently active first — the fold-out under
+   *  the project row (Recents does not repeat them). */
   chatsByProject: Record<string, ChatSummary[]>;
+}
+
+/** The sidebar's sort key in epoch ms: the chat's latest thread activity
+ *  (the server computes it — the latest thread event, falling back to the
+ *  chat's creation), falling back to created_at for rows without it, and
+ *  to 0 when neither parses (tests' placeholder stamps) — a NaN would make
+ *  the comparator garbage, 0 keeps the stable server order instead. */
+export function chatActivityMs(row: Pick<ChatSummary, "last_activity_at" | "created_at">): number {
+  const t = Date.parse(row.last_activity_at ?? row.created_at);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** Most recently active first; the sort is stable, so equal keys keep the
+ *  server's order (it tiebreaks by id). The server list arrives in this
+ *  order already — the client-side re-sort matters when a live thread-event
+ *  push moves a background chat's activity forward between list refreshes. */
+export function byRecentActivity(a: ChatSummary, b: ChatSummary): number {
+  return chatActivityMs(b) - chatActivityMs(a);
 }
 
 export function sidebarGrouping(chats: ChatSummary[] | null): SidebarGrouping {
@@ -27,10 +45,13 @@ export function sidebarGrouping(chats: ChatSummary[] | null): SidebarGrouping {
     }
     (chatsByProject[chat.project_id] ??= []).push(chat);
   }
+  stateless.sort(byRecentActivity);
+  for (const chats of Object.values(chatsByProject)) chats.sort(byRecentActivity);
   return { visible: stateless, chatsByProject };
 }
 
-/** The project fold-out opens showing this many chats, newest first. */
+/** The project fold-out opens showing this many chats, most recently active
+ *  first. */
 export const PROJECT_PAGE_INITIAL = 5;
 /** Each "Show more" click reveals this many additional chats. */
 export const PROJECT_PAGE_STEP = 20;
@@ -73,11 +94,12 @@ export function outgoingProjectId(picked: PickedProject | null | undefined): str
 
 // ---- the picker dialog's recency ordering ----
 
-/** Projects that have chats, most recently used first (chat list order). */
+/** Projects that have chats, most recently used first (recent-activity
+ *  order — the same key the sidebar folds out by). */
 export function recentProjects(chats: ChatSummary[] | null, projects: Project[]): Project[] {
   const byId = new Map(projects.map((p) => [p.id, p]));
   const seen: Project[] = [];
-  for (const chat of chats ?? []) {
+  for (const chat of [...(chats ?? [])].sort(byRecentActivity)) {
     if (!chat.project_id) continue;
     const p = byId.get(chat.project_id);
     if (p && !seen.includes(p)) seen.push(p);

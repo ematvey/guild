@@ -150,7 +150,13 @@ export function turnErrorEvent(message: string): ThreadEvent {
 export function threadEventWire(event: ThreadEvent): string {
   switch (event.type) {
     case "user_message":
-      return obj({ type: "user_message", content: event.content, attachments: event.attachments ?? [] });
+      return obj({
+        type: "user_message",
+        content: event.content,
+        attachments: event.attachments ?? [],
+        ...(event.queued ? { queued: true } : {}),
+        ...(event.mode ? { mode: event.mode } : {}),
+      });
     case "system_message":
       return obj({ type: "system_message", content: event.content });
     case "assistant_message":
@@ -267,6 +273,8 @@ export function normalizeThreadEvent(payload: Record<string, unknown>): ThreadEv
         type: "user_message",
         content: String(payload["content"] ?? ""),
         attachments: Array.isArray(payload["attachments"]) ? (payload["attachments"] as MessageAttachment[]) : [],
+        ...(payload["queued"] === true ? { queued: true } : {}),
+        ...(payload["mode"] === "steer" || payload["mode"] === "queue" ? { mode: payload["mode"] as "steer" | "queue" } : {}),
       };
     case "system_message":
       return { type: "system_message", content: String(payload["content"] ?? "") };

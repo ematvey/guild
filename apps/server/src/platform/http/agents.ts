@@ -186,7 +186,7 @@ async function submitSessionTurn(
         attachment_ids: [],
         server_workspace: body.server_workspace,
       },
-      { content: body.message, attachments: [] },
+      { content: body.message, attachments: [], queued: priorGenerating },
     );
     const submissionId = await chats.runtime.submitTurn(body.chat_id, user.org_id, {
       orgId: user.org_id,
@@ -214,5 +214,4 @@ async function submitSessionTurn(
     }),
   );
 }
-
 
