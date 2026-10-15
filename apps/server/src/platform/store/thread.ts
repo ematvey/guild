@@ -14,6 +14,7 @@ interface EventRowDb {
   id: string;
   chat_id: string;
   seq: number;
+  type: string;
   payload: unknown;
   created_at: string;
 }
@@ -82,7 +83,7 @@ export class ThreadStore {
     try {
       await client.query("BEGIN");
       const res = await client.query<EventRowDb>(
-        "SELECT id, chat_id, seq, payload, created_at FROM thread_events WHERE id = $1 AND chat_id = $2 FOR UPDATE",
+        "SELECT id, chat_id, seq, type, payload, created_at FROM thread_events WHERE id = $1 AND chat_id = $2 FOR UPDATE",
         [id, chatId],
       );
       const row = res.rows[0];
@@ -93,9 +94,12 @@ export class ThreadStore {
       const payload = { ...(row.payload as Record<string, unknown>) };
       delete payload.queued;
       await client.query("DELETE FROM thread_events WHERE id = $1 AND chat_id = $2", [id, chatId]);
+      // The move keeps the row's identity and content: type and created_at
+      // ride along (type is NOT NULL — omitting it fails the insert), only
+      // the seq (position) and the cleared flag change.
       const inserted = await client.query<EventRowDb>(
-        "INSERT INTO thread_events (id, chat_id, seq, payload) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3::jsonb) RETURNING id, chat_id, seq, payload, created_at",
-        [id, chatId, JSON.stringify(payload)],
+        "INSERT INTO thread_events (id, chat_id, seq, type, payload, created_at) VALUES ($1, $2, nextval(pg_get_serial_sequence('thread_events', 'seq')), $3, $4::jsonb, $5) RETURNING id, chat_id, seq, type, payload, created_at",
+        [id, chatId, row.type, JSON.stringify(payload), row.created_at],
       );
       await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
       await client.query("COMMIT");

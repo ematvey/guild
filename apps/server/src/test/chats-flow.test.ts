@@ -10,6 +10,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // The turn flow waits on async bridge/compaction writes: generous timeouts.
 const TEST_TIMEOUT = 30_000;
+
+const sseDelta = (content: string): string =>
+  `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+const sseDone = (): string =>
+  'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+  'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
+  "data: [DONE]\n\n";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 import type { PlatformContext } from "../platform/context.js";
 
@@ -450,6 +457,88 @@ describe("gateway/chat turn flow", () => {
     controller.abort();
     void pump;
     void pumpError;
+  }, TEST_TIMEOUT);
+
+  it("a queued send's echo delivers even when the run closes within one watch batch", async () => {
+    const created = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/chats",
+      headers: auth(stack.memberToken),
+      payload: { title: "queue delivery chat" },
+    });
+    const chat = JSON.parse(created.body) as { id: string };
+    // First response slow (the chat is generating when the queued send
+    // arrives), second response fast (the queued turn's placement→done
+    // window closes inside one watch batch — the regression case).
+    stack.mock.setResponses([
+      {
+        chunks: [
+          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n',
+          sseDelta("slow "),
+          sseDelta("turn "),
+          sseDelta("one "),
+          sseDelta("two "),
+          sseDelta("three"),
+          sseDone(),
+        ],
+        chunkDelayMs: 300,
+      },
+      {
+        body:
+          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
+          sseDelta("fast queued answer") +
+          sseDone(),
+      },
+    ]);
+    const first = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/gateway/chat",
+      headers: auth(stack.memberToken),
+      payload: { chat_id: chat.id, model: "GLM-Test-Model", messages: [{ role: "user", content: "slow one" }] },
+    });
+    expect(first.statusCode).toBe(200);
+    await waitFor(async () => stack.mock.requests.length >= 1);
+    const queued = await stack.env.app.inject({
+      method: "POST",
+      url: "/api/v1/gateway/chat",
+      headers: auth(stack.memberToken),
+      payload: {
+        chat_id: chat.id,
+        model: "GLM-Test-Model",
+        send_mode: "queue",
+        messages: [{ role: "user", content: "queued one" }],
+      },
+    });
+    expect(queued.statusCode).toBe(200);
+    const ack = JSON.parse(queued.body) as { user_message_id: string };
+    // Both turns settle; the queued echo's `queued` flag must clear — the
+    // bridge saw only the terminal submission status, and delivery must
+    // still happen (a stuck flagged row renders as a forever-queued chip).
+    await waitFor(async () => {
+      const cmd = await stack.env.db.query<{ status: string }>(
+        "SELECT status FROM turn_commands WHERE id = $1",
+        [ack.user_message_id],
+      );
+      return cmd.rows[0]?.status === "completed";
+    }, 15_000);
+    await waitFor(async () => {
+      const row = await stack.env.db.query<{ payload: Record<string, unknown> }>(
+        "SELECT payload FROM thread_events WHERE id = $1",
+        [ack.user_message_id],
+      );
+      return row.rows[0] !== undefined && row.rows[0]!.payload.queued !== true;
+    }, 15_000);
+    // Restore the default script for the remaining tests.
+    stack.mock.setResponses([
+      {
+        body:
+          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
+          'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n' +
+          'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+          'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
+          "data: [DONE]\n\n",
+      },
+    ]);
   }, TEST_TIMEOUT);
 
   it("stop answers stopped:true and compacts answer ok", async () => {
