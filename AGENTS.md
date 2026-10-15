@@ -32,6 +32,14 @@ you.
   nothing. Every task ends with the compose rebuild recipe from
   `deploy-nuances.md` §2 and a live-bundle check (§2 end). Run the rebuild
   detached — the cargo release build inside Docker is the long pole.
+- **Desktop-affecting changes always get a desktop release, same task.**
+  Anything that lands under `apps/desktop/` (or anything else baked into
+  the client) must end with a client release cut from `develop` and
+  published to the dev updater manifest (`scripts/release-clients.sh`,
+  `docs/clients.md`) — not just the compose deploy. A web-only deploy
+  leaves every installed client on the old bundle, which reads as
+  "my fix didn't work". The flow is: commit → compose rebuild → client
+  release → verify `latest.json` serves the new version.
 - **Sessions run this repo concurrently.** Check `git log` / `git status`
   for fresh commits before and after editing; pull/rebase rather than
   clobber.
