@@ -11,6 +11,24 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **`always_allow` tool curation — the org grants a tool past the approval gate (2026-10-15).**
+  The per-tool admin curation on an integration row gains a third approval
+  value next to `default` and `always_ask`: `always_allow` classifies the
+  tool as `skip` in the gate — the call flows with no approval card
+  regardless of the chat's approval mode or the chat owner's account
+  policy, the mirror of `always_ask` forcing the card over them (org
+  governance wins in both directions). Read-class tools (web_search,
+  web_fetch, scrape/search/map) already flow by default — this is for
+  write/admin-class tools the org deems non-sensitive, and it makes the
+  intent explicit instead of relying on the class floor. Admin API
+  validates and echoes the value; the admin UI's Tools table gains the
+  "Always allow" option; the script API needs no change (only always_ask
+  is refused there, as non-interactive). SRS-46 updated. Tests: m6 covers
+  the admin curate/read-back round trip, m8-chat proves a write-class
+  always_allow tool (`slack_post_message`) executes with no card where the
+  default curation would have gone to the judge/card. Full suite: 439
+  passing, failures identical to base (pre-existing timing flakes + the
+  stale golden). Commit `6612a4b`.
 - **Chat view modes — casual/technical, header kebab, hover timestamps (2026-10-15).**
   Designed by grill (doc: `docs/plans/2026-10-15-chat-view-modes-design.md`). The
   thread header gains a kebab menu: Rename (popup dialog), Archive/Unarchive
