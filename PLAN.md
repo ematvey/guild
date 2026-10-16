@@ -26,7 +26,12 @@ not kept here — it lives in git.
   `docs/plans/2026-10-17-pi-durable-contracts.md`. Validation: 507 broad checks
   pass (40 opt-in sandbox skips; three baseline-failing files independently
   reproduced), plus 36 final recovery checks; server typecheck passes.
-  Dev deployment and updater verification follow the implementation commit.
+  Dev compose serves 0.5.71 with Pi Durable 1.3.0; the live bundle matches
+  the container. All six signed desktop artifacts are published to dev, and
+  local/public updater manifests advertise four platforms at 0.5.71. A public
+  installer download matches its hash/signature. A live codemode/history turn
+  completed with `PI_DURABLE_130_OK`; command and submission settled and all
+  projection cursors caught up. Implementation: `284c5a7`.
 
 - **Every queued input has a runnable owner; clocks update locally (2026-10-17,
   0.5.70).** pi-durable documents that failed runs leave queued inputs for the

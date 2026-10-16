@@ -105,6 +105,29 @@ Long-run evidence is in the systemd journals for
 
 ## Delivery
 
-Dev compose rebuild, bundle check, signed desktop release, updater
-verification, and a live turn are completed after the implementation commit.
-Their terminal results are recorded in PLAN.md when verified.
+Implementation commit: `284c5a7` on `develop`, product version **0.5.71**.
+
+- Dev compose rebuild completed successfully; `/api/v1/health` reports
+  0.5.71 and the running image contains Pi Durable 1.3.0.
+- The HTTP-served `index-BWjK-s0s.js` matches the rebuilt container byte for
+  byte: SHA-256 `6bff96843520e7fa67ed0ec4ec53e0c452175ac170911c10fe20dd7e4f7938de`.
+  Its hash is unchanged because this release changes server behavior and
+  client version metadata without changing frontend logic.
+- The desktop release completed successfully: six signed artifacts
+  (Windows installer, Linux AppImage, two macOS DMGs, two macOS updater
+  archives). All artifact metadata signatures verify. Both local and public
+  updater manifests advertise **0.5.71** for all four platforms.
+- The Windows installer downloaded through the public updater URL matches
+  its recorded SHA-256 and Ed25519 signature:
+  `d08fcc407d0bfdb045435b3828c30e3bb99be9785dd2b8eff836b1045e820219`.
+- A real GLM-5.3-Flash turn used codemode to call `thread_history`, returned
+  `PI_DURABLE_130_OK`, and cleared generating. Chat:
+  `01a146a8-9152-786b-8997-3ded9dcb9bdc`. Its command is completed, its
+  submission is done, and its cursor reaches durable entry 16220.
+- After startup backfill, **zero** dev chats have unprojected entries. A
+  read-only check of 5,738 mappings found **zero duplicate pairs**.
+- Production was not deployed or modified. Desktop artifacts were built and
+  published; native GUI execution on Windows/macOS was not performed.
+
+Delivery journals: `bigjob-20261016-213900-guild-dev-deploy` and
+`bigjob-20261016-213920-guild-dev-clients`, both exit status 0.
