@@ -1,5 +1,9 @@
+import { ConversationRecovery } from "../chats/recovery.js";
+import { pendingWorkQuery } from "../platform/store/work.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pino from "pino";
+import pg from "pg";
+import { ConversationDirectory } from "../harness/conversation-directory.js";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { createModels, Type } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
@@ -66,6 +70,79 @@ function bridge(chatId: string, conversation: Conversation, store = threads) {
 }
 
 describe("durable integration contracts", () => {
+  it("creates distinct chats without exhausting the shared connection pool", async () => {
+    const pool = new pg.Pool({ connectionString: stack.env.config.databaseUrl, max: 2, connectionTimeoutMillis: 1500 });
+    const h = await Harness.open(await PostgresDurableStorage.open(new SharedPoolDatabase(pool)), { registry: createRegistry(), models: createModels() }, context);
+    try {
+      const directory = new ConversationDirectory(pool);
+      const ids = await Promise.all(Array.from({ length: 4 }, () => chat()));
+      const conversations = await Promise.all(ids.map((id) => directory.ensure(id, async () =>
+        (await h.createConversation({ ownership: { kind: "ownerless" } }, context)).id,
+      )));
+      expect(new Set(conversations).size).toBe(4);
+    } finally {
+      await h.close(context);
+      await pool.end();
+    }
+  });
+
+  it("coalesces first-touch creation for concurrent callers", async () => {
+    const id = await chat();
+    const runtime = stack.env.app.platform.runtime;
+    const conversations = await Promise.all(
+      Array.from({ length: 8 }, () => runtime.conversationForChat(id, stack.orgId)),
+    );
+    expect(new Set(conversations.map((c) => c.id)).size).toBe(1);
+    expect(
+      (await stack.env.db.query("SELECT conversation_id FROM chat_conversations WHERE chat_id=$1", [id])).rows,
+    ).toHaveLength(1);
+  });
+
+  it("reconciles a failed generation outcome after an error-event write fails", async () => {
+    const h = await open();
+    const id = await chat();
+    try {
+      const c = await h.createConversation({ ownership: { kind: "ownerless" } }, context);
+      await stack.env.db.query("INSERT INTO chat_conversations(chat_id,conversation_id) VALUES($1,$2)", [id, c.id]);
+      const submission = await c.submit({ type: "input", content: "model not configured" }, context);
+      const settled = await submission.wait(context);
+      expect(settled.status).toBe("unanswered");
+      await h.waitForIdle(context);
+      const recovery = new ConversationRecovery(stack.env.db);
+      const b = bridge(id, c);
+      const records = await recovery.submissions(id, c.id);
+      await b.recover(c, records);
+      await recovery.acknowledge(id, records);
+      expect(await pendingWorkQuery(stack.env.db)(id)).toBe(true);
+      await expect(
+        recovery.failures(id, c.id, async () => {
+          throw new Error("event store unavailable");
+        }),
+      ).rejects.toThrow("event store unavailable");
+      await recovery.failures(id, c.id, (taskId, message) => b.persistTaskFailure(String(c.id), taskId, message));
+      await recovery.failures(id, c.id, (taskId, message) => b.persistTaskFailure(String(c.id), taskId, message));
+      expect((await threads.listEvents(stack.orgId, id)).filter((row) => row.event.type === "turn_error")).toHaveLength(
+        1,
+      );
+      expect(await pendingWorkQuery(stack.env.db)(id)).toBe(false);
+    } finally {
+      await h.close(context);
+    }
+  });
+
+  it("reclaims only acknowledged commit receipts and records write timing", async () => {
+    const storage = await PostgresDurableStorage.open(new SharedPoolDatabase(stack.env.db));
+    try {
+      for (let index = 0; index < 80; index++) await storage.commit([], context);
+      await until(async () => storage.diagnostics().receiptDeletes >= 64);
+      expect(storage.diagnostics().commits).toBe(80);
+      expect(storage.diagnostics().lockWaitMs).toBeGreaterThan(0);
+    } finally {
+      await storage.close(context);
+    }
+    expect(storage.diagnostics().acknowledgedReceipts).toBe(0);
+  });
+
   it("backfills cut history, adopts legacy events, and survives a cursor-write failure without duplicates", async () => {
     const h = await open();
     const c = await h.createConversation({ ownership: { kind: "ownerless" } }, context);
@@ -339,7 +416,7 @@ describe("durable integration contracts", () => {
       let agent = await c.agent(context);
       expect(agent.tools.map((t) => t.name)).toEqual(["codemode"]);
       expect(agent.callable.map((t) => t.name)).toEqual(
-        expect.arrayContaining(["mcp_fixture_echo", "thread_history", "thread_search"]),
+        expect.arrayContaining(["mcp7_fixture_echo", "thread_history", "thread_search"]),
       );
       (user as unknown as { resolveSnapshot: () => Promise<unknown> }).resolveSnapshot = async () => ({
         ...base,
@@ -352,7 +429,7 @@ describe("durable integration contracts", () => {
         }
       ).provisionTurnTools(c, id, stack.orgId);
       agent = await c.agent(context);
-      expect(agent.callable.map((t) => t.name)).not.toContain("mcp_fixture_echo");
+      expect(agent.callable.map((t) => t.name)).not.toContain("mcp7_fixture_echo");
       expect(agent.callable.map((t) => t.name)).toContain("thread_history");
     } finally {
       (user as unknown as { resolveSnapshot: unknown }).resolveSnapshot = original;

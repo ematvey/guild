@@ -78,3 +78,10 @@ export async function applyPlatformMigrations(
     client.release();
   }
 }
+
+/** Workers verify the schema; only the server applies migrations. */
+export async function assertPlatformSchema(pool: PlatformPool): Promise<void> {
+  const latest = readdirSync(platformMigrationsDir()).filter(file => file.endsWith(".sql")).sort().at(-1)?.replace(/\.sql$/, "");
+  const result = await pool.query<{present:boolean}>("SELECT EXISTS(SELECT 1 FROM schema_history WHERE name=$1) AS present",[latest]);
+  if (!result.rows[0]?.present) throw new Error("platform schema requires server migration");
+}

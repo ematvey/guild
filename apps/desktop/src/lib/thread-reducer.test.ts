@@ -281,6 +281,31 @@ describe("applyThreadEvents: live buffer supersession", () => {
   });
 });
 
+describe("queued steering mode updates", () => {
+  it("keeps one queued chip through promotion, then delivers that same message", () => {
+    const reducer = createThreadReducer();
+    reducer.open("chat");
+    const queued: ThreadEventRow = {
+      id: "same-message", seq: 1, created_at: "t",
+      event: { type: "user_message", content: "correction", queued: true, mode: "queue" },
+    };
+    reducer.applyState(state("chat", 1, [queued]));
+    const promoted: ThreadEventRow = {
+      ...queued, seq: 2,
+      event: { type: "user_message", content: "correction", queued: true, mode: "steer" },
+    };
+    const update = reducer.applyThreadEvents("chat", 2, [promoted]);
+    expect(update.blocks.filter(block => block.kind === "user")).toHaveLength(1);
+    expect(update.blocks[0]).toMatchObject({ eventId: "same-message", queued: true, queuedMode: "steer" });
+    const delivered = reducer.applyThreadEvents("chat", 3, [{
+      ...queued, seq: 3, event: { type: "user_message", content: "correction" },
+    }]);
+    expect(delivered.blocks.filter(block => block.kind === "user")).toHaveLength(1);
+    expect(delivered.blocks[0]).toMatchObject({ eventId: "same-message" });
+    expect(delivered.blocks[0]!.queued).toBeUndefined();
+  });
+});
+
 describe("applyThreadEvents: incremental journal fan-out", () => {
   it("applies fresh rows live; a later sync with the same rows dedupes", () => {
     const r = createThreadReducer(); r.open("chat");

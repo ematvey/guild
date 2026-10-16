@@ -16,21 +16,64 @@ function fakeDeps(commands: { id: string; position: number | null }[]): BridgeDe
     rows,
     threads: {
       latestTurn: async () => 0,
-      appendProjectedEntry: async (chatId: string, _entryId: number, event: ThreadEventRow["event"]) => {
-        const row: ThreadEventRow = { id: uuidv7(), chat_id: chatId, seq: (seq += 1), event, created_at: "2026-10-04T00:00:00.000000Z" };
+      appendProjectedEntry: async ({ chatId, event }: { chatId: string; event: ThreadEventRow["event"] }) => {
+        const row: ThreadEventRow = {
+          id: uuidv7(),
+          chat_id: chatId,
+          seq: (seq += 1),
+          event,
+          created_at: "2026-10-04T00:00:00.000000Z",
+        };
+        rows.push(row);
+        return row;
+      },
+      appendTaskFailure: async (chatId: string, _taskId: number, event: ThreadEventRow["event"]) => {
+        const row: ThreadEventRow = {
+          id: uuidv7(),
+          chat_id: chatId,
+          seq: ++seq,
+          event,
+          created_at: "2026-10-04T00:00:00.000000Z",
+        };
         rows.push(row);
         return row;
       },
       appendEvent: async (chatId: string, event: ThreadEventRow["event"]) => {
-        const row: ThreadEventRow = { id: uuidv7(), chat_id: chatId, seq: (seq += 1), event, created_at: "2026-10-04T00:00:00.000000Z" };
+        const row: ThreadEventRow = {
+          id: uuidv7(),
+          chat_id: chatId,
+          seq: (seq += 1),
+          event,
+          created_at: "2026-10-04T00:00:00.000000Z",
+        };
         rows.push(row);
         return row;
       },
     } as never,
     chats: { setGenerating: async () => {} } as never,
     turnCommands: {
+      forSubmission: async () =>
+        commands.map((c) => ({
+          ...c,
+          org_id: "o",
+          user_id: "u",
+          chat_id: "c",
+          request: {},
+          payload: {},
+          status: "submitted",
+          invocation_id: null,
+        })) as never,
       byInvocation: async () =>
-        commands.map((c) => ({ ...c, org_id: "o", user_id: "u", chat_id: "c", request: {}, payload: {}, status: "submitted", invocation_id: null })) as never,
+        commands.map((c) => ({
+          ...c,
+          org_id: "o",
+          user_id: "u",
+          chat_id: "c",
+          request: {},
+          payload: {},
+          status: "submitted",
+          invocation_id: null,
+        })) as never,
       begin: async () => true,
       finish: async () => {},
     } as never,
@@ -57,7 +100,11 @@ function sink(): GenerationStreamSink & { record: SinkRecord } {
   };
 }
 
-function assistantEntry(text: string, stopReason: string, usage: { input: number; output: number; total: number }): unknown {
+function assistantEntry(
+  text: string,
+  stopReason: string,
+  usage: { input: number; output: number; total: number },
+): unknown {
   return {
     id: 1,
     kind: "pi.assistant",
@@ -110,11 +157,24 @@ describe("bridge generation stream", () => {
         entry: {
           id: 2,
           kind: "pi.tool-result",
-          model: [{ role: "toolResult", toolCallId: "call-1", toolName: "bash", content: [{ type: "text", text: "ok" }], isError: false }],
+          model: [
+            {
+              role: "toolResult",
+              toolCallId: "call-1",
+              toolName: "bash",
+              content: [{ type: "text", text: "ok" }],
+              isError: false,
+            },
+          ],
         } as never,
       } as never,
     ]);
-    await bridge.handle("conv-1", [{ type: "message_end", entry: assistantEntry("partial", "toolUse", { input: 3, output: 2, total: 0.000014 }) } as never]);
+    await bridge.handle("conv-1", [
+      {
+        type: "message_end",
+        entry: assistantEntry("partial", "toolUse", { input: 3, output: 2, total: 0.000014 }),
+      } as never,
+    ]);
     await bridge.handle("conv-1", [{ type: "run_end", inputs: [1n] } as never]);
 
     const events = out.record.events.map(([, e]) => e);
@@ -202,8 +262,18 @@ describe("bridge generation stream", () => {
     await bridge2.handle("conv-2", [{ type: "run_start", inputs: [1n] } as never]);
     await bridge2.handle("conv-2", [
       // pi always emits message_start before message_end (streamed or not).
-      { type: "message_start", message: { role: "assistant", content: [{ type: "text", text: "stopped mid-sentence" }], model: "GLM-Test-Model" } } as never,
-      { type: "message_end", entry: assistantEntry("stopped mid-sentence", "aborted", { input: 0, output: 0, total: 0 }) } as never,
+      {
+        type: "message_start",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "stopped mid-sentence" }],
+          model: "GLM-Test-Model",
+        },
+      } as never,
+      {
+        type: "message_end",
+        entry: assistantEntry("stopped mid-sentence", "aborted", { input: 0, output: 0, total: 0 }),
+      } as never,
     ]);
     await bridge2.handle("conv-2", [{ type: "run_end", inputs: [1n] } as never]);
     const events2 = out2.record.events.map(([, e]) => e);
@@ -254,13 +324,13 @@ describe("bridge generation stream", () => {
   });
 
   it("renders the stream events byte-exactly (ryu floats, declaration order)", () => {
-    expect(streamEventWire({ type: "delta", content: "he\"llo" })).toBe('{"type":"delta","content":"he\\"llo"}');
+    expect(streamEventWire({ type: "delta", content: 'he"llo' })).toBe('{"type":"delta","content":"he\\"llo"}');
     expect(streamEventWire({ type: "done", message_id: "abc", cost_usd: 0, tokens_in: 3, tokens_out: 2 })).toBe(
       '{"type":"done","message_id":"abc","cost_usd":0.0,"tokens_in":3,"tokens_out":2}',
     );
-    expect(streamEventWire({ type: "tool_started", call_id: "c", name: "bash", arguments: "{}", executor: "server" })).toBe(
-      '{"type":"tool_started","call_id":"c","name":"bash","arguments":"{}","executor":"server"}',
-    );
+    expect(
+      streamEventWire({ type: "tool_started", call_id: "c", name: "bash", arguments: "{}", executor: "server" }),
+    ).toBe('{"type":"tool_started","call_id":"c","name":"bash","arguments":"{}","executor":"server"}');
     expect(streamEventWire({ type: "error", code: "provider", message: "x" })).toBe(
       '{"type":"error","code":"provider","message":"x"}',
     );

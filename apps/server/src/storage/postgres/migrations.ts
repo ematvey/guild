@@ -129,6 +129,14 @@ export const DURABLE_POSTGRES_MIGRATIONS = [
       )`,
     ],
   },
+  {
+    version: 5,
+    statements: [
+      `CREATE INDEX tasks_generation_failures ON tasks(conversation_id,id)
+        WHERE kind='"pi.generation"' AND status='terminal'
+          AND record::jsonb->'state'->'outcome'->>'status' IN ('failed','faulted','orphaned')`,
+    ],
+  },
 ];
 
 export const CURRENT_POSTGRES_SCHEMA_VERSION = DURABLE_POSTGRES_MIGRATIONS.at(-1)?.version ?? 0;

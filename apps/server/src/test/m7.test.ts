@@ -89,6 +89,11 @@ beforeAll(async () => {
 
   // Minimal fake MCP server (streamable HTTP): initialize + tools/list.
   mcpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+    if (req.method !== "POST") {
+      res.writeHead(req.method === "DELETE" ? 200 : 405);
+      res.end();
+      return;
+    }
     let body = "";
     req.on("data", (c: Buffer) => (body += c));
     req.on("end", () => {

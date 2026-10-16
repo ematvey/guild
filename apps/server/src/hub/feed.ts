@@ -250,7 +250,7 @@ export class FeedForwarder implements GenerationStreamSink {
     // async owner lookup + watermark ride the per-chat chain.
     this.enqueue(chatId, async () => {
       const chat = await this.ensureChat(chatId, false);
-      if (chat === null || this.generations.get(chatId) !== generationId) return;
+      if (chat === null) return;
       const sinks = this.ctx.hub.sinksOfUser(chat.userId);
       if (sinks.length === 0) return;
       let seq: number;
@@ -301,7 +301,11 @@ export class FeedForwarder implements GenerationStreamSink {
   }
 
   close(chatId: string): void {
-    this.generations.delete(chatId);
+    const generationId=this.generations.get(chatId);
+    this.enqueue(chatId,async()=>{
+      if(this.generations.get(chatId)===generationId) this.generations.delete(chatId);
+      this.dirtyChats.add(chatId);
+    });
   }
 
   /** Serializes one chat's async sends (order preserved, failures skipped). */

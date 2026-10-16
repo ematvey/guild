@@ -1,8 +1,8 @@
+import { ApiError } from "../platform/errors.js";
 // The worker supervisor: the main server's one forker. A forked child owns
 // one chat's conversation (its scoped harness, bridge, codemode sandbox);
-// the supervisor routes admission + control over IPC. Workers are not
-// idle-reaped in this milestone — they run until the server closes or die
-// and get respawned while their journal slice still has pending work.
+// the supervisor routes admission + control over IPC. Workers are
+// reaped after idle work completes; crashed owners resume from the journal.
 // Distributed placement later replaces fork() behind the same seam.
 
 import { fork } from "node:child_process";
@@ -32,11 +32,16 @@ interface Handle {
   /** Requests sent before the ready handshake resolved. */
   readonly queued: WorkerRequest[];
   readonly dispatches: Map<number, AbortController>;
-  readonly waiters: Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>;
-  respawns: number;
+  readonly waiters: Map<
+    number,
+    { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+  >;
+  ready: Promise<void>;
+  lastUsed: number;
+  retiring: boolean;
   resolveReady: () => void;
   rejectReady: (error: Error) => void;
-  readySettled: boolean;
+  readyState: "starting" | "ready" | "failed";
 }
 
 /** Bun runs TypeScript natively and the production server runs under bun;
@@ -93,6 +98,51 @@ export class ForkSupervisor {
   private readonly handles = new Map<string, Handle>();
   private heartbeatSweeper: NodeJS.Timeout | undefined;
   private closed = false;
+  private readonly spawning = new Map<string, Promise<Handle>>();
+  private readonly recovering = new Map<string, Promise<void>>();
+  private readonly attempts = new Map<string, number>();
+  private readonly recoveryAbort = new AbortController();
+  private launchQueue: Promise<void> = Promise.resolve();
+  private bootRecovery?: Promise<void>;
+  private readonly maxWorkers = Math.max(1, Number(process.env.GUILD_WORKER_LIMIT) || 16);
+  private readonly idleMs = Math.max(1, Number(process.env.GUILD_WORKER_IDLE_MS) || 300_000);
+
+  private async pause(ms: number): Promise<void> {
+    if (this.closed) return;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.recoveryAbort.signal.removeEventListener("abort", done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.recoveryAbort.signal.addEventListener("abort", done, { once: true });
+    });
+  }
+
+  private retire(handle: Handle): void {
+    handle.retiring = true;
+    this.attempts.delete(handle.chatId);
+    handle.child.kill("SIGTERM");
+    const timer = setTimeout(() => {
+      if (handle.alive) handle.child.kill("SIGKILL");
+    }, 5000);
+    timer.unref();
+    handle.child.once("exit", () => clearTimeout(timer));
+  }
+
+  private async retireIdle(force = false): Promise<boolean> {
+    for (const handle of this.handles.values()) {
+      if (handle.retiring || handle.readyState !== "ready" || handle.waiters.size || handle.dispatches.size) continue;
+      if (!force && Date.now() - handle.lastUsed < this.idleMs) continue;
+      const pending = await this.hasPendingWork(handle.chatId).catch(() => true);
+      if (pending || handle.waiters.size || handle.dispatches.size) continue;
+      // Removal waits for exit, preserving the single-worker invariant.
+      this.retire(handle);
+      return true;
+    }
+    return false;
+  }
 
   constructor(
     private readonly config: Config,
@@ -103,11 +153,13 @@ export class ForkSupervisor {
     /** Machine-tool dispatch on the server's hub (workers proxy their
      *  env calls here; undefined only in degenerate test stacks). */
     private readonly dispatchMachine?: (call: MachineDispatchCall, signal?: AbortSignal) => Promise<MachineToolOutcome>,
+    private readonly options: { spawn?: typeof fork; readyTimeoutMs?: number; respawnDelays?: readonly number[] } = {},
   ) {}
 
   private startHeartbeatSweeper(): void {
     if (this.heartbeatSweeper) return;
     this.heartbeatSweeper = setInterval(() => {
+      void this.retireIdle().catch((error) => this.log.warn({ err: error }, "idle worker retirement failed"));
       for (const handle of this.handles.values()) {
         if (Date.now() - handle.lastBeat > HEARTBEAT_STALE_MS) {
           this.log.warn({ chatId: handle.chatId }, "worker heartbeat stale; killing for respawn");
@@ -122,13 +174,47 @@ export class ForkSupervisor {
    *  before the ready handshake queues and flushes on ready. */
   private async ensureWorker(chatId: string): Promise<Handle> {
     const existing = this.handles.get(chatId);
-    if (existing && existing.alive) return existing;
-    if (this.closed) throw new Error("supervisor is closed");
+    if (existing && existing.alive && !existing.retiring) {
+      await existing.ready;
+      existing.lastUsed = Date.now();
+      return existing;
+    }
+    const pending = this.spawning.get(chatId);
+    if (pending) return pending;
+    const operation = (async () => {
+      let release!: () => void;
+      const previous = this.launchQueue;
+      this.launchQueue = new Promise((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      let handle: Handle;
+      try {
+        const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+        while (!this.closed && (this.handles.size >= Math.max(1, this.maxWorkers) || this.handles.has(chatId))) {
+          await this.retireIdle(true);
+          if (Date.now() > deadline) throw new Error("worker capacity unavailable");
+          await this.pause(100);
+        }
+        if (this.closed) throw new Error("supervisor is closed");
+        handle = this.spawnWorker(chatId);
+      } finally {
+        release();
+      }
+      await handle.ready;
+      return handle;
+    })();
+    this.spawning.set(chatId, operation);
+    void operation.finally(() => this.spawning.delete(chatId)).catch(() => {});
+    return operation;
+  }
+
+  private spawnWorker(chatId: string): Handle {
     this.startHeartbeatSweeper();
 
     const handle: Handle = {
       chatId,
-      child: fork(WORKER_ENTRY, [], {
+      child: (this.options.spawn ?? fork)(WORKER_ENTRY, [], {
         execPath: workerExecPath(),
         env: workerEnv(this.config, chatId) as NodeJS.ProcessEnv,
         stdio: ["ignore", "inherit", "inherit", "ipc"],
@@ -140,31 +226,35 @@ export class ForkSupervisor {
       queued: [],
       waiters: new Map(),
       dispatches: new Map(),
-      respawns: 0,
+      ready: Promise.resolve(),
+      lastUsed: Date.now(),
+      retiring: false,
       resolveReady: () => {},
       rejectReady: () => {},
-      readySettled: false,
+      readyState: "starting",
     };
     const ready = new Promise<void>((resolve, reject) => {
       handle.resolveReady = () => {
-        if (!handle.readySettled) {
-          handle.readySettled = true;
+        if (handle.readyState === "starting") {
+          handle.readyState = "ready";
           resolve();
         }
       };
       handle.rejectReady = (error) => {
-        if (!handle.readySettled) {
-          handle.readySettled = true;
+        if (handle.readyState === "starting") {
+          handle.readyState = "failed";
           reject(error);
         }
       };
     });
+    handle.ready = ready;
     this.handles.set(chatId, handle);
 
-    const readyTimer = setTimeout(
-      () => handle.rejectReady(new Error("worker did not become ready in time")),
-      READY_TIMEOUT_MS,
-    );
+    const readyTimer = setTimeout(() => {
+      if (handle.readyState !== "starting") return;
+      handle.rejectReady(new Error("worker did not become ready in time"));
+      handle.child.kill("SIGKILL");
+    }, this.options.readyTimeoutMs ?? READY_TIMEOUT_MS);
     readyTimer.unref?.();
     void ready.catch(() => {});
 
@@ -183,10 +273,9 @@ export class ForkSupervisor {
         waiter.reject(new Error("worker exited with a request in flight"));
       }
       handle.waiters.clear();
-      void this.onWorkerDeath(chatId, handle);
+      this.recover(chatId, handle);
     });
 
-    await ready;
     return handle;
   }
 
@@ -194,9 +283,11 @@ export class ForkSupervisor {
     const message = raw as WorkerMessage;
     if (!message || typeof message !== "object" || !("t" in message)) return;
     if (message.t === "ready") {
+      if (handle.readyState !== "starting") return;
       handle.lastBeat = Date.now();
       const queued = handle.queued.splice(0);
       handle.resolveReady();
+      handle.lastUsed = Date.now();
       for (const request of queued) this.send(handle, request);
       return;
     }
@@ -243,29 +334,54 @@ export class ForkSupervisor {
       if (!waiter) return;
       handle.waiters.delete(message.ref);
       clearTimeout(waiter.timer);
+      handle.lastUsed = Date.now();
       if (message.ok) waiter.resolve(message.data);
-      else waiter.reject(new Error(message.error));
+      else
+        waiter.reject(
+          message.status && message.code
+            ? new ApiError(message.status, message.code, message.error)
+            : new Error(message.error),
+        );
     }
   }
 
   /** The journal decides respawn: a dead worker whose conversation still
    *  has pending work gets one, with backoff; an idle worker just stays
    *  dead until the next touch. */
-  private async onWorkerDeath(chatId: string, handle: Handle): Promise<void> {
+  private recover(chatId: string, handle: Handle): void {
     for (const controller of handle.dispatches.values()) controller.abort();
     handle.dispatches.clear();
-    if (this.closed) return;
-    if (!(await this.hasPendingWork(chatId).catch(() => false))) return;
-    const delay = RESPAWN_DELAYS_MS[Math.min(handle.respawns, RESPAWN_DELAYS_MS.length - 1)]!;
-    handle.respawns++;
-    this.log.warn({ chatId, delayMs: delay }, "worker died with pending work; respawning");
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    if (this.closed) return;
-    try {
-      await this.ensureWorker(chatId);
-    } catch (error) {
-      this.log.error({ err: error, chatId }, "worker respawn failed");
-      void this.onWorkerDeath(chatId, handle);
+    if (this.closed || handle.retiring || this.recovering.has(chatId)) return;
+    const operation = this.recoverChat(chatId);
+    this.recovering.set(chatId, operation);
+    void operation.finally(() => this.recovering.delete(chatId)).catch(() => {});
+  }
+
+  private async recoverChat(chatId: string): Promise<void> {
+    while (!this.closed) {
+      const attempt = this.attempts.get(chatId) ?? 0;
+      const delays = this.options.respawnDelays ?? RESPAWN_DELAYS_MS;
+      const delay = delays[Math.min(attempt, delays.length - 1)]!;
+      this.attempts.set(chatId, attempt + 1);
+      await this.pause(delay);
+      if (this.closed) return;
+      try {
+        if (!(await this.hasPendingWork(chatId))) {
+          this.attempts.delete(chatId);
+          return;
+        }
+        const handle = await this.ensureWorker(chatId);
+        if (!handle.alive) continue;
+        // A healthy interval, rather than a new PID, resets the crash budget.
+        const timer = setTimeout(() => {
+          if (handle.alive) this.attempts.delete(chatId);
+        }, 600_000);
+        timer.unref();
+        handle.child.once("exit", () => clearTimeout(timer));
+        return;
+      } catch (error) {
+        this.log.warn({ err: error, chatId, attempt }, "worker recovery will retry");
+      }
     }
   }
 
@@ -293,7 +409,7 @@ export class ForkSupervisor {
       }, REQUEST_TIMEOUT_MS);
       timer.unref?.();
       handle.waiters.set(ref, { resolve: resolve as (value: unknown) => void, reject, timer });
-      if (handle.readySettled) this.send(handle, full);
+      if (handle.readyState === "ready") this.send(handle, full);
       else handle.queued.push(full);
     });
   }
@@ -302,6 +418,10 @@ export class ForkSupervisor {
    *  submission id. */
   submit(chatId: string, input: Extract<WorkerRequest, { t: "submit" }>["input"]): Promise<number> {
     return this.request<number>(chatId, { t: "submit", input });
+  }
+
+  steer(chatId: string, submissionId: number): Promise<boolean> {
+    return this.request<boolean>(chatId, { t: "steer", submissionId });
   }
 
   withdraw(chatId: string, submissionId: number): Promise<string> {
@@ -320,11 +440,33 @@ export class ForkSupervisor {
    *  has pending work. This replaces the in-process resume()-everything —
    *  the journal is the registry. */
   async recoverFromJournal(chats: Iterable<{ chatId: string }>): Promise<void> {
-    for (const { chatId } of chats) {
-      await this.ensureWorker(chatId).catch((error) =>
-        this.log.error({ err: error, chatId }, "boot worker spawn failed"),
-      );
-    }
+    const pending = [...chats];
+    let next = 0;
+    const operation = Promise.all(
+      Array.from({ length: Math.min(4, pending.length) }, async () => {
+        while (!this.closed) {
+          const row = pending[next++];
+          if (!row) return;
+          const { chatId } = row;
+          try {
+            const handle = await this.ensureWorker(chatId);
+            if (!(await this.hasPendingWork(chatId)) && !handle.waiters.size && !handle.dispatches.size) {
+              handle.retiring = true;
+              handle.child.kill("SIGTERM");
+            }
+          } catch (error) {
+            this.log.error({ err: error, chatId }, "boot worker spawn failed");
+            if (!this.recovering.has(chatId)) {
+              const recovery = this.recoverChat(chatId);
+              this.recovering.set(chatId, recovery);
+              void recovery.finally(() => this.recovering.delete(chatId)).catch(() => {});
+            }
+          }
+        }
+      }),
+    ).then(() => {});
+    const previous = this.bootRecovery;
+    this.bootRecovery = Promise.allSettled([previous, operation]).then(() => {});
   }
 
   /** Test/ops accessor: the worker child's pid, when one is live. */
@@ -336,6 +478,7 @@ export class ForkSupervisor {
    *  cleanly, leaving pending work pending) and stops the sweeper. */
   async close(): Promise<void> {
     this.closed = true;
+    this.recoveryAbort.abort();
     if (this.heartbeatSweeper) clearInterval(this.heartbeatSweeper);
     const children = [...this.handles.values()];
     for (const handle of children) {
@@ -360,27 +503,11 @@ export class ForkSupervisor {
           }),
       ),
     );
+    await this.bootRecovery;
+    await Promise.allSettled([...this.spawning.values(), ...this.recovering.values()]);
   }
 }
 
-/** The pending-work probe the supervisor needs: live tasks or queued
- *  submissions on the chat's conversation. */
-export function pendingWorkQuery(
-  db: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> },
-): (chatId: string) => Promise<boolean> {
-  return async (chatId) => {
-    const res = await db.query(
-      `SELECT EXISTS (
-         SELECT 1 FROM chat_conversations c
-         WHERE c.chat_id = $1 AND (
-           EXISTS (SELECT 1 FROM tasks t WHERE t.conversation_id = c.conversation_id AND t.status IN ('pending', 'running', 'waiting'))
-           OR EXISTS (SELECT 1 FROM submissions s WHERE s.conversation_id = c.conversation_id AND s.status = 'queued')
-         )
-       ) AS pending`,
-      [chatId],
-    );
-    return res.rows[0]?.pending === true;
-  };
-}
+export { pendingWorkQuery } from "../platform/store/work.js";
 
 export type { WorkerResponse };

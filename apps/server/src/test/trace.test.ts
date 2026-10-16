@@ -394,14 +394,16 @@ describe("LLM trace: judge self-report", () => {
       );
       expect(judgePayloads.map((p) => p["kind"]).sort()).toEqual(["request", "response"]);
 
-      // The model rows of the turn carry the chat/turn context headers.
+      // Model attribution uses the durable conversation identity. Turn zero
+      // is the trace schema's unknown sentinel, not a process-local counter.
       const turnModelRows = rows.filter(
         (r) => r["caller"] === "model" && r["chat_id"] === chatId,
       );
       expect(turnModelRows.length).toBeGreaterThanOrEqual(2);
       for (const r of turnModelRows) {
-        expect(Number(r["turn"])).toBeGreaterThanOrEqual(1);
-        expect(String(r["cause"])).toBe("turn-step");
+        expect(Number(r["turn"])).toBe(0);
+        expect(Number(r["conversation_id"])).toBeGreaterThan(0);
+        expect(String(r["cause"])).toBe("conversation-request");
         expect(r["user_id"]).toBe(stack.memberId);
       }
     },

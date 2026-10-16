@@ -23,7 +23,7 @@ import { mcpConnect } from "../integrations/mcp.js";
 type Json = Record<string, unknown>;
 
 /** Tool names Guild reserves for its own machinery — a user server's name
- *  must not collide with them (the wire tool name is mcp_<name>_<tool>, but
+ *  must not collide with them (the wire tool name is mcp<length>_<name>_<tool>, but
  *  the bare name stays reserved to avoid ambiguity). */
 const RESERVED_NAMES = new Set([
   "read", "write", "edit", "bash", "codemode",
@@ -34,7 +34,7 @@ function sendJson(reply: FastifyReply, value: unknown): void {
   void reply.type("application/json").send(rustJsonText(value));
 }
 /** The server-name rule: identifier-safe slug, 1–64 chars. The chat runtime
- *  wires tools as mcp_<name>_<tool>, so the name must stay slug-safe. */
+ *  wires tools as mcp<length>_<name>_<tool>, so the name must stay slug-safe. */
 export function validateName(name: string): void {
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(name)) {
     throw ApiError.badRequest("name must match [a-z0-9][a-z0-9_-]{0,63}");

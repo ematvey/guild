@@ -96,10 +96,10 @@ export class TurnCommandStore {
         machine_id: string | null;
         machine_label: string | null;
         archived_at: string | null;
-      }>("SELECT project_id, machine_id, machine_label, archived_at FROM chats WHERE id = $1 AND org_id = $2 FOR UPDATE", [
-        chat,
-        org,
-      ]);
+      }>(
+        "SELECT project_id, machine_id, machine_label, archived_at FROM chats WHERE id = $1 AND org_id = $2 FOR UPDATE",
+        [chat, org],
+      );
       if (!chatRow.rows[0]) throw new ApiError(404, "not_found", "no such chat");
       const current = chatRow.rows[0];
       if (current.archived_at !== null) {
@@ -222,6 +222,17 @@ export class TurnCommandStore {
     } finally {
       client.release();
     }
+  }
+
+  /** Request identity is durable before the HTTP acknowledgement updates invocation_id. */
+  async forSubmission(chatId: string, submissionId: number): Promise<TurnCommand[]> {
+    const result = await this.pool.query<TurnCommand>(
+      `SELECT tc.* FROM turn_commands tc
+      JOIN submissions s ON s.id=$2 AND s.request_id::jsonb #>> '{}' = tc.id::text
+      WHERE tc.chat_id=$1`,
+      [chatId, submissionId],
+    );
+    return result.rows;
   }
 
   async finish(id: string, invocation: string, failed: boolean): Promise<void> {

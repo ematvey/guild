@@ -1,26 +1,29 @@
 // The integrations chat runtime (server_tool_step + the plugin turn
 // machinery): per turn the enabled
 // plugins of the conversation's org resolve into a snapshot, one dynamic
-// per-org registry extension carries their tools (the Guild-provided
+// per-conversation registry extension carries their tools (the Guild-provided
 // `{slug}_list_tools` / `{slug}_guide` disclosure pair plus the connector
 // tools), the system prompt gains the integrations index, and every call
 // runs the policy filter, the approval envelope, and the audit event.
 //
-// How dynamic registration maps onto pi-durable 1.0.1: the registry is
-// process-global and extensions are static code, so the per-org extension
+// Dynamic registration: the registry is
+// process-global and extensions are static code, so the per-conversation extension
 // is (re)installed at each turn start (registry.install replaces in place)
 // and each conversation is configured with an exact extension selection +
 // tool allow-list (`pi.agent`), role-filtered like the Rust disclosure
 // filter. The tool calls ride the existing durable turn stream untouched.
 
 import type { Context } from "@earendil-works/chord";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import * as tar from "tar";
-import type { PromptSection, Registry, ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
+import { toolSchema, toolDetails } from "./tool-schema.js";
+import { readGuideText } from "./guide-text.js";
+import type {
+  PromptSection,
+  Registry,
+  ToolExecutionApi,
+  ToolExecutionResult,
+  ToolRegistration,
+} from "@earendil-works/pi-durable";
 import type { Extension } from "@earendil-works/pi-durable";
-import type { TSchema } from "@earendil-works/pi-ai";
 import type { Logger } from "pino";
 import type { PlatformPool } from "../platform/db.js";
 import type { EventStore } from "../platform/store/events.js";
@@ -56,13 +59,12 @@ interface TurnSnapshot {
   chatId: string;
   turns: PluginTurn[];
   caller: IntegrationCaller | null;
-  at: number;
 }
 
 /** The narrow gateway slice the runtime needs (structurally the
  *  GatewayCtx). Secrets are re-resolved at call time — snapshots never
  *  carry values. */
-export interface IntegrationGateway extends PluginGateway {}
+export type IntegrationGateway = PluginGateway;
 
 export interface IntegrationsRuntimeDeps {
   gateway: IntegrationGateway;
@@ -135,58 +137,59 @@ export interface IntegrationGate {
 
 /** The turn-start preparation a conversation is configured with. */
 export interface TurnPreparation {
-  action: "configure" | "clear" | "none";
   /** The extensions to select in addition to the base (configure) — the
-   *  per-org integration extension. */
+   *  per-conversation integration extension. */
   extensions: readonly Extension<ToolRegistration>[];
   /** The tool objects for the conversation's allow-list (configure). */
   tools: readonly ToolRegistration[];
 }
 
 export class IntegrationsRuntime {
-  /** Turn-start snapshots keyed by conversation id (the Rust journaled
-   *  per-turn resolution — a turn's calls re-derive from its snapshot). */
+  /** Declarations remain stable until the next explicit provisioning. */
   private readonly snapshots = new Map<number, TurnSnapshot>();
   /** Every integration tool name this runtime has ever registered — the
    *  cheap gate-classifier short-circuit for coding tools. */
   private readonly knownToolNames = new Set<string>();
-  /** The last installed org extension per org (the per-conversation
-   *  selection references it through the change object). */
-  private readonly orgExtensions = new Map<string, Extension<ToolRegistration>>();
 
   constructor(
     private readonly deps: IntegrationsRuntimeDeps,
     private readonly registry: Registry<ToolRegistration>,
   ) {}
 
-  extensionName(orgId: string): string {
-    return `guild-integrations:${orgId}`;
+  extensionName(orgId: string, conversationId?: number): string {
+    return `guild-integrations:${orgId}${conversationId === undefined ? "" : `:${conversationId}`}`;
+  }
+
+  forget(conversationId: number): void {
+    const snapshot = this.snapshots.get(conversationId);
+    if (snapshot) {
+      const extension = this.registry.snapshot().extension(this.extensionName(snapshot.orgId, conversationId));
+      if (extension) this.registry.uninstall(extension);
+    }
+    this.snapshots.delete(conversationId);
   }
 
   private warn(message: string): void {
     this.deps.log.warn(message);
   }
 
-  /** Turn start (restate.rs ~1598): resolve this org's enabled plugins,
-   *  cache the snapshot for the conversation's calls, install the org
-   *  extension, and return the role-filtered tool names the model may
-   *  call. `"clear"` resets a previously configured conversation whose org
-   *  no longer carries integrations; `"none"` leaves it untouched. */
+  /** Resolve the desired tool surface before admission or resume. Empty
+   * selections clear persisted tools; transient resolution failures propagate. */
   async prepareTurn(conversationId: number, chatId: string, orgId: string): Promise<TurnPreparation> {
     let turns: PluginTurn[] = [];
     try {
       turns = await resolvePlugins(this.deps.gateway, orgId, (m) => this.warn(m));
     } catch (error) {
-      this.warn(`integrations resolve failed, the turn continues without them: ${(error as Error).message}`);
-      turns = [];
+      this.warn(`integrations resolve failed: ${(error as Error).message}`);
+      throw error;
     }
     const caller = await this.chatCaller(chatId);
-    this.snapshots.set(conversationId, { orgId, chatId, turns, caller, at: Date.now() });
+    this.snapshots.set(conversationId, { orgId, chatId, turns, caller });
     if (turns.length === 0) {
       // Empty desired state must clear persisted choices, also after restart.
-      return { action: "clear", extensions: [], tools: [] };
+      return { extensions: [], tools: [] };
     }
-    const extension = this.installOrgExtension(orgId, turns);
+    const extension = this.installOrgExtension(orgId, turns, conversationId);
     const tools: ToolRegistration[] = [];
     const role = caller?.role ?? "member";
     for (const turn of turns) {
@@ -195,11 +198,10 @@ export class IntegrationsRuntime {
         if (toolAllowed(turn, info, role)) tools.push(this.connectorTool(info));
       }
     }
-    return { action: "configure", extensions: [extension], tools };
+    return { extensions: [extension], tools };
   }
 
-  /** The chat owner's identity (restate.rs resolves the caller at turn
-   *  start; the chat owner is the caller). */
+  /** Resolve the chat owner's current role and acting identity. */
   private async chatCaller(chatId: string): Promise<IntegrationCaller | null> {
     try {
       const res = await this.deps.pool.query<{ id: string; email: string | null; role: string }>(
@@ -210,7 +212,7 @@ export class IntegrationsRuntime {
       return row ? { userId: row.id, email: row.email, role: row.role } : null;
     } catch (error) {
       this.warn(`chat caller resolution failed: ${(error as Error).message}`);
-      return null;
+      throw error;
     }
   }
 
@@ -218,7 +220,7 @@ export class IntegrationsRuntime {
    *  Guild-provided disclosure pair per plugin plus every curated-enabled
    *  connector tool. Curated-off tools are not registered at all — not
    *  declared to the model and not callable. */
-  private installOrgExtension(orgId: string, turns: PluginTurn[]): Extension<ToolRegistration> {
+  private installOrgExtension(orgId: string, turns: PluginTurn[], conversationId: number): Extension<ToolRegistration> {
     const tools: ToolRegistration[] = [];
     for (const turn of turns) {
       tools.push(this.listToolsTool(turn), this.guideTool(turn));
@@ -237,74 +239,105 @@ export class IntegrationsRuntime {
         const snapshot = await runtime.snapshotFor(Number(input.conversationId));
         const snapshotTurns = snapshot?.turns ?? [];
         if (snapshotTurns.length === 0) return undefined;
-        return `Enabled integrations (their tools are discovered on demand):\n${snapshotTurns.map(indexLine).map((line) => `- ${line}`).join("\n")}`;
+        return `Enabled integrations (their tools are discovered on demand):\n${snapshotTurns
+          .map(indexLine)
+          .map((line) => `- ${line}`)
+          .join("\n")}`;
       },
     };
-    const extension: Extension<ToolRegistration> = { name: this.extensionName(orgId), tools, sections: [section] };
+    const extension: Extension<ToolRegistration> = {
+      name: this.extensionName(orgId, conversationId),
+      tools,
+      sections: [section],
+    };
     this.registry.install(extension);
-    this.orgExtensions.set(orgId, extension);
     return extension;
   }
 
-  private static toolRegistration(spec: PluginToolInfo["spec"], execute: (args: Json, callId: string, conversationId: number, signal?: AbortSignal) => Promise<{ content: string; isError: boolean; meta?: unknown }>): ToolRegistration {
+  private static toolRegistration(
+    spec: PluginToolInfo["spec"],
+    execute: (
+      args: Json,
+      callId: string,
+      conversationId: number,
+      signal?: AbortSignal,
+    ) => Promise<{ content: string; isError: boolean; meta?: unknown }>,
+  ): ToolRegistration {
     const registration = {
       name: spec.name,
       description: spec.description,
-      parameters: spec.parameters as TSchema,
+      parameters: toolSchema(spec.parameters),
       callers: ["tools"] as const,
       replay: "unsafe" as const,
       async execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> {
         context.abortSignal?.throwIfAborted();
-        const outcome = await execute((args ?? {}) as Json, api.callId, Number(api.conversationId), context.abortSignal);
+        const outcome = await execute(
+          (args ?? {}) as Json,
+          api.callId,
+          Number(api.conversationId),
+          context.abortSignal,
+        );
         context.abortSignal?.throwIfAborted();
         // The tool-owned widget payload rides the details' reserved
         // `guild_meta` key — the bridge maps it onto the tool_result event.
         return {
           isError: outcome.isError,
           output: [{ type: "text", text: outcome.content }],
-          ...(outcome.meta !== undefined && outcome.meta !== null ? { details: { guild_meta: outcome.meta } as unknown as ToolExecutionResult["details"] } : {}),
+          ...(outcome.meta !== undefined && outcome.meta !== null
+            ? { details: toolDetails({ guild_meta: outcome.meta }) }
+            : {}),
         };
       },
-    } as unknown as ToolRegistration;
+    } satisfies ToolRegistration;
     return registration;
   }
 
   /** `{slug}_list_tools`: the role-filtered tool specs as compact JSON. */
   private listToolsTool(turn: PluginTurn): ToolRegistration {
-    return IntegrationsRuntime.toolRegistration({
-      name: namespacedTool(turn.slug, "list_tools"),
-      description: `List the tools of the ${turn.slug} integration that you may call, with JSON schemas.`,
-      parameters: { type: "object", properties: {} },
-    }, async (_args, _callId, conversationId) => {
-      const snapshot = await this.snapshotFor(conversationId);
-      const snapshotTurn = snapshot?.turns.find((t) => t.slug === turn.slug);
-      if (snapshotTurn === undefined) {
-        return { content: `integration ${turn.slug} is not enabled for this conversation`, isError: true };
-      }
-      const role = snapshot?.caller?.role ?? "member";
-      const specs = snapshotTurn.tools
-        .filter((info) => toolAllowed(snapshotTurn, info, role))
-        .map((info) => ({ name: info.spec.name, description: info.spec.description, parameters: info.spec.parameters }));
-      return { content: JSON.stringify(specs), isError: false };
-    });
+    return IntegrationsRuntime.toolRegistration(
+      {
+        name: namespacedTool(turn.slug, "list_tools"),
+        description: `List the tools of the ${turn.slug} integration that you may call, with JSON schemas.`,
+        parameters: { type: "object", properties: {} },
+      },
+      async (_args, _callId, conversationId) => {
+        const snapshot = await this.snapshotFor(conversationId);
+        const snapshotTurn = snapshot?.turns.find((t) => t.slug === turn.slug);
+        if (snapshotTurn === undefined) {
+          return { content: `integration ${turn.slug} is not enabled for this conversation`, isError: true };
+        }
+        const role = snapshot?.caller?.role ?? "member";
+        const specs = snapshotTurn.tools
+          .filter((info) => toolAllowed(snapshotTurn, info, role))
+          .map((info) => ({
+            name: info.spec.name,
+            description: info.spec.description,
+            parameters: info.spec.parameters,
+          }));
+        return { content: JSON.stringify(specs), isError: false };
+      },
+    );
   }
 
   /** `{slug}_guide`: the usage guide (SKILL.md/README.md) of the
    *  integration's approved cookbook bundle, when one is installed. */
   private guideTool(turn: PluginTurn): ToolRegistration {
-    return IntegrationsRuntime.toolRegistration({
-      name: namespacedTool(turn.slug, "guide"),
-      description: `Return the usage guide (SKILL.md) for the ${turn.slug} integration.`,
-      parameters: { type: "object", properties: {} },
-    }, async (_args, _callId, conversationId) => {
-      const snapshot = await this.snapshotFor(conversationId);
-      const snapshotTurn = snapshot?.turns.find((t) => t.slug === turn.slug);
-      if (snapshotTurn === undefined || snapshotTurn.executor !== "mcp") {
-        return { content: `integration ${turn.slug} has no guide`, isError: false };
-      }
-      const guide = await this.fetchGuide(snapshot!.orgId, turn.slug).catch(() => null);
-      return { content: guide ?? `integration ${turn.slug} has no guide`, isError: false };
-    });
+    return IntegrationsRuntime.toolRegistration(
+      {
+        name: namespacedTool(turn.slug, "guide"),
+        description: `Return the usage guide (SKILL.md) for the ${turn.slug} integration.`,
+        parameters: { type: "object", properties: {} },
+      },
+      async (_args, _callId, conversationId) => {
+        const snapshot = await this.snapshotFor(conversationId);
+        const snapshotTurn = snapshot?.turns.find((t) => t.slug === turn.slug);
+        if (snapshotTurn === undefined || snapshotTurn.executor !== "mcp") {
+          return { content: `integration ${turn.slug} has no guide`, isError: false };
+        }
+        const guide = await this.fetchGuide(snapshot!.orgId, turn.slug).catch(() => null);
+        return { content: guide ?? `integration ${turn.slug} has no guide`, isError: false };
+      },
+    );
   }
 
   private connectorTool(info: PluginToolInfo): ToolRegistration {
@@ -319,7 +352,7 @@ export class IntegrationsRuntime {
    *  to an empty snapshot so the cheap checks never repeat the DB read. */
   private async snapshotFor(conversationId: number): Promise<TurnSnapshot | undefined> {
     const cached = this.snapshots.get(conversationId);
-    if (cached !== undefined && Date.now() - cached.at < 10 * 60_000) return cached;
+    if (cached !== undefined) return cached;
     const chatId = await this.deps.chatOfConversation(conversationId);
     if (chatId === null) return undefined;
     let orgId: string | null = null;
@@ -337,10 +370,18 @@ export class IntegrationsRuntime {
       turns = [];
     }
     const caller = await this.chatCaller(chatId);
-    const snapshot: TurnSnapshot = { orgId, chatId, turns, caller, at: Date.now() };
+    const snapshot: TurnSnapshot = { orgId, chatId, turns, caller };
     this.snapshots.set(conversationId, snapshot);
-    if (turns.length > 0) this.installOrgExtension(orgId, turns);
+    if (turns.length > 0) this.installOrgExtension(orgId, turns, conversationId);
     return snapshot;
+  }
+
+  /** Declarations stay stable until provisioning; authorization is always fresh. */
+  private async authorizedSnapshot(conversationId: number): Promise<TurnSnapshot | undefined> {
+    const declared = await this.snapshotFor(conversationId);
+    if (!declared) return undefined;
+    const turns = await resolvePlugins(this.deps.gateway, declared.orgId, (message) => this.warn(message));
+    return { ...declared, turns, caller: await this.chatCaller(declared.chatId) };
   }
 
   /** The approval-gate classification of one call (restate.rs
@@ -356,7 +397,7 @@ export class IntegrationsRuntime {
     if (!this.knownToolNames.has(callName) && !/^(int_)?[a-z0-9][a-z0-9-]*_[a-z0-9_]+$/.test(callName)) {
       return undefined;
     }
-    const snapshot = await this.snapshotFor(conversationId);
+    const snapshot = await this.authorizedSnapshot(conversationId);
     if (snapshot === undefined || snapshot.turns.length === 0) return undefined;
     if (parseAutoTool(snapshot.turns, callName) !== undefined) return "skip";
     const target = pluginTarget(snapshot.turns, callName);
@@ -373,8 +414,14 @@ export class IntegrationsRuntime {
    *  policy filter, the plugin dispatch, the artifact spill, and the audit
    *  event. A failure is a tool RESULT the model sees, never a thrown
    *  error. */
-  private async executeToolCall(conversationId: number, callId: string, callName: string, args: Json, signal?: AbortSignal): Promise<{ content: string; isError: boolean; meta?: unknown }> {
-    const snapshot = await this.snapshotFor(conversationId);
+  private async executeToolCall(
+    conversationId: number,
+    callId: string,
+    callName: string,
+    args: Json,
+    signal?: AbortSignal,
+  ): Promise<{ content: string; isError: boolean; meta?: unknown }> {
+    const snapshot = await this.authorizedSnapshot(conversationId);
     const turns = snapshot?.turns ?? [];
     // Guild-provided disclosure tools (never sent to a connector).
     const auto = parseAutoTool(turns, callName);
@@ -392,12 +439,19 @@ export class IntegrationsRuntime {
       return { content: "not permitted by integration policy", isError: true };
     }
     const raw = unnamespacedTool(turn.slug, callName) ?? callName;
-    const outcome = await callPlugin(this.deps.gateway, turn, raw, args, {
-      orgId: snapshot.orgId,
-      callerId: snapshot.caller?.userId ?? snapshot.chatId,
-      callId,
-      actingAs: snapshot.caller?.email ?? null,
-    }, signal)
+    const outcome = await callPlugin(
+      this.deps.gateway,
+      turn,
+      raw,
+      args,
+      {
+        orgId: snapshot.orgId,
+        callerId: snapshot.caller?.userId ?? snapshot.chatId,
+        callId,
+        actingAs: snapshot.caller?.email ?? null,
+      },
+      signal,
+    )
       .then((value) => ({ ok: true as const, value }))
       .catch((error: unknown) => ({ ok: false as const, error }));
     const ok = outcome.ok;
@@ -424,7 +478,12 @@ export class IntegrationsRuntime {
   /** The artifact choke point (tool artifacts design): a tool-carried
    *  payload spills always and the content becomes the pointer text; a
    *  spill failure keeps the inline result — the outcome is never lost. */
-  private async materialize(chatId: string, callId: string, rawTool: string, outcome: ToolOutcome): Promise<{ content: string; isError: boolean; meta?: unknown }> {
+  private async materialize(
+    chatId: string,
+    callId: string,
+    rawTool: string,
+    outcome: ToolOutcome,
+  ): Promise<{ content: string; isError: boolean; meta?: unknown }> {
     const { artifacts, objects } = this.deps;
     if (outcome.artifact !== undefined) {
       if (objects === undefined) {
@@ -432,8 +491,15 @@ export class IntegrationsRuntime {
       }
       try {
         const spilled = await spillArtifact(
-          artifacts, objects, (await this.orgIdOfChat(chatId)) ?? "", chatId, callId, rawTool,
-          outcome.artifact.filename, outcome.artifact.contentType, outcome.artifact.bytes,
+          artifacts,
+          objects,
+          (await this.orgIdOfChat(chatId)) ?? "",
+          chatId,
+          callId,
+          rawTool,
+          outcome.artifact.filename,
+          outcome.artifact.contentType,
+          outcome.artifact.bytes,
         );
         return {
           content: pointerText(rawTool, spilled, outcome.artifact.contentType, null),
@@ -475,30 +541,7 @@ export class IntegrationsRuntime {
     const skillStored = await gateway.registry.getVersion(orgId, "skill", first, skillVersion);
     if (skillStored.bundle_sha256 !== skillSha256) return null;
     const bytes = await objects.get(skillStored.object_key);
-    return extractBundleText(bytes);
-  }
-}
-
-/** Extracts SKILL.md (falling back to README.md) from a tar.gz bundle. */
-function extractBundleText(bundle: Buffer): string | null {
-  const dir = mkdtempSync(path.join(tmpdir(), "guild-guide-"));
-  try {
-    const tgz = path.join(dir, "bundle.tar.gz");
-    writeFileSync(tgz, bundle);
-    tar.x({ sync: true, gzip: true, cwd: dir, file: tgz });
-    for (const name of ["SKILL.md", "README.md"]) {
-      try {
-        const text = readFileSync(path.join(dir, name), "utf8");
-        if (text.trim() !== "") return text;
-      } catch {
-        // next candidate
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+    return readGuideText(bytes);
   }
 }
 

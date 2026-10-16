@@ -668,7 +668,8 @@ export function createThreadReducer(): ThreadReducer {
         // Delivery of a queued send MOVES the echo to a fresh seq: a block
         // for this event id already renders (the queued chip) — reposition
         // it at the placement point (array end = seq order here) with the
-        // flag cleared, instead of appending a twin.
+        // placement flags reconciled, instead of appending a twin. A mode
+        // update can move its seq while the input is still queued.
         const existing = v.blocks.find((b) => b.kind === "user" && b.eventId === row.id);
         if (existing) {
           v.blocks = [
@@ -681,6 +682,7 @@ export function createThreadReducer(): ThreadReducer {
               ts: row.created_at,
               pending: false,
               ...clearedQueuedFields(),
+              ...queuedFieldsOf(ev),
             },
           ];
           break;

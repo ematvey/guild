@@ -357,6 +357,22 @@ export function registerChatsRoutes(
   app.delete("/api/v1/gateway/chat/:id/pending/:messageId", withdrawPending);
   app.delete("/api/v1/threads/:id/pending/:messageId", withdrawPending);
 
+  app.post("/api/v1/threads/:id/pending/:messageId/steer", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    const messageId = parseUuidParam(req, "messageId");
+    await chats.chats.getChat(user.org_id, chatId, user);
+    const command = await chats.turnCommands.byId(messageId, chatId);
+    if (!command) throw ApiError.notFound("no such message");
+    if (!command.invocation_id?.startsWith("sub:")) {
+      throw ApiError.conflict("not_admitted", "message admission is still pending — retry shortly");
+    }
+    const changed = await chats.runtime.steerQueued(chatId, Number(command.invocation_id.slice(4)));
+    if (!changed) throw ApiError.conflict("already_placed", "message already placed — refresh to see it delivered");
+    await chats.threads.setQueuedMode(chatId, messageId, "steer");
+    return reply.send({ steering: true });
+  });
+
   const resolveApproval = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");

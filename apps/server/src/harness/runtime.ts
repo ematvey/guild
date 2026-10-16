@@ -1,12 +1,7 @@
-// The Guild agent runtime (spec decision 9): one process owns the pi-durable
-// harness — the Postgres durable storage over the same database, the model
-// providers (loopback gateway, decision 7), the extension registry, and the
-// scheduler with auto-compaction + steering/follow-ups enabled (decision 12).
-//
-// Chats map 1:1 to durable conversations (the chat_conversations table,
-// spec decision 6). The ChatBridge keeps thread_events, the generating
-// flag, and turn-command settlement in sync so the wire contracts the
-// clients consume never change.
+import { SingleFlight, ConversationAdmissions, AdmissionCancelled } from "./operations.js";
+// Composes model access, tool provisioning, and chat admission. ConversationHost
+// owns the scheduler lifetime; worker mode scopes that lifetime to one chat.
+// Durable projection and live presentation consume the same committed records.
 
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -23,11 +18,9 @@ import {
   type AgentEventStream,
   type Conversation,
   type ConversationId,
+  type SubmissionId,
   type Extension,
   type Registry,
-  type SubmissionRecord,
-  type Cursor,
-  type Storage,
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
@@ -59,17 +52,28 @@ import { MachineStore } from "../platform/store/machines.js";
 import { TeamStore } from "../platform/store/teams.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { SkillReadSink } from "../platform/skillReads.js";
-import { MachineExecutionEnv, machineDispatch, type ExecutorKind, type MachineDispatchHost } from "../machines/dispatch.js";
+import {
+  MachineExecutionEnv,
+  machineDispatch,
+  type ExecutorKind,
+  type MachineDispatchHost,
+} from "../machines/dispatch.js";
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
 import { createGuildExtension, toolsOnlyCaller, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
+import { ConversationHost, type ConversationLifetime } from "./conversation-host.js";
+import { ConversationDirectory } from "./conversation-directory.js";
+import { chatsWithWork } from "../platform/store/work.js";
+import { assertPlatformSchema } from "../platform/migrations.js";
+import { CURRENT_POSTGRES_SCHEMA_VERSION } from "../storage/postgres/migrations.js";
 import { drainIdleInbox } from "./queue-recovery.js";
 import { createThreadHistoryTools } from "./thread-history.js";
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
 import { SkillRuntime } from "./skills.js";
-import { ensureOrgProvider, guildProviderId, setGuildTurnTraceContext, type GuildRouteInfo } from "./models.js";
+import { ensureOrgProvider, guildProviderId, type GuildRouteInfo } from "./models.js";
 import type { LlmTraceSink } from "../platform/trace.js";
+import { ConversationRecovery } from "../chats/recovery.js";
 import { ChatBridge, type GenerationStreamSink } from "../chats/bridge.js";
 import type { LiveBuffers } from "../chats/bridge.js";
 
@@ -111,12 +115,19 @@ export class GuildRuntime {
   private readonly turnCommands: TurnCommandStore;
   private readonly gateway: GatewayStore;
   private readonly bridge: ChatBridge;
-  private readonly watches = new Map<string, AgentEventStream>();
+  private readonly recovery: ConversationRecovery;
+  private readonly host = new ConversationHost();
+  private readonly watchOpening = new SingleFlight<string, void>();
+  private readonly admissions = new ConversationAdmissions();
+  private get watches(): Map<string, AgentEventStream> {
+    return this.host.value!.watches;
+  }
+  private readonly directory: ConversationDirectory;
+  private readonly providerChats = new Map<string, { chatId: string; conversationId: number }>();
   private readonly chatToConversation = new Map<string, number>();
-  /** Per-chat turn counters (the llm_calls turn column; best effort). */
-  private readonly turnCounters = new Map<string, number>();
-  private storage: Storage | undefined;
-  private harness: Harness | undefined;
+  private get harness() {
+    return this.host.value?.harness;
+  }
   /** The durable database facade, created once at startup (the platform
    *  pool outlives the runtime; the facade must not end it). Reused by
    *  every supervisor reopen. */
@@ -124,7 +135,7 @@ export class GuildRuntime {
   /** Supervisor state (the reopen loop below). */
   private reopenAttempts = 0;
   private harnessOpenedAt = 0;
-  private reopening = false;
+  private reopening: Promise<void> | undefined;
   /** Test/diagnostic access to the owned harness (read-only usage). */
   harnessForTest(): Harness | undefined {
     return this.harness;
@@ -142,19 +153,16 @@ export class GuildRuntime {
   private starting: Promise<void> | undefined;
   private stopped = false;
 
-
   private readonly agentSessions: AgentSessionStore;
   readonly toolArtifacts: ToolArtifactStore;
   /** The integrations chat runtime (M8): per-turn plugin resolution, the
    *  dynamic per-org tool registration, execution + audit. */
   readonly integrationsRuntime: IntegrationsRuntime;
   /** The user-MCP chat runtime: the chat owner's servers declared as
-   *  mcp_<server>_<tool> per turn, executed server-side with the stored
+   *  mcp<length>_<server>_<tool> per turn, executed server-side with the stored
    *  headers. */
   readonly userMcpRuntime: UserMcpRuntime;
-  /** The skills runtime: the read_skill/search_skills/push_skill tools
-   *  (the guild extension carries them), the Task 6 index section, and the
-   *  install-fan-out hook the routes call (Task 8 fills syncUser). */
+  /** Skill tools, prompt index, materialization, and install fan-out. */
   readonly skillsRuntime: SkillRuntime;
   /** The guild extension object (the per-conversation selection carries
    *  it, resolved by name against the registry). */
@@ -207,6 +215,8 @@ export class GuildRuntime {
             },
           })
         : null;
+    this.directory = new ConversationDirectory(pool);
+    this.recovery = new ConversationRecovery(pool);
     this.models = createModels();
     this.registry = createRegistry();
     this.threads = new ThreadStore(pool);
@@ -310,7 +320,7 @@ export class GuildRuntime {
    *  extensions with their tools — every configure starts from this. */
   private baseConfiguration(): { extensions: readonly Extension[]; tools: readonly ToolRegistration[] } {
     const extensions = [this.guildExtension, this.codingToolsScriptOnly, this.codemodeExtension];
-    return { extensions, tools: extensions.flatMap(extension => extension.tools ?? []) };
+    return { extensions, tools: extensions.flatMap((extension) => extension.tools ?? []) };
   }
 
   private masterKey(): Buffer {
@@ -361,10 +371,13 @@ export class GuildRuntime {
       trace: this.trace,
       currentModel: async (conversationId) => {
         await this.start();
-        const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
+        const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
         const agent = conversation ? await conversation.agent(BACKGROUND_CONTEXT) : undefined;
         const resolved = agent?.model?.modelId ?? null;
-        this.log.info({ conversationId, found: conversation !== undefined, agentModel: resolved }, "currentModel probe");
+        this.log.info(
+          { conversationId, found: conversation !== undefined, agentModel: resolved },
+          "currentModel probe",
+        );
         return resolved;
       },
     };
@@ -383,7 +396,10 @@ export class GuildRuntime {
    *  (`workspaces/<org>/<name>`) when one is bound, the per-conversation
    *  chat dir (`chats/<org>/<conversationId>`) otherwise. `hostDir` is
    *  where the in-process executor keeps it (tests/dev). */
-  private async sandboxTarget(conversationId: number, orgId: string): Promise<SandboxTarget & { hostDir: string; chatId: string | null }> {
+  private async sandboxTarget(
+    conversationId: number,
+    orgId: string,
+  ): Promise<SandboxTarget & { hostDir: string; chatId: string | null }> {
     const chatId = await this.chatOfConversation(conversationId);
     if (chatId !== null) {
       const workspace = await this.agentSessions.workspaceForChat(orgId, chatId);
@@ -407,7 +423,11 @@ export class GuildRuntime {
   /** The execution env for a conversation's server-side tools (the
    *  SkillRuntime deps hook and the harness env factory). Sandboxed
    *  (runner), in-process (tests/dev), or refused (disabled). */
-  private async envForConversation(conversationId: number, orgId: string, opts: { materialize?: boolean } = {}): Promise<ExecutionEnv> {
+  private async envForConversation(
+    conversationId: number,
+    orgId: string,
+    opts: { materialize?: boolean } = {},
+  ): Promise<ExecutionEnv> {
     const target = await this.sandboxTarget(conversationId, orgId);
     switch (this.config.sandbox.mode) {
       case "runner": {
@@ -477,11 +497,12 @@ export class GuildRuntime {
     await this.skillsRuntime.materializeSkill(args.orgId, args.slug, args.version, env);
   }
 
-  /** Idempotent start: migrations, harness open, watches for every mapped
-   *  conversation. The one owning process (decision 9) is the server. */
+  /** Initialize once; the server migrates, workers verify and open their scope. */
   async start(): Promise<void> {
     this.starting ??= this.startOnce();
     await this.starting;
+    await this.reopening;
+    if (this.stopped) throw new Error("runtime is closed");
   }
 
   private async startOnce(): Promise<void> {
@@ -491,9 +512,19 @@ export class GuildRuntime {
     // Platform schema first: the mapping below references chats(id), and
     // every route handler assumes apps/server/migrations are current.
     // Failure throws — startup must not come up on a stale schema.
-    await applyPlatformMigrations(this.pool, { log: this.log });
-    await applyPostgresMigrations(this.durableDb!);
-    await applyChatMappingMigration(this.pool);
+    if (this.workerScope) {
+      await assertPlatformSchema(this.pool);
+      const schema = await this.pool.query<{ version: number }>("SELECT version FROM durable_schema WHERE singleton=1");
+      if (schema.rows[0]?.version !== CURRENT_POSTGRES_SCHEMA_VERSION)
+        throw new Error("durable schema requires server migration");
+    } else {
+      await applyPlatformMigrations(this.pool, { log: this.log });
+      await applyPostgresMigrations(this.durableDb!);
+      await applyChatMappingMigration(this.pool);
+      await this.pool.query(
+        "INSERT INTO chat_recovery_metadata(singleton,legacy_task_id) SELECT true,COALESCE(max(id),0) FROM tasks ON CONFLICT DO NOTHING",
+      );
+    }
     // The skill_reads ClickHouse DDL: ensured once at startup (spec §3's
     // detail-page stats read the table; record() also awaits it). ClickHouse
     // being down must not block startup — reads degrade to zero and writes
@@ -521,46 +552,30 @@ export class GuildRuntime {
    * opening a scheduler or adopting any other worker's live tasks. */
   private async bootstrapWorkerConversation(): Promise<void> {
     const chatId = this.workerScope!.chatId;
-    const existing = await this.pool.query<{ conversation_id: string | number }>(
-      "SELECT conversation_id FROM chat_conversations WHERE chat_id = $1",
-      [chatId],
-    );
-    if (existing.rows.length > 0) {
-      this.chatToConversation.set(chatId, Number(existing.rows[0]!.conversation_id));
-      return;
-    }
-    const bootstrap = createSession(await PostgresDurableStorage.open(this.durableDb!));
-    try {
-      const conversation = await bootstrap.commit(async tx => {
-        const record = await tx.createConversation({ ownership: { kind: "ownerless" } });
-        await tx.doc(LiveDoc, record.id);
-        await tx.doc(InboxDoc, record.id);
-        await tx.doc(UsageDoc, record.id);
-        await tx.doc(ProviderDoc, record.id);
-        await tx.doc(AgentDoc, record.id);
-        return record;
-      }, BACKGROUND_CONTEXT);
-      await this.pool.query(
-        "INSERT INTO chat_conversations (chat_id, conversation_id) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id",
-        [chatId, Number(conversation.id)],
-      );
-      this.chatToConversation.set(chatId, Number(conversation.id));
-    } finally {
-      await bootstrap.close(BACKGROUND_CONTEXT).catch(() => {});
-    }
+    const id = await this.directory.ensure(chatId, async () => {
+      const bootstrap = createSession(await PostgresDurableStorage.open(this.durableDb!, { migrate: false }));
+      try {
+        const conversation = await bootstrap.commit(async (tx) => {
+          const record = await tx.createConversation({ ownership: { kind: "ownerless" } });
+          await tx.doc(LiveDoc, record.id);
+          await tx.doc(InboxDoc, record.id);
+          await tx.doc(UsageDoc, record.id);
+          await tx.doc(ProviderDoc, record.id);
+          await tx.doc(AgentDoc, record.id);
+          return record;
+        }, BACKGROUND_CONTEXT);
+        return Number(conversation.id);
+      } finally {
+        await bootstrap.close(BACKGROUND_CONTEXT);
+      }
+    });
+    this.chatToConversation.set(chatId, id);
   }
 
   /** Server-side boot scan: chats whose conversation has live tasks or
    *  queued submissions (the journal is the registry). */
   private async chatsWithPendingWork(includeProjections = false): Promise<{ chatId: string }[]> {
-    const res = await this.pool.query<{ chat_id: string }>(
-      `SELECT DISTINCT c.chat_id FROM chat_conversations c JOIN chats ch ON ch.id=c.chat_id
-       WHERE ch.generating OR EXISTS (SELECT 1 FROM tasks t WHERE t.conversation_id = c.conversation_id AND t.status IN ('pending', 'running', 'waiting'))
-          OR EXISTS (SELECT 1 FROM submissions s WHERE s.conversation_id = c.conversation_id AND s.status = 'queued')
-          ${includeProjections ? `OR EXISTS (SELECT 1 FROM entries e WHERE e.conversation_id=c.conversation_id
-            AND e.id>COALESCE((SELECT p.entry_id FROM chat_projection_cursors p WHERE p.chat_id=c.chat_id AND p.conversation_id=c.conversation_id),0))` : ""}`,
-    );
-    return res.rows.map((row) => ({ chatId: row.chat_id }));
+    return chatsWithWork(this.pool, includeProjections);
   }
 
   /** Opens the durable storage + harness and attaches everything a resumed
@@ -570,109 +585,128 @@ export class GuildRuntime {
    *  a sealed session takes no writes, so in-flight tasks stay pending and
    *  resume re-drives them. */
   private async openHarness(): Promise<void> {
+    await this.host.replace(
+      () => this.createHarness(),
+      () => this.initializeHarness(),
+      (error) => {
+        if (!this.stopped)
+          this.reopening ??= this.scheduleReopen(error).finally(() => {
+            this.reopening = undefined;
+          });
+      },
+    );
+  }
+
+  private async createHarness(): Promise<ConversationLifetime> {
     const db = this.durableDb;
     if (!db) throw new Error("openHarness before startOnce");
-    const durable = await PostgresDurableStorage.open(db);
-    const scopeId = this.workerScope ? this.chatToConversation.get(this.workerScope.chatId) : undefined;
-    if (this.workerScope && scopeId === undefined) throw new Error("worker has no conversation mapping");
-    const repaired = await durable.repairLiveProjections(scopeId as ConversationId | undefined);
-    if (repaired.length) this.log.warn({ documents: repaired, conversationId: scopeId }, "rebuilt damaged live projections");
-    if (this.workerScope) {
-      // The worker's view: every scan forced onto its conversation, by-id
-      // reads refusing foreign records — the boundary that keeps the
-      // scheduler from adopting another conversation's work.
-      const conversationId = this.chatToConversation.get(this.workerScope.chatId);
-      if (conversationId === undefined) throw new Error("worker has no conversation mapping");
-      this.storage = new ScopedDurableStorage(durable, conversationId as ConversationId);
-    } else {
-      this.storage = durable;
-    }
-    const harness = await Harness.open(this.storage, {
-      models: this.models,
-      registry: this.registry,
-      settings: {
-        extensions: [
-          this.registry.snapshot().extension("guild")!,
-          this.codingToolsScriptOnly,
-          this.codemodeExtension,
-        ],
-        // Decision 12: automatic background compaction on (built-in default
-        // thresholds), steering/follow-ups on (the inbox boundary places
-        // queued inputs; "one-at-a-time" keeps turn semantics).
-        compaction: { enabled: true },
-        steeringMode: "one-at-a-time",
-        followUpMode: "one-at-a-time",
-      },
-      env: async (target) => {
-        // M4 executor selection: the chat's bound machine (machine dispatch
-        // over the hub), an agent session's workspace dir
-        // (workspaces/<org>/<name>), or the per-conversation sandbox the M3
-        // runtime used for regular chats.
-        const kind = await this.executorKind(Number(target.conversationId));
-        if (kind === "machine") {
-          if (this.workerScope) {
-            if (!this.workerScope.dispatch) {
-              throw new Error("machine-bound chats in worker mode require the dispatch proxy");
-            }
-            const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
-            const chat = await this.pool.query<{ machine_id: string; machine_label: string | null; org_id: string; project_folder: string | null }>(
-              `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
-               FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.id = $1`,
-              [chatId],
-            );
-            const row = chat.rows[0]!;
-            return new MachineExecutionEnv({
-              machineId: row.machine_id,
-              orgId: row.org_id,
-              chatId,
-              workdir: row.project_folder,
-              timeoutMs: this.config.clientToolTimeoutMs,
-              dispatch: this.workerScope.dispatch,
-            });
-          }
-          const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
-          const chat = await this.pool.query<{ machine_id: string; machine_label: string | null; org_id: string; project_folder: string | null }>(
-            `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
+    const durable = await PostgresDurableStorage.open(db, { migrate: false });
+    try {
+      const scopeId = this.workerScope ? this.chatToConversation.get(this.workerScope.chatId) : undefined;
+      if (this.workerScope && scopeId === undefined) throw new Error("worker has no conversation mapping");
+      const repaired = await durable.repairLiveProjections(scopeId as ConversationId | undefined);
+      if (repaired.length)
+        this.log.warn({ documents: repaired, conversationId: scopeId }, "rebuilt damaged live projections");
+      let storage;
+      if (this.workerScope) {
+        // The worker's view: every scan forced onto its conversation, by-id
+        // reads refusing foreign records — the boundary that keeps the
+        // scheduler from adopting another conversation's work.
+        const conversationId = this.chatToConversation.get(this.workerScope.chatId);
+        if (conversationId === undefined) throw new Error("worker has no conversation mapping");
+        storage = new ScopedDurableStorage(durable, conversationId as ConversationId);
+      } else {
+        storage = durable;
+      }
+      const harness = await Harness.open(
+        storage,
+        {
+          models: this.models,
+          registry: this.registry,
+          settings: {
+            extensions: [
+              this.registry.snapshot().extension("guild")!,
+              this.codingToolsScriptOnly,
+              this.codemodeExtension,
+            ],
+            // Decision 12: automatic background compaction on (built-in default
+            // thresholds), steering/follow-ups on (the inbox boundary places
+            // queued inputs; "one-at-a-time" keeps turn semantics).
+            compaction: { enabled: true },
+            steeringMode: "one-at-a-time",
+            followUpMode: "one-at-a-time",
+          },
+          env: async (target) => {
+            // M4 executor selection: the chat's bound machine (machine dispatch
+            // over the hub), an agent session's workspace dir
+            // (workspaces/<org>/<name>), or the per-conversation sandbox the M3
+            // runtime used for regular chats.
+            const kind = await this.executorKind(Number(target.conversationId));
+            if (kind === "machine") {
+              const dispatch = this.workerScope?.dispatch ?? this.dispatch();
+              if (!dispatch) throw new Error("machine-bound chat has no dispatch host");
+              const chatId = (await this.chatOfConversation(Number(target.conversationId)))!;
+              const chat = await this.pool.query<{
+                machine_id: string;
+                machine_label: string | null;
+                org_id: string;
+                project_folder: string | null;
+              }>(
+                `SELECT c.machine_id, c.machine_label, c.org_id, pr.folder AS project_folder
              FROM chats c LEFT JOIN projects pr ON pr.id = c.project_id WHERE c.id = $1`,
-            [chatId],
-          );
-          const row = chat.rows[0]!;
-          return new MachineExecutionEnv({
-            machineId: row.machine_id,
-            orgId: row.org_id,
-            chatId,
-            workdir: row.project_folder,
-            timeoutMs: this.config.clientToolTimeoutMs,
-            dispatch: this.dispatch()!,
-          });
-        }
-        // Agent-session workspaces and plain chats: the server-side
-        // sandbox (envForConversation picks runner / in-process / refused).
-        const chatId = await this.chatOfConversation(Number(target.conversationId));
-        if (chatId === null) {
-          // Unmapped conversations have no org to sandbox under; only the
-          // in-process executor serves them.
-          if (this.config.sandbox.mode !== "inprocess-unsafe") throw new Error("no chat is bound to this conversation");
-          const dir = `${sandboxRoot()}/${target.conversationId}`;
-          await mkdir(dir, { recursive: true });
-          return new NodeExecutionEnv({ cwd: dir });
-        }
-        const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
-        return this.envForConversation(Number(target.conversationId), chat.rows[0]!.org_id, { materialize: true });
-      },
-      onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
-    }, BACKGROUND_CONTEXT);
-    this.harness = harness;
-    // Supervisor: a storage error closes the Harness by itself; its
-    // documented host pattern is to reopen on failure. A deliberate close
-    // (app shutdown) must not reopen.
-    void harness.closed.then((end) => {
-      if (end.reason !== "failed" || this.stopped) return;
-      void this.scheduleReopen(end.error);
-    });
+                [chatId],
+              );
+              const row = chat.rows[0]!;
+              return new MachineExecutionEnv({
+                machineId: row.machine_id,
+                orgId: row.org_id,
+                chatId,
+                workdir: row.project_folder,
+                timeoutMs: this.config.clientToolTimeoutMs,
+                dispatch,
+              });
+            }
+            // Agent-session workspaces and plain chats: the server-side
+            // sandbox (envForConversation picks runner / in-process / refused).
+            const chatId = await this.chatOfConversation(Number(target.conversationId));
+            if (chatId === null) {
+              // Unmapped conversations have no org to sandbox under; only the
+              // in-process executor serves them.
+              if (this.config.sandbox.mode !== "inprocess-unsafe")
+                throw new Error("no chat is bound to this conversation");
+              const dir = `${sandboxRoot()}/${target.conversationId}`;
+              await mkdir(dir, { recursive: true });
+              return new NodeExecutionEnv({ cwd: dir });
+            }
+            const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
+            return this.envForConversation(Number(target.conversationId), chat.rows[0]!.org_id, { materialize: true });
+          },
+          onReport: (error) => this.log.warn({ err: error }, "harness extension failure"),
+        },
+        BACKGROUND_CONTEXT,
+      );
+      void harness.closed.then(() =>
+        this.log.info({ durable: durable.diagnostics() }, "durable storage lifetime closed"),
+      );
+      return { harness, storage, watches: new Map() };
+    } catch (error) {
+      await durable.close(BACKGROUND_CONTEXT).catch(() => {});
+      throw error;
+    }
+  }
+
+  private async initializeHarness(): Promise<void> {
+    const harness = this.harness!;
     // The worker's mapping was bootstrapped for exactly its chat; loading
     // the full table here would attach foreign conversations' watches, and
     // the scoped harness refuses them by design.
+    for (const id of this.chatToConversation.values()) {
+      this.bridge.forget(String(id));
+      this.integrationsRuntime.forget(id);
+      this.userMcpRuntime.forget(id);
+      this.skillsRuntime.forget(id);
+    }
+    this.providerChats.clear();
     if (!this.workerScope) await this.loadMapping();
     // Watches attach before resume: a re-driven run must start with its
     // watch already live. Attached after, the attach snapshot is not
@@ -684,7 +718,8 @@ export class GuildRuntime {
     // Org model providers register before resume: a re-driven run resolves
     // its model through the registry, and without this it fails no_model —
     // submit-time refresh alone only covers turns submitted in this process.
-    await this.refreshAllOrgModels();
+    if (this.workerScope) await this.refreshOrgModels(await this.orgOfChat(this.workerScope.chatId));
+    else await this.refreshAllOrgModels();
     // Tool provisioning rides the same path a submit uses: a re-driven run
     // (crash or deploy restart) must issue new integration/MCP calls
     // against a provisioned surface, not the fresh process's core-only
@@ -692,9 +727,7 @@ export class GuildRuntime {
     const pendingChats = new Set((await this.chatsWithPendingWork()).map((row) => row.chatId));
     for (const [chatId, conversationId] of this.chatToConversation) {
       if (!pendingChats.has(chatId)) continue;
-      await this.provisionResumedConversation(chatId, conversationId).catch((error) =>
-        this.log.warn({ err: error, chatId }, "resume tool provisioning failed"),
-      );
+      await this.provisionResumedConversation(chatId, conversationId);
     }
     // Re-drives the runs the previous process left pending (a crash, or a
     // deploy restart that skipped the drain): the turn continues where it
@@ -715,7 +748,7 @@ export class GuildRuntime {
   private async provisionResumedConversation(chatId: string, conversationId: string | number): Promise<void> {
     const chat = await this.pool.query<{ org_id: string }>("SELECT org_id FROM chats WHERE id = $1", [chatId]);
     if (chat.rows[0] === undefined) return;
-    const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
+    const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
     if (!conversation) return;
     await this.provisionTurnTools(conversation, chatId, chat.rows[0].org_id);
   }
@@ -728,16 +761,18 @@ export class GuildRuntime {
    *  reopen instead of a permanent 30s recovery tail. Concurrent failures
    *  (the old and the new harness both settling) collapse into one loop. */
   private async scheduleReopen(error: unknown): Promise<void> {
-    if (this.reopening || this.stopped) return;
-    this.reopening = true;
-    try {
+    if (this.stopped) return;
+    {
       if (Date.now() - this.harnessOpenedAt > 10 * 60_000) this.reopenAttempts = 0;
       let lastError = error;
       for (;;) {
         const delays = GuildRuntime.REOPEN_DELAYS_MS;
         const delay = delays[Math.min(this.reopenAttempts, delays.length - 1)]!;
         this.reopenAttempts++;
-        this.log.error({ err: lastError, attempt: this.reopenAttempts, delayMs: delay }, "durable session failed; reopening");
+        this.log.error(
+          { err: lastError, attempt: this.reopenAttempts, delayMs: delay },
+          "durable session failed; reopening",
+        );
         await new Promise((resolve) => setTimeout(resolve, delay));
         if (this.stopped) return;
         try {
@@ -748,8 +783,6 @@ export class GuildRuntime {
           lastError = reopenError;
         }
       }
-    } finally {
-      this.reopening = false;
     }
   }
 
@@ -773,7 +806,11 @@ export class GuildRuntime {
 
   /** Attaches the bridge's event stream to one conversation (dedup: the
    *  latest watch wins). */
-  private async attachWatch(chatId: string, conversationId: number): Promise<void> {
+  private attachWatch(chatId: string, conversationId: number): Promise<void> {
+    return this.watchOpening.run(chatId, () => this.attachWatchOnce(chatId, conversationId));
+  }
+
+  private async attachWatchOnce(chatId: string, conversationId: number): Promise<void> {
     const existing = this.watches.get(chatId);
     if (existing) {
       await existing.stop().catch(() => {});
@@ -781,33 +818,42 @@ export class GuildRuntime {
     }
     const key = String(conversationId);
     this.bridge.bind(key, chatId, await this.orgOfChat(chatId));
+    const sessionId = await this.harness!.commit(
+      async (tx) => (await tx.doc(ProviderDoc, conversationId as ConversationId)).sessionId,
+      BACKGROUND_CONTEXT,
+    );
+    this.providerChats.set(sessionId, { chatId, conversationId });
     const harness = this.harness!;
     const conversation = (await harness.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT))!;
     const stream = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
-    const storage = this.storage!;
+    let closed = false;
+    void harness.closed.then(() => {
+      closed = true;
+    });
     const recover = async () => {
       // Bound the backfill and submission snapshot on the Session line.
       // A later placement must not be skipped by advancing past its entry
       // before its queued echo was delivered.
-      const { submissions, through } = await harness.commit(async tx => {
+      const { submissions, through } = await harness.commit(async (tx) => {
         const tail = await tx.scanEntries({ conversationId: conversation.id, order: "descending" }, 1);
-        const submissions: SubmissionRecord[] = [];
-        let cursor: Cursor | undefined;
-        do {
-          const page = await storage.scanSubmissions({ conversationId: conversation.id }, 100, cursor, BACKGROUND_CONTEXT);
-          submissions.push(...page.items);
-          cursor = page.next;
-        } while (cursor !== undefined);
+        const submissions = await this.recovery.submissions(chatId, conversation.id);
         return { submissions, through: tail.items[0]?.id };
       }, BACKGROUND_CONTEXT);
       if (through !== undefined) await this.bridge.recover(conversation, submissions, through);
       for (const record of submissions) {
         if (record.status === "queued") continue;
-        if (typeof record.requestId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.requestId)) {
+        if (
+          typeof record.requestId === "string" &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.requestId)
+        ) {
           await this.turnCommands.submitted(record.requestId, `sub:${record.id}`);
         }
         await this.bridge.handle(key, [{ type: "submission", record }]);
       }
+      await this.recovery.acknowledge(chatId, submissions);
+      await this.recovery.failures(chatId, conversation.id, (id, message) =>
+        this.bridge.persistTaskFailure(key, id, message),
+      );
     };
     try {
       await recover();
@@ -818,19 +864,20 @@ export class GuildRuntime {
     }
     stream.start(async (events) => {
       try {
-        if (events.some(event => event.type === "snapshot")) await recover();
+        if (events.some((event) => event.type === "snapshot")) await recover();
         await this.bridge.handle(key, events);
-        if (events.some(event => event.type === "run_end" || event.type === "snapshot")) {
+        if (events.some((event) => event.type === "run_end" || event.type === "snapshot")) {
           await recover();
           await this.reconcileConversation(chatId, conversationId);
         }
       } catch (error) {
+        if (this.stopped || closed) return;
         this.log.error({ err: error, chatId }, "retrying transcript projection");
         // Keep the watch alive. A bounded event stream may coalesce while
         // storage is unavailable; immutable backfill and a fresh snapshot
         // restore everything needed without replaying partial deltas.
-        while (!this.stopped && this.harness === harness) {
-          await new Promise(resolve => setTimeout(resolve, 250));
+        while (!this.stopped && !closed && this.harness === harness) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
           try {
             await recover();
             const current = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
@@ -851,11 +898,16 @@ export class GuildRuntime {
   /** Every ending (including model_error) must leave queued inputs with
    * a runnable owner. Startup also heals queues left by an older process. */
   private async reconcileConversation(chatId: string, conversationId: number): Promise<void> {
-    const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
+    const harness = this.harness;
+    if (!harness || this.stopped) return;
+    const conversation = await harness.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
     if (!conversation) return;
-    const row = await this.pool.query<{ org_id: string; archived_at: Date | null }>("SELECT org_id,archived_at FROM chats WHERE id=$1", [chatId]);
+    const row = await this.pool.query<{ org_id: string; archived_at: Date | null }>(
+      "SELECT org_id,archived_at FROM chats WHERE id=$1",
+      [chatId],
+    );
     if (!row.rows[0]) return;
-    if (row.rows[0].archived_at === null && await drainIdleInbox(conversation)) this.harness!.resume();
+    if (row.rows[0].archived_at === null && (await drainIdleInbox(conversation))) harness.resume();
     await this.chats.reconcileGenerating(row.rows[0].org_id, chatId);
   }
 
@@ -869,24 +921,24 @@ export class GuildRuntime {
     await this.start();
     const known = this.chatToConversation.get(chatId);
     if (known !== undefined) {
-      const conversation = await this.harness!.conversation(known as never, BACKGROUND_CONTEXT);
+      const conversation = await this.harness!.conversation(known as ConversationId, BACKGROUND_CONTEXT);
       if (conversation) return conversation;
       this.chatToConversation.delete(chatId);
       await this.pool.query("DELETE FROM chat_conversations WHERE chat_id = $1", [chatId]);
-      // The durable conversation is gone but the thread journal is not: the
-      // reset below starts an EMPTY conversation — the model loses every
-      // prior turn's context (observed 2026-10-15: after a durable wedge,
-      // the next message ran on a fresh conversation and the model had no
-      // prior context). Loud, so the gap stays diagnosable.
-      this.log.warn({ chatId, conversationId: known }, "chat's durable conversation is gone; resetting to an empty conversation (thread history is not replayed)");
+      // Missing durable state cannot be reconstructed from a possibly
+      // incomplete visible journal. A replacement starts with empty context.
+      this.log.warn(
+        { chatId, conversationId: known },
+        "chat's durable conversation is gone; resetting to an empty conversation (thread history is not replayed)",
+      );
     }
-    const conversation = await this.harness!.createConversation({ ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT);
-    await this.pool.query(
-      "INSERT INTO chat_conversations (chat_id, conversation_id) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id",
-      [chatId, conversation.id],
+    const id = await this.directory.ensure(chatId, async () =>
+      Number((await this.harness!.createConversation({ ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT)).id),
     );
-    this.chatToConversation.set(chatId, conversation.id);
-    await this.attachWatch(chatId, conversation.id);
+    this.chatToConversation.set(chatId, id);
+    if (!this.watches.has(chatId)) await this.attachWatch(chatId, id);
+    const conversation = await this.harness!.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+    if (!conversation) throw new Error("mapped conversation does not exist");
     void orgId;
     return conversation;
   }
@@ -897,9 +949,14 @@ export class GuildRuntime {
    *  runs it before admission; resume runs it before the re-driven run —
    *  a resumed run must see the same tool surface a submitted one gets
    *  (the fresh process's registry carries only the base extensions). */
-  private async provisionTurnTools(conversation: Conversation, chatId: string, orgId: string): Promise<void> {
+  private async provisionTurnTools(
+    conversation: Conversation,
+    chatId: string,
+    orgId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const prepared = await this.integrationsRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
-    const userPrepared = await this.userMcpRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
+    const userPrepared = await this.userMcpRuntime.prepareTurn(Number(conversation.id), chatId, orgId, signal);
     // Reconcile the complete desired selection, including an empty surface.
     // Persisted choices may outlive this process's provisioning caches.
     const base = this.baseConfiguration();
@@ -916,7 +973,20 @@ export class GuildRuntime {
    *  for the org is refreshed from the gateway routes, the agent's model is
    *  configured, and the input is durably admitted (queued in the inbox when
    *  busy — steering/follow-up semantics, decision 12). */
-  async submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
+  submitTurn(chatId: string, orgId: string, input: SubmitTurnInput): Promise<number> {
+    return this.admissions
+      .run(chatId, (signal) => this.admitTurn(chatId, orgId, input, signal))
+      .catch(async (error) => {
+        if (error instanceof AdmissionCancelled) {
+          await this.turnCommands.settleCancelledById(input.requestId, chatId);
+          await this.threads.deleteQueuedEvent(chatId, input.requestId);
+          await this.chats.reconcileGenerating(orgId, chatId);
+        }
+        throw error;
+      });
+  }
+
+  private async admitTurn(chatId: string, orgId: string, input: SubmitTurnInput, signal: AbortSignal): Promise<number> {
     if (this.supervisor) {
       // Worker mode: the full admission path (conversation bootstrap,
       // configure, integrations, submit) runs in the worker; the server
@@ -926,21 +996,7 @@ export class GuildRuntime {
     await this.sweepExpiredCommands();
     const conversation = await this.conversationForChat(chatId, orgId);
     await this.refreshOrgModels(orgId);
-    // The turn's trace context: every loopback model call this turn makes
-    // carries chat/conversation/turn + the chat owner as request headers
-    // (the gateway's llm_calls rows attribute through them; the judge
-    // self-reports its own). Per-conversation counter, best effort under
-    // same-org concurrency (the latest turn's context wins).
-    const turnNo = (this.turnCounters.get(chatId) ?? 0) + 1;
-    this.turnCounters.set(chatId, turnNo);
     const owner = await this.chats.ownerOf(chatId);
-    setGuildTurnTraceContext({
-      orgId,
-      chatId,
-      conversationId: Number(conversation.id),
-      turn: turnNo,
-      userId: owner?.user_id ?? null,
-    });
     // Integrations (M8) + user MCP: the shared per-turn provisioning (the
     // same call the resume path makes before a re-driven run) — the org's
     // enabled plugins resolve into a snapshot, the per-org extension
@@ -948,8 +1004,9 @@ export class GuildRuntime {
     // allow-list are refreshed (role-filtered like the Rust disclosure
     // filter). User MCP servers: the chat owner's enabled servers declare
     // their tools the same way (one extension + bare registrations).
-    // Orgs/users with neither keep the exact previous configure behavior.
-    await this.provisionTurnTools(conversation, chatId, orgId);
+    // Empty desired selections clear previously configured dynamic tools.
+    await this.provisionTurnTools(conversation, chatId, orgId, signal);
+    signal.throwIfAborted();
     // The combined skills index section renders at turn start from the
     // stash; a turn whose client sent no index re-renders from the server
     // portion alone (browser/server turns never send one).
@@ -976,7 +1033,9 @@ export class GuildRuntime {
     // model never has to guess the prefix's meaning). The typed text stays
     // verbatim; images make the content an array, so only its text part
     // carries the directive.
-    const directive = owner === null ? null : await this.skillsRuntime.invocationDirective(orgId, input.content, input.skillsIndex);
+    const directive =
+      owner === null ? null : await this.skillsRuntime.invocationDirective(orgId, input.content, input.skillsIndex);
+    signal.throwIfAborted();
     const submission = await conversation.submit(
       {
         type: "input",
@@ -995,6 +1054,25 @@ export class GuildRuntime {
     return Number(submission.id);
   }
 
+  /** Changes only inbox placement; the submission and its visible echo keep identity. */
+  async steerQueued(chatId: string, submissionId: number): Promise<boolean> {
+    if (this.supervisor) return this.supervisor.steer(chatId, submissionId);
+    await this.start();
+    const id = this.chatToConversation.get(chatId);
+    if (id === undefined) return false;
+    const conversation = await this.harness!.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+    if (!conversation) return false;
+    const promoted = await conversation.commit(async (tx) => {
+      const inbox = await tx.doc(InboxDoc, conversation.id);
+      const item = inbox.items.find((item) => Number(item.id) === submissionId);
+      if (!item || item.mode === "write") return false;
+      item.mode = "steer";
+      return true;
+    }, BACKGROUND_CONTEXT);
+    if (promoted) await this.reconcileConversation(chatId, id);
+    return promoted;
+  }
+
   /** Withdraws one queued (not yet placed) submission — the desktop
    *  queued-chip trash button's backend. Returns the pi-durable abort
    *  outcome: "aborted" removes the inbox item; "already_placed"/"settled"
@@ -1005,9 +1083,13 @@ export class GuildRuntime {
     await this.start();
     const conversationId = this.chatToConversation.get(chatId);
     if (conversationId === undefined) return "not_found";
-    const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
+    const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
     if (!conversation) return "not_found";
-    return this.harness!.abortSubmission(submissionId as never, BACKGROUND_CONTEXT, conversationId as never);
+    return this.harness!.abortSubmission(
+      submissionId as SubmissionId,
+      BACKGROUND_CONTEXT,
+      conversationId as ConversationId,
+    );
   }
 
   /** Registers/refreshes every org's loopback provider (startup path: the
@@ -1037,7 +1119,21 @@ export class GuildRuntime {
       }));
     ensureOrgProvider(
       this.models,
-      { selfBaseUrl: this.config.selfBaseUrl, internalKey: this.config.internalKey },
+      {
+        selfBaseUrl: this.config.selfBaseUrl,
+        internalKey: this.config.internalKey,
+        traceHeaders: async (sessionId) => {
+          const source = sessionId === undefined ? undefined : this.providerChats.get(sessionId);
+          if (!source) return {};
+          const owner = await this.chats.ownerOf(source.chatId);
+          return {
+            "x-guild-chat-id": source.chatId,
+            "x-guild-conversation-id": String(source.conversationId),
+            "x-guild-cause": "conversation-request",
+            ...(owner ? { "x-guild-user-id": owner.user_id } : {}),
+          };
+        },
+      },
       orgId,
       infos,
     );
@@ -1046,6 +1142,7 @@ export class GuildRuntime {
   /** Stops the chat's in-flight generation: withdraws queued inputs, aborts
    *  the ordinary ownership scope, and waits until it is idle. */
   async stopChat(chatId: string): Promise<void> {
+    this.admissions.cancel(chatId);
     if (this.supervisor) {
       await this.supervisor.stop(chatId);
       return;
@@ -1053,9 +1150,11 @@ export class GuildRuntime {
     await this.start();
     const conversationId = this.chatToConversation.get(chatId);
     if (conversationId === undefined) return;
-    const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
+    const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
     if (!conversation) return;
-    await conversation.abort(BACKGROUND_CONTEXT).catch((error) => this.log.warn({ err: error, chatId }, "abort failed"));
+    await conversation
+      .abort(BACKGROUND_CONTEXT)
+      .catch((error) => this.log.warn({ err: error, chatId }, "abort failed"));
     await this.chats.setGenerating(await this.orgOfChat(chatId), chatId, false);
   }
 
@@ -1067,7 +1166,7 @@ export class GuildRuntime {
     await this.start();
     const conversationId = this.chatToConversation.get(chatId);
     if (conversationId === undefined) return false;
-    const conversation = await this.harness!.conversation(conversationId as never, BACKGROUND_CONTEXT);
+    const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
     if (!conversation) return false;
     await conversation.compact(undefined, BACKGROUND_CONTEXT);
     return true;
@@ -1094,13 +1193,18 @@ export class GuildRuntime {
   async close(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    await this.admissions.close();
     await this.supervisor?.close();
-    for (const stream of this.watches.values()) {
-      await stream.stop().catch(() => {});
+    await this.host.close();
+    await this.reopening;
+    for (const id of this.chatToConversation.values()) {
+      this.bridge.forget(String(id));
+      this.integrationsRuntime.forget(id);
+      this.userMcpRuntime.forget(id);
+      this.skillsRuntime.forget(id);
     }
-    this.watches.clear();
-    if (this.harness) await this.harness.close(BACKGROUND_CONTEXT).catch(() => {});
-    if (this.storage) await this.storage.close(BACKGROUND_CONTEXT).catch(() => {});
+    this.chatToConversation.clear();
+    this.providerChats.clear();
     await this.codemodeSandbox.close().catch(() => {});
     await this.sandboxes?.close().catch(() => {});
   }

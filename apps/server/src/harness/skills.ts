@@ -372,7 +372,12 @@ export class SkillRuntime {
   /** The org portion's lines: installs with pin/update markers first, then
    *  uninstalled skills (clipped, (org) marker) — locally-listed slugs
    *  excluded. */
-  private async orgLines(orgId: string, items: RegistryItemRow[], userId: string, exclude: Set<string>): Promise<string[]> {
+  private async orgLines(
+    orgId: string,
+    items: RegistryItemRow[],
+    userId: string,
+    exclude: Set<string>,
+  ): Promise<string[]> {
     const pins = new Map((await this.deps.skills.listForUser(orgId, userId)).map((i) => [i.slug, i.pinned_version]));
     const installed: string[] = [];
     const uninstalled: string[] = [];
@@ -382,7 +387,10 @@ export class SkillRuntime {
       if (pin === undefined) {
         uninstalled.push(`- ${item.slug}: ${clipDescription(item.description)} (org)`);
       } else {
-        const update = item.latest_version !== null && item.latest_version !== pin ? `, update available: ${item.latest_version}` : "";
+        const update =
+          item.latest_version !== null && item.latest_version !== pin
+            ? `, update available: ${item.latest_version}`
+            : "";
         installed.push(`- ${item.slug}: ${item.description} (installed, pinned ${pin}${update})`);
       }
     }
@@ -391,6 +399,10 @@ export class SkillRuntime {
 
   /** Remembers the index text a turn was prepared with (the guild
    *  extension's section reuses it; Task 8 diffs it for machine sync). */
+  forget(conversationId: number): void {
+    this.lastIndex.delete(conversationId as ConversationId);
+  }
+
   noteTurnInput(conversationId: number, skillsIndex: string): void {
     this.lastIndex.set(conversationId as ConversationId, skillsIndex);
   }
@@ -407,7 +419,10 @@ export class SkillRuntime {
    *  machine's connect-time HTTP pull (`GET /api/v1/skills/sync-payload`).
    *  A pin with no version row is dropped (logged) — it can never
    *  materialize. */
-  async syncPayload(orgId: string, userId: string): Promise<{ skills: Array<{ slug: string; version: string; bundle_sha256: string; url?: string }> }> {
+  async syncPayload(
+    orgId: string,
+    userId: string,
+  ): Promise<{ skills: Array<{ slug: string; version: string; bundle_sha256: string; url?: string }> }> {
     let installs: Array<{ slug: string; pinned_version: string }>;
     try {
       installs = await this.deps.skills.listForUser(orgId, userId);
@@ -419,7 +434,9 @@ export class SkillRuntime {
       try {
         const meta = await this.deps.registry.getVersionMeta(orgId, "skill", install.slug, install.pinned_version);
         if (meta === null) {
-          this.deps.log.warn(`skills sync: ${install.slug}@${install.pinned_version} has no version row — entry dropped`);
+          this.deps.log.warn(
+            `skills sync: ${install.slug}@${install.pinned_version} has no version row — entry dropped`,
+          );
           continue;
         }
         skills.push({
@@ -665,7 +682,9 @@ export class SkillRuntime {
       );
     }
     if (justInstalled && (await this.deps.executorKind(Number(api.conversationId))) === "machine") {
-      parts.push("Note: the skill was just installed — its additional files are still syncing to your machine and may not be readable yet.");
+      parts.push(
+        "Note: the skill was just installed — its additional files are still syncing to your machine and may not be readable yet.",
+      );
     }
     if (control.latest_version !== null && control.latest_version !== version) {
       parts.push(`Note: a newer version (${control.latest_version}) exists — ask the user before updating.`);
@@ -757,7 +776,16 @@ export class SkillRuntime {
       })),
     };
     await this.deps.registry.upsertVersion(
-      orgId, "skill", slug, version, description, manifest, key, sha256, userId, skill,
+      orgId,
+      "skill",
+      slug,
+      version,
+      description,
+      manifest,
+      key,
+      sha256,
+      userId,
+      skill,
       { userId, role, isTeamMember },
     );
     try {
@@ -789,9 +817,7 @@ export class SkillRuntime {
       return this.textResult(`Pushed ${slug} ${version} — new org skill (now in the catalog).`);
     }
     const extra = collected.size - 1;
-    return this.textResult(
-      `Pushed ${slug} ${version} (SKILL.md + ${extra} additional file${extra === 1 ? "" : "s"}).`,
-    );
+    return this.textResult(`Pushed ${slug} ${version} (SKILL.md + ${extra} additional file${extra === 1 ? "" : "s"}).`);
   }
 
   /** Reads every regular file under a directory of `env` into memory

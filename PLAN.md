@@ -11,6 +11,21 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Conversation lifetimes own recovery; queued inputs can become steering
+  (2026-10-17, 0.5.72).** Candidate harness initialization and replacement
+  dispose the entire scheduler/storage/watch lifetime. First-touch mapping
+  creation coalesces and locks per chat. Worker readiness, recovery backoff,
+  transient work probes, idle/capacity limits and bounded boot catch-up share
+  explicit ownership. Entry projection, task-failure reconstruction and
+  incremental submission reconciliation are separate from live presentation.
+  Traces resolve the durable provider-session identity; dynamic declarations
+  are scoped per conversation, MCP names are unambiguous, and execution
+  authorization stays fresh. Receipts are reclaimed only after acknowledged
+  success, with commit/lock diagnostics. Queued chips expose Steer now,
+  preserving submission identity through worker IPC and the durable inbox.
+  Details and validation: `docs/plans/2026-10-17-conversation-lifetimes.md`.
+  Delivery verification is recorded after the implementation commit.
+
 - **Pi Durable integration follows persisted identities and recovery contracts
   (2026-10-17, 0.5.71).** Pins the Pi Durable/AI/codemode/Chord family to 1.3.0.
   Commit receipts identify an invocation rather than an ID set; worker

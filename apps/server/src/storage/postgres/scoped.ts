@@ -69,24 +69,19 @@ export class ScopedDurableStorage implements Storage {
     cursor: Cursor | undefined,
     context: Context,
   ): Promise<Page<ConversationRecord, Cursor>> {
-    // The scope filter can drop most of a page, so walk inner pages until
-    // the outer page fills or the inner scan exhausts; the last consumed
-    // inner cursor is the outer one.
-    const items: ConversationRecord[] = [];
-    let innerCursor = cursor;
-    for (;;) {
-      const inner = await this.inner.scanConversations(query, limit, innerCursor, context);
-      for (const record of inner.items) {
-        if (record.id === this.scope) items.push(record);
-      }
-      innerCursor = inner.next;
-      if (items.length >= limit || innerCursor === undefined) {
-        return items.length >= limit ? ({ items: items.slice(0, limit), next: innerCursor } as Page<ConversationRecord, Cursor>) : { items };
-      }
-    }
+    if (cursor !== undefined || limit <= 0) return emptyPage();
+    const record = await this.inner.conversation(this.scope, context);
+    if (!record) return emptyPage();
+    if (query.ownerConversationId !== undefined && record.owner?.conversationId !== query.ownerConversationId)
+      return emptyPage();
+    if (query.ownerTaskId !== undefined && record.owner?.taskId !== query.ownerTaskId) return emptyPage();
+    return { items: [record] };
   }
 
-  async entry(id: EntryId, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+  async entry(
+    id: EntryId,
+    context: Context,
+  ): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
   async entry(
     conversationId: ConversationId,
     id: EntryId,

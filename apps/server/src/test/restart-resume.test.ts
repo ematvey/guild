@@ -1,7 +1,5 @@
-// Full durability across a restart: a turn interrupted by a deploy (the
-// SIGTERM handler hard-exits — connections die mid-turn, nothing settles)
-// must resume and complete in the next process, not end as interrupted or
-// failed.
+// A suspended runtime leaves committed work pending; a fresh app resumes it.
+// SIGKILL recovery is separately covered by worker-mode.test.ts.
 
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -16,7 +14,9 @@ beforeAll(async () => {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((resolve, reject) => probe.close((error) => (error === undefined ? resolve() : reject(error))));
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   stack = await setupM2Stack({
     GUILD_SELF_BASE_URL: `http://127.0.0.1:${port}`,
   });
@@ -42,15 +42,14 @@ async function waitFor(probe: () => Promise<boolean>, timeoutMs = 20_000): Promi
   throw new Error("waitFor timed out");
 }
 
-const sseDelta = (content: string): string =>
-  `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+const sseDelta = (content: string): string => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
 const sseDone = (): string =>
   'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
   "data: [DONE]\n\n";
 
 describe("restart resume (full durability)", () => {
-  it("a turn interrupted by a restart resumes and completes", async () => {
+  it("a turn suspended by runtime close resumes and completes in a fresh app", async () => {
     // A stream slow enough to still be running when the process dies.
     stack.mock.setResponses([
       {
@@ -91,21 +90,22 @@ describe("restart resume (full durability)", () => {
     await waitFor(async () => stack.mock.requests.length >= 1);
     await new Promise((resolve) => setTimeout(resolve, 800));
 
-    // The deploy hard stop (the SIGTERM handler process.exit()s): every
-    // connection dies mid-turn, the runtime never settles anything, and the
-    // journal keeps the run pending. The dead storage also blocks app1's
-    // leftover retries from writing outcomes.
+    // Close the actual owner before opening a replacement. Closing only the
+    // fixture's seeding pool would leave app1's scheduler and database pool
+    // alive, creating two owners rather than simulating a dead process.
+    await stack.env.app.platform.runtime.close();
+    const pending = await stack.env.db.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM tasks WHERE status<>'terminal'",
+    );
+    expect(pending.rows[0]!.n).toBeGreaterThan(0);
     stack.env.app.server.closeAllConnections();
-    await new Promise<void>((resolve) => stack.env.app.server.close(() => resolve()));
-    await stack.env.db.end();
+    await stack.env.app.close();
 
     // The next process: the model answers, the run re-drives to completion.
     stack.mock.setResponses([
       {
         body:
-          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
-          sseDelta("resumed answer complete") +
-          sseDone(),
+          'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' + sseDelta("resumed answer complete") + sseDone(),
       },
     ]);
     const app2 = await buildApp(stack.env.config);
@@ -117,8 +117,9 @@ describe("restart resume (full durability)", () => {
           url: "/api/v1/chats",
           headers: auth(stack.memberToken),
         });
-        const listed = (JSON.parse(chatRow.body) as { chats: { id: string; generating: boolean }[] }).chats
-          .find((c) => c.id === chat.id);
+        const listed = (JSON.parse(chatRow.body) as { chats: { id: string; generating: boolean }[] }).chats.find(
+          (c) => c.id === chat.id,
+        );
         return listed!.generating === false;
       });
 
