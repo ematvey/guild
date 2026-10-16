@@ -21,7 +21,7 @@ export type WsClientMsg = { "type": "ping", } | { "type": "sync", chat_id?: stri
  * sync and live updates replace the whole view at an ordered watermark.
  * LiveFrame is a separate, non-replayable stream for command consumers.
  */
-export type WsServerMsg = { "type": "hello" } | { "type": "displaced" } | { "type": "auth_required" } | { "type": "tool_dispatch", chat_id: string, call_id: string, name: string, arguments: string, workdir?: string, } | { "type": "error", message: string, } | { "type": "machine_request", request_id: string, op: string, payload: JsonValue, } | { "type": "thread_list", chats: Array<JsonValue>, } | { "type": "chat_status", chat_id: string, generating: boolean, } | { "type": "thread_events", chat_id: string, 
+export type WsServerMsg = { "type": "hello" } | { "type": "displaced" } | { "type": "auth_required" } | { "type": "tool_dispatch", chat_id: string, call_id: string, name: string, arguments: string, workdir?: string, } | { "type": "tool_cancel", call_id: string, } | { "type": "error", message: string, } | { "type": "machine_request", request_id: string, op: string, payload: JsonValue, } | { "type": "thread_list", chats: Array<JsonValue>, } | { "type": "chat_status", chat_id: string, generating: boolean, } | { "type": "thread_events", chat_id: string, 
 /**
  * Newest `seq` carried by `events` (client watermark guard).
  */

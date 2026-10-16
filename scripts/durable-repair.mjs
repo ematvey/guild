@@ -1,57 +1,44 @@
-// Finds durable documents whose stored deltas no longer materialize, then
-// (with --fix) deletes the ephemeral poisoned ones (pi.live family) so the
-// next read rematerializes them at their initial value.
+// Audit stored document chains. --fix rebuilds only the built-in live
+// projection from durable tasks/submissions, retaining the damaged revisions.
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { apply } from "@earendil-works/chord/delta";
 
-const { apply } = await import("/home/user/guild/node_modules/@earendil-works/chord/dist/delta/index.js");
-
-const pool = new pg.Pool({ connectionString: "postgres://guild:guild@127.0.0.1:5432/guild", max: 2 });
-const fix = process.argv.includes("--fix");
-
-const docs = await pool.query("SELECT id, kind, record FROM documents");
-const bad = [];
-for (const doc of docs.rows) {
-  const baseRows = await pool.query(
-    "SELECT seq, version, content FROM document_revisions WHERE document_id = $1 AND kind = 'base' ORDER BY seq DESC LIMIT 1",
-    [doc.id],
-  );
-  if (baseRows.rows.length === 0) continue;
-  const base = baseRows.rows[0];
-  const tail = await pool.query(
-    "SELECT seq, kind, version, content FROM document_revisions WHERE document_id = $1 AND seq > $2 ORDER BY seq",
-    [doc.id, base.seq],
-  );
-  let value;
-  try {
-    value = JSON.parse(base.content);
-    for (const rev of tail.rows) {
-      if (rev.kind !== "delta" || rev.version !== base.version) {
-        throw new Error(`version boundary crossed (rev kind=${rev.kind} v=${rev.version} base v=${base.version})`);
+// The storage adapter is TypeScript and the deployed runtime executes it in Bun.
+if (!process.versions.bun) {
+  const result = spawnSync("bun", [fileURLToPath(import.meta.url), ...process.argv.slice(2)], { stdio: "inherit" });
+  if (result.error) console.error(result.error.message);
+  process.exit(result.status ?? 1);
+}
+const pool = new pg.Pool({ connectionString: process.env.GUILD_DATABASE_URL ?? "postgres://guild:guild@127.0.0.1:5432/guild", max: 2 });
+try {
+  const docs = await pool.query("SELECT id,kind FROM documents WHERE retired_at IS NULL");
+  let bad = 0;
+  for (const doc of docs.rows) {
+    const baseRows = await pool.query("SELECT seq,version,content FROM document_revisions WHERE document_id=$1 AND kind='base' ORDER BY seq DESC LIMIT 1", [doc.id]);
+    const base = baseRows.rows[0];
+    if (!base) continue;
+    const tail = await pool.query("SELECT kind,version,content FROM document_revisions WHERE document_id=$1 AND seq>$2 ORDER BY seq", [doc.id, base.seq]);
+    try {
+      let value = JSON.parse(base.content);
+      for (const revision of tail.rows) {
+        if (revision.kind !== "delta" || revision.version !== base.version) throw new Error("version boundary without a base");
+        value = apply(value, JSON.parse(revision.content));
       }
-      value = apply(value, JSON.parse(rev.content));
+    } catch (error) {
+      bad++;
+      console.log(`document ${doc.id} kind=${doc.kind}: ${String(error)}`);
     }
-  } catch (error) {
-    bad.push({ id: doc.id, kind: doc.kind, record: doc.record, error: String(error) });
   }
-}
-
-console.log(`scanned ${docs.rows.length} documents, poisoned: ${bad.length}`);
-for (const b of bad) {
-  console.log(`  doc ${b.id} kind=${b.kind}: ${b.error}`);
-  console.log(`    record: ${b.record.slice(0, 200)}`);
-}
-
-if (fix) {
-  const ephemeral = bad.filter((b) => b.kind.includes("pi.live") || b.kind.includes("pi.inbox") || b.kind.includes("pi.codemode") || b.kind.includes("pi.tool.nested-call"));
-  const keep = bad.filter((b) => !ephemeral.includes(b));
-  if (keep.length > 0) {
-    console.log(`NOT deleting ${keep.length} non-ephemeral poisoned docs (manual review needed):`);
-    for (const k of keep) console.log(`  doc ${k.id} kind=${k.kind}`);
+  console.log(`scanned ${docs.rows.length} current documents; invalid: ${bad}`);
+  if (process.argv.includes("--fix")) {
+    const { PostgresDurableStorage } = await import("../apps/server/src/storage/postgres/storage.ts");
+    const { SharedPoolDatabase } = await import("../apps/server/src/storage/postgres/pg.ts");
+    const storage = await PostgresDurableStorage.open(new SharedPoolDatabase(pool));
+    const repaired = await storage.repairLiveProjections();
+    console.log(`rebuilt live projections: ${repaired.join(", ") || "none"}; other document kinds are unchanged`);
   }
-  for (const b of ephemeral) {
-    await pool.query("DELETE FROM document_revisions WHERE document_id = $1", [b.id]);
-    await pool.query("DELETE FROM documents WHERE id = $1", [b.id]);
-    console.log(`deleted poisoned ephemeral doc ${b.id} (${b.kind})`);
-  }
+} finally {
+  await pool.end();
 }
-await pool.end();

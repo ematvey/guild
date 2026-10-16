@@ -184,6 +184,13 @@ export class LiveHub {
     return holder.sink.send(msg);
   }
 
+  /** Cancellation belongs to the connection that accepted the call. */
+  sendMachineToolCancel(machineId: string, orgId: string, connectionId: string, callId: string): boolean {
+    const holder = this.machineHolder(machineId);
+    if (!holder || holder.org_id !== orgId || holder.conn_id !== connectionId) return false;
+    return holder.sink.send({ type: "tool_cancel", call_id: callId });
+  }
+
   /** Displaces a machine's live socket without a replacement: registry
    *  adoption re-keyed the row away from this id, so the old registration no
    *  longer has a registry identity to hold. (Rust `displace_machine`.) */

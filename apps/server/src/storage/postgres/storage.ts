@@ -34,6 +34,7 @@ import type {
   TaskRecord,
 } from "@earendil-works/pi-durable";
 import type { PostgresDatabase, PostgresExecutor } from "./executor.js";
+import { rebuildLiveProjection } from "./live-projection.js";
 import { applyPostgresMigrations } from "./migrations.js";
 import { isTransientDbError, RETRY_DELAYS_MS, sleep } from "./pg.js";
 
@@ -178,6 +179,7 @@ interface DocumentAction {
   create?: DocumentCreate;
   content?: DocumentContent;
   copy?: DocumentCopySource;
+  liveValue?: JsonObject;
 }
 
 /**
@@ -188,6 +190,8 @@ interface DocumentAction {
  * matching the ownership boundary of serialization-backed stores.
  */
 export class PostgresDurableStorage implements Storage {
+  private readonly liveRevisions = new Map<DocumentId, number>();
+  private readonly liveValues = new Map<DocumentId, JsonObject>();
   private nextId: number;
   private closed = false;
   private closing: Promise<void> | undefined;
@@ -218,6 +222,47 @@ export class PostgresDurableStorage implements Storage {
     }
   }
 
+  /** Repairs only the built-in latest live projection, before a scheduler opens.
+   * The metadata lock fences repair against commits. Authoritative records stay
+   * untouched, and damaged revisions remain available in the repair journal. */
+  async repairLiveProjections(conversationId?: ConversationId): Promise<DocumentId[]> {
+    this.assertOpen();
+    return this.db.transaction(async tx => {
+      const metadata = await tx.query<{ next_seq: number }>("SELECT next_seq FROM durable_metadata WHERE singleton=1 FOR UPDATE");
+      let seq = Number(metadata[0]!.next_seq);
+      const rows = await tx.query<{ id: number; owner_id: number; record: string }>(
+        `SELECT id,owner_id,record FROM documents WHERE kind=$1 AND scope_kind='conversation' AND retired_at IS NULL${conversationId === undefined ? "" : " AND owner_id=$2"} ORDER BY id`,
+        conversationId === undefined ? [encodeIndexedString("pi.live")] : [encodeIndexedString("pi.live"), conversationId],
+      );
+      const repaired: DocumentId[] = [];
+      for (const row of rows) {
+        const id = asDocumentId(Number(row.id));
+        try {
+          await this.materializeDocument(tx, id, "current");
+          continue;
+        } catch (error) {
+          if (!(error instanceof Error) || error.name !== "PathError") throw error;
+          const record = parseJson(row.record) as DocumentRecord;
+          if (!isCurrentOnly(record)) throw error;
+          const revisions = await tx.query<{ seq: number; kind: string; version: number; content: string }>("SELECT seq,kind,version,content FROM document_revisions WHERE document_id=$1 ORDER BY seq", [id]);
+          if (revisions.some(revision => revision.version !== 1)) throw error;
+          const value = await rebuildLiveProjection(tx, Number(row.owner_id));
+          // Also fence writers holding a revision beyond the metadata watermark.
+          const repairSeq = revisions.reduce((next, revision) => Math.max(next, Number(revision.seq) + 1), seq);
+          await tx.query("INSERT INTO live_projection_repairs(document_id,repaired_at_seq,conversation_id,reason,revisions) VALUES ($1,$2,$3,$4,$5)", [id, repairSeq, row.owner_id, error.message, encodeJson(revisions)]);
+          await tx.query("DELETE FROM document_revisions WHERE document_id=$1", [id]);
+          await tx.query("INSERT INTO document_revisions(document_id,seq,kind,version,content) VALUES ($1,$2,'base',1,$3)", [id, repairSeq, encodeJson(value)]);
+          seq = repairSeq + 1;
+          this.liveRevisions.delete(id);
+          this.liveValues.delete(id);
+          repaired.push(id);
+        }
+      }
+      if (repaired.length) await tx.query("UPDATE durable_metadata SET next_seq=$1 WHERE singleton=1", [seq]);
+      return repaired;
+    });
+  }
+
   async commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq> {
     this.assertOpen();
     const documentActions = this.prepareDocumentActions(writes);
@@ -244,6 +289,7 @@ export class PostgresDurableStorage implements Storage {
           const adopted = await this.adoptCommit(fingerprint).catch(() => undefined);
           if (adopted !== undefined) {
             this.nextId = Math.max(this.nextId, candidateNextId);
+            this.adoptLiveValues(documentActions, adopted);
             return adopted;
           }
         }
@@ -283,7 +329,23 @@ export class PostgresDurableStorage implements Storage {
       return committedSeq;
     });
     this.nextId = Math.max(this.nextId, candidateNextId);
+    this.adoptLiveValues(documentActions, seq);
     return seq;
+  }
+
+  private adoptLiveValues(actions: Map<DocumentId, DocumentAction>, seq: Seq): void {
+    for (const [id, action] of actions) {
+      if (!this.liveRevisions.has(id) && action.create?.kind !== "pi.live" && action.liveValue === undefined) continue;
+      if (action.retire) {
+        this.liveRevisions.delete(id);
+        this.liveValues.delete(id);
+        continue;
+      }
+      if (!action.content) continue;
+      this.liveRevisions.set(id, Number(seq));
+      const value = action.liveValue ?? (action.content.kind === "base" ? action.content.value : undefined);
+      if (value !== undefined) this.liveValues.set(id, structuredClone(value));
+    }
   }
 
   /** The seq of the commit that already applied this exact batch (same
@@ -595,7 +657,15 @@ export class PostgresDurableStorage implements Storage {
     this.assertOpen();
     // Record and revision queries must observe one committed state; a commit between
     // them could otherwise replace the base mid-read.
-    return this.db.readTransaction((tx) => this.materializeDocument(tx, id, at));
+    return this.db.readTransaction(async (tx) => {
+      const stored = await this.materializeDocument(tx, id, at);
+      if (at === "current" && stored?.record.kind === "pi.live" && !this.liveRevisions.has(id)) {
+        const rows = await tx.query<{ seq: number }>("SELECT max(seq) AS seq FROM document_revisions WHERE document_id=$1", [id]);
+        this.liveRevisions.set(id, Number(rows[0]!.seq));
+        this.liveValues.set(id, structuredClone(stored.value));
+      }
+      return stored;
+    });
   }
 
   async scanDocuments(
@@ -772,6 +842,21 @@ export class PostgresDurableStorage implements Storage {
         }
       }
       const record = action.create ?? existing!;
+      if (record.kind === "pi.live" && existing && (action.content || action.retire)) {
+        const rows = await tx.query<{ seq: number }>("SELECT max(seq) AS seq FROM document_revisions WHERE document_id=$1", [id]);
+        const expected = this.liveRevisions.get(id);
+        if (expected !== undefined && expected !== Number(rows[0]!.seq)) {
+          throw new StorageRequestError(`Live projection ${id} has a stale writer`);
+        }
+        if (action.content?.kind === "delta") {
+          // A matching revision lets validation reuse the committed value rather
+          // than replay the growing delta chain on every streaming update.
+          const value = this.liveValues.get(id) ?? (await this.materializeDocument(tx, id, "current"))!.value;
+          action.liveValue = apply(value, action.content.ops);
+        } else if (action.content?.kind === "base") {
+          action.liveValue = action.content.value;
+        }
+      }
       const key = addressKey(record);
       let live = liveCounts.get(key);
       if (live === undefined) live = (await this.currentDocumentId(tx, record)) === undefined ? 0 : 1;

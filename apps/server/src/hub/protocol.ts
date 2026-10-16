@@ -16,6 +16,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Server → client. Returns the exact bytes serde_json::to_string would
  *  produce for each WsServerMsg variant. */
 export type WsServerMsg =
+  | { type: "tool_cancel"; call_id: string }
   | { type: "hello" }
   | { type: "displaced" }
   | { type: "auth_required" }
@@ -187,6 +188,8 @@ export function serializeServerMsg(msg: WsServerMsg): string {
       return JSON.stringify(frame("auth_required", []));
     case "pong":
       return JSON.stringify(frame("pong", []));
+    case "tool_cancel":
+      return JSON.stringify(frame("tool_cancel", [["call_id", msg.call_id]]));
     case "tool_dispatch":
       return JSON.stringify(
         frame("tool_dispatch", [

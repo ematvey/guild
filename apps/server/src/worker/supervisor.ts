@@ -31,6 +31,7 @@ interface Handle {
   nextRef: number;
   /** Requests sent before the ready handshake resolved. */
   readonly queued: WorkerRequest[];
+  readonly dispatches: Map<number, AbortController>;
   readonly waiters: Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>;
   respawns: number;
   resolveReady: () => void;
@@ -101,7 +102,7 @@ export class ForkSupervisor {
     private readonly hasPendingWork: (chatId: string) => Promise<boolean>,
     /** Machine-tool dispatch on the server's hub (workers proxy their
      *  env calls here; undefined only in degenerate test stacks). */
-    private readonly dispatchMachine?: (call: MachineDispatchCall) => Promise<MachineToolOutcome>,
+    private readonly dispatchMachine?: (call: MachineDispatchCall, signal?: AbortSignal) => Promise<MachineToolOutcome>,
   ) {}
 
   private startHeartbeatSweeper(): void {
@@ -138,6 +139,7 @@ export class ForkSupervisor {
       nextRef: 1,
       queued: [],
       waiters: new Map(),
+      dispatches: new Map(),
       respawns: 0,
       resolveReady: () => {},
       rejectReady: () => {},
@@ -204,22 +206,34 @@ export class ForkSupervisor {
     }
     // Worker-initiated machine dispatch (the IPC proxy): the hub-backed
     // registry does the real frame send + result wait on the server side.
+    if (message.t === "dispatch_cancel") {
+      handle.dispatches.get(message.ref)?.abort();
+      return;
+    }
     if (message.t === "dispatch") {
+      const controller = new AbortController();
+      handle.dispatches.set(message.ref, controller);
+      const reply = (response: WorkerResponse) => {
+        if (handle.child.connected) handle.child.send(response, () => {});
+      };
       void (async () => {
         if (!this.dispatchMachine) {
-          handle.child.send({ t: "result", ref: message.ref, ok: false, error: "machine dispatch unavailable" });
+          reply({ t: "result", ref: message.ref, ok: false, error: "machine dispatch unavailable" });
+          handle.dispatches.delete(message.ref);
           return;
         }
         try {
-          const outcome = await this.dispatchMachine(message.call);
-          handle.child.send({ t: "result", ref: message.ref, ok: true, data: outcome });
+          const outcome = await this.dispatchMachine(message.call, controller.signal);
+          reply({ t: "result", ref: message.ref, ok: true, data: outcome });
         } catch (error) {
-          handle.child.send({
+          reply({
             t: "result",
             ref: message.ref,
             ok: false,
             error: (error as Error)?.message ?? String(error),
           });
+        } finally {
+          handle.dispatches.delete(message.ref);
         }
       })();
       return;
@@ -238,6 +252,8 @@ export class ForkSupervisor {
    *  has pending work gets one, with backoff; an idle worker just stays
    *  dead until the next touch. */
   private async onWorkerDeath(chatId: string, handle: Handle): Promise<void> {
+    for (const controller of handle.dispatches.values()) controller.abort();
+    handle.dispatches.clear();
     if (this.closed) return;
     if (!(await this.hasPendingWork(chatId).catch(() => false))) return;
     const delay = RESPAWN_DELAYS_MS[Math.min(handle.respawns, RESPAWN_DELAYS_MS.length - 1)]!;
@@ -322,6 +338,10 @@ export class ForkSupervisor {
     this.closed = true;
     if (this.heartbeatSweeper) clearInterval(this.heartbeatSweeper);
     const children = [...this.handles.values()];
+    for (const handle of children) {
+      for (const controller of handle.dispatches.values()) controller.abort();
+      handle.dispatches.clear();
+    }
     this.handles.clear();
     await Promise.all(
       children.map(

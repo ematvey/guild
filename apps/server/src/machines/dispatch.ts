@@ -28,6 +28,7 @@ export type ExecutorKind = "machine" | "server" | null;
 export interface MachineDispatchHost {
   machineHolder(machineId: string): { conn_id: string; org_id: string } | null;
   sendMachineToolDispatch(machineId: string, orgId: string, msg: { type: "tool_dispatch"; chat_id: string; call_id: string; name: string; arguments: string; workdir?: string }): boolean;
+  sendMachineToolCancel(machineId: string, orgId: string, connectionId: string, callId: string): boolean;
   /** The control-plane request to a machine's executor socket (the skills
    *  fleet sync push) and the slot liveness the fan-out consults. */
   machineRequest: MachineRequestFn;
@@ -74,7 +75,8 @@ export class MachineDispatch {
     args: Record<string, unknown>;
     workdir: string | null;
     timeoutMs: number;
-  }): Promise<MachineToolOutcome> {
+  }, signal?: AbortSignal): Promise<MachineToolOutcome> {
+    signal?.throwIfAborted();
     const holder = this.hub.machineHolder(opts.machineId);
     if (holder === null || holder.org_id !== opts.orgId) {
       return { content: "machine offline", is_error: true, meta: null, images: [] };
@@ -86,6 +88,10 @@ export class MachineDispatch {
     });
     this.pending.set(callId, { connectionId: holder.conn_id, orgId: opts.orgId, settle: settle! });
     let timer: NodeJS.Timeout | undefined;
+    const cancel = () => {
+      this.hub.sendMachineToolCancel(opts.machineId, opts.orgId, holder.conn_id, callId);
+      settle!({ content: "machine tool cancelled", is_error: true, meta: null, images: [] });
+    };
     try {
       const sent = this.hub.sendMachineToolDispatch(opts.machineId, opts.orgId, {
         type: "tool_dispatch",
@@ -98,21 +104,26 @@ export class MachineDispatch {
       if (!sent) {
         return { content: "machine offline", is_error: true, meta: null, images: [] };
       }
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
       const timeout = new Promise<MachineToolOutcome>((resolve) => {
         timer = setTimeout(
-          () =>
+          () => {
+            this.hub.sendMachineToolCancel(opts.machineId, opts.orgId, holder.conn_id, callId);
             resolve({
               content: `client tool ${opts.name} (${callId}) timed out after 5 minutes: no client result arrived`,
               is_error: true,
               meta: null,
               images: [],
-            }),
+            });
+          },
           opts.timeoutMs,
         );
         timer.unref?.();
       });
       return await Promise.race([done, timeout]);
     } finally {
+      signal?.removeEventListener("abort", cancel);
       this.pending.delete(callId);
       clearTimeout(timer);
     }
@@ -222,7 +233,7 @@ export class MachineExecutionEnv implements ExecutionEnv {
     this.cwd = options.workdir ?? "/";
   }
 
-  private async runTool(name: string, args: Record<string, unknown>): Promise<MachineToolOutcome> {
+  private async runTool(name: string, args: Record<string, unknown>, context?: Context): Promise<MachineToolOutcome> {
     return this.options.dispatch.dispatch({
       machineId: this.options.machineId,
       orgId: this.options.orgId,
@@ -231,7 +242,7 @@ export class MachineExecutionEnv implements ExecutionEnv {
       args,
       workdir: this.options.workdir,
       timeoutMs: this.options.timeoutMs,
-    });
+    }, context?.abortSignal);
   }
 
   async absolutePath(p: string): Promise<Result<string, FileError>> {
@@ -242,8 +253,8 @@ export class MachineExecutionEnv implements ExecutionEnv {
     return ok(path.join(...parts));
   }
 
-  private async readThrough(path: string): Promise<string> {
-    const outcome = await this.runTool("read_file", { path });
+  private async readThrough(path: string, context: Context): Promise<string> {
+    const outcome = await this.runTool("read_file", { path }, context);
     if (outcome.is_error) {
       throw new FileError(/no such file|not found/i.test(outcome.content) ? "not_found" : "unknown", outcome.content, path);
     }
@@ -252,7 +263,7 @@ export class MachineExecutionEnv implements ExecutionEnv {
 
   async readTextFile(p: string, _context: Context): Promise<Result<string, FileError>> {
     try {
-      return ok(await this.readThrough(p));
+      return ok(await this.readThrough(p, _context));
     } catch (error) {
       return err(error instanceof FileError ? error : new FileError("unknown", String(error), p));
     }
@@ -328,7 +339,7 @@ export class MachineExecutionEnv implements ExecutionEnv {
     if (typeof content !== "string") {
       return fileErr("not_supported", "binary writes are not supported over machine dispatch", p);
     }
-    const outcome = await this.runTool("write_file", { path: p, content });
+    const outcome = await this.runTool("write_file", { path: p, content }, _context);
     if (outcome.is_error) return fileErr("unknown", outcome.content, p);
     return ok(undefined);
   }
@@ -388,6 +399,7 @@ export class MachineExecutionEnv implements ExecutionEnv {
   }
 
   async exec(command: string | readonly string[], options: ShellExecOptions | undefined, _context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
+    if (_context.abortSignal?.aborted) return err(new ExecutionError("aborted", "aborted"));
     const timeoutMs =
       options?.timeout !== undefined ? Math.min(Math.max(options.timeout * 1000, 1), DEFAULT_EXECUTE_TIMEOUT_MS) : DEFAULT_EXECUTE_TIMEOUT_MS;
     // The wire contract carries one shell command string; an argv array is
@@ -395,7 +407,8 @@ export class MachineExecutionEnv implements ExecutionEnv {
     // argv form over machine dispatch).
     const line = typeof command === "string" ? command : command.map(shellQuote).join(" ");
     let streamed = 0;
-    const outcome = await this.runTool("execute", { command: line, timeout_ms: timeoutMs });
+    const outcome = await this.runTool("execute", { command: line, timeout_ms: timeoutMs }, _context);
+    if (_context.abortSignal?.aborted) return err(new ExecutionError("aborted", "aborted"));
     if (options?.onOutput !== undefined && outcome.content.length > streamed) {
       const info: ShellOutputInfo = { stream: "stdout" };
       options.onOutput(outcome.content, _context, info);

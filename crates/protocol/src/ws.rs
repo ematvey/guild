@@ -82,6 +82,10 @@ pub enum WsServerMsg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workdir: Option<String>,
     },
+    /// Stop a call owned by this executor connection. Unknown/completed IDs are ignored.
+    ToolCancel {
+        call_id: String,
+    },
     Error {
         message: String,
     },

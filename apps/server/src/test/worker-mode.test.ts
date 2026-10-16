@@ -125,6 +125,31 @@ describe("worker-per-chat (fork supervisor)", () => {
     expect(stack.env.app.platform.supervisor!.pidOf(chatId)).toBeDefined();
   }, 90_000);
 
+  it("rebuilds a poisoned projection on worker restart and completes the next turn", async () => {
+    const chatId = await createChat("recover live projection");
+    stack.mock.setResponses([{ body: finalSse("before projection repair") }]);
+    await submit(chatId, "first turn");
+    await waitFor(async () => (await lastAssistant(chatId)).includes("before projection repair"));
+    const mapping = await stack.env.db.query<{ conversation_id: string }>("SELECT conversation_id FROM chat_conversations WHERE chat_id=$1", [chatId]);
+    const conversationId = mapping.rows[0]!.conversation_id;
+    const docs = await stack.env.db.query<{ id: string }>("SELECT id FROM documents WHERE kind=$1 AND owner_id=$2 AND retired_at IS NULL", [JSON.stringify("pi.live"), conversationId]);
+    const documentId = docs.rows[0]!.id;
+    process.kill(stack.env.app.platform.supervisor!.pidOf(chatId)!, "SIGKILL");
+    await waitFor(async () => stack.env.app.platform.supervisor!.pidOf(chatId) === undefined);
+    await stack.env.db.query(`WITH reserved AS (UPDATE durable_metadata SET next_seq=next_seq+1 WHERE singleton=1 RETURNING next_seq-1 AS seq)
+      INSERT INTO document_revisions(document_id,seq,kind,version,content) SELECT $1,seq,'delta',1,$2 FROM reserved`, [documentId, JSON.stringify([["s", ["nestedTools", 0, "output"], "late output"]])]);
+    stack.mock.setResponses([{ body: finalSse("after projection repair") }]);
+    await submit(chatId, "second turn");
+    await waitFor(async () => (await lastAssistant(chatId)).includes("after projection repair"));
+    const repairs = await stack.env.db.query("SELECT document_id FROM live_projection_repairs WHERE document_id=$1", [documentId]);
+    expect(repairs.rows).toHaveLength(1);
+    const inputs = await stack.env.db.query<{ status: string }>("SELECT status FROM submissions WHERE conversation_id=$1 AND record::jsonb->>'type'='input' ORDER BY id", [conversationId]);
+    expect(inputs.rows.map(row => row.status)).toEqual(["done", "done"]);
+    const thread = await stack.env.app.inject({ method: "GET", url: `/api/v1/chats/${chatId}/thread`, headers: auth(stack.memberToken) });
+    expect(thread.body).toContain("before projection repair");
+    expect(thread.body).toContain("after projection repair");
+  }, 90_000);
+
   it("killing one chat's worker mid-turn leaves the other chat alone and the turn resumes", async () => {
     const chatA = await createChat("worker kill A");
     const chatB = await createChat("worker kill B");
@@ -250,6 +275,37 @@ describe("worker-per-chat (fork supervisor)", () => {
     }, 60_000);
     ws.close();
   }, 120_000);
+
+  it("stopping a machine tool crosses worker IPC and cancels the accepting executor", async () => {
+    const ticket = await stack.env.app.inject({ method: "POST", url: "/api/v1/ws/ticket", headers: { authorization: `Bearer ${stack.memberToken}` } });
+    expect(ticket.statusCode).toBe(200);
+    const machineId = "worker-cancel-machine";
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/v1/ws?ticket=${JSON.parse(ticket.body).ticket}&machine_id=${machineId}&instance_id=${crypto.randomUUID()}`);
+    const frames: Record<string, unknown>[] = [];
+    ws.on("message", (data: Buffer) => frames.push(JSON.parse(data.toString("utf8"))));
+    await new Promise<void>((resolve, reject) => { ws.on("open", resolve); ws.on("error", reject); });
+    try {
+      await waitFor(async () => stack.env.app.platform.hub.machineOnline(machineId));
+      const chatId = await createChat("cancel machine tool");
+      await stack.env.db.query("UPDATE chats SET approval=$2 WHERE id=$1", [chatId, JSON.stringify({ default: "full_access" })]);
+      await stack.env.app.platform.chats.setMachine(stack.orgId, chatId, machineId, machineId);
+      stack.mock.setResponses([{ body: toolCallSse("bash", JSON.stringify({ command: "sleep 30" })) }, { body: finalSse("stopped") }]);
+      await submit(chatId, "start long command");
+      await waitFor(async () => frames.some(frame => frame.type === "tool_dispatch"));
+      const dispatch = frames.find(frame => frame.type === "tool_dispatch")!;
+      const stopped = await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${chatId}/stop`, headers: { authorization: `Bearer ${stack.memberToken}` } });
+      expect(stopped.statusCode).toBe(200);
+      await waitFor(async () => frames.some(frame => frame.type === "tool_cancel"));
+      expect(frames.find(frame => frame.type === "tool_cancel")!.call_id).toBe(dispatch.call_id);
+      ws.send(JSON.stringify({ type: "tool_result", chat_id: chatId, call_id: dispatch.call_id, content: "late result must be ignored", is_error: false, meta: null }));
+      await waitFor(async () => {
+        const row = await stack.env.db.query<{ generating: boolean }>("SELECT generating FROM chats WHERE id=$1", [chatId]);
+        return row.rows[0]!.generating === false;
+      });
+      const thread = await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${chatId}`, headers: auth(stack.memberToken) });
+      expect(thread.body).not.toContain("late result must be ignored");
+    } finally { ws.close(); }
+  }, 90_000);
 
   it("killing a worker mid-tool-call keeps integration tools on the resumed run", async () => {
     // The vendor answers slowly, so the kill lands while the integration
