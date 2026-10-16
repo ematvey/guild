@@ -23,7 +23,7 @@ let memberToken: string;
 const sandboxRoot = mkdtempSync(path.join(tmpdir(), "guild-codemode-sandbox-"));
 const dataDir = mkdtempSync(path.join(tmpdir(), "guild-codemode-data-"));
 
-const toolCallSse = (name: string, args: string, id = "call_cm"): string =>
+const toolCallSse = (name: string, args: string, _id = "call_cm"): string =>
   'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_cm","type":"function","function":{"name":"' +
   name +
   '","arguments":' +

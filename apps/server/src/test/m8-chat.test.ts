@@ -23,8 +23,10 @@ let memberToken: string;
 const sandboxRoot = mkdtempSync(path.join(tmpdir(), "guild-m8-sandbox-"));
 const dataDir = mkdtempSync(path.join(tmpdir(), "guild-m8-data-"));
 
-const toolCallSse = (name: string, args: string): string =>
-  'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_m8","type":"function","function":{"name":"' +
+const toolCallSse = (name: string, args: string): string => {
+  args = JSON.stringify({ code: `return await tools[${JSON.stringify(name)}](${args});` });
+  name = "codemode";
+  return 'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_m8","type":"function","function":{"name":"' +
   name +
   '","arguments":' +
   JSON.stringify(args) +
@@ -32,6 +34,7 @@ const toolCallSse = (name: string, args: string): string =>
   'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
   "data: [DONE]\n\n";
+};
 
 const finalSse =
   'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
@@ -214,12 +217,12 @@ describe("M8: integrations chat runtime", () => {
       await turnSettled(chatId);
 
       const events = await threadEvents(chatId);
-      const call = toolCalls(events).find((b) => (b as { name: string }).name === "atlassian_list_tools");
+      const call = toolCalls(events).find((b) => (b as { name: string }).name === "codemode");
       expect(call).toBeDefined();
       const result = toolResults(events).find((e) => (e.event as { call_id: string }).call_id === (call as { id: string }).id);
       expect(result).toBeDefined();
       expect((result!.event as { is_error: boolean }).is_error).toBe(false);
-      const specs = JSON.parse((result!.event as { content: string }).content) as Record<string, unknown>[];
+      const specs = JSON.parse((result!.event as { content: string }).content.split("Output:\n")[1]!) as Record<string, unknown>[];
       const names = specs.map((s) => s["name"]);
       // Read-class connector tools for the member; write-class tools
       // (confluence_create_page, api) are role-filtered out; the list_tools
@@ -334,7 +337,7 @@ describe("M8: integrations chat runtime", () => {
 
       const events = await threadEvents(chatId, stack.adminToken);
       expect(events.find((e) => (e.event as { type?: string }).type === "approval_request")).toBeUndefined();
-      const call = toolCalls(events).find((b) => (b as { name: string }).name === "slack_post_message");
+      const call = toolCalls(events).find((b) => (b as { name: string }).name === "codemode");
       expect(call).toBeDefined();
       const result = toolResults(events).find((e) => (e.event as { call_id: string }).call_id === (call as { id: string }).id);
       expect(result).toBeDefined();

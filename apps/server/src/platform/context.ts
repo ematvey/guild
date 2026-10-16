@@ -185,6 +185,8 @@ export class PlatformContext {
                  WHERE c.chat_id = $1 AND (
                    EXISTS (SELECT 1 FROM tasks t WHERE t.conversation_id = c.conversation_id AND t.status IN ('pending', 'running', 'waiting'))
                    OR EXISTS (SELECT 1 FROM submissions s WHERE s.conversation_id = c.conversation_id AND s.status = 'queued')
+                   OR EXISTS (SELECT 1 FROM entries e WHERE e.conversation_id=c.conversation_id
+                     AND e.id>COALESCE((SELECT p.entry_id FROM chat_projection_cursors p WHERE p.chat_id=c.chat_id AND p.conversation_id=c.conversation_id),0))
                  )
                ) AS pending`,
               [chatId],

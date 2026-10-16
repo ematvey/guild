@@ -5,6 +5,8 @@
 // the session guard.
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { createRegistry, defineDoc, Harness } from "@earendil-works/pi-durable";
+import { createModels } from "@earendil-works/pi-ai";
 import type { ConversationRecord } from "@earendil-works/pi-durable";
 import { afterAll, describe, expect, it } from "vitest";
 import pg from "pg";
@@ -28,6 +30,7 @@ afterAll(async () => {
 class FlakyDb implements PostgresDatabase {
   failTransactions = 0;
   failQueries = 0;
+  loseCommitReply = false;
 
   constructor(private readonly inner: PgPoolDatabase) {}
 
@@ -44,7 +47,12 @@ class FlakyDb implements PostgresDatabase {
       this.failTransactions--;
       throw Object.assign(new Error("server closed the connection unexpectedly"), { code: "ECONNRESET" });
     }
-    return this.inner.transaction(callback);
+    const result = await this.inner.transaction(callback);
+    if (this.loseCommitReply) {
+      this.loseCommitReply = false;
+      throw Object.assign(new Error("connection reset after COMMIT"), { code: "ECONNRESET" });
+    }
+    return result;
   }
 
   async readTransaction<T>(callback: (tx: PostgresExecutor) => Promise<T>): Promise<T> {
@@ -83,22 +91,51 @@ describe("durable Postgres resilience", () => {
       await withStorage(async (storage, db) => {
         const id = await storage.mintId();
         const writes = [conversationWrite(id)];
+        db.loseCommitReply = true;
         const seq = await storage.commit(writes, BACKGROUND_CONTEXT);
-        // Re-committing the same writes on a clean connection must reject
-        // (the storage contract: the ID claim throws, no adoption).
+        expect(seq).toBeGreaterThan(0);
         await expect(storage.commit(writes, BACKGROUND_CONTEXT)).rejects.toThrow("already belongs to conversation");
-        // The same re-commit after a connection failure is ambiguous (the
-        // attempt may have committed): the durable_commits row identifies
-        // the applied batch and the commit adopts its seq.
         db.failTransactions = 1;
-        const adopted = await storage.commit(writes, BACKGROUND_CONTEXT);
-        expect(adopted).toBe(seq);
+        await expect(storage.commit(writes, BACKGROUND_CONTEXT)).rejects.toThrow("already belongs to conversation");
         const record = await storage.conversation(id as never, BACKGROUND_CONTEXT);
         expect((record as ConversationRecord | undefined)?.id).toBe(id);
       });
     },
     30_000,
   );
+
+  it("does not adopt an older checkpoint touching the same task", async () => {
+    await withStorage(async (storage, db) => {
+      const conversationId = await storage.mintId();
+      await storage.commit([conversationWrite(conversationId)], BACKGROUND_CONTEXT);
+      const id = await storage.mintId();
+      const task = { id, conversationId, kind: "test.checkpoint", version: 1, input: {}, background: false, abortRequested: false,
+        state: { status: "pending", checkpoint: { n: 1 } } };
+      const first = await storage.commit([{ type: "task", value: task }] as never, BACKGROUND_CONTEXT);
+      db.failTransactions = 1;
+      const second = await storage.commit([{ type: "task", value: { ...task, state: { status: "pending", checkpoint: { n: 2 } } } }] as never, BACKGROUND_CONTEXT);
+      expect(second).toBeGreaterThan(first);
+      expect((await storage.task(id as never, BACKGROUND_CONTEXT))?.state).toMatchObject({ checkpoint: { n: 2 } });
+      db.loseCommitReply = true;
+      await storage.commit([{ type: "task", value: { ...task, state: { status: "pending", checkpoint: { n: 3 } } } }] as never, BACKGROUND_CONTEXT);
+      expect((await storage.task(id as never, BACKGROUND_CONTEXT))?.state).toMatchObject({ checkpoint: { n: 3 } });
+    });
+  });
+
+  it("stores distinct document-only deltas through ambiguous and pre-commit failures", async () => {
+    await withStorage(async(storage,db)=>{
+      const Counter=defineDoc({kind:"test.counter",version:1,scope:"conversation",history:"latest",fork:"initial",initial:()=>({n:0})});
+      const h=await Harness.open(storage,{models:createModels(),registry:createRegistry()},BACKGROUND_CONTEXT);
+      try {
+        const c=await h.root(BACKGROUND_CONTEXT);
+        const set=async(n:number)=>c.commit(async tx=>{(await tx.doc(Counter,c.id)).n=n;},BACKGROUND_CONTEXT);
+        await set(1);db.failTransactions=1;await set(2);
+        expect(await h.snapshot(Counter,c.id,BACKGROUND_CONTEXT)).toEqual({n:2});
+        db.loseCommitReply=true;await set(3);
+        expect(await h.snapshot(Counter,c.id,BACKGROUND_CONTEXT)).toEqual({n:3});
+      }finally{await h.close(BACKGROUND_CONTEXT);}
+    });
+  });
 
   it(
     "retries a commit through transient connection errors",

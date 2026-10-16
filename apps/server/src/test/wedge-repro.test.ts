@@ -21,7 +21,6 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
-import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 
@@ -231,9 +230,9 @@ describe("wedge repro: input after a failed run", () => {
     "A: tool error then model 404 → is the next input stuck queued?",
     async () => {
       const state = await scenario("A tool-error + 404", [
-        toolCallSse("bash", JSON.stringify({ command: "exit 3" })),
+        { body: toolCallSse("bash", JSON.stringify({ command: "exit 3" })) },
         notFound,
-      ]);
+      ], 500, allGenerationsTerminal);
       expect(state.submissionStatus).toBe("placed");
     },
     TEST_TIMEOUT,
@@ -277,8 +276,8 @@ describe("wedge repro: input after a failed run", () => {
     "C: tool error then a normal answer → control, next input placed",
     async () => {
       const state = await scenario("C tool-error + ok", [
-        toolCallSse("bash", JSON.stringify({ command: "exit 3" })),
-        finalSse,
+        { body: toolCallSse("bash", JSON.stringify({ command: "exit 3" })) },
+        { body: finalSse },
       ]);
       // The mechanism check: a non-retryable first-turn failure ends the
       // run at once, so the next input is admitted to an IDLE conversation
