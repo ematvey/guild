@@ -12,8 +12,10 @@ not kept here — it lives in git.
 ## Latest decisions
 
 - **Every queued input has a runnable owner; clocks update locally (2026-10-17,
-  0.5.70).** pi-durable's model-error ending clears its run without placing
-  queued inputs. Guild applies an atomic idle inbox boundary after run endings,
+  0.5.70).** pi-durable documents that failed runs leave queued inputs for the
+  next input or queued write. Guild's stale generating flag and normal-send
+  guard blocked that native recovery path. Guild deliberately extends the
+  contract with automatic continuation: an atomic idle inbox boundary after run endings,
   admission and startup, preserving submission identities, queue modes and
   context resets. Generating is reconciled from durable work after admission
   rather than unconditionally raised after a possibly completed run. The
