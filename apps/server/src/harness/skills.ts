@@ -302,7 +302,8 @@ export class SkillRuntime {
         "needed). Existing entries get the next version; maintainer-gated skills only accept pushes from the owner, " +
         "the owner team, or an admin.",
       parameters: Type.Object({ slug: Type.String({ description: "The skill's slug" }) }),
-      replay: "safe",
+      // Publishing allocates a new version; interruption must not publish again.
+      replay: "unsafe",
       outputLimits: { maxBytes: 4 * 1024 },
       execute: (args, api) => this.push(args.slug, api),
     });

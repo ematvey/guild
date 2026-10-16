@@ -32,8 +32,10 @@ const dataDir = mkdtempSync(path.join(tmpdir(), "guild-mcp-data-"));
 let store: UserMcpStore;
 let master: Buffer;
 
-const toolCallSse = (name: string, args: string): string =>
-  'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_mcp","type":"function","function":{"name":"' +
+const toolCallSse = (name: string, args: string): string => {
+  args = JSON.stringify({ code: `return await tools[${JSON.stringify(name)}](${args});` });
+  name = "codemode";
+  return 'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_mcp","type":"function","function":{"name":"' +
   name +
   '","arguments":' +
   JSON.stringify(args) +
@@ -41,6 +43,7 @@ const toolCallSse = (name: string, args: string): string =>
   'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
   "data: [DONE]\n\n";
+};
 
 const finalSse =
   'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n' +
@@ -402,11 +405,12 @@ describe("user mcp chat runtime", () => {
       const events = await threadEvents(chatId);
       const result = toolResults(events)[0]!;
       expect((result.event as { is_error: boolean }).is_error).toBe(false);
-      expect((result.event as { content: string }).content).toBe("5");
+      expect((result.event as { content: string }).content).toContain("5");
 
       // The system prompt carries the index line; the request declared the
       // wire tool names.
-      const modelReq = stack.mock.requests[0]!.body as { messages: { role: string; content: string }[] };
+      const modelReq = stack.mock.requests[0]!.body as { messages: { role: string; content: string }[]; tools: { function: { name: string } }[] };
+      expect(modelReq.tools.map(tool => tool.function.name)).toEqual(["codemode"]);
       const system = modelReq.messages.find((m) => m.role === "system")?.content ?? "";
       expect(system).toContain("MCP testsvr: 2 tools");
     },

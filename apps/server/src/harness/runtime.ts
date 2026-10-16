@@ -12,6 +12,12 @@ import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   createRegistry,
+  createSession,
+  AgentDoc,
+  InboxDoc,
+  LiveDoc,
+  UsageDoc,
+  ProviderDoc,
   Harness,
   watchEvents,
   type AgentEventStream,
@@ -19,6 +25,8 @@ import {
   type ConversationId,
   type Extension,
   type Registry,
+  type SubmissionRecord,
+  type Cursor,
   type Storage,
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
@@ -301,14 +309,8 @@ export class GuildRuntime {
   /** The base conversation configuration: the guild, coding, and codemode
    *  extensions with their tools — every configure starts from this. */
   private baseConfiguration(): { extensions: readonly Extension[]; tools: readonly ToolRegistration[] } {
-    return {
-      extensions: [this.guildExtension, this.codingToolsScriptOnly, this.codemodeExtension],
-      tools: [
-        ...(this.codingToolsScriptOnly.tools ?? []),
-        ...this.skillsRuntime.tools(),
-        ...(this.codemodeExtension.tools ?? []),
-      ],
-    };
+    const extensions = [this.guildExtension, this.codingToolsScriptOnly, this.codemodeExtension];
+    return { extensions, tools: extensions.flatMap(extension => extension.tools ?? []) };
   }
 
   private masterKey(): Buffer {
@@ -509,19 +511,14 @@ export class GuildRuntime {
       // Server in worker mode: no harness here — a second scheduler would
       // adopt the workers' tasks. Boot recovery spawns workers for every
       // conversation the journal says still has pending work.
-      await this.supervisor.recoverFromJournal(await this.chatsWithPendingWork());
+      await this.supervisor.recoverFromJournal(await this.chatsWithPendingWork(true));
       return;
     }
     await this.openHarness();
   }
 
-  /** Worker-only: resolve (or create) the conversation this worker serves.
-   *  Conversation creation needs a Session, and the scoped harness cannot
-   *  create conversations outside its scope — a transient unscoped harness
-   *  does it, opened and closed without ever resuming: its adoption scan
-   *  only resets running→pending rows (the checkpoint is preserved and the
-   *  journal stays consistent either way; the scoped harness that follows
-   *  re-derives from the journal as usual). */
+  /** Create a chat's initial records through the Session kernel, without
+   * opening a scheduler or adopting any other worker's live tasks. */
   private async bootstrapWorkerConversation(): Promise<void> {
     const chatId = this.workerScope!.chatId;
     const existing = await this.pool.query<{ conversation_id: string | number }>(
@@ -532,13 +529,17 @@ export class GuildRuntime {
       this.chatToConversation.set(chatId, Number(existing.rows[0]!.conversation_id));
       return;
     }
-    const bootstrap = await Harness.open(
-      await PostgresDurableStorage.open(this.durableDb!),
-      { models: this.models, registry: this.registry, onReport: (error) => this.log.warn({ err: error }, "bootstrap harness report") },
-      BACKGROUND_CONTEXT,
-    );
+    const bootstrap = createSession(await PostgresDurableStorage.open(this.durableDb!));
     try {
-      const conversation = await bootstrap.createConversation({ ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT);
+      const conversation = await bootstrap.commit(async tx => {
+        const record = await tx.createConversation({ ownership: { kind: "ownerless" } });
+        await tx.doc(LiveDoc, record.id);
+        await tx.doc(InboxDoc, record.id);
+        await tx.doc(UsageDoc, record.id);
+        await tx.doc(ProviderDoc, record.id);
+        await tx.doc(AgentDoc, record.id);
+        return record;
+      }, BACKGROUND_CONTEXT);
       await this.pool.query(
         "INSERT INTO chat_conversations (chat_id, conversation_id) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id",
         [chatId, Number(conversation.id)],
@@ -551,11 +552,13 @@ export class GuildRuntime {
 
   /** Server-side boot scan: chats whose conversation has live tasks or
    *  queued submissions (the journal is the registry). */
-  private async chatsWithPendingWork(): Promise<{ chatId: string }[]> {
+  private async chatsWithPendingWork(includeProjections = false): Promise<{ chatId: string }[]> {
     const res = await this.pool.query<{ chat_id: string }>(
       `SELECT DISTINCT c.chat_id FROM chat_conversations c JOIN chats ch ON ch.id=c.chat_id
        WHERE ch.generating OR EXISTS (SELECT 1 FROM tasks t WHERE t.conversation_id = c.conversation_id AND t.status IN ('pending', 'running', 'waiting'))
-          OR EXISTS (SELECT 1 FROM submissions s WHERE s.conversation_id = c.conversation_id AND s.status = 'queued')`,
+          OR EXISTS (SELECT 1 FROM submissions s WHERE s.conversation_id = c.conversation_id AND s.status = 'queued')
+          ${includeProjections ? `OR EXISTS (SELECT 1 FROM entries e WHERE e.conversation_id=c.conversation_id
+            AND e.id>COALESCE((SELECT p.entry_id FROM chat_projection_cursors p WHERE p.chat_id=c.chat_id AND p.conversation_id=c.conversation_id),0))` : ""}`,
     );
     return res.rows.map((row) => ({ chatId: row.chat_id }));
   }
@@ -676,9 +679,7 @@ export class GuildRuntime {
     // delivered as run_start, and the bridge misses the generation id and
     // the turn-command claims for the whole resumed run.
     for (const [chatId, conversationId] of this.chatToConversation) {
-      await this.attachWatch(chatId, conversationId).catch((error) =>
-        this.log.error({ err: error, chatId }, "watch attach failed"),
-      );
+      await this.attachWatch(chatId, conversationId);
     }
     // Org model providers register before resume: a re-driven run resolves
     // its model through the registry, and without this it fails no_model —
@@ -780,12 +781,68 @@ export class GuildRuntime {
     }
     const key = String(conversationId);
     this.bridge.bind(key, chatId, await this.orgOfChat(chatId));
-    const stream = await watchEvents(this.harness!, conversationId as never, BACKGROUND_CONTEXT);
+    const harness = this.harness!;
+    const conversation = (await harness.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT))!;
+    const stream = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
+    const storage = this.storage!;
+    const recover = async () => {
+      // Bound the backfill and submission snapshot on the Session line.
+      // A later placement must not be skipped by advancing past its entry
+      // before its queued echo was delivered.
+      const { submissions, through } = await harness.commit(async tx => {
+        const tail = await tx.scanEntries({ conversationId: conversation.id, order: "descending" }, 1);
+        const submissions: SubmissionRecord[] = [];
+        let cursor: Cursor | undefined;
+        do {
+          const page = await storage.scanSubmissions({ conversationId: conversation.id }, 100, cursor, BACKGROUND_CONTEXT);
+          submissions.push(...page.items);
+          cursor = page.next;
+        } while (cursor !== undefined);
+        return { submissions, through: tail.items[0]?.id };
+      }, BACKGROUND_CONTEXT);
+      if (through !== undefined) await this.bridge.recover(conversation, submissions, through);
+      for (const record of submissions) {
+        if (record.status === "queued") continue;
+        if (typeof record.requestId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.requestId)) {
+          await this.turnCommands.submitted(record.requestId, `sub:${record.id}`);
+        }
+        await this.bridge.handle(key, [{ type: "submission", record }]);
+      }
+    };
+    try {
+      await recover();
+      await this.bridge.handle(key, [stream.snapshot]);
+    } catch (error) {
+      await stream.stop();
+      throw error;
+    }
     stream.start(async (events) => {
-      await this.bridge.handle(key, events);
-      if (events.some(event => event.type === "run_end")) {
-        await this.reconcileConversation(chatId, conversationId).catch(error =>
-          this.log.error({ err: error, chatId }, "idle inbox recovery failed"));
+      try {
+        if (events.some(event => event.type === "snapshot")) await recover();
+        await this.bridge.handle(key, events);
+        if (events.some(event => event.type === "run_end" || event.type === "snapshot")) {
+          await recover();
+          await this.reconcileConversation(chatId, conversationId);
+        }
+      } catch (error) {
+        this.log.error({ err: error, chatId }, "retrying transcript projection");
+        // Keep the watch alive. A bounded event stream may coalesce while
+        // storage is unavailable; immutable backfill and a fresh snapshot
+        // restore everything needed without replaying partial deltas.
+        while (!this.stopped && this.harness === harness) {
+          await new Promise(resolve => setTimeout(resolve, 250));
+          try {
+            await recover();
+            const current = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
+            const snapshot = current.snapshot;
+            await current.stop();
+            await this.bridge.handle(key, [snapshot]);
+            await this.reconcileConversation(chatId, conversationId);
+            break;
+          } catch (retryError) {
+            this.log.warn({ err: retryError, chatId }, "transcript projection retry failed");
+          }
+        }
       }
     });
     this.watches.set(chatId, stream);
@@ -843,19 +900,16 @@ export class GuildRuntime {
   private async provisionTurnTools(conversation: Conversation, chatId: string, orgId: string): Promise<void> {
     const prepared = await this.integrationsRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
     const userPrepared = await this.userMcpRuntime.prepareTurn(Number(conversation.id), chatId, orgId);
-    // A "clear" must still reconfigure — it drops that runtime's stale
-    // extension — so the conversation is left untouched only when both
-    // runtimes have never configured it and have nothing to add now.
-    if (prepared.action !== "none" || userPrepared.action !== "none") {
-      const base = this.baseConfiguration();
-      await conversation.configure(
-        {
-          extensions: [...base.extensions, ...prepared.extensions, ...userPrepared.extensions],
-          tools: [...base.tools, ...prepared.tools.map(toolsOnlyCaller), ...userPrepared.tools.map(toolsOnlyCaller)],
-        },
-        BACKGROUND_CONTEXT,
-      );
-    }
+    // Reconcile the complete desired selection, including an empty surface.
+    // Persisted choices may outlive this process's provisioning caches.
+    const base = this.baseConfiguration();
+    await conversation.configure(
+      {
+        extensions: [...base.extensions, ...prepared.extensions, ...userPrepared.extensions],
+        tools: [...base.tools, ...prepared.tools, ...userPrepared.tools],
+      },
+      BACKGROUND_CONTEXT,
+    );
   }
 
   /** Submits a user turn into the chat's conversation: the model provider

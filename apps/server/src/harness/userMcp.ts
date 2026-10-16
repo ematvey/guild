@@ -1,12 +1,13 @@
 // The user-MCP chat runtime: per turn the chat owner's enabled MCP servers
 // resolve into a snapshot, one dynamic per-user registry extension carries
-// the prompt index, and every discovered tool is declared directly to the
-// model as mcp_<server>_<tool> (no disclosure pair — the scale is small and
+// the prompt index, and every discovered tool is available to codemode as
+// mcp_<server>_<tool> (no disclosure pair — the scale is small and
 // the user owns the servers). Nothing is cached across turns: discovery is
 // per-turn; secrets never ride the snapshot (headers re-decrypt at call
 // time); one unreachable server degrades to a diagnostic line, never a
 // failed turn.
 
+import type { Context } from "@earendil-works/chord";
 import type {
   Extension,
   PromptSection,
@@ -58,7 +59,6 @@ export function userMcpToolName(serverName: string, toolName: string): string {
 
 export class UserMcpRuntime {
   private readonly snapshots = new Map<number, TurnSnapshot>();
-  private readonly configured = new Map<number, string>();
 
   constructor(
     private readonly deps: UserMcpRuntimeDeps,
@@ -82,11 +82,7 @@ export class UserMcpRuntime {
     const snapshot = await this.resolveSnapshot(chatId, orgId);
     this.snapshots.set(conversationId, snapshot);
     if (snapshot.servers.length === 0) {
-      if (this.configured.has(conversationId)) {
-        this.configured.delete(conversationId);
-        return { action: "clear", extensions: [], tools: [] };
-      }
-      return { action: "none", extensions: [], tools: [] };
+      return { action: "clear", extensions: [], tools: [] };
     }
     const extension = this.installUserExtension(snapshot);
     const tools = extension.tools ?? [];
@@ -131,7 +127,7 @@ export class UserMcpRuntime {
           });
         }
         base.lines.push(
-          `MCP ${row.name}: ${listed.length} tools — call ${userMcpToolName(row.name, "<tool>")} directly; the schema is declared.`,
+          `MCP ${row.name}: ${listed.length} tools — call ${userMcpToolName(row.name, "<tool>")} through codemode; its schema is available to scripts.`,
         );
       } catch (error) {
         base.lines.push(`MCP ${row.name}: unreachable (${(error as Error).message})`);
@@ -153,7 +149,7 @@ export class UserMcpRuntime {
       async render(input) {
         const snap = await runtime.snapshotFor(Number(input.conversationId));
         if (snap === undefined || snap.servers.length === 0) return undefined;
-        return `User MCP servers (their tools are declared):\n${snap.lines.map((line) => `- ${line}`).join("\n")}`;
+        return `User MCP servers (their tools are available to codemode):\n${snap.lines.map((line) => `- ${line}`).join("\n")}`;
       },
     };
     const extension: Extension<ToolRegistration> = {
@@ -196,9 +192,12 @@ export class UserMcpRuntime {
       name: wireName,
       description: tool.description,
       parameters: tool.inputSchema as TSchema,
+      callers: ["tools"] as const,
       replay: "unsafe" as const,
-      async execute(args: unknown, api: ToolExecutionApi): Promise<ToolExecutionResult> {
-        const outcome = await runtime.executeToolCall(Number(api.conversationId), wireName, tool, (args ?? {}) as Json);
+      async execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> {
+        context.abortSignal?.throwIfAborted();
+        const outcome = await runtime.executeToolCall(Number(api.conversationId), wireName, tool, (args ?? {}) as Json, context.abortSignal);
+        context.abortSignal?.throwIfAborted();
         return {
           isError: outcome.isError,
           output: [{ type: "text", text: outcome.content }],
@@ -229,6 +228,7 @@ export class UserMcpRuntime {
     wireName: string,
     declared: ResolvedTool,
     args: Json,
+    signal?: AbortSignal,
   ): Promise<{ content: string; isError: boolean }> {
     const snapshot = await this.snapshotFor(conversationId);
     const server = snapshot?.servers.find((s) => s.id === declared.serverId);
@@ -244,7 +244,7 @@ export class UserMcpRuntime {
       return { content: `MCP server ${server.name} is no longer enabled`, isError: true };
     }
     try {
-      const peer = await mcpConnect(row.url, this.deps.store.resolveHeaders(row.headers_enc, this.deps.masterKey()));
+      const peer = await mcpConnect(row.url, this.deps.store.resolveHeaders(row.headers_enc, this.deps.masterKey()), signal);
       const result = await peer.callTool(declared.toolName, args);
       return { content: result.content, isError: result.isError };
     } catch (error) {

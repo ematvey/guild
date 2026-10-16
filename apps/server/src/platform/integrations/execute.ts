@@ -6,6 +6,7 @@
 // model sees), never a thrown HTTP error — callers map ToolOutcome to the
 // tool result they surface.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, createSign } from "node:crypto";
 import { mcpConnect, type McpPeer } from "./mcp.js";
 import { envelopeHeaders, type PluginTurn } from "./plugins.js";
@@ -79,8 +80,15 @@ function urlencode(value: string): string {
   return pathSegment(value);
 }
 
+const callSignals = new AsyncLocalStorage<AbortSignal | undefined>();
+
 function fetchTimeout(ms: number, init?: RequestInit): RequestInit {
-  return { ...init, signal: AbortSignal.timeout(ms) };
+  const signal = callSignals.getStore();
+  signal?.throwIfAborted();
+  const signals = [AbortSignal.timeout(ms)];
+  if (signal) signals.push(signal);
+  if (init?.signal) signals.push(init.signal);
+  return { ...init, signal: AbortSignal.any(signals) };
 }
 
 function transportCause(error: unknown): string {
@@ -1758,10 +1766,12 @@ export async function executeConnectorTool(
   args: Json,
   secrets: [string, string][],
   actingAs: string | null,
+  signal?: AbortSignal,
 ): Promise<ToolOutcome> {
+  signal?.throwIfAborted();
   const execute = builtinExecute(slug);
   if (execute === undefined) throw new Error(`unknown integration ${slug}`);
-  return execute(config, tool, args, secrets, actingAs);
+  return callSignals.run(signal, () => execute(config, tool, args, secrets, actingAs));
 }
 
 /** Secrets the connector needs — the resolved store values ride only to
@@ -1793,7 +1803,9 @@ export async function callPlugin(
   rawTool: string,
   args: Json,
   identity: PluginCallIdentity,
+  signal?: AbortSignal,
 ): Promise<ToolOutcome> {
+  signal?.throwIfAborted();
   const masterKey = source.masterKey();
   if (turn.executor === "rust") {
     const execute = builtinExecute(turn.slug);
@@ -1803,7 +1815,8 @@ export async function callPlugin(
     // values never reach logs or events.
     const names = await source.integrationSecrets.names(identity.orgId, turn.slug);
     const secrets = await source.integrationSecrets.resolve(identity.orgId, turn.slug, names, masterKey);
-    return execute(turn.rowConfig, rawTool, args, secrets, identity.actingAs);
+    signal?.throwIfAborted();
+    return callSignals.run(signal, () => execute(turn.rowConfig, rawTool, args, secrets, identity.actingAs));
   }
   // MCP plugin: a short-lived call connection keeps caller and call ID
   // exact (the Rust pool's per-call connect).
@@ -1814,7 +1827,7 @@ export async function callPlugin(
   const headers = envelopeHeaders(identity.callId, identity.orgId, identity.callerId, identity.actingAs, secrets);
   let peer: McpPeer;
   try {
-    peer = await mcpConnect(mcpUrl, headers);
+    peer = await mcpConnect(mcpUrl, headers, signal);
   } catch (error) {
     throw new Error(`integration ${turn.slug} unreachable: ${(error as Error).message}`);
   }

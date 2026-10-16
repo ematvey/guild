@@ -86,7 +86,11 @@ function rpcRequest(id: number, method: string, params: Json): Json {
  * fails with the Rust pool's "mcp connect timed out"; every other transport
  * or handshake failure surfaces as "mcp handshake failed: <detail>".
  */
-export async function mcpConnect(url: string, headers: Record<string, string>): Promise<McpPeer> {
+export async function mcpConnect(url: string, headers: Record<string, string>, signal?: AbortSignal): Promise<McpPeer> {
+  signal?.throwIfAborted();
+  const bounded = (ms: number) => signal === undefined
+    ? AbortSignal.timeout(ms)
+    : AbortSignal.any([signal, AbortSignal.timeout(ms)]);
   const baseHeaders: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
@@ -94,13 +98,14 @@ export async function mcpConnect(url: string, headers: Record<string, string>): 
   };
   let sessionId: string | null = null;
   const post = async (body: Json): Promise<Response> => {
+    signal?.throwIfAborted();
     const allHeaders: Record<string, string> = { ...baseHeaders };
     if (sessionId !== null) allHeaders["mcp-session-id"] = sessionId;
     return fetch(url, {
       method: "POST",
       headers: allHeaders,
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: bounded(REQUEST_TIMEOUT_MS),
     });
   };
 
@@ -115,7 +120,7 @@ export async function mcpConnect(url: string, headers: Record<string, string>): 
         capabilities: {},
         clientInfo: { name: "guild", version: "0.1.0" },
       })),
-      signal: AbortSignal.timeout(CONNECT_TIMEOUT_MS),
+      signal: bounded(CONNECT_TIMEOUT_MS),
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {

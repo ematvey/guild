@@ -344,7 +344,7 @@ async function recordedDecision(deps: ApprovalGateDeps, chatId: string, callId: 
  *  the tool silently, before any card). */
 async function existingApprovalRequest(deps: ApprovalGateDeps, chatId: string, callId: string): Promise<JudgeVerdict | undefined> {
   const res = await deps.pool.query<{ judge: Record<string, unknown> | null }>(
-    `SELECT payload->>'judge' AS judge FROM thread_events
+    `SELECT payload->'judge' AS judge FROM thread_events
      WHERE chat_id = $1 AND type = 'approval_request' AND payload->>'call_id' = $2
      ORDER BY seq DESC LIMIT 1`,
     [chatId, callId],
@@ -370,9 +370,10 @@ async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<neve
   // Journaled request with a deterministic id: a recovery re-run of the gate
   // re-appends the same row (ON CONFLICT no-op), never a duplicate card.
   const requestId = uuidv5(JUDGE_NAMESPACE, `guild-approval-request:${chatId}:${call.id}`);
-  await deps.threads.appendEvent(chatId, approvalRequestEvent(call.id, call.name, argsJson, judge), requestId);
+  const request = await deps.threads.appendEvent(chatId, approvalRequestEvent(call.id, call.name, argsJson, judge), requestId);
 
-  const deadline = Date.now() + deps.approvalTimeoutMs;
+  // Idempotent append returns the original card's time across reopen.
+  const deadline = Date.parse(request.created_at) + deps.approvalTimeoutMs;
   try {
     while (true) {
       const decision = await recordedDecision(deps, chatId, call.id);
@@ -398,13 +399,17 @@ async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<neve
       await runtime.sleep(Date.now() + GATE_POLL_MS, context);
     }
   } catch (error) {
-    // An abort (stop, displacement, recovery) must not orphan the card:
-    // journal the denial so the client's PENDING resolves and the journal
-    // stays replayable.
-    const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
-    await deps.threads
-      .appendEvent(chatId, approvalDecisionEvent(call.id, false, "aborted before decision"), decisionId)
-      .catch(() => {});
+    // Close/failure preserves pending work. Only persisted abort intent
+    // represents a cancelled action; a transport/read error is no decision.
+    const task = await deps.pool.query<{ abort_requested: boolean }>(
+      "SELECT abort_requested FROM tasks WHERE id = $1", [runtime.taskId],
+    ).catch(() => undefined);
+    if (task?.rows[0]?.abort_requested === true) {
+      const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
+      await deps.threads
+        .appendEvent(chatId, approvalDecisionEvent(call.id, false, "aborted before decision"), decisionId)
+        .catch(() => {});
+    }
     throw error;
   }
 }

@@ -11,6 +11,23 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Pi Durable integration follows persisted identities and recovery contracts
+  (2026-10-17, 0.5.71).** Pins the Pi Durable/AI/codemode/Chord family to 1.3.0.
+  Commit receipts identify an invocation rather than an ID set; worker
+  bootstrap uses the Session kernel without scheduler adoption. Visible
+  transcripts have idempotent entry mappings, a recoverable cursor and
+  initial/overflow snapshot reconciliation, with missing projections counted
+  as pending work. Dynamic tools are installed script-only, base history
+  tools stay callable, and empty provisioning clears stored selections.
+  Interrupted skill publishing reports interruption instead of replaying a
+  new version. Approvals preserve cards and original deadlines across close;
+  integration/MCP cancellation reaches HTTP transports, including nested
+  codemode calls. Details and regression evidence:
+  `docs/plans/2026-10-17-pi-durable-contracts.md`. Validation: 507 broad checks
+  pass (40 opt-in sandbox skips; three baseline-failing files independently
+  reproduced), plus 36 final recovery checks; server typecheck passes.
+  Dev deployment and updater verification follow the implementation commit.
+
 - **Every queued input has a runnable owner; clocks update locally (2026-10-17,
   0.5.70).** pi-durable documents that failed runs leave queued inputs for the
   next input or queued write. Guild's stale generating flag and normal-send

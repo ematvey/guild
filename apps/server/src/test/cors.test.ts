@@ -1,11 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
+import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "../storage/postgres/test-support.js";
+let database: DisposableDatabase;
+beforeAll(async () => { database = await createDisposableDatabase(); });
+afterAll(async () => { await dropDisposableDatabase(database.name); });
 
 // The CORS layer port: preflights answered
 // 204 with ACAO only for the allow-listed webview origins.
 function cfg() {
-  return loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s" });
+  return loadConfig({ GUILD_MASTER_KEY_HEX: "00".repeat(32), GUILD_JWT_SECRET: "s", GUILD_DATABASE_URL: database.url, GUILD_LOG_LEVEL: "silent" });
 }
 
 describe("cors", () => {

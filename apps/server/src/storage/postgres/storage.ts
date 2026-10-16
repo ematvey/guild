@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { apply, applyImmutable, type Op } from "@earendil-works/chord/delta";
 import type { Context } from "@earendil-works/chord";
 import { StorageRequestError } from "@earendil-works/pi-durable";
@@ -157,23 +157,6 @@ const writeId = (write: StorageWrite): number | undefined => {
   }
 };
 
-/** The batch fingerprint: a hash of every record ID the batch touches —
- *  claimed IDs (conversation/entry/task/submission/document.create/copy)
- *  and re-touched document IDs (change/retire). Identifying a commit by the
- *  full set (not just the smallest ID) keeps distinct batches that share a
- *  record ID (document changes re-touch the same document) from adopting
- *  each other. */
-const batchFingerprint = (writes: readonly StorageWrite[]): string | undefined => {
-  const ids: number[] = [];
-  for (const write of writes) {
-    const id = write.type === "document.change" || write.type === "document.retire" ? write.id : writeId(write);
-    if (id !== undefined) ids.push(id);
-  }
-  if (ids.length === 0) return undefined;
-  ids.sort((a, b) => a - b);
-  return createHash("sha256").update(JSON.stringify(ids)).digest("hex");
-};
-
 interface DocumentAction {
   retire: boolean;
   create?: DocumentCreate;
@@ -267,7 +250,7 @@ export class PostgresDurableStorage implements Storage {
     this.assertOpen();
     const documentActions = this.prepareDocumentActions(writes);
     const candidateNextId = this.candidateNextId(writes);
-    const fingerprint = batchFingerprint(writes);
+    const fingerprint = `commit:${randomUUID()}`;
     // Adoption and retry arm only after THIS call saw a connection-class
     // failure: that is the only situation where the outcome is genuinely
     // unknown. A clean attempt (a first-seen ID conflict, say) must reject
@@ -282,7 +265,7 @@ export class PostgresDurableStorage implements Storage {
         // The failed attempt may have committed: the connection can die
         // after the backend applied the transaction but before the client
         // learns the outcome. The durable_commits row identifies an
-        // applied batch by its ID-set fingerprint — adopt instead of
+        // applied batch by its invocation identity — adopt instead of
         // double-applying (the ID claims would reject the retry) or
         // failing the session.
         if (sawTransient && fingerprint !== undefined) {
@@ -312,6 +295,12 @@ export class PostgresDurableStorage implements Storage {
       );
       if (metadata.length === 0) throw new Error("Durable Postgres metadata is missing");
       const committedSeq = asSeq(metadata[0]!.next_seq);
+      // The metadata lock also waits for an earlier ambiguous attempt. Check
+      // its receipt before applying any deltas a second time.
+      if (fingerprint !== undefined) {
+        const receipt = await tx.query<{ seq: number }>("SELECT seq FROM durable_commits WHERE key = $1", [fingerprint]);
+        if (receipt[0]) return asSeq(receipt[0].seq);
+      }
       await this.checkGlobalIds(tx, writes);
       await this.checkDocumentActions(tx, documentActions);
       for (const write of writes) await this.applyTableWrite(tx, write, committedSeq);
@@ -348,8 +337,7 @@ export class PostgresDurableStorage implements Storage {
     }
   }
 
-  /** The seq of the commit that already applied this exact batch (same
-   *  full ID-set fingerprint), if any. */
+  /** The sequence stored by an earlier attempt of this commit invocation. */
   private async adoptCommit(fingerprint: string): Promise<Seq | undefined> {
     const rows = await this.db.query<{ seq: number }>("SELECT seq FROM durable_commits WHERE key = $1", [fingerprint]);
     return rows.length === 0 ? undefined : asSeq(rows[0]!.seq);

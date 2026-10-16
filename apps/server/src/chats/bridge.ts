@@ -8,11 +8,13 @@
 // drift); steered inputs join the running turn, follow-ups start the next.
 // Steps count model calls within the turn, exactly like the ChatRunner.
 
+import type { Conversation, EntryId, SnapshotEvent, SubmissionRecord, JsonObject } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import type { Logger } from "pino";
 import type { StreamWireEvent } from "../hub/protocol.js";
-import { uuidv7 } from "../platform/time.js";
+import { uuidv5, uuidv7 } from "../platform/time.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
 import { artifactMeta, shouldSpill, spillOversizedResult } from "./spill.js";
@@ -96,6 +98,8 @@ interface BridgeState {
    *  buffers.thinking and lands in the durable reasoning block at the turn
    *  boundary, so live frames stop at the first text delta. */
   textStarted: boolean;
+  sourceEntry?: number;
+  legacyThrough?: number;
 }
 
 function invocationOf(submissionId: number): string {
@@ -152,9 +156,88 @@ export class ChatBridge {
     return this.state(conversationId).buffers;
   }
 
-  /** Handles one watchEvents batch. Never throws: a bridge failure must not
-   *  kill the durable run — errors are logged and the durable entries stay
-   *  the source of truth (re-runnable recovery = importer rerun). */
+  /** Backfill from immutable storage, including entries outside the active
+   * reset/compaction range. Each projected row is idempotent before its
+   * cursor advances, so a process may die between those two commits. */
+  async recover(conversation: Conversation, submissions: readonly SubmissionRecord[] = [], through?: EntryId): Promise<void> {
+    const key = String(conversation.id);
+    const bound = this.state(key);
+    const cursor = await this.deps.threads.projectionCursor(bound.chatId, Number(conversation.id));
+    if (cursor.legacyThrough === undefined) {
+      cursor.legacyThrough = Number(through ?? (await conversation.entries({ order: "descending" }, 1, undefined, BACKGROUND_CONTEXT)).items[0]?.id ?? 0);
+      await this.deps.threads.advanceProjection(bound.chatId, Number(conversation.id), cursor);
+    }
+    const placed = new Map(submissions.filter(s => s.entry !== undefined).map(s => [Number(s.entry), s]));
+    const answers = new Set(submissions.flatMap(s => s.type === "input" && s.status === "done" ? [Number(s.answer)] : []));
+    const replay: BridgeState = {
+      ...bound, turn: cursor.turn, step: cursor.step, generationId: null, legacyThrough: cursor.legacyThrough,
+      handledEntries: new Set(), spilled: new Map(), buffers: { text: "", thinking: "" },
+    };
+    for (;;) {
+      const page = await conversation.entries({ order: "ascending", minEntryId: (cursor.entryId + 1) as EntryId, ...(through === undefined ? {} : { maxEntryId: through }) }, 100, undefined, BACKGROUND_CONTEXT);
+      if (page.items.length === 0) break;
+      for (const entry of page.items) {
+        const input = placed.get(Number(entry.id));
+        if (input?.requestId && input.type === "input") await this.deps.threads.deliverQueuedEvent(bound.chatId, input.requestId);
+        if ((entry.kind === "pi.user" || input?.type === "input") && !cursor.runOpen) {
+          replay.turn++;
+          replay.step = 0;
+          cursor.runOpen = true;
+        }
+        await this.projectEntry(replay, entry);
+        const answer = entry.kind === "pi.assistant" ? entry.model?.find(m => m.role === "assistant") : undefined;
+        if (answer?.role === "assistant" && (answers.has(Number(entry.id)) || answer.stopReason !== "toolUse" || !answer.content.some(b => b.type === "toolCall"))) {
+          cursor.runOpen = false;
+        }
+        cursor.entryId = Number(entry.id);
+        cursor.turn = replay.turn;
+        cursor.step = replay.step;
+      }
+      await this.deps.threads.advanceProjection(bound.chatId, Number(conversation.id), cursor);
+    }
+  }
+
+  async persistTaskFailure(conversationId: string, taskId: number, message: string): Promise<void> {
+    await this.deps.threads.appendEvent(this.state(conversationId).chatId, turnErrorEvent(message),
+      uuidv5("6ba7b810-9dad-11d1-80b4-00c04fd430c8", `guild-task-failure:${taskId}`));
+  }
+
+  private async restoreSnapshot(conversationId: string, state: BridgeState, snapshot: SnapshotEvent): Promise<void> {
+    state.buffers = { text: "", thinking: "" };
+    state.textStarted = false;
+    if (snapshot.run) {
+      await this.handleOne(conversationId, state, { type: "run_start", inputs: snapshot.run.inputs });
+      const cursor = await this.deps.threads.projectionCursor(state.chatId, Number(conversationId));
+      state.turn = cursor.turn;
+      state.step = cursor.step;
+    } else {
+      await this.deps.chats.setGenerating(state.orgId, state.chatId, false);
+      this.finishGeneration(state);
+    }
+    if (snapshot.generation?.message) {
+      await this.handleOne(conversationId, state, { type: "message_start", message: snapshot.generation.message });
+    }
+    for (const tool of snapshot.tools) {
+      if (tool.status === "done") continue;
+      const call = snapshot.entries.flatMap(entry => entry.model ?? []).flatMap(message =>
+        message.role === "assistant" ? message.content.filter(block => block.type === "toolCall") : [])
+        .find(block => block.type === "toolCall" && block.id === tool.callId);
+      await this.handleOne(conversationId, state, { type: "tool_execution_start", toolCallId: tool.callId, toolName: tool.name,
+        args: call?.type === "toolCall" ? JSON.parse(JSON.stringify(call.arguments)) as JsonObject : {}, taskId: tool.taskId! });
+    }
+    this.streamSink?.dirty(state.chatId);
+  }
+
+  private async projectEntry(state: BridgeState, entry: EntryRecord): Promise<void> {
+    state.sourceEntry = Number(entry.id);
+    try {
+      await this.handleEntry(state, entry);
+    } finally {
+      delete state.sourceEntry;
+    }
+  }
+
+  /** A failed delivery is retried by the host without stopping the agent. */
   handle = async (conversationId: string, events: readonly AgentEvent[]): Promise<void> => {
     const state = this.state(conversationId);
     if (!state.chatId) return;
@@ -163,12 +246,16 @@ export class ChatBridge {
         await this.handleOne(conversationId, state, event);
       } catch (error) {
         this.deps.log.error({ err: error, chatId: state.chatId, event: event.type }, "bridge event failed");
+        throw error;
       }
     }
   };
 
   private async handleOne(_conversationId: string, state: BridgeState, event: AgentEvent): Promise<void> {
     switch (event.type) {
+      case "snapshot":
+        await this.restoreSnapshot(_conversationId, state, event);
+        return;
       case "run_start": {
         state.turn = (await this.deps.threads.latestTurn(state.chatId)) + 1;
         state.step = 0;
@@ -211,12 +298,13 @@ export class ChatBridge {
         // The run's own failure (Rust: StreamEvent::Error at the failure
         // point + the registry removal). Tool/compaction task failures are
         // the executor paths' own surface.
-        if (event.kind !== "pi.generation" || state.generationId === null || state.doneSent) return;
+        if (event.kind !== "pi.generation") return;
+        await this.persistTaskFailure(_conversationId, Number(event.taskId), event.message);
+        if (state.generationId === null || state.doneSent) return;
         state.doneSent = true;
         state.failure = event.message;
         // Persisted so the failure survives reload and socket loss — the
         // live error frame alone dies with the connection (deploy restarts).
-        await this.append(state, turnErrorEvent(event.message));
         this.emitStream(state, { type: "error", code: "provider", message: event.message });
         return;
       }
@@ -295,8 +383,8 @@ export class ChatBridge {
         // results arrive via tool_execution_end). entry_appended events do
         // not repeat run-generated entries.
         if (event.entry && !state.handledEntries.has(String(event.entry.id))) {
+          await this.projectEntry(state, event.entry);
           state.handledEntries.add(String(event.entry.id));
-          await this.handleEntry(state, event.entry);
         }
         return;
       }
@@ -319,9 +407,9 @@ export class ChatBridge {
       case "tool_execution_end": {
         if (event.parentToolCallId !== undefined) return;
         if (event.entry && !state.handledEntries.has(String(event.entry.id))) {
-          state.handledEntries.add(String(event.entry.id));
           const result = event.entry.model?.find((m) => m.role === "toolResult");
-          await this.handleEntry(state, event.entry);
+          await this.projectEntry(state, event.entry);
+          state.handledEntries.add(String(event.entry.id));
           // The result card rides after the persisted row (Rust
           // ToolCompleted carries the finished tool's content — the spilled
           // pointer when the result spilled).
@@ -340,8 +428,8 @@ export class ChatBridge {
       }
       case "entry_appended": {
         if (state.handledEntries.has(String(event.entry.id))) return;
+        await this.projectEntry(state, event.entry);
         state.handledEntries.add(String(event.entry.id));
-        await this.handleEntry(state, event.entry);
         return;
       }
       case "submission": {
@@ -358,9 +446,12 @@ export class ChatBridge {
           (event.record.status === "placed" || event.record.status === "done") &&
           typeof event.record.requestId === "string"
         ) {
-          await this.deps.threads.deliverQueuedEvent(state.chatId, event.record.requestId).catch((error) => {
-            this.deps.log.error({ err: error, chatId: state.chatId, requestId: event.record.requestId }, "queued echo delivery failed");
-          });
+          await this.deps.threads.deliverQueuedEvent(state.chatId, event.record.requestId);
+          if (event.record.status === "done") {
+            for (const command of await this.deps.turnCommands.byInvocation(invocationOf(Number(event.record.id)))) {
+              await this.deps.turnCommands.finish(command.id, invocationOf(Number(event.record.id)), false);
+            }
+          }
           return;
         }
         // Settled-but-unanswered inputs (stop / archive withdrawal): mark
@@ -368,12 +459,13 @@ export class ChatBridge {
         // never-delivered queued echo — a withdrawn input leaves no
         // transcript trace, exactly like a chip the user trashed.
         if (event.record.status === "unanswered") {
+          if (event.record.entry !== undefined && event.record.requestId) {
+            await this.deps.threads.deliverQueuedEvent(state.chatId, event.record.requestId);
+          }
           const commands = await this.deps.turnCommands.byInvocation(invocationOf(Number(event.record.id)));
           for (const command of commands) {
             await this.deps.turnCommands.settleCancelled(command.id, invocationOf(Number(event.record.id)));
-            await this.deps.threads.deleteQueuedEvent(state.chatId, command.id).catch((error) => {
-              this.deps.log.error({ err: error, chatId: state.chatId, command: command.id }, "queued echo withdrawal failed");
-            });
+            if (event.record.entry === undefined) await this.deps.threads.deleteQueuedEvent(state.chatId, command.id);
           }
         }
         return;
@@ -428,6 +520,10 @@ export class ChatBridge {
         );
         const row = await this.append(state, ev);
         state.lastEventId = row.id;
+        if (row.event.type === "assistant_message") {
+          state.turn = row.event.turn;
+          state.step = row.event.step;
+        }
         if (this.streamSink && state.chatId && state.generationId !== null) {
           if (message.stopReason === "aborted") {
             // The stop epilogue owns this generation's terminal: a
@@ -561,7 +657,9 @@ export class ChatBridge {
   }
 
   private async append(state: BridgeState, ev: ThreadEvent): Promise<ThreadEventRow> {
-    return this.deps.threads.appendEvent(state.chatId, ev);
+    return state.sourceEntry === undefined
+      ? this.deps.threads.appendEvent(state.chatId, ev)
+      : this.deps.threads.appendProjectedEntry(state.chatId, state.sourceEntry, ev, state.sourceEntry <= (state.legacyThrough ?? -1));
   }
 }
 

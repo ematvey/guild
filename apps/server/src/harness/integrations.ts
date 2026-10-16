@@ -13,6 +13,7 @@
 // tool allow-list (`pi.agent`), role-filtered like the Rust disclosure
 // filter. The tool calls ride the existing durable turn stream untouched.
 
+import type { Context } from "@earendil-works/chord";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -146,9 +147,6 @@ export class IntegrationsRuntime {
   /** Turn-start snapshots keyed by conversation id (the Rust journaled
    *  per-turn resolution — a turn's calls re-derive from its snapshot). */
   private readonly snapshots = new Map<number, TurnSnapshot>();
-  /** Conversations whose `pi.agent` selection was configured (so a later
-   *  turn with zero plugins can clear it again). */
-  private readonly configured = new Map<number, string>();
   /** Every integration tool name this runtime has ever registered — the
    *  cheap gate-classifier short-circuit for coding tools. */
   private readonly knownToolNames = new Set<string>();
@@ -185,13 +183,8 @@ export class IntegrationsRuntime {
     const caller = await this.chatCaller(chatId);
     this.snapshots.set(conversationId, { orgId, chatId, turns, caller, at: Date.now() });
     if (turns.length === 0) {
-      // A previously configured conversation gets its selection cleared
-      // when the org no longer carries integrations.
-      if (this.configured.has(conversationId)) {
-        this.configured.delete(conversationId);
-        return { action: "clear", extensions: [], tools: [] };
-      }
-      return { action: "none", extensions: [], tools: [] };
+      // Empty desired state must clear persisted choices, also after restart.
+      return { action: "clear", extensions: [], tools: [] };
     }
     const extension = this.installOrgExtension(orgId, turns);
     const tools: ToolRegistration[] = [];
@@ -253,14 +246,17 @@ export class IntegrationsRuntime {
     return extension;
   }
 
-  private static toolRegistration(spec: PluginToolInfo["spec"], execute: (args: Json, callId: string, conversationId: number) => Promise<{ content: string; isError: boolean; meta?: unknown }>): ToolRegistration {
+  private static toolRegistration(spec: PluginToolInfo["spec"], execute: (args: Json, callId: string, conversationId: number, signal?: AbortSignal) => Promise<{ content: string; isError: boolean; meta?: unknown }>): ToolRegistration {
     const registration = {
       name: spec.name,
       description: spec.description,
       parameters: spec.parameters as TSchema,
+      callers: ["tools"] as const,
       replay: "unsafe" as const,
-      async execute(args: unknown, api: ToolExecutionApi): Promise<ToolExecutionResult> {
-        const outcome = await execute((args ?? {}) as Json, api.callId, Number(api.conversationId));
+      async execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> {
+        context.abortSignal?.throwIfAborted();
+        const outcome = await execute((args ?? {}) as Json, api.callId, Number(api.conversationId), context.abortSignal);
+        context.abortSignal?.throwIfAborted();
         // The tool-owned widget payload rides the details' reserved
         // `guild_meta` key — the bridge maps it onto the tool_result event.
         return {
@@ -312,8 +308,8 @@ export class IntegrationsRuntime {
   }
 
   private connectorTool(info: PluginToolInfo): ToolRegistration {
-    return IntegrationsRuntime.toolRegistration(info.spec, async (args, callId, conversationId) => {
-      return this.executeToolCall(conversationId, callId, info.spec.name, args);
+    return IntegrationsRuntime.toolRegistration(info.spec, async (args, callId, conversationId, signal) => {
+      return this.executeToolCall(conversationId, callId, info.spec.name, args, signal);
     });
   }
 
@@ -377,7 +373,7 @@ export class IntegrationsRuntime {
    *  policy filter, the plugin dispatch, the artifact spill, and the audit
    *  event. A failure is a tool RESULT the model sees, never a thrown
    *  error. */
-  private async executeToolCall(conversationId: number, callId: string, callName: string, args: Json): Promise<{ content: string; isError: boolean; meta?: unknown }> {
+  private async executeToolCall(conversationId: number, callId: string, callName: string, args: Json, signal?: AbortSignal): Promise<{ content: string; isError: boolean; meta?: unknown }> {
     const snapshot = await this.snapshotFor(conversationId);
     const turns = snapshot?.turns ?? [];
     // Guild-provided disclosure tools (never sent to a connector).
@@ -401,7 +397,7 @@ export class IntegrationsRuntime {
       callerId: snapshot.caller?.userId ?? snapshot.chatId,
       callId,
       actingAs: snapshot.caller?.email ?? null,
-    })
+    }, signal)
       .then((value) => ({ ok: true as const, value }))
       .catch((error: unknown) => ({ ok: false as const, error }));
     const ok = outcome.ok;

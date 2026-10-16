@@ -10,7 +10,8 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
-import { createSession, InboxDoc, type ConversationId } from "@earendil-works/pi-durable";
+import { createSession, InboxDoc, AssistantEntry, UserEntry, type ConversationId } from "@earendil-works/pi-durable";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { PostgresDurableStorage } from "../storage/postgres/index.js";
 import { PgPoolDatabase } from "../storage/postgres/pg.js";
@@ -153,6 +154,30 @@ describe("worker-per-chat (fork supervisor)", () => {
     expect(thread.body).toContain("before projection repair");
     expect(thread.body).toContain("after projection repair");
   }, 90_000);
+
+  it("respawns for a missing transcript projection after every agent task has settled", async () => {
+    const chatId = await createChat("recover committed answer");
+    stack.mock.setResponses([{ body: finalSse("first answer") }]);
+    await submit(chatId, "first input");
+    await waitFor(async () => (await lastAssistant(chatId)).includes("first answer"));
+    const conversationId = Number((await stack.env.db.query("SELECT conversation_id FROM chat_conversations WHERE chat_id=$1", [chatId])).rows[0].conversation_id) as ConversationId;
+    await waitFor(async () => (await stack.env.db.query(`SELECT NOT EXISTS(SELECT 1 FROM entries e WHERE e.conversation_id=$1
+      AND e.id>COALESCE((SELECT p.entry_id FROM chat_projection_cursors p WHERE p.chat_id=$2),0)) AS ready`, [conversationId,chatId])).rows[0].ready);
+    const database = new PgPoolDatabase(stack.env.db);
+    database.close = async () => {};
+    const session = createSession(await PostgresDurableStorage.open(database));
+    try {
+      await session.commit(async tx => {
+        await tx.appendEntry(UserEntry, conversationId, { model: [{ role: "user", content: "committed input", timestamp: Date.now() }] });
+        await tx.appendEntry(AssistantEntry, conversationId, { model: [fauxAssistantMessage("committed before bridge crash")] });
+      }, BACKGROUND_CONTEXT);
+    } finally { await session.close(BACKGROUND_CONTEXT); }
+    expect((await stack.env.db.query("SELECT count(*)::int AS n FROM tasks WHERE conversation_id=$1 AND status<>'terminal'", [conversationId])).rows[0].n).toBe(0);
+    process.kill(stack.env.app.platform.supervisor!.pidOf(chatId)!, "SIGKILL");
+    await waitFor(async () => (await lastAssistant(chatId)).includes("committed before bridge crash"));
+    const thread = await stack.env.app.inject({ method: "GET", url: `/api/v1/chats/${chatId}/thread`, headers: auth(stack.memberToken) });
+    expect(thread.body.match(/committed before bridge crash/g)).toHaveLength(1);
+  }, 30_000);
 
   it("startup drains an idle durable queue without requiring another user message", async () => {
     const chatId = await createChat("resume queued input");
