@@ -29,6 +29,7 @@ export function ContextRing({ chatId, model, revision }: {
   const label = known
     ? `Context: ~${count.format(usage.tokens!)} / ${count.format(usage.max!)} tokens (${percent}%). Last completed request, including its response${usage.usage_model !== model ? `; measured on ${usage.usage_model}` : ""}.`
     : !chatId ? "Context usage available after the first response"
+    : !model ? "Choose a model to see context usage"
     : read?.key !== key ? "Loading context usage"
     : read.failed ? "Context usage unavailable"
     : "Context usage available after the next response";
