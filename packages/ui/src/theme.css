@@ -13,6 +13,15 @@
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Both faces are variable fonts, so every weight token resolves to a real
+     axis value. All boldness tiers sit one step lighter than the Tailwind
+     defaults — medium reads as a hint (450), semibold as the workhorse
+     heading weight (500), and nothing in the UI exceeds 800. */
+  --font-weight-medium: 450;
+  --font-weight-semibold: 500;
+  --font-weight-bold: 600;
+  --font-weight-extrabold: 700;
+  --font-weight-black: 800;
 }
 
 :root {
