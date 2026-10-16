@@ -1,16 +1,16 @@
 import { ApiError } from "../platform/errors.js";
 // One forked worker process: owns one chat's conversation end to end —
 // scoped durable harness, bridge, codemode sandbox, executor envs — and
-// serves admission + control over the supervisor's IPC protocol. Frames
-// and approval decisions cross the boundary through Postgres (thread_events
-// + pg_notify; the gate's journaled decision poll), not through here.
+// serves admission, control, and live frames over the supervisor's IPC
+// protocol. Transcript rows and approval decisions cross through Postgres.
 
 import pino from "pino";
 import { ObjectStore } from "../platform/s3.js";
 import { createPlatformPool } from "../platform/db.js";
 import { GuildRuntime } from "../harness/runtime.js";
 import { loadConfig } from "../config.js";
-import type { WorkerRequest, WorkerResponse } from "./protocol.js";
+import type { BufferUpdate, WorkerRequest, WorkerResponse } from "./protocol.js";
+import type { LiveBuffers } from "../chats/bridge.js";
 import { IpcMachineDispatch } from "./dispatch-proxy.js";
 
 const config = loadConfig(process.env);
@@ -27,6 +27,25 @@ const ipcDispatch = new IpcMachineDispatch((message) => send(message));
 const runtime = new GuildRuntime(config, pool, log, objects, undefined, undefined, undefined, undefined, {
   chatId,
   dispatch: ipcDispatch,
+});
+let mirrored: LiveBuffers = { text: "", thinking: "" };
+const bufferUpdate = (previous: string, current: string): BufferUpdate | undefined =>
+  previous === current ? undefined : current.startsWith(previous)
+    ? { append: current.slice(previous.length) } : { replace: current };
+runtime.setStreamSink({
+  open(_chat, generationId) {
+    mirrored = { text: "", thinking: "" };
+    send({ t: "stream", action: "open", generationId });
+  },
+  event(_chat, event) { send({ t: "stream", action: "event", event }); },
+  dirty() { send({ t: "stream", action: "dirty" }); },
+  close() { send({ t: "stream", action: "close" }); },
+  buffers(_chat, current) {
+    const text = bufferUpdate(mirrored.text, current.text);
+    const thinking = bufferUpdate(mirrored.thinking, current.thinking);
+    if (text || thinking) send({ t: "stream", action: "buffers", text, thinking });
+    mirrored = { ...current };
+  },
 });
 
 let heartbeat: NodeJS.Timeout | undefined;

@@ -19,6 +19,7 @@ import { ApiError } from "../errors.js";
 import { rustJsonText } from "../provider/sse.js";
 import { requireUser, parseUuidParam, requireJsonBody } from "./error.js";
 import { mcpConnect } from "../integrations/mcp.js";
+import { userMcpToolName } from "../domain/mcp.js";
 
 type Json = Record<string, unknown>;
 
@@ -108,21 +109,33 @@ export function validateHeaders(raw: unknown): Record<string, string> | undefine
  *  listing share this path (one code path, two routes). A connect or
  *  list failure is a result ({ok:false, error}), not a thrown error. */
 export async function probeServer(
-  ctx: IdentityCtx,
-  url: string,
-  headersEnc: Buffer | null,
-): Promise<{ ok: true; tools: { name: string; description: string }[] } | { ok: false; error: string }> {
-  const headers = ctx.userMcp.resolveHeaders(headersEnc, ctx.masterKey());
+  server: { name: string; url: string; headers?: Record<string, string> },
+): Promise<{ ok: true; tools: { name: string; call_name: string; description: string }[] } | { ok: false; error: string }> {
   try {
-    const peer = await mcpConnect(url, headers);
+    const peer = await mcpConnect(server.url, server.headers ?? {}, AbortSignal.timeout(20_000));
     const tools = await peer.listTools();
-    return { ok: true, tools: tools.map((t) => ({ name: t.name, description: t.description })) };
+    return { ok: true, tools: tools.map((t) => ({ name: t.name, call_name: userMcpToolName(server.name, t.name), description: t.description })) };
   } catch (error) {
     return { ok: false, error: (error as Error).message };
   }
 }
 
+function connectionDraft(body: Json): { name: string; url: string; headers?: Record<string, string> } {
+  const name = body["name"];
+  if (typeof name !== "string") throw ApiError.badRequest("missing name");
+  validateName(name);
+  const url = body["url"];
+  if (typeof url !== "string") throw ApiError.badRequest("missing url");
+  validateUrl(url);
+  return { name, url, headers: validateHeaders(body["headers"]) };
+}
+
 export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): void {
+  app.post("/api/v1/mcp/probe", async (req, reply) => {
+    await requireUser(auth, req);
+    sendJson(reply, await probeServer(connectionDraft(requireJsonBody(req))));
+    return reply;
+  });
   // `GET /api/v1/mcp/servers` — the caller's servers (masked headers).
   app.get("/api/v1/mcp/servers", async (req, reply) => {
     const user = await requireUser(auth, req);
@@ -145,13 +158,7 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): 
   app.post("/api/v1/mcp/servers", async (req, reply) => {
     const user = await requireUser(auth, req);
     const body = requireJsonBody(req);
-    const name = body["name"];
-    if (typeof name !== "string") throw ApiError.badRequest("missing name");
-    validateName(name);
-    const url = body["url"];
-    if (typeof url !== "string") throw ApiError.badRequest("missing url");
-    validateUrl(url);
-    const headers = validateHeaders(body["headers"]);
+    const { name, url, headers } = connectionDraft(body);
     const enabled = body["enabled"] === undefined ? true : body["enabled"] === true;
     const existing = await auth.userMcp.list(user.org_id, user.id);
     if (existing.some((r) => r.name === name)) {
@@ -212,7 +219,7 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): 
     const id = parseUuidParam(req, "id");
     const row = await auth.userMcp.get(user.org_id, user.id, id);
     if (row === null) throw ApiError.notFound("no such server");
-    sendJson(reply, await probeServer(auth, row.url, row.headers_enc));
+    sendJson(reply, await probeServer({ name: row.name, url: row.url, headers: auth.userMcp.resolveHeaders(row.headers_enc, auth.masterKey()) }));
     return reply;
   });
 
@@ -222,7 +229,7 @@ export function registerUserMcpRoutes(app: FastifyInstance, auth: IdentityCtx): 
     const id = parseUuidParam(req, "id");
     const row = await auth.userMcp.get(user.org_id, user.id, id);
     if (row === null) throw ApiError.notFound("no such server");
-    sendJson(reply, await probeServer(auth, row.url, row.headers_enc));
+    sendJson(reply, await probeServer({ name: row.name, url: row.url, headers: auth.userMcp.resolveHeaders(row.headers_enc, auth.masterKey()) }));
     return reply;
   });
 }

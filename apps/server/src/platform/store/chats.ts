@@ -23,6 +23,11 @@ export interface ChatRow {
   project_id: string | null;
 }
 
+export type CompactionStatus =
+  | { status: "running" }
+  | { status: "completed"; compacted: boolean }
+  | { status: "failed"; error: string };
+
 export interface ChatListRow {
   id: string;
   org_id: string;
@@ -87,6 +92,26 @@ function rowToChat(r: Record<string, unknown>): ChatRow {
 
 export class ChatStore {
   constructor(private readonly pool: PlatformPool) {}
+
+  /** A manual compaction can finish successfully without appending a summary. */
+  async compactionStatus(chatId: string, taskId: number): Promise<CompactionStatus | null> {
+    const result = await this.pool.query<{
+      status: string;
+      outcome: { status: string; result?: { entryId?: number }; error?: { message?: string }; reason?: string } | null;
+    }>(
+      `SELECT t.status,t.record::jsonb->'state'->'outcome' AS outcome FROM tasks t
+       JOIN chat_conversations c ON c.conversation_id=t.conversation_id
+       WHERE c.chat_id=$1 AND t.id=$2 AND t.kind='"pi.compaction"'`,
+      [chatId, taskId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    if (row.status !== "terminal") return { status: "running" };
+    if (row.outcome?.status === "completed") {
+      return { status: "completed", compacted: row.outcome.result?.entryId !== undefined };
+    }
+    return { status: "failed", error: row.outcome?.error?.message ?? row.outcome?.reason ?? "Compaction did not complete" };
+  }
 
   /** The chat's org and owner (the agent tools' caller identity: the
    *  conversation → chat → owner mapping). null when the chat is gone. */

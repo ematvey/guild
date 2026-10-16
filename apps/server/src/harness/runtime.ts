@@ -1158,29 +1158,28 @@ export class GuildRuntime {
     await this.chats.setGenerating(await this.orgOfChat(chatId), chatId, false);
   }
 
-  /** Kicks off a manual compaction (the fire-and-forget Rust handler): the
-   *  conversation-owned compaction task summarizes while the conversation
-   *  keeps working; the summary lands as a Compaction thread event. */
-  async compactChat(chatId: string): Promise<boolean> {
+  /** Starts a conversation-owned compaction and returns its durable task identity. */
+  async compactChat(chatId: string): Promise<number | null> {
     if (this.supervisor) return this.supervisor.compact(chatId);
     await this.start();
     const conversationId = this.chatToConversation.get(chatId);
-    if (conversationId === undefined) return false;
+    if (conversationId === undefined) return null;
     const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
-    if (!conversation) return false;
-    await conversation.compact(undefined, BACKGROUND_CONTEXT);
-    return true;
+    if (!conversation) return null;
+    return Number(await conversation.compact(undefined, BACKGROUND_CONTEXT));
   }
 
   /** Wires the live-frame fan-out (the member-socket feed forwarder). The
    *  bridge emits into it; without a sink the frames are simply dropped. */
   setStreamSink(sink: GenerationStreamSink | null): void {
     this.bridge.setStream(sink);
+    this.supervisor?.setStreamSink(sink);
   }
 
   /** Live streaming buffers of a conversation (the ThreadState frame's
    *  text/thinking). */
   liveBuffers(chatId: string): LiveBuffers {
+    if (this.supervisor) return this.supervisor.liveBuffers(chatId);
     const conversationId = this.chatToConversation.get(chatId);
     if (conversationId === undefined) return { text: "", thinking: "" };
     return this.bridge.buffers(String(conversationId));

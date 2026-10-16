@@ -11,6 +11,14 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Browser verification follows real task and stream lifetimes (2026-10-17,
+  0.5.73).** MCP settings use server-provided canonical call names. Manual
+  compaction tracks its durable task outcome, including no-op and failure,
+  independently of generation. Worker IPC relays ephemeral live frames and
+  mirrors partial buffers for reconnect; durable transcript/approval records
+  remain in Postgres. Full affected-feature browser coverage and delivery:
+  `docs/plans/2026-10-17-browser-verification.md` (in progress).
+
 - **Conversation lifetimes own recovery; queued inputs can become steering
   (2026-10-17, 0.5.72).** Candidate harness initialization and replacement
   dispose the entire scheduler/storage/watch lifetime. First-touch mapping

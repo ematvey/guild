@@ -43,6 +43,8 @@ export interface GenerationStreamSink {
   /** The chat's streaming buffers moved — the feed's view republish poll
    *  must capture (Rust publish_views' signature tick). */
   dirty(chatId: string): void;
+  /** Mirrors unpersisted buffers across a worker boundary without publishing a full view. */
+  buffers?(chatId: string, buffers: LiveBuffers): void;
   /** The generation ended (Rust generations.remove). */
   close(chatId: string): void;
 }
@@ -235,6 +237,7 @@ export class ChatBridge {
     for (const event of events) {
       try {
         await this.handleOne(conversationId, state, event);
+        this.streamSink?.buffers?.(state.chatId, state.buffers);
       } catch (error) {
         this.deps.log.error({ err: error, chatId: state.chatId, event: event.type }, "bridge event failed");
         throw error;

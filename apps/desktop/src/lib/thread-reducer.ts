@@ -554,10 +554,6 @@ interface ChatView {
   /// Compaction block keys present when /compact was sent: a sync adding a
   /// new one is the success signal.
   compactKeys: string[];
-  /// The server's generating flag was seen while compacting: busy→false
-  /// afterwards without a compaction event means the compaction appended
-  /// nothing to the log.
-  compactBusySeen: boolean;
 }
 
 export interface ThreadReducer {
@@ -610,6 +606,8 @@ export interface ThreadReducer {
   /** Arms (chatId) or disarms (null) the manual-compaction line. Arming
    * snapshots the compaction keys present now; applyState reconciles. */
   setCompacting(chatId: string | null): ApplyResult;
+  /** A task outcome clears only its own chat's pending indicator. */
+  finishCompacting(chatId: string): ApplyResult;
 }
 
 /// Per-chat rendered-view cache cap (switch-back restorations).
@@ -638,7 +636,6 @@ export function createThreadReducer(): ThreadReducer {
     toolsByCall: new Map(),
     approvalsByCall: new Map(),
     compactKeys: [],
-    compactBusySeen: false,
   });
 
   const viewOf = (cid: string): ChatView => {
@@ -935,15 +932,10 @@ export function createThreadReducer(): ThreadReducer {
       // deletes the echo (no fan-out row exists to announce it) and
       // delivery moves it — both land here via the state republish.
       v.blocks = reconcileQueuedSends(v.blocks, state.events);
-      // Pending /compact reconciliation: a newly appeared compaction event
-      // is the success signal; the server's busy flag dropping back to false
-      // without one means the compaction failed (nothing was appended).
+      // A summary entry can settle the indicator before the task poll returns.
+      // Agent generation state is independent of compaction completion.
       if (compactingChat === cid) {
         if (v.blocks.some((b) => b.kind === "compaction" && !v.compactKeys.includes(b.key))) {
-          compactingChat = null;
-        } else if (state.generating) {
-          v.compactBusySeen = true;
-        } else if (v.compactBusySeen) {
           compactingChat = null;
         }
       }
@@ -1125,9 +1117,12 @@ export function createThreadReducer(): ThreadReducer {
       } else {
         const v = viewOf(chatId);
         v.compactKeys = v.blocks.filter((b) => b.kind === "compaction").map((b) => b.key);
-        v.compactBusySeen = false;
         compactingChat = chatId;
       }
+      return result(viewOf(current));
+    },
+    finishCompacting(chatId) {
+      if (compactingChat === chatId) compactingChat = null;
       return result(viewOf(current));
     },
   };

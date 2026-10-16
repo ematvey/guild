@@ -1,7 +1,7 @@
 // User-owned MCP servers: the store (encrypted headers, masked previews),
 // the session-auth CRUD + probe routes (validation, SSRF literal guard,
 // cross-user isolation), and the chat runtime (per-turn discovery, the
-// mcp_<server>_<tool> declarations, call-time execution) against the real
+// unambiguous declarations, call-time execution) against the real
 // app + harness + mock provider and the fixture MCP server.
 
 import { createServer } from "node:http";
@@ -360,9 +360,12 @@ describe("user mcp routes", () => {
     const okId = await seedServer({ name: "probeok", url: fixtureBase, headers: { "x-test": "v" } });
     const ok = await stack.env.app.inject({ method: "POST", url: `/api/v1/mcp/servers/${okId}/probe`, headers: auth(), payload: {} });
     expect(ok.statusCode).toBe(200);
-    const okBody = JSON.parse(ok.body) as { ok: boolean; tools: { name: string }[]; error?: string };
+    const okBody = JSON.parse(ok.body) as { ok: boolean; tools: { name: string; call_name: string }[]; error?: string };
     expect(okBody.ok).toBe(true);
     expect(okBody.tools.map((t) => t.name).sort()).toEqual(["add", "echo"]);
+    expect(okBody.tools.map((t) => t.call_name).sort()).toEqual(["mcp7_probeok_add", "mcp7_probeok_echo"]);
+    const listed = await stack.env.app.inject({ method: "GET", url: `/api/v1/mcp/servers/${okId}/tools`, headers: authNoBody() });
+    expect(JSON.parse(listed.body).tools).toEqual(okBody.tools);
 
     // The dead-port row needs a private literal URL — seeded directly, so
     // the route probe path runs against it without the guard's blessing.
@@ -383,6 +386,28 @@ describe("user mcp routes", () => {
     const tools = await stack.env.app.inject({ method: "GET", url: `/api/v1/mcp/servers/${okId}/tools`, headers: auth() });
     expect((JSON.parse(tools.body) as { ok: boolean }).ok).toBe(true);
     await stack.env.app.inject({ method: "DELETE", url: `/api/v1/mcp/servers/${okId}`, headers: authNoBody() });
+  });
+
+  it("probes a validated draft without creating or enabling a server", async () => {
+    const before = await store.list(orgId, stack.memberId);
+    const payload = { name: "draft", url: fixtureBase, headers: { "x-probe": "probe-only-header" } };
+    const url = "/api/v1/mcp/probe";
+    expect((await stack.env.app.inject({ method: "POST", url, headers: auth(), payload })).statusCode).toBe(400);
+    process.env.GUILD_MCP_ALLOW_PRIVATE = "1";
+    try {
+      const result = await stack.env.app.inject({ method: "POST", url, headers: auth(), payload });
+      expect(result.statusCode).toBe(200);
+      const body = JSON.parse(result.body);
+      expect(body.ok).toBe(true);
+      expect(body.tools.map((t: { call_name: string }) => t.call_name).sort()).toEqual(["mcp5_draft_add", "mcp5_draft_echo"]);
+      expect(result.body).not.toContain("probe-only-header");
+      const withoutHeaders = await stack.env.app.inject({ method: "POST", url, headers: auth(), payload: { name: "draft", url: fixtureBase } });
+      expect(JSON.parse(withoutHeaders.body).ok).toBe(true);
+      expect(await store.list(orgId, stack.memberId)).toEqual(before);
+      expect((await stack.env.app.inject({ method: "POST", url, payload })).statusCode).toBe(401);
+    } finally {
+      delete process.env.GUILD_MCP_ALLOW_PRIVATE;
+    }
   });
 });
 
