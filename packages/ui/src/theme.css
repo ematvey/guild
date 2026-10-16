@@ -70,6 +70,14 @@
   --radius: 0.625rem;
 }
 
+/* Markdown **bold** renders <strong>/<b>; Tailwind's preflight pins it to
+   `bolder` (700 in body text), which would sit above the lighter weight
+   ladder — pin it to the semibold token instead. */
+strong,
+b {
+  font-weight: var(--font-weight-semibold);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
