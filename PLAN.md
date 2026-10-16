@@ -11,6 +11,19 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **View modes re-consolidated — casual differs only in the collapse (2026-10-16,
+  0.5.61).** The 2026-10-15 casual view had grown extra divergences beyond the
+  thinking/tool collapse (extra py-2 padding around user/agent text, terminal
+  errors abstracted to "Turn failed", compaction cards and queued-send chips
+  hidden, technical-only working shimmer). All reverted: the entry construction
+  now routes EVERYTHING except reasoning/tool blocks to the shared plain path —
+  compaction cards, queued chips and full error text render identically in both
+  views, spacing is identical, and the working shimmer shows in both whenever
+  the displayed tail isn't already animating (in casual the shimmer suppresses
+  only while the last entry is an active WorkedForBlock). The two views now
+  differ exactly where intended: contiguous thinking/tool runs collapse into
+  one worked-for entry (casual) vs 1:1 frames (technical). Hover-stamp logic
+  was already view-independent (computed on the shared entry list).
 - **Provider/model errors surface in the chat (2026-10-16, 0.5.61).**
   A failed provider attempt (e.g. the upstream 401 rendered as "502:
   provider auth failed (check org key)") produced empty assistant blocks

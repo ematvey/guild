@@ -3015,10 +3015,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // Casual's counting "Agent is working Ns" ticks once per second while the
   // turn streams.
   const [nowTick, setNowTick] = useState(() => Date.now());
-  // View entries: technical renders the transcript 1:1; casual replaces
-  // each contiguous thinking/tool run with one WorkedForBlock and keeps
-  // only user messages, agent text, pending approvals and terminal errors
-  // (compaction cards and queued-send chips stay out).
+  // View entries: the two views differ ONLY in thinking/tool runs —
+  // technical renders each block 1:1, casual replaces each contiguous run
+  // with one WorkedForBlock. Everything else (user, text, errors,
+  // compaction cards, queued-send chips, approvals) is identical.
   const { entries: displayEntries, finalAgent, lastAgent } = useMemo(() => {
     type Plain = { kind: "plain"; b: Block; i: number };
     type Entry = { kind: "work"; run: Block[] } | Plain;
@@ -3029,19 +3029,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
       run = [];
     };
     blocks.forEach((b, i) => {
-      if (chatView !== "casual") {
+      if (chatView !== "casual" || (b.kind !== "reasoning" && b.kind !== "tool")) {
         entries.push({ kind: "plain", b, i });
-        return;
-      }
-      if (b.kind === "reasoning" || b.kind === "tool") {
-        run.push(b);
         return;
       }
       flush();
-      if (b.kind === "user" && !b.queued) entries.push({ kind: "plain", b, i });
-      else if (b.kind === "text" || b.kind === "error" || (b.kind === "approval" && b.approval)) {
-        entries.push({ kind: "plain", b, i });
-      }
+      run.push(b);
     });
     flush();
     // Hover stamps under agent text mark only the turn's final message: an
@@ -3503,7 +3496,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 ) : e.b.kind === "user" ? (
                   <div
                     key={e.b.key}
-                    className={`group relative ml-auto w-fit max-w-[80%] ${chatView === "casual" ? "py-2" : ""}`}
+                    className="group relative ml-auto w-fit max-w-[80%]"
                   >
                     <div className={`rounded-2xl bg-secondary px-4 py-2.5 leading-[1.75] ${WRAP_ANYWHERE}`}>
                       {e.b.text && <div className="whitespace-pre-wrap">{e.b.text}</div>}
@@ -3535,12 +3528,12 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 ) : e.b.kind === "error" ? (
                   <div
                     key={e.b.key}
-                    className={`w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive ${chatView === "casual" ? "text-sm" : ""}`}
+                    className="w-fit rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive"
                   >
-                    {chatView === "casual" ? "Turn failed" : e.b.text}
+                    {e.b.text}
                   </div>
                 ) : (
-                  <div key={e.b.key} className={`group relative ${chatView === "casual" ? "py-2" : ""}`}>
+                  <div key={e.b.key} className="group relative">
                     <div
                       className={`max-w-none space-y-3 leading-[1.75] ${MD_CLASS} ${MD_TABLE_CLASS}`}
                     >
@@ -3567,15 +3560,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                   <span>Compacting thread…</span>
                 </div>
               )}
-              {/* Working shimmer (technical view only — casual's work runs
-                  carry their own live indicator): the turn is generating but
-                  the log's tail is not already animating. */}
-              {chatView === "technical" &&
-                streaming &&
+              {/* Working shimmer: the turn is generating but the displayed
+                  tail is not already animating — a live reasoning frame
+                  (technical) or an active work run (casual). */}
+              {streaming &&
                 !(
                   blocks.length > 0 &&
                   (blocks[blocks.length - 1].kind === "text" ||
                     blocks[blocks.length - 1].kind === "reasoning")
+                ) &&
+                !(
+                  chatView === "casual" &&
+                  displayEntries[displayEntries.length - 1]?.kind === "work"
                 ) && (
                   <div className="max-w-none py-1">
                     <WorkingIndicator
