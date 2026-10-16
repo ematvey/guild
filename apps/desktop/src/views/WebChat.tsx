@@ -45,6 +45,7 @@ import {
   Square,
   X as XIcon,
   SquareTerminal,
+  SquareCode,
   FileDown,
   TriangleAlert,
   Wrench,
@@ -987,6 +988,8 @@ function ToolKindIcon({ kind }: { kind: string }) {
       return <Globe className={cls} />;
     case "terminal":
       return <SquareTerminal className={cls} />;
+    case "codemode":
+      return <SquareCode className={cls} />;
     case "read":
       return <FileText className={cls} />;
     case "artifact":
