@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { BookOpen, Copy, KeyRound, Plus } from "lucide-react";
+import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
 import {
@@ -79,6 +80,7 @@ const SURFACES = ["OpenAI", "Anthropic"] as const;
 
 export function GatewaySection() {
   const [keys, setKeys] = useState<ApiKeyInfo[] | null>(lastKeys);
+  const [loadError, setLoadError] = useState(false);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [issued, setIssued] = useState<string | null>(null);
@@ -91,6 +93,7 @@ export function GatewaySection() {
     void listMyApiKeys().then((k) => {
       if (cacheEpochChanged(epoch)) return;
       if (k === null) {
+        setLoadError(true);
         toast.error("Could not load API keys");
         return;
       }
@@ -262,8 +265,8 @@ console.log(msg.content[0].text);`,
         </Button>
       </div>
 
-      {keys === null ? (
-        <div className="h-16 animate-pulse rounded-lg bg-muted" />
+      {loadError && keys === null ? <p role="alert" className="text-sm text-destructive">Could not load API keys.</p> : keys === null ? (
+        <SkeletonRows rows={2} />
       ) : keys.length === 0 ? (
         <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">
           No API keys yet. Create one to give an external client gateway

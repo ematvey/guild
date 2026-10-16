@@ -15,7 +15,7 @@ import { Input } from "@guild/ui/components/input";
 import { Button } from "@guild/ui/components/button";
 import { Avatar } from "@guild/ui/components/avatar";
 import { Badge } from "@guild/ui/components/badge";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonRows } from "@guild/ui/components/skeleton";
 import {
   Select,
   SelectContent,
@@ -427,7 +427,7 @@ export function SkillsPanel({
               {!loadFailed &&
                 skills === null &&
                 [0, 1, 2, 3, 4, 5].map((i) => (
-                  <Skeleton key={i} className="h-16 w-full rounded-md" style={{ opacity: 1 - (i % 3) * 0.15 }} />
+                  <SkeletonRows key={i} rows={1} />
                 ))}
               {skills !== null &&
                 filtered.map((item) => {

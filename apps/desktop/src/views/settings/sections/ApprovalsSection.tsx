@@ -4,6 +4,7 @@
 //! user and their bound machine, not to an individual conversation.
 
 import { useEffect, useState } from "react";
+import { SkeletonRows, SkeletonText } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import { Textarea } from "@guild/ui/components/textarea";
 import { toast } from "sonner";
@@ -14,7 +15,8 @@ import { Field } from "../components/field";
 export function ApprovalsSection() {
   const [policyDefault, setPolicyDefault] = useState<"server" | "ask" | "allow" | "never">("server");
   const [overridesText, setOverridesText] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -25,6 +27,7 @@ export function ApprovalsSection() {
     setLoading(true);
     getApproval()
       .then((p) => {
+        setLoaded(true);
         setPolicyDefault(p?.default ?? "server");
         setOverridesText(
           p?.overrides && Object.keys(p.overrides).length > 0
@@ -93,6 +96,7 @@ export function ApprovalsSection() {
         title="Approvals"
         description="Applies to every chat you run — tool trust is yours, not per-conversation."
       />
+      {loading ? <div className="space-y-5"><SkeletonRows rows={4} /><SkeletonText lines={3} /></div> : !loaded ? <p role="alert" className="text-sm text-destructive">{error}</p> : <>
       <div className="space-y-1.5">
         {modes.map((m) => (
           <button
@@ -137,6 +141,7 @@ export function ApprovalsSection() {
         {saved && <span className="text-xs text-muted-foreground">saved</span>}
         {error && <span className="text-xs text-destructive">{error}</span>}
       </div>
+      </>}
     </div>
   );
 }

@@ -24,7 +24,7 @@ import {
 } from "@guild/ui/components/dialog";
 import { Input } from "@guild/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonForm, SkeletonText } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
 import { MD_CLASS, mdComponents } from "../markdown";
 import { diffLines, type DiffLine } from "./skill-diff";
@@ -232,9 +232,8 @@ export function SkillEditor({ mode, slug, onBack, onSaved }: SkillEditorProps) {
           <span className="font-semibold">Edit skill</span>
         </div>
         <div className="px-3 pb-3">
-          <Skeleton className="mb-2 h-9 w-full rounded-md" />
-          <Skeleton className="mb-2 h-9 w-full rounded-md" />
-          <Skeleton className="h-40 w-full rounded-md" />
+          <SkeletonForm />
+          <SkeletonText lines={5} className="pt-3" />
         </div>
       </div>
     );

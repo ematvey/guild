@@ -31,7 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@guild/ui/components/select";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { Skeleton, SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "../components/empty-state";
@@ -331,9 +331,9 @@ export default function ModelsSection({
   );
 }
 
-function useProviders(): { providers: ProviderRow[] | null; settled: boolean } {
+function useProviders(): { providers: ProviderRow[] | null; settled: boolean; error: string | null } {
   const res = useCachedGet<{ providers: ProviderRow[] }>("/api/v1/admin/gateway/providers");
-  return { providers: res.data?.providers ?? null, settled: res.settled };
+  return { providers: res.data?.providers ?? null, settled: res.settled, error: res.error };
 }
 
 /// Shared provider form fields for the add and edit screens.
@@ -461,7 +461,7 @@ function ProviderDetail({
   onChanged: () => void;
   onBack: () => void;
 }) {
-  const { providers, settled } = useProviders();
+  const { providers, settled, error: loadError } = useProviders();
   const p = useMemo(
     () => providers?.find((x) => x.provider === slug) ?? null,
     [providers, slug],
@@ -493,10 +493,11 @@ function ProviderDetail({
     );
   }
   if (p === null) {
+    if (loadError) return <p role="alert" className="text-sm text-destructive">{loadError}</p>;
     return (
       <div>
         <PageHeader title={slug} back={{ label: "Models", onClick: onBack }} />
-        <Skeleton className="h-40 w-full rounded-lg" />
+        <SkeletonForm />
       </div>
     );
   }
@@ -543,7 +544,7 @@ function ProviderDetail({
       return (
         <div>
           <PageHeader title={slug} back={{ label: "Models", onClick: onBack }} />
-          <Skeleton className="h-40 w-full rounded-lg" />
+          <SkeletonForm />
         </div>
       );
     }
@@ -644,10 +645,7 @@ function ProviderDetail({
 
 function useRouteField(model: string) {
   const res = useCachedGet<{ routes: RouteRow[] }>("/api/v1/admin/gateway/routes");
-  return useMemo(
-    () => res.data?.routes.find((x) => x.model === model) ?? null,
-    [res.data, model],
-  );
+  return { route: res.data?.routes.find((x) => x.model === model) ?? null, settled: res.settled, error: res.error };
 }
 
 /// Provider picker shared by route add + edit: value is the provider slug,
@@ -696,7 +694,7 @@ function RouteDetail({
   onChanged: () => void;
   onBack: () => void;
 }) {
-  const r = useRouteField(model);
+  const { route: r, settled, error: loadError } = useRouteField(model);
   // The saved route is facts first; editing is an explicit draft mode.
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [draft, setDraft] = useState<RouteRow | null>(null);
@@ -717,10 +715,12 @@ function RouteDetail({
   }, [r]);
 
   if (r === null || draft === null) {
+    if (loadError) return <p role="alert" className="text-sm text-destructive">{loadError}</p>;
+    if (settled && r === null) return <EmptyState icon={Blocks} title="Route not found" hint="It may have been deleted." />;
     return (
       <div>
         <PageHeader title={model} back={{ label: "Models", onClick: onBack }} />
-        <Skeleton className="h-40 w-full rounded-lg" />
+        <SkeletonForm />
       </div>
     );
   }

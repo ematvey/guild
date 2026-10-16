@@ -11,6 +11,7 @@
 //! restores the default text. Per-org, admin-only (migration 0028 / org KV).
 
 import { useEffect, useState } from "react";
+import { SkeletonText } from "@guild/ui/components/skeleton";
 import { Button } from "@guild/ui/components/button";
 import { Textarea } from "@guild/ui/components/textarea";
 import { toast } from "sonner";
@@ -72,7 +73,8 @@ function PromptField({
   const [prompt, setPrompt] = useState("");
   const [fallbackText, setFallbackText] = useState("");
   const [isCustom, setIsCustom] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -83,6 +85,7 @@ function PromptField({
     setLoading(true);
     load()
       .then((r) => {
+        setLoaded(true);
         // The field renders the CURRENT effective text filled in: the
         // server's default fills the box when no custom value is stored.
         setFallbackText(r.fallback);
@@ -138,6 +141,9 @@ function PromptField({
       setSaving(false);
     }
   };
+
+  if (loading) return <Field label={label}><div className="rounded-md border border-border p-3" style={{ minHeight: `${rows + 1}rem` }}><SkeletonText lines={Math.min(rows, 5)} /></div></Field>;
+  if (!loaded) return <Field label={label}><p role="alert" className="text-sm text-destructive">{error}</p></Field>;
 
   return (
     <Field label={`${label} ${isCustom ? "(custom)" : "(default)"}`}>

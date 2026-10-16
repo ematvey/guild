@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Cpu } from "lucide-react";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonForm } from "@guild/ui/components/skeleton";
 import { listMachines, type MachineInfo } from "../../../transport";
 import { relativeTime } from "../../../lib/relative-time";
 import { cacheEpochChanged, currentCacheEpoch } from "../use-cached-api";
@@ -31,12 +31,14 @@ export function clearMachinesCache(): void {
 }
 
 export function MachineSection() {
+  const [loadError, setLoadError] = useState(false);
   const [machines, setMachines] = useState<MachineInfo[] | null>(lastMachines);
   useEffect(() => {
     const epoch = currentCacheEpoch();
     void listMachines().then((m) => {
       if (cacheEpochChanged(epoch)) return;
       if (m === null) {
+        setLoadError(true);
         toast.error("Could not load machines");
         return; // keep the last good list on screen
       }
@@ -48,8 +50,8 @@ export function MachineSection() {
   return (
     <div className="space-y-4">
       <PageHeader title="Machine" />
-      {machines === null ? (
-        <Skeleton className="h-16 w-full rounded-lg" />
+      {machines === null && loadError ? <p role="alert" className="text-sm text-destructive">Could not load machines.</p> : machines === null ? (
+        <SkeletonForm />
       ) : machines.length === 0 ? (
         <p className="rounded-lg border border-border bg-card p-3 text-base text-muted-foreground">
           No machines yet. Start the Guild desktop app on the machine and sign

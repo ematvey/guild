@@ -3,6 +3,7 @@
 //! everyone; org sections appear for admins. Sections are lazy-imported so
 //! the chat bundle only pays for what opens.
 
+import { Skeleton, SkeletonForm } from "@guild/ui/components/skeleton";
 import { useEffect, useState } from "react";
 import {
   Activity,
@@ -290,16 +291,13 @@ function LazySection({
   if (error) return <p className="text-base text-destructive">{error}</p>;
   if (!Comp)
     return (
-      <div className="space-y-3 pt-2">
-        <div className="h-4 w-40 animate-pulse rounded-md bg-accent" />
-        <div className="h-24 w-full animate-pulse rounded-lg bg-accent" />
-      </div>
+      <SkeletonForm />
     );
   return <Comp detail={detail} onDetailChange={onDetailChange} />;
 }
 
 function AccountSection({ email }: { email: string }) {
-  const [role, setRole] = useState<string>("…");
+  const [role, setRole] = useState<string | null>(null);
   useEffect(() => {
     apiMe().then((u) => setRole(u?.role ?? "member"));
   }, []);
@@ -314,14 +312,14 @@ function AccountSection({ email }: { email: string }) {
           <p className="break-all text-sm">{email}</p>
         </FactCard>
         <FactCard label="Role">
-          <p className="text-sm capitalize">{role}</p>
+          <div className="text-sm capitalize">{role === null ? <Skeleton className="h-4 w-20" /> : role}</div>
         </FactCard>
       </FactGrid>
-      <p className="text-sm text-muted-foreground">
-        {role === "admin"
+      <div className="text-sm text-muted-foreground">
+        {role === null ? <Skeleton className="h-3 w-64 max-w-full" /> : role === "admin"
           ? "You can configure the workspace: users, teams, models, integrations and registry."
           : "Ask a workspace admin for model or integration changes."}
-      </p>
+      </div>
     </div>
   );
 }

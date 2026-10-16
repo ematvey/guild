@@ -2,6 +2,7 @@
 // projects first, a "No project" reset, and a "New project…" entry point
 // into the create dialog.
 
+import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { useMemo, useState } from "react";
 import { Folder, FolderOpen, Plus, Search, X } from "lucide-react";
 import {
@@ -73,7 +74,7 @@ export function ProjectPickerDialog({
             />
           </div>
           <div className="max-h-80 min-h-40 overflow-y-auto overscroll-contain">
-            {projects === null && <p className="p-3 text-sm text-muted-foreground">Loading…</p>}
+            {projects === null && <SkeletonRows />}
             {projects !== null && (
               <div className="space-y-0.5">
                 {current && (

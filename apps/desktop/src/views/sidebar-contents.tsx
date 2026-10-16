@@ -24,7 +24,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonRows } from "@guild/ui/components/skeleton";
 import type { ChatSummary, MachineInfo, Project } from "../transport";
 import {
   PROJECT_PAGE_INITIAL,
@@ -415,7 +415,7 @@ export function ChatsPanel({
         <div className="space-y-0.5 pb-2 pt-2">
           {loadingChats &&
             [0, 1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-8 w-full rounded-md" style={{ opacity: 1 - i * 0.15 }} />
+              <SkeletonRows key={i} rows={1} className="[&>div]:h-8 [&>div]:px-2" />
             ))}
           {!loadingChats &&
             grouping.visible.map((c) => (
@@ -531,7 +531,7 @@ export function WorkPanel({
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         <div className="space-y-0.5">
           {projects === null &&
-            [0, 1].map((i) => <Skeleton key={i} className="h-8 w-full rounded-md" />)}
+            [0, 1].map((i) => <SkeletonRows key={i} rows={1} className="[&>div]:h-8 [&>div]:px-2" />)}
           {projects?.map((p) => {
             const open = !!expanded[p.id];
             const chats = grouping.chatsByProject[p.id] ?? [];

@@ -36,7 +36,7 @@ import {
   DialogFooter,
   DialogTitle,
 } from "@guild/ui/components/dialog";
-import { Spinner } from "@guild/ui/components/spinner";
+import { SkeletonRows } from "@guild/ui/components/skeleton";
 
 /** One local skill row (the rpc list's entry, shaped for the UI). */
 export interface LocalSkillRow {
@@ -213,6 +213,7 @@ export default function LocalSkills() {
         </Button>
       </div>
 
+      {installs === null && !error && <SkeletonRows rows={2} />}
       {installs !== null && installs.length > 0 && (
         <div className="mb-3">
           <p className="pb-1.5 text-xs font-medium text-muted-foreground">Org installs</p>
@@ -277,9 +278,7 @@ export default function LocalSkills() {
       )}
 
       {rows === null ? (
-        <div className="flex justify-center py-8">
-          <Spinner />
-        </div>
+        <SkeletonRows />
       ) : error ? (
         <p className="text-sm text-destructive">{error}</p>
       ) : rows.length === 0 ? null : (

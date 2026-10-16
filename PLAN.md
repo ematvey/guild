@@ -11,6 +11,17 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Loading states describe pending data, never absence (2026-10-16, 0.5.68).**
+  Workspace identity, approval policy, assistant prompts, account role,
+  observability totals/payloads and release versions now wait for their reads
+  before showing defaults, zeroes or missing-content copy. Failed settings
+  reads render errors instead of editable defaults or permanent skeletons;
+  missing user/team/model detail records resolve explicitly. Shared skeletons
+  use subdued, reduced-motion-aware fills and compact text/row/form shapes;
+  chat, skills, tables, project pickers and workspace switchers use those
+  shapes instead of broad solid slabs. Scope and verification are recorded in
+  `docs/plans/2026-10-16-loading-states.md`.
+
 - **Per-route sampling temperature (2026-10-16, 0.5.66).** Stray-token
   corruption in codemode scripts traced to temperature 1.0 — the model's
   generation_config default that neither harness overrides — with strays
@@ -182,6 +193,17 @@ not kept here — it lives in git.
   web-only deploy leaves installed clients on the old bundle.
 
 ## Latest decisions
+
+- **Loading states describe pending data, never absence (2026-10-16, 0.5.68).**
+  Workspace identity, approval policy, assistant prompts, account role,
+  observability totals/payloads and release versions now wait for their reads
+  before showing defaults, zeroes or missing-content copy. Failed settings
+  reads render errors instead of editable defaults or permanent skeletons;
+  missing user/team/model detail records resolve explicitly. Shared skeletons
+  use subdued, reduced-motion-aware fills and compact text/row/form shapes;
+  chat, skills, tables, project pickers and workspace switchers use those
+  shapes instead of broad solid slabs. Scope and verification are recorded in
+  `docs/plans/2026-10-16-loading-states.md`.
 
 - **Never touch prod while developing (user-mandated 2026-10-15).** Dev
   work targets the dev stack only (`:18080`), including client-release

@@ -1506,8 +1506,8 @@ export async function getApproval(): Promise<ApprovalPolicy | null> {
   const res = await fetch(apiUrl("/api/v1/me/approval"), {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`approval policy rejected (${res.status})`);
+  const v = await res.json();
   return (v?.approval ?? v) as ApprovalPolicy | null;
 }
 
@@ -1534,8 +1534,8 @@ export async function getAssistantPrompt(): Promise<string | null> {
   const res = await fetch(apiUrl("/api/v1/admin/assistant-prompt"), {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return null;
-  const v = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`assistant prompt rejected (${res.status})`);
+  const v = await res.json();
   return (v?.prompt ?? null) as string | null;
 }
 

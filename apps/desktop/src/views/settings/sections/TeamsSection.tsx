@@ -22,7 +22,7 @@ import {
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "../components/empty-state";
@@ -74,9 +74,11 @@ export default function TeamsSection({ detail = null, onDetailChange }: SectionD
     // Deep-linked team page: wait for the list before resolving the id —
     // a not-yet-loaded row would render as the add-team form.
     if (detail !== "new" && teams === null) {
-      return <Skeleton className="h-24 w-full rounded-lg" />;
+      if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
+      return <SkeletonForm />;
     }
     const team = detail === "new" ? null : teams?.find((t) => t.id === detail) ?? null;
+    if (detail !== "new" && !team) return <EmptyState title="Team not found" hint="It may have been deleted." icon={UsersRound} />;
     return (
       <TeamDetail
         team={team}
@@ -304,8 +306,8 @@ function TeamDetail({
         </div>
         {members === null ? (
           <div className="space-y-2 p-4">
-            <Skeleton className="h-9 w-full rounded-md" />
-            <Skeleton className="h-9 w-full rounded-md" />
+            <SkeletonRows rows={1} />
+            <SkeletonRows rows={1} />
           </div>
         ) : members.length === 0 ? (
           <p className="px-4 py-6 text-center text-sm text-muted-foreground">No members yet.</p>
