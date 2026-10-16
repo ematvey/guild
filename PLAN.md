@@ -11,6 +11,19 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Error wire gap closed — assistant_message error now reaches clients (2026-10-16,
+  0.5.63).** The 0.5.61 fix persisted the error on the assistant_message DB
+  payload but never emitted it on any wire: parseThreadEvent (jsonb →
+  ThreadEvent) didn't read it and threadEventWire (ThreadEvent → HTTP/SSE)
+  didn't write it, so the desktop saw the error live-nowhere — history fetch
+  and the fan-out lanes both stripped it. Fix: `error: Option<String>` added to
+  the Rust `AssistantMessage` variant (serde skip_serializing_if none,
+  after `interrupted`), bindings regenerated, TS parse + wire mirrored (event
+  level stays sorted-key), new thread-state test pins both sides of the
+  round trip. Desktop needed no change — its transport type and reducer
+  already expected the field. Golden failures in the suite are the known
+  stale ones (`onboarded`, `last_activity_at`) + the pre-existing ws-feed
+  timing flake — both fail identically on base.
 - **View modes re-consolidated — casual differs only in the collapse (2026-10-16,
   0.5.61).** The 2026-10-15 casual view had grown extra divergences beyond the
   thinking/tool collapse (extra py-2 padding around user/agent text, terminal

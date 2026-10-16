@@ -138,4 +138,39 @@ describe("ThreadState wire fidelity (live Rust bytes)", () => {
     expect(FINAL_FRAME).toContain('{"chat_id":');
     expect(FINAL_FRAME).not.toContain('{"id":');
   });
+
+  it("assistant_message error rides parse + wire (absent stays absent)", () => {
+    const base = {
+      type: "assistant_message",
+      turn: 3,
+      step: 1,
+      blocks: [],
+      usage: { tokens_in: 0, tokens_out: 0, cost_usd: 0 },
+      model: "GLM-5.3-Flash",
+    };
+    // With error: parse keeps it, wire emits it last (declaration order).
+    const withError = normalizeThreadEvent({ ...base, error: "502: provider auth failed" })!;
+    expect((withError as { error?: string }).error).toBe("502: provider auth failed");
+    const wire = threadEventRowWire({
+      id: "01900000-0000-7000-8000-000000000000",
+      chat_id: "01900000-0000-7000-8000-000000000001",
+      seq: 1,
+      event: withError,
+      created_at: "2026-10-16T10:00:00.000000Z",
+    });
+    // The event level is a sorted-key Value (serde_json::json!); error sorts
+    // between blocks and model.
+    expect(wire).toContain('"blocks":[],"error":"502: provider auth failed","model":"GLM-5.3-Flash"');
+    // Without error: no error key on the wire (byte-compat with old rows).
+    const withoutError = normalizeThreadEvent(base)!;
+    const plainWire = threadEventRowWire({
+      id: "01900000-0000-7000-8000-000000000000",
+      chat_id: "01900000-0000-7000-8000-000000000001",
+      seq: 2,
+      event: withoutError,
+      created_at: "2026-10-16T10:00:00.000000Z",
+    });
+    expect(plainWire).toContain('"model":"GLM-5.3-Flash"');
+    expect(plainWire).not.toContain('"error"');
+  });
 });
