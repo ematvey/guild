@@ -7,8 +7,7 @@ below runs on a Linux build host — no Windows or macOS machine is required
 ## 1. Architecture: one binary, one process
 
 The client is a **single executable** (`guild-desktop` crate → shipped as
-`Guild`/`Guild.exe`/`guild`) running the **single-process design**
-(docs/specs/2026-09-13-single-process-desktop.md): the GUI process hosts the
+`Guild`/`Guild.exe`/`guild`) running the **single-process design**: the GUI process hosts the
 engine itself. There is no headless daemon in the product flow and no
 automatic daemon spawn — a CLI verb without a running app fails with
 "Guild app is not running" instead of forking a headless engine.
