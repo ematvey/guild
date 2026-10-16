@@ -11,6 +11,14 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **The live "Agent is working Ns" clock anchors to the turn
+  (2026-10-16, 0.5.64).** The casual view's counter is a per-run timer and
+  read as broken: it reset at every step/intermediate text, and a race
+  between the state-publish and entry-commit channels could make a new
+  step's live block inherit the previous step's open-time (the counter
+  starting mid-flight). While a run is the turn's live tail, the label now
+  counts from the turn's user message — starts at 0, never resets; settled
+  runs keep their own per-run durations.
 - **Error wire gap closed — assistant_message error now reaches clients (2026-10-16,
   0.5.63).** The 0.5.61 fix persisted the error on the assistant_message DB
   payload but never emitted it on any wire: parseThreadEvent (jsonb →

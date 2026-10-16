@@ -948,4 +948,29 @@ describe("workRunLabel (casual worked-for entry)", () => {
     );
     expect(workRunLabel(run(undefined, undefined), true, true, 0)).toBe("Agent is stopping");
   });
+
+  it("the live clock anchors to the turn start when given (no per-step resets)", () => {
+    // Run opened 3s ago, but the turn began 12s ago (previous steps in
+    // between): the live label counts the whole turn, not this run.
+    expect(
+      workRunLabel(
+        run("2026-10-15T12:00:09.000Z", undefined),
+        true,
+        false,
+        Date.parse("2026-10-15T12:00:12.000Z"),
+        "2026-10-15T12:00:00.000Z",
+      ),
+    ).toBe("Agent is working 12s");
+    // The settled label ignores the turn anchor — it spells this run's own
+    // open-to-end duration.
+    expect(
+      workRunLabel(
+        run("2026-10-15T12:00:09.000Z", "2026-10-15T12:00:12.000Z"),
+        false,
+        false,
+        0,
+        "2026-10-15T12:00:00.000Z",
+      ),
+    ).toBe("Agent worked for 3 seconds");
+  });
 });

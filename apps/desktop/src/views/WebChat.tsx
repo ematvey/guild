@@ -1051,8 +1051,17 @@ function HoverStamp({ ts, side }: { ts?: string; side: "left" | "right" }) {
 /// the entry should not render at all: a completed run under one second
 /// (and one without stamps at all) carries no information — "worked for 0
 /// seconds" is noise. Live states always render.
-export function workRunLabel(run: Block[], active: boolean, stopping: boolean, nowMs: number): string | null {
-  const start = run[0]?.kind === "tool" ? run[0].tool?.ts : run[0]?.ts;
+export function workRunLabel(
+  run: Block[],
+  active: boolean,
+  stopping: boolean,
+  nowMs: number,
+  turnStart?: string,
+): string | null {
+  const ownStart = run[0]?.kind === "tool" ? run[0].tool?.ts : run[0]?.ts;
+  // Live counting anchors to the turn start (starts at 0, no per-step
+  // resets); a settled run keeps its own open-to-end duration.
+  const start = (active && turnStart) || ownStart;
   const last = run[run.length - 1];
   const end = last.kind === "tool" ? (last.tool?.endTs ?? last.tool?.ts) : last.ts;
   const secs = (() => {
@@ -1070,13 +1079,14 @@ export function workRunLabel(run: Block[], active: boolean, stopping: boolean, n
   return `Agent worked for ${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
-function WorkedForBlock({ run, active, stopping, nowMs }: {
+function WorkedForBlock({ run, active, stopping, nowMs, turnStart }: {
   run: Block[];
   active: boolean;
   stopping: boolean;
   nowMs: number;
+  turnStart?: string;
 }) {
-  const label = workRunLabel(run, active, stopping, nowMs);
+  const label = workRunLabel(run, active, stopping, nowMs, turnStart);
   if (label === null) return null;
   return (
     <div className="-mt-1.5! mb-2.5! py-0 text-sm text-muted-foreground">
@@ -3021,14 +3031,23 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // compaction cards, queued-send chips, approvals) is identical.
   const { entries: displayEntries, finalAgent, lastAgent } = useMemo(() => {
     type Plain = { kind: "plain"; b: Block; i: number };
-    type Entry = { kind: "work"; run: Block[] } | Plain;
+    type Entry = { kind: "work"; run: Block[]; turnStart?: string } | Plain;
     const entries: Entry[] = [];
     let run: Block[] = [];
+    // The live "Agent is working Ns" clock anchors to the TURN's user
+    // message, not the run's own open-time: the turn is what the user is
+    // waiting on, so the counter starts at 0 when the agent begins and
+    // never resets between steps (per-run open-times are polluted anyway —
+    // a state publish carrying the next step's buffer can arrive before
+    // the previous step's commit, making the new live block inherit the
+    // old open-time). Settled runs keep their own per-run duration.
+    let turnStart: string | undefined;
     const flush = () => {
-      if (run.length) entries.push({ kind: "work", run });
+      if (run.length) entries.push({ kind: "work", run, turnStart });
       run = [];
     };
     blocks.forEach((b, i) => {
+      if (b.kind === "user") turnStart = b.ts;
       if (chatView !== "casual" || (b.kind !== "reasoning" && b.kind !== "tool")) {
         entries.push({ kind: "plain", b, i });
         return;
@@ -3492,6 +3511,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     active={streaming && i === displayEntries.length - 1}
                     stopping={!!(chatId && stopping[chatId])}
                     nowMs={nowTick}
+                    turnStart={e.turnStart}
                   />
                 ) : e.b.kind === "user" ? (
                   <div
