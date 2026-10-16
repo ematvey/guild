@@ -60,9 +60,14 @@ export function assistantMessageEvent(
   usage: UsagePayload,
   model: string,
   interrupted?: boolean,
+  error?: string,
 ): ThreadEvent {
   const ev: ThreadEvent = { type: "assistant_message", turn, step, blocks, usage, model };
   if (interrupted !== undefined) (ev as { interrupted?: boolean }).interrupted = interrupted;
+  // A failed provider attempt tracks its error on the event itself; the
+  // client renders it only while it is the thread's latest block (a later
+  // retry that produced content supersedes it).
+  if (error !== undefined) (ev as { error?: string }).error = error;
   return ev;
 }
 

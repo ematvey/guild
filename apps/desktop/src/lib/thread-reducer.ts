@@ -304,6 +304,9 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
             }
           }
         }
+        if (ev.error) {
+          blocks.push({ kind: "error", text: ev.error, key: seqKey(inEvent++) });
+        }
         break;
       }
       case "tool_result": {
@@ -381,17 +384,31 @@ export function deriveThread(rows: ThreadEventRow[]): DerivedThread {
   // still waiting for an answer. Expired cards stay: no tool result tells
   // their story — the card itself is the record that the call never ran.
   return {
-    blocks: blocks.filter(
-      (b) =>
-        !(
-          b.kind === "approval" &&
-          b.approval &&
-          (b.approval.status === "approved" || b.approval.status === "denied")
-        ),
+    blocks: pruneStaleErrors(
+      blocks.filter(
+        (b) =>
+          !(
+            b.kind === "approval" &&
+            b.approval &&
+            (b.approval.status === "approved" || b.approval.status === "denied")
+          ),
+      ),
     ),
     toolsByCall,
     approvalsByCall,
   };
+}
+
+/// A failed provider attempt's error block is transient: it renders only
+/// while it is the thread's LAST block — the current error. Any later
+/// content (a retry that landed, a new turn, a queued chip) supersedes it;
+/// older errors, including earlier failed attempts of the same turn, never
+/// render. Applied wherever blocks are finalized: full derivation, and
+/// after every incrementally applied event.
+export function pruneStaleErrors(blocks: Block[]): Block[] {
+  const last = blocks[blocks.length - 1];
+  if (last?.kind !== "error") return blocks.filter((b) => b.kind !== "error");
+  return blocks.filter((b, i) => i === blocks.length - 1 || b.kind !== "error");
 }
 
 export function eventsToBlocks(rows: ThreadEventRow[]): Block[] {
@@ -743,6 +760,9 @@ export function createThreadReducer(): ThreadReducer {
             }
           }
         }
+        if (ev.error) {
+          v.blocks.push({ kind: "error", text: ev.error, key: seqKey(0) });
+        }
         break;
       }
       case "tool_result": {
@@ -823,6 +843,9 @@ export function createThreadReducer(): ThreadReducer {
         v.blocks.push({ kind: "error", text: `Turn failed: ${ev.message}`, key: seqKey(0) });
         break;
     }
+    // A new event supersedes a shown error: prune keeps the error visible
+    // only while it stays the thread's latest block.
+    v.blocks = pruneStaleErrors(v.blocks);
   }
 
   const api: ThreadReducer = {

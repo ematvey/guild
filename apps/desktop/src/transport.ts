@@ -906,6 +906,9 @@ export type ThreadEvent =
       model: string;
       /** Aborted mid-stream: blocks carry the delivered prefix only. */
       interrupted?: boolean | null;
+      /** Failed provider attempt: the error text. Rendered only while this
+       *  is the thread's latest block; a later retry supersedes it. */
+      error?: string | null;
     }
   | {
       type: "tool_result";

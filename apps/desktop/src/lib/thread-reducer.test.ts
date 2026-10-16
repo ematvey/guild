@@ -692,3 +692,66 @@ it("a create-time failure is owned by scratch and cannot reappear on later adopt
   expect(adopted.blocks.some(b => b.pending)).toBe(false);
   expect(adopted.blocks.some(b => b.kind === "error")).toBe(true);
 });
+
+describe("provider error surfacing (tracked on assistant_message, shown only while latest)", () => {
+  const assistantError = (error: string, step = 0): ThreadEvent => ({
+    type: "assistant_message",
+    turn: 1,
+    step,
+    model: "m",
+    usage,
+    blocks: [],
+    error,
+  });
+
+  it("derivation shows the error when it is the thread's latest block", () => {
+    const blocks = eventsToBlocks([
+      row(1, { type: "user_message", content: "hello" }),
+      row(2, assistantError("502: provider auth failed")),
+    ]);
+    expect(blocks.filter(b => b.kind === "error").map(b => b.text)).toEqual(["502: provider auth failed"]);
+  });
+
+  it("a later retry's content supersedes the earlier error", () => {
+    const blocks = eventsToBlocks([
+      row(1, { type: "user_message", content: "hello" }),
+      row(2, assistantError("502: transient")),
+      row(3, assistantText("hi there")),
+    ]);
+    expect(blocks.filter(b => b.kind === "error")).toEqual([]);
+    expect(blocks.filter(b => b.kind === "text").map(b => b.text)).toEqual(["hi there"]);
+  });
+
+  it("only the latest of several failed attempts renders", () => {
+    const blocks = eventsToBlocks([
+      row(1, { type: "user_message", content: "hello" }),
+      row(2, assistantError("502: attempt one")),
+      row(3, assistantError("502: attempt two (final)")),
+    ]);
+    expect(blocks.filter(b => b.kind === "error").map(b => b.text)).toEqual(["502: attempt two (final)"]);
+  });
+
+  it("an error from a finished turn is pruned once a new turn produces content", () => {
+    const r = createThreadReducer(); r.open("chat");
+    r.applyThreadEvents("chat", 0, [
+      row(1, { type: "user_message", content: "hello" }),
+      row(2, assistantError("502: provider auth failed")),
+    ]);
+    expect(r.applyThreadEvents("chat", 0, []).blocks.some(b => b.kind === "error")).toBe(true);
+    const after = r.applyThreadEvents("chat", 0, [
+      row(3, { type: "user_message", content: "try again" }),
+      row(4, assistantText("works now", 1)),
+    ]);
+    expect(after.blocks.some(b => b.kind === "error")).toBe(false);
+  });
+
+  it("an error is pruned once a newer user message lands, even before its answer", () => {
+    const r = createThreadReducer(); r.open("chat");
+    r.applyThreadEvents("chat", 0, [
+      row(1, { type: "user_message", content: "hello" }),
+      row(2, assistantError("502: provider auth failed")),
+      row(3, { type: "user_message", content: "queued retry" }),
+    ]);
+    expect(r.applyThreadEvents("chat", 0, []).blocks.some(b => b.kind === "error")).toBe(false);
+  });
+});

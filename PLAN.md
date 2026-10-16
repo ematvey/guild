@@ -11,6 +11,18 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Provider/model errors surface in the chat (2026-10-16, 0.5.61).**
+  A failed provider attempt (e.g. the upstream 401 rendered as "502:
+  provider auth failed (check org key)") produced empty assistant blocks
+  and an empty thread — the user saw nothing. The error now rides the
+  `assistant_message` event (`error` field, set by the bridge when
+  `stopReason === "error"`) and renders as a destructive error card. Per
+  the contract, an error is visible only while it is the thread's LAST
+  block — the current error: `pruneStaleErrors` in `thread-reducer.ts`
+  drops every error block that is not final, so retries that land, new
+  turns and queued chips all supersede it, and mid-history failures never
+  render. All four failed "hello" attempts in the affected thread are
+  still tracked in the journal, only the last shows.
 - **Codemode script block gets JS highlighting (2026-10-16, 0.5.60).**
   The monospace source block on the codemode card is tokenized for display
   by an in-house single-regex highlighter (`js-highlight.tsx` — keywords,

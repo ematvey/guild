@@ -424,6 +424,7 @@ export class ChatBridge {
           usage,
           message.model,
           message.stopReason === "aborted" ? true : undefined,
+          message.stopReason === "error" ? (message.errorMessage ?? "Model error") : undefined,
         );
         const row = await this.append(state, ev);
         state.lastEventId = row.id;
