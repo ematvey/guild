@@ -9,6 +9,8 @@ import { ApiError } from "../errors.js";
 import type { PlatformPool } from "../db.js";
 import { pgTimestampToRfc3339, uuidv5, uuidv7 } from "../time.js";
 import { normalizeThreadEvent, type ThreadEvent, type ThreadEventRow } from "../domain/thread-events.js";
+import type { EntryRecord } from "@earendil-works/pi-durable";
+import { calculateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 
 export interface ProjectionCursor {
   entryId: number;
@@ -38,6 +40,30 @@ function toRow(r: EventRowDb): ThreadEventRow | undefined {
 
 export class ThreadStore {
   constructor(private readonly pool: PlatformPool) {}
+
+  /** Latest measured context, including the answer and cached input. A head
+   *  change (reset/compaction) invalidates measurements of the old prefix.
+   *  Read immutable entries directly so this works without starting a worker. */
+  async contextUsage(orgId: string, chatId: string): Promise<{ tokens: number; model: string } | null> {
+    const result = await this.pool.query<{ record: string }>(
+      `SELECT e.record FROM entries e
+       JOIN chat_conversations cc ON cc.conversation_id = e.conversation_id
+       JOIN chats c ON c.id = cc.chat_id
+       WHERE c.org_id = $1 AND c.id = $2
+         AND e.id > COALESCE((SELECT h.id FROM entries h
+           WHERE h.conversation_id = e.conversation_id AND h.head IS NOT NULL ORDER BY h.id DESC LIMIT 1), 0)
+         AND e.record::jsonb->>'kind' = 'pi.assistant'
+         AND e.record::jsonb->'model'->0->>'stopReason' NOT IN ('error', 'aborted')
+       ORDER BY e.id DESC LIMIT 1`,
+      [orgId, chatId],
+    );
+    if (!result.rows[0]) return null;
+    const entry = JSON.parse(result.rows[0].record) as EntryRecord;
+    const message = entry.model?.find(m => m.role === "assistant");
+    if (!message || message.role !== "assistant") return null;
+    const tokens = calculateContextTokens(message.usage);
+    return Number.isFinite(tokens) && tokens > 0 ? { tokens, model: message.model } : null;
+  }
 
   /** Appends one event: uuid v7 id, `seq` from the BIGSERIAL (global write
    *  order). `id` supplied = idempotent re-append: the first version wins

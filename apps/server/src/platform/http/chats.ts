@@ -194,6 +194,17 @@ export function registerChatsRoutes(
   app.get("/api/v1/chats/:id/thread", threadRead);
   app.get("/api/v1/threads/:id", threadRead);
 
+  app.get("/api/v1/threads/:id/context", async (req) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    await chats.chats.getChat(user.org_id, chatId, user);
+    const usage = await chats.threads.contextUsage(user.org_id, chatId);
+    const model = queryParam(req, "model") || usage?.model || null;
+    const max = model === null ? null :
+      (await gateway.gatewayStore.contextWindow(user.org_id, model)) ?? DEFAULT_CONTEXT_WINDOW;
+    return { tokens: usage?.tokens ?? null, max, model, usage_model: usage?.model ?? null };
+  });
+
   const stopTurn = async (req: FastifyRequest, reply: FastifyReply) => {
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
