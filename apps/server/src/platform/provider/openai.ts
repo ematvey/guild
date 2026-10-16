@@ -102,6 +102,9 @@ export function openAiBody(req: ProviderRequest): Record<string, unknown> {
   if (req.maxTokens > 0) {
     body[usesCompletionTokens(req.model) ? "max_completion_tokens" : "max_tokens"] = req.maxTokens;
   }
+  if (req.temperature !== null) {
+    body["temperature"] = req.temperature;
+  }
   if (req.tools !== null) {
     body["tools"] = req.tools.map((t) => ({
       type: "function",

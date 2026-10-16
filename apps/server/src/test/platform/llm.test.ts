@@ -62,6 +62,47 @@ describe("M2 LLM gateway endpoints", () => {
     expect(Number(row!["cost_usd"])).toBeCloseTo(0.000014, 10);
   });
 
+  it("route temperature: default applies when the client sends none, client value wins", async () => {
+    // Route with a configured default temperature (the stray-token fix).
+    await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/admin/gateway/routes",
+      headers: { authorization: `Bearer ${stack.adminToken}`, "content-type": "application/json" },
+      payload: { model: "m-temp", provider: "mock-openai", price_in: 0, price_out: 0, temperature: 0.6 },
+    });
+    // Out of range → rejected at the admin surface.
+    const bad = await stack.env.app.inject({
+      method: "PUT",
+      url: "/api/v1/admin/gateway/routes",
+      headers: { authorization: `Bearer ${stack.adminToken}`, "content-type": "application/json" },
+      payload: { model: "m-temp", provider: "mock-openai", price_in: 0, price_out: 0, temperature: 2.5 },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    // Client sends no temperature → the route default rides upstream.
+    await stack.env.app.inject({
+      method: "POST",
+      url: "/openai/v1/chat/completions",
+      headers: { authorization: `Bearer ${stack.apiKey}`, "content-type": "application/json" },
+      payload: { model: "m-temp", messages: [{ role: "user", content: "hi" }], stream: false },
+    });
+    // Client sends its own → it wins over the route default.
+    await stack.env.app.inject({
+      method: "POST",
+      url: "/openai/v1/chat/completions",
+      headers: { authorization: `Bearer ${stack.apiKey}`, "content-type": "application/json" },
+      payload: { model: "m-temp", messages: [{ role: "user", content: "hi" }], stream: false, temperature: 0.9 },
+    });
+
+    const bodies = stack.mock.requests.map((r) => r.body).filter((b) => b["model"] === "m-temp");
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]!["temperature"]).toBe(0.6);
+    expect(bodies[1]!["temperature"]).toBe(0.9);
+    // A route without a configured temperature keeps the field absent.
+    const base = bodies.find((b) => b["model"] === "m1");
+    expect(base === undefined || base!["temperature"] === undefined).toBe(true);
+  });
+
   it("openai reasoning replay: reasoning_content rides in and out", async () => {
     await stack.routeModel("m-reason");
     const scripted = await startMockUpstream([
@@ -483,6 +524,7 @@ describe("M2 LLM gateway endpoints", () => {
         baseUrl: upstream.url,
         tools: null,
         maxTokens: 0,
+        temperature: null,
       });
     } catch (e) {
       error = e as Error;

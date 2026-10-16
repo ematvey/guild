@@ -266,18 +266,26 @@ export const BUILTIN_CONNECTORS: BuiltinConnector[] = [
       await probe(fetch(url, fetchTimeout({ headers })), "superproxy");
     },
   },
+  // The polymorphic-slot principle: an integration that can fill a
+  // standard capability slot (currently search and fetch) exposes its
+  // tools under the slot's standard name and signature —
+  // web_search(query, count) and web_fetch(url, max_chars) — the same
+  // spec shape searxng and superproxy declare, so the model sees the
+  // identical tool regardless of which backend fills the slot.
+  // Provider-specific extras (firecrawl's map) keep their own names and
+  // ride the slug namespace as ordinary extras.
   {
     name: "firecrawl",
-    classes: { scrape: "read", search: "read", map: "read" },
+    classes: { web_search: "read", web_fetch: "read", map: "read" },
     tools() {
       return [
         {
-          name: "scrape",
+          name: "web_fetch",
           description: "Fetch a web page through the Firecrawl API and return its content as markdown.",
           parameters: {
             type: "object",
             properties: {
-              url: { type: "string", description: "Absolute http(s) URL to scrape" },
+              url: { type: "string", description: "Absolute http(s) URL to fetch" },
               max_chars: {
                 type: "number",
                 description: "Max characters of returned markdown (default 8000)",
@@ -287,17 +295,13 @@ export const BUILTIN_CONNECTORS: BuiltinConnector[] = [
           },
         },
         {
-          name: "search",
+          name: "web_search",
           description: "Search the web through the Firecrawl API and return the top results (title, url, description).",
           parameters: {
             type: "object",
             properties: {
               query: { type: "string" },
-              limit: { type: "number", description: "1-20, default 5" },
-              scrape: {
-                type: "boolean",
-                description: "Also scrape each result and return a short markdown excerpt (slower)",
-              },
+              count: { type: "number", description: "1-20, default 5" },
             },
             required: ["query"],
           },

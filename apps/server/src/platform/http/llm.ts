@@ -115,6 +115,7 @@ export async function dispatch(
   messages: InternalMessage[],
   tools: ToolSpec[] | null,
   clientMaxTokens: number | null,
+  clientTemperature: number | null = null,
 ): Promise<RoutedCall> {
   const route = await ctx.gatewayStore.resolveRoute(orgId, model, ctx.masterKey());
   await ctx.usage.ensureOnce();
@@ -144,6 +145,9 @@ export async function dispatch(
     baseUrl: route.baseUrl,
     tools,
     maxTokens,
+    // A client that names its own temperature wins; otherwise the route's
+    // configured default applies (null = provider default).
+    temperature: clientTemperature ?? route.temperature,
   }).catch((error: unknown) => {
     throw new ProxyError(
       new ApiError(502, "provider_error", error instanceof ProviderError ? error.message : errorText(error)),
@@ -157,6 +161,16 @@ export async function dispatch(
     priceOut: route.priceOut,
     usage: ctx.usage,
   };
+}
+
+/** Validates a client-specified sampling temperature. Absent = null (the
+ *  route's configured default then applies); out of range = 400. */
+export function clientTemperature(v: unknown): number | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > 2) {
+    throw new ApiError(400, "invalid_request_error", "temperature must be within (0, 2]");
+  }
+  return v;
 }
 
 /** A completed gateway call's usage event (key owner attribution). */

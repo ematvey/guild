@@ -81,6 +81,9 @@ export interface ProviderRequest {
   /** Max output tokens per call. 0 = provider default. Anthropic requires
    *  an explicit max_tokens; routes configure it (migration 0035). */
   maxTokens: number;
+  /** Sampling temperature. null = provider default. The route's configured
+   *  temperature applies when the client sends none (migration 0072). */
+  temperature: number | null;
 }
 
 export interface ModelProvider {

@@ -132,6 +132,9 @@ export function anthropicBody(req: ProviderRequest): Record<string, unknown> {
   if (req.system !== null) {
     body["system"] = req.system;
   }
+  if (req.temperature !== null) {
+    body["temperature"] = req.temperature;
+  }
   if (req.tools !== null) {
     body["tools"] = req.tools.map((t) => ({
       name: t.name,

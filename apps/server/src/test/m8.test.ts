@@ -173,6 +173,9 @@ function route(req: IncomingMessage, url: URL, body: string): { status: number; 
   if (p === "/v1/scrape") {
     return { status: 200, body: JSON.stringify({ success: true, data: { markdown: "# page", metadata: { sourceURL: "https://x.test", statusCode: 200, title: "X" } } }) };
   }
+  if (p === "/v1/search") {
+    return { status: 200, body: JSON.stringify({ success: true, data: [{ title: "Res", url: "https://x.test/a", description: "snip" }] }) };
+  }
   // SearxNG.
   if (p === "/search") {
     return { status: 200, body: JSON.stringify({ results: [{ title: "Res", url: "https://x.test/a", content: "snip" }] }) };
@@ -400,10 +403,17 @@ describe("connector execute spot checks (mock backend)", () => {
     expect(out.meta).toMatchObject({ card: "langfuse", kind: "traces", count: 1 });
   });
 
-  it("firecrawl scrape renders the markdown with the web card meta", async () => {
-    const out = await executeConnectorTool("firecrawl", { base_url: vendorBase }, "scrape", { url: "https://x.test" }, [], null);
+  it("firecrawl web_fetch renders the markdown with the web card meta", async () => {
+    const out = await executeConnectorTool("firecrawl", { base_url: vendorBase }, "web_fetch", { url: "https://x.test" }, [], null);
     expect(out.content).toContain("# page");
     expect(out.meta).toMatchObject({ card: "web", kind: "fetch", url: "https://x.test", status_code: 200 });
+  });
+
+  it("firecrawl web_search maps count onto the firecrawl limit", async () => {
+    const out = await executeConnectorTool("firecrawl", { base_url: vendorBase }, "web_search", { query: "x", count: 5 }, [], null);
+    expect(lastHit("/v1/search").body).toContain("\"limit\":5");
+    expect(out.content).toContain("1. Res");
+    expect(out.meta).toMatchObject({ card: "web", kind: "search", truncated: false });
   });
 
   it("searxng web_search renders numbered results with source meta", async () => {

@@ -11,6 +11,18 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Polymorphic integrations expose standard tool slots under the standard
+  name and signature (2026-10-16).** An integration that can fill a
+  standard capability slot (currently search and fetch) must declare its
+  tool as `web_search(query, count)` / `web_fetch(url, max_chars)` — the
+  same spec shape searxng and superproxy declare — so the model sees the
+  identical tool no matter which backend fills the slot; provider-specific
+  extras (firecrawl's `map`) keep their own names and ride the slug
+  namespace as ordinary extras. Firecrawl conformed: `scrape` →
+  `web_fetch`, `search` → `web_search` (count maps onto the Firecrawl
+  limit; the per-result scrape option is gone with the nonstandard
+  signature). The principle is codified in a comment above the firecrawl
+  connector in `connectors.ts`.
 - **The live "Agent is working Ns" clock anchors to the turn
   (2026-10-16, 0.5.64).** The casual view's counter is a per-run timer and
   read as broken: it reset at every step/intermediate text, and a race
