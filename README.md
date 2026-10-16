@@ -11,8 +11,7 @@ level. Orgs own their data and their LLM resources.
   (OpenAI-shaped + Anthropic-shaped), chats/turns (durable conversations),
   hub machine links, org registry, releases, integrations tool API, web UI.
 
-Spec: `docs/specs/2026-09-09-guild-design.md`, TS-server rebuild design:
-`docs/specs/2026-10-04-ts-server-pi-durable-design.md`.
+TS-server rebuild design: `docs/specs/2026-10-04-ts-server-pi-durable-design.md`.
 
 ## Layout
 

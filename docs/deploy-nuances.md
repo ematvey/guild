@@ -321,8 +321,8 @@ docker compose down -v
 
 # Daemon watch-items (milestone-8, 2026-09-10)
 
-Maintenance notes for the per-user daemon (`docs/plans/2026-09-10-milestone-8-daemon.md`).
-Check these when touching releases, tests, or the daemon itself.
+Maintenance notes for the per-user daemon. Check these when touching
+releases, tests, or the daemon itself.
 
 1. **Bump the workspace version on every release.** The attach handshake
    (`daemon.hello` → version compare) reads `CARGO_PKG_VERSION` of the
