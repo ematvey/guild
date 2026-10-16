@@ -11,6 +11,18 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Tooltips are desktop-only; mobile drawer header owns its close
+  (`cc6e9c0`, `135660d`, 2026-10-16).** A touch-opened radix tooltip has no
+  hover-leave to dismiss it — it sticks over neighboring controls, so
+  tooltips now render only on desktop (`DesktopTooltip`). The mobile
+  sheet's built-in corner X sat exactly on top of the panel header's
+  new-thread plus; the sheet close is suppressed (`hideClose`) and the
+  header carries its own labeled close. New-thread hotkey is host-split:
+  Ctrl/Cmd+N on the desktop client, Ctrl+Alt+N in browsers (plain Ctrl+N
+  is browser-reserved). Smallest fonts raised to 12px app-wide. Shipped
+  0.5.53–0.5.55 on develop and merged to prod master (`94de0c2`, deployed
+  :18081, prod client release 0.5.55 published).
+
 - **Resume shares the submit provisioning path (`df5bf4f`, 2026-10-16).**
   The hubspot soak incident: a worker death mid-turn respawned a fresh
   process whose registry carried only core tools — integration/MCP tools
