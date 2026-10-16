@@ -700,13 +700,19 @@ function RouteDetail({
   // The saved route is facts first; editing is an explicit draft mode.
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [draft, setDraft] = useState<RouteRow | null>(null);
+  // The temperature field edits as raw text so a mid-typing value like "0."
+  // survives re-renders (Number("0.") would collapse it to "0"); parsed on save.
+  const [tempText, setTempText] = useState<string>("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // adopt the loaded row into the draft once (edits are local until saved)
   useEffect(() => {
-    if (r && draft === null) setDraft(r);
+    if (r && draft === null) {
+      setDraft(r);
+      setTempText(r.temperature != null ? String(r.temperature) : "");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [r]);
 
@@ -725,6 +731,14 @@ function RouteDetail({
     setBusy(true);
     setError(null);
     try {
+      // Empty = provider default; otherwise accept any decimal the user
+      // typed and let the server's (0, 2] validation reject garbage.
+      const parsedTemp = tempText.trim() === "" ? null : Number(tempText.trim());
+      if (parsedTemp !== null && (!Number.isFinite(parsedTemp) || parsedTemp <= 0 || parsedTemp > 2)) {
+        setError("Temperature must be within (0, 2]");
+        setBusy(false);
+        return;
+      }
       await api("PUT", "/api/v1/admin/gateway/routes", {
         model: draft.model,
         provider: draft.provider,
@@ -737,7 +751,7 @@ function RouteDetail({
         ...(draft.max_output_tokens != null
           ? { max_output_tokens: draft.max_output_tokens }
           : {}),
-        ...(draft.temperature != null ? { temperature: draft.temperature } : {}),
+        ...(draft.temperature != null || tempText.trim() !== "" ? { temperature: parsedTemp } : {}),
         modalities: draft.modalities,
       });
       toast.success("Route saved", { description: draft.model });
@@ -840,11 +854,10 @@ function RouteDetail({
             </Field>
             <Field label="Temperature" hint="Sampling temperature, 0–2; empty = provider default. Lower (0.6) makes long tool-call scripts reliable; a client that sends its own temperature overrides it.">
               <Input
-                value={draft.temperature != null ? String(draft.temperature) : ""}
+                value={tempText}
+                inputMode="decimal"
                 placeholder="default"
-                onChange={(e) =>
-                  patch({ temperature: e.target.value === "" ? null : Number(e.target.value) })
-                }
+                onChange={(e) => setTempText(e.target.value)}
               />
             </Field>
           </div>
