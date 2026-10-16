@@ -31,7 +31,7 @@ import {
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
-import { SkeletonForm } from "@guild/ui/components/skeleton";
+import { Skeleton, SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "../components/empty-state";
@@ -138,7 +138,7 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
         header: "Spend · 30d",
         cell: ({ row }) => (
           <div className="flex items-center justify-end gap-2 tabular-nums text-muted-foreground">
-            <SpendSparkline points={spend[row.original.email]?.points ?? []} />
+            {seriesRes.data === null && !seriesRes.error ? <Skeleton className="h-3 w-24" /> : seriesRes.error ? <span title={seriesRes.error}>Unavailable</span> : <SpendSparkline points={spend[row.original.email]?.points ?? []} />}
             {spend[row.original.email] && (
               <span>${spend[row.original.email].total.toFixed(4)}</span>
             )}
@@ -171,7 +171,7 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
         ),
       },
     ],
-    [spend, onDetailChange],
+    [spend, onDetailChange, seriesRes.data, seriesRes.error],
   );
 
   if (detail !== null) {

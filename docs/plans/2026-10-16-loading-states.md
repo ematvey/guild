@@ -17,8 +17,8 @@ content. Existing data remains visible during background refreshes.
 | SSO, Machine, MCP, Integrations, Registry | Compact form/row placeholders in place of solid slabs; detail read failures surfaced |
 | Settings module imports | Compact form placeholder while module loads |
 | Chat history | One compact conversation-shaped placeholder instead of multiple fake tool blocks |
-| Sidebar chats/projects, installer list | Text-sized row placeholders |
-| Skills catalog, activity, detail, editor, local installs | Compact rows and text instead of large rectangles or centered spinners |
+| Sidebar chats/projects, installer list | Text-sized row placeholders; expanded projects wait for the chat list before claiming no chats |
+| Skills catalog, activity, detail, source manifest, editor, local installs | Compact rows and text instead of large rectangles or centered spinners |
 | Project picker and local/remote folder browser | Row placeholders while listings load |
 | Desktop workspace switcher | Logo/name/list placeholders until sessions resolve |
 | Shared tables | Row placeholders preserve table density |
