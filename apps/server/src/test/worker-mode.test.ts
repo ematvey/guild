@@ -10,6 +10,10 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
+import { createSession, InboxDoc, type ConversationId } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { PostgresDurableStorage } from "../storage/postgres/index.js";
+import { PgPoolDatabase } from "../storage/postgres/pg.js";
 import { masterKeyBytes, encryptSecret } from "../platform/crypto.js";
 
 let stack: M2Stack;
@@ -148,6 +152,35 @@ describe("worker-per-chat (fork supervisor)", () => {
     const thread = await stack.env.app.inject({ method: "GET", url: `/api/v1/chats/${chatId}/thread`, headers: auth(stack.memberToken) });
     expect(thread.body).toContain("before projection repair");
     expect(thread.body).toContain("after projection repair");
+  }, 90_000);
+
+  it("startup drains an idle durable queue without requiring another user message", async () => {
+    const chatId = await createChat("resume queued input");
+    stack.mock.setResponses([{ body: finalSse("first answer") }]);
+    await submit(chatId, "first input");
+    await waitFor(async () => (await lastAssistant(chatId)).includes("first answer"));
+    const mapping = await stack.env.db.query<{ conversation_id: string }>("SELECT conversation_id FROM chat_conversations WHERE chat_id=$1", [chatId]);
+    const conversationId = Number(mapping.rows[0]!.conversation_id) as ConversationId;
+    process.kill(stack.env.app.platform.supervisor!.pidOf(chatId)!, "SIGKILL");
+    await waitFor(async () => stack.env.app.platform.supervisor!.pidOf(chatId) === undefined);
+    // A Session writes the exact durable idle+queued state; it owns no scheduler.
+    const database = new PgPoolDatabase(stack.env.db);
+    database.close = async () => {}; // The test stack owns the shared pool.
+    const session = createSession(await PostgresDurableStorage.open(database));
+    const queuedId = await session.commit(async tx => {
+      const inbox = await tx.doc(InboxDoc, conversationId);
+      const item = await tx.createSubmission({ conversationId, type: "input", status: "queued", requestId: "parked-input" });
+      inbox.items.push({ id: item.id, mode: "followUp", content: "queued before restart" });
+      return item.id;
+    }, BACKGROUND_CONTEXT);
+    await session.close(BACKGROUND_CONTEXT);
+    await stack.env.db.query("UPDATE chats SET generating=true WHERE id=$1", [chatId]);
+    stack.mock.setResponses([{ body: finalSse("recovered queued answer") }]);
+    await stack.env.app.platform.supervisor!.recoverFromJournal([{ chatId }]);
+    await waitFor(async () => (await lastAssistant(chatId)).includes("recovered queued answer"));
+    const record = await stack.env.db.query<{ status: string }>("SELECT status FROM submissions WHERE id=$1", [queuedId]);
+    expect(record.rows[0]!.status).toBe("done");
+    await waitFor(async () => !(await stack.env.db.query<{ generating: boolean }>("SELECT generating FROM chats WHERE id=$1", [chatId])).rows[0]!.generating);
   }, 90_000);
 
   it("killing one chat's worker mid-turn leaves the other chat alone and the turn resumes", async () => {

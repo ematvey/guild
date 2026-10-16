@@ -14,6 +14,8 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "./markdown";
 import { highlightJs } from "./js-highlight";
+import { WorkedForBlock } from "./worked-for-block";
+export { workRunLabel } from "./worked-for-block";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import {
   Archive,
@@ -1027,58 +1029,6 @@ function HoverStamp({ ts, side }: { ts?: string; side: "left" | "right" }) {
       className={`pointer-events-none absolute -bottom-4 ${side === "right" ? "right-0" : "left-0"} text-xs leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100`}
     >
       {text}
-    </div>
-  );
-}
-
-/// Casual-view replacement for one contiguous thinking/tool run: pulsing
-/// "Agent is working Ns" while the run is the turn's live tail, settling to
-/// "Agent worked for S seconds". The small py padding (immune to the list's
-/// space-y margins) keeps consecutive runs from stacking without gaps.
-/// The worked-for label for one contiguous thinking/tool run, or null when
-/// the entry should not render at all: a completed run under one second
-/// (and one without stamps at all) carries no information — "worked for 0
-/// seconds" is noise. Live states always render.
-export function workRunLabel(
-  run: Block[],
-  active: boolean,
-  stopping: boolean,
-  nowMs: number,
-  turnStart?: string,
-): string | null {
-  const ownStart = run[0]?.kind === "tool" ? run[0].tool?.ts : run[0]?.ts;
-  // Live counting anchors to the turn start (starts at 0, no per-step
-  // resets); a settled run keeps its own open-to-end duration.
-  const start = (active && turnStart) || ownStart;
-  const last = run[run.length - 1];
-  const end = last.kind === "tool" ? (last.tool?.endTs ?? last.tool?.ts) : last.ts;
-  const secs = (() => {
-    if (!start) return null;
-    const to = active ? nowMs : end ? Date.parse(end) : null;
-    if (to === null || isNaN(to)) return null;
-    // Floor, not round: a 0.5s run must read as sub-second (hidden), never
-    // round up to a fictional "1 seconds".
-    return Math.max(0, Math.floor((to - Date.parse(start)) / 1000));
-  })();
-  if (stopping) return "Agent is stopping";
-  if (active) return secs !== null ? `Agent is working ${secs}s` : "Agent is working";
-  if (secs === null || secs < 1) return null;
-  if (secs < 60) return `Agent worked for ${secs} ${secs === 1 ? "second" : "seconds"}`;
-  return `Agent worked for ${Math.floor(secs / 60)}m ${secs % 60}s`;
-}
-
-function WorkedForBlock({ run, active, stopping, nowMs, turnStart }: {
-  run: Block[];
-  active: boolean;
-  stopping: boolean;
-  nowMs: number;
-  turnStart?: string;
-}) {
-  const label = workRunLabel(run, active, stopping, nowMs, turnStart);
-  if (label === null) return null;
-  return (
-    <div className="-mt-1.5! mb-2.5! py-0 text-sm text-muted-foreground">
-      {active ? <span className="animate-pulse">{label}</span> : label}
     </div>
   );
 }
@@ -3010,9 +2960,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     setChatView(m);
     void saveChatViewMode(m);
   }, []);
-  // Casual's counting "Agent is working Ns" ticks once per second while the
-  // turn streams.
-  const [nowTick, setNowTick] = useState(() => Date.now());
   // View entries: the two views differ ONLY in thinking/tool runs —
   // technical renders each block 1:1, casual replaces each contiguous run
   // with one WorkedForBlock. Everything else (user, text, errors,
@@ -3066,12 +3013,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   }, [blocks, chatView]);
   const offlineMachineBanner = offlineMachine(chats, chatId, isTauri, isTauri ? machineId() : undefined);
   const streaming = busy || openGenerating;
-  useEffect(() => {
-    if (chatView !== "casual" || !streaming) return;
-    setNowTick(Date.now());
-    const t = setInterval(() => setNowTick(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [chatView, streaming]);
   // A first send's create round trip on the scratch surface: the composer
   // freezes with its text until the route moves to the created thread.
   const holdingFirstSend = (() => {
@@ -3504,7 +3445,6 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                     run={e.run}
                     active={streaming && i === displayEntries.length - 1}
                     stopping={!!(chatId && stopping[chatId])}
-                    nowMs={nowTick}
                     turnStart={e.turnStart}
                   />
                 ) : e.b.kind === "user" ? (

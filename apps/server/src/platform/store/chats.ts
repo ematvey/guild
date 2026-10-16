@@ -415,6 +415,22 @@ export class ChatStore {
     }
   }
 
+  /** Reconcile the UI projection against current durable work in one SQL
+   * statement, rather than clearing a flag from an earlier run's snapshot. */
+  async reconcileGenerating(orgId: string, chatId: string): Promise<void> {
+    const res = await this.pool.query<{ user_id: string; generating: boolean }>(
+      `WITH work AS (
+        SELECT EXISTS (SELECT 1 FROM tasks t JOIN chat_conversations cc ON cc.conversation_id=t.conversation_id
+          WHERE cc.chat_id=$2 AND t.kind=$3 AND t.status<>'terminal')
+          OR EXISTS (SELECT 1 FROM submissions s JOIN chat_conversations cc ON cc.conversation_id=s.conversation_id
+          WHERE cc.chat_id=$2 AND s.status='queued') AS generating
+      ) UPDATE chats c SET generating=work.generating FROM work
+        WHERE c.org_id=$1 AND c.id=$2 AND c.generating IS DISTINCT FROM work.generating
+        RETURNING c.user_id,c.generating`, [orgId, chatId, JSON.stringify("pi.generation")],
+    );
+    if (res.rows[0]) await this.notifyChatStatus(orgId, res.rows[0].user_id, chatId, res.rows[0].generating);
+  }
+
   private async notifyChatStatus(orgId: string, userId: string, chatId: string, generating: boolean): Promise<void> {
     // Same channel and payload the Rust notify_chat_status sends (the member
     // socket's listener flips the sidebar spinner): "generating:<bool>".

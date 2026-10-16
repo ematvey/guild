@@ -11,6 +11,19 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Every queued input has a runnable owner; clocks update locally (2026-10-17,
+  0.5.70).** pi-durable's model-error ending clears its run without placing
+  queued inputs. Guild applies an atomic idle inbox boundary after run endings,
+  admission and startup, preserving submission identities, queue modes and
+  context resets. Generating is reconciled from durable work after admission
+  rather than unconditionally raised after a possibly completed run. The
+  elapsed-time clock now owns its timer in a memoized child: ticks cannot
+  rerender the transcript parent. A browser fixture with 4,000 history entries
+  retained one parent/history render across five clock ticks. Failure-window
+  regressions pass in both worker modes, and restart recovery places an
+  existing idle queued submission without another message. Details:
+  `docs/plans/2026-10-17-idle-inbox-recovery.md`.
+
 - **Live projections recover from authoritative records; machine work owns a
   cancellable lifetime (2026-10-17, 0.5.69).** Invalid `pi.live` chains are archived and
   rebuilt before harness startup from task checkpoints, placed submissions and
