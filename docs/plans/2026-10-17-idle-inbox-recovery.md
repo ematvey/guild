@@ -1,14 +1,29 @@
 # Idle inbox recovery and local clock updates
 
-The parallel pi investigation supplied a deterministic second failure, retained
+The parallel pi investigation supplied a deterministic Guild integration failure, retained
 in the deliberately uncommitted `apps/server/src/test/wedge-repro.test.ts`.
 A provider 404 is wrapped by the gateway as a retryable 502, leaving a run live
 through the 2/4/8-second retry backoff. Inputs admitted then enter `pi.inbox`.
-On `model_error`, pi-durable clears the run but applies no final inbox boundary;
-resuming task scheduling alone cannot place those queued inputs. Version 0.5.69
-repaired damaged projections and cancellation but did not close this hole.
+The pi-durable README's “Busy Conversations” contract deliberately leaves queued
+items in the inbox after a failed run. The next input or queued write places them,
+oldest first; restart/resume alone does not. This is documented native behavior,
+not a pi-durable defect or permanent loss of placement.
+
+Guild made that recovery path unreachable: its generating flag could remain true
+while the native conversation was idle, and `WebChat` silently rejects normal-mode
+sends while `busy || openGenerating` is true. Thus the action that would trigger
+native placement was blocked by Guild's UI. Version 0.5.69 repaired damaged
+projections and cancellation but did not close this integration gap.
 
 ## Contract and implementation
+
+Guild deliberately chooses automatic continuation after failure, extending the
+native next-admission contract. Clearing the flag and allowing a fresh normal
+send would also restore native recovery, but would leave already accepted user
+messages waiting for another admission. Guild instead places accepted queued
+inputs without requiring another user action, including after restart. Its UI
+work indicator therefore includes queued work while Guild arranges its run;
+it is not a claim that pi-durable itself calls an idle inbox busy.
 
 Guild applies an idle final boundary using public pi-durable APIs in a single
 conversation transaction. A live run makes reconciliation a no-op. Otherwise,
@@ -77,4 +92,7 @@ An intervening M6 rerun saw extra telemetry collector requests. The broad WS
 suite also timed out in teardown. Sandbox suites and the operator diagnostic
 were excluded; no blanket claim that the entire repository suite is green.
 
-The parallel session's `wedge-repro.test.ts` remains unchanged and uncommitted.
+The parallel session's `wedge-repro.test.ts` remains uncommitted. Its scenario-B
+wording now describes native contract behavior; its original assertions and
+execution logic are preserved as a baseline diagnostic. The separate
+`queue-recovery.test.ts` asserts Guild's automatic-continuation policy.
