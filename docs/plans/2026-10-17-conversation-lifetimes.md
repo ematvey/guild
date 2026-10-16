@@ -188,15 +188,44 @@ last_activity_at fields. Their exact comparisons remain enabled. The WS feed
 case now checks the actual acknowledged generation's terminal and final
 view; it is not replaced with a weaker assertion.
 
-Server typechecking passes. The focused final lifecycle, two-connection pool,
-durable-contract, and queue checks pass: 27 tests across three files
-(`bigjob-20261016-225043-guild-directory`). Desktop validation passes 353 tests
-across 27 files plus TypeScript/Vite build
-(`bigjob-20261016-224411-guild-desktop-steering`). The MCP HTTP fixture accepts
-bodyless transport requests instead of parsing them as JSON.
+Server typechecking passes. The final full server suite passes **538 tests**
+across 58 files, with 40 opt-in sandbox checks skipped across two files;
+there are no unhandled errors. The same job completes the desktop
+TypeScript/Vite build (`bigjob-20261016-225335-guild-final-suite`, exit 0).
+The final focused lifecycle, two-connection pool, durable-contract, and queue
+checks also pass: 27 tests (`bigjob-20261016-225043-guild-directory`).
+Desktop validation passes **353 tests** across 27 files plus its build
+(`bigjob-20261016-224411-guild-desktop-steering`, exit 0). The MCP HTTP fixture
+accepts bodyless transport requests rather than parsing them as JSON.
 
-The broad server run passed 537 checks; its newly added pool regression
-reproduced the old cached directory implementation while the focused run
-verified its fix. A fresh source-frozen broad run is in progress. Terminal
-suite, dev deployment, bundle, desktop updater, and live verification results
-are recorded here after they complete.
+Implementation commit: `bf923a1` on `develop`. The canonical dev compose
+rebuild and recreation completed with exit 0
+(`bigjob-20261016-225400-guild-deploy`). Health reports 0.5.72; the running
+container contains Pi Durable 1.3.0. Served `/assets/index-Cyewy_rr.js`
+is byte-identical to the image: SHA-256
+`c35f52f95d0c09eed6906ba09d046f945f4f150ac322e57a1decd73d99f68d9f`.
+Durable schema 5 and platform migration 0075 are applied. Startup recovered
+all 20 previously unprojected generation errors; the read-only duplicate
+check found 5,759 mappings, zero duplicate pairs, and zero affected chats.
+After the live smoke, no live tasks or recovery backlog remained.
+
+Signed desktop packaging/publication completed with exit 0
+(`bigjob-20261016-225401-guild-clients`). All six 0.5.72 artifacts have updater
+and server signatures. The local and public dev updater manifests both
+advertise 0.5.72 for Windows, Linux, and both macOS architectures. A public
+Windows installer download passed SHA-256 and Ed25519 verification:
+`4a3445440ae4e3a49fa852a8e79b61d21a2a8dbf6cceefcca66a87fe41d86239`.
+Native Windows/macOS GUI execution was not performed.
+
+The authenticated live browser test used chat
+`01a146ec-9066-7956-9d50-27f9976f82bc`. It paused a real sandbox file write
+at approval, queued another input, clicked **Steer now**, and verified the
+same chip changed to **Steer**. After approval, the write succeeded and the
+model replied exactly `QUEUE_STEERING_0572_OK`. Submissions 16315 and 16325
+both completed with answer 16329; both commands completed, and the promoted
+message kept its original ID. Reload preserved the delivered transcript and
+idle composer. Screenshots and JSON evidence live under
+`/home/user/guild-audits/pi-durable-2026-10-17/`.
+
+All deployment, database, and release operations used dev. Production was
+untouched.
