@@ -1172,10 +1172,8 @@ export async function withdrawQueued(chatId: string, messageId: string): Promise
   return true;
 }
 
-/// Summarizes the chat's history (POST /compact): the model-authored
-/// summarization call replaces the pre-compaction history in the model's
-/// view. Fire-and-forget — the compaction card lands via the thread sync.
-export async function compactChat(chatId: string): Promise<void> {
+/** Follow the durable compaction task, including successful no-op outcomes. */
+export async function compactChat(chatId: string): Promise<boolean> {
   const token = getToken();
   const res = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/compact`), {
     method: "POST",
@@ -1187,6 +1185,20 @@ export async function compactChat(chatId: string): Promise<void> {
   if (!res.ok) {
     const v = await res.json().catch(() => ({}));
     throw new Error(v?.error?.message ?? res.statusText);
+  }
+  const started = await res.json() as { task_id: number | null };
+  if (started.task_id === null) return false;
+  if (!Number.isSafeInteger(started.task_id) || started.task_id < 1) throw new Error("Invalid compaction task response");
+  for (;;) {
+    const response = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/compactions/${started.task_id}`), {
+      headers: { authorization: `Bearer ${token}`, "x-guild-client-id": clientId() },
+    });
+    const status = await response.json();
+    if (!response.ok) throw new Error(status?.error?.message ?? response.statusText);
+    if (status.status === "completed") return status.compacted === true;
+    if (status.status === "failed") throw new Error(status.error);
+    if (status.status !== "running") throw new Error("Invalid compaction status response");
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
 }
 

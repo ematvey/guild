@@ -4,7 +4,7 @@
 //! previews only), the live probe + tool table, the enable toggle, and
 //! delete with confirm.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { SectionDetailProps } from "../section-nav";
 import { useCachedGet } from "../use-cached-api";
@@ -54,7 +54,7 @@ interface ServerRow {
 
 interface ProbeResult {
   ok: boolean;
-  tools?: { name: string; description: string }[];
+  tools?: { name: string; call_name?: string; description: string }[];
   error?: string;
 }
 
@@ -231,7 +231,7 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
     <div>
       <PageHeader
         title="MCP servers"
-        description="Your own MCP (streamable-HTTP) servers. Their tools become callable in your chats as mcp_<server>_<tool>."
+        description="Tools from your enabled MCP servers are available in your chats."
         actions={
           <Button size="sm" onClick={() => setAddOpen(true)}>
             <Plus className="mr-1 size-4" /> Add server
@@ -269,7 +269,6 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
           setAddOpen(false);
           onDetailChange(id);
         }}
-        onChangedReload={reload}
       />
     </div>
   );
@@ -279,38 +278,31 @@ function AddServerDialog({
   open,
   onOpenChange,
   onCreated,
-  onChangedReload,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (id: string) => void;
-  onChangedReload: () => void;
 }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [headers, setHeaders] = useState<HeaderDraft[]>([]);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [busy, setBusy] = useState(false);
-  /** The row a successful create already landed (Test connection saves
-   *  first — the probe endpoint reads the stored headers). */
-  const [createdId, setCreatedId] = useState<string | null>(null);
+  useEffect(() => { setProbe(null); }, [name, url, headers]);
 
   const reset = () => {
     setName("");
     setUrl("");
     setHeaders([]);
     setProbe(null);
-    setCreatedId(null);
   };
 
-  const ensureCreated = async (): Promise<string | null> => {
-    if (createdId !== null) return createdId;
+  const createServer = async (): Promise<string> => {
     const res = await api<{ server: { id: string } }>("POST", "/api/v1/mcp/servers", {
       name,
       url,
       headers: headersPayload(headers),
     });
-    setCreatedId(res.server.id);
     return res.server.id;
   };
 
@@ -318,12 +310,8 @@ function AddServerDialog({
     setBusy(true);
     setProbe(null);
     try {
-      const id = await ensureCreated();
-      if (id === null) return;
-      const res = await api<ProbeResult>("POST", `/api/v1/mcp/servers/${id}/probe`, {});
+      const res = await api<ProbeResult>("POST", "/api/v1/mcp/probe", { name, url, headers: headersPayload(headers) });
       setProbe(res);
-      if (res.ok && res.tools !== undefined) toolCounts.set(id, res.tools.length);
-      onChangedReload();
     } catch (e) {
       setProbe({ ok: false, error: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -331,15 +319,18 @@ function AddServerDialog({
     }
   };
 
-  const finish = () => {
-    ensureCreated()
-      .then((id) => {
-        if (id === null) return;
-        toast.success("MCP server added", { description: name });
-        reset();
-        onCreated(id);
-      })
-      .catch((e) => toast.error("Could not add server", { description: e instanceof Error ? e.message : String(e) }));
+  const finish = async () => {
+    setBusy(true);
+    try {
+      const id = await createServer();
+      toast.success("MCP server added", { description: name });
+      reset();
+      onCreated(id);
+    } catch (e) {
+      toast.error("Could not add server", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -359,7 +350,7 @@ function AddServerDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <Field label="Name" hint="Lowercase slug — tools are wired as mcp_<name>_<tool>.">
+          <Field label="Name" hint="Use lowercase letters, numbers, underscores or hyphens.">
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-tools" />
           </Field>
           <Field label="URL" hint="http(s) streamable-HTTP endpoint.">
@@ -420,6 +411,8 @@ function McpDetail({
         ...(headers.length > 0 ? { headers: headersPayload(headers) } : {}),
         ...(extra ?? {}),
       });
+      setProbe(null);
+      toolCounts.delete(server.id);
       toast.success("Saved", { description: name });
       onChanged();
     } catch (e) {
@@ -486,7 +479,7 @@ function McpDetail({
       />
       <div className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name" hint="Lowercase slug — tools are wired as mcp_<name>_<tool>.">
+          <Field label="Name" hint="Use lowercase letters, numbers, underscores or hyphens.">
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           <Field label="URL">
@@ -524,7 +517,7 @@ function McpDetail({
               <tbody>
                 {(probe.tools ?? []).map((t) => (
                   <tr key={t.name} className="border-b border-border last:border-0">
-                    <td className="px-4 py-2 font-mono text-xs">{`mcp_${name}_${t.name}`}</td>
+                    <td className="px-4 py-2 font-mono text-xs">{t.call_name ?? t.name}</td>
                     <td className="px-4 py-2 text-xs text-muted-foreground">{t.description}</td>
                   </tr>
                 ))}

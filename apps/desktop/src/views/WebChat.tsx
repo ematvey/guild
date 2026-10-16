@@ -2797,12 +2797,18 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     if ((!text && pendingRef.current.length === 0) || !model) return;
     if (text.toLowerCase() === "/compact") {
       if (!chatId) { toast.error("Compact needs an existing chat — send a message first"); return; }
+      if (compacting) { toast.info("Compaction is already running"); return; }
       promptRef.current = "";
       setPrompt("");
       requestAnimationFrame(autoGrow);
       setCompacting(reducerRef.current.setCompacting(chatId).compacting);
-      try { await compactChat(chatId); }
-      catch (e) { setCompacting(reducerRef.current.setCompacting(null).compacting); toast.error(e instanceof Error ? e.message : String(e)); }
+      try {
+        if (!await compactChat(chatId)) toast.info("No compaction was needed");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+      } finally {
+        setCompacting(reducerRef.current.finishCompacting(chatId).compacting);
+      }
       return;
     }
     const retry = [...outgoingRef.current.values()].find(c => c.error && (c.chatId ?? c.originChatId) === chatId && matchesCommandDraft(c, text, pendingRef.current));
@@ -4223,4 +4229,3 @@ function DeviceSetupDialog({
     </Dialog>
   );
 }
-

@@ -1,9 +1,16 @@
 // The main server ↔ worker IPC protocol. One forked worker process owns
 // one conversation's scoped harness (worker/main.ts); the supervisor routes
-// admission and control over this channel. Frames and approval decisions
-// deliberately do NOT ride here: the worker's bridge writes thread_events +
-// pg_notify through the shared database, and the approval gate polls the
-// journaled decision — both cross the process boundary through Postgres.
+// admission, control, and ephemeral live frames over this channel. Durable
+// transcript rows and approval decisions still cross through Postgres.
+
+import type { StreamWireEvent } from "../hub/protocol.js";
+
+export type BufferUpdate = { append: string } | { replace: string };
+export type WorkerStreamEvent =
+  | { t: "stream"; action: "open"; generationId: string }
+  | { t: "stream"; action: "event"; event: StreamWireEvent }
+  | { t: "stream"; action: "dirty" | "close" }
+  | { t: "stream"; action: "buffers"; text?: BufferUpdate; thinking?: BufferUpdate };
 
 /** One machine-tool dispatch, proxied from a worker to the server's
  *  hub-backed registry (the same shape MachineDispatch.dispatch takes). */
@@ -47,6 +54,6 @@ export type WorkerResponse =
   | { t: "result"; ref: number; ok: true; data: unknown }
   | { t: "result"; ref: number; ok: false; error: string; status?: number; code?: string };
 
-export type WorkerEvent = { t: "ready" } | { t: "heartbeat" };
+export type WorkerEvent = { t: "ready" } | { t: "heartbeat" } | WorkerStreamEvent;
 
 export type WorkerMessage = WorkerRequest | WorkerResponse | WorkerEvent;

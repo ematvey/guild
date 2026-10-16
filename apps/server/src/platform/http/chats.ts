@@ -450,12 +450,25 @@ export function registerChatsRoutes(
     const user = await requireUser(auth, req);
     const chatId = parseUuidParam(req, "id");
     await chats.chats.getChat(user.org_id, chatId, user);
-    await chats.runtime.compactChat(chatId);
-    return reply.status(200).send(JSON.stringify({ ok: true }));
+    const taskId = await chats.runtime.compactChat(chatId);
+    return reply.status(200).send({ ok: true, task_id: taskId });
   };
   // Deprecated alias: POST /api/v1/gateway/chat/:id/compact.
   app.post("/api/v1/gateway/chat/:id/compact", compactTurn);
   app.post("/api/v1/threads/:id/compact", compactTurn);
+  app.get("/api/v1/threads/:id/compactions/:taskId", async (req, reply) => {
+    const user = await requireUser(auth, req);
+    const chatId = parseUuidParam(req, "id");
+    await chats.chats.getChat(user.org_id, chatId, user);
+    const rawTaskId = (req.params as { taskId: string }).taskId;
+    const taskId = Number(rawTaskId);
+    if (!/^\d+$/.test(rawTaskId) || !Number.isSafeInteger(taskId) || taskId < 1) {
+      throw ApiError.badRequest("invalid compaction task ID");
+    }
+    const status = await chats.chats.compactionStatus(chatId, taskId);
+    if (!status) throw ApiError.notFound("no such compaction");
+    return reply.send(status);
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,8 @@ import type {
   ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { toolSchema } from "./tool-schema.js";
+import { userMcpToolName } from "../platform/domain/mcp.js";
+export { userMcpToolName } from "../platform/domain/mcp.js";
 import type { Logger } from "pino";
 import { mcpConnect } from "../platform/integrations/mcp.js";
 import type { UserMcpStore } from "../platform/store/userMcp.js";
@@ -49,11 +51,6 @@ export interface UserMcpRuntimeDeps {
   log: Logger;
   chatOfConversation(conversationId: number): Promise<string | null>;
   chatOwnerOf(chatId: string): Promise<{ org_id: string; user_id: string } | null>;
-}
-
-/** The wire tool name for one user-MCP tool. */
-export function userMcpToolName(serverName: string, toolName: string): string {
-  return `mcp${serverName.length}_${serverName}_${toolName}`;
 }
 
 export class UserMcpRuntime {

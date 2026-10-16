@@ -11,6 +11,7 @@ import type { Logger } from "pino";
 import type { Config } from "../config.js";
 import type { MachineToolOutcome } from "../machines/dispatch.js";
 import type { MachineDispatchCall, WorkerMessage, WorkerRequest, WorkerResponse } from "./protocol.js";
+import type { GenerationStreamSink, LiveBuffers } from "../chats/bridge.js";
 
 const WORKER_ENTRY = fileURLToPath(new URL("./main.ts", import.meta.url));
 
@@ -27,6 +28,7 @@ interface Handle {
   readonly chatId: string;
   child: ReturnType<typeof fork>;
   alive: boolean;
+  buffers: LiveBuffers;
   lastBeat: number;
   nextRef: number;
   /** Requests sent before the ready handshake resolved. */
@@ -106,6 +108,13 @@ export class ForkSupervisor {
   private bootRecovery?: Promise<void>;
   private readonly maxWorkers = Math.max(1, Number(process.env.GUILD_WORKER_LIMIT) || 16);
   private readonly idleMs = Math.max(1, Number(process.env.GUILD_WORKER_IDLE_MS) || 300_000);
+  private streamSink: GenerationStreamSink | null = null;
+
+  setStreamSink(sink: GenerationStreamSink | null): void { this.streamSink = sink; }
+
+  liveBuffers(chatId: string): LiveBuffers {
+    return { ...(this.handles.get(chatId)?.buffers ?? { text: "", thinking: "" }) };
+  }
 
   private async pause(ms: number): Promise<void> {
     if (this.closed) return;
@@ -221,6 +230,7 @@ export class ForkSupervisor {
         execArgv: [],
       }),
       alive: true,
+      buffers: { text: "", thinking: "" },
       lastBeat: Date.now(),
       nextRef: 1,
       queued: [],
@@ -267,7 +277,11 @@ export class ForkSupervisor {
       handle.alive = false;
       clearTimeout(readyTimer);
       handle.rejectReady(new Error(`worker exited (code ${code ?? "null"}, signal ${signal ?? "null"}) before ready`));
-      if (this.handles.get(chatId) === handle) this.handles.delete(chatId);
+      if (this.handles.get(chatId) === handle) {
+        this.handles.delete(chatId);
+        this.streamSink?.close(chatId);
+        this.streamSink?.dirty(chatId);
+      }
       for (const waiter of handle.waiters.values()) {
         clearTimeout(waiter.timer);
         waiter.reject(new Error("worker exited with a request in flight"));
@@ -282,6 +296,29 @@ export class ForkSupervisor {
   private onMessage(handle: Handle, raw: unknown): void {
     const message = raw as WorkerMessage;
     if (!message || typeof message !== "object" || !("t" in message)) return;
+    if (message.t === "stream") {
+      if (!handle.alive || this.handles.get(handle.chatId) !== handle) return;
+      const chatId = handle.chatId;
+      switch (message.action) {
+        case "open":
+          handle.buffers = { text: "", thinking: "" };
+          this.streamSink?.open(chatId, message.generationId);
+          break;
+        case "event": this.streamSink?.event(chatId, message.event); break;
+        case "dirty": this.streamSink?.dirty(chatId); break;
+        case "close":
+          handle.buffers = { text: "", thinking: "" };
+          this.streamSink?.close(chatId);
+          break;
+        case "buffers":
+          for (const key of ["text", "thinking"] as const) {
+            const update = message[key];
+            if (update) handle.buffers[key] = "replace" in update ? update.replace : handle.buffers[key] + update.append;
+          }
+          break;
+      }
+      return;
+    }
     if (message.t === "ready") {
       if (handle.readyState !== "starting") return;
       handle.lastBeat = Date.now();
@@ -432,8 +469,8 @@ export class ForkSupervisor {
     return this.request<void>(chatId, { t: "stop" });
   }
 
-  compact(chatId: string): Promise<boolean> {
-    return this.request<boolean>(chatId, { t: "compact" });
+  compact(chatId: string): Promise<number | null> {
+    return this.request<number | null>(chatId, { t: "compact" });
   }
 
   /** Boot recovery: fork workers for every chat whose conversation still

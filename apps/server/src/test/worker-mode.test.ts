@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
+import type { StreamWireEvent, WsServerMsg } from "../hub/protocol.js";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 import { createSession, InboxDoc, AssistantEntry, UserEntry, type ConversationId } from "@earendil-works/pi-durable";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
@@ -107,6 +108,34 @@ async function createChat(title: string): Promise<string> {
 }
 
 describe("worker-per-chat (fork supervisor)", () => {
+  it("relays partials before completion and restores them on socket sync", async () => {
+    const chatId = await createChat("worker streaming relay");
+    const ticket = await stack.env.app.inject({ method: "POST", url: "/api/v1/ws/ticket", headers: auth(stack.memberToken), payload: {} });
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/v1/ws?ticket=${JSON.parse(ticket.body).ticket}&instance_id=${crypto.randomUUID()}`);
+    const frames: (Exclude<WsServerMsg, { type: "live_frame" }> | { type: "live_frame"; chat_id: string; generation_id: string; event: StreamWireEvent })[] = [];
+    ws.on("message", data => frames.push(JSON.parse(data.toString())));
+    try {
+      await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+      stack.mock.setResponses([{ chunks: [sseDelta("partial-before-terminal"), sseDelta(" final"), sseDone()], chunkDelayMs: 800 }]);
+      const response = await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${chatId}/turns`, headers: auth(stack.memberToken), payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "stream before settling" }] } });
+      expect(response.statusCode).toBe(200);
+      const commandId = JSON.parse(response.body).generation_id;
+      await waitFor(async () => frames.some(f => f.type === "live_frame" && f.chat_id === chatId && f.event?.type === "delta" && f.event.content.includes("partial-before-terminal")));
+      expect(await lastAssistant(chatId)).toBe("");
+      expect(stack.env.app.platform.runtime.liveBuffers(chatId).text).toBe("partial-before-terminal");
+      const delta = frames.filter(f => f.type === "live_frame").find(f => f.event.type === "delta")!;
+      expect(delta.generation_id).toBe(commandId);
+      frames.length = 0;
+      ws.send(JSON.stringify({ type: "sync", chat_id: chatId }));
+      await waitFor(async () => frames.some(f => f.type === "thread_state" && f.chat_id === chatId && f.text === "partial-before-terminal" && f.generating));
+      await waitFor(async () => (await lastAssistant(chatId)) === "partial-before-terminal final");
+      await waitFor(async () => frames.some(f => f.type === "live_frame" && f.event?.type === "done"));
+      expect(stack.env.app.platform.runtime.liveBuffers(chatId)).toEqual({ text: "", thinking: "" });
+    } finally {
+      ws.close();
+    }
+  }, 60_000);
+
   it("admits and completes a turn through a forked worker", async () => {
     const chatId = await createChat("worker mode chat");
     stack.mock.setResponses([

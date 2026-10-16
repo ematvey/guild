@@ -528,7 +528,7 @@ describe("compacting guard (the null === null flash)", () => {
     expect(r.open("c1").compacting).toBe(true);
   });
 
-  it("a new compaction event is the success signal; busy→false without one is failure", () => {
+  it("a new compaction event settles the pending line", () => {
     const r = createThreadReducer();
     r.open("c1");
     r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go" })]));
@@ -550,15 +550,26 @@ describe("compacting guard (the null === null flash)", () => {
     expect(done.blocks.find((b) => b.kind === "compaction")!.compaction!.summary).toBe("so far: go");
   });
 
-  it("busy→false with no compaction event clears the line (nothing was appended)", () => {
+  it("a no-op task outcome clears the line without depending on generation state", () => {
     const r = createThreadReducer();
     r.open("c1");
     r.applyState(state("c1", 1, [row(1, { type: "user_message", content: "go" })]));
     r.setCompacting("c1");
     r.applyState(state("c1", 2, [], "", "thinking", true));
     const ended = r.applyState(state("c1", 3, [], "", "", false));
-    expect(ended.compacting).toBe(false);
+    expect(ended.compacting).toBe(true);
     expect(ended.blocks.some((b) => b.kind === "compaction")).toBe(false);
+    expect(r.finishCompacting("c1").compacting).toBe(false);
+  });
+
+  it("another chat's completed compaction cannot clear the current pending task", () => {
+    const r = createThreadReducer();
+    r.open("c1");
+    r.setCompacting("c1");
+    r.open("c2");
+    r.setCompacting("c2");
+    expect(r.finishCompacting("c1").compacting).toBe(true);
+    expect(r.finishCompacting("c2").compacting).toBe(false);
   });
 
   it("compaction keys already present when /compact was sent do not settle it", () => {

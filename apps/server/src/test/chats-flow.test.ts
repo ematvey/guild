@@ -19,6 +19,8 @@ const sseDone = (): string =>
   "data: [DONE]\n\n";
 import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 import type { PlatformContext } from "../platform/context.js";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { guildProviderId } from "../harness/models.js";
 
 let stack: M2Stack;
 let port: number;
@@ -687,6 +689,33 @@ describe("gateway/chat turn flow", () => {
       payload: {},
     });
     expect(compact.statusCode).toBe(200);
-    expect(JSON.parse(compact.body)).toEqual({ ok: true });
+    expect(JSON.parse(compact.body)).toEqual({ ok: true, task_id: null });
+  }, TEST_TIMEOUT);
+
+  it("reports a no-op compaction's terminal task outcome, scoped to its chat", async () => {
+    const headers = auth(stack.memberToken);
+    const created = await stack.env.app.inject({ method: "POST", url: "/api/v1/threads", headers, payload: { title: "compact no-op" } });
+    const id = JSON.parse(created.body).id as string;
+    const runtime = stack.env.app.platform.runtime;
+    await runtime.refreshOrgModels(stack.orgId);
+    const conversation = await runtime.conversationForChat(id, stack.orgId);
+    await conversation.configure({ model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } }, BACKGROUND_CONTEXT);
+    const started = await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${id}/compact`, headers, payload: {} });
+    expect(started.statusCode).toBe(200);
+    const taskId = JSON.parse(started.body).task_id as number;
+    expect(taskId).toBeGreaterThan(0);
+    const path = `/api/v1/threads/${id}/compactions/${taskId}`;
+    await waitFor(async () => {
+      const response = await stack.env.app.inject({ method: "GET", url: path, headers });
+      expect(response.statusCode).toBe(200);
+      return JSON.parse(response.body).status === "completed";
+    });
+    const done = await stack.env.app.inject({ method: "GET", url: path, headers });
+    expect(JSON.parse(done.body)).toEqual({ status: "completed", compacted: false });
+    const other = await stack.env.app.inject({ method: "POST", url: "/api/v1/threads", headers, payload: { title: "other compaction" } });
+    const otherId = JSON.parse(other.body).id;
+    expect((await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${otherId}/compactions/${taskId}`, headers })).statusCode).toBe(404);
+    expect((await stack.env.app.inject({ method: "GET", url: path })).statusCode).toBe(401);
+    expect((await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${id}/compactions/NaN`, headers })).statusCode).toBe(400);
   }, TEST_TIMEOUT);
 });
