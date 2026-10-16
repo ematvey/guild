@@ -284,9 +284,9 @@ async function firecrawlExecute(config: Json, tool: string, args: Json, secrets:
   const base = firecrawlBaseUrl(config);
   const key = secretOrNull(secrets, "api_key");
   switch (tool) {
-    case "scrape": {
+    case "web_fetch": {
       const url = args["url"];
-      if (typeof url !== "string") throw new Error("scrape requires url");
+      if (typeof url !== "string") throw new Error("web_fetch requires url");
       const maxChars = clampNumber(args, "max_chars", MAX_BODY_CHARS, MAX_BODY_CHARS);
       const resp = await firecrawlPost(base, "/v1/scrape", { url, formats: ["markdown"] }, key);
       const data = (resp["data"] ?? {}) as Json;
@@ -300,12 +300,11 @@ async function firecrawlExecute(config: Json, tool: string, args: Json, secrets:
       if (title !== null) meta["title"] = title;
       return { content, meta };
     }
-    case "search": {
+    case "web_search": {
       const query = args["query"];
-      if (typeof query !== "string") throw new Error("search requires query");
-      const limit = clampNumber(args, "limit", 5, 20);
+      if (typeof query !== "string") throw new Error("web_search requires query");
+      const limit = clampNumber(args, "count", 5, 20);
       const body: Json = { query, limit };
-      if (args["scrape"] === true) body["scrapeOptions"] = { formats: ["markdown"] };
       const resp = await firecrawlPost(base, "/v1/search", body, key);
       // The self-hosted API returns a flat results array; the cloud shape
       // nests it under data.web.

@@ -47,6 +47,7 @@ interface RouteRow {
   reasoning: boolean;
   context_window: number | null;
   max_output_tokens: number | null;
+  temperature: number | null;
   modalities: string[];
 }
 
@@ -736,6 +737,7 @@ function RouteDetail({
         ...(draft.max_output_tokens != null
           ? { max_output_tokens: draft.max_output_tokens }
           : {}),
+        ...(draft.temperature != null ? { temperature: draft.temperature } : {}),
         modalities: draft.modalities,
       });
       toast.success("Route saved", { description: draft.model });
@@ -833,6 +835,15 @@ function RouteDetail({
                   patch({
                     max_output_tokens: e.target.value === "" ? null : Number(e.target.value),
                   })
+                }
+              />
+            </Field>
+            <Field label="Temperature" hint="Sampling temperature, 0–2; empty = provider default. Lower (0.6) makes long tool-call scripts reliable; a client that sends its own temperature overrides it.">
+              <Input
+                value={draft.temperature != null ? String(draft.temperature) : ""}
+                placeholder="default"
+                onChange={(e) =>
+                  patch({ temperature: e.target.value === "" ? null : Number(e.target.value) })
                 }
               />
             </Field>

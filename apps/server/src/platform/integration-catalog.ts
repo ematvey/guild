@@ -92,7 +92,7 @@ export const CONNECTORS: ConnectorManifest[] = [
     name: "firecrawl",
     version: "1.0.0",
     description:
-      "Scrape pages as markdown, search, and map site links through a self-hosted Firecrawl API (crawl jobs are not exposed as tools)",
+      "Search the web and fetch pages as markdown through a self-hosted Firecrawl API (plus site link mapping; crawl jobs are not exposed as tools)",
     categories: ["search", "fetch"],
     secret_names: ["api_key"],
     auth_kind: "org_secret",

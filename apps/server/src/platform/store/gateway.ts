@@ -29,6 +29,10 @@ export interface RouteRow {
   /** Max output tokens per model call (migration 0035); null = provider
    *  default. */
   maxOutputTokens: number | null;
+  /** Sampling temperature (migration 0072); null = provider default (the
+   *  model's generation_config). Applied when the client does not send its
+   *  own temperature. */
+  temperature: number | null;
 }
 
 /** Admin-facing route row: everything except the decrypted key (serde
@@ -43,6 +47,7 @@ export interface AdminRouteRow {
   reasoning: boolean;
   context_window: number | null;
   max_output_tokens: number | null;
+  temperature: number | null;
   modalities: string[];
 }
 
@@ -192,7 +197,7 @@ export class GatewayStore {
   async listRoutes(orgId: string): Promise<AdminRouteRow[]> {
     const res = await this.pool.query<AdminRouteRow>(
       "SELECT model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
-        "quota_monthly_usd, reasoning, context_window, max_output_tokens, modalities " +
+        "quota_monthly_usd, reasoning, context_window, max_output_tokens, temperature, modalities " +
         "FROM model_routes WHERE org_id = $1 ORDER BY model",
       [orgId],
     );
@@ -210,20 +215,21 @@ export class GatewayStore {
     reasoning: boolean,
     contextWindow: number | null,
     maxOutputTokens: number | null,
+    temperature: number | null,
     modalities: string[],
   ): Promise<void> {
     await this.pool.query(
       "INSERT INTO model_routes (org_id, model, provider, enabled, price_per_mtok_in_usd, price_per_mtok_out_usd, " +
-        "quota_monthly_usd, reasoning, context_window, max_output_tokens, modalities) " +
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) " +
+        "quota_monthly_usd, reasoning, context_window, max_output_tokens, temperature, modalities) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) " +
         "ON CONFLICT (org_id, model) " +
         "DO UPDATE SET provider = EXCLUDED.provider, enabled = EXCLUDED.enabled, " +
         "price_per_mtok_in_usd = EXCLUDED.price_per_mtok_in_usd, " +
         "price_per_mtok_out_usd = EXCLUDED.price_per_mtok_out_usd, " +
         "quota_monthly_usd = EXCLUDED.quota_monthly_usd, reasoning = EXCLUDED.reasoning, " +
         "context_window = EXCLUDED.context_window, max_output_tokens = EXCLUDED.max_output_tokens, " +
-        "modalities = EXCLUDED.modalities",
-      [orgId, model, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, modalities],
+        "temperature = EXCLUDED.temperature, modalities = EXCLUDED.modalities",
+      [orgId, model, provider, enabled, priceIn, priceOut, quotaMonthlyUsd, reasoning, contextWindow, maxOutputTokens, temperature, modalities],
     );
   }
 
@@ -242,12 +248,13 @@ export class GatewayStore {
       reasoning: boolean;
       context_window: number | null;
       max_output_tokens: number | null;
+      temperature: number | null;
       modalities: string[];
     }>(
       "SELECT r.provider, k.protocol, k.base_url, k.encrypted_key, " +
         "r.price_per_mtok_in_usd, r.price_per_mtok_out_usd, r.enabled, " +
         "r.quota_monthly_usd, r.reasoning, r.context_window, " +
-        "r.max_output_tokens, r.modalities " +
+        "r.max_output_tokens, r.temperature, r.modalities " +
         "FROM model_routes r " +
         "LEFT JOIN provider_keys k ON k.org_id = r.org_id AND k.provider = r.provider " +
         "WHERE r.org_id = $1 AND r.model = $2",
@@ -288,6 +295,7 @@ export class GatewayStore {
       modalities: row.modalities ?? [],
       contextWindow: row.context_window,
       maxOutputTokens: row.max_output_tokens,
+      temperature: row.temperature,
     };
   }
 

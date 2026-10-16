@@ -18,6 +18,7 @@ import {
   recordUsageSync,
   StreamUsageCounters,
   ProxyError,
+  clientTemperature,
   type GatewayContext,
   type GatewayCredential,
   type RoutedCall,
@@ -79,6 +80,7 @@ interface AnthropicRequest {
   max_tokens?: number;
   stream?: boolean;
   tools?: AnthropicTool[] | null;
+  temperature?: number;
 }
 
 /** Anthropic request → internal (system, messages). Top-level system,
@@ -337,7 +339,7 @@ async function handleMessages(
   const [system, internal] = toInternal(req0);
   const tools = req0.tools !== undefined && req0.tools !== null ? toToolSpecs(req0.tools) : null;
 
-  const call = await dispatch(gateway, credential.orgId, req0.model, system, internal, tools, req0.max_tokens ?? null);
+  const call = await dispatch(gateway, credential.orgId, req0.model, system, internal, tools, req0.max_tokens ?? null, clientTemperature(req0.temperature));
   const model = call.model;
   const provider = call.provider;
 

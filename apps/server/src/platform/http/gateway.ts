@@ -57,6 +57,10 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
       // min() it would erase a positive client limit — reject it.
       throw ApiError.badRequest("max_output_tokens must be a positive integer");
     }
+    const temperature = typeof body["temperature"] === "number" ? body["temperature"] : null;
+    if (temperature !== null && (temperature <= 0 || temperature > 2)) {
+      throw ApiError.badRequest("temperature must be within (0, 2]");
+    }
     const priceIn = body["price_in"];
     if (typeof priceIn !== "number") throw ApiError.badRequest("missing price_in");
     const priceOut = body["price_out"];
@@ -78,6 +82,7 @@ export function registerGatewayAdminRoutes(app: FastifyInstance, gateway: Gatewa
       reasoning,
       contextWindow,
       maxOutputTokens,
+      temperature,
       modalities,
     );
     return rustJsonText({});

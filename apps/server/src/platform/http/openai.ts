@@ -17,6 +17,7 @@ import {
   readTraceHeaders,
   StreamUsageCounters,
   ProxyError,
+  clientTemperature,
   type GatewayContext,
   type GatewayCredential,
   type GatewayTraceEmission,
@@ -75,6 +76,7 @@ interface OpenAiChatRequest {
   tools?: { type?: string; function: { name: string; description?: string; parameters?: unknown } }[] | null;
   max_tokens?: number;
   max_completion_tokens?: number;
+  temperature?: number;
 }
 
 /** One message's content after decoding the wire parts. */
@@ -333,7 +335,7 @@ async function handleChatCompletions(
       };
   // The judge reads this to join its self-reported row to the usage event.
   reply.header("x-guild-request-id", requestId);
-  const call = await dispatch(gateway, credential.orgId, req0.model, system, messages, tools, limitField ?? null);
+  const call = await dispatch(gateway, credential.orgId, req0.model, system, messages, tools, limitField ?? null, clientTemperature(req0.temperature));
   const completionId = `chatcmpl-${uuidv7()}`;
   const model = call.model;
   const providerName = call.provider;

@@ -396,7 +396,7 @@ describe("POST /api/v1/integrations/{slug}/tools/{tool} (execute)", () => {
 
   it("journales the audit event (integration.tool_called, via=script)", async () => {
     await seedIntegration("firecrawl", { base_url: "http://127.0.0.1:1" }, true, { api_key: "fc-key" });
-    await call("POST", "/api/v1/integrations/firecrawl/tools/search", e.adminToken, { query: "journaled" });
+    await call("POST", "/api/v1/integrations/firecrawl/tools/web_search", e.adminToken, { query: "journaled" });
     const res = await e.env.db.query(
       "SELECT payload FROM events WHERE kind = 'integration.tool_called' AND payload->>'slug' = 'firecrawl' ORDER BY created_at DESC LIMIT 1",
     );
