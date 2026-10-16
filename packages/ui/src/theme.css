@@ -18,6 +18,7 @@
      defaults — medium collapses into the body weight (400), semibold is the
      workhorse emphasis weight (500), and nothing in the UI exceeds 800. */
   --font-weight-medium: 400;
+  --font-weight-normal: 375;
   --font-weight-semibold: 500;
   --font-weight-bold: 600;
   --font-weight-extrabold: 700;
@@ -70,9 +71,16 @@
   --radius: 0.625rem;
 }
 
+/* Body text sits below the standard regular weight: Inter 400 reads heavier
+   than the reference typography this theme targets; the variable wght axis
+   makes 375 a real weight, and utilities override where emphasis is set. */
+body {
+  font-weight: 375;
+}
+
 /* Markdown **bold** renders <strong>/<b>; Tailwind's preflight pins it to
    `bolder` (700 in body text). Message bold is the main emphasis voice:
-   clearly heavier than the 400 body, below preflight-heavy — literal 600
+   clearly heavier than the 375 body, below preflight-heavy — literal 600
    (the bold token is not emitted; no font-bold utility is in use). */
 strong,
 b {
