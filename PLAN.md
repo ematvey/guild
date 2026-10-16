@@ -11,6 +11,21 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Composer bottom padding is remount-safe (2026-10-16, 0.5.56).** The
+  reported "composer overlaps the last line at scroll-bottom" bug was the
+  composer's ResizeObserver: it observed once on mount, but the
+  Skills/Settings routes swap the whole chat column out, so the composer
+  remounts and the observer kept watching the detached node — `composerH`
+  froze at the pre-remount height (~47 CSS px short), the pane's
+  `paddingBottom: composerH + 20` no longer covered the real composer, and
+  every scroll-to-bottom (stick or scrollbar drag) landed with the last line
+  behind it. Diagnosed from the screen recording alone: frame-measured card
+  top vs. last text row vs. known CSS geometry proved the pane was at max
+  scroll with a too-short padding. Fix: the composer element arrives via
+  callback-ref state and the observation effect keys on it; the stick
+  layout effect also re-sticks on `composerH` changes (queued chips /
+  textarea growth while pinned).
+
 - **Tooltips are desktop-only; mobile drawer header owns its close
   (`cc6e9c0`, `135660d`, 2026-10-16).** A touch-opened radix tooltip has no
   hover-leave to dismiss it — it sticks over neighboring controls, so
