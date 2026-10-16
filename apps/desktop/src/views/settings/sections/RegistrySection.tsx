@@ -14,7 +14,7 @@ import { displayVersion } from "../../skills/skills-api";
 import { Button } from "@guild/ui/components/button";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
-import { SkeletonRows } from "@guild/ui/components/skeleton";
+import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
 import { EmptyState } from "../components/empty-state";
@@ -213,6 +213,12 @@ function ItemDetail({
     }
   };
 
+  if (item === null) {
+    if (itemsRes.error) return <p role="alert" className="text-sm text-destructive">{itemsRes.error}</p>;
+    if (itemsRes.settled) return <EmptyState icon={Package} title="Item not found" hint="It may have been removed." />;
+    return <SkeletonForm />;
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -255,7 +261,7 @@ function ItemDetail({
 
       <div className="rounded-lg border border-border bg-card p-4">
         <p className="text-sm font-medium">Versions</p>
-        {versions === null ? (
+        {versionsRes.error && versions === null ? <p role="alert" className="text-sm text-destructive">{versionsRes.error}</p> : versions === null ? (
           <SkeletonRows rows={1} />
         ) : versions.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">No versions published.</p>

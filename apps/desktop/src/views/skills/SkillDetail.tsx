@@ -300,6 +300,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
     skill_md: string;
     files: SkillSourceFile[];
   } | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(true);
   const [selectedFile, setSelectedFile] = useState("SKILL.md");
   const [rawSkillMd, setRawSkillMd] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -327,8 +328,11 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
     if (detail === null) return;
     let live = true;
     setSource(null);
+    setSourceLoading(true);
     skillsSource(detail.slug).then((s) => {
-      if (live) setSource(s);
+      if (live) { setSource(s); setSourceLoading(false); }
+    }).catch(() => {
+      if (live) setSourceLoading(false);
     });
     return () => {
       live = false;
@@ -387,7 +391,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
   const files = source === null ? null : bundleFilePaths(source);
   const currentPath = files !== null && files.includes(selectedFile) ? selectedFile : "SKILL.md";
   const tree = files === null ? [] : buildFileTree(files);
-  const fileCount = files?.length ?? 1;
+  const fileCount = files?.length;
 
   const renderTree = (nodes: FileTreeNode[], depth: number): ReactNode =>
     nodes.map((node) =>
@@ -425,7 +429,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
       ? `${source?.skill_md.split("\n").length ?? 0} lines`
       : `${selectedSourceFile?.size ?? 0} bytes`;
   const viewerBody =
-    source === null ? (
+    sourceLoading ? <SkeletonText lines={6} className="p-4" /> : source === null ? (
       <p className="p-10 text-center text-[13px] text-muted-foreground">
         File contents unavailable — the bundle manifest could not be loaded.
       </p>
@@ -458,7 +462,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
             {rawSkillMd ? "Preview" : "Raw"}
           </button>
         )}
-        <span className="shrink-0 tabular-nums">{viewerMeta}</span>
+        <span className="shrink-0 tabular-nums">{sourceLoading ? <Skeleton className="h-3 w-12" /> : source === null ? "" : viewerMeta}</span>
       </div>
       {viewerBody}
     </div>

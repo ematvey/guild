@@ -3162,6 +3162,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   const sidebar =
     sidebarTab === "work" ? (
       <WorkPanel
+        loadingChats={chats === null}
         grouping={grouping}
         projects={projects}
         machines={machines}

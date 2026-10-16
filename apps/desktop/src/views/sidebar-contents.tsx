@@ -475,6 +475,7 @@ export function ChatsPanel({
 
 export function WorkPanel({
   grouping,
+  loadingChats,
   projects,
   machines,
   chatId,
@@ -488,6 +489,7 @@ export function WorkPanel({
   onArchiveProject,
 }: {
   grouping: ReturnType<typeof sidebarGrouping>;
+  loadingChats: boolean;
   projects: Project[] | null;
   /** Registered machines with their live socket state — feeds each
    *  project row's machine label + online/offline dot. */
@@ -563,7 +565,8 @@ export function WorkPanel({
                 />
                 {open && (
                   <div className="ml-4 space-y-0.5 border-l border-border/60 py-0.5 pl-2">
-                    {chats.slice(0, limit).map((c) => (
+                    {loadingChats && <SkeletonRows rows={2} className="[&>div]:h-8 [&>div]:px-2" />}
+                    {!loadingChats && chats.slice(0, limit).map((c) => (
                       <ChatListItem
                         key={c.id}
                         title={c.title || "Untitled"}
@@ -574,7 +577,7 @@ export function WorkPanel({
                         onArchive={() => onArchiveChat?.(c.id)}
                       />
                     ))}
-                    {chats.length === 0 && (
+                    {!loadingChats && chats.length === 0 && (
                       <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet.</p>
                     )}
                     {chats.length > limit && (
