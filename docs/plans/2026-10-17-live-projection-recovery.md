@@ -78,6 +78,13 @@ app-server library tests and 52 protocol tests passed, and the desktop crate
 compiled. The frontend production build passed. A scoped server typecheck
 passed; the repository-wide check still reports existing errors in
 `codemode.test.ts` and the other session's untracked `wedge-repro.test.ts`.
-The broader suite retains baseline WebSocket/golden fixture failures, verified
-against the starting implementation; the final run's counts are recorded below
-once complete.
+The final broad suite passed 487 tests and retained three baseline failures:
+`ws-feed.test.ts`'s legacy live-frame expectation and the HTTP/WS golden
+fixtures (`onboarded` and `last_activity_at`). These failures reproduce against
+the starting implementation. The task's operator diagnostic test was preserved
+and excluded; sandbox integration suites require their separate harness.
+
+A final atomicity regression also covers a valid first-document delta followed
+by an invalid second-document delta in one rejected batch. Validation uses
+immutable application so the first document's cached state cannot acquire
+changes that never committed. The regression failed before that correction.
