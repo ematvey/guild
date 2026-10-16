@@ -1,4 +1,4 @@
-# Affected-feature browser verification and fixes — 0.5.73
+# Affected-feature browser verification and fixes — 0.5.74
 
 The full browser pass follows the Pi Durable audit and conversation-lifetime
 changes in 0.5.71–0.5.72. It uses isolated managed dev members and local MCP
@@ -17,6 +17,9 @@ is excluded. Detailed screenshots, recordings, and state evidence are in
 2. A successful no-op manual compaction left “Compacting thread…” forever.
    Starting compaction now returns its durable task ID; the authenticated,
    chat-scoped status route exposes running/completed/failed outcomes.
+   A conversation-owned compaction returns a write submission, so status
+   follows that submission through queued placement; a prepared summary is
+   not a no-op. Cancelled or superseded writes report failure.
    The client follows that task, clears its own chat's indicator on every
    terminal outcome, and reports when no compaction was needed. Generation
    busy/idle transitions no longer stand in for compaction completion.

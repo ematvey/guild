@@ -21,6 +21,7 @@ import { setupM2Stack, type M2Stack } from "./platform/m2-harness.js";
 import type { PlatformContext } from "../platform/context.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { guildProviderId } from "../harness/models.js";
+import { UserEntry } from "@earendil-works/pi-durable";
 
 let stack: M2Stack;
 let port: number;
@@ -690,6 +691,38 @@ describe("gateway/chat turn flow", () => {
     });
     expect(compact.statusCode).toBe(200);
     expect(JSON.parse(compact.body)).toEqual({ ok: true, task_id: null });
+  }, TEST_TIMEOUT);
+
+  it("waits for a manual compaction's queued summary write to be placed", async () => {
+    const headers = auth(stack.memberToken);
+    const created = await stack.env.app.inject({ method: "POST", url: "/api/v1/threads", headers, payload: { title: "queued compaction" } });
+    const id = JSON.parse(created.body).id as string;
+    const runtime = stack.env.app.platform.runtime;
+    await runtime.refreshOrgModels(stack.orgId);
+    const conversation = await runtime.conversationForChat(id, stack.orgId);
+    await conversation.configure({ model: { provider: guildProviderId(stack.orgId), modelId: "GLM-Test-Model" } }, BACKGROUND_CONTEXT);
+    await conversation.commit(async tx => {
+      for (let i = 0; i < 3; i++) await tx.appendEntry(UserEntry, conversation.id, { model: [{ role: "user", content: `${i}:` + "old context ".repeat(5000), timestamp: i }] });
+    }, BACKGROUND_CONTEXT);
+    stack.mock.setResponses([
+      { chunks: [sseDelta("still generating"), sseDelta(" finished"), sseDone()], chunkDelayMs: 2000 },
+      { body: sseDelta("summarized old context") + sseDone() },
+    ]);
+    const previous = stack.mock.requests.length;
+    await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${id}/turns`, headers, payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "hold the current run" }] } });
+    await waitFor(async () => stack.mock.requests.length > previous);
+    const started = await stack.env.app.inject({ method: "POST", url: `/api/v1/threads/${id}/compact`, headers, payload: {} });
+    const taskId = JSON.parse(started.body).task_id as number;
+    await waitFor(async () => {
+      const rows = await stack.env.db.query<{ status: string }>(`SELECT s.status FROM tasks t JOIN submissions s
+        ON s.id=(t.record::jsonb->'state'->'outcome'->'result'->>'submissionId')::bigint WHERE t.id=$1`, [taskId]);
+      return rows.rows[0]?.status === "queued";
+    });
+    const path = `/api/v1/threads/${id}/compactions/${taskId}`;
+    expect(JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body)).toEqual({ status: "running" });
+    await waitFor(async () => JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body).status === "completed");
+    expect(JSON.parse((await stack.env.app.inject({ method: "GET", url: path, headers })).body)).toEqual({ status: "completed", compacted: true });
+    await waitFor(async () => (await stack.env.app.inject({ method: "GET", url: `/api/v1/threads/${id}`, headers })).body.includes("summarized old context"));
   }, TEST_TIMEOUT);
 
   it("reports a no-op compaction's terminal task outcome, scoped to its chat", async () => {

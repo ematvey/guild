@@ -97,7 +97,7 @@ export class ChatStore {
   async compactionStatus(chatId: string, taskId: number): Promise<CompactionStatus | null> {
     const result = await this.pool.query<{
       status: string;
-      outcome: { status: string; result?: { entryId?: number }; error?: { message?: string }; reason?: string } | null;
+      outcome: { status: string; result?: { entryId?: number; submissionId?: number }; error?: { message?: string }; reason?: string } | null;
     }>(
       `SELECT t.status,t.record::jsonb->'state'->'outcome' AS outcome FROM tasks t
        JOIN chat_conversations c ON c.conversation_id=t.conversation_id
@@ -108,6 +108,19 @@ export class ChatStore {
     if (!row) return null;
     if (row.status !== "terminal") return { status: "running" };
     if (row.outcome?.status === "completed") {
+      const submissionId = row.outcome.result?.submissionId;
+      if (submissionId !== undefined) {
+        const placed = await this.pool.query<{ status: string; reason: string | null }>(
+          `SELECT s.status,s.record::jsonb->>'reason' AS reason FROM submissions s
+           JOIN chat_conversations c ON c.conversation_id=s.conversation_id
+           WHERE c.chat_id=$1 AND s.id=$2 AND s.record::jsonb->>'type'='write'`,
+          [chatId, submissionId],
+        );
+        const write = placed.rows[0];
+        if (write?.status === "queued") return { status: "running" };
+        if (write?.status === "done") return { status: "completed", compacted: true };
+        return { status: "failed", error: write?.reason === "aborted" ? "Compaction was cancelled" : "Compaction summary was superseded or could not be applied" };
+      }
       return { status: "completed", compacted: row.outcome.result?.entryId !== undefined };
     }
     return { status: "failed", error: row.outcome?.error?.message ?? row.outcome?.reason ?? "Compaction did not complete" };
