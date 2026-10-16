@@ -45,4 +45,36 @@ The temporary fixture was removed after verification. This demonstrates removal
 of the identified periodic transcript work; it does not measure every possible
 cause of workstation lag.
 
-Deployment and final validation results will be recorded below.
+## Deployment and final validation
+
+Implementation commit: `7ff1865` on develop. Dev compose rebuilt and recreated
+successfully; health reports 0.5.70 and the served bundle is
+`index-BWjK-s0s.js`. An authenticated Chromium session loaded the original
+large thread (56,400 characters of visible history), its composer was usable
+and no Stop indicator remained. The database had no idle conversations with
+queued submissions. A separate live verification turn completed `QUEUE_FIX_OK`,
+its existing submission settled done, and generating cleared. That verification
+thread was archived afterwards.
+
+All six signed client artifacts published successfully with local/server
+SHA-256 verification. Both localhost and the public dev updater serve 0.5.70
+with four signed platforms. A public Windows installer download matched
+`a4498203110abf6459f23d6446b01358c56558a0e6a661f0db042c5d6fc60dd0`.
+No prod stack was changed.
+
+Focused boundary/worker tests: 11 passed; failed-run HTTP regressions: both
+worker modes passed. Frontend label tests: 58 passed; production build and
+scoped server typecheck passed. Generated bindings are fresh. Full typecheck
+still excludes the existing codemode unused-variable error and the unchanged
+operator diagnostic's type errors.
+
+The broad server run passed 463 tests across 47 passing files, with four
+failed tests across four files. Three are the previously established WS/golden
+assertions. The fourth was M6 cleanup: PostgreSQL refused to terminate a process
+while dropping its disposable database. The same SPA assertion passed alone;
+a later full M6 run passed all 26 tests (the starting commit also passed all 26).
+An intervening M6 rerun saw extra telemetry collector requests. The broad WS
+suite also timed out in teardown. Sandbox suites and the operator diagnostic
+were excluded; no blanket claim that the entire repository suite is green.
+
+The parallel session's `wedge-repro.test.ts` remains unchanged and uncommitted.
