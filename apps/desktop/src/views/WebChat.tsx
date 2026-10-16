@@ -3394,7 +3394,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             }}
           >
             <div
-              className="mx-auto w-full max-w-3xl space-y-4 px-4 pt-6"
+              className="mx-auto w-full max-w-3xl space-y-4 px-4 pt-6 text-[var(--chat-foreground)] [&_strong]:text-foreground [&_b]:text-foreground"
               style={{ paddingBottom: composerH + 20 }}
             >
               {displayEntries.map((e, i) =>

@@ -46,6 +46,9 @@
   --sidebar: #f7f5f0;
   --sidebar-foreground: #171717;
   --radius: 0.625rem;
+  /* Chat body text: the full-strength foreground reads aggressive white on
+     dark; the chat pane dims it while bold spans keep the bright color. */
+  --chat-foreground: var(--foreground);
 }
 
 .dark {
@@ -69,6 +72,7 @@
   --sidebar: #161412;
   --sidebar-foreground: #f5f5f5;
   --radius: 0.625rem;
+  --chat-foreground: oklch(0.872 0.01 258.338);
 }
 
 /* Body text sits below the standard regular weight: Inter 400 reads heavier
