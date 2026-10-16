@@ -98,7 +98,7 @@ describe("external tool cancellation", () => {
       createRegistry(),
     );
     const prepared = await runtime.prepareTurn(1, "chat", "org");
-    const tool = prepared.tools.find((t) => t.name === "mcp_fixture_wait")!;
+    const tool = prepared.tools.find((t) => t.name === "mcp7_fixture_wait")!;
     const controller = new AbortController();
     const observed = observe("tools/call");
     const result = tool.execute(
@@ -152,7 +152,7 @@ describe("external tool cancellation", () => {
     faux.setResponses([
       fauxAssistantMessage(
         fauxToolCall("codemode", {
-          code: "return await tools.mcp_fixture_wait({});",
+          code: "return await tools.mcp7_fixture_wait({});",
         }),
         { stopReason: "toolUse" },
       ),

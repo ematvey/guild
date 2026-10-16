@@ -1,3 +1,4 @@
+import { ApiError } from "../platform/errors.js";
 // One forked worker process: owns one chat's conversation end to end —
 // scoped durable harness, bridge, codemode sandbox, executor envs — and
 // serves admission + control over the supervisor's IPC protocol. Frames
@@ -72,6 +73,9 @@ process.on("message", (raw: unknown) => {
         case "submit":
           data = await runtime.submitTurn(chatId, request.input.orgId, request.input);
           break;
+        case "steer":
+          data = await runtime.steerQueued(chatId, request.submissionId);
+          break;
         case "withdraw":
           data = await runtime.withdrawQueued(chatId, request.submissionId);
           break;
@@ -85,7 +89,13 @@ process.on("message", (raw: unknown) => {
       }
       send({ t: "result", ref: request.ref, ok: true, data });
     } catch (error) {
-      send({ t: "result", ref: request.ref, ok: false, error: (error as Error)?.message ?? String(error) });
+      send({
+        t: "result",
+        ref: request.ref,
+        ok: false,
+        error: (error as Error)?.message ?? String(error),
+        ...(error instanceof ApiError ? { status: error.status, code: error.code } : {}),
+      });
       log.error({ err: error, chatId, kind: request.t }, "worker request failed");
     }
   })();

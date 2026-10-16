@@ -1,3 +1,5 @@
+import { TranscriptProjection } from "./projection.js";
+import { canonicalJson } from "../platform/domain/json.js";
 // The event bridge: pi-durable `watchEvents()` streams → thread_events rows
 // + generating flag + turn-command settlement, with the EXACT frame contract
 // the Rust ChatRunner wrote (turn/step numbering, UsagePayload fields,
@@ -9,28 +11,17 @@
 // Steps count model calls within the turn, exactly like the ChatRunner.
 
 import type { Conversation, EntryId, SnapshotEvent, SubmissionRecord, JsonObject } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import type { Logger } from "pino";
 import type { StreamWireEvent } from "../hub/protocol.js";
-import { uuidv5, uuidv7 } from "../platform/time.js";
+import { uuidv7 } from "../platform/time.js";
 import type { ObjectStore } from "../platform/s3.js";
 import type { ToolArtifactStore } from "../platform/store/toolArtifacts.js";
-import { artifactMeta, shouldSpill, spillOversizedResult } from "./spill.js";
 import type { ChatStore } from "../platform/store/chats.js";
 import type { ThreadStore } from "../platform/store/thread.js";
 import type { TurnCommandStore } from "../platform/store/turn_commands.js";
-import {
-  assistantMessageEvent,
-  compactionEvent,
-  toolResultEvent,
-  turnErrorEvent,
-  unwrapCompactionSummary,
-  type Block,
-  type ThreadEvent,
-  type ThreadEventRow,
-} from "../platform/domain/thread-events.js";
+import { turnErrorEvent, type ThreadEventRow } from "../platform/domain/thread-events.js";
 
 export interface LiveBuffers {
   /** Unpersisted streaming buffers of the current generation attempt (the
@@ -98,7 +89,6 @@ interface BridgeState {
    *  buffers.thinking and lands in the durable reasoning block at the turn
    *  boundary, so live frames stop at the first text delta. */
   textStarted: boolean;
-  sourceEntry?: number;
   legacyThrough?: number;
 }
 
@@ -110,7 +100,11 @@ export class ChatBridge {
   private readonly states = new Map<string, BridgeState>();
   private streamSink: GenerationStreamSink | null = null;
 
-  constructor(private readonly deps: BridgeDeps) {}
+  private readonly projection: TranscriptProjection;
+
+  constructor(private readonly deps: BridgeDeps) {
+    this.projection = new TranscriptProjection(deps);
+  }
 
   /** Wires the live-frame fan-out (the feed forwarder; unset = frames are
    *  dropped — sinks-less deployments still persist everything). */
@@ -156,53 +150,20 @@ export class ChatBridge {
     return this.state(conversationId).buffers;
   }
 
-  /** Backfill from immutable storage, including entries outside the active
-   * reset/compaction range. Each projected row is idempotent before its
-   * cursor advances, so a process may die between those two commits. */
-  async recover(conversation: Conversation, submissions: readonly SubmissionRecord[] = [], through?: EntryId): Promise<void> {
-    const key = String(conversation.id);
-    const bound = this.state(key);
-    const cursor = await this.deps.threads.projectionCursor(bound.chatId, Number(conversation.id));
-    if (cursor.legacyThrough === undefined) {
-      cursor.legacyThrough = Number(through ?? (await conversation.entries({ order: "descending" }, 1, undefined, BACKGROUND_CONTEXT)).items[0]?.id ?? 0);
-      await this.deps.threads.advanceProjection(bound.chatId, Number(conversation.id), cursor);
-    }
-    const placed = new Map(submissions.filter(s => s.entry !== undefined).map(s => [Number(s.entry), s]));
-    const answers = new Set(submissions.flatMap(s => s.type === "input" && s.status === "done" ? [Number(s.answer)] : []));
-    const replay: BridgeState = {
-      ...bound, turn: cursor.turn, step: cursor.step, generationId: null, legacyThrough: cursor.legacyThrough,
-      handledEntries: new Set(), spilled: new Map(), buffers: { text: "", thinking: "" },
-    };
-    for (;;) {
-      const page = await conversation.entries({ order: "ascending", minEntryId: (cursor.entryId + 1) as EntryId, ...(through === undefined ? {} : { maxEntryId: through }) }, 100, undefined, BACKGROUND_CONTEXT);
-      if (page.items.length === 0) break;
-      for (const entry of page.items) {
-        const input = placed.get(Number(entry.id));
-        if (input?.requestId && input.type === "input") await this.deps.threads.deliverQueuedEvent(bound.chatId, input.requestId);
-        if ((entry.kind === "pi.user" || input?.type === "input") && !cursor.runOpen) {
-          replay.turn++;
-          replay.step = 0;
-          cursor.runOpen = true;
-        }
-        await this.projectEntry(replay, entry);
-        const answer = entry.kind === "pi.assistant" ? entry.model?.find(m => m.role === "assistant") : undefined;
-        if (answer?.role === "assistant" && (answers.has(Number(entry.id)) || answer.stopReason !== "toolUse" || !answer.content.some(b => b.type === "toolCall"))) {
-          cursor.runOpen = false;
-        }
-        cursor.entryId = Number(entry.id);
-        cursor.turn = replay.turn;
-        cursor.step = replay.step;
-      }
-      await this.deps.threads.advanceProjection(bound.chatId, Number(conversation.id), cursor);
-    }
+  async recover(
+    conversation: Conversation,
+    submissions: readonly SubmissionRecord[] = [],
+    through?: EntryId,
+  ): Promise<void> {
+    await this.projection.recover(conversation, this.state(String(conversation.id)), submissions, through);
   }
 
-  async persistTaskFailure(conversationId: string, taskId: number, message: string): Promise<void> {
-    await this.deps.threads.appendEvent(this.state(conversationId).chatId, turnErrorEvent(message),
-      uuidv5("6ba7b810-9dad-11d1-80b4-00c04fd430c8", `guild-task-failure:${taskId}`));
+  async persistTaskFailure(conversationId: string, taskId: number, message: string): Promise<ThreadEventRow> {
+    return this.deps.threads.appendTaskFailure(this.state(conversationId).chatId, taskId, turnErrorEvent(message));
   }
 
   private async restoreSnapshot(conversationId: string, state: BridgeState, snapshot: SnapshotEvent): Promise<void> {
+    await this.syncQueuedModes(state, snapshot.inbox);
     state.buffers = { text: "", thinking: "" };
     state.textStarted = false;
     if (snapshot.run) {
@@ -219,21 +180,51 @@ export class ChatBridge {
     }
     for (const tool of snapshot.tools) {
       if (tool.status === "done") continue;
-      const call = snapshot.entries.flatMap(entry => entry.model ?? []).flatMap(message =>
-        message.role === "assistant" ? message.content.filter(block => block.type === "toolCall") : [])
-        .find(block => block.type === "toolCall" && block.id === tool.callId);
-      await this.handleOne(conversationId, state, { type: "tool_execution_start", toolCallId: tool.callId, toolName: tool.name,
-        args: call?.type === "toolCall" ? JSON.parse(JSON.stringify(call.arguments)) as JsonObject : {}, taskId: tool.taskId! });
+      const call = snapshot.entries
+        .flatMap((entry) => entry.model ?? [])
+        .flatMap((message) =>
+          message.role === "assistant" ? message.content.filter((block) => block.type === "toolCall") : [],
+        )
+        .find((block) => block.type === "toolCall" && block.id === tool.callId);
+      await this.handleOne(conversationId, state, {
+        type: "tool_execution_start",
+        toolCallId: tool.callId,
+        toolName: tool.name,
+        args: call?.type === "toolCall" ? (JSON.parse(JSON.stringify(call.arguments)) as JsonObject) : {},
+        taskId: tool.taskId!,
+      });
     }
     this.streamSink?.dirty(state.chatId);
   }
 
+  private async syncQueuedModes(state: BridgeState, items: readonly { id: number; mode: string }[]): Promise<void> {
+    for (const item of items) {
+      if (item.mode === "write") continue;
+      for (const command of await this.deps.turnCommands.byInvocation(invocationOf(Number(item.id)))) {
+        await this.deps.threads.setQueuedMode(state.chatId, command.id, item.mode === "steer" ? "steer" : "queue");
+      }
+    }
+  }
+
   private async projectEntry(state: BridgeState, entry: EntryRecord): Promise<void> {
-    state.sourceEntry = Number(entry.id);
-    try {
-      await this.handleEntry(state, entry);
-    } finally {
-      delete state.sourceEntry;
+    await this.projection.project(state, entry);
+    const message = entry.kind === "pi.assistant" ? entry.model?.find((item) => item.role === "assistant") : undefined;
+    if (
+      message?.role === "assistant" &&
+      message.stopReason !== "aborted" &&
+      !message.content.some((block) => block.type === "toolCall") &&
+      state.lastEventId &&
+      state.generationId &&
+      this.streamSink
+    ) {
+      state.doneSent = true;
+      this.emitStream(state, {
+        type: "done",
+        message_id: state.lastEventId,
+        cost_usd: message.usage.cost.total,
+        tokens_in: message.usage.input,
+        tokens_out: message.usage.output,
+      });
     }
   }
 
@@ -257,6 +248,8 @@ export class ChatBridge {
         await this.restoreSnapshot(_conversationId, state, event);
         return;
       case "run_start": {
+        state.handledEntries.clear();
+        state.spilled.clear();
         state.turn = (await this.deps.threads.latestTurn(state.chatId)) + 1;
         state.step = 0;
         state.doneSent = false;
@@ -266,11 +259,14 @@ export class ChatBridge {
         let generationId: string | null = null;
         let oldestPosition: number | null = null;
         for (const input of event.inputs) {
-          const commands = await this.deps.turnCommands.byInvocation(invocationOf(Number(input)));
+          const commands = await this.deps.turnCommands.forSubmission(state.chatId, Number(input));
           for (const command of commands) {
             const claimed = await this.deps.turnCommands.begin(command.id, state.chatId, invocationOf(Number(input)));
             void claimed;
-            if (generationId === null || (command.position !== null && command.position < (oldestPosition ?? Number.MAX_SAFE_INTEGER))) {
+            if (
+              generationId === null ||
+              (command.position !== null && command.position < (oldestPosition ?? Number.MAX_SAFE_INTEGER))
+            ) {
               generationId = command.id;
               oldestPosition = command.position;
             }
@@ -317,7 +313,8 @@ export class ChatBridge {
           // The first partial commit arrives as message_start with the
           // content streamed so far (Rust: the first ProviderChunk::Text
           // already emits its Delta) — seed the buffers and stream it.
-          for (const block of (event.message as { content: { type: string; text?: string; thinking?: string }[] }).content) {
+          for (const block of (event.message as { content: { type: string; text?: string; thinking?: string }[] })
+            .content) {
             if (block.type === "text" && block.text) {
               state.buffers.text += block.text;
               state.textStarted = true;
@@ -352,7 +349,8 @@ export class ChatBridge {
           } else if (change.type === "thinking_start") {
             const block = change.block as { thinking?: string };
             state.buffers.thinking += block.thinking ?? "";
-            if (block.thinking && !state.textStarted) this.emitStream(state, { type: "thinking_delta", content: block.thinking });
+            if (block.thinking && !state.textStarted)
+              this.emitStream(state, { type: "thinking_delta", content: block.thinking });
           } else if (change.type === "block" && change.block.type === "text") {
             state.buffers.text += change.block.text;
             state.textStarted = true;
@@ -366,7 +364,8 @@ export class ChatBridge {
             state.buffers.text = "";
             state.buffers.thinking = "";
             state.textStarted = false;
-            for (const block of (change.message as { content: { type: string; text?: string; thinking?: string }[] }).content) {
+            for (const block of (change.message as { content: { type: string; text?: string; thinking?: string }[] })
+              .content) {
               if (block.type === "text") state.buffers.text += block.text ?? "";
               else if (block.type === "thinking") state.buffers.thinking += block.thinking ?? "";
             }
@@ -432,6 +431,9 @@ export class ChatBridge {
         state.handledEntries.add(String(event.entry.id));
         return;
       }
+      case "inbox_update":
+        await this.syncQueuedModes(state, event.items);
+        return;
       case "submission": {
         // Placement (queued → placed): the durable inbox actually handed
         // the input to a run — the Codex-style queued chip becomes a real
@@ -475,161 +477,6 @@ export class ChatBridge {
     }
   }
 
-  private async handleEntry(state: BridgeState, entry: EntryRecord): Promise<void> {
-    switch (entry.kind) {
-      case "pi.user":
-        // The visible user echo is written by the accept path
-        // (turn_commands.accept, id = user_message_id) — never duplicated.
-        return;
-      case "pi.assistant": {
-        const message = entry.model?.find((m) => m.role === "assistant");
-        if (!message || message.role !== "assistant") return;
-        state.step += 1;
-        state.currentModel = message.model;
-        const blocks: Block[] = [];
-        let text = "";
-        let reasoning = "";
-        const toolCalls: { id: string; name: string; arguments: string }[] = [];
-        for (const block of message.content) {
-          if (block.type === "text") text += block.text;
-          else if (block.type === "thinking") reasoning += block.thinking;
-          else if (block.type === "toolCall") {
-            toolCalls.push({
-              id: block.id,
-              name: block.name,
-              arguments: canonicalJson(block.arguments),
-            });
-          }
-        }
-        if (reasoning !== "") blocks.push({ type: "reasoning", text: reasoning });
-        if (text !== "") blocks.push({ type: "text", text });
-        for (const call of toolCalls) blocks.push({ type: "tool_call", ...call });
-        const usage = {
-          tokens_in: message.usage.input,
-          tokens_out: message.usage.output,
-          cost_usd: message.usage.cost.total,
-        };
-        const ev = assistantMessageEvent(
-          state.turn,
-          state.step,
-          blocks,
-          usage,
-          message.model,
-          message.stopReason === "aborted" ? true : undefined,
-          message.stopReason === "error" ? (message.errorMessage ?? "Model error") : undefined,
-        );
-        const row = await this.append(state, ev);
-        state.lastEventId = row.id;
-        if (row.event.type === "assistant_message") {
-          state.turn = row.event.turn;
-          state.step = row.event.step;
-        }
-        if (this.streamSink && state.chatId && state.generationId !== null) {
-          if (message.stopReason === "aborted") {
-            // The stop epilogue owns this generation's terminal: a
-            // zero-usage Done at run end (Rust's cancelled path).
-          } else if (toolCalls.length === 0) {
-            // The final step: the turn ends — Rust sends Done inline at the
-            // final persist (route-priced usage).
-            state.doneSent = true;
-            this.emitStream(state, {
-              type: "done",
-              message_id: row.id,
-              cost_usd: usage.cost_usd ?? 0,
-              tokens_in: usage.tokens_in ?? 0,
-              tokens_out: usage.tokens_out ?? 0,
-            });
-          }
-        }
-        return;
-      }
-      case "pi.tool-result": {
-        const result = entry.model?.find((m) => m.role === "toolResult");
-        if (!result || result.role !== "toolResult") return;
-        const content = result.content
-          .map((part) => (part.type === "text" ? part.text : ""))
-          .join("");
-        // The tool-owned widget payload rides the result details' reserved
-        // `guild_meta` key (integration tools, spec C.2); other tools carry
-        // no meta, so the wire contract stays untouched for them.
-        // Codemode is the other meta-carrying tool: pi-durable writes the
-        // script's nested-call list into the result details once, with the
-        // result, and that list is the desktop widget's payload (the nested
-        // tool_execution frames are dropped above).
-        const details = result.details;
-        const isCodemode = result.toolName === "codemode";
-        const codemodeMeta =
-          isCodemode && details !== null && typeof details === "object" && !Array.isArray(details)
-            ? details
-            : undefined;
-        const toolMeta = codemodeMeta ?? (details !== null && typeof details === "object" && !Array.isArray(details)
-          ? (details as Record<string, unknown>)["guild_meta"]
-          : undefined);
-        // Image parts ride only when the route supports the image modality
-        // (gated at persist time, like the Rust path — keeps replay identical).
-        const supported = await this.deps.routeSupportsImages(state.orgId, state.currentModel);
-        const eventImages = supported
-          ? result.content
-              .filter((part): part is { type: "image"; data: string; mimeType: string } => part.type === "image")
-              .map((part) => `data:${part.mimeType};base64,${part.data}`)
-          : [];
-        const ev = toolResultEvent(
-          state.turn,
-          state.step,
-          result.toolCallId,
-          result.toolName,
-          content,
-          result.isError,
-          toolMeta,
-        );
-        if (eventImages.length > 0) (ev as { images: string[] }).images = eventImages;
-        // Oversized-result spill (M4): the persisted event carries the
-        // pointer text + the artifact card meta; the durable entry keeps the
-        // full content (pi-durable owns model context — the M3 split).
-        if (this.deps.spill !== undefined && shouldSpill(content)) {
-          try {
-            const { spilled, pointer } = await spillOversizedResult(
-              this.deps.spill.artifacts,
-              this.deps.spill.objects,
-              state.orgId,
-              state.chatId,
-              result.toolCallId,
-              result.toolName,
-              content,
-            );
-            state.spilled.set(result.toolCallId, pointer);
-            (ev as { content: string }).content = pointer;
-            // The spilled card claims the meta (existing tool meta keys
-            // preserved — the Rust artifact_meta merge).
-            const meta = artifactMeta(toolMeta, spilled);
-            (ev as { meta?: unknown }).meta = meta;
-          } catch (error) {
-            this.deps.log.error({ err: error, chatId: state.chatId }, "oversized result spill failed, keeping inline");
-          }
-        }
-        await this.append(state, ev);
-        return;
-      }
-      case "pi.compaction": {
-        // pi-durable compactions carry the summary as text blocks; the
-        // importer's synthetic ones carry a plain string.
-        const summary = entry.model?.find((m) => m.role === "user");
-        const raw = summary?.content;
-        const text =
-          typeof raw === "string"
-            ? raw
-            : Array.isArray(raw)
-              ? raw.map((b) => (b.type === "text" ? b.text : "")).join("")
-              : "";
-        const ev = compactionEvent(unwrapCompactionSummary(text));
-        await this.append(state, ev);
-        return;
-      }
-      default:
-        return;
-    }
-  }
-
   /** The generation's terminal bookkeeping at run end: an unsent terminal
    *  rides here (failure → Error, stop → zero-usage Done with the last
    *  event id), then the registry entry clears (Rust's turn epilogue). */
@@ -649,28 +496,15 @@ export class ChatBridge {
       });
     }
     this.streamSink.close(state.chatId);
+    state.generationId = null;
+    state.handledEntries.clear();
+    state.spilled.clear();
   }
 
   private emitStream(state: BridgeState, event: StreamWireEvent): void {
     if (!this.streamSink || !state.chatId || state.generationId === null) return;
     this.streamSink.event(state.chatId, event);
   }
-
-  private async append(state: BridgeState, ev: ThreadEvent): Promise<ThreadEventRow> {
-    return state.sourceEntry === undefined
-      ? this.deps.threads.appendEvent(state.chatId, ev)
-      : this.deps.threads.appendProjectedEntry(state.chatId, state.sourceEntry, ev, state.sourceEntry <= (state.legacyThrough ?? -1));
-  }
-}
-
-/** serde_json-compatible rendering of a parsed tool-call argument value
- *  (BTreeMap key order, sorted) — the Rust blocks carry the arguments as
- *  the raw JSON string, parsed and re-encoded by guild-core. */
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const keys = Object.keys(value).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`).join(",")}}`;
 }
 
 export type { ThreadEventRow };

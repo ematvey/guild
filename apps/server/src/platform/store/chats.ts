@@ -1,3 +1,4 @@
+import { generationWorkSql } from "./work.js";
 // Chat store: chat CRUD with the
 // owner/admin gate, the sidebar list with its unread projection (chat_reads
 // watermark — UI state stays as-is, spec decision 6), project-derived
@@ -420,13 +421,10 @@ export class ChatStore {
   async reconcileGenerating(orgId: string, chatId: string): Promise<void> {
     const res = await this.pool.query<{ user_id: string; generating: boolean }>(
       `WITH work AS (
-        SELECT EXISTS (SELECT 1 FROM tasks t JOIN chat_conversations cc ON cc.conversation_id=t.conversation_id
-          WHERE cc.chat_id=$2 AND t.kind=$3 AND t.status<>'terminal')
-          OR EXISTS (SELECT 1 FROM submissions s JOIN chat_conversations cc ON cc.conversation_id=s.conversation_id
-          WHERE cc.chat_id=$2 AND s.status='queued') AS generating
+        SELECT EXISTS (SELECT 1 FROM chat_conversations c WHERE c.chat_id=$2 AND (${generationWorkSql})) AS generating
       ) UPDATE chats c SET generating=work.generating FROM work
         WHERE c.org_id=$1 AND c.id=$2 AND c.generating IS DISTINCT FROM work.generating
-        RETURNING c.user_id,c.generating`, [orgId, chatId, JSON.stringify("pi.generation")],
+        RETURNING c.user_id,c.generating`, [orgId, chatId],
     );
     if (res.rows[0]) await this.notifyChatStatus(orgId, res.rows[0].user_id, chatId, res.rows[0].generating);
   }

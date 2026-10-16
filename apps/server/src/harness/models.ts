@@ -14,42 +14,6 @@ export function guildProviderId(orgId: string): string {
   return `guild:${orgId}`;
 }
 
-/** The trace context one in-app turn rides on: every loopback model call
- *  the harness makes while this turn runs forwards it as request headers so
- *  the gateway's llm_calls rows carry chat/turn attribution and the chat
- *  owner's user id. Keyed by org — the provider (and therefore the auth
- *  resolve that merges the headers) is per-org; two same-org turns in
- *  flight overlap on the slot and the latest turn's context wins (best
- *  effort; the judge self-reports its rows with exact context). */
-export interface GuildTurnTraceContext {
-  orgId: string;
-  chatId: string;
-  conversationId: number;
-  turn: number | null;
-  userId: string | null;
-}
-
-const turnTraceContexts = new Map<string, GuildTurnTraceContext>();
-
-/** Sets the trace context the org's next loopback model calls carry. */
-export function setGuildTurnTraceContext(ctx: GuildTurnTraceContext): void {
-  turnTraceContexts.set(ctx.orgId, ctx);
-}
-
-/** The current context's request headers (empty when none is set). */
-export function guildTurnTraceHeaders(orgId: string): Record<string, string> {
-  const ctx = turnTraceContexts.get(orgId);
-  if (ctx === undefined) return {};
-  const headers: Record<string, string> = {
-    "x-guild-chat-id": ctx.chatId,
-    "x-guild-conversation-id": String(ctx.conversationId),
-    "x-guild-cause": "turn-step",
-  };
-  if (ctx.turn !== null) headers["x-guild-turn"] = String(ctx.turn);
-  if (ctx.userId !== null) headers["x-guild-user-id"] = ctx.userId;
-  return headers;
-}
-
 export interface GuildRouteInfo {
   /** The route's model name (what external clients call it). */
   model: string;
@@ -66,6 +30,7 @@ export interface GuildModelsConfig {
   /** Loopback base of this server's own gateway (config.selfBaseUrl). */
   selfBaseUrl: string;
   internalKey: string | null;
+  traceHeaders?(sessionId: string | undefined): Promise<Record<string, string>>;
 }
 
 /** Ensures the models collection carries a provider for `orgId` exposing
@@ -107,18 +72,17 @@ export function ensureOrgProvider(
             // from the resolved key; the org scoping rides as a request
             // header resolved alongside it (applyAuth merges auth.headers
             // into every request — provider-level static headers do not
-            // reach the stream path). The current turn's trace context
-            // (chat/conversation/turn/owner) rides the same way.
+            // reach the stream path). Trace headers are added per request
+            // using the durable provider-session identity.
             apiKey: config.internalKey ?? "missing",
             headers: {
               "x-guild-org-id": orgId,
-              ...guildTurnTraceHeaders(orgId),
             },
           },
         }),
       },
     },
-    api: openAiCompletionsApi(),
+    api: openAiCompletionsApi(config),
     models: routes.map((route) => ({
       id: route.model,
       name: route.model,
@@ -136,6 +100,28 @@ export function ensureOrgProvider(
 }
 
 /** The OpenAI-completions API implementation, loaded on first stream call. */
-function openAiCompletionsApi() {
-  return lazyApi(async () => import("@earendil-works/pi-ai/api/openai-completions"));
+function openAiCompletionsApi(config: GuildModelsConfig) {
+  return lazyApi(async () => {
+    const api = await import("@earendil-works/pi-ai/api/openai-completions");
+    const tracedFetch =
+      (sessionId: string | undefined): typeof fetch =>
+      async (input, init) => {
+        const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+        const trace = await config.traceHeaders?.(sessionId);
+        for (const [name, value] of Object.entries(trace ?? {})) headers.set(name, value);
+        return fetch(input, { ...init, headers });
+      };
+    return {
+      stream: (model, context, options) =>
+        api.stream({ ...model, api: "openai-completions" }, context, {
+          ...options,
+          fetch: tracedFetch(options?.sessionId),
+        }),
+      streamSimple: (model, context, options) =>
+        api.streamSimple({ ...model, api: "openai-completions" }, context, {
+          ...options,
+          fetch: tracedFetch(options?.sessionId),
+        }),
+    } satisfies import("@earendil-works/pi-ai").ProviderStreams;
+  });
 }

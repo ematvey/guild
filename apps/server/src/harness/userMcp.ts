@@ -1,7 +1,7 @@
 // The user-MCP chat runtime: per turn the chat owner's enabled MCP servers
-// resolve into a snapshot, one dynamic per-user registry extension carries
+// resolve into a snapshot, one dynamic per-conversation registry extension carries
 // the prompt index, and every discovered tool is available to codemode as
-// mcp_<server>_<tool> (no disclosure pair — the scale is small and
+// mcp<length>_<server>_<tool> (no disclosure pair — the scale is small and
 // the user owns the servers). Nothing is cached across turns: discovery is
 // per-turn; secrets never ride the snapshot (headers re-decrypt at call
 // time); one unreachable server degrades to a diagnostic line, never a
@@ -16,7 +16,7 @@ import type {
   ToolExecutionResult,
   ToolRegistration,
 } from "@earendil-works/pi-durable";
-import type { TSchema } from "@earendil-works/pi-ai";
+import { toolSchema } from "./tool-schema.js";
 import type { Logger } from "pino";
 import { mcpConnect } from "../platform/integrations/mcp.js";
 import type { UserMcpStore } from "../platform/store/userMcp.js";
@@ -41,7 +41,6 @@ interface TurnSnapshot {
   tools: ResolvedTool[];
   /** The prompt-index lines (reachable servers + unreachable diagnostics). */
   lines: string[];
-  at: number;
 }
 
 export interface UserMcpRuntimeDeps {
@@ -54,7 +53,7 @@ export interface UserMcpRuntimeDeps {
 
 /** The wire tool name for one user-MCP tool. */
 export function userMcpToolName(serverName: string, toolName: string): string {
-  return `mcp_${serverName}_${toolName}`;
+  return `mcp${serverName.length}_${serverName}_${toolName}`;
 }
 
 export class UserMcpRuntime {
@@ -65,8 +64,17 @@ export class UserMcpRuntime {
     private readonly registry: Registry<ToolRegistration>,
   ) {}
 
-  extensionName(userId: string): string {
-    return `guild-user-mcp:${userId}`;
+  extensionName(userId: string, conversationId?: number): string {
+    return `guild-user-mcp:${userId}${conversationId === undefined ? "" : `:${conversationId}`}`;
+  }
+
+  forget(conversationId: number): void {
+    const snapshot = this.snapshots.get(conversationId);
+    if (snapshot) {
+      const extension = this.registry.snapshot().extension(this.extensionName(snapshot.userId, conversationId));
+      if (extension) this.registry.uninstall(extension);
+    }
+    this.snapshots.delete(conversationId);
   }
 
   private warn(message: string): void {
@@ -75,31 +83,36 @@ export class UserMcpRuntime {
 
   /** Turn start: resolve the chat owner's enabled servers, discover their
    *  tools live, cache the snapshot for the turn's calls, install the
-   *  per-user extension, and return the tool registrations the model may
+   *  per-conversation extension, and return the tool registrations the model may
    *  call. A server that fails to connect or list contributes zero tools
    *  and one diagnostic line — the turn never fails over one bad server. */
-  async prepareTurn(conversationId: number, chatId: string, orgId: string): Promise<TurnPreparation> {
-    const snapshot = await this.resolveSnapshot(chatId, orgId);
+  async prepareTurn(
+    conversationId: number,
+    chatId: string,
+    orgId: string,
+    signal?: AbortSignal,
+  ): Promise<TurnPreparation> {
+    const snapshot = await this.resolveSnapshot(chatId, orgId, signal);
     this.snapshots.set(conversationId, snapshot);
     if (snapshot.servers.length === 0) {
-      return { action: "clear", extensions: [], tools: [] };
+      return { extensions: [], tools: [] };
     }
-    const extension = this.installUserExtension(snapshot);
+    const extension = this.installUserExtension(snapshot, conversationId);
     const tools = extension.tools ?? [];
-    return { action: "configure", extensions: [extension], tools };
+    return { extensions: [extension], tools };
   }
 
   /** Resolves the turn snapshot: the chat owner's enabled servers, live
    *  tool discovery, and the prompt-index lines. Unreachable servers keep
    *  their row (call time re-checks) but contribute no tools. */
-  private async resolveSnapshot(chatId: string, orgId: string): Promise<TurnSnapshot> {
-    const base: TurnSnapshot = { orgId, chatId, userId: "", servers: [], tools: [], lines: [], at: Date.now() };
+  private async resolveSnapshot(chatId: string, orgId: string, signal?: AbortSignal): Promise<TurnSnapshot> {
+    const base: TurnSnapshot = { orgId, chatId, userId: "", servers: [], tools: [], lines: [] };
     let owner: { org_id: string; user_id: string } | null;
     try {
       owner = await this.deps.chatOwnerOf(chatId);
     } catch (error) {
       this.warn(`user-mcp chat owner resolution failed: ${(error as Error).message}`);
-      return base;
+      throw error;
     }
     if (owner === null) return base;
     base.userId = owner.user_id;
@@ -107,40 +120,71 @@ export class UserMcpRuntime {
     try {
       rows = await this.deps.store.listEnabled(orgId, owner.user_id);
     } catch (error) {
-      this.warn(`user-mcp server resolution failed, the turn continues without them: ${(error as Error).message}`);
-      return base;
+      this.warn(`user-mcp server resolution failed: ${(error as Error).message}`);
+      throw error;
     }
     const masterKey = this.deps.masterKey();
-    for (const row of rows) {
-      const server = { id: row.id, name: row.name, url: row.url, headersEnc: row.headers_enc };
-      base.servers.push(server);
-      try {
-        const peer = await mcpConnect(row.url, this.deps.store.resolveHeaders(row.headers_enc, masterKey));
-        const listed = await peer.listTools();
-        for (const tool of listed) {
-          base.tools.push({
-            serverId: row.id,
-            serverName: row.name,
-            toolName: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-          });
+    const deadline = AbortSignal.any([AbortSignal.timeout(20_000), ...(signal ? [signal] : [])]);
+    let next = 0;
+    const resolved = await Promise.all(
+      Array.from({ length: Math.min(4, rows.length) }, async () => {
+        const results: {
+          index: number;
+          server: TurnSnapshot["servers"][number];
+          tools: ResolvedTool[];
+          line: string;
+        }[] = [];
+        for (;;) {
+          const index = next++;
+          const row = rows[index];
+          if (!row) break;
+          const tools: ResolvedTool[] = [];
+          let line = "";
+          const server = { id: row.id, name: row.name, url: row.url, headersEnc: row.headers_enc };
+
+          try {
+            const peer = await mcpConnect(
+              row.url,
+              this.deps.store.resolveHeaders(row.headers_enc, masterKey),
+              deadline,
+            );
+            const listed = await peer.listTools();
+            for (const tool of listed) {
+              toolSchema(tool.inputSchema);
+              tools.push({
+                serverId: row.id,
+                serverName: row.name,
+                toolName: tool.name,
+                description: tool.description,
+                inputSchema: tool.inputSchema,
+              });
+            }
+            line = `MCP ${row.name}: ${listed.length} tools — call ${userMcpToolName(row.name, "<tool>")} through codemode; its schema is available to scripts.`;
+          } catch (error) {
+            tools.length = 0;
+            line = `MCP ${row.name}: unreachable (${(error as Error).message})`;
+          }
+          results.push({ index, server, tools, line });
         }
-        base.lines.push(
-          `MCP ${row.name}: ${listed.length} tools — call ${userMcpToolName(row.name, "<tool>")} through codemode; its schema is available to scripts.`,
-        );
-      } catch (error) {
-        base.lines.push(`MCP ${row.name}: unreachable (${(error as Error).message})`);
-      }
+        return results;
+      }),
+    );
+    for (const result of resolved.flat().sort((a, b) => a.index - b.index)) {
+      base.servers.push(result.server);
+      base.tools.push(...result.tools);
+      base.lines.push(result.line);
     }
+    signal?.throwIfAborted();
+    const names = base.tools.map((tool) => userMcpToolName(tool.serverName, tool.toolName));
+    if (new Set(names).size !== names.length) throw new Error("duplicate MCP tool name");
     return base;
   }
 
-  /** Installs (or replaces in place) the per-user extension: the prompt
+  /** Installs (or replaces in place) the per-conversation extension: the prompt
    *  index section plus every declared tool (pi-durable resolves a
    *  conversation's tool allow-list against the installed extensions — the
    *  integrations runtime carries its connector tools the same way). */
-  private installUserExtension(snapshot: TurnSnapshot): Extension<ToolRegistration> {
+  private installUserExtension(snapshot: TurnSnapshot, conversationId: number): Extension<ToolRegistration> {
     const tools = snapshot.tools.map((t) => this.toolRegistration(t));
     const runtime = this;
     const section: PromptSection<ToolRegistration> = {
@@ -153,7 +197,7 @@ export class UserMcpRuntime {
       },
     };
     const extension: Extension<ToolRegistration> = {
-      name: this.extensionName(snapshot.userId),
+      name: this.extensionName(snapshot.userId, conversationId),
       tools,
       sections: [section],
     };
@@ -166,7 +210,7 @@ export class UserMcpRuntime {
    *  re-derives them). Users without servers resolve to an empty snapshot. */
   private async snapshotFor(conversationId: number): Promise<TurnSnapshot | undefined> {
     const cached = this.snapshots.get(conversationId);
-    if (cached !== undefined && Date.now() - cached.at < 10 * 60_000) return cached;
+    if (cached !== undefined) return cached;
     const chatId = await this.deps.chatOfConversation(conversationId);
     if (chatId === null) return undefined;
     let orgId: string | null = null;
@@ -179,7 +223,7 @@ export class UserMcpRuntime {
     if (orgId === null) return undefined;
     const snapshot = await this.resolveSnapshot(chatId, orgId);
     this.snapshots.set(conversationId, snapshot);
-    if (snapshot.servers.length > 0) this.installUserExtension(snapshot);
+    if (snapshot.servers.length > 0) this.installUserExtension(snapshot, conversationId);
     return snapshot;
   }
 
@@ -191,19 +235,25 @@ export class UserMcpRuntime {
     const registration = {
       name: wireName,
       description: tool.description,
-      parameters: tool.inputSchema as TSchema,
+      parameters: toolSchema(tool.inputSchema),
       callers: ["tools"] as const,
       replay: "unsafe" as const,
       async execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> {
         context.abortSignal?.throwIfAborted();
-        const outcome = await runtime.executeToolCall(Number(api.conversationId), wireName, tool, (args ?? {}) as Json, context.abortSignal);
+        const outcome = await runtime.executeToolCall(
+          Number(api.conversationId),
+          wireName,
+          tool,
+          (args ?? {}) as Json,
+          context.abortSignal,
+        );
         context.abortSignal?.throwIfAborted();
         return {
           isError: outcome.isError,
           output: [{ type: "text", text: outcome.content }],
         };
       },
-    } as unknown as ToolRegistration;
+    } satisfies ToolRegistration;
     return registration;
   }
 
@@ -244,7 +294,11 @@ export class UserMcpRuntime {
       return { content: `MCP server ${server.name} is no longer enabled`, isError: true };
     }
     try {
-      const peer = await mcpConnect(row.url, this.deps.store.resolveHeaders(row.headers_enc, this.deps.masterKey()), signal);
+      const peer = await mcpConnect(
+        row.url,
+        this.deps.store.resolveHeaders(row.headers_enc, this.deps.masterKey()),
+        signal,
+      );
       const result = await peer.callTool(declared.toolName, args);
       return { content: result.content, isError: result.isError };
     } catch (error) {

@@ -6,7 +6,7 @@
 
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // The turn flow waits on async bridge/compaction writes: generous timeouts.
 const TEST_TIMEOUT = 30_000;
@@ -251,6 +251,72 @@ describe("chats CRUD wire", () => {
 });
 
 describe("gateway/chat turn flow", () => {
+  it(
+    "Stop cancels delayed admission and removes its unplaced queued echo",
+    async () => {
+      const headers = auth(stack.memberToken);
+      const created = await stack.env.app.inject({
+        method: "POST",
+        url: "/api/v1/threads",
+        headers,
+        payload: { title: "cancel preparing" },
+      });
+      const chatId = JSON.parse(created.body).id as string;
+      const runtime = stack.env.app.platform.runtime;
+      // Simulate an accept during a previous turn's generating window.
+      await stack.env.db.query("UPDATE chats SET generating=true WHERE id=$1", [chatId]);
+      let reached!: () => void;
+      const preparing = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const spy = vi
+        .spyOn(runtime.userMcpRuntime, "prepareTurn")
+        .mockImplementation(async (_id, _chat, _org, signal) => {
+          reached();
+          await new Promise<void>((_resolve, reject) => {
+            if (signal?.aborted) reject(signal.reason);
+            else signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+          return { extensions: [], tools: [] };
+        });
+      try {
+        const request = stack.env.app.inject({
+          method: "POST",
+          url: `/api/v1/threads/${chatId}/turns`,
+          headers,
+          payload: { model: "GLM-Test-Model", messages: [{ role: "user", content: "preparing" }] },
+        });
+        const response = Promise.resolve(request);
+        await preparing;
+        await runtime.stopChat(chatId);
+        expect((await response).statusCode).toBe(409);
+        const commands = await stack.env.db.query<{ status: string }>(
+          "SELECT status FROM turn_commands WHERE chat_id=$1",
+          [chatId],
+        );
+        expect(commands.rows[0]!.status).toBe("cancelled");
+        expect(
+          (
+            await stack.env.db.query("SELECT 1 FROM thread_events WHERE chat_id=$1 AND payload->>'queued'='true'", [
+              chatId,
+            ])
+          ).rows,
+        ).toHaveLength(0);
+        expect(
+          (
+            await stack.env.db.query(
+              "SELECT 1 FROM submissions s JOIN chat_conversations c ON c.conversation_id=s.conversation_id WHERE c.chat_id=$1",
+              [chatId],
+            )
+          ).rows,
+        ).toHaveLength(0);
+      } finally {
+        spy.mockRestore();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
   it("runs a turn end-to-end: ack, thread events, metered usage, settled command", async () => {
     const created = await stack.env.app.inject({
       method: "POST",
@@ -282,7 +348,9 @@ describe("gateway/chat turn flow", () => {
       "user_message_id",
     ]);
     expect(ack.accepted).toBe(true);
-    expect(ack.status).toBe("submitted");
+    // A fast run can begin or finish before its acknowledgement is read.
+    expect(["submitted", "running", "completed"]).toContain(ack.status);
+    expect(ack.invocation_id).toMatch(/^sub:\d+$/);
 
     // The thread log carries the user event + the assistant event with
     // usage + cost (persisted by the bridge from the durable run).

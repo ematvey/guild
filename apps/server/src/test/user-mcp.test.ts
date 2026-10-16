@@ -395,7 +395,7 @@ describe("user mcp chat runtime", () => {
       await seedServer({ name: "testsvr", url: fixtureBase, headers: { authorization: "Bearer turnsecret9" } });
       const chatId = await createChat("mcp-declare");
       scriptFor(
-        { body: toolCallSse("mcp_testsvr_add", JSON.stringify({ a: 2, b: 3 })) },
+        { body: toolCallSse("mcp7_testsvr_add", JSON.stringify({ a: 2, b: 3 })) },
         { body: finalSse },
       );
       await submitTurn(chatId, "add two numbers with my mcp server");
@@ -430,7 +430,7 @@ describe("user mcp chat runtime", () => {
       const modelReq = stack.mock.requests.at(-1)!.body as { messages: { role: string; content: string }[] };
       const system = modelReq.messages.find((m) => m.role === "system")?.content ?? "";
       expect(system).toContain("MCP deadsvr: unreachable (");
-      expect(system).not.toContain("mcp_deadsvr_");
+      expect(system).not.toContain("mcp7_deadsvr_");
     },
     TEST_TIMEOUT,
   );

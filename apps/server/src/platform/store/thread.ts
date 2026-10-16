@@ -47,7 +47,21 @@ export class ThreadStore {
    *  shown card, never fail the tool. Notifies `guild_thread_committed`
    *  in the same transaction (the member-socket sync channel; the M5
    *  lane's listener consumes it). */
-  async appendEvent(chatId: string, event: ThreadEvent, id?: string, entryId?: number, adoptLegacy = false): Promise<ThreadEventRow> {
+  appendEvent(chatId: string, event: ThreadEvent, id?: string): Promise<ThreadEventRow> {
+    return this.persistEvent({ chatId, event, id });
+  }
+
+  private async persistEvent(input: {
+    chatId: string;
+    event: ThreadEvent;
+    id?: string;
+    source?: { kind: "entry" | "task"; id: number; adoptLegacy: boolean };
+  }): Promise<ThreadEventRow> {
+    const { chatId, event, id } = input;
+    const sourceId = input.source?.id;
+    const adoptLegacy = input.source?.adoptLegacy ?? false;
+    const table = input.source?.kind === "task" ? "chat_task_projections" : "chat_entry_projections";
+    const column = input.source?.kind === "task" ? "task_id" : "entry_id";
     // Postgres jsonb cannot hold U+0000 (tool output can: binary files,
     // /proc/*/environ); every NUL becomes U+FFFD.
     const payload = JSON.stringify(event, (_key, value: unknown) =>
@@ -58,28 +72,35 @@ export class ThreadStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      if (entryId !== undefined) {
+      if (sourceId !== undefined) {
         // The chat lock serializes adoption of pre-projection legacy rows.
         await client.query("SELECT id FROM chats WHERE id=$1 FOR UPDATE", [chatId]);
         const existing = await client.query<EventRowDb>(
           `SELECT e.id,e.chat_id,e.seq,e.payload,to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at FROM thread_events e
-           JOIN chat_entry_projections p ON p.event_id=e.id WHERE p.entry_id=$1 AND p.chat_id=$2`,
-          [entryId, chatId],
+           JOIN ${table} p ON p.event_id=e.id WHERE p.${column}=$1 AND p.chat_id=$2`,
+          [sourceId, chatId],
         );
-        const legacy = existing.rows[0] || !adoptLegacy ? existing : await client.query<EventRowDb>(
-          `SELECT e.id,e.chat_id,e.seq,e.payload,to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at FROM thread_events e
+        const legacy =
+          existing.rows[0] || !adoptLegacy
+            ? existing
+            : await client.query<EventRowDb>(
+                `SELECT e.id,e.chat_id,e.seq,e.payload,to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at FROM thread_events e
            WHERE e.chat_id=$1 AND e.type=$2 AND NOT EXISTS
-             (SELECT 1 FROM chat_entry_projections p WHERE p.event_id=e.id)
+             (SELECT 1 FROM ${table} p WHERE p.event_id=e.id)
              AND ((e.payload - 'turn' - 'step') = ($3::jsonb - 'turn' - 'step')
                OR ($2='tool_result' AND e.payload->>'call_id'=$3::jsonb->>'call_id'))
-           ORDER BY e.seq LIMIT 1`, [chatId, eventType, payload],
-        );
+           ORDER BY e.seq LIMIT 1`,
+                [chatId, eventType, payload],
+              );
         const found = legacy.rows[0];
         if (found) {
-          await client.query("INSERT INTO chat_entry_projections(entry_id,chat_id,event_id) VALUES($1,$2,$3) ON CONFLICT(entry_id) DO NOTHING", [entryId,chatId,found.id]);
+          await client.query(
+            `INSERT INTO ${table}(${column},chat_id,event_id) VALUES($1,$2,$3) ON CONFLICT(${column}) DO NOTHING`,
+            [sourceId, chatId, found.id],
+          );
           await client.query("COMMIT");
           const normalized = toRow(found);
-          if (!normalized) throw new ApiError(500,"internal","projected event does not parse");
+          if (!normalized) throw new ApiError(500, "internal", "projected event does not parse");
           return normalized;
         }
       }
@@ -91,8 +112,12 @@ export class ThreadStore {
       );
       const row = res.rows[0];
       if (!row) throw new ApiError(500, "internal", "thread event append returned no row");
-      if (entryId !== undefined) {
-        await client.query("INSERT INTO chat_entry_projections(entry_id,chat_id,event_id) VALUES($1,$2,$3)", [entryId,chatId,eventId]);
+      if (sourceId !== undefined) {
+        await client.query(`INSERT INTO ${table}(${column},chat_id,event_id) VALUES($1,$2,$3)`, [
+          sourceId,
+          chatId,
+          eventId,
+        ]);
       }
       await client.query("SELECT pg_notify('guild_thread_committed', $1)", [chatId]);
       await client.query("COMMIT");
@@ -107,26 +132,60 @@ export class ThreadStore {
     }
   }
 
-  async appendProjectedEntry(chatId: string, entryId: number, event: ThreadEvent, adoptLegacy = false): Promise<ThreadEventRow> {
+  appendProjectedEntry(input: {
+    chatId: string;
+    entryId: number;
+    event: ThreadEvent;
+    adoptLegacy: boolean;
+  }): Promise<ThreadEventRow> {
+    const { chatId, entryId, event, adoptLegacy } = input;
     const id = uuidv5("6ba7b810-9dad-11d1-80b4-00c04fd430c8", `guild-entry:${entryId}`);
-    return this.appendEvent(chatId, event, id, entryId, adoptLegacy);
+    return this.persistEvent({ chatId, event, id, source: { kind: "entry", id: entryId, adoptLegacy } });
+  }
+
+  async appendTaskFailure(chatId: string, taskId: number, event: ThreadEvent): Promise<ThreadEventRow> {
+    const boundary = await this.pool.query<{ legacy_task_id: number }>(
+      "SELECT legacy_task_id FROM chat_recovery_metadata WHERE singleton=true",
+    );
+    return this.persistEvent({
+      chatId,
+      event,
+      id: uuidv5("6ba7b810-9dad-11d1-80b4-00c04fd430c8", `guild-task-failure:${taskId}`),
+      source: { kind: "task", id: taskId, adoptLegacy: taskId <= Number(boundary.rows[0]?.legacy_task_id ?? 0) },
+    });
   }
 
   async projectionCursor(chatId: string, conversationId: number): Promise<ProjectionCursor> {
-    const res = await this.pool.query<{ entry_id: number; turn: number; step: number; run_open: boolean; legacy_through_entry_id: number }>(
-      "SELECT entry_id,turn,step,run_open,legacy_through_entry_id FROM chat_projection_cursors WHERE chat_id=$1 AND conversation_id=$2", [chatId,conversationId],
+    const res = await this.pool.query<{
+      entry_id: number;
+      turn: number;
+      step: number;
+      run_open: boolean;
+      legacy_through_entry_id: number;
+    }>(
+      "SELECT entry_id,turn,step,run_open,legacy_through_entry_id FROM chat_projection_cursors WHERE chat_id=$1 AND conversation_id=$2",
+      [chatId, conversationId],
     );
     const row = res.rows[0];
-    return row ? { entryId: Number(row.entry_id), turn: row.turn, step: row.step, runOpen: row.run_open, legacyThrough: Number(row.legacy_through_entry_id) }
+    return row
+      ? {
+          entryId: Number(row.entry_id),
+          turn: row.turn,
+          step: row.step,
+          runOpen: row.run_open,
+          legacyThrough: Number(row.legacy_through_entry_id),
+        }
       : { entryId: 0, turn: 0, step: 0, runOpen: false };
   }
 
   async advanceProjection(chatId: string, conversationId: number, cursor: ProjectionCursor): Promise<void> {
-    await this.pool.query(`INSERT INTO chat_projection_cursors(chat_id,conversation_id,entry_id,turn,step,run_open,legacy_through_entry_id)
+    await this.pool.query(
+      `INSERT INTO chat_projection_cursors(chat_id,conversation_id,entry_id,turn,step,run_open,legacy_through_entry_id)
       VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(chat_id) DO UPDATE SET
       conversation_id=EXCLUDED.conversation_id,entry_id=EXCLUDED.entry_id,turn=EXCLUDED.turn,step=EXCLUDED.step,run_open=EXCLUDED.run_open,legacy_through_entry_id=EXCLUDED.legacy_through_entry_id
       WHERE chat_projection_cursors.conversation_id<>EXCLUDED.conversation_id OR chat_projection_cursors.entry_id<EXCLUDED.entry_id`,
-      [chatId,conversationId,cursor.entryId,cursor.turn,cursor.step,cursor.runOpen,cursor.legacyThrough ?? 0]);
+      [chatId, conversationId, cursor.entryId, cursor.turn, cursor.step, cursor.runOpen, cursor.legacyThrough ?? 0],
+    );
   }
 
   /** Delivery of one queued user_message echo (the Codex-style queued-send
@@ -176,6 +235,18 @@ export class ThreadStore {
     } finally {
       client.release();
     }
+  }
+
+  async setQueuedMode(chatId: string, id: string, mode: "steer" | "queue"): Promise<void> {
+    await this.pool.query(
+      `WITH updated AS (
+      UPDATE thread_events SET payload=jsonb_set(payload,'{mode}',to_jsonb($3::text)),
+        seq=nextval(pg_get_serial_sequence('thread_events','seq'))
+      WHERE chat_id=$1 AND id=$2 AND payload->>'queued'='true' AND payload->>'mode' IS DISTINCT FROM $3
+      RETURNING chat_id
+    ) SELECT pg_notify('guild_thread_committed',chat_id::text) FROM updated`,
+      [chatId, id, mode],
+    );
   }
 
   /** Withdrawal of one queued echo (user trash / stop / archive): removes

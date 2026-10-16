@@ -23,15 +23,20 @@ export interface MachineDispatchCall {
  *  `dispatch` flows the other way (worker → server): the worker's env
  *  proxies machine-tool dispatch to the server's hub connection. */
 export type WorkerRequest =
-  | { t: "submit"; ref: number; input: {
-      orgId: string;
-      requestId: string;
-      content: string;
-      images: { mimeType: string; data: string }[];
-      model: string | null;
-      sendMode?: "steer" | "queue";
-      skillsIndex?: string;
-    } }
+  | {
+      t: "submit";
+      ref: number;
+      input: {
+        orgId: string;
+        requestId: string;
+        content: string;
+        images: { mimeType: string; data: string }[];
+        model: string | null;
+        sendMode?: "steer" | "queue";
+        skillsIndex?: string;
+      };
+    }
+  | { t: "steer"; ref: number; submissionId: number }
   | { t: "withdraw"; ref: number; submissionId: number }
   | { t: "stop"; ref: number }
   | { t: "compact"; ref: number }
@@ -40,10 +45,8 @@ export type WorkerRequest =
 
 export type WorkerResponse =
   | { t: "result"; ref: number; ok: true; data: unknown }
-  | { t: "result"; ref: number; ok: false; error: string };
+  | { t: "result"; ref: number; ok: false; error: string; status?: number; code?: string };
 
-export type WorkerEvent =
-  | { t: "ready" }
-  | { t: "heartbeat" };
+export type WorkerEvent = { t: "ready" } | { t: "heartbeat" };
 
 export type WorkerMessage = WorkerRequest | WorkerResponse | WorkerEvent;

@@ -1129,7 +1129,26 @@ export async function stopChat(chatId: string): Promise<boolean> {
   return true;
 }
 
-/// Compacts the thread manually (the /compact composer command): one
+/** Promote the existing queued input; placement races preserve its identity. */
+export async function steerQueued(chatId: string, messageId: string): Promise<"steering" | "pending" | "placed"> {
+  const response = await fetch(
+    apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/pending/${encodeURIComponent(messageId)}/steer`),
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${getToken()}`, "x-guild-client-id": clientId() },
+    },
+  );
+  if (response.status === 409) {
+    const body = await response.json();
+    return body?.error?.code === "not_admitted" ? "pending" : "placed";
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body?.error?.message ?? response.statusText);
+  }
+  return "steering";
+}
+
 /** Withdraws one queued (not yet placed) mid-turn send — the queued-chip
  *  trash button. False = it just got placed (409): refresh, the message is
  *  already transitioning to a delivered transcript bubble. */

@@ -21,7 +21,9 @@
 // still applies, exactly like the Rust server-local executor.
 
 import { hook, ToolTask } from "@earendil-works/pi-durable";
-import type { TaskRuntime } from "@earendil-works/pi-durable";
+import type { HookApi } from "@earendil-works/pi-durable";
+import type { Context } from "@earendil-works/chord";
+import { setTimeout as delay } from "node:timers/promises";
 import { CODEMODE_TOOL_NAME } from "@earendil-works/pi-durable/codemode";
 import { codemodeScriptLint } from "./codemode-lint.js";
 import type { ToolCall } from "@earendil-works/pi-ai";
@@ -40,7 +42,7 @@ export const APPROVAL_POLICY_PROMPT_KEY = "assistant_approval_policy_prompt";
 /** Built-in "Approve for me" policy prompt (codex-style: only escalate
  *  potentially unsafe actions). Admin-tunable via the org KV key. */
 export const DEFAULT_APPROVAL_POLICY_PROMPT =
-  "You are the safety gate for an AI assistant that runs tools on the user's machine. You are given one proposed tool action as JSON. Decide whether it is safe to run automatically, without asking the user first.\n\nApprove routine, low-risk actions: reading files, ordinary read-only shell commands (ls, dir, cat, git status, git log, ping, date), writing or editing files inside the user's workspace, web searches, and fetching public URLs.\n\nAsk the user when the action is potentially unsafe: destructive or irreversible operations (deleting files or data, force-pushing, dropping or truncating databases, factory resets), anything touching files outside the workspace or system locations, installing or upgrading software, killing processes or services, sending credentials or secrets anywhere, spending money, sending messages or email on the user's behalf, or anything unusual for a coding assistant.\n\nReply with ONLY a JSON object, no other text: {\"approve\": true, \"reason\": \"one short sentence\"} where approve=true means run it silently and approve=false means the user must be asked first.";
+  'You are the safety gate for an AI assistant that runs tools on the user\'s machine. You are given one proposed tool action as JSON. Decide whether it is safe to run automatically, without asking the user first.\n\nApprove routine, low-risk actions: reading files, ordinary read-only shell commands (ls, dir, cat, git status, git log, ping, date), writing or editing files inside the user\'s workspace, web searches, and fetching public URLs.\n\nAsk the user when the action is potentially unsafe: destructive or irreversible operations (deleting files or data, force-pushing, dropping or truncating databases, factory resets), anything touching files outside the workspace or system locations, installing or upgrading software, killing processes or services, sending credentials or secrets anywhere, spending money, sending messages or email on the user\'s behalf, or anything unusual for a coding assistant.\n\nReply with ONLY a JSON object, no other text: {"approve": true, "reason": "one short sentence"} where approve=true means run it silently and approve=false means the user must be asked first.';
 
 const APPROVAL_POLICY_TIMEOUT_MS = 10_000;
 const GATE_POLL_MS = 500;
@@ -72,15 +74,8 @@ export function toolClass(name: string): string {
   }
 }
 
-/** serde_json-compatible canonical re-serialization of a parsed tool-call
- *  argument value (sorted keys) — the deterministic request/decision event
- *  bodies ride on it. */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const keys = Object.keys(value).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`).join(",")}}`;
-}
+export { canonicalJson } from "../platform/domain/json.js";
+import { canonicalJson } from "../platform/domain/json.js";
 
 export interface ApprovalGateDeps {
   pool: PlatformPool;
@@ -121,7 +116,10 @@ interface ChatPolicyRow {
 /** Effective policy for a user: the user's stored policy (migration 0026 —
  *  approval is user-scoped), or the server default when unset or unreadable
  *  (the safe direction). */
-function resolvePolicy(stored: Record<string, unknown> | null): { default: string | null; overrides: Record<string, string> } {
+function resolvePolicy(stored: Record<string, unknown> | null): {
+  default: string | null;
+  overrides: Record<string, string>;
+} {
   if (stored === null || typeof stored !== "object") {
     return SERVER_DEFAULT_POLICY as { default: string; overrides: Record<string, string> };
   }
@@ -136,7 +134,10 @@ function resolvePolicy(stored: Record<string, unknown> | null): { default: strin
   return { default: dflt, overrides };
 }
 
-function forTool(policy: { default: string | null; overrides: Record<string, string> }, name: string): "allow" | "ask" | "never" {
+function forTool(
+  policy: { default: string | null; overrides: Record<string, string> },
+  name: string,
+): "allow" | "ask" | "never" {
   const override = policy.overrides[name];
   if (override === "allow" || override === "ask" || override === "never") return override;
   const dflt = policy.default;
@@ -156,7 +157,14 @@ interface JudgeOutcome {
   ms: number;
 }
 
-async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: string, userId: string | null, model: string, call: ToolCall): Promise<JudgeOutcome> {
+async function judgeVerdict(
+  deps: ApprovalGateDeps,
+  orgId: string,
+  chatId: string,
+  userId: string | null,
+  model: string,
+  call: ToolCall,
+): Promise<JudgeOutcome> {
   const startedAt = Date.now();
   const undecided: JudgeOutcome = { approve: null, reason: null, ms: 0 };
   if (deps.internalKey === null) return undecided;
@@ -214,7 +222,10 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
         signal: controller.signal,
       });
       if (!res.ok) {
-        deps.log.warn({ chatId, status: res.status, ms: Date.now() - startedAt }, "approval judge: gateway rejected the call");
+        deps.log.warn(
+          { chatId, status: res.status, ms: Date.now() - startedAt },
+          "approval judge: gateway rejected the call",
+        );
         errorTextTrace = `gateway status ${res.status}`;
         settled = { ...undecided, ms: Date.now() - startedAt }; // quota/route failures ask the user
         return settled;
@@ -237,7 +248,10 @@ async function judgeVerdict(deps: ApprovalGateDeps, orgId: string, chatId: strin
     const a = s.indexOf("{");
     const b = s.lastIndexOf("}");
     if (a === -1 || b < a) {
-      deps.log.warn({ chatId, ms: Date.now() - startedAt, raw: s.slice(0, 200) }, "approval judge: no JSON in the verdict");
+      deps.log.warn(
+        { chatId, ms: Date.now() - startedAt, raw: s.slice(0, 200) },
+        "approval judge: no JSON in the verdict",
+      );
       errorTextTrace = "no JSON in the verdict";
       settled = { ...undecided, ms: Date.now() - startedAt };
       return settled;
@@ -326,7 +340,11 @@ async function readChatPolicy(deps: ApprovalGateDeps, chatId: string): Promise<C
 }
 
 /** The recorded decision for one call, if any (the route journals it). */
-async function recordedDecision(deps: ApprovalGateDeps, chatId: string, callId: string): Promise<{ approved: boolean; reason: string | null } | null> {
+async function recordedDecision(
+  deps: ApprovalGateDeps,
+  chatId: string,
+  callId: string,
+): Promise<{ approved: boolean; reason: string | null } | null> {
   const res = await deps.pool.query<{ approved: boolean; reason: string | null }>(
     `SELECT (payload->>'approved')::boolean AS approved, payload->>'reason' AS reason
      FROM thread_events WHERE chat_id = $1 AND type = 'approval_decision' AND payload->>'call_id' = $2
@@ -342,7 +360,11 @@ async function recordedDecision(deps: ApprovalGateDeps, chatId: string, callId: 
  *  must reuse the shown card — never re-judge (a second metered call) or
  *  re-append. A live card never carries approve=true (that verdict runs
  *  the tool silently, before any card). */
-async function existingApprovalRequest(deps: ApprovalGateDeps, chatId: string, callId: string): Promise<JudgeVerdict | undefined> {
+async function existingApprovalRequest(
+  deps: ApprovalGateDeps,
+  chatId: string,
+  callId: string,
+): Promise<JudgeVerdict | undefined> {
   const res = await deps.pool.query<{ judge: Record<string, unknown> | null }>(
     `SELECT payload->'judge' AS judge FROM thread_events
      WHERE chat_id = $1 AND type = 'approval_request' AND payload->>'call_id' = $2
@@ -365,12 +387,23 @@ async function existingApprovalRequest(deps: ApprovalGateDeps, chatId: string, c
 /** The gate wait: returns `undefined` (approved → run the tool) or a block
  *  text (denied). The tool task suspends inside this hook until a decision
  *  event lands or the timeout lapses. */
-async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<never, never, never, never>, chatId: string, call: ToolCall, context: Parameters<TaskRuntime<never, never, never, never>["sleep"]>[1], judge?: JudgeVerdict): Promise<{ block: string } | undefined> {
+async function waitForApproval(
+  deps: ApprovalGateDeps,
+  runtime: HookApi,
+  chatId: string,
+  call: ToolCall,
+  context: Context,
+  judge?: JudgeVerdict,
+): Promise<{ block: string } | undefined> {
   const argsJson = canonicalJson(call.arguments);
   // Journaled request with a deterministic id: a recovery re-run of the gate
   // re-appends the same row (ON CONFLICT no-op), never a duplicate card.
   const requestId = uuidv5(JUDGE_NAMESPACE, `guild-approval-request:${chatId}:${call.id}`);
-  const request = await deps.threads.appendEvent(chatId, approvalRequestEvent(call.id, call.name, argsJson, judge), requestId);
+  const request = await deps.threads.appendEvent(
+    chatId,
+    approvalRequestEvent(call.id, call.name, argsJson, judge),
+    requestId,
+  );
 
   // Idempotent append returns the original card's time across reopen.
   const deadline = Date.parse(request.created_at) + deps.approvalTimeoutMs;
@@ -389,21 +422,27 @@ async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<neve
         const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
         await deps.threads.appendEvent(
           chatId,
-          approvalDecisionEvent(call.id, false, "approval timed out — the call was not run; do not retry it, continue without it or ask the user"),
+          approvalDecisionEvent(
+            call.id,
+            false,
+            "approval timed out — the call was not run; do not retry it, continue without it or ask the user",
+          ),
           decisionId,
         );
-        return { block: "approval timed out — the call was not run; do not retry it, continue without it or ask the user" };
+        return {
+          block: "approval timed out — the call was not run; do not retry it, continue without it or ask the user",
+        };
       }
       // Stop responsiveness: the stop path aborts the conversation's tasks;
       // an aborted run cancels this hook's context (the sleep rejects).
-      await runtime.sleep(Date.now() + GATE_POLL_MS, context);
+      await delay(GATE_POLL_MS, undefined, { signal: context.abortSignal });
     }
   } catch (error) {
     // Close/failure preserves pending work. Only persisted abort intent
     // represents a cancelled action; a transport/read error is no decision.
-    const task = await deps.pool.query<{ abort_requested: boolean }>(
-      "SELECT abort_requested FROM tasks WHERE id = $1", [runtime.taskId],
-    ).catch(() => undefined);
+    const task = await deps.pool
+      .query<{ abort_requested: boolean }>("SELECT abort_requested FROM tasks WHERE id = $1", [runtime.taskId])
+      .catch(() => undefined);
     if (task?.rows[0]?.abort_requested === true) {
       const decisionId = uuidv5(JUDGE_NAMESPACE, `guild-approval-decision:${chatId}:${call.id}`);
       await deps.threads
@@ -419,7 +458,7 @@ async function waitForApproval(deps: ApprovalGateDeps, runtime: TaskRuntime<neve
 export function createApprovalGate(deps: ApprovalGateDeps) {
   return hook(ToolTask, {
     async beforeTool(call: ToolCall, api, context) {
-      const runtime = api as unknown as TaskRuntime<never, never, never, never>;
+      const runtime = api;
       // The codemode wrapper call is not a capability — every nested call it
       // makes runs this gate on its own. Gating the wrapper too would ask
       // (a judge consult) before the script has even run, once per call.

@@ -105,6 +105,7 @@ import {
   stopChat,
   uploadAttachment,
   withdrawQueued,
+  steerQueued,
 } from "../transport";
 import {
   apiUrl,
@@ -2826,6 +2827,21 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     await deliverOutgoing(command);
   };
 
+  const [steeringMessage, setSteeringMessage] = useState<string | null>(null);
+  const steerChip = useCallback(async (block: Block) => {
+    if (!chatId || !block.eventId) return;
+    setSteeringMessage(block.eventId);
+    try {
+      const outcome = await steerQueued(chatId, block.eventId);
+      if (outcome === "pending") toast.info("Message is still being queued. Try again in a moment.");
+      else if (outcome === "placed") toast.info("Message was just delivered to the agent");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSteeringMessage(null);
+    }
+  }, [chatId]);
+
   /** Trash on a queued chip: withdraws the not-yet-placed send server-side.
    *  The chip drops on success; 409 means the input was just placed — the
    *  delivery flow converts it to a transcript bubble (refresh incoming). */
@@ -3576,6 +3592,17 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {b.queuedMode === "steer" ? "Steer" : "Queued"}
                       </span>
+                      {b.queuedMode !== "steer" && b.eventId && (
+                        <button
+                          type="button"
+                          disabled={steeringMessage === b.eventId}
+                          className="shrink-0 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                          onClick={() => void steerChip(b)}
+                          title="Send as guidance during the current response"
+                        >
+                          {steeringMessage === b.eventId ? "Steering…" : "Steer now"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         aria-label="Remove queued message"

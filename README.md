@@ -130,3 +130,11 @@ Full process: `docs/clients.md`.
 - **Generated TS types** (§6): `crates/protocol/bindings/**` is generated
   with `cargo test -p protocol --features ts` (freshness check:
   `scripts/check-bindings.sh`); do not edit by hand.
+
+### Promote a queued message to steering
+
+While an agent runs, queued message chips offer **Steer now**. This keeps the
+message identity and delivers it at the next tool boundary. The session-auth
+endpoint is `POST /api/v1/threads/:chatId/pending/:messageId/steer` (empty body,
+or `{}` with JSON content type). It returns `{ "steering": true }`, or 409
+when the message has already been placed or admission is still pending.

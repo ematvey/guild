@@ -38,7 +38,7 @@ import { rebuildLiveProjection } from "./live-projection.js";
 import { applyPostgresMigrations } from "./migrations.js";
 import { isTransientDbError, RETRY_DELAYS_MS, sleep } from "./pg.js";
 
-// pi-durable 1.0.1 does not export its branding helpers from the package entry;
+// Pi Durable does not export its branding helpers from the package entry;
 // the erased brands are phantom types, so trusted numeric boundaries brand with casts.
 const asConversationId = (value: number) => value as ConversationId;
 const asEntryId = (value: number) => value as EntryId;
@@ -169,7 +169,7 @@ interface DocumentAction {
  * Portable Postgres implementation of the pi-durable `Storage` contract.
  *
  * Pure logic lives here; the backend supplies the `PostgresDatabase` facade.
- * Records are read back from JSONB, so every read returns a detached value
+ * Records are decoded from JSON text, so every read returns a detached value
  * matching the ownership boundary of serialization-backed stores.
  */
 export class PostgresDurableStorage implements Storage {
@@ -178,6 +178,34 @@ export class PostgresDurableStorage implements Storage {
   private nextId: number;
   private closed = false;
   private closing: Promise<void> | undefined;
+  private readonly acknowledgedReceipts = new Set<string>();
+  private receiptCleanup: Promise<void> | undefined;
+  private readonly stats = { commits: 0, lockWaitMs: 0, commitMs: 0, receiptDeletes: 0 };
+
+  diagnostics() {
+    return { ...this.stats, acknowledgedReceipts: this.acknowledgedReceipts.size };
+  }
+
+  private async cleanReceipts(): Promise<void> {
+    if (this.receiptCleanup) return this.receiptCleanup;
+    const keys = [...this.acknowledgedReceipts];
+    if (!keys.length) return;
+    const operation = this.db
+      .query("DELETE FROM durable_commits WHERE key=ANY($1::text[])", [keys])
+      .then(() => {
+        keys.forEach((key) => this.acknowledgedReceipts.delete(key));
+        this.stats.receiptDeletes += keys.length;
+      })
+      .catch(() => {});
+    this.receiptCleanup = operation;
+    await operation;
+    this.receiptCleanup = undefined;
+  }
+
+  private acknowledgeReceipt(key: string): void {
+    this.acknowledgedReceipts.add(key);
+    if (this.acknowledgedReceipts.size >= 64) void this.cleanReceipts();
+  }
 
   private constructor(
     private readonly db: PostgresDatabase,
@@ -187,9 +215,9 @@ export class PostgresDurableStorage implements Storage {
   }
 
   /** Apply pending migrations, then open storage over an owned Postgres facade. */
-  static async open(db: PostgresDatabase): Promise<PostgresDurableStorage> {
+  static async open(db: PostgresDatabase, options: { migrate?: boolean } = {}): Promise<PostgresDurableStorage> {
     try {
-      await applyPostgresMigrations(db);
+      if (options.migrate !== false) await applyPostgresMigrations(db);
       const rows = await db.query<{ next_id: number; next_seq: number }>(
         "SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1",
       );
@@ -210,12 +238,16 @@ export class PostgresDurableStorage implements Storage {
    * untouched, and damaged revisions remain available in the repair journal. */
   async repairLiveProjections(conversationId?: ConversationId): Promise<DocumentId[]> {
     this.assertOpen();
-    return this.db.transaction(async tx => {
-      const metadata = await tx.query<{ next_seq: number }>("SELECT next_seq FROM durable_metadata WHERE singleton=1 FOR UPDATE");
+    return this.db.transaction(async (tx) => {
+      const metadata = await tx.query<{ next_seq: number }>(
+        "SELECT next_seq FROM durable_metadata WHERE singleton=1 FOR UPDATE",
+      );
       let seq = Number(metadata[0]!.next_seq);
       const rows = await tx.query<{ id: number; owner_id: number; record: string }>(
         `SELECT id,owner_id,record FROM documents WHERE kind=$1 AND scope_kind='conversation' AND retired_at IS NULL${conversationId === undefined ? "" : " AND owner_id=$2"} ORDER BY id`,
-        conversationId === undefined ? [encodeIndexedString("pi.live")] : [encodeIndexedString("pi.live"), conversationId],
+        conversationId === undefined
+          ? [encodeIndexedString("pi.live")]
+          : [encodeIndexedString("pi.live"), conversationId],
       );
       const repaired: DocumentId[] = [];
       for (const row of rows) {
@@ -227,14 +259,23 @@ export class PostgresDurableStorage implements Storage {
           if (!(error instanceof Error) || error.name !== "PathError") throw error;
           const record = parseJson(row.record) as DocumentRecord;
           if (!isCurrentOnly(record)) throw error;
-          const revisions = await tx.query<{ seq: number; kind: string; version: number; content: string }>("SELECT seq,kind,version,content FROM document_revisions WHERE document_id=$1 ORDER BY seq", [id]);
-          if (revisions.some(revision => revision.version !== 1)) throw error;
+          const revisions = await tx.query<{ seq: number; kind: string; version: number; content: string }>(
+            "SELECT seq,kind,version,content FROM document_revisions WHERE document_id=$1 ORDER BY seq",
+            [id],
+          );
+          if (revisions.some((revision) => revision.version !== 1)) throw error;
           const value = await rebuildLiveProjection(tx, Number(row.owner_id));
           // Also fence writers holding a revision beyond the metadata watermark.
           const repairSeq = revisions.reduce((next, revision) => Math.max(next, Number(revision.seq) + 1), seq);
-          await tx.query("INSERT INTO live_projection_repairs(document_id,repaired_at_seq,conversation_id,reason,revisions) VALUES ($1,$2,$3,$4,$5)", [id, repairSeq, row.owner_id, error.message, encodeJson(revisions)]);
+          await tx.query(
+            "INSERT INTO live_projection_repairs(document_id,repaired_at_seq,conversation_id,reason,revisions) VALUES ($1,$2,$3,$4,$5)",
+            [id, repairSeq, row.owner_id, error.message, encodeJson(revisions)],
+          );
           await tx.query("DELETE FROM document_revisions WHERE document_id=$1", [id]);
-          await tx.query("INSERT INTO document_revisions(document_id,seq,kind,version,content) VALUES ($1,$2,'base',1,$3)", [id, repairSeq, encodeJson(value)]);
+          await tx.query(
+            "INSERT INTO document_revisions(document_id,seq,kind,version,content) VALUES ($1,$2,'base',1,$3)",
+            [id, repairSeq, encodeJson(value)],
+          );
           seq = repairSeq + 1;
           this.liveRevisions.delete(id);
           this.liveValues.delete(id);
@@ -250,7 +291,7 @@ export class PostgresDurableStorage implements Storage {
     this.assertOpen();
     const documentActions = this.prepareDocumentActions(writes);
     const candidateNextId = this.candidateNextId(writes);
-    const fingerprint = `commit:${randomUUID()}`;
+    const commitKey = `commit:${randomUUID()}`;
     // Adoption and retry arm only after THIS call saw a connection-class
     // failure: that is the only situation where the outcome is genuinely
     // unknown. A clean attempt (a first-seen ID conflict, say) must reject
@@ -259,7 +300,12 @@ export class PostgresDurableStorage implements Storage {
     let sawTransient = false;
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.commitOnce(writes, documentActions, candidateNextId, fingerprint);
+        const started = performance.now();
+        const seq = await this.commitOnce(writes, documentActions, candidateNextId, commitKey);
+        this.stats.commits++;
+        this.stats.commitMs += performance.now() - started;
+        this.acknowledgeReceipt(commitKey);
+        return seq;
       } catch (error) {
         if (isTransientDbError(error)) sawTransient = true;
         // The failed attempt may have committed: the connection can die
@@ -268,11 +314,12 @@ export class PostgresDurableStorage implements Storage {
         // applied batch by its invocation identity — adopt instead of
         // double-applying (the ID claims would reject the retry) or
         // failing the session.
-        if (sawTransient && fingerprint !== undefined) {
-          const adopted = await this.adoptCommit(fingerprint).catch(() => undefined);
+        if (sawTransient && commitKey !== undefined) {
+          const adopted = await this.adoptCommit(commitKey).catch(() => undefined);
           if (adopted !== undefined) {
             this.nextId = Math.max(this.nextId, candidateNextId);
             this.adoptLiveValues(documentActions, adopted);
+            this.acknowledgeReceipt(commitKey);
             return adopted;
           }
         }
@@ -286,28 +333,30 @@ export class PostgresDurableStorage implements Storage {
     writes: readonly StorageWrite[],
     documentActions: Map<DocumentId, DocumentAction>,
     candidateNextId: number,
-    fingerprint: string | undefined,
+    commitKey: string | undefined,
   ): Promise<Seq> {
     const seq = await this.db.transaction(async (tx) => {
       // FOR UPDATE serializes concurrent commits on the metadata row.
+      const lockStarted = performance.now();
       const metadata = await tx.query<{ next_id: number; next_seq: number }>(
         "SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1 FOR UPDATE",
       );
+      this.stats.lockWaitMs += performance.now() - lockStarted;
       if (metadata.length === 0) throw new Error("Durable Postgres metadata is missing");
       const committedSeq = asSeq(metadata[0]!.next_seq);
       // The metadata lock also waits for an earlier ambiguous attempt. Check
       // its receipt before applying any deltas a second time.
-      if (fingerprint !== undefined) {
-        const receipt = await tx.query<{ seq: number }>("SELECT seq FROM durable_commits WHERE key = $1", [fingerprint]);
+      if (commitKey !== undefined) {
+        const receipt = await tx.query<{ seq: number }>("SELECT seq FROM durable_commits WHERE key = $1", [commitKey]);
         if (receipt[0]) return asSeq(receipt[0].seq);
       }
       await this.checkGlobalIds(tx, writes);
       await this.checkDocumentActions(tx, documentActions);
       for (const write of writes) await this.applyTableWrite(tx, write, committedSeq);
       await this.applyDocumentActions(tx, documentActions, committedSeq);
-      if (fingerprint !== undefined) {
+      if (commitKey !== undefined) {
         await tx.query("INSERT INTO durable_commits (key, seq) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [
-          fingerprint,
+          commitKey,
           committedSeq,
         ]);
       }
@@ -338,8 +387,8 @@ export class PostgresDurableStorage implements Storage {
   }
 
   /** The sequence stored by an earlier attempt of this commit invocation. */
-  private async adoptCommit(fingerprint: string): Promise<Seq | undefined> {
-    const rows = await this.db.query<{ seq: number }>("SELECT seq FROM durable_commits WHERE key = $1", [fingerprint]);
+  private async adoptCommit(commitKey: string): Promise<Seq | undefined> {
+    const rows = await this.db.query<{ seq: number }>("SELECT seq FROM durable_commits WHERE key = $1", [commitKey]);
     return rows.length === 0 ? undefined : asSeq(rows[0]!.seq);
   }
 
@@ -387,7 +436,11 @@ export class PostgresDurableStorage implements Storage {
       `SELECT record FROM conversations WHERE ${clauses.join(" AND ")} ORDER BY id ${orderSql(position.order)} LIMIT $${params.length}`,
       params,
     );
-    return page(rows.map((row) => parseJson(row.record) as ConversationRecord), limit, position.order);
+    return page(
+      rows.map((row) => parseJson(row.record) as ConversationRecord),
+      limit,
+      position.order,
+    );
   }
 
   entry(id: EntryId, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
@@ -538,7 +591,9 @@ export class PostgresDurableStorage implements Storage {
   async task(id: TaskId, _context: Context): Promise<TaskRecord<JsonObject, JsonObject, JsonObject> | undefined> {
     this.assertOpen();
     const rows = await this.db.query("SELECT record FROM tasks WHERE id = $1", [id]);
-    return rows.length === 0 ? undefined : (parseJson(rows[0]!.record) as TaskRecord<JsonObject, JsonObject, JsonObject>);
+    return rows.length === 0
+      ? undefined
+      : (parseJson(rows[0]!.record) as TaskRecord<JsonObject, JsonObject, JsonObject>);
   }
 
   async scanTasks(
@@ -572,7 +627,11 @@ export class PostgresDurableStorage implements Storage {
       `SELECT record FROM tasks WHERE ${clauses.join(" AND ")} ORDER BY id ${orderSql(position.order)} LIMIT $${params.length}`,
       params,
     );
-    return page(rows.map((row) => parseJson(row.record) as TaskRecord<JsonObject, JsonObject, JsonObject>), limit, position.order);
+    return page(
+      rows.map((row) => parseJson(row.record) as TaskRecord<JsonObject, JsonObject, JsonObject>),
+      limit,
+      position.order,
+    );
   }
 
   async submission(id: SubmissionId, _context: Context): Promise<SubmissionRecord | undefined> {
@@ -603,7 +662,11 @@ export class PostgresDurableStorage implements Storage {
       `SELECT record FROM submissions WHERE ${clauses.join(" AND ")} ORDER BY id ${orderSql(position.order)} LIMIT $${params.length}`,
       params,
     );
-    return page(rows.map((row) => parseJson(row.record) as SubmissionRecord), limit, position.order);
+    return page(
+      rows.map((row) => parseJson(row.record) as SubmissionRecord),
+      limit,
+      position.order,
+    );
   }
 
   async submissionByRequest(
@@ -612,10 +675,10 @@ export class PostgresDurableStorage implements Storage {
     _context: Context,
   ): Promise<SubmissionRecord | undefined> {
     this.assertOpen();
-    const rows = await this.db.query(
-      "SELECT record FROM submissions WHERE conversation_id = $1 AND request_id = $2",
-      [conversationId, encodeIndexedString(requestId)],
-    );
+    const rows = await this.db.query("SELECT record FROM submissions WHERE conversation_id = $1 AND request_id = $2", [
+      conversationId,
+      encodeIndexedString(requestId),
+    ]);
     return rows.length === 0 ? undefined : (parseJson(rows[0]!.record) as SubmissionRecord);
   }
 
@@ -648,7 +711,10 @@ export class PostgresDurableStorage implements Storage {
     return this.db.readTransaction(async (tx) => {
       const stored = await this.materializeDocument(tx, id, at);
       if (at === "current" && stored?.record.kind === "pi.live" && !this.liveRevisions.has(id)) {
-        const rows = await tx.query<{ seq: number }>("SELECT max(seq) AS seq FROM document_revisions WHERE document_id=$1", [id]);
+        const rows = await tx.query<{ seq: number }>(
+          "SELECT max(seq) AS seq FROM document_revisions WHERE document_id=$1",
+          [id],
+        );
         this.liveRevisions.set(id, Number(rows[0]!.seq));
         this.liveValues.set(id, structuredClone(stored.value));
       }
@@ -680,13 +746,21 @@ export class PostgresDurableStorage implements Storage {
       `SELECT record FROM documents WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT $${params.length}`,
       params,
     );
-    return page(rows.map((row) => parseJson(row.record) as DocumentRecord), limit, "ascending");
+    return page(
+      rows.map((row) => parseJson(row.record) as DocumentRecord),
+      limit,
+      "ascending",
+    );
   }
 
   async close(_context: Context): Promise<void> {
     if (this.closing === undefined) {
       this.closed = true;
-      this.closing = this.db.close();
+      this.closing = (async () => {
+        await this.receiptCleanup;
+        await this.cleanReceipts();
+        await this.db.close();
+      })();
     }
     await this.closing;
   }
@@ -747,7 +821,9 @@ export class PostgresDurableStorage implements Storage {
       const document = write.type === "document.create" || write.type === "document.copy";
       const table = document ? "document" : write.type;
       const id = document ? write.record.id : write.value.id;
-      const existingRows = await tx.query<{ record_type: string }>("SELECT record_type FROM record_ids WHERE id = $1", [id]);
+      const existingRows = await tx.query<{ record_type: string }>("SELECT record_type FROM record_ids WHERE id = $1", [
+        id,
+      ]);
       const existing = existingRows.length === 0 ? undefined : existingRows[0]!.record_type;
       const earlier = claimed.get(id);
       if (table === "conversation" || table === "entry" || table === "document") {
@@ -831,7 +907,10 @@ export class PostgresDurableStorage implements Storage {
       }
       const record = action.create ?? existing!;
       if (record.kind === "pi.live" && existing && (action.content || action.retire)) {
-        const rows = await tx.query<{ seq: number }>("SELECT max(seq) AS seq FROM document_revisions WHERE document_id=$1", [id]);
+        const rows = await tx.query<{ seq: number }>(
+          "SELECT max(seq) AS seq FROM document_revisions WHERE document_id=$1",
+          [id],
+        );
         const expected = this.liveRevisions.get(id);
         if (expected !== undefined && expected !== Number(rows[0]!.seq)) {
           throw new StorageRequestError(`Live projection ${id} has a stale writer`);
@@ -1003,13 +1082,7 @@ export class PostgresDurableStorage implements Storage {
         }
         await tx.query(
           "INSERT INTO document_revisions (document_id, seq, kind, version, content) VALUES ($1, $2, $3, $4, $5)",
-          [
-            id,
-            seq,
-            content.kind,
-            content.version,
-            encodeJson(content.kind === "base" ? content.value : content.ops),
-          ],
+          [id, seq, content.kind, content.version, encodeJson(content.kind === "base" ? content.value : content.ops)],
         );
       }
       if (action.retire) {
