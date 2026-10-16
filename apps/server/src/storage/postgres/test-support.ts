@@ -60,6 +60,7 @@ export async function dropDisposableDatabase(name: string): Promise<void> {
 /** Drop every durable table so migrations rebuild a pristine schema in place. */
 export async function resetDurableTables(executor: PostgresExecutor): Promise<void> {
   for (const table of [
+    "live_projection_repairs",
     "document_revisions",
     "documents",
     "submissions",

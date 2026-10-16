@@ -26,7 +26,7 @@ export class IpcMachineDispatch {
   private seq = 0;
 
   constructor(
-    private readonly send: (message: { t: "dispatch"; ref: number; call: MachineDispatchCall }) => void,
+    private readonly send: (message: { t: "dispatch"; ref: number; call: MachineDispatchCall } | { t: "dispatch_cancel"; ref: number }) => void,
   ) {}
 
   /** Feeds a WorkerResponse that carries a dispatch reply; returns true
@@ -41,20 +41,28 @@ export class IpcMachineDispatch {
     return true;
   }
 
-  async dispatch(call: MachineDispatchCall): Promise<MachineToolOutcome> {
+  async dispatch(call: MachineDispatchCall, signal?: AbortSignal): Promise<MachineToolOutcome> {
+    signal?.throwIfAborted();
     const ref = (this.seq += 1);
     const done = new Promise<MachineToolOutcome>((resolve) => {
       this.pending.set(ref, resolve);
     });
+    const cancel = () => {
+      this.send({ t: "dispatch_cancel", ref });
+      this.pending.get(ref)?.({ content: "machine tool cancelled", is_error: true, meta: null, images: [] });
+    };
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<MachineToolOutcome>((resolve) => {
-      timer = setTimeout(() => resolve(OFFLINE), call.timeoutMs + REPLY_GRACE_MS);
+      timer = setTimeout(() => { this.send({ t: "dispatch_cancel", ref }); resolve(OFFLINE); }, call.timeoutMs + REPLY_GRACE_MS);
       timer.unref?.();
     });
     try {
       this.send({ t: "dispatch", ref, call });
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
       return await Promise.race([done, timeout]);
     } finally {
+      signal?.removeEventListener("abort", cancel);
       this.pending.delete(ref);
       clearTimeout(timer);
     }

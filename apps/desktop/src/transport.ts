@@ -299,6 +299,7 @@ export function routeMessage(message: WsServerMsg, handlers: SocketHandlers): vo
   switch (message.type) {
     case "hello":
     case "tool_dispatch":
+    case "tool_cancel":
       return;
     case "thread_state":
       handlers.onThreadState?.(message as unknown as ThreadState);

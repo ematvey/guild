@@ -568,15 +568,20 @@ export class GuildRuntime {
   private async openHarness(): Promise<void> {
     const db = this.durableDb;
     if (!db) throw new Error("openHarness before startOnce");
+    const durable = await PostgresDurableStorage.open(db);
+    const scopeId = this.workerScope ? this.chatToConversation.get(this.workerScope.chatId) : undefined;
+    if (this.workerScope && scopeId === undefined) throw new Error("worker has no conversation mapping");
+    const repaired = await durable.repairLiveProjections(scopeId as ConversationId | undefined);
+    if (repaired.length) this.log.warn({ documents: repaired, conversationId: scopeId }, "rebuilt damaged live projections");
     if (this.workerScope) {
       // The worker's view: every scan forced onto its conversation, by-id
       // reads refusing foreign records — the boundary that keeps the
       // scheduler from adopting another conversation's work.
       const conversationId = this.chatToConversation.get(this.workerScope.chatId);
       if (conversationId === undefined) throw new Error("worker has no conversation mapping");
-      this.storage = new ScopedDurableStorage(await PostgresDurableStorage.open(db), conversationId as ConversationId);
+      this.storage = new ScopedDurableStorage(durable, conversationId as ConversationId);
     } else {
-      this.storage = await PostgresDurableStorage.open(db);
+      this.storage = durable;
     }
     const harness = await Harness.open(this.storage, {
       models: this.models,

@@ -11,6 +11,17 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Live projections recover from authoritative records; machine work owns a
+  cancellable lifetime (2026-10-17, 0.5.69).** Invalid `pi.live` chains are archived and
+  rebuilt before harness startup from task checkpoints, placed submissions and
+  assistant entries. Run ownership survives repair; unsupported or ambiguous
+  state fails without destructive resets. Live writes validate their deltas
+  and fence stale storage owners at a revision watermark. Operator repair uses
+  the same path. Machine cancellation now crosses worker IPC and the executor
+  socket, and executor disconnect terminates owned tool process trees. Details:
+  `docs/plans/2026-10-17-live-projection-recovery.md`. The reported browser freeze
+  remains unproven; these changes address reproduced recovery/lifetime defects.
+
 - **Loading states describe pending data, never absence (2026-10-16, 0.5.68).**
   Workspace identity, approval policy, assistant prompts, account role,
   observability totals/payloads and release versions now wait for their reads

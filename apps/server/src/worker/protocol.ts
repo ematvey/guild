@@ -35,7 +35,8 @@ export type WorkerRequest =
   | { t: "withdraw"; ref: number; submissionId: number }
   | { t: "stop"; ref: number }
   | { t: "compact"; ref: number }
-  | { t: "dispatch"; ref: number; call: MachineDispatchCall };
+  | { t: "dispatch"; ref: number; call: MachineDispatchCall }
+  | { t: "dispatch_cancel"; ref: number };
 
 export type WorkerResponse =
   | { t: "result"; ref: number; ok: true; data: unknown }

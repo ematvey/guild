@@ -116,6 +116,19 @@ export const DURABLE_POSTGRES_MIGRATIONS = [
       "CREATE TABLE durable_commits (\n\t\tkey TEXT PRIMARY KEY,\n\t\tseq BIGINT NOT NULL\n\t)",
     ],
   },
+  {
+    version: 4,
+    statements: [
+      `CREATE TABLE live_projection_repairs (
+        document_id BIGINT NOT NULL,
+        repaired_at_seq BIGINT NOT NULL,
+        conversation_id BIGINT NOT NULL,
+        reason TEXT NOT NULL,
+        revisions TEXT NOT NULL,
+        PRIMARY KEY(document_id, repaired_at_seq)
+      )`,
+    ],
+  },
 ];
 
 export const CURRENT_POSTGRES_SCHEMA_VERSION = DURABLE_POSTGRES_MIGRATIONS.at(-1)?.version ?? 0;

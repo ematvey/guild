@@ -8,10 +8,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { buildApp, GUILD_TS_SERVER_VERSION, NATIVE_ROUTES } from "../app.js";
 import { loadConfig } from "../config.js";
+import { createDisposableDatabase, dropDisposableDatabase, type DisposableDatabase } from "../storage/postgres/test-support.js";
 
 let wss: WebSocketServer;
+let database: DisposableDatabase;
 
 beforeAll(async () => {
+  database = await createDisposableDatabase();
   // WS echo server — the hub route stand-in.
   wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   wss.on("connection", (socket) => {
@@ -23,6 +26,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((resolve) => wss.close(() => resolve()));
+  await dropDisposableDatabase(database.name);
 });
 
 const TEST_ENV = {
@@ -31,7 +35,7 @@ const TEST_ENV = {
 };
 
 function makeApp() {
-  return buildApp(loadConfig({ ...TEST_ENV, GUILD_LOG_LEVEL: "silent" }));
+  return buildApp(loadConfig({ ...TEST_ENV, GUILD_DATABASE_URL: database.url, GUILD_WEB_DIST: `/tmp/${database.name}-missing-web-dist`, GUILD_LOG_LEVEL: "silent" }));
 }
 
 describe("health route (native)", () => {
@@ -80,6 +84,8 @@ describe("health route (native)", () => {
       "/api/v1/chats/*",
       "/api/v1/gateway/chat",
       "/api/v1/gateway/chat/*",
+      "/api/v1/threads",
+      "/api/v1/threads/*",
       // M6 long tail: registry, releases, projects, teams, admin reads.
       "/api/v1/registry/*",
       "/api/v1/skills",

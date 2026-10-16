@@ -223,6 +223,9 @@ enum ServerFrame {
         arguments: String,
         workdir: Option<String>,
     },
+    ToolCancel {
+        call_id: String,
+    },
     MachineRequest {
         request_id: String,
         op: String,
@@ -238,6 +241,42 @@ enum ServerFrame {
     Other,
 }
 
+/// Tool work is owned by one executor connection and addressed by call ID.
+#[derive(Default)]
+struct ToolExecutions(std::collections::HashMap<String, tokio::task::JoinHandle<()>>);
+
+impl ToolExecutions {
+    fn spawn(&mut self, id: String, work: impl std::future::Future<Output = ()> + Send + 'static) {
+        self.0.retain(|_, task| !task.is_finished());
+        if !self.0.contains_key(&id) {
+            self.0.insert(id, tokio::spawn(work));
+        }
+    }
+
+    fn cancel(&mut self, id: &str) {
+        if let Some(task) = self.0.remove(id) {
+            task.abort();
+        }
+    }
+
+    async fn shutdown(&mut self) {
+        for task in self.0.values() {
+            task.abort();
+        }
+        for (_, task) in self.0.drain() {
+            let _ = task.await;
+        }
+    }
+}
+
+impl Drop for ToolExecutions {
+    fn drop(&mut self) {
+        for task in self.0.values() {
+            task.abort();
+        }
+    }
+}
+
 fn classify_server_frame(text: &str) -> ServerFrame {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
         return ServerFrame::Other;
@@ -247,7 +286,7 @@ fn classify_server_frame(text: &str) -> ServerFrame {
         .and_then(|t| t.as_str())
         .unwrap_or_default();
     match tag {
-        "tool_dispatch" | "machine_request" | "error" => {
+        "tool_dispatch" | "tool_cancel" | "machine_request" | "error" => {
             match serde_json::from_value::<WsServerMsg>(value) {
                 Ok(WsServerMsg::ToolDispatch {
                     chat_id,
@@ -262,6 +301,7 @@ fn classify_server_frame(text: &str) -> ServerFrame {
                     arguments,
                     workdir,
                 },
+                Ok(WsServerMsg::ToolCancel { call_id }) => ServerFrame::ToolCancel { call_id },
                 Ok(WsServerMsg::MachineRequest {
                     request_id,
                     op,
@@ -349,6 +389,7 @@ async fn ws_session(
             Err(e) => crate::dtrace::dtrace(&format!("skills connect pull failed: {e}")),
         }
     });
+    let mut executions = ToolExecutions::default();
     let mut last_inbound = tokio::time::Instant::now();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(heartbeat_secs()));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -386,7 +427,7 @@ async fn ws_session(
                             // free to interleave.
                             let outbound = outbound_tx.clone();
                             let hooks = hooks.clone();
-                            tokio::spawn(async move {
+                            executions.spawn(call_id.clone(), async move {
                                 let result =
                                     execute_client_tool(&name, &arguments, workdir.as_deref(), Some(hooks)).await;
                                 let msg = WsClientMsg::ToolResult {
@@ -404,6 +445,7 @@ async fn ws_session(
                                 ));
                             });
                         }
+                        ServerFrame::ToolCancel { call_id } => executions.cancel(&call_id),
                         ServerFrame::MachineRequest { request_id, op, payload } => {
                             let outbound = outbound_tx.clone();
                             let hooks = hooks.clone();
@@ -458,6 +500,7 @@ async fn ws_session(
             }
         }
     };
+    executions.shutdown().await;
     // Close cleanly, then let the writer drain: dropping the sender is what
     // unblocks `recv` — without it the writer (and this function) hang
     // whenever the loop broke while the socket was still healthy (config
@@ -554,10 +597,7 @@ async fn pull_skills(cloud: &CloudClient) -> Result<serde_json::Value, String> {
 
 /// `pull_skills` with an explicit root — the test seam (the env-var root
 /// races parallel tests).
-async fn pull_skills_at(
-    cloud: &CloudClient,
-    root: &Path,
-) -> Result<serde_json::Value, String> {
+async fn pull_skills_at(cloud: &CloudClient, root: &Path) -> Result<serde_json::Value, String> {
     let url = format!(
         "{}/api/v1/skills/sync-payload",
         cloud.base_url.trim_end_matches('/')
@@ -1168,6 +1208,47 @@ pub struct IdentifyParams {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tool_cancel_and_disconnect_stop_shell_descendants() {
+        for disconnect in [false, true] {
+            let dir = std::env::temp_dir().join(format!("guild-cancel-{}", uuid::Uuid::now_v7()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let started = dir.join("started");
+            let survived = dir.join("survived");
+            let workdir = dir.to_str().unwrap().to_owned();
+            let args = serde_json::json!({
+                "command": "touch started; sleep 0.4; touch survived",
+                "timeout_ms": 30_000
+            })
+            .to_string();
+            let mut executions = ToolExecutions::default();
+            executions.spawn("call-1".into(), async move {
+                let _ = execute_client_tool("execute", &args, Some(&workdir), None).await;
+            });
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !started.exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("shell did not start");
+            if disconnect {
+                executions.shutdown().await;
+            } else {
+                executions.cancel("unrelated");
+                executions.cancel("call-1");
+                executions.cancel("call-1");
+            }
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            assert!(!survived.exists(), "shell descendant survived cancellation");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+        assert!(
+            matches!(classify_server_frame(r#"{"type":"tool_cancel","call_id":"call-1"}"#), ServerFrame::ToolCancel { call_id } if call_id == "call-1")
+        );
+    }
+
     fn cfg() -> MachineLinkConfig {
         MachineLinkConfig {
             base_url: "http://localhost:18080".into(),
@@ -1564,7 +1645,10 @@ mod tests {
                 "/api/v1/registry/skill/{slug}/{version}/bundle",
                 axum::routing::get(
                     move |headers: axum::http::HeaderMap,
-                          axum::extract::Path((slug, version)): axum::extract::Path<(String, String)>| async move {
+                          axum::extract::Path((slug, version)): axum::extract::Path<(
+                        String,
+                        String,
+                    )>| async move {
                         if headers
                             .get(axum::http::header::AUTHORIZATION)
                             .and_then(|v| v.to_str().ok())
@@ -1575,7 +1659,10 @@ mod tests {
                         if slug != "demo-skill" || version != "v2" {
                             return (axum::http::StatusCode::NOT_FOUND, Vec::new());
                         }
-                        (axum::http::StatusCode::OK, bundle_route.lock().unwrap().clone())
+                        (
+                            axum::http::StatusCode::OK,
+                            bundle_route.lock().unwrap().clone(),
+                        )
                     },
                 ),
             );
@@ -1592,8 +1679,7 @@ mod tests {
         assert_eq!(summary["removed"], serde_json::json!(["stale-skill"]));
         assert_eq!(summary["failed"], serde_json::json!([]));
         let skill_dir = skills_home.join(".agents/skills/demo-skill");
-        let skill_md =
-            std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        let skill_md = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
         assert!(skill_md.contains("PULLED-BODY"));
         assert!(
             skill_dir.join("agents/guild.yaml").exists(),

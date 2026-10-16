@@ -194,7 +194,7 @@ export class PlatformContext {
             // Workers proxy machine-tool dispatch to the hub-backed
             // registry (this.machineDispatch resolves lazily at call time
             // — the runtime below is not constructed yet here).
-            (call) => this.machineDispatch.dispatch(call),
+            (call, signal) => this.machineDispatch.dispatch(call, signal),
           )
         : undefined;
     this.runtime = new GuildRuntime(config, this.pool, log, this.objects, this.hub, this.skillReads, this.trace, this.supervisor);
