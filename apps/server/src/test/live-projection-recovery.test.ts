@@ -37,6 +37,17 @@ describe("reconstructable live projection", () => {
     expect((await storage.document(id, "current", BACKGROUND_CONTEXT))?.value).toEqual({});
   });
 
+  it("does not change the validation snapshot when an atomic batch is rejected", async () => {
+    const first = await createLive(106, { nestedTools: [] });
+    const second = await createLive(107);
+    await expect(storage.commit([
+      { type: "document.change", id: first, content: { kind: "delta", version: 1, ops: [["p", ["nestedTools"], 0, 0, [{ output: "ghost" }]]] } },
+      { type: "document.change", id: second, content: { kind: "delta", version: 1, ops: [["s", ["nestedTools", 0, "output"], "invalid"]] } },
+    ] as StorageWrite[], BACKGROUND_CONTEXT)).rejects.toThrow();
+    await expect(storage.commit([{ type: "document.change", id: first, content: { kind: "delta", version: 1, ops: [["s", ["nestedTools", 0, "output"], "late"]] } }] as StorageWrite[], BACKGROUND_CONTEXT)).rejects.toThrow();
+    expect((await storage.document(first, "current", BACKGROUND_CONTEXT))?.value).toEqual({ nestedTools: [] });
+  });
+
   it("archives damage and reconstructs an idle projection without changing queued inputs", async () => {
     const id = await createLive(101);
     await pool.query("INSERT INTO submissions(id,conversation_id,request_id,status,record) VALUES (901,101,'queued','queued',$1)", [JSON.stringify({ id: 901, conversationId: 101, type: "input", status: "queued", requestId: "queued" })]);

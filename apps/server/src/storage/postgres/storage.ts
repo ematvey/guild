@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { apply, type Op } from "@earendil-works/chord/delta";
+import { apply, applyImmutable, type Op } from "@earendil-works/chord/delta";
 import type { Context } from "@earendil-works/chord";
 import { StorageRequestError } from "@earendil-works/pi-durable";
 import type {
@@ -852,7 +852,7 @@ export class PostgresDurableStorage implements Storage {
           // A matching revision lets validation reuse the committed value rather
           // than replay the growing delta chain on every streaming update.
           const value = this.liveValues.get(id) ?? (await this.materializeDocument(tx, id, "current"))!.value;
-          action.liveValue = apply(value, action.content.ops);
+          action.liveValue = applyImmutable(value, action.content.ops);
         } else if (action.content?.kind === "base") {
           action.liveValue = action.content.value;
         }
