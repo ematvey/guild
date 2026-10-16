@@ -17,7 +17,13 @@ not kept here — it lives in git.
   independently of generation. Worker IPC relays ephemeral live frames and
   mirrors partial buffers for reconnect; durable transcript/approval records
   remain in Postgres. Full affected-feature browser coverage and delivery:
-  `docs/plans/2026-10-17-browser-verification.md` (in progress).
+  `docs/plans/2026-10-17-browser-verification.md`. All 19 browser feature
+  groups pass, including uploaded-file steering and post-publication crash
+  recovery without another version. Final validation: 542 server tests,
+  354 desktop tests, typecheck/build pass (40 opt-in sandbox skips). Dev
+  compose and all six signed desktop artifacts serve 0.5.74; the live bundle
+  matches the image and public installer signatures verify. No pending work
+  or duplicate projections remain. Implementation: `82f7c45`, `274bd50`.
 
 - **Conversation lifetimes own recovery; queued inputs can become steering
   (2026-10-17, 0.5.72).** Candidate harness initialization and replacement
