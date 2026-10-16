@@ -21,7 +21,12 @@ not kept here — it lives in git.
   measures the current prefix. The read is owner/org scoped and does not wake
   a worker. Committed-history changes refresh it; streaming text does not.
   Validation: nine focused server checks, all 354 desktop tests, server
-  typecheck and frontend build pass.
+  typecheck and frontend build pass. Browser evidence and measurement scope:
+  `docs/plans/2026-10-17-context-ring.md`. Dev compose and all six signed
+  desktop artifacts serve 0.5.75; local/public manifests advertise four
+  platforms and a public installer download's hash/signature verifies.
+  A real browser turn, reload/back navigation, keyboard focus and a 390px
+  composer pass. Implementation: `ced46a4`, `3aa5ca8`.
 
 - **Browser verification follows real task and stream lifetimes (2026-10-17,
   0.5.74).** MCP settings use server-provided canonical call names. Manual

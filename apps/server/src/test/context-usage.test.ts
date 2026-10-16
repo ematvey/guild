@@ -11,6 +11,8 @@ beforeAll(async () => {
   stack = await setupM2Stack();
   await stack.routeModel("Context-Test");
   await stack.env.db.query("UPDATE model_routes SET context_window = 500000 WHERE org_id = $1", [stack.orgId]);
+  await stack.routeModel("Context-Small");
+  await stack.env.db.query("UPDATE model_routes SET context_window = 10000 WHERE org_id = $1 AND model = 'Context-Small'", [stack.orgId]);
   const chat = await stack.env.app.inject({ method: "POST", url: "/api/v1/threads", headers: headers(), payload: {} });
   chatId = chat.json().id;
   await stack.env.db.query("INSERT INTO chat_conversations(chat_id,conversation_id) VALUES($1,1000)", [chatId]);
@@ -42,6 +44,10 @@ describe("composer context usage from committed provider measurements", () => {
     expect(response.json()).toEqual({ tokens: 1420, max: 500000, model: "Context-Test", usage_model: "Context-Test" });
     const store = new ThreadStore(stack.env.db);
     expect(await store.contextUsage(crypto.randomUUID(), chatId)).toBeNull();
+    const switched = await stack.env.app.inject({
+      url: `/api/v1/threads/${chatId}/context?model=Context-Small`, headers: headers(),
+    });
+    expect(switched.json()).toEqual({ tokens: 1420, max: 10000, model: "Context-Small", usage_model: "Context-Test" });
   });
 
   it("invalidates the old measurement after a head change and resumes on the next response", async () => {
@@ -52,6 +58,9 @@ describe("composer context usage from committed provider measurements", () => {
     expect((await stack.env.app.inject({ url: url(), headers: headers() })).json().tokens).toBeNull();
     await assistant(1004, 77);
     expect((await stack.env.app.inject({ url: url(), headers: headers() })).json().tokens).toBe(77);
+    await assistant(1005, 0);
+    // Some providers omit the aggregate; cached reads/writes must still count.
+    expect((await stack.env.app.inject({ url: url(), headers: headers() })).json().tokens).toBe(1420);
   });
 
   it("requires authentication and thread ownership", async () => {
