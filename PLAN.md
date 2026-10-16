@@ -11,6 +11,26 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Codemode widget: the script card renders its nested calls (2026-10-16,
+  0.5.59).** The codemode-only exposure (above) left every script call as a
+  generic tool frame — args JSON dump, no visibility into what the script
+  did. pi-durable already writes the nested-call list into the result
+  details (`calls: { id, name, args, status, durationMs, error }`, terminal
+  statuses only, written once with the result — nested tool_execution
+  frames are dropped by the bridge), so the widget needed one server wire
+  and one desktop render. Server: `pi.tool-result` handling in
+  `bridge.ts` passes the codemode result details through as the
+  tool_result event's `meta` (guild_meta keeps precedence for integration
+  tools; codemode details carry no guild_meta). Desktop: `toolKind` maps
+  `codemode` to its own kind, and `ToolBody` renders the nested-call list
+  (`toolname(args) → status pill + duration`, error text under failed
+  rows), the script source as a monospace block, and the script's output
+  text. Types live in `thread-reducer.ts` (`ToolMeta.calls`,
+  `CodemodeCallRow`). During the run the card still shows only the source
+  + `running…` — the calls list arrives with the result, by design.
+  Shipped 0.5.59: compose rebuild live-verified (bundle hash changed,
+  health ok) and client release published to the dev registry (all four
+  platforms signed, `latest.json` serves 0.5.59).
 - **Codemode-only tool exposure + thread-history tools (2026-10-16).** The
   model is now offered exactly one tool: `codemode` (every registration
   carries `callers: ["tools"]` — pi-durable's native script-only marker;
