@@ -24,7 +24,13 @@ not kept here — it lives in git.
   success, with commit/lock diagnostics. Queued chips expose Steer now,
   preserving submission identity through worker IPC and the durable inbox.
   Details and validation: `docs/plans/2026-10-17-conversation-lifetimes.md`.
-  Delivery verification is recorded after the implementation commit.
+  Implementation: `bf923a1`. Validation: 538 server tests and 353 desktop
+  tests pass, plus typechecking/builds (40 opt-in sandbox checks skipped).
+  Dev compose serves 0.5.72 with Pi Durable 1.3.0 and a verified image-matching
+  bundle. All six signed desktop artifacts and four updater platforms serve
+  0.5.72. A live browser promotion completed a real sandbox write and shared
+  one durable answer; startup reconstructed 20 missing generation errors
+  with no duplicates or recovery backlog. Production was untouched.
 
 - **Pi Durable integration follows persisted identities and recovery contracts
   (2026-10-17, 0.5.71).** Pins the Pi Durable/AI/codemode/Chord family to 1.3.0.
