@@ -601,7 +601,7 @@ async function submitTurn(
     await chats.turnCommands.failUnsubmitted(commandId).catch(() => {});
     throw error;
   }
-  await chats.chats.setGenerating(user.org_id, chatId, true);
+  await chats.chats.reconcileGenerating(user.org_id, chatId);
   const refreshed = await chats.turnCommands.existing(commandId, user.org_id, user.id, chatId, request);
   return commandAck(refreshed ?? command);
 }

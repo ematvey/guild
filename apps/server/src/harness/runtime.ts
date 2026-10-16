@@ -55,6 +55,7 @@ import { MachineExecutionEnv, machineDispatch, type ExecutorKind, type MachineDi
 import { execPolicy as loadExecPolicy, type ExecPolicy } from "../execpolicy/matcher.js";
 import type { Config } from "../config.js";
 import { createGuildExtension, toolsOnlyCaller, ASSISTANT_PROMPT_KEY, type GuildExtensionDeps } from "./extension.js";
+import { drainIdleInbox } from "./queue-recovery.js";
 import { createThreadHistoryTools } from "./thread-history.js";
 import { IntegrationsRuntime } from "./integrations.js";
 import { UserMcpRuntime } from "./userMcp.js";
@@ -552,8 +553,8 @@ export class GuildRuntime {
    *  queued submissions (the journal is the registry). */
   private async chatsWithPendingWork(): Promise<{ chatId: string }[]> {
     const res = await this.pool.query<{ chat_id: string }>(
-      `SELECT DISTINCT c.chat_id FROM chat_conversations c
-       WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.conversation_id = c.conversation_id AND t.status IN ('pending', 'running', 'waiting'))
+      `SELECT DISTINCT c.chat_id FROM chat_conversations c JOIN chats ch ON ch.id=c.chat_id
+       WHERE ch.generating OR EXISTS (SELECT 1 FROM tasks t WHERE t.conversation_id = c.conversation_id AND t.status IN ('pending', 'running', 'waiting'))
           OR EXISTS (SELECT 1 FROM submissions s WHERE s.conversation_id = c.conversation_id AND s.status = 'queued')`,
     );
     return res.rows.map((row) => ({ chatId: row.chat_id }));
@@ -698,6 +699,9 @@ export class GuildRuntime {
     // deploy restart that skipped the drain): the turn continues where it
     // stopped instead of ending as interrupted.
     harness.resume();
+    for (const [chatId, conversationId] of this.chatToConversation) {
+      await this.reconcileConversation(chatId, conversationId);
+    }
     // Never-delivered commands of past failed submits (the durable wedge
     // left two pending rows forever) — swept at startup and on every
     // submit; the sweep failing must not block the turn.
@@ -779,8 +783,23 @@ export class GuildRuntime {
     const stream = await watchEvents(this.harness!, conversationId as never, BACKGROUND_CONTEXT);
     stream.start(async (events) => {
       await this.bridge.handle(key, events);
+      if (events.some(event => event.type === "run_end")) {
+        await this.reconcileConversation(chatId, conversationId).catch(error =>
+          this.log.error({ err: error, chatId }, "idle inbox recovery failed"));
+      }
     });
     this.watches.set(chatId, stream);
+  }
+
+  /** Every ending (including model_error) must leave queued inputs with
+   * a runnable owner. Startup also heals queues left by an older process. */
+  private async reconcileConversation(chatId: string, conversationId: number): Promise<void> {
+    const conversation = await this.harness!.conversation(conversationId as ConversationId, BACKGROUND_CONTEXT);
+    if (!conversation) return;
+    const row = await this.pool.query<{ org_id: string; archived_at: Date | null }>("SELECT org_id,archived_at FROM chats WHERE id=$1", [chatId]);
+    if (!row.rows[0]) return;
+    if (row.rows[0].archived_at === null && await drainIdleInbox(conversation)) this.harness!.resume();
+    await this.chats.reconcileGenerating(row.rows[0].org_id, chatId);
   }
 
   private async orgOfChat(chatId: string): Promise<string> {
@@ -918,6 +937,7 @@ export class GuildRuntime {
       },
       BACKGROUND_CONTEXT,
     );
+    await this.reconcileConversation(chatId, Number(conversation.id));
     return Number(submission.id);
   }
 

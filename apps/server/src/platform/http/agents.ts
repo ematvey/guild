@@ -201,7 +201,7 @@ async function submitSessionTurn(
     await chats.turnCommands.failUnsubmitted(commandId).catch(() => {});
     throw error;
   }
-  await chats.chats.setGenerating(user.org_id, body.chat_id, true);
+  await chats.chats.reconcileGenerating(user.org_id, body.chat_id);
   const refreshed = await chats.turnCommands.existing(commandId, user.org_id, user.id, body.chat_id, sortedJson(request));
   const ack = refreshed ?? command;
   return JSON.stringify(
