@@ -11,6 +11,22 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Per-route sampling temperature (2026-10-16, 0.5.66).** Stray-token
+  corruption in codemode scripts traced to temperature 1.0 — the model's
+  generation_config default that neither harness overrides — with strays
+  clustering at high-entropy helper-template junctions (`.slice(0, n` in a
+  rewritten `clip` helper; repetition in context roughly doubles the rate;
+  guild's retry-heavy script mode mass-produces those junctions).
+  Composition (system prompt, history shape, developer-vs-system) measured
+  within noise on exact-request replays. New `temperature` column on
+  `model_routes` (migration 0072): applies when the client sends none, an
+  explicit client temperature wins, absent = provider default; validated
+  (0, 2] at the admin API, forwarded by both provider bodies, editable in
+  the desktop route editor. Golden admin_routes fixture updated for the new
+  field. **The GLM-5.3-Flash route's temperature is still unset** — measured
+  0/100 strays at 0.6 on the replayed failing request; setting the value is
+  a settings-UI decision.
+
 - **Polymorphic integrations expose standard tool slots under the standard
   name and signature (2026-10-16).** An integration that can fill a
   standard capability slot (currently search and fetch) must declare its
