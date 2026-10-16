@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@guild/ui/components/dropdown-menu";
+import { Skeleton, SkeletonRows } from "@guild/ui/components/skeleton";
 import { ChevronDown, Plus, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@guild/ui/components/tooltip";import {
   IS_TAURI,
@@ -70,6 +71,8 @@ export function WorkspaceMenuItems({
     await workspaceSignOut(base);
     onReload();
   };
+
+  if (effective === null) return <SkeletonRows rows={2} />;
 
   const rows = effective?.workspaces ?? [];
   const active = effective?.active ?? null;
@@ -170,7 +173,7 @@ export function WorkspaceRailButton({
               className="flex size-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent"
               aria-label="Switch workspace"
             >
-              {activeRow?.logo_url ? (
+              {list === null ? <Skeleton className="size-6 shrink-0" /> : activeRow?.logo_url ? (
                 <img
                   src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
                   alt=""
@@ -223,7 +226,7 @@ export function WorkspaceSwitcher({
           className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none transition-colors hover:bg-accent"
           title="Switch workspace"
         >
-          {activeRow?.logo_url ? (
+          {list === null ? <Skeleton className="size-6 shrink-0" /> : activeRow?.logo_url ? (
             <img
               src={`${activeRow.base_url.replace(/\/$/, "")}${activeRow.logo_url}`}
               alt=""
@@ -234,7 +237,7 @@ export function WorkspaceSwitcher({
               {label.slice(0, 1).toUpperCase()}
             </span>
           ) : null}
-          <span className="min-w-0 truncate font-semibold">{label}</span>
+          {list === null ? <Skeleton className="h-3.5 w-24" /> : <span className="min-w-0 truncate font-semibold">{label}</span>}
           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>

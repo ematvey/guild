@@ -31,7 +31,7 @@ import {
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "../components/empty-state";
@@ -178,9 +178,11 @@ export default function UsersSection({ detail = null, onDetailChange }: SectionD
     // Deep-linked user page: wait for the list before resolving the id —
     // a not-yet-loaded row would render as the add-user form.
     if (detail !== "new" && users === null) {
-      return <Skeleton className="h-24 w-full rounded-lg" />;
+      if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
+      return <SkeletonForm />;
     }
     const user = detail === "new" ? null : users?.find((u) => u.id === detail) ?? null;
+    if (detail !== "new" && !user) return <EmptyState title="User not found" hint="It may have been deleted." icon={Users} />;
     return (
       <UserDetail
         user={user}

@@ -14,7 +14,7 @@ import { displayVersion } from "../../skills/skills-api";
 import { Button } from "@guild/ui/components/button";
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
 import { FactCard, FactGrid } from "../components/fact-card";
 import { EmptyState } from "../components/empty-state";
@@ -256,7 +256,7 @@ function ItemDetail({
       <div className="rounded-lg border border-border bg-card p-4">
         <p className="text-sm font-medium">Versions</p>
         {versions === null ? (
-          <Skeleton className="mt-3 h-12 w-full rounded-md" />
+          <SkeletonRows rows={1} />
         ) : versions.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">No versions published.</p>
         ) : (

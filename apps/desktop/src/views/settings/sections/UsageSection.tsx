@@ -3,6 +3,7 @@
 //! selector. The period and group live in the URL (?period=&group=), so
 //! back/forward, reloads and deep links restore the exact view.
 
+import { Skeleton, SkeletonRows } from "@guild/ui/components/skeleton";
 import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { quantizeIso, useCachedGet } from "../use-cached-api";
@@ -185,22 +186,22 @@ export default function UsageSection() {
 
       {/* spend stat cards */}
       <div className="grid grid-cols-2 gap-3">
-        {summary === null && error === null
+        {summary === null && summaryRes.error === null
           ? [0, 1].map((i) => (
               <div key={i} className={`${card} space-y-2`}>
-                <div className="h-3 w-20 animate-pulse rounded bg-accent" />
-                <div className="h-7 w-24 animate-pulse rounded bg-accent" />
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-7 w-24" />
               </div>
             ))
           : [
               metric === "tokens"
                 ? [
-                    { label: "Tokens today", value: compact(summary?.today_tokens ?? 0) },
-                    { label: "Tokens this month", value: compact(summary?.month_tokens ?? 0) },
+                    { label: "Tokens today", value: summary ? compact(summary.today_tokens ?? 0) : "—" },
+                    { label: "Tokens this month", value: summary ? compact(summary.month_tokens ?? 0) : "—" },
                   ]
                 : [
-                    { label: "Spent today", value: money(summary?.today_cost_usd) },
-                    { label: "Spent this month", value: money(summary?.month_cost_usd) },
+                    { label: "Spent today", value: summary ? money(summary.today_cost_usd) : "—" },
+                    { label: "Spent this month", value: summary ? money(summary.month_cost_usd) : "—" },
                   ],
             ]
               .flat()
@@ -223,8 +224,8 @@ export default function UsageSection() {
           <PeriodPicker period={period} onPick={(p) => pick({ period: p })} />
         </div>
         <div className="p-4">
-          {timeline === null ? (
-            <div className="h-40 w-full animate-pulse rounded-md bg-accent" />
+          {timeline === null && seriesRes.error ? <p role="alert" className="text-sm text-destructive">{seriesRes.error}</p> : timeline === null ? (
+            <div role="status" aria-label="Loading usage chart" className="flex h-40 items-end gap-4 border-b border-border px-4 pb-1">{[35, 55, 40, 70, 50, 65, 45].map((height, i) => <Skeleton key={i} className="flex-1 rounded-sm" style={{ height: `${height}%` }} />)}</div>
           ) : timeline.every((p) => p.cost === 0 && p.requests === 0) ? (
             <p className="py-16 text-center text-sm text-muted-foreground">
               No usage in the last {period}.
@@ -308,10 +309,10 @@ export default function UsageSection() {
             </ChartContainer>
           </div>
         )}
-        {rows === null ? (
+        {rows === null && breakdownRes.error ? <p role="alert" className="p-4 text-sm text-destructive">{breakdownRes.error}</p> : rows === null ? (
           <div className="space-y-2 p-4">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-8 w-full animate-pulse rounded-md bg-accent" />
+              <SkeletonRows key={i} rows={1} />
             ))}
           </div>
         ) : rows.length === 0 ? (

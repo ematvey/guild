@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonRows } from "@guild/ui/components/skeleton";
 import {
   skillsActivity,
   type SkillActivityEvent,
@@ -213,7 +213,7 @@ export function ActivityFeed() {
       </div>
       {events === null &&
         [0, 1, 2].map((i) => (
-          <Skeleton key={i} className="mb-2 h-10 w-full rounded-md" style={{ opacity: 1 - i * 0.15 }} />
+          <SkeletonRows key={i} rows={1} />
         ))}
       {rows.map((row) => (
         <div key={`${row.event.kind}:${row.event.ts}:${row.event.payload.slug ?? ""}`} className="mb-1.5 flex items-start gap-2 rounded-md border border-border p-2.5">

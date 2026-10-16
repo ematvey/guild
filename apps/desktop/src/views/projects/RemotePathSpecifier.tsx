@@ -6,7 +6,7 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { ChevronRight, CornerDownLeft, Folder, FolderOpen } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
-import { Spinner } from "@guild/ui/components/spinner";
+import { SkeletonRows } from "@guild/ui/components/skeleton";
 import { listRemoteDir, remoteHome } from "../../transport";
 import {
   displayPath,
@@ -148,9 +148,7 @@ export function RemotePathSpecifier({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border border-border">
         {state.entries === null && !state.error && (
-          <div className="flex items-center gap-2 p-3 text-muted-foreground">
-            <Spinner className="size-3.5" /> listing…
-          </div>
+          <SkeletonRows />
         )}
         {state.error && <div className="p-3 text-muted-foreground">{state.error}</div>}
         {state.entries !== null && state.entries.length === 0 && (

@@ -5,6 +5,7 @@
 //! live in the URL query, the open row in the /settings/observability/<id>
 //! sub-page — back/forward, reloads and deep links restore the exact view.
 
+import { Skeleton, SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
 import { useEffect, useState } from "react";
 import { Activity } from "lucide-react";
 import { apiMe } from "../../../transport";
@@ -80,6 +81,7 @@ export default function ObservabilitySection({ detail, onDetailChange }: Section
   }, []);
 
   if (detail !== null && detail !== undefined) {
+    if (role === null) return <SkeletonForm />;
     return <CallDetail requestId={decodeURIComponent(detail)} isAdmin={role === "admin"} onBack={() => onDetailChange(null)} />;
   }
   return <CallsDashboard role={role} onOpen={(id) => onDetailChange(encodeURIComponent(id))} />;
@@ -152,7 +154,7 @@ function CallsDashboard({ role, onOpen }: { role: string | null; onOpen: (id: st
         ].map((card) => (
           <div key={card.label} className="rounded-lg border border-border bg-card p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{card.label}</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{card.value}</p>
+            <div className="mt-1 text-2xl font-semibold tabular-nums">{summary === null && !summaryRes.error ? <Skeleton className="my-2 h-5 w-20" /> : summary === null ? "—" : card.value}</div>
           </div>
         ))}
       </div>
@@ -217,7 +219,7 @@ function CallsDashboard({ role, onOpen }: { role: string | null; onOpen: (id: st
         ) : calls === null ? (
           <div className="space-y-2 p-4">
             {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-8 w-full animate-pulse rounded-md bg-accent" />
+              <SkeletonRows key={i} rows={1} />
             ))}
           </div>
         ) : calls.length === 0 ? (
@@ -316,10 +318,10 @@ function CallDetail({
       <PageHeader title="Call detail" back={{ label: "Observability", onClick: onBack }} />
       {res.error !== null && <p className="text-sm text-destructive">{res.error}</p>}
       {call === null ? (
-        res.settled ? (
+        res.error ? null : res.settled ? (
           <EmptyState icon={Activity} title="Call not found" hint={`No llm_calls row for ${requestId} in the last 30 days.`} />
         ) : (
-          <div className="h-32 w-full animate-pulse rounded-lg bg-accent" />
+          <SkeletonForm />
         )
       ) : (
         <>
@@ -356,6 +358,7 @@ function CallDetail({
               <p className="border-b border-border px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Payloads {payloadsRes.data && payloadsRes.data.payloads.length === 0 ? "(none stored — payload tracing is off)" : ""}
               </p>
+              {payloadsRes.error ? <p role="alert" className="p-4 text-sm text-destructive">{payloadsRes.error}</p> : payloadsRes.data === null ? <SkeletonRows rows={2} /> : null}
               {(payloadsRes.data?.payloads ?? []).map((p) => (
                 <div key={p.kind} className="border-b border-border/60 px-4 py-3 last:border-0">
                   <p className="mb-1 text-xs capitalize text-muted-foreground">{p.kind}</p>

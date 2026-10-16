@@ -14,7 +14,7 @@ import { ChevronLeft, ChevronRight, SearchX, Search } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Button } from "./button";
 import { Input } from "./input";
-import { Skeleton } from "./skeleton";
+import { SkeletonRows } from "./skeleton";
 
 /// Generic data table: client-side search, sortable columns, pagination,
 /// optional row click. `data === null` renders the loading skeleton; an
@@ -89,11 +89,7 @@ export function DataTable<T>({
       )}
       <div className="min-h-24">
         {data === null ? (
-          <div className="space-y-2 p-3">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-10 w-full rounded-md" />
-            ))}
-          </div>
+          <SkeletonRows rows={4} />
         ) : (
           <table className="w-full text-sm">
             <thead>

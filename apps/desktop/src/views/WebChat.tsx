@@ -74,7 +74,7 @@ import { useIsMobile } from "@guild/ui/hooks/use-mobile";
 import { toast } from "sonner";
 import { WorkingIndicator } from "@guild/ui/components/working-indicator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@guild/ui/components/select";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { Skeleton, SkeletonRows, SkeletonText } from "@guild/ui/components/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
 import { DesktopTooltip } from "../components/desktop-tooltip";
@@ -689,27 +689,11 @@ export function mentionCandidates(
 /// /thread/<id> but the view has nothing to render yet). Without this, the
 /// new-thread hero would flash for the whole fetch duration.
 function ThreadSkeleton() {
-  // Conversation-shaped skeleton: mirrors the real thread layout (user
-  // bubbles right, assistant text + tool frames left) instead of a spinner.
-  const row = "flex flex-col gap-1.5";
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <div className="mx-auto w-full max-w-3xl space-y-3 px-4 py-4">
-        <div className={row}>
-          <Skeleton className="ml-auto h-6 w-1/2 rounded-2xl" />
-          <Skeleton className="h-3 w-20 rounded-md" />
-          <Skeleton className="h-10 w-5/6 rounded-lg" />
-          <Skeleton className="h-12 w-5/6 rounded-lg" />
-        </div>
-        <div className={row}>
-          <Skeleton className="h-6 w-2/5 rounded-2xl" />
-          <Skeleton className="h-3 w-24 rounded-md" />
-          <Skeleton className="h-10 w-5/6 rounded-lg" />
-          <Skeleton className="h-12 w-5/6 rounded-lg" />
-        </div>
-        <div className={row}>
-          <Skeleton className="ml-auto h-6 w-3/5 rounded-2xl" />
-        </div>
+    <div role="status" aria-label="Loading conversation" className="min-h-0 flex-1 overflow-hidden">
+      <div className="mx-auto max-w-3xl space-y-8 px-5 py-6">
+        <div className="flex justify-end"><Skeleton className="h-4 w-2/5" /></div>
+        <SkeletonText lines={4} />
       </div>
     </div>
   );
@@ -4190,7 +4174,7 @@ function DeviceSetupDialog({
               ))}
             </div>
             <div className="mt-2 min-w-0 space-y-2">
-              {installers === null && [0, 1].map((i) => <Skeleton key={i} className="h-10 w-full rounded-md" />)}
+              {installers === null && [0, 1].map((i) => <SkeletonRows key={i} rows={1} />)}
               {installers !== null && installers.length === 0 && (
                 <p className="text-muted-foreground">
                   No {OS_LABEL[os]} installer published yet — check back soon.

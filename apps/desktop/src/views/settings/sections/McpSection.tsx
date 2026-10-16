@@ -32,7 +32,7 @@ import {
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
 import { EmptyState } from "../components/empty-state";
@@ -198,10 +198,10 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
 
   if (detail !== null) {
     if (rows === null) {
+      if (list.error) return <p role="alert" className="text-sm text-destructive">{list.error}</p>;
       return (
         <div className="space-y-2">
-          <Skeleton className="h-14 w-full rounded-lg" />
-          <Skeleton className="h-24 w-full rounded-lg" />
+          <SkeletonForm />
         </div>
       );
     }
@@ -243,8 +243,8 @@ export default function McpSection({ detail = null, onDetailChange }: SectionDet
           <p className="text-sm text-destructive">{list.error}</p>
         ) : (
           <div className="space-y-2">
-            <Skeleton className="h-14 w-full rounded-lg" />
-            <Skeleton className="h-14 w-full rounded-lg" />
+            <SkeletonRows rows={1} />
+            <SkeletonRows rows={1} />
           </div>
         )
       ) : rows.length === 0 ? (

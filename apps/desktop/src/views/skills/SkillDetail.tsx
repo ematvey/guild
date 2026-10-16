@@ -17,7 +17,7 @@ import { Badge } from "@guild/ui/components/badge";
 import { Avatar } from "@guild/ui/components/avatar";
 import { Button } from "@guild/ui/components/button";
 import { Input } from "@guild/ui/components/input";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { Skeleton, SkeletonText } from "@guild/ui/components/skeleton";
 import {
   skillsDetail,
   skillsFork,
@@ -376,7 +376,7 @@ export function SkillDetail({ slug, me, onBack, onEdit, onOpenSkill }: SkillDeta
         <div className="mx-auto w-full max-w-[56rem] px-5 pt-4 pb-3">
           <Skeleton className="mb-2 h-6 w-2/3 rounded-lg" />
           <Skeleton className="mb-2 h-4 w-full rounded-md" />
-          <Skeleton className="h-24 w-full rounded-lg" />
+          <SkeletonText lines={5} className="pt-3" />
         </div>
       </div>
     );

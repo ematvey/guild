@@ -35,7 +35,7 @@ import {
 import { DataTable } from "@guild/ui/components/data-table";
 import { Badge } from "@guild/ui/components/badge";
 import { Input } from "@guild/ui/components/input";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonRows, SkeletonForm } from "@guild/ui/components/skeleton";
 import { Textarea } from "@guild/ui/components/textarea";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
@@ -283,10 +283,10 @@ export default function IntegrationsSection({
     // Deep-linked detail: wait for the list before resolving the id —
     // otherwise a not-yet-loaded row would render as not-found.
     if (rows === null || available === null) {
+      if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
       return (
         <div className="space-y-2">
-          <Skeleton className="h-14 w-full rounded-lg" />
-          <Skeleton className="h-24 w-full rounded-lg" />
+          <SkeletonForm />
         </div>
       );
     }
@@ -369,7 +369,7 @@ export default function IntegrationsSection({
           </DialogHeader>
           <div className="max-h-80 overflow-y-auto">
             {available === null ? (
-              <Skeleton className="h-10 w-full" />
+              <SkeletonRows rows={1} />
             ) : available.length === 0 ? (
               <p className="py-3 text-sm text-muted-foreground">
                 Everything available is already added.
@@ -990,8 +990,8 @@ function ToolCuration({
         </div>
       ) : data === null ? (
         <div className="space-y-2 p-4">
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-3/4" />
+          <SkeletonRows rows={1} />
+          <SkeletonRows rows={1} />
         </div>
       ) : !data.resolved ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">

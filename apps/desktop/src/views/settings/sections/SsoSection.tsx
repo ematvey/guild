@@ -18,7 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@guild/ui/components/alert-dialog";
-import { Skeleton } from "@guild/ui/components/skeleton";
+import { SkeletonForm } from "@guild/ui/components/skeleton";
 import { Input } from "@guild/ui/components/input";
 import { PageHeader } from "../components/page-header";
 import { Field } from "../components/field";
@@ -66,9 +66,10 @@ export default function SsoSection() {
   };
 
   if (cfg === null) {
+    if (cfgRes.error) return <p role="alert" className="text-sm text-destructive">{cfgRes.error}</p>;
     return (
       <div className="space-y-3">
-        <Skeleton className="h-24 w-full max-w-xl rounded-lg" />
+        <SkeletonForm />
       </div>
     );
   }

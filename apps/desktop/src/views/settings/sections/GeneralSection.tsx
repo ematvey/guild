@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ImagePlus, Trash2 } from "lucide-react";
 import { Button } from "@guild/ui/components/button";
+import { Skeleton } from "@guild/ui/components/skeleton";
 import { Input } from "@guild/ui/components/input";
 import { PageHeader } from "../components/page-header";
 import { api, ApiError, getToken } from "../admin-api";
@@ -18,6 +19,7 @@ interface OrgSettings {
 
 export default function GeneralSection() {
   const [org, setOrg] = useState<OrgSettings | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [logoTick, setLogoTick] = useState(0); // busts the img cache on change
@@ -29,7 +31,7 @@ export default function GeneralSection() {
         setOrg(v);
         setName(v.name);
       })
-      .catch((e) => toast.error(`Could not load workspace settings: ${e.message}`));
+      .catch((e) => setLoadError(`Could not load workspace settings: ${e.message}`));
   }, []);
 
   const saveName = async () => {
@@ -103,16 +105,19 @@ export default function GeneralSection() {
         title="General"
         description="The workspace's name and logo, shown across the app."
       />
-      <div className="flex items-center gap-5">
+      {loadError && <p role="alert" className="text-sm text-destructive">{loadError}</p>}
+      <div className="flex items-center gap-5" aria-busy={!org && !loadError}>
         <div className="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
-          {org?.logo_url ? (
+          {!org && !loadError ? (
+            <Skeleton className="size-full" />
+          ) : org?.logo_url ? (
             <img
               src={`${apiUrl(org.logo_url)}?v=${logoTick}`}
               alt="Workspace logo"
               className="size-full object-contain"
             />
           ) : (
-            <span className="text-sm text-muted-foreground">no logo</span>
+            <span className="text-sm text-muted-foreground">{org ? "no logo" : "Unavailable"}</span>
           )}
         </div>
         <div className="flex flex-col gap-2">
@@ -131,14 +136,14 @@ export default function GeneralSection() {
             <Button
               size="sm"
               variant="outline"
-              disabled={busy}
+              disabled={busy || !org}
               onClick={() => fileRef.current?.click()}
             >
               <ImagePlus className="size-4" />
-              {org?.logo_url ? "Replace logo" : "Upload logo"}
+              {!org && !loadError ? <Skeleton className="h-3 w-20" /> : org?.logo_url ? "Replace logo" : "Upload logo"}
             </Button>
             {org?.logo_url && (
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void removeLogo()}>
+              <Button size="sm" variant="outline" disabled={busy || !org} onClick={() => void removeLogo()}>
                 <Trash2 className="size-4" />
                 Remove
               </Button>
@@ -152,15 +157,16 @@ export default function GeneralSection() {
           Workspace name
         </label>
         <div className="flex gap-2">
-          <Input
+          {!org && !loadError ? <div role="status" aria-label="Loading workspace name" className="flex h-9 flex-1 items-center rounded-md border border-border px-3"><Skeleton className="h-3 w-36" /></div> : <Input
+            disabled={!org}
             id="workspace-name"
             value={name}
             autoComplete="off"
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && name.trim() !== org?.name && void saveName()}
             placeholder="e.g. Acme"
-          />
-          <Button disabled={busy || !name.trim() || name.trim() === org?.name} onClick={() => void saveName()}>
+          />}
+          <Button disabled={busy || !org || !name.trim() || name.trim() === org?.name} onClick={() => void saveName()}>
             Save
           </Button>
         </div>
