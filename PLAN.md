@@ -25,7 +25,9 @@ not kept here — it lives in git.
   the desktop route editor. Golden admin_routes fixture updated for the new
   field. **The GLM-5.3-Flash route's temperature is still unset** — measured
   0/100 strays at 0.6 on the replayed failing request; setting the value is
-  a settings-UI decision.
+  a settings-UI decision. (0.5.67 follow-up: the editor's temperature field
+  edits as raw text — Number("0.") collapsed to "0" per keystroke and made
+  decimals impossible.)
 
 - **Polymorphic integrations expose standard tool slots under the standard
   name and signature (2026-10-16).** An integration that can fill a
