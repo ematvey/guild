@@ -455,10 +455,19 @@ export class ChatBridge {
         // The tool-owned widget payload rides the result details' reserved
         // `guild_meta` key (integration tools, spec C.2); other tools carry
         // no meta, so the wire contract stays untouched for them.
+        // Codemode is the other meta-carrying tool: pi-durable writes the
+        // script's nested-call list into the result details once, with the
+        // result, and that list is the desktop widget's payload (the nested
+        // tool_execution frames are dropped above).
         const details = result.details;
-        const toolMeta = details !== null && typeof details === "object" && !Array.isArray(details)
+        const isCodemode = result.toolName === "codemode";
+        const codemodeMeta =
+          isCodemode && details !== null && typeof details === "object" && !Array.isArray(details)
+            ? details
+            : undefined;
+        const toolMeta = codemodeMeta ?? (details !== null && typeof details === "object" && !Array.isArray(details)
           ? (details as Record<string, unknown>)["guild_meta"]
-          : undefined;
+          : undefined);
         // Image parts ride only when the route supports the image modality
         // (gated at persist time, like the Rust path — keeps replay identical).
         const supported = await this.deps.routeSupportsImages(state.orgId, state.currentModel);

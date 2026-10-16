@@ -152,6 +152,7 @@ import {
   type ApprovalBlock,
   type ArtifactCard,
   type Block,
+  type CodemodeCallRow,
   type CompactionBlock,
   type ThreadReducer,
   type ToolBlock,
@@ -814,6 +815,7 @@ function toolKind(t: ToolBlock): string {
   if (t.meta?.kind) return t.meta.kind;
   if (typeof t.meta?.card === "string") return t.meta.card;
   const n = t.name.toLowerCase();
+  if (n === "codemode") return "codemode";
   if (n.includes("search")) return "search";
   if (n.includes("fetch")) return "fetch";
   if (n === "execute" || n === "bash" || n === "shell") return "terminal";
@@ -827,6 +829,7 @@ function toolKind(t: ToolBlock): string {
 const TOOL_LABELS: Record<string, string> = {
   web_search: "Web search",
   web_fetch: "Browse",
+  codemode: "Script",
   execute: "Execute",
   read_file: "Read",
   edit_file: "Edit",
@@ -1171,9 +1174,98 @@ function ArtifactDownloadCard({ card }: { card: ArtifactCard }) {
   );
 }
 
+/// Wall-clock label for a codemode nested-call row: `340ms` / `1.2s`.
+function codemodeDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(Math.round(ms / 100) / 10).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`;
+}
+
+/// The codemode script's nested tool calls (pi-durable result details),
+/// one compact row per call: `toolname(args) → status`. Same pill palette
+/// as the tool frames; a failed call's error text rides under the row.
+function CodemodeCallList({ calls }: { calls: CodemodeCallRow[] }) {
+  if (calls.length === 0) return null;
+  return (
+    <div className="overflow-hidden rounded-lg border border-border">
+      {calls.map((c) => {
+        const cls =
+          c.status === "ok"
+            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+            : c.status === "error"
+              ? "border-destructive/40 bg-destructive/10 text-destructive"
+              : "border-border bg-muted text-muted-foreground";
+        return (
+          <div
+            key={c.id}
+            className={`border-b border-border/60 px-2.5 py-1.5 last:border-b-0 ${c.status === "error" ? "bg-destructive/5" : ""}`}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate font-mono text-muted-foreground" title={c.args}>
+                {c.name}
+                <span className="text-muted-foreground/60">(</span>
+                {c.args ?? ""}
+                <span className="text-muted-foreground/60">)</span>
+              </span>
+              <span className="ml-auto flex shrink-0 items-center gap-2">
+                {c.durationMs != null && (
+                  <span className="text-xs tabular-nums text-muted-foreground/60">
+                    {codemodeDuration(c.durationMs)}
+                  </span>
+                )}
+                <span className={`rounded-full border px-1.5 py-px text-xs uppercase tracking-wide ${cls}`}>
+                  {c.status}
+                </span>
+              </span>
+            </div>
+            {c.error && (
+              <div className="mt-1 whitespace-pre-wrap break-all text-xs leading-relaxed text-destructive/90">
+                {c.error}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ToolBody({ t }: { t: ToolBlock }) {
   const m = t.meta;
   const kind = toolKind(t);
+  if (kind === "codemode") {
+    // The script source rides the arguments ({ code, options? } — a
+    // grammar-sampled call may carry the source as the raw string).
+    let code = "";
+    try {
+      const a: unknown = JSON.parse(t.args);
+      code = typeof a === "string" ? a : typeof (a as { code?: unknown })?.code === "string" ? ((a as { code: string }).code) : "";
+    } catch {
+      code = t.args ?? "";
+    }
+    return (
+      <div className="space-y-2">
+        <CodemodeCallList calls={m?.calls ?? []} />
+        {code && (
+          <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 font-mono text-sm leading-relaxed text-muted-foreground">
+            {code}
+          </pre>
+        )}
+        {t.content && (
+          <pre
+            className={`max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed ${
+              t.status === "error" ? "text-destructive" : "text-muted-foreground"
+            }`}
+          >
+            {t.content}
+          </pre>
+        )}
+        {t.status === "running" && (
+          <span className="animate-pulse text-muted-foreground">running…</span>
+        )}
+      </div>
+    );
+  }
   if (kind === "artifact") {
     const card = artifactCardOf(t);
     // The card replaces the raw content — the model-facing pointer text

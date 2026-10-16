@@ -72,6 +72,20 @@ export interface ToolMeta {
   offset?: number;
   total_lines?: number;
   lang?: string;
+  /// Codemode script call (server: pi-durable result details): the
+  /// script's nested tool calls in call order, terminal statuses only.
+  calls?: CodemodeCallRow[];
+}
+
+/// One nested tool call a codemode script made, as pi-durable records it
+/// in the codemode result's details (args cut server-side for display).
+export interface CodemodeCallRow {
+  id: number;
+  name: string;
+  args?: string;
+  status: "ok" | "error" | "cancelled";
+  durationMs?: number;
+  error?: string;
 }
 
 /// Download card on a spilled tool_result (the server puts it in
