@@ -13,6 +13,7 @@ const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MD_CLASS, MD_TABLE_CLASS, mdComponents, WRAP_ANYWHERE } from "./markdown";
+import { highlightJs } from "./js-highlight";
 import { clampSidebarWidth, saveSidebarWidth, storedSidebarWidth } from "../lib/sidebar-width";
 import {
   Archive,
@@ -1247,8 +1248,8 @@ function ToolBody({ t }: { t: ToolBlock }) {
       <div className="space-y-2">
         <CodemodeCallList calls={m?.calls ?? []} />
         {code && (
-          <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 font-mono text-sm leading-relaxed text-muted-foreground">
-            {code}
+          <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 font-mono text-sm leading-relaxed">
+            {highlightJs(code)}
           </pre>
         )}
         {t.content && (
