@@ -1701,16 +1701,19 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // The composer floats over the chat content; the scroll pane needs its
   // live height as bottom padding — a fixed guess breaks as soon as the
   // composer stack grows (queued chips, attachments, a taller textarea).
-  const composerRef = useRef<HTMLDivElement>(null);
+  // The element arrives via callback ref: the Skills/Settings routes swap
+  // the whole chat column out, so the composer remounts and an
+  // observe-once effect would keep watching the detached node while the
+  // padding froze at a stale height (the reported clipped-last-line bug).
+  const [composerEl, setComposerEl] = useState<HTMLDivElement | null>(null);
   const [composerH, setComposerH] = useState(128);
   useEffect(() => {
-    const el = composerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setComposerH(el.offsetHeight));
-    ro.observe(el);
-    setComposerH(el.offsetHeight);
+    if (!composerEl) return;
+    const ro = new ResizeObserver(() => setComposerH(composerEl.offsetHeight));
+    ro.observe(composerEl);
+    setComposerH(composerEl.offsetHeight);
     return () => ro.disconnect();
-  }, []);
+  }, [composerEl]);
   const chatsRef = useRef<ChatSummary[] | null>(null);
   chatsRef.current = chats;
   // URL-driven navigation state (see parseChatRoute above): everything the
@@ -2129,8 +2132,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     // True max scroll, not scrollIntoView on a bottom sentinel: a sentinel
     // sits above the composer-offset padding, and aligning it with the
     // scrollport bottom leaves the last lines behind the floating composer.
+    // composerH rides along: a composer stack growth (queued chips,
+    // attachments, a taller textarea) deepens the padding and must re-stick
+    // even when no block changed.
     if (el) el.scrollTop = el.scrollHeight;
-  }, [blocks]);
+  }, [blocks, composerH]);
 
   const refreshChats = async () => {
     const c = await listChats();
@@ -3491,7 +3497,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
         {/* composer: floats over the chat content; the scroll pane runs
             full-height behind it and offsets it by its measured height */}
         <div
-          ref={composerRef}
+          ref={setComposerEl}
           className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/85 to-transparent px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-6 sm:px-4"
         >
           <div className="pointer-events-auto mx-auto w-full max-w-3xl rounded-2xl border border-border bg-card p-2 shadow-lg backdrop-blur-sm">
