@@ -23,6 +23,7 @@
 import { hook, ToolTask } from "@earendil-works/pi-durable";
 import type { TaskRuntime } from "@earendil-works/pi-durable";
 import { CODEMODE_TOOL_NAME } from "@earendil-works/pi-durable/codemode";
+import { codemodeScriptLint } from "./codemode-lint.js";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import type { ExecutorKind } from "../machines/dispatch.js";
 import type { Logger } from "pino";
@@ -417,7 +418,18 @@ export function createApprovalGate(deps: ApprovalGateDeps) {
       // The codemode wrapper call is not a capability — every nested call it
       // makes runs this gate on its own. Gating the wrapper too would ask
       // (a judge consult) before the script has even run, once per call.
-      if (call.name === CODEMODE_TOOL_NAME) return undefined;
+      // But its script source gets the static check first: the known
+      // doomed patterns (timers, busy-wait, tools.* globals, positional
+      // args, Node-isms) fail here with a teaching message instead of
+      // crashing — or worse, spinning — in the sandbox.
+      if (call.name === CODEMODE_TOOL_NAME) {
+        const code = call.arguments?.code;
+        if (typeof code === "string") {
+          const lint = codemodeScriptLint(code);
+          if (lint !== undefined) return { block: lint };
+        }
+        return undefined;
+      }
       const chatId = await deps.chatOfConversation(Number(runtime.conversationId));
       if (chatId === null) return undefined; // unmapped conversation: no gate
       const executor = await deps.executorKind(Number(runtime.conversationId));

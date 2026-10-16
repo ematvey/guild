@@ -23,7 +23,7 @@ let memberToken: string;
 const sandboxRoot = mkdtempSync(path.join(tmpdir(), "guild-codemode-sandbox-"));
 const dataDir = mkdtempSync(path.join(tmpdir(), "guild-codemode-data-"));
 
-const toolCallSse = (name: string, args: string): string =>
+const toolCallSse = (name: string, args: string, id = "call_cm"): string =>
   'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_cm","type":"function","function":{"name":"' +
   name +
   '","arguments":' +
@@ -234,6 +234,40 @@ describe("codemode over the chat loop", () => {
       const nestedCards = toolResults(events).filter((e) => (e.event as { call_id: string }).call_id.includes("/c"));
       expect(nestedCards).toHaveLength(0);
       expect(toolResults(events)).toHaveLength(1);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "blocks a script with a doomed pattern at submit time and the fixed retry runs",
+    async () => {
+      const chatId = await createChat("codemode-lint");
+      const bad = 'await new Promise((resolve) => setTimeout(resolve, 100));\nreturn "done";';
+      scriptFor(
+        { body: toolCallSse("codemode", JSON.stringify({ code: bad }), "call_cm_bad") },
+        { body: toolCallSse("codemode", JSON.stringify({ code: 'await tools.write({ path: "cm-lint.txt", content: "ok" });\nreturn await tools.read({ path: "cm-lint.txt" });' }), "call_cm_retry") },
+        { body: finalSse },
+      );
+      await submitTurn(chatId, "wait then read");
+      await turnSettled(chatId);
+
+      const events = await threadEvents(chatId);
+      const calls = (events as unknown as { event: { blocks?: { type: string; name?: string; id?: string }[] } }[])
+        .flatMap((e) => e.event.blocks ?? [])
+        .filter((b) => b.type === "tool_call" && b.name === "codemode");
+      expect(calls).toHaveLength(2);
+      // The harness normalizes model call ids, so order — not id — picks
+      // the result: first the blocked submit, then the fixed retry.
+      const results = toolResults(events).map((e) => e.event as { content: string; is_error: boolean });
+      expect(results).toHaveLength(2);
+      expect(results[0]!.is_error).toBe(true);
+      expect(results[0]!.content).toContain("blocked by the codemode script check");
+      expect(results[0]!.content).toContain("NO timers");
+      // The block is submit-time: the sandbox never started, so no nested
+      // harness run and no wall-time wait.
+      expect(results[1]!.is_error).toBe(false);
+      expect(results[1]!.content).toContain("Script completed");
+      expect(results[1]!.content).toContain("ok");
     },
     TEST_TIMEOUT,
   );
