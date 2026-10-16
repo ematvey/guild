@@ -339,4 +339,105 @@ describe("codemode over the chat loop", () => {
     },
     TEST_TIMEOUT,
   );
+
+  it(
+    "offers only codemode to the model; scripts still reach every tool",
+    async () => {
+      const chatId = await createChat("codemode-only");
+      scriptFor({ body: finalSse });
+      await submitTurn(chatId, "hello");
+      await turnSettled(chatId);
+
+      // The model request declares exactly one tool: codemode.
+      const body = await firstRequest();
+      const tools = (body["tools"] as { function?: { name: string } }[]).map((t) => t.function?.name);
+      expect(tools).toEqual(["codemode"]);
+
+      // The agent's callable set still carries everything (script reach).
+      const conversationId = runtime().conversationIdForChat(chatId) as never;
+      const conversation = await runtime().harnessForTest()!.conversation(conversationId, BACKGROUND_CONTEXT);
+      const agent = await conversation!.agent(BACKGROUND_CONTEXT);
+      const callable = agent.callable.map((t) => t.name);
+      for (const name of ["read", "write", "edit", "bash", "read_skill", "thread_history", "thread_search"]) {
+        expect(callable).toContain(name);
+      }
+      // The codemode section lists the script-only tools for the model.
+      const messages = body["messages"] as { role: string; content: unknown }[];
+      const system = messages.filter((m) => m.role === "system").map((m) => String(m.content)).join("\n");
+      expect(system).toContain("### `thread_history`");
+      expect(system).toContain("### `thread_search`");
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "reads thread history and searches across the owner's chats from a script",
+    async () => {
+      // A second chat of the same user, with a distinctive marker in its
+      // history (the user turn itself is a thread_event).
+      const otherChat = await createChat("history-search-other");
+      const marker = "xylophone-marker-4821";
+      await stack.env.db.query(
+        `INSERT INTO thread_events (id, chat_id, type, payload)
+         VALUES (gen_random_uuid(), $1, 'user_message', $2::jsonb)`,
+        [otherChat, JSON.stringify({ type: "user_message", content: `discussing the ${marker} project` })],
+      );
+
+      const chatId = await createChat("history-search-home");
+      const code = [
+        `const search = await tools.thread_search({ query: "${marker}" });`,
+        "const hit = search.hits[0];",
+        "const page = await tools.thread_history({ chatId: hit.chatId, limit: 10 });",
+        "return { found: hit.snippet, title: hit.chatTitle, readBack: page.events.some((e) => e.text.includes('" +
+          marker +
+          "')) };",
+      ].join("\n");
+      scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+      await submitTurn(chatId, "find the marker thread");
+      await turnSettled(chatId);
+
+      const events = await threadEvents(chatId);
+      const call = (events as unknown as { event: { blocks?: { type: string; name?: string; id?: string } }[] }[])
+        .flatMap((e) => (e.event as { blocks?: { type: string; name?: string; id?: string }[] }).blocks ?? [])
+        .find((b) => b.type === "tool_call" && b.name === "codemode");
+      const result = toolResultFor(events, call!.id!);
+      expect(result.is_error).toBe(false);
+      expect(result.content).toContain("discussing the");
+      expect(result.content).toContain("history-search-other");
+      expect(result.content).toContain('readBack\":true');
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "denies thread_history on another user's chat",
+    async () => {
+      // A foreign chat: same org, a different owner (the org's other user).
+      const foreign = await stack.env.db.query<{ id: string }>(
+        `INSERT INTO chats (id, org_id, user_id, title)
+         SELECT gen_random_uuid(), c.org_id, u.id, 'history-foreign'
+         FROM (SELECT DISTINCT org_id, user_id FROM chats LIMIT 1) c
+         JOIN users u ON u.id <> c.user_id
+         LIMIT 1
+         RETURNING id`,
+      );
+      const foreignChatId = foreign.rows[0]?.id;
+      expect(foreignChatId).toBeDefined();
+
+      const chatId = await createChat("history-deny");
+      const code = `return await tools.thread_history({ chatId: "${foreignChatId}" });`;
+      scriptFor({ body: toolCallSse("codemode", JSON.stringify({ code })) }, { body: finalSse });
+      await submitTurn(chatId, "peek elsewhere");
+      await turnSettled(chatId);
+
+      const events = await threadEvents(chatId);
+      const call = (events as unknown as { event: { blocks?: { type: string; name?: string; id?: string } }[] }[])
+        .flatMap((e) => (e.event as { blocks?: { type: string; name?: string; id?: string }[] }).blocks ?? [])
+        .find((b) => b.type === "tool_call" && b.name === "codemode");
+      const result = toolResultFor(events, call!.id!);
+      expect(result.is_error).toBe(true);
+      expect(result.content).toContain("not_found");
+    },
+    TEST_TIMEOUT,
+  );
 });

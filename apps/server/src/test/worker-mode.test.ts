@@ -54,10 +54,8 @@ const sseDone = (): string =>
   "data: [DONE]\n\n";
 
 const toolCallSse = (name: string, args: string): string =>
-  'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_wm","type":"function","function":{"name":"' +
-  name +
-  '","arguments":' +
-  JSON.stringify(args) +
+  'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_wm","type":"function","function":{"name":"codemode","arguments":' +
+  JSON.stringify(JSON.stringify({ code: `return await tools.${name}(${args});` })) +
   "}}]}}]}\n\n" +
   'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
@@ -246,7 +244,8 @@ describe("worker-per-chat (fork supervisor)", () => {
       const events = (JSON.parse(thread.body) as { events: { event: Record<string, unknown> }[] }).events;
       const result = events.find((e) => e.event.type === "tool_result");
       if (!result) return false;
-      expect((result.event as { content: string }).content).toBe("Linux workstation 6.1.0");
+      // The codemode card carries the nested execute's structured output.
+      expect((result.event as { content: string }).content).toContain("Linux workstation 6.1.0");
       return events.some((e) => e.event.type === "assistant_message");
     }, 60_000);
     ws.close();

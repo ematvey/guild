@@ -321,13 +321,18 @@ describe("LLM trace: judge self-report", () => {
         payload: { default: "approve_for_me" },
       });
 
-      // Script: the tool-call turn, the judge's verdict (a non-stream
+      // Script: the tool-call turn (the model scripts the bash call through
+      // codemode — the nested call runs the same approval gate, which
+      // delegates to the judge), the judge's verdict (a non-stream
       // gateway call → the mock serves SSE frames the gateway accumulates),
       // then the final answer.
+      const judgeCode = 'return await tools.bash({ command: "rm -rf ./trace-judge-gone" });';
       stack.mock.setResponses([
         {
           body:
-            'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_trace","type":"function","function":{"name":"bash","arguments":"{\\"command\\":\\"rm -rf ./trace-judge-gone\\"}"}}]}}]}\n\n' +
+            'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_trace","type":"function","function":{"name":"codemode","arguments":' +
+            JSON.stringify(JSON.stringify({ code: judgeCode })) +
+            '}}]}}]}\n\n' +
             'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
             'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
             "data: [DONE]\n\n",
@@ -364,7 +369,7 @@ describe("LLM trace: judge self-report", () => {
       expect(judge).toBeDefined();
       expect(judge!["verdict"]).toBe(true);
       expect(String(judge!["verdict_reason"])).toBe("safe");
-      expect(String(judge!["cause"])).toContain("approval-gate:bash:call_trace");
+      expect(String(judge!["cause"])).toContain("approval-gate:bash:call_trace/c");
       expect(judge!["chat_id"]).toBe(chatId);
       expect(judge!["user_id"]).toBe(stack.memberId);
       expect(Number(judge!["tokens_in"])).toBe(12);

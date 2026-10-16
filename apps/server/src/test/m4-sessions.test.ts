@@ -28,12 +28,12 @@ const dataDir = mkdtempSync(path.join(tmpdir(), "guild-m4-data-"));
 
 // The scripted provider upstream: 16 responses consumed in strict order by
 // the sequential tests below (turns are two model calls each: the tool call,
-// then the final answer).
+// then the final answer). Under codemode-only exposure the model scripts the
+// call: one `codemode` request whose body runs the named tool as a nested
+// call — the nested call runs the same pipeline (gate, exec policy, spill).
 const toolCallSse = (name: string, args: string): string =>
-  'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_m4","type":"function","function":{"name":"' +
-  name +
-  '","arguments":' +
-  JSON.stringify(args) +
+  'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_m4","type":"function","function":{"name":"codemode","arguments":' +
+  JSON.stringify(JSON.stringify({ code: `return await tools.${name}(${args});` })) +
   "}}]}}]}\n\n" +
   'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
   'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n' +
@@ -202,8 +202,11 @@ describe("M4: workspace agent sessions", () => {
       expect(written).toBe("hello m4");
 
       const events = await threadEvents(session.chat_id);
+      // Nested calls make no cards: the codemode call is the card, and the
+      // workspace write above proves the nested write ran.
       const toolResult = events.find((e) => (e.event as { type?: string }).type === "tool_result");
-      expect((toolResult!.event as { name: string }).name).toBe("write");
+      expect((toolResult!.event as { name: string }).name).toBe("codemode");
+      expect((toolResult!.event as { is_error: boolean }).is_error).toBe(false);
     },
     TEST_TIMEOUT,
   );
@@ -394,7 +397,7 @@ describe("M4: approval gate block/resume", () => {
       const decision = events.filter((e) => (e.event as { type?: string }).type === "approval_decision").pop();
       expect(decision).toBeDefined();
       expect((decision!.event as { approved: boolean; reason?: string }).approved).toBe(false);
-      expect((decision!.event as { reason?: string }).reason).toContain("timed out awaiting approval");
+      expect((decision!.event as { reason?: string }).reason).toContain("approval timed out");
       const result = events.find((e) => (e.event as { type?: string }).type === "tool_result");
       expect(((result!.event as { content: string }).content).toLowerCase()).toContain("timed out");
       await turnSettled(chatId);
@@ -530,15 +533,19 @@ describe("M4: tool artifacts + oversized-result spill", () => {
       }, 30000);
       await turnSettled(session.chat_id);
       const events = await threadEvents(session.chat_id);
+      // Nested calls make no cards — both turns' work lands in the owning
+      // codemode call's result. The second turn's script returns the nested
+      // bash result, whose structured output carries the tail-capped text.
       const catResult = events
         .filter((e) => (e.event as { type?: string }).type === "tool_result")
         .map((e) => e.event as { name: string; content: string; is_error: boolean })
-        .find((e) => e.name === "bash");
+        .find((e) => e.name === "codemode" && e.content.includes('"output"'));
       expect(catResult).toBeDefined();
       expect(catResult!.is_error).toBe(false);
       // The tail-cap: the last ~50 KiB, not the file's 70 KiB head.
-      expect(catResult!.content.length).toBeLessThanOrEqual(50 * 1024 + 200);
+      expect(catResult!.content.length).toBeLessThanOrEqual(52 * 1024);
       expect(catResult!.content).toContain("AAAA");
+      expect(catResult!.content).toContain('"truncated":true');
       const { shouldSpill } = await import("../chats/spill.js");
       expect(shouldSpill("x".repeat(65536))).toBe(false);
       expect(shouldSpill("x".repeat(65537))).toBe(true);
@@ -618,7 +625,9 @@ describe("M4: machine-tool dispatch via the hub", () => {
         return events.some((e) => (e.event as { type?: string }).type === "tool_result");
       });
       const result = (await threadEvents(chatId)).find((e) => (e.event as { type?: string }).type === "tool_result");
-      expect((result!.event as { content: string }).content).toBe("Linux workstation 6.1.0");
+      // The codemode card carries the script's return value: the nested
+      // execute's structured output.
+      expect((result!.event as { content: string }).content).toContain("Linux workstation 6.1.0");
       expect((result!.event as { is_error: boolean }).is_error).toBe(false);
       await turnSettled(chatId);
       ws.close();
@@ -644,7 +653,9 @@ describe("M4: machine-tool dispatch via the hub", () => {
       await turnSettled(chatId);
       const events = await threadEvents(chatId);
       const second = events.filter((e) => (e.event as { type?: string }).type === "tool_result").pop();
-      expect((second!.event as { is_error: boolean }).is_error).toBe(true);
+      // The nested call's failure rides back as the shell result (exit 1,
+      // "machine offline" output); the owning codemode call completes.
+      expect((second!.event as { is_error: boolean }).is_error).toBe(false);
       expect((second!.event as { content: string }).content).toContain("machine offline");
     },
     TEST_TIMEOUT,

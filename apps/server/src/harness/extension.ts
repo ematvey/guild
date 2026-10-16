@@ -16,7 +16,7 @@ export const DEFAULT_PERSONA =
  *  when non-blank) plus the coding-tools sentence. */
 export function buildSystemPrompt(orgPrompt: string | null | undefined): string {
   const persona = orgPrompt !== null && orgPrompt !== undefined && orgPrompt.trim() !== "" ? orgPrompt.trim() : DEFAULT_PERSONA;
-  return `${persona} You have tools (read, write, edit, bash) that execute on the Guild server. Use them to inspect and change files before answering anything that could be about files.`;
+  return `${persona} Every tool runs on the Guild server through the codemode tool: write JavaScript that calls \`tools.read\`, \`tools.write\`, \`tools.edit\`, \`tools.bash\`, \`tools.thread_history\`, \`tools.thread_search\`, and the skill/MCP tools as nested calls. Inspect and change files with scripts before answering anything that could be about files.`;
 }
 
 /** The codemode usage notes: what the shipped tool description leaves easy
@@ -25,6 +25,7 @@ export function buildSystemPrompt(orgPrompt: string | null | undefined): string 
 export const CODEMODE_NOTES_SECTION_TEXT = [
   "Codemode rules:",
   "- `searchTools`, `ALL_TOOLS`, `describeTool`, `describeNamespace`, `store`, `load`, `text`, `image`, `console`, and `exit` are sandbox globals. Call them bare (`await searchTools(\"query\")`), NEVER as `tools.searchTools` — only the conversation's real tools live on `tools`.",
+  "- Every real tool is script-only: direct calls are not offered to you, so always act through `codemode` scripts.",
   "- The `code` parameter is the raw script body: never wrapped in a code fence or quotes.",
 ].join("\n");
 
@@ -36,12 +37,23 @@ export interface GuildExtensionDeps extends ApprovalGateDeps {
   /** conversationId → the chat owner's user (the skills index's install
    *  pins resolve against them) — the same chat→row lookup. */
   userOfConversation(conversationId: ConversationId): Promise<{ id: string } | null>;
+  /** The thread-history tools (thread_history/thread_search), built by the
+   *  runtime over its pool; absent in tests without one. */
+  threadTools?: readonly ToolRegistration[];
   /** The integrations chat runtime (M8): the approval gate consults it for
    *  the integration tool envelope (absent: the generic policy applies). */
   integrations?: IntegrationGate;
   /** The skills runtime (read_skill/search_skills/push_skill + the Task 6
    *  prompt index section); absent in tests without one. */
   skillRuntime?: SkillRuntime;
+}
+
+/** Codemode-only exposure: tools the model must not see directly become
+ *  script-callable (`callers: ["tools"]`) — they stay in the registry (the
+ *  codemode section lists them and nested script calls run them) but are
+ *  never offered as active model tools. */
+export function toolsOnlyCaller<T extends ToolRegistration>(tool: T): T {
+  return tool.callers === undefined ? { ...tool, callers: ["tools"] } : tool;
 }
 
 export function createGuildExtension(deps: GuildExtensionDeps) {
@@ -74,7 +86,9 @@ export function createGuildExtension(deps: GuildExtensionDeps) {
   };
   return defineExtension({
     name: "guild",
-    tools: deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools(),
+    tools: [...(deps.skillRuntime === undefined ? [] : deps.skillRuntime.tools()), ...(deps.threadTools ?? [])].map(
+      toolsOnlyCaller,
+    ),
     sections: [section, skillsSection, codemodeNotes],
     hooks: [createApprovalGate(deps)],
   });
