@@ -203,6 +203,23 @@ export type ThreadState = {
   project_machine_label?: string;
 };
 
+export interface ThreadContextUsage {
+  tokens: number | null;
+  max: number | null;
+  model: string | null;
+  usage_model: string | null;
+}
+
+export async function fetchThreadContext(chatId: string, model: string, signal: AbortSignal): Promise<ThreadContextUsage> {
+  const query = new URLSearchParams({ model });
+  const response = await fetch(apiUrl(`/api/v1/threads/${encodeURIComponent(chatId)}/context?${query}`), {
+    headers: { authorization: `Bearer ${getToken()}` },
+    signal,
+  });
+  if (!response.ok) throw new Error("Could not load context usage");
+  return response.json();
+}
+
 export interface SocketHandlers {
   onConnect?: () => void;
   onThreadState?: (state: ThreadState) => void;

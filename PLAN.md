@@ -11,6 +11,18 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Context usage stays inside the composer (2026-10-17, 0.5.75).** An 18px
+  ring sits immediately left of the model picker; hover/focus exposes the
+  token count, capacity and percentage. Measurements come from committed
+  provider usage, including cached input and the completed response, against
+  the selected route's context window (the harness's 128k fallback applies).
+  The tooltip identifies the measured model when switching routes. Unmeasured
+  threads and reset/compaction heads show an unknown ring until a new response
+  measures the current prefix. The read is owner/org scoped and does not wake
+  a worker. Committed-history changes refresh it; streaming text does not.
+  Validation: nine focused server checks, all 354 desktop tests, server
+  typecheck and frontend build pass.
+
 - **Browser verification follows real task and stream lifetimes (2026-10-17,
   0.5.74).** MCP settings use server-provided canonical call names. Manual
   compaction tracks its task and queued-summary placement, including no-op and failure,

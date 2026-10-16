@@ -80,6 +80,7 @@ import { Skeleton, SkeletonRows, SkeletonText } from "@guild/ui/components/skele
 import { Sheet, SheetContent, SheetTitle } from "@guild/ui/components/sheet";
 import { Textarea } from "@guild/ui/components/textarea";
 import { DesktopTooltip } from "../components/desktop-tooltip";
+import { ContextRing } from "../components/context-ring";
 import { SettingsSectionPane } from "./settings/settings-sections";
 import { CreateProjectDialog } from "./projects/CreateProjectDialog";
 import { chatProjectOf, outgoingProjectId, projectChipLabel, sidebarGrouping, type PickedProject } from "./projects/projects";
@@ -1765,6 +1766,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
   // the right place.
   const [route, setRoute] = useState<ChatRoute>(() => parseChatRoute(window.location.pathname));
   const chatId = route.chatId;
+  const [contextRevision, setContextRevision] = useState<{ chatId: string; seq: number } | null>(null);
+  const updateContextRevision = (cid: string, events: ThreadState["events"]) => {
+    const seq = events[events.length - 1]?.seq ?? 0;
+    setContextRevision(prev => prev?.chatId === cid && prev.seq >= seq ? prev : { chatId: cid, seq });
+  };
   const overlay = route.overlay;
   // The open chat's server-side generating flag — the same truth the sidebar
   // spinner shows (live chat-status frames, optimistic send, then the fetched
@@ -2383,6 +2389,7 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
     );
     if (!chatsRef.current?.some(chat => chat.id === cid)) void refreshChats();
     if (cid !== openChatIdRef.current) return;
+    updateContextRevision(cid, state.events);
     setBusy(state.generating);
     setBlocks(applied.blocks);
     setCompacting(applied.compacting);
@@ -2583,7 +2590,10 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
           });
         }
         if (applied.stale) return;
-        if (cid === openChatIdRef.current) setBlocks(applied.blocks);
+        if (cid === openChatIdRef.current) {
+          updateContextRevision(cid, events);
+          setBlocks(applied.blocks);
+        }
       },
       onSync: (cid, phase) => {
         if (phase === "begin") {
@@ -3885,6 +3895,8 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
             )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                <ContextRing chatId={chatId} model={model}
+                  revision={contextRevision?.chatId === chatId ? contextRevision.seq : null} />
                 {models !== null && models.length > 0 && (
                   <Select value={model} onValueChange={setModel}>
                     <SelectTrigger className="h-7 w-auto min-w-0 max-w-28 gap-1 border-none bg-secondary px-2 shadow-none sm:max-w-40">
