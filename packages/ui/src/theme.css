@@ -71,11 +71,12 @@
 }
 
 /* Markdown **bold** renders <strong>/<b>; Tailwind's preflight pins it to
-   `bolder` (700 in body text), which would sit above the lighter weight
-   ladder — pin it to the semibold token instead. */
+   `bolder` (700 in body text). Message bold is the main emphasis voice:
+   clearly heavier than the 400 body, below preflight-heavy — literal 600
+   (the bold token is not emitted; no font-bold utility is in use). */
 strong,
 b {
-  font-weight: var(--font-weight-semibold);
+  font-weight: 600;
 }
 
 @theme inline {
