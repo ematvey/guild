@@ -21,6 +21,14 @@ not kept here — it lives in git.
   socket, and executor disconnect terminates owned tool process trees. Details:
   `docs/plans/2026-10-17-live-projection-recovery.md`. The reported browser freeze
   remains unproven; these changes address reproduced recovery/lifetime defects.
+  Dev verified: health 0.5.69, live bundle `index-CRKD5YRJ.js`, six signed
+  desktop artifacts and four public updater platforms. The running devbox
+  daemon was upgraded from 0.5.40 to 0.5.69 after its tools were idle. A real
+  machine shell plus sleep child exited on Stop, then the same conversation
+  completed `CANCEL_OK`. The affected thread is idle, its history remains
+  readable, and the document audit reports no invalid chains. Broad server
+  validation: 487 pass, three reproduced baseline WS/golden failures; Rust
+  library/protocol tests and the desktop compile pass.
 
 - **Loading states describe pending data, never absence (2026-10-16, 0.5.68).**
   Workspace identity, approval policy, assistant prompts, account role,

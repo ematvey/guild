@@ -88,3 +88,32 @@ A final atomicity regression also covers a valid first-document delta followed
 by an invalid second-document delta in one rejected batch. Validation uses
 immutable application so the first document's cached state cannot acquire
 changes that never committed. The regression failed before that correction.
+
+## Dev deployment and terminal verification
+
+Implementation commits: `63ac201` and `b76f097`, on develop. The compose server
+was rebuilt and recreated; its health reports 0.5.69 and its embedded bundle is
+`index-CRKD5YRJ.js` (previously `index-IkPXRbty.js`). The deployed source uses
+immutable validation. The latest focused rerun after that correction passed
+48 tests across storage, worker, cancellation and restart boundaries.
+
+The client publisher completed successfully with six artifacts, verifying
+every upload's local/server SHA-256. The localhost and public dev updater
+(`guild.example.com`) serve version 0.5.69 with four signed platform entries.
+A real Windows installer download through the public updater URL also matched
+the release registry's SHA-256.
+
+The devbox daemon was idle before restart. Its old PID 475727 exited, the
+replacement process became PID 3290542, and the dev machine registry reports
+0.5.69. A live verification conversation completed an ordinary model turn,
+then dispatched `sleep 30; : guild_cancel_verify_20261017_0015` to that machine.
+The observed shell PID 3322865 and child PID 3322866 both exited after the HTTP
+Stop request. The same conversation then completed a new turn with `CANCEL_OK`.
+The verification conversation was archived after checking its terminal result.
+
+The affected original conversation's history is readable (443 events in the
+checked page), `generating=false`, and it has no remaining nonterminal tasks.
+The final operator audit reports zero invalid chains. Its original damaged
+revisions are retained in `live_projection_repairs` (document 10976). This
+repairs the reproduced thread failure and enforces command cancellation; it
+does not establish a cause or a verified fix for the separate browser freeze.
