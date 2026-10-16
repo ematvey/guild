@@ -51,6 +51,7 @@ import {
   Wrench,
   Trash2,
   CornerDownRight,
+  Link2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -3436,6 +3437,11 @@ function WebChatAccount({ email, role = "member", displayName, avatarUrl, onSign
                 <DropdownMenuItem onSelect={() => setChatViewPersist("technical")}>
                   <Check className={`size-4 ${chatView === "technical" ? "" : "opacity-0"}`} />
                   Technical view
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(window.location.href).then(() => toast("Thread URL copied"))}>
+                  <Link2 className="size-4" />
+                  Copy thread URL
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
