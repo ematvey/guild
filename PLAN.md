@@ -11,6 +11,13 @@ not kept here — it lives in git.
 
 ## Latest decisions
 
+- **Codemode script block gets JS highlighting (2026-10-16, 0.5.60).**
+  The monospace source block on the codemode card is tokenized for display
+  by an in-house single-regex highlighter (`js-highlight.tsx` — keywords,
+  strings, comments, numbers, globals, call sites; no new dependency,
+  unknown constructs fall through as plain text). Shipped 0.5.60: compose
+  rebuild live-verified and client release published to the dev registry
+  (all four platforms, `latest.json` serves 0.5.60).
 - **Codemode widget: the script card renders its nested calls (2026-10-16,
   0.5.59).** The codemode-only exposure (above) left every script call as a
   generic tool frame — args JSON dump, no visibility into what the script
